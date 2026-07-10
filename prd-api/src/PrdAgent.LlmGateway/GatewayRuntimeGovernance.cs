@@ -205,6 +205,20 @@ public sealed class GatewayBudgetCoordinator
                 budget,
             })));
 
+        async Task<GatewayBudgetMonthRecord?> TryReserveMonthAsync()
+            => await months.FindOneAndUpdateAsync(
+                identity & withinBudget,
+                Builders<GatewayBudgetMonthRecord>.Update
+                    .Set(x => x.BudgetUsd, budget)
+                    .Set(x => x.UpdatedAt, now)
+                    .Inc(x => x.ReservedUsd, amount),
+                new FindOneAndUpdateOptions<GatewayBudgetMonthRecord>
+                {
+                    IsUpsert = false,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                ct);
+
         GatewayBudgetMonthRecord? updated;
         try
         {
@@ -221,22 +235,13 @@ public sealed class GatewayBudgetCoordinator
                     .Set(x => x.UpdatedAt, now),
                 new UpdateOptions { IsUpsert = true },
                 ct);
-            updated = await months.FindOneAndUpdateAsync(
-                identity & withinBudget,
-                Builders<GatewayBudgetMonthRecord>.Update
-                    .Set(x => x.BudgetUsd, budget)
-                    .Set(x => x.UpdatedAt, now)
-                    .Inc(x => x.ReservedUsd, amount),
-                new FindOneAndUpdateOptions<GatewayBudgetMonthRecord>
-                {
-                    IsUpsert = false,
-                    ReturnDocument = ReturnDocument.After,
-                },
-                ct);
+            updated = await TryReserveMonthAsync();
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            updated = null;
+            // 两个请求可能同时在月初创建同一条月份记录。唯一索引只允许一个 upsert
+            // 获胜；失败方必须在已存在记录上重试原子预占，不能误报预算耗尽。
+            updated = await TryReserveMonthAsync();
         }
 
         if (updated == null)
@@ -351,6 +356,7 @@ public enum GatewayExecutionBeginState
 {
     Started,
     Replay,
+    ReplayUnavailable,
     Running,
     Unknown,
     Failed,
@@ -364,9 +370,17 @@ public sealed record GatewayExecutionBeginResult(
 
 public sealed class GatewayRequestExecutionStore
 {
+    public const int MaxReplayResponseBytes = 8 * 1024 * 1024;
     private readonly LlmGatewayDataContext _data;
+    private readonly ILogger<GatewayRequestExecutionStore>? _logger;
 
-    public GatewayRequestExecutionStore(LlmGatewayDataContext data) => _data = data;
+    public GatewayRequestExecutionStore(
+        LlmGatewayDataContext data,
+        ILogger<GatewayRequestExecutionStore>? logger = null)
+    {
+        _data = data;
+        _logger = logger;
+    }
 
     public async Task<GatewayExecutionBeginResult> BeginAsync(
         string appCallerCode,
@@ -402,6 +416,7 @@ public sealed class GatewayRequestExecutionStore
             {
                 "completed" when !string.IsNullOrWhiteSpace(existing.ResponseJson)
                     => new(GatewayExecutionBeginState.Replay, existing.Id, existing.ResponseJson),
+                "completed-unreplayable" => new(GatewayExecutionBeginState.ReplayUnavailable, existing.Id),
                 "unknown" => new(GatewayExecutionBeginState.Unknown, existing.Id),
                 "failed" => new(GatewayExecutionBeginState.Failed, existing.Id),
                 _ => new(GatewayExecutionBeginState.Running, existing.Id),
@@ -409,8 +424,35 @@ public sealed class GatewayRequestExecutionStore
         }
     }
 
-    public Task CompleteAsync(string executionId, string responseJson, CancellationToken ct)
-        => UpdateAsync(executionId, "completed", responseJson, null, ct);
+    public async Task CompleteAsync(string executionId, string responseJson, CancellationToken ct)
+    {
+        var responseTooLarge = Encoding.UTF8.GetByteCount(responseJson) > MaxReplayResponseBytes;
+
+        try
+        {
+            if (responseTooLarge)
+                await MarkReplayUnavailableAsync(executionId, "GATEWAY_REPLAY_RESPONSE_TOO_LARGE", ct);
+            else
+                await UpdateAsync(executionId, "completed", responseJson, null, ct);
+        }
+        catch (MongoException ex)
+        {
+            // 幂等快照是辅助能力。上游已经成功后，Mongo 单文档限制或暂时写失败不能
+            // 反转用户响应；记录为不可重放并对后续同 requestId 保持 fail-closed。
+            _logger?.LogWarning(ex, "[GatewayIdempotency] replay snapshot unavailable execution={ExecutionId}", executionId);
+            if (!responseTooLarge)
+            {
+                try
+                {
+                    await MarkReplayUnavailableAsync(executionId, "GATEWAY_REPLAY_SNAPSHOT_UNAVAILABLE", CancellationToken.None);
+                }
+                catch (Exception fallbackEx)
+                {
+                    _logger?.LogError(fallbackEx, "[GatewayIdempotency] failed to persist replay-unavailable state execution={ExecutionId}", executionId);
+                }
+            }
+        }
+    }
 
     public Task UnknownAsync(string executionId, string errorCode, CancellationToken ct)
         => UpdateAsync(executionId, "unknown", null, errorCode, ct);
@@ -444,6 +486,57 @@ public sealed class GatewayRequestExecutionStore
                 .Set(x => x.ErrorCode, errorCode)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+    }
+
+    private Task MarkReplayUnavailableAsync(string executionId, string errorCode, CancellationToken ct)
+        => UpdateAsync(executionId, "completed-unreplayable", null, errorCode, ct);
+
+    public static string Fingerprint(GatewayRawRequest request)
+    {
+        var multipartFiles = request.MultipartFiles?
+            .OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => new
+            {
+                FieldName = x.Key,
+                x.Value.FileName,
+                x.Value.MimeType,
+                SizeBytes = x.Value.Content.LongLength,
+                Sha256 = Convert.ToHexString(SHA256.HashData(x.Value.Content)).ToLowerInvariant(),
+            })
+            .ToArray();
+        var multipartRefs = request.MultipartFileRefs?
+            .OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => new
+            {
+                FieldName = x.Key,
+                x.Value.RefKey,
+                x.Value.FileName,
+                x.Value.MimeType,
+                x.Value.SizeBytes,
+                x.Value.Sha256,
+                x.Value.Url,
+            })
+            .ToArray();
+
+        return Fingerprint(new
+        {
+            request.AppCallerCode,
+            request.ModelType,
+            request.EndpointPath,
+            request.ExpectedModel,
+            request.PinnedPlatformId,
+            request.PinnedModelId,
+            RequestBody = request.RequestBody?.ToJsonString(),
+            request.IsMultipart,
+            MultipartFields = request.MultipartFields?.OrderBy(x => x.Key, StringComparer.Ordinal).ToArray(),
+            MultipartFiles = multipartFiles,
+            MultipartFileRefs = multipartRefs,
+            request.HttpMethod,
+            ExtraHeaders = request.ExtraHeaders?.OrderBy(x => x.Key, StringComparer.Ordinal).ToArray(),
+            request.TimeoutSeconds,
+            request.ExpectBinaryResponse,
+            request.Context,
+        });
     }
 
     public static string Fingerprint<T>(T value)

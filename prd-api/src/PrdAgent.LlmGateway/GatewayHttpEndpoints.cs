@@ -322,21 +322,16 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var rawRequest = ToOpenAiImageRawRequest(ingress);
             using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async token =>
-            {
-                var raw = await ExecuteRawWithIdempotencyAsync(
-                    services,
-                    gateway,
-                    rawRequest,
-                    requestId,
-                    "openai-images-generation",
-                    token);
-                await WriteOpenAiRawCompatAsync(http, raw);
-            });
+            await ExecuteRawWithIdempotencyAsync(
+                http,
+                services,
+                gateway,
+                ingress,
+                rawRequest,
+                requestId,
+                "openai-images-generation");
         });
 
         app.MapPost("/v1/images/edits", async (
@@ -394,25 +389,20 @@ public static class GatewayHttpEndpoints
                 },
             };
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var rawRequest = ToOpenAiImageRawRequest(
                 ingress,
                 "/v1/images/edits",
                 multipartFields,
                 parsed.MultipartFiles);
             using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async token =>
-            {
-                var raw = await ExecuteRawWithIdempotencyAsync(
-                    services,
-                    gateway,
-                    rawRequest,
-                    requestId,
-                    "openai-images-edit",
-                    token);
-                await WriteOpenAiRawCompatAsync(http, raw);
-            });
+            await ExecuteRawWithIdempotencyAsync(
+                http,
+                services,
+                gateway,
+                ingress,
+                rawRequest,
+                requestId,
+                "openai-images-edit");
         });
 
         // OpenAI-compatible M2M 入口。用于 claude-sdk-sidecar 的 legacy/openai-compatible
@@ -869,13 +859,14 @@ public static class GatewayHttpEndpoints
                 }
                 if (execution.State != GatewayExecutionBeginState.Started)
                 {
-                    var code = execution.State == GatewayExecutionBeginState.Unknown
-                        ? "GATEWAY_OUTCOME_UNKNOWN"
-                        : execution.State == GatewayExecutionBeginState.Conflict
-                            ? "GATEWAY_IDEMPOTENCY_CONFLICT"
-                            : execution.State == GatewayExecutionBeginState.Failed
-                                ? "GATEWAY_REQUEST_ALREADY_FAILED"
-                            : "GATEWAY_REQUEST_IN_PROGRESS";
+                    var code = execution.State switch
+                    {
+                        GatewayExecutionBeginState.Unknown => "GATEWAY_OUTCOME_UNKNOWN",
+                        GatewayExecutionBeginState.Conflict => "GATEWAY_IDEMPOTENCY_CONFLICT",
+                        GatewayExecutionBeginState.Failed => "GATEWAY_REQUEST_ALREADY_FAILED",
+                        GatewayExecutionBeginState.ReplayUnavailable => "GATEWAY_REPLAY_UNAVAILABLE",
+                        _ => "GATEWAY_REQUEST_IN_PROGRESS",
+                    };
                     return Results.Json(GatewayRawResponse.Fail(code, "相同 requestId 的 raw 请求不能重复提交", 409), jsonOpts, statusCode: 409);
                 }
             }
@@ -2762,13 +2753,14 @@ public static class GatewayHttpEndpoints
         }
     }
 
-    private static async Task<GatewayRawResponse> ExecuteRawWithIdempotencyAsync(
+    private static async Task ExecuteRawWithIdempotencyAsync(
+        HttpContext http,
         IServiceProvider services,
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        GatewayIngressRequest ingress,
         GatewayRawRequest request,
         string requestId,
-        string operation,
-        CancellationToken ct)
+        string operation)
     {
         var store = services.GetService<GatewayRequestExecutionStore>();
         GatewayExecutionBeginResult? execution = null;
@@ -2779,11 +2771,13 @@ public static class GatewayHttpEndpoints
                 requestId,
                 operation,
                 GatewayRequestExecutionStore.Fingerprint(request),
-                ct);
+                CancellationToken.None);
             if (execution.State == GatewayExecutionBeginState.Replay)
             {
-                return JsonSerializer.Deserialize<GatewayRawResponse>(execution.ResponseJson!, JsonSerializerOptions.Default)
-                       ?? GatewayRawResponse.Fail("GATEWAY_REPLAY_INVALID", "已保存的幂等响应无法反序列化", 500);
+                var replay = JsonSerializer.Deserialize<GatewayRawResponse>(execution.ResponseJson!, JsonSerializerOptions.Default)
+                             ?? GatewayRawResponse.Fail("GATEWAY_REPLAY_INVALID", "已保存的幂等响应无法反序列化", 500);
+                await WriteOpenAiRawCompatAsync(http, replay);
+                return;
             }
             if (execution.State != GatewayExecutionBeginState.Started)
             {
@@ -2792,45 +2786,58 @@ public static class GatewayHttpEndpoints
                     GatewayExecutionBeginState.Unknown => "GATEWAY_OUTCOME_UNKNOWN",
                     GatewayExecutionBeginState.Conflict => "GATEWAY_IDEMPOTENCY_CONFLICT",
                     GatewayExecutionBeginState.Failed => "GATEWAY_REQUEST_ALREADY_FAILED",
+                    GatewayExecutionBeginState.ReplayUnavailable => "GATEWAY_REPLAY_UNAVAILABLE",
                     _ => "GATEWAY_REQUEST_IN_PROGRESS",
                 };
-                return GatewayRawResponse.Fail(code, "相同 requestId 的 raw 请求不能重复提交", 409);
+                await WriteOpenAiRawCompatAsync(http, GatewayRawResponse.Fail(code, "相同 requestId 的 raw 请求不能重复提交", 409));
+                return;
             }
         }
 
-        try
+        var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+        if (await TryWriteGovernanceErrorAsync(http, governance))
         {
-            var resolution = await gateway.ResolveModelAsync(
-                request.AppCallerCode,
-                request.ModelType,
-                request.ExpectedModel,
-                request.PinnedPlatformId,
-                request.PinnedModelId,
-                ct);
-            var raw = await gateway.SendRawWithResolutionAsync(request, resolution, ct);
             if (store is not null && execution is not null)
+                await store.FailAsync(execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
+            return;
+        }
+
+        await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async ct =>
+        {
+            try
             {
-                if (raw.Success)
-                    await store.CompleteAsync(execution.ExecutionId, JsonSerializer.Serialize(raw), CancellationToken.None);
-                else if (raw.StatusCode >= 500)
-                    await store.UnknownAsync(execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
-                else
-                    await store.FailAsync(execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
+                var resolution = await gateway.ResolveModelAsync(
+                    request.AppCallerCode,
+                    request.ModelType,
+                    request.ExpectedModel,
+                    request.PinnedPlatformId,
+                    request.PinnedModelId,
+                    ct);
+                var raw = await gateway.SendRawWithResolutionAsync(request, resolution, ct);
+                if (store is not null && execution is not null)
+                {
+                    if (raw.Success)
+                        await store.CompleteAsync(execution.ExecutionId, JsonSerializer.Serialize(raw), CancellationToken.None);
+                    else if (raw.StatusCode >= 500)
+                        await store.UnknownAsync(execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                    else
+                        await store.FailAsync(execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
+                }
+                await WriteOpenAiRawCompatAsync(http, raw);
             }
-            return raw;
-        }
-        catch (OperationCanceledException)
-        {
-            if (store is not null && execution is not null)
-                await store.UnknownAsync(execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
-            throw;
-        }
-        catch
-        {
-            if (store is not null && execution is not null)
-                await store.UnknownAsync(execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
-            throw;
-        }
+            catch (OperationCanceledException)
+            {
+                if (store is not null && execution is not null)
+                    await store.UnknownAsync(execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
+                throw;
+            }
+            catch
+            {
+                if (store is not null && execution is not null)
+                    await store.UnknownAsync(execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                throw;
+            }
+        });
     }
 
     private static async Task SendOpenAiCompatibleAsync(

@@ -49,6 +49,37 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ConcurrentFirstMonthReservations_AllSucceedWhenBudgetHasCapacity()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+
+        var caller = new GatewayAppCallerRecord
+        {
+            AppCallerCode = "budget-month-create-race",
+            RequestType = "chat",
+            MonthlyBudgetUsd = 1m,
+            BudgetReservationUsd = 0.1m,
+        };
+        var coordinators = Enumerable.Range(0, 8)
+            .Select(_ => new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance))
+            .ToArray();
+
+        var admissions = await Task.WhenAll(coordinators.Select((coordinator, index) =>
+            coordinator.ReserveAsync(caller, $"month-race-{index}", CancellationToken.None)));
+
+        admissions.Count(x => x.Allowed).ShouldBe(8);
+        var month = await scope.Context.Database
+            .GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0.8m);
+        month.SpentUsd.ShouldBe(0m);
+    }
+
+    [Fact]
     public async Task ClientFailure_ReleasesBudgetReservation()
     {
         var testDatabase = await TryCreateDatabaseAsync();
@@ -135,6 +166,65 @@ public sealed class GatewayRuntimeGovernanceTests
             CancellationToken.None);
         status.ShouldNotBeNull();
         status.Status.ShouldBe("unknown");
+    }
+
+    [Fact]
+    public void RawFingerprint_ChangesWhenMultipartFileContentChanges()
+    {
+        static GatewayRawRequest Request(byte[] content) => new()
+        {
+            AppCallerCode = "fingerprint-test",
+            ModelType = "generation",
+            EndpointPath = "/v1/images/edits",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object> { ["prompt"] = "edit" },
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["image"] = ("input.png", content, "image/png"),
+            },
+        };
+
+        var first = GatewayRequestExecutionStore.Fingerprint(Request([1, 2, 3]));
+        var second = GatewayRequestExecutionStore.Fingerprint(Request([1, 2, 4]));
+
+        first.ShouldNotBe(second);
+    }
+
+    [Fact]
+    public async Task OversizedReplaySnapshot_DoesNotFailCompletedUpstreamCall()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        var store = new GatewayRequestExecutionStore(scope.Context);
+        var begin = await store.BeginAsync(
+            "large-replay-test",
+            "large-response-request",
+            "openai-images-generation",
+            "same-fingerprint",
+            CancellationToken.None);
+        begin.State.ShouldBe(GatewayExecutionBeginState.Started);
+
+        var oversized = new string('x', GatewayRequestExecutionStore.MaxReplayResponseBytes + 1);
+        await store.CompleteAsync(begin.ExecutionId, oversized, CancellationToken.None);
+
+        var replay = await store.BeginAsync(
+            "large-replay-test",
+            "large-response-request",
+            "openai-images-generation",
+            "same-fingerprint",
+            CancellationToken.None);
+        replay.State.ShouldBe(GatewayExecutionBeginState.ReplayUnavailable);
+        var stored = await store.GetAsync(
+            "large-replay-test",
+            "large-response-request",
+            "openai-images-generation",
+            CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored.Status.ShouldBe("completed-unreplayable");
+        stored.ResponseJson.ShouldBeNull();
+        stored.ErrorCode.ShouldBe("GATEWAY_REPLAY_RESPONSE_TOO_LARGE");
     }
 
     [Fact]

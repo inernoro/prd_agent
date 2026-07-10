@@ -2063,6 +2063,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RunWithRequestCancellationAsync", endpoints);
         Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
         Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        var imageHelperStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
+        var imageHelperEnd = endpoints.IndexOf("private static async Task SendOpenAiCompatibleAsync", imageHelperStart, StringComparison.Ordinal);
+        var imageHelper = endpoints[imageHelperStart..imageHelperEnd];
+        Assert.True(
+            imageHelper.IndexOf("store.BeginAsync", StringComparison.Ordinal)
+            < imageHelper.IndexOf("RecordAndCheckAppCallerGovernanceAsync", StringComparison.Ordinal),
+            "图片兼容入口的幂等 replay 必须在预算预占与限流前返回");
         var rawEndpointStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
         var rawEndpointEnd = endpoints.IndexOf("app.MapPost(\"/gw/v1/profile-test\"", rawEndpointStart, StringComparison.Ordinal);
         var rawEndpoint = endpoints[rawEndpointStart..rawEndpointEnd];
