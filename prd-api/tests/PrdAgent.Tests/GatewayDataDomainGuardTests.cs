@@ -35,6 +35,18 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void GatewayOwnedModelConfig_ModelsIgnoreExtraMetadataFields()
+    {
+        var modelGroup = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ModelGroup.cs");
+        var modelExchange = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ModelExchange.cs");
+
+        Assert.Contains("using MongoDB.Bson.Serialization.Attributes;", modelGroup);
+        Assert.Contains("[BsonIgnoreExtraElements]\npublic class ModelGroup", modelGroup);
+        Assert.Contains("using MongoDB.Bson.Serialization.Attributes;", modelExchange);
+        Assert.Contains("[BsonIgnoreExtraElements]\npublic class ModelExchange", modelExchange);
+    }
+
+    [Fact]
     public void ShadowReadEndpoints_UseGatewayDatabase()
     {
         var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
@@ -92,9 +104,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
         Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
         Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
-        Assert.Contains("active appCaller 必须使用 modelPolicy=pool", consoleProgram);
-        Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
-        Assert.Contains(".Set(\"ModelPolicy\", \"pool\")", consoleProgram);
+        Assert.Contains("active appCaller 必须使用 modelPolicy=auto/pool/pinned", consoleProgram);
+        var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
+        Assert.Contains("allowMapFallback: !activeGatewayAppCallerRequiresGwConfig", modelResolver);
+        Assert.Contains("FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback)", modelResolver);
+        Assert.Contains("normalized-to-supported-model-policy", consoleProgram);
+        Assert.Contains("IsSupportedAppCallerModelPolicy(currentModelPolicy)", consoleProgram);
+        Assert.Contains("路由策略保留或补齐为 {targetModelPolicy}", consoleProgram);
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
         Assert.Contains("m.AsNullableBool(\"Enabled\") ?? true", consoleProgram);
         Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
@@ -103,6 +120,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
+        Assert.Contains("activeAppCallerMapFallbackCutoverPrerequisitesReady", consoleProgram);
+        Assert.Contains("http-full 阶段会开启运行态 fail-closed 开关", consoleProgram);
+        Assert.Contains("currentCommitHttpTransportReady", consoleProgram);
+        Assert.Contains("pre-http shadow/seed 日志不阻断进入 http-full", consoleProgram);
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
@@ -765,7 +786,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
         Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
         Assert.Contains("allow_missing_map_logs_waiver_for_stage()", script);
-        Assert.Contains("canary-*)", script);
+        Assert.Contains("canary-*|http-full)", script);
         Assert.Contains("elif [ \"${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}\" = \"1\" ] && allow_missing_map_logs_waiver_for_stage; then", script);
         Assert.Contains("preflight_args=\"$preflight_args --allow-missing-map-logs\"", script);
         Assert.Contains("suffix=\"$suffix --allow-missing-map-logs\"", script);
@@ -1018,6 +1039,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allow_release_tree_mismatch", workflow);
         Assert.Contains("INPUT_ALLOW_RELEASE_TREE_MISMATCH", workflow);
         Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1", workflow);
+        Assert.Contains("allow_missing_map_logs", workflow);
+        Assert.Contains("INPUT_ALLOW_MISSING_MAP_LOGS", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1", workflow);
         Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", workflow);
         Assert.Contains("release_tree_mismatch_bypass", workflow);
         Assert.Contains("environment: production", workflow);
@@ -1035,7 +1059,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
-        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ \"$allow_missing_map_logs\" != \"true\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
         Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
         Assert.Contains("--stage \"$stage\"", workflow);
@@ -1714,7 +1738,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("stream[chat]", script);
         Assert.Contains("\"/client-stream\"", script);
         Assert.Contains("client-stream[chat]", script);
-        Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": \"ping, client stream reply OK\"}]", script);
+        Assert.Contains("GW_SMOKE_PROMPT", script);
+        Assert.Contains("GW_SMOKE_MAX_TOKENS", script);
+        Assert.Contains("GW_SMOKE_REQUEST_TIMEOUT_SECONDS", script);
+        Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": SMOKE_PROMPT}]", script);
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("\"verdict\": \"pass\" if passed == len(rows) else \"fail\"", script);

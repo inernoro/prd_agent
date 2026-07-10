@@ -975,7 +975,7 @@ PY
 
 allow_missing_map_logs_waiver_for_stage() {
   case "$stage" in
-    canary-*)
+    canary-*|http-full)
       return 0
       ;;
     *)
