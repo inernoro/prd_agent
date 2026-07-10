@@ -1,6 +1,7 @@
 // GW appCaller 注册表：展示 llmgw-serve 被动发现的调用方。
 // 这是目标架构里“appCaller 权威迁到 GW”的第一步，只读，不修改 MAP 旧配置。
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -48,7 +49,13 @@ function fmtTime(value?: string | null) {
   return d.toLocaleString();
 }
 
+function logsHref(key: 'requestId' | 'sessionId' | 'runId', value?: string | null) {
+  if (!value) return '';
+  return `/logs?${key}=${encodeURIComponent(value)}`;
+}
+
 export function AppCallersPage() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -65,13 +72,13 @@ export function AppCallersPage() {
     monthlyBudgetUsd: '',
     rateLimitPerMinute: '',
   });
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [sourceSystem, setSourceSystem] = useState('');
-  const [ingressProtocol, setIngressProtocol] = useState('');
-  const [requestType, setRequestType] = useState('');
-  const [drift, setDrift] = useState('');
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page') || '1') || 1));
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [status, setStatus] = useState(() => searchParams.get('status') || '');
+  const [sourceSystem, setSourceSystem] = useState(() => searchParams.get('sourceSystem') || '');
+  const [ingressProtocol, setIngressProtocol] = useState(() => searchParams.get('ingressProtocol') || '');
+  const [requestType, setRequestType] = useState(() => searchParams.get('requestType') || '');
+  const [drift, setDrift] = useState(() => searchParams.get('drift') || '');
 
   const loadCurrentPage = async () => {
     setError(null);
@@ -234,7 +241,7 @@ export function AppCallersPage() {
             setPage(1);
             setSearch(e.target.value);
           }}
-          placeholder="搜索 appCallerCode / title"
+          placeholder="搜索 appCallerCode / title / requestId"
           style={{ ...selectStyle, width: 260 }}
         />
         <FilterSelect label="全部状态" value={status} options={data.statuses} onChange={(v) => { setPage(1); setStatus(v); }} style={selectStyle} />
@@ -312,6 +319,7 @@ export function AppCallersPage() {
               <th style={th}>模型池</th>
               <th style={th}>策略</th>
               <th style={th}>治理</th>
+              <th style={th}>最近请求</th>
               <th style={th}>次数</th>
               <th style={th}>最近发现</th>
               <th style={th}>操作</th>
@@ -449,10 +457,47 @@ function AppCallerRow({
           />
         </div>
       </td>
+      <td style={td}>
+        <TraceLinks item={item} />
+      </td>
       <td style={td}>{item.totalSeen}</td>
       <td style={td}>{fmtTime(item.lastSeenAt)}</td>
       <td style={td}><Button size="sm" variant="ghost" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存'}</Button></td>
     </tr>
+  );
+}
+
+function TraceLinks({ item }: { item: GatewayAppCaller }) {
+  const links = [
+    { label: 'request', href: logsHref('requestId', item.lastObservedRequestId), value: item.lastObservedRequestId },
+    { label: 'session', href: logsHref('sessionId', item.lastObservedSessionId), value: item.lastObservedSessionId },
+    { label: 'run', href: logsHref('runId', item.lastObservedRunId), value: item.lastObservedRunId },
+  ].filter((x) => x.value && x.href);
+
+  if (links.length === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+      {links.map((link) => (
+        <a
+          key={link.label}
+          href={link.href}
+          style={{
+            color: 'var(--accent)',
+            fontSize: 11,
+            fontFamily: 'ui-monospace, monospace',
+            textDecoration: 'none',
+            maxWidth: 220,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={link.value ?? ''}
+        >
+          {link.label}: {link.value}
+        </a>
+      ))}
+    </div>
   );
 }
 

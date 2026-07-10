@@ -43,6 +43,8 @@ Required environment for deploy stages:
   LLMGW_GATE_SMOKE_ROUTE_POOL_ID and LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID/MODEL_ID
                               Required when LLMGW_GATE_SMOKE_ROUTE_MATRIX=1
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
+  LLMGW_STAGE_RUN_PROTOCOL_CANARY=0 disables default four-protocol runtime canary on canary/http-full stages
+  LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS caps protocol canary runtime requests, default 4
   LLMGW_STAGE_RUN_VIDEO_CANARY=1 enables /gw/v1/raw video exchange canary evidence
   LLMGW_CONSOLE_BASE and LLMGW_CONSOLE_TOKEN, or LLMGW_CONSOLE_USER/PASSWORD
                               Required for config-authority and http-full stages
@@ -329,6 +331,8 @@ serving_probe_md="${evidence_prefix}.serving-probe.md"
 smoke_json="${evidence_prefix}.gw-smoke.json"
 smoke_md="${evidence_prefix}.gw-smoke.md"
 prod_preflight_json="${evidence_prefix}.prod-preflight.json"
+prod_health_preflight_json="${evidence_prefix}.prod-health-preflight.json"
+prod_health_preflight_md="${evidence_prefix}.prod-health-preflight.md"
 shadow_seed_json="${evidence_prefix}.map-shadow-seed.json"
 upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
@@ -336,6 +340,8 @@ provider_audit_json="${evidence_prefix}.provider-audit.json"
 provider_audit_md="${evidence_prefix}.provider-audit.md"
 protocol_router_audit_json="${evidence_prefix}.protocol-router-audit.json"
 protocol_router_audit_md="${evidence_prefix}.protocol-router-audit.md"
+protocol_canary_json="${evidence_prefix}.protocol-canary.json"
+protocol_canary_md="${evidence_prefix}.protocol-canary.md"
 video_canary_json="${evidence_prefix}.video-canary.json"
 asr_http_canary_json="${evidence_prefix}.asr-http-canary.json"
 config_authority_backup_json="${evidence_prefix}.config-authority-backup.json"
@@ -384,6 +390,25 @@ case "$stage" in
     ;;
 esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
+case "$stage" in
+  canary-*|http-full)
+    protocol_canary_default=1
+    ;;
+  *)
+    protocol_canary_default=0
+    ;;
+esac
+run_protocol_canary="${LLMGW_STAGE_RUN_PROTOCOL_CANARY:-$protocol_canary_default}"
+protocol_canary_max_runtime_calls="${LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}"
+case "$stage" in
+  rollback-inproc|rollback-rehearsal|config-authority)
+    prod_health_preflight_default=0
+    ;;
+  *)
+    prod_health_preflight_default=1
+    ;;
+esac
+prod_health_preflight_required="${LLMGW_STAGE_RUN_PROD_HEALTH_PREFLIGHT:-$prod_health_preflight_default}"
 case "$stage" in
   http-full)
     disable_map_fallback_default=true
@@ -462,12 +487,17 @@ print_plan() {
     echo "  smokeRoutePinnedPlatformId: ${smoke_route_pinned_platform_id:-none}"
     echo "  smokeRoutePinnedModelId: ${smoke_route_pinned_model_id:-none}"
     echo "  prodPreflightJson: $prod_preflight_json"
+    echo "  prodHealthPreflightJson: $prod_health_preflight_json"
+    echo "  prodHealthPreflightRequired: $prod_health_preflight_required"
     echo "  shadowSeedJson: $shadow_seed_json"
     echo "  upstreamReadinessJson: $upstream_readiness_json"
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
     echo "  providerAuditJson: $provider_audit_json"
     echo "  providerAuditEnabled: $run_provider_audit"
     echo "  protocolRouterAuditJson: $protocol_router_audit_json"
+    echo "  protocolCanaryJson: $protocol_canary_json"
+    echo "  protocolCanaryRequired: $run_protocol_canary"
+    echo "  protocolCanaryMaxRuntimeCalls: $protocol_canary_max_runtime_calls"
     echo "  videoCanaryJson: $video_canary_json"
     echo "  videoCanaryEnabled: $run_video_canary"
     echo "  asrHttpCanaryJson: $asr_http_canary_json"
@@ -548,9 +578,11 @@ scripts/llmgw-prod-stage.sh
 scripts/llmgw-rollout-ledger.py
 scripts/llmgw-rollout-status.py
 scripts/llmgw-prod-preflight.py
+scripts/llmgw-prod-health-preflight.py
 scripts/llmgw-upstream-readiness.py
 scripts/llmgw-prod-provider-config-audit.py
 scripts/llmgw-protocol-router-audit.py
+scripts/llmgw-protocol-canary.py
 scripts/llmgw-map-shadow-seed.py
 scripts/llmgw-report-agent-shadow-seed.py
 scripts/llmgw-video-exchange-canary.py
@@ -648,12 +680,16 @@ append_ledger_entry() {
     --release-gate-json "$release_gate_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
+    --prod-health-preflight-json "$prod_health_preflight_json" \
+    --prod-health-preflight-required "$prod_health_preflight_required" \
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
     --protocol-router-audit-json "$protocol_router_audit_json" \
+    --protocol-canary-json "$protocol_canary_json" \
+    --protocol-canary-required "$run_protocol_canary" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
     --asr-http-canary-json "$asr_http_canary_json" \
@@ -696,6 +732,9 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_REUSE_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" \
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON="${prod_health_preflight_json:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_MD="${prod_health_preflight_md:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED="${prod_health_preflight_required:-0}" \
   LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON="${upstream_readiness_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
@@ -703,6 +742,10 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED="${run_provider_audit:-0}" \
   LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_JSON="${protocol_router_audit_json:-}" \
   LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_MD="${protocol_router_audit_md:-}" \
+  LLMGW_DRY_RUN_PROTOCOL_CANARY_JSON="${protocol_canary_json:-}" \
+  LLMGW_DRY_RUN_PROTOCOL_CANARY_MD="${protocol_canary_md:-}" \
+  LLMGW_DRY_RUN_PROTOCOL_CANARY_REQUIRED="${run_protocol_canary:-0}" \
+  LLMGW_DRY_RUN_PROTOCOL_CANARY_MAX_RUNTIME_CALLS="${protocol_canary_max_runtime_calls:-4}" \
   LLMGW_DRY_RUN_VIDEO_CANARY_JSON="${video_canary_json:-}" \
   LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED="${run_video_canary:-0}" \
   LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON="${asr_http_canary_json:-}" \
@@ -765,6 +808,16 @@ else:
     commands.append(
         preflight
     )
+    if os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED", "0") == "1":
+        commands.append(
+            "python3 scripts/llmgw-prod-health-preflight.py --base ${LLMGW_GATE_BASE} "
+            "--expect-commit "
+            + commit
+            + " --check-auth-boundary --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON", "")
+            + " --report-md "
+            + os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_MD", "")
+        )
     if os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1":
         commands.append(
             "GW_KEY=${LLMGW_GATE_KEY} "
@@ -791,6 +844,19 @@ else:
     if os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"):
         exec_dep = "PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 " + exec_dep
     commands.append(exec_dep)
+    if os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_REQUIRED", "0") == "1":
+        commands.append(
+            "exec_dep.sh post-deploy before runtime-gates: GW_KEY=${LLMGW_GATE_KEY} "
+            "python3 scripts/llmgw-protocol-canary.py --base ${LLMGW_GATE_BASE} "
+            "--expect-commit "
+            + commit
+            + " --execute --max-runtime-calls "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", "4")
+            + " --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_JSON", "")
+            + " --report-md "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MD", "")
+        )
     if os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1":
         commands.append(
             "PRD_AGENT_BASE=${PRD_AGENT_BASE:-${LLMGW_STAGE_MAP_BASE:-}} "
@@ -834,6 +900,8 @@ report = {
     "reuseExistingStaticDist": os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"),
     "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
+    "prodHealthPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON", ""),
+    "prodHealthPreflightRequired": os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED", "0") == "1",
     "shadowSeedJson": os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", ""),
     "shadowSeedEnabled": os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1",
     "upstreamReadinessJson": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", ""),
@@ -842,6 +910,10 @@ report = {
     "providerAuditRequired": os.environ.get("LLMGW_DRY_RUN_PROVIDER_AUDIT_ENABLED", "0") == "1",
     "protocolRouterAuditJson": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_JSON", ""),
     "protocolRouterAuditMd": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_ROUTER_AUDIT_MD", ""),
+    "protocolCanaryJson": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_JSON", ""),
+    "protocolCanaryMd": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MD", ""),
+    "protocolCanaryRequired": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_REQUIRED", "0") == "1",
+    "protocolCanaryMaxRuntimeCalls": os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", "4"),
     "videoCanaryJson": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_JSON", ""),
     "videoCanaryRequired": os.environ.get("LLMGW_DRY_RUN_VIDEO_CANARY_ENABLED", "0") == "1",
     "asrHttpCanaryJson": os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_JSON", ""),
@@ -887,6 +959,9 @@ with open(md_path, "w", encoding="utf-8") as fh:
         "configAuthorityBackupJson",
         "configAuthorityJson",
         "protocolRouterAuditJson",
+        "protocolCanaryRequired",
+        "protocolCanaryJson",
+        "protocolCanaryMaxRuntimeCalls",
         "releaseMainRef",
         "minStageObservationHours",
     ):
@@ -942,6 +1017,60 @@ run_prod_preflight() {
       suffix="$suffix --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
+  fi
+}
+
+run_prod_health_preflight() {
+  if [ "$prod_health_preflight_required" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway production health preflight skipped: LLMGW_STAGE_RUN_PROD_HEALTH_PREFLIGHT is not 1"
+    else
+      echo "LLM Gateway production health preflight dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-prod-health-preflight.py" ]; then
+    echo "ERROR: missing scripts/llmgw-prod-health-preflight.py; refusing staged rollout without deployed commit preflight." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    python3 scripts/llmgw-prod-health-preflight.py \
+      --base "$gate_base" \
+      --expect-commit "$commit" \
+      --check-auth-boundary \
+      --json-out "$prod_health_preflight_json" \
+      --report-md "$prod_health_preflight_md"
+  else
+    echo "+ python3 scripts/llmgw-prod-health-preflight.py --base \"$gate_base\" --expect-commit \"$commit\" --check-auth-boundary --json-out \"$prod_health_preflight_json\" --report-md \"$prod_health_preflight_md\""
+  fi
+}
+
+run_protocol_canary_evidence() {
+  if [ "$run_protocol_canary" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway protocol canary skipped: LLMGW_STAGE_RUN_PROTOCOL_CANARY is not 1"
+    else
+      echo "LLM Gateway protocol canary dry-run skipped by default; set LLMGW_STAGE_RUN_PROTOCOL_CANARY=1 to include four-protocol runtime evidence"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-protocol-canary.py" ]; then
+    echo "ERROR: missing scripts/llmgw-protocol-canary.py; cannot collect four-protocol runtime evidence." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    GW_KEY="$gate_key" \
+    python3 scripts/llmgw-protocol-canary.py \
+      --base "$gate_base" \
+      --expect-commit "$commit" \
+      --execute \
+      --max-runtime-calls "$protocol_canary_max_runtime_calls" \
+      --json-out "$protocol_canary_json" \
+      --report-md "$protocol_canary_md"
+  else
+    echo "+ GW_KEY=\"***\" python3 scripts/llmgw-protocol-canary.py --base \"$gate_base\" --expect-commit \"$commit\" --execute --max-runtime-calls \"$protocol_canary_max_runtime_calls\" --json-out \"$protocol_canary_json\" --report-md \"$protocol_canary_md\""
   fi
 }
 
@@ -1348,6 +1477,7 @@ export LLMGW_GATE_JSON_OUT="${LLMGW_GATE_JSON_OUT:-$release_gate_json}"
 export LLMGW_GATE_REPORT_MD="${LLMGW_GATE_REPORT_MD:-$release_gate_md}"
 export LLMGW_SERVING_PROBE_JSON_OUT="${LLMGW_SERVING_PROBE_JSON_OUT:-$serving_probe_json}"
 export LLMGW_SERVING_PROBE_REPORT_MD="${LLMGW_SERVING_PROBE_REPORT_MD:-$serving_probe_md}"
+export LLMGW_SERVING_PROBE_REQUIRE_ROUTE_SELF_TEST="${LLMGW_SERVING_PROBE_REQUIRE_ROUTE_SELF_TEST:-1}"
 export GW_SMOKE_JSON_OUT="${GW_SMOKE_JSON_OUT:-$smoke_json}"
 export GW_SMOKE_REPORT_MD="${GW_SMOKE_REPORT_MD:-$smoke_md}"
 export GW_SMOKE_ROUTE_MATRIX="${GW_SMOKE_ROUTE_MATRIX:-$smoke_route_matrix}"
@@ -1356,12 +1486,16 @@ export GW_SMOKE_ROUTE_MODEL_TYPE="${GW_SMOKE_ROUTE_MODEL_TYPE:-$smoke_route_mode
 export GW_SMOKE_ROUTE_POOL_ID="${GW_SMOKE_ROUTE_POOL_ID:-$smoke_route_pool_id}"
 export GW_SMOKE_ROUTE_PINNED_PLATFORM_ID="${GW_SMOKE_ROUTE_PINNED_PLATFORM_ID:-$smoke_route_pinned_platform_id}"
 export GW_SMOKE_ROUTE_PINNED_MODEL_ID="${GW_SMOKE_ROUTE_PINNED_MODEL_ID:-$smoke_route_pinned_model_id}"
+export LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY="${LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY:-$run_protocol_canary}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-$protocol_canary_json}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-$protocol_canary_md}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-$protocol_canary_max_runtime_calls}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
 case "$stage" in
   canary-intent-text|canary-chat|canary-streaming)
-    export GW_SMOKE_MODEL_TYPES="${GW_SMOKE_MODEL_TYPES:-chat,intent}"
+    export GW_SMOKE_MODEL_TYPES="${GW_SMOKE_MODEL_TYPES:-chat}"
     ;;
 esac
 if [ "$stage" = "shadow-start" ]; then
@@ -1395,6 +1529,10 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
+run_prod_health_preflight
+
+run_protocol_canary_evidence
+
 run_video_canary_evidence
 
 run_asr_http_canary_evidence
@@ -1417,12 +1555,16 @@ if [ "$execute" = "1" ]; then
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
+    --prod-health-preflight-json "$prod_health_preflight_json" \
+    --prod-health-preflight-required "$prod_health_preflight_required" \
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
     --provider-audit-json "$provider_audit_json" \
     --provider-audit-required "$run_provider_audit" \
     --protocol-router-audit-json "$protocol_router_audit_json" \
+    --protocol-canary-json "$protocol_canary_json" \
+    --protocol-canary-required "$run_protocol_canary" \
     --video-canary-json "$video_canary_json" \
     --video-canary-required "$run_video_canary" \
     --asr-http-canary-json "$asr_http_canary_json" \

@@ -384,8 +384,16 @@ public class ModelResolver : IModelResolver
                     expectedModel ?? "(无)", selectedModel.ModelId,
                     platform.Name, selectedModel.HealthStatus);
 
+                var modelConfig = NeedsModelConfigFallback(selectedModel)
+                    ? await FindGatewayOwnedOrMapModelAsync(
+                        selectedModel.PlatformId,
+                        selectedModel.ModelId,
+                        ct,
+                        allowMapFallback: !activeGatewayAppCallerRequiresGwConfig)
+                    : null;
+
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
-                    resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+                    resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
                     return resolvedPoolCandidates[0];
             }
@@ -1178,6 +1186,11 @@ public class ModelResolver : IModelResolver
         };
     }
 
+    internal static bool NeedsModelConfigFallback(ModelGroupItem model)
+        => string.IsNullOrWhiteSpace(model.Protocol)
+           || model.Capabilities is null
+           || model.Capabilities.Count == 0;
+
     #endregion
 }
 
@@ -1362,8 +1375,11 @@ public class InMemoryModelResolver : IModelResolver
                     continue;
 
                 _apiKeys.TryGetValue(platform.Id, out var apiKey);
+                var modelConfig = ModelResolver.NeedsModelConfigFallback(selectedModel)
+                    ? FindModelConfigForInMemory(selectedModel)
+                    : null;
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
-                    resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+                    resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
                     return Task.FromResult(resolvedPoolCandidates[0]);
             }
@@ -1463,6 +1479,12 @@ public class InMemoryModelResolver : IModelResolver
 
         return (null, null);
     }
+
+    private LLMModel? FindModelConfigForInMemory(ModelGroupItem model)
+        => _legacyModels.FirstOrDefault(m => m.Enabled
+            && string.Equals(m.PlatformId, model.PlatformId, StringComparison.Ordinal)
+            && (string.Equals(m.ModelName, model.ModelId, StringComparison.Ordinal)
+                || string.Equals(m.Id, model.ModelId, StringComparison.Ordinal)));
 
     public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,

@@ -355,6 +355,38 @@ public class ModelResolverTests
     }
 
     [Fact]
+    public async Task PoolModelCapability_WhenPoolSnapshotMissing_ShouldFallbackToModelConfig()
+    {
+        var platform = CreatePlatform("plat-1", "Claude", "anthropic");
+        var pool = CreateModelGroup(
+            "pool-tools", "Tool Gate Pool", "chat",
+            isDefault: true, priority: 0,
+            ("plat-1", "claude-no-tools", ModelHealthStatus.Healthy));
+        var modelConfig = CreateLegacyModel("claude-no-tools", "plat-1", "chat");
+        modelConfig.Protocol = "anthropic";
+        modelConfig.Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "function_calling", Source = "user", Value = false },
+            new() { Type = "parameter:seed", Source = "user", Value = false }
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("any::chat", "chat");
+
+        Assert.True(result.Success);
+        Assert.Equal("claude-no-tools", result.ActualModel);
+        Assert.Equal("anthropic", result.Protocol);
+        Assert.Equal("protocol-from-model", result.ResolutionReason);
+        Assert.False(result.SupportsFunctionCalling);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.False(result.ParameterCapabilities!["seed"]);
+    }
+
+    [Fact]
     public async Task PoolModelCapability_WhenVisionImageThinkingFalse_ShouldFlowToResolution()
     {
         var platform = CreatePlatform("plat-1", "OpenAI");

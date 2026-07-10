@@ -60,12 +60,14 @@ public class GatewayKeyGateContractTests
     // /gw/v1/* 的写端点（send/resolve/raw）与读端点（pools）都覆盖，证明密钥门是全 /gw/v1 前缀级。
     public static IEnumerable<object[]> ProtectedRequests() => new[]
     {
+        new object[] { HttpMethod.Post, "/gw/v1/invoke" },
         new object[] { HttpMethod.Post, "/gw/v1/send" },
         new object[] { HttpMethod.Post, "/gw/v1/resolve" },
         new object[] { HttpMethod.Post, "/gw/v1/raw" },
         new object[] { HttpMethod.Post, "/gw/v1/profile-test" },
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
+        new object[] { HttpMethod.Get, "/gw/v1/route-self-test" },
         new object[] { HttpMethod.Post, "/v1/chat/completions" },
         new object[] { HttpMethod.Post, "/v1/responses" },
         new object[] { HttpMethod.Post, "/v1/images/generations" },
@@ -159,6 +161,43 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "sidecar-picked",
+                    messages = new[] { new { role = "user", content = "hi" } },
+                    logprobs = true,
+                    top_logprobs = 1,
+                    stream = false,
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var doc = JsonDocument.Parse(body);
+            var logprobs = doc.RootElement
+                .GetProperty("choices")[0]
+                .GetProperty("logprobs");
+            logprobs.GetProperty("content")[0].GetProperty("token").GetString().ShouldBe("sent");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesPoolModelPolicy()
     {
         var gateway = new EchoingGateway();
@@ -187,6 +226,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-chat-premium");
+            AssertRoutingContext(gateway.LastRequest.Context, "openai-compatible", "pool", "pool-chat-premium");
             var upstreamBody = gateway.LastRequest.RequestBody!.ToJsonString();
             upstreamBody.ShouldNotContain("model_policy");
             upstreamBody.ShouldNotContain("model_pool_id");
@@ -228,6 +268,46 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("anthropic/claude-sonnet-4");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "openai-compatible", "pinned");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GwNativeInvoke_PreservesExplicitPoolModelPolicy()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/invoke")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "demo.app::chat",
+                    ModelType = "chat",
+                    ExpectedModel = "native-chat-pool",
+                    RequestBody = new { messages = new[] { new { role = "user", content = "hi" } } },
+                    Context = new { ModelPolicy = "pool", ModelPoolId = "pool-native-chat", RequestId = "native-invoke-pool-test" },
+                }),
+            };
+            req.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBe("pool-native-chat");
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.IngressProtocol.ShouldBe("gw-native");
+            gateway.LastRequest.Context.ModelPolicy.ShouldBe("pool");
+            gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-native-chat");
+            AssertRoutingContext(gateway.LastRequest.Context, "gw-native", "pool", "pool-native-chat", sourceSystem: "map");
         }
         finally
         {
@@ -383,6 +463,7 @@ public class GatewayKeyGateContractTests
             var droppedParameters = gateway.LastRequest.Context!.DroppedParameters;
             droppedParameters.ShouldNotBeNull();
             droppedParameters.ShouldNotContain("parallel_tool_calls");
+            gateway.LastRequest.Context.ParameterPolicy.ShouldBe("strict-require");
             gateway.LastRequest.RequestBody!.ContainsKey("parallel_tool_calls").ShouldBeTrue();
         }
         finally
@@ -877,6 +958,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("claude-3-7-sonnet-latest");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "claude-compatible", "pinned");
         }
         finally
         {
@@ -915,6 +997,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-claude-quality");
+            AssertRoutingContext(gateway.LastRequest.Context, "claude-compatible", "pool", "pool-claude-quality");
         }
         finally
         {
@@ -1325,6 +1408,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pool");
             gateway.LastRequest.Context.ModelPoolId.ShouldBe("pool-gemini-quality");
+            AssertRoutingContext(gateway.LastRequest.Context, "gemini-compatible", "pool", "pool-gemini-quality");
         }
         finally
         {
@@ -1365,6 +1449,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.PinnedModelId.ShouldBe("gemini-2.5-pro");
             gateway.LastRequest.Context.ShouldNotBeNull();
             gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+            AssertRoutingContext(gateway.LastRequest.Context, "gemini-compatible", "pinned");
         }
         finally
         {
@@ -1570,6 +1655,52 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Fact]
+    public async Task RouteSelfTest_IsProtectedDryRunAndCoversProtocolIngresses()
+    {
+        await using var app = BuildHost();
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/route-self-test");
+            req.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            root.GetProperty("Status").GetString().ShouldBe("ok");
+            root.GetProperty("Mode").GetString().ShouldBe("dry-run");
+            root.GetProperty("UpstreamCalled").GetBoolean().ShouldBeFalse();
+            root.GetProperty("Total").GetInt32().ShouldBe(4);
+            root.GetProperty("Passed").GetInt32().ShouldBe(4);
+
+            var protocols = root.GetProperty("Cases").EnumerateArray()
+                .Select(x => x.GetProperty("IngressProtocol").GetString())
+                .ToHashSet();
+            protocols.ShouldContain("gw-native");
+            protocols.ShouldContain("openai-compatible");
+            protocols.ShouldContain("claude-compatible");
+            protocols.ShouldContain("gemini-compatible");
+
+            var poolCases = root.GetProperty("Cases").EnumerateArray()
+                .Where(x => x.GetProperty("ModelPolicy").GetString() == "pool")
+                .ToList();
+            poolCases.Count.ShouldBe(2);
+            poolCases.All(x => string.Equals(
+                x.GetProperty("ExpectedModel").GetString(),
+                x.GetProperty("ModelPoolId").GetString(),
+                StringComparison.Ordinal)).ShouldBeTrue();
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     /// <summary>
     /// 上游 stub：任何方法被调用即抛。401 应在中间件层短路，永远到不了这里；
     /// 若哪个受保护端点在无 key 时仍触达 gateway，会抛出而不是静默 200，暴露密钥门漏洞。
@@ -1611,6 +1742,22 @@ public class GatewayKeyGateContractTests
         return app;
     }
 
+    private static void AssertRoutingContext(
+        GatewayRequestContext? context,
+        string ingressProtocol,
+        string modelPolicy,
+        string? modelPoolId = null,
+        string parameterPolicy = "default-drop",
+        string sourceSystem = "external")
+    {
+        context.ShouldNotBeNull();
+        context!.SourceSystem.ShouldBe(sourceSystem);
+        context.IngressProtocol.ShouldBe(ingressProtocol);
+        context.ModelPolicy.ShouldBe(modelPolicy);
+        context.ModelPoolId.ShouldBe(modelPoolId);
+        context.ParameterPolicy.ShouldBe(parameterPolicy);
+    }
+
     private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
     {
         public GatewayRequest? LastRequest { get; private set; }
@@ -1650,6 +1797,30 @@ public class GatewayKeyGateContractTests
                             {
                                 ["name"] = "get_weather",
                                 ["arguments"] = "{\"city\":\"Shanghai\"}",
+                            },
+                        },
+                    },
+                });
+            }
+            if (request.RequestBody?["logprobs"]?.GetValue<bool>() == true)
+            {
+                return Task.FromResult(new GatewayResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = $"sent:{request.ExpectedModel}",
+                    Resolution = Resolve(request.ExpectedModel),
+                    Extensions = new Dictionary<string, JsonNode?>
+                    {
+                        ["logprobs"] = new JsonObject
+                        {
+                            ["content"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["token"] = "sent",
+                                    ["logprob"] = -0.01,
+                                },
                             },
                         },
                     },

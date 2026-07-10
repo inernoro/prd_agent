@@ -21,6 +21,7 @@ public class LlmRequestLogDoc
     public string RequestId { get; set; } = string.Empty;
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
 
     public string? RequestType { get; set; }

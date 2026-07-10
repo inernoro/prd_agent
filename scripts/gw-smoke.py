@@ -33,11 +33,13 @@ ROUTE_PINNED_MODEL_ID = os.environ.get("GW_SMOKE_ROUTE_PINNED_MODEL_ID", "").str
 SELF_TEST = os.environ.get("GW_SMOKE_SELF_TEST", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
+# 默认只跑低成本 chat provider canary；intent/vision 需要通过 GW_SMOKE_MODEL_TYPES 显式打开。
 DEFAULT_SAMPLE_CODES = [
     ("report-agent.generate::chat", "chat"),
     ("prd-agent-desktop.chat.suggested-questions::intent", "intent"),
     ("visual-agent.image::vision", "vision"),
 ]
+DEFAULT_LOW_COST_MODEL_TYPES = {"chat"}
 
 
 def _parse_csv_env(name):
@@ -48,6 +50,14 @@ def _parse_csv_env(name):
 def _selected_sample_codes():
     model_types = _parse_csv_env("GW_SMOKE_MODEL_TYPES")
     app_callers = _parse_csv_env("GW_SMOKE_APP_CALLERS")
+    include_default_non_chat = os.environ.get("GW_SMOKE_INCLUDE_DEFAULT_NON_CHAT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not model_types and not app_callers and not include_default_non_chat:
+        model_types = DEFAULT_LOW_COST_MODEL_TYPES
     selected = []
     for app_caller, model_type in DEFAULT_SAMPLE_CODES:
         if model_types and model_type.lower() not in model_types:
@@ -313,23 +323,40 @@ def main():
         ok = code == 200
         rows.append((f"pools[{mtype}]", ok, f"{code} {raw[:120]}"))
 
-    # 3) send 非流式（chat 代表）
+    # 3) invoke 非流式（GW Native 目标入口，按抽样 ModelType 覆盖）。
     for accode, mtype in sample_codes:
         body = {
             "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
             "RequestBody": {"messages": [{"role": "user", "content": "ping, reply OK"}], "max_tokens": 16},
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
-        code, raw = _req("POST", "/send", body)
+        code, raw = _req("POST", "/invoke", body)
         d = _envelope_data(raw) or {}
         res = d.get("Resolution") or {}
         ok = (code == 200 and d.get("Success") is True
               and bool(d.get("Content")) and bool(res.get("ActualModel")))
         # 无"选 A 给 B"：若请求指定了 expectedModel，actualModel 应一致（此处未指定，仅记录）。
         detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
-        rows.append((f"send[{mtype}]", ok, detail))
+        rows.append((f"invoke[{mtype}]", ok, detail))
 
-    # 4) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
+    # 4) send 兼容入口：MAP 旧客户端仍用 /send，只抽 chat 一类避免 D 层冒烟成本膨胀。
+    if has_chat:
+        send_body = {
+            "AppCallerCode": "report-agent.generate::chat",
+            "ModelType": "chat",
+            "Stream": False,
+            "RequestBody": {"messages": [{"role": "user", "content": "ping, send compat reply OK"}], "max_tokens": 16},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
+        }
+        code, raw = _req("POST", "/send", send_body)
+        d = _envelope_data(raw) or {}
+        res = d.get("Resolution") or {}
+        ok = (code == 200 and d.get("Success") is True
+              and bool(d.get("Content")) and bool(res.get("ActualModel")))
+        detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
+        rows.append(("send-compat[chat]", ok, detail))
+
+    # 5) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
     if has_chat:
         stream_body = {
             "AppCallerCode": "report-agent.generate::chat",
@@ -360,7 +387,7 @@ def main():
         ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
         rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
 
-    # 5) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
+    # 6) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
     if has_chat:
         client_stream_body = {
             "AppCallerCode": "report-agent.generate::chat",
@@ -382,7 +409,7 @@ def main():
         ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
         rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
 
-    # 6) route matrix：只打 /resolve，不消耗上游模型 token。用于证明 auto/pool/pinned 路由策略进入 GW router。
+    # 7) route matrix：只打 /resolve，不消耗上游模型 token。用于证明 auto/pool/pinned 路由策略进入 GW router。
     if ROUTE_MATRIX_ENABLED:
         auto_body = {
             "AppCallerCode": ROUTE_APP_CALLER,
@@ -431,10 +458,10 @@ def main():
         else:
             rows.append((f"route-pinned[{ROUTE_MODEL_TYPE}]", True, "skipped: pinned platform/model env not set"))
 
-    # 7) canary：指向不存在的入口，必须失败（证明探测有效）
+    # 8) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
             "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test", "IsHealthProbe": True}}
-    code, raw = _req("POST", "/send", body)
+    code, raw = _req("POST", "/invoke", body)
     d = _envelope_data(raw) or {}
     canary_caught = not (code == 200 and d.get("Success") is True)
     rows.append(("canary(必败入口)", canary_caught, f"{code} success={d.get('Success')} (期望失败)"))

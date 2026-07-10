@@ -254,6 +254,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             IGatewayAdapter? activeAdapter = adapter;
             GatewayTokenUsage? tokenUsage = null;
             System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            Dictionary<string, System.Text.Json.Nodes.JsonNode?>? extensions = null;
             string? finishReason = null;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
@@ -354,6 +355,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     tokenUsage = activeAdapter.ParseTokenUsage(responseBody);
                     // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
                     toolCalls = activeAdapter.ParseToolCalls(responseBody);
+                    extensions = activeAdapter.ParseExtensions(responseBody);
                     finishReason = ExtractFinishReason(responseBody);
                 }
 
@@ -423,6 +425,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
+                Extensions = extensions,
                 Resolution = activeResolution.ToGatewayResolution(),
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
@@ -962,6 +965,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var profileName = string.IsNullOrWhiteSpace(request.ProfileName)
             ? "Runtime profile test"
             : request.ProfileName.Trim();
+        var sourceContext = request.Context;
 
         var resolution = new GatewayModelResolution
         {
@@ -1007,8 +1011,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
-                UserId = request.UserId,
-                QuestionText = "[Runtime Profile Test] Reply with ok."
+                SessionId = sourceContext?.SessionId,
+                RunId = sourceContext?.RunId,
+                GroupId = sourceContext?.GroupId,
+                UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
+                ViewRole = sourceContext?.ViewRole,
+                DocumentChars = sourceContext?.DocumentChars,
+                DocumentHash = sourceContext?.DocumentHash,
+                QuestionText = "[Runtime Profile Test] Reply with ok.",
+                SystemPromptChars = sourceContext?.SystemPromptChars,
+                SystemPromptText = sourceContext?.SystemPromptText,
+                ImageReferences = sourceContext?.ImageReferences,
+                GatewayTransport = sourceContext?.GatewayTransport,
+                SourceSystem = sourceContext?.SourceSystem,
+                IngressProtocol = sourceContext?.IngressProtocol,
+                AppCallerTitle = sourceContext?.AppCallerTitle,
+                ModelPolicy = sourceContext?.ModelPolicy,
+                ModelPoolId = sourceContext?.ModelPoolId,
+                ParameterPolicy = sourceContext?.ParameterPolicy,
+                DroppedParameters = sourceContext?.DroppedParameters,
+                IsHealthProbe = sourceContext?.IsHealthProbe,
             }
         };
 
@@ -2977,6 +2999,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerTitle: request.Context?.AppCallerTitle,
                     ModelPolicy: request.Context?.ModelPolicy,
                     ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,
@@ -3344,6 +3367,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerTitle: request.Context?.AppCallerTitle,
                     ModelPolicy: request.Context?.ModelPolicy,
                     ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,

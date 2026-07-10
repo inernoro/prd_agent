@@ -285,7 +285,8 @@ public class ChatService : IChatService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            AppCallerCode: AppCallerCode));
+            AppCallerCode: AppCallerCode,
+            RunId: effectiveRunId));
 
         // 检查用户消息是否已存在（CreateRun 可能已创建）
         Message userMessage;

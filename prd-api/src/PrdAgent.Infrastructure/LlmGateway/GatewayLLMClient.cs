@@ -115,6 +115,7 @@ public class GatewayLLMClient : ILLMClient
                 RequestId = scopeCtx?.RequestId,
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,
+                RunId = scopeCtx?.RunId,
                 UserId = scopeCtx?.UserId,
                 ViewRole = scopeCtx?.ViewRole,
                 DocumentChars = scopeCtx?.DocumentChars,
@@ -125,6 +126,7 @@ public class GatewayLLMClient : ILLMClient
                 // S2 观测标记：透传当前作用域的传输标记。MAP inproc 模式下为 null（LlmGateway 兜底 inproc）；
                 // serving 端 client-stream 场景下作用域已由 OpenContextScope 注入 "http"，据此如实标注。
                 GatewayTransport = scopeCtx?.GatewayTransport,
+                IsHealthProbe = scopeCtx?.IsHealthProbe,
             }
         };
 

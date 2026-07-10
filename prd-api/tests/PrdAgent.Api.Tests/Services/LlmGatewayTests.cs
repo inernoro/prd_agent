@@ -727,6 +727,36 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public void OpenAIAdapter_ParseExtensions_PreservesChoiceLogprobs()
+    {
+        var adapter = new OpenAIGatewayAdapter();
+        var responseBody = """
+        {
+          "choices": [
+            {
+              "message": { "role": "assistant", "content": "hi" },
+              "logprobs": {
+                "content": [
+                  { "token": "hi", "logprob": -0.1, "top_logprobs": [ { "token": "hi", "logprob": -0.1 } ] }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+        var extensions = adapter.ParseExtensions(responseBody);
+
+        Assert.NotNull(extensions);
+        Assert.True(extensions!.ContainsKey("logprobs"));
+        var logprobs = Assert.IsType<JsonObject>(extensions["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("hi", (string?)first["token"]);
+        Assert.Equal(-0.1, (double?)first["logprob"]);
+    }
+
+    [Fact]
     public async Task SendAsync_WhenVisionModelExplicitlyUnsupported_ShouldFailBeforeHttp()
     {
         var gateway = CreateCapabilityGateGateway(
@@ -1214,6 +1244,79 @@ public class LlmGatewayTests
         Assert.Equal("default-drop", logWriter.Start.ParameterPolicy);
         Assert.NotNull(logWriter.Start.DroppedParameters);
         Assert.Single(logWriter.Start.DroppedParameters!, "store");
+    }
+
+    [Fact]
+    public async Task SendAsync_PreservesOpenAiLogprobsInExtensions()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a",
+                Name = "Pool A",
+                Code = "pool-a",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var http = new SequenceHttpClientFactory((200, """
+        {
+          "choices": [
+            {
+              "message": { "content": "ok" },
+              "finish_reason": "stop",
+              "logprobs": {
+                "content": [
+                  { "token": "ok", "logprob": -0.2 }
+                ]
+              }
+            }
+          ],
+          "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        }
+        """));
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["logprobs"] = true,
+                ["top_logprobs"] = 1
+            }
+        });
+
+        Assert.True(response.Success);
+        Assert.NotNull(response.Extensions);
+        var logprobs = Assert.IsType<JsonObject>(response.Extensions!["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("ok", (string?)first["token"]);
     }
 
     [Fact]
