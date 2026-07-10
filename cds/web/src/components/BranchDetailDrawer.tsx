@@ -79,6 +79,7 @@ interface BranchDetailData {
   stopCount?: number;
   errorMessage?: string;
   lastDeploymentRunId?: string;
+  currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -188,6 +189,23 @@ interface DeploymentRunSummary {
     summary: string;
     suggestedAction?: string;
   };
+}
+
+interface DeploymentVersionSummary {
+  id: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  configHash: string;
+  profiles: Array<{
+    profileId: string;
+    name: string;
+    artifactImage: string;
+    reusable: boolean;
+    reuseBlockedReason?: string;
+  }>;
+  createdByRunId: string;
+  createdAt: string;
 }
 
 export interface DeploymentContainerLogSnapshot {
@@ -836,6 +854,7 @@ export function BranchDetailDrawer({
   const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
+  const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -885,6 +904,7 @@ export function BranchDetailDrawer({
   useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
   const [actionBusy, setActionBusy] = useState<{ branchId: string; action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' } | null>(null);
+  const [versionBusyId, setVersionBusyId] = useState<string | null>(null);
   const currentActionBusy = actionBusy?.branchId === branchId ? actionBusy.action : null;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [logsMode, setLogsMode] = useState<LogsMode>('system');
@@ -916,11 +936,13 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, runsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
+      const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
           .catch(() => ({ runs: [] })),
+        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
+          .catch(() => ({ versions: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {
             setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
@@ -942,6 +964,7 @@ export function BranchDetailDrawer({
       }
       setLogs(logsRes.logs || []);
       setDeploymentRuns(runsRes.runs || []);
+      setDeploymentVersions(versionsRes.versions || []);
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
@@ -1105,6 +1128,8 @@ export function BranchDetailDrawer({
     setLogQuery('');
     setShowAllHistory(false);
     setDeploymentRuns([]);
+    setDeploymentVersions([]);
+    setVersionBusyId(null);
     setEnvState({ status: 'idle' });
     setProfileState({ status: 'loading' });
     setInfraServices([]);
@@ -1356,6 +1381,30 @@ export function BranchDetailDrawer({
       ));
     }
   }, [branchId, onToast, onActionComplete, onClose, load]);
+
+  const deployVersion = useCallback(async (version: DeploymentVersionSummary, rollback: boolean): Promise<void> => {
+    if (!branchId) return;
+    setVersionBusyId(version.id);
+    try {
+      const response = await apiRequest<{ runId?: string }>(
+        rollback
+          ? `/api/branches/${encodeURIComponent(branchId)}/rollback`
+          : `/api/deployment-versions/${encodeURIComponent(version.id)}/deploy`,
+        {
+          method: 'POST',
+          body: rollback ? { versionId: version.id } : { branchId },
+        },
+      );
+      onToast?.(`${rollback ? '版本回滚' : '版本重新部署'}已提交${response.runId ? `，runId: ${response.runId}` : ''}`);
+      await load();
+      onActionComplete?.('deploy');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`${rollback ? '版本回滚' : '版本重新部署'}失败:${message}`);
+    } finally {
+      setVersionBusyId(null);
+    }
+  }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
     if (!branchId) return;
@@ -2120,6 +2169,12 @@ export function BranchDetailDrawer({
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
+                    <DeploymentVersionLedger
+                      versions={deploymentVersions}
+                      currentVersionId={branch.currentVersionId}
+                      busyVersionId={versionBusyId}
+                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
+                    />
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                         还没有构建记录。点击部署后，构建计划和日志会出现在这里。
@@ -2519,6 +2574,73 @@ export function BranchDetailDrawer({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function DeploymentVersionLedger({
+  versions,
+  currentVersionId,
+  busyVersionId,
+  onDeploy,
+}: {
+  versions: DeploymentVersionSummary[];
+  currentVersionId?: string;
+  busyVersionId: string | null;
+  onDeploy: (version: DeploymentVersionSummary, rollback: boolean) => void;
+}): JSX.Element | null {
+  if (versions.length === 0) return null;
+  const visible = versions.slice(0, 5);
+
+  return (
+    <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+      <header className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <div>
+          <h4 className="text-sm font-semibold">不可变部署版本</h4>
+          <p className="mt-0.5 text-xs text-muted-foreground">可复用版本直接启动既有产物，不再重新拉取和编译源码。</p>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">最近 {visible.length} 个</span>
+      </header>
+      <div className="divide-y divide-[hsl(var(--hairline))]">
+        {visible.map((version) => {
+          const reusable = version.profiles.length > 0 && version.profiles.every((profile) => profile.reusable);
+          const isCurrent = version.id === currentVersionId;
+          const blockedReason = version.profiles.find((profile) => !profile.reusable)?.reuseBlockedReason;
+          const busy = busyVersionId === version.id;
+          return (
+            <div key={version.id} className="px-4 py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="font-mono text-xs text-foreground" title={version.id}>{version.id.slice(0, 15)}</span>
+                <span className="font-mono text-xs text-muted-foreground">{version.commitSha.slice(0, 7)}</span>
+                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">当前版本</span> : null}
+                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                  {reusable ? '产物可复用' : '仅记录'}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>{version.profiles.length} 个服务</span>
+                <span>{new Date(version.createdAt).toLocaleString()}</span>
+              </div>
+              {!reusable && blockedReason ? (
+                <p className="mt-2 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">{blockedReason}</p>
+              ) : null}
+              {reusable ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={busyVersionId !== null}
+                  onClick={() => onDeploy(version, !isCurrent)}
+                >
+                  {busy ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                  {isCurrent ? '重新部署此版本' : '回滚到此版本'}
+                </Button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

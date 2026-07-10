@@ -1017,6 +1017,62 @@ def cmd_deployment_run_wait(args: argparse.Namespace) -> None:
         extra={"data": {"run": last_run}})
 
 
+def cmd_deployment_version_list(args: argparse.Namespace) -> None:
+    query: dict[str, str] = {}
+    project = args.project or os.environ.get("CDS_PROJECT_ID", "")
+    if project:
+        query["project"] = project
+    if args.branch:
+        query["branch"] = args.branch
+    if args.commit:
+        query["commit"] = args.commit
+    path = "/api/deployment-versions"
+    if query:
+        path += "?" + urllib.parse.urlencode(query)
+    body = _call("GET", path, timeout=30)
+    versions = body.get("versions", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        for version in versions:
+            profiles = version.get("profiles") or []
+            reusable = bool(profiles) and all(profile.get("reusable") for profile in profiles)
+            print(f"{version.get('id', '?'):28s} {version.get('commitSha', '?')[:10]:10s} "
+                  f"{('reusable' if reusable else 'record-only'):11s} {version.get('branchId', '?')}")
+        return
+    ok({"versions": versions, "total": body.get("total", len(versions)) if isinstance(body, dict) else len(versions)})
+
+
+def cmd_deployment_version_show(args: argparse.Namespace) -> None:
+    body = _call("GET", f"/api/deployment-versions/{urllib.parse.quote(args.id)}", timeout=30)
+    ok(body)
+
+
+def cmd_deployment_version_deploy(args: argparse.Namespace) -> None:
+    body = _call(
+        "POST",
+        f"/api/deployment-versions/{urllib.parse.quote(args.id)}/deploy",
+        body={"branchId": args.branch} if args.branch else {},
+        timeout=30,
+    )
+    run_id = body.get("runId") if isinstance(body, dict) else None
+    if args.wait and run_id:
+        cmd_deployment_run_wait(argparse.Namespace(id=run_id, timeout=args.timeout))
+    ok(body, note=f"版本部署已受理{f' (runId={run_id})' if run_id else ''}")
+
+
+def cmd_branch_rollback(args: argparse.Namespace) -> None:
+    payload = {"versionId": args.version} if args.version else {}
+    body = _call(
+        "POST",
+        f"/api/branches/{urllib.parse.quote(args.id)}/rollback",
+        body=payload,
+        timeout=30,
+    )
+    run_id = body.get("runId") if isinstance(body, dict) else None
+    if args.wait and run_id:
+        cmd_deployment_run_wait(argparse.Namespace(id=run_id, timeout=args.timeout))
+    ok(body, note=f"版本回滚已受理{f' (runId={run_id})' if run_id else ''}")
+
+
 def cmd_branch_preview_url(args: argparse.Namespace) -> None:
     """打印分支的 v3 预览域名（来自 `/api/branches` 的 previewSlug 字段，
     后端唯一来源 `cds/src/services/preview-slug.ts:computePreviewSlug`）。
@@ -7370,6 +7426,12 @@ def _build_parser() -> argparse.ArgumentParser:
     bd = br.add_parser("deploy"); bd.add_argument("id"); bd.add_argument("--timeout", type=int, default=300)
     bd.add_argument("--commit", help="显式按指定 commit 触发部署(40 位 SHA)")
     bd.set_defaults(func=cmd_branch_deploy)
+    brb = br.add_parser("rollback", help="回滚到指定版本，未指定时选择最近一个可复用历史版本")
+    brb.add_argument("id", help="CDS canonical branch id")
+    brb.add_argument("--version", help="目标 DeploymentVersion id")
+    brb.add_argument("--wait", action="store_true", help="等待回滚 DeploymentRun 进入终态")
+    brb.add_argument("--timeout", type=int, default=300)
+    brb.set_defaults(func=cmd_branch_rollback)
     bcp = br.add_parser(
         "claim-prebuilt",
         help="手动认领已成功的 CI 预构建镜像,修复 webhook 漏投导致的 ciTargetSha 落后",
@@ -7464,6 +7526,25 @@ def _build_parser() -> argparse.ArgumentParser:
     drw.add_argument("id", help="runId")
     drw.add_argument("--timeout", type=int, default=300)
     drw.set_defaults(func=cmd_deployment_run_wait)
+
+    dv = sub.add_parser(
+        "deployment-version",
+        help="不可变部署版本:列出、查看、重新部署",
+    ).add_subparsers(dest="sub", required=True)
+    dvl = dv.add_parser("list", help="列出 DeploymentVersion")
+    dvl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    dvl.add_argument("--branch", help="CDS canonical branch id")
+    dvl.add_argument("--commit", help="commit SHA")
+    dvl.set_defaults(func=cmd_deployment_version_list)
+    dvs = dv.add_parser("show", help="查看完整 DeploymentVersion")
+    dvs.add_argument("id", help="versionId")
+    dvs.set_defaults(func=cmd_deployment_version_show)
+    dvd = dv.add_parser("deploy", help="重新部署一个可复用 DeploymentVersion")
+    dvd.add_argument("id", help="versionId")
+    dvd.add_argument("--branch", help="兼容参数；版本已绑定原分支")
+    dvd.add_argument("--wait", action="store_true", help="等待 DeploymentRun 进入终态")
+    dvd.add_argument("--timeout", type=int, default=300)
+    dvd.set_defaults(func=cmd_deployment_version_deploy)
 
     sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
     sp = sch.add_parser("parse", help="解析口令,不请求 CDS")
