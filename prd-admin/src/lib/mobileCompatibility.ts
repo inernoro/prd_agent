@@ -30,6 +30,9 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   // 注：/prd-agent Web 端已下线，不参与移动兼容性矩阵
   '/defect-agent':            { level: 'full' },
   '/report-agent':            { level: 'full' },
+  // 视觉创作：列表页响应式；编辑器（/visual-agent/:id）手机端默认进入移动专属线性生成流
+  // （MobileVisualAgentEditor，生成/查看/以图改图全可用），完整画布为可选浏览模式（已支持
+  // 双指捏合缩放 + 单指平移），精细排版仍建议 PC。
   '/visual-agent':            { level: 'full' },
   '/settings':                { level: 'full' },
   '/assets':                  { level: 'full' },

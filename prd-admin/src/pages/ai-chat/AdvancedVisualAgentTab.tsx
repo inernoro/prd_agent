@@ -3557,6 +3557,76 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return () => el.removeEventListener('wheel', onWheel as EventListener);
   }, [canvas.length, setViewport, zoomAt]);
 
+  // 触屏双指捏合缩放 + 双指平移（gesture-unification：pinch = 缩放；配合 stage 的 touch-action:none）
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinch: { baseDist: number; baseZoom: number; wx: number; wy: number } | null = null;
+
+    const midOf = () => {
+      const pts = Array.from(pointers.values());
+      return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    };
+    const distOf = () => {
+      const pts = Array.from(pointers.values());
+      return Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size !== 2) return;
+      // 第二根手指落下即进入捏合：清掉单指已启动的平移/拖拽/框选，手势归捏合接管
+      panRef.current.active = false;
+      dragItemsRef.current.active = false;
+      setPanning(false);
+      setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
+      const rect = el.getBoundingClientRect();
+      const mid = midOf();
+      const sx = mid.x - rect.left;
+      const sy = mid.y - rect.top;
+      const z = zoomRef.current;
+      const cam = cameraRef.current;
+      pinch = {
+        baseDist: distOf(),
+        baseZoom: z,
+        wx: (sx - cam.x) / z,
+        wy: (sy - cam.y) / z,
+      };
+    };
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch' || !pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!pinch || pointers.size !== 2) return;
+      const rect = el.getBoundingClientRect();
+      const mid = midOf();
+      const sx = mid.x - rect.left;
+      const sy = mid.y - rect.top;
+      const nextZoom = clampZoom(pinch.baseZoom * (distOf() / pinch.baseDist));
+      // 捏合起点的世界坐标始终跟随两指中点：一个手势同时完成缩放与平移
+      setViewport(nextZoom, { x: sx - pinch.wx * nextZoom, y: sy - pinch.wy * nextZoom });
+      e.preventDefault();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+    };
+
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
+  }, [canvas.length, setViewport]);
+
   // 初始化/刷新时：确保 DOM transform 与 state/ref 一致
   useEffect(() => {
     zoomRef.current = zoom;
@@ -5578,6 +5648,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
               userSelect: 'none',
               WebkitUserSelect: 'none',
+              // 触屏：阻止浏览器接管单指滚动/双指手势，否则 PointerEvents 拖拽会被 pointercancel 打断
+              touchAction: 'none',
             }}
             onContextMenu={(e) => e.preventDefault()}
             tabIndex={0}
