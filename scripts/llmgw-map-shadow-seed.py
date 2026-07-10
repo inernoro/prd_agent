@@ -1624,6 +1624,7 @@ def main() -> int:
     parser.add_argument("--root-username", default=read_env_secret("ROOT_ACCESS_USERNAME") or "root", help="Root username for login")
     parser.add_argument("--root-password", default=read_env_secret("ROOT_ACCESS_PASSWORD"), help="Root password for login, preferably via env")
     parser.add_argument("--iterations", type=int, default=1, help="How many text seed iterations to run")
+    parser.add_argument("--skip-text-seeds", action="store_true", help="Skip default document/session-chat/preview seeds; use for focused image, vision, or ASR acceptance")
     parser.add_argument("--sleep-seconds", type=float, default=0, help="Sleep between iterations")
     parser.add_argument("--timeout", type=float, default=90, help="HTTP timeout seconds")
     parser.add_argument("--since-hours", type=float, default=168, help="Shadow summary window")
@@ -1679,6 +1680,8 @@ def main() -> int:
 
     if args.iterations < 1:
         raise SystemExit("--iterations must be >= 1")
+    if args.skip_text_seeds and (args.include_desktop_chat_run or args.include_open_platform):
+        raise SystemExit("--skip-text-seeds cannot be combined with --include-desktop-chat-run or --include-open-platform because those paths require a seeded document/session")
     if args.max_video_submits < 1:
         raise SystemExit("--max-video-submits must be >= 1")
 
@@ -1810,6 +1813,7 @@ def main() -> int:
         "gwBase": gw_base,
         "releaseCommit": release_commit,
         "iterations": args.iterations,
+        "skipTextSeeds": bool(args.skip_text_seeds),
         "continueOnError": bool(args.continue_on_error),
         "videoSubmitGuard": {
             "requestedVideoSubmits": requested_video_submits,
@@ -1824,6 +1828,7 @@ def main() -> int:
     print(f"gwBase={gw_base}")
     print(f"releaseCommit={release_commit}")
     print(f"iterations={args.iterations}")
+    print(f"skipTextSeeds={bool(args.skip_text_seeds)}")
     print(
         "videoSubmitGuard="
         f"{requested_video_submits}/{args.max_video_submits}"
@@ -1867,32 +1872,35 @@ def main() -> int:
     for index in range(args.iterations):
         tag = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{index + 1}"
         prefix = f"seed[{index + 1}]"
-        document_step = run_seed_step(
-            evidence,
-            f"{prefix}.create_document",
-            args.continue_on_error,
-            lambda: create_document(base, token, args.timeout, tag),
-        )
-        if not document_step.ok:
-            if index + 1 < args.iterations and args.sleep_seconds > 0:
-                time.sleep(args.sleep_seconds)
-            continue
-        session_id, document_id = document_step.result
-        chat_step = run_seed_step(
-            evidence,
-            f"{prefix}.session_chat",
-            args.continue_on_error,
-            lambda: call_session_chat(base, token, session_id, args.timeout, tag),
-        )
-        if chat_step.ok:
-            stream_successes += 1
-        if not args.skip_preview_ask:
-            preview_step = run_seed_step(
+        session_id = ""
+        document_id = ""
+        if not args.skip_text_seeds:
+            document_step = run_seed_step(
                 evidence,
-                f"{prefix}.preview_ask",
+                f"{prefix}.create_document",
                 args.continue_on_error,
-                lambda: call_preview_ask(base, token, session_id, args.timeout, tag),
+                lambda: create_document(base, token, args.timeout, tag),
             )
+            if not document_step.ok:
+                if index + 1 < args.iterations and args.sleep_seconds > 0:
+                    time.sleep(args.sleep_seconds)
+                continue
+            session_id, document_id = document_step.result
+            chat_step = run_seed_step(
+                evidence,
+                f"{prefix}.session_chat",
+                args.continue_on_error,
+                lambda: call_session_chat(base, token, session_id, args.timeout, tag),
+            )
+            if chat_step.ok:
+                stream_successes += 1
+            if not args.skip_preview_ask:
+                run_seed_step(
+                    evidence,
+                    f"{prefix}.preview_ask",
+                    args.continue_on_error,
+                    lambda: call_preview_ask(base, token, session_id, args.timeout, tag),
+                )
         if args.include_desktop_chat_run:
             desktop_chat_step = run_seed_step(
                 evidence,
