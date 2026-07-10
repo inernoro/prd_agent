@@ -1437,7 +1437,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("key-integrity", readiness);
         Assert.Contains("router", readiness);
         Assert.Contains("routableCallers", readiness);
-        Assert.Contains("pool.ModelType == caller.RequestType", readiness);
+        Assert.Contains("IsPoolRoutableForRequestType", readiness);
+        Assert.Contains("pool.IsDefaultForType", readiness);
         Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
         Assert.Contains("exceptionType={ExceptionType}", readiness);
         Assert.DoesNotContain("ex.Message", readiness);

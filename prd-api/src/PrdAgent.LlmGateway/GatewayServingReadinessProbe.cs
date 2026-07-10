@@ -190,9 +190,24 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 ? new List<ModelGroup>()
                 : await pools.Find(Builders<ModelGroup>.Filter.In(x => x.Id, poolIds))
                     .ToListAsync(cancellationToken);
+            var requestTypes = governed
+                .Select(x => x.RequestType)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var defaultPools = requestTypes.Count == 0
+                ? new List<ModelGroup>()
+                : await pools.Find(
+                        Builders<ModelGroup>.Filter.And(
+                            Builders<ModelGroup>.Filter.Eq(x => x.IsDefaultForType, true),
+                            Builders<ModelGroup>.Filter.In(x => x.ModelType, requestTypes)))
+                    .ToListAsync(cancellationToken);
             var poolById = boundPools.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
-            var routableCallers = governed.Count(x => IsCallerRoutable(x, poolById));
+            var routableCallers = governed.Count(x => IsCallerRoutable(x, poolById, defaultPools));
             var invalidCallers = governed.Count - routableCallers;
+            // Readiness is instance-scoped. A single invalid caller is configuration degradation,
+            // which the config-authority release gate blocks; taking every serving instance out
+            // would turn one caller's bad binding into a global AI outage.
             if (governed.Count > 0 && routableCallers == 0)
             {
                 throw new InvalidOperationException(
@@ -205,14 +220,24 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
 
     public static bool IsCallerRoutable(
         GatewayAppCallerRecord caller,
-        IReadOnlyDictionary<string, ModelGroup> poolById)
+        IReadOnlyDictionary<string, ModelGroup> poolById,
+        IReadOnlyCollection<ModelGroup> defaultPools)
     {
-        return !string.IsNullOrWhiteSpace(caller.ModelPoolId) &&
-               poolById.TryGetValue(caller.ModelPoolId, out var pool) &&
-               pool.ModelType == caller.RequestType &&
-               pool.Models.Count > 0 &&
-               pool.Models.Any(m => m.HealthStatus != ModelHealthStatus.Unavailable);
+        if (!string.IsNullOrWhiteSpace(caller.ModelPoolId))
+        {
+            return poolById.TryGetValue(caller.ModelPoolId, out var boundPool) &&
+                   IsPoolRoutableForRequestType(boundPool, caller.RequestType);
+        }
+
+        return defaultPools.Any(pool =>
+            pool.IsDefaultForType &&
+            IsPoolRoutableForRequestType(pool, caller.RequestType));
     }
+
+    private static bool IsPoolRoutableForRequestType(ModelGroup pool, string requestType)
+        => pool.ModelType == requestType &&
+           pool.Models.Count > 0 &&
+           pool.Models.Any(m => m.HealthStatus != ModelHealthStatus.Unavailable);
 
     private async Task<GatewayServingReadinessComponent> MeasureAsync(
         string name,
