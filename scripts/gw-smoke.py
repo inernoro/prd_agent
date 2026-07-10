@@ -31,6 +31,9 @@ ROUTE_POOL_ID = os.environ.get("GW_SMOKE_ROUTE_POOL_ID", "").strip()
 ROUTE_PINNED_PLATFORM_ID = os.environ.get("GW_SMOKE_ROUTE_PINNED_PLATFORM_ID", "").strip()
 ROUTE_PINNED_MODEL_ID = os.environ.get("GW_SMOKE_ROUTE_PINNED_MODEL_ID", "").strip()
 SELF_TEST = os.environ.get("GW_SMOKE_SELF_TEST", "").strip().lower() in {"1", "true", "yes", "on"}
+SMOKE_PROMPT = os.environ.get("GW_SMOKE_PROMPT", "Reply exactly OK. No explanation.").strip() or "Reply exactly OK. No explanation."
+SMOKE_MAX_TOKENS = int(os.environ.get("GW_SMOKE_MAX_TOKENS", "4"))
+SMOKE_REQUEST_TIMEOUT = int(os.environ.get("GW_SMOKE_REQUEST_TIMEOUT_SECONDS", os.environ.get("GW_TIMEOUT", "120")))
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 # 默认只跑低成本 chat provider canary；intent/vision 需要通过 GW_SMOKE_MODEL_TYPES 显式打开。
@@ -327,7 +330,8 @@ def main():
     for accode, mtype in sample_codes:
         body = {
             "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
-            "RequestBody": {"messages": [{"role": "user", "content": "ping, reply OK"}], "max_tokens": 16},
+            "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
+            "RequestBody": {"messages": [{"role": "user", "content": SMOKE_PROMPT}], "max_tokens": SMOKE_MAX_TOKENS},
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
         code, raw = _req("POST", "/invoke", body)
@@ -345,7 +349,8 @@ def main():
             "AppCallerCode": "report-agent.generate::chat",
             "ModelType": "chat",
             "Stream": False,
-            "RequestBody": {"messages": [{"role": "user", "content": "ping, send compat reply OK"}], "max_tokens": 16},
+            "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
+            "RequestBody": {"messages": [{"role": "user", "content": SMOKE_PROMPT}], "max_tokens": SMOKE_MAX_TOKENS},
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
         code, raw = _req("POST", "/send", send_body)
@@ -362,9 +367,10 @@ def main():
             "AppCallerCode": "report-agent.generate::chat",
             "ModelType": "chat",
             "Stream": True,
+            "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
             "RequestBody": {
-                "messages": [{"role": "user", "content": "ping, stream reply OK"}],
-                "max_tokens": 16,
+                "messages": [{"role": "user", "content": SMOKE_PROMPT}],
+                "max_tokens": SMOKE_MAX_TOKENS,
                 "stream": True,
             },
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
@@ -392,11 +398,11 @@ def main():
         client_stream_body = {
             "AppCallerCode": "report-agent.generate::chat",
             "ModelType": "chat",
-            "MaxTokens": 16,
+            "MaxTokens": SMOKE_MAX_TOKENS,
             "Temperature": 0.2,
             "IncludeThinking": False,
             "SystemPrompt": "Reply briefly.",
-            "Messages": [{"Role": "user", "Content": "ping, client stream reply OK"}],
+            "Messages": [{"Role": "user", "Content": SMOKE_PROMPT}],
             "EnablePromptCache": True,
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True},
         }
