@@ -14,6 +14,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -144,6 +145,7 @@ describe('Branch Routes', () => {
   let serverEventLogStore: ServerEventLogSink;
   let branchOperationCoordinator: BranchOperationCoordinator;
   let deploymentRunService: DeploymentRunService;
+  let deploymentVersionService: DeploymentVersionService;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -236,6 +238,7 @@ describe('Branch Routes', () => {
     };
     branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
     deploymentRunService = new DeploymentRunService(stateService);
+    deploymentVersionService = new DeploymentVersionService(stateService);
 
     const app = express();
     app.use(express.json());
@@ -248,6 +251,7 @@ describe('Branch Routes', () => {
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
       deploymentRunService,
+      deploymentVersionService,
     }));
 
     await new Promise<void>((resolve) => {
@@ -1960,6 +1964,60 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('immutable deployment version reuse', () => {
+    it('creates a reusable version and redeploys the same commit without pulling source again', async () => {
+      const commitSha = '1234567890abcdef1234567890abcdef12345678';
+      const image = `ghcr.io/acme/api:sha-${commitSha}`;
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: image,
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+        prebuiltImage: true,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'version-reuse',
+        projectId: 'default',
+        branch: 'feature/version-reuse',
+        worktreePath: path.join(tmpDir, 'worktrees', 'version-reuse'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+      mock.addResponsePattern(/docker pull .*ghcr\.io\/acme\/api:sha-/, () => ({ stdout: 'pulled', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const first = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
+      expect(first.status).toBe(200);
+      expect(String(first.body)).toContain('version-create');
+      const branchAfterFirst = stateService.getBranch('version-reuse');
+      const versionId = branchAfterFirst?.currentVersionId;
+      expect(versionId).toMatch(/^dv_/);
+      expect(deploymentVersionService.get(versionId!)).toMatchObject({
+        commitSha,
+        profiles: [expect.objectContaining({ artifactImage: image, reusable: true })],
+      });
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+
+      const second = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
+      expect(second.status).toBe(200);
+      expect(String(second.body)).toContain('已锁定版本');
+      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      const secondRunId = String(second.headers['x-cds-deployment-run-id']);
+      expect(deploymentRunService.get(secondRunId)).toMatchObject({
+        versionId,
+        status: 'running',
+        phase: 'complete',
+      });
+      expect(stateService.getDeploymentVersions({ branchId: 'version-reuse' })).toHaveLength(1);
+    });
+  });
+
   describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
     it('can reserve the next deploy as the same operation chain', async () => {
       const now = new Date().toISOString();
@@ -2080,12 +2138,15 @@ describe('Branch Routes', () => {
         expect(stateService.getBranch('force-webhook')?.status).toBe('running');
         const profileRunId = String(deploy.headers['x-cds-deployment-run-id']);
         expect(profileRunId).toMatch(/^dr_/);
-        expect(deploymentRunService.get(profileRunId)).toMatchObject({
+        const profileRun = deploymentRunService.get(profileRunId);
+        expect(profileRun).toMatchObject({
           branchId: 'force-webhook',
           status: 'running',
           phase: 'complete',
           operationId: forceOperationId,
+          versionId: expect.stringMatching(/^dv_/),
         });
+        expect(stateService.getBranch('force-webhook')?.currentVersionId).toBe(profileRun?.versionId);
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
         expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
@@ -2503,6 +2564,7 @@ describe('Branch Routes', () => {
         worktreePath: path.join(tmpDir, 'worktrees', 'empty-cleanup'),
         status: 'running',
         createdAt: now,
+        currentVersionId: 'dv_previous',
         // No build profiles configured for the project AND no extraProfiles → effective list empty,
         // but a leftover service is still tracked (the just-cleared extra).
         services: {
@@ -2522,6 +2584,7 @@ describe('Branch Routes', () => {
       // The lingering service row is gone (container was torn down + entry removed).
       expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
       expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+      expect(stateService.getBranch('empty-cleanup')?.currentVersionId).toBeUndefined();
       const runId = String(res.headers['x-cds-deployment-run-id']);
       expect(runId).toMatch(/^dr_/);
       expect(stateService.getBranch('empty-cleanup')?.lastDeploymentRunId).toBe(runId);

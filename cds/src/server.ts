@@ -8,6 +8,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
+import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
@@ -80,6 +81,7 @@ import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
+import { DeploymentVersionService } from './services/deployment-version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -676,6 +678,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
+    'GET /deployment-versions': '列出部署版本',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -876,6 +879,9 @@ export function resolveApiLabel(method: string, path: string): string {
   const patterns: Array<[RegExp, string]> = [
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
     [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
+    [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
+    [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
+    [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
@@ -1244,6 +1250,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   deploymentRunService.reconcileInterrupted();
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -3495,6 +3502,38 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  app.use('/api', createDeploymentVersionsRouter({
+    deploymentVersionService,
+    assertProjectAccess: assertProjectAccess as any,
+    dispatchVersion: async (version, trigger) => {
+      try {
+        const upstream = await fetch(
+          `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CDS-Internal': '1',
+              'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
+              'X-CDS-Source-Project-Id': version.projectId,
+              'X-CDS-Source-Branch-Id': version.branchId,
+            },
+            body: JSON.stringify({ versionId: version.id }),
+          },
+        );
+        const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
+        if (upstream.ok) {
+          void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
+          return { accepted: true, status: upstream.status, runId };
+        }
+        const error = (await upstream.text().catch(() => '')).slice(0, 500);
+        return { accepted: false, status: upstream.status, error };
+      } catch (err) {
+        return { accepted: false, status: 503, error: (err as Error).message };
+      }
+    },
+  }));
+
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -3509,6 +3548,7 @@ export function createServer(deps: ServerDeps): express.Express {
     serverEventLogStore: deps.serverEventLogStore,
     branchOperationCoordinator: deps.branchOperationCoordinator,
     deploymentRunService,
+    deploymentVersionService,
   }));
 
   // 2026-05-28: 单一 SSE 通道 + 任务化刷新。

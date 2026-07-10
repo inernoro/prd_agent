@@ -71,6 +71,7 @@ import {
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
+import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
@@ -1778,6 +1779,8 @@ export interface RouterDeps {
   branchOperationCoordinator?: BranchOperationCoordinator;
   /** Persistent deployment ledger shared by all deploy entry points. */
   deploymentRunService?: DeploymentRunService;
+  /** Immutable deployment versions and reusable artifact projection. */
+  deploymentVersionService?: DeploymentVersionService;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -1984,6 +1987,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     serverEventLogStore,
     branchOperationCoordinator,
     deploymentRunService,
+    deploymentVersionService,
   } = deps;
 
   const router = Router();
@@ -2854,6 +2858,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
       deploymentRunId?: string;
+      deploymentVersionId?: string;
+      deploymentConfigHash?: string;
+      profiles?: BuildProfile[];
     } = {},
   ): Promise<'completed' | 'failed'> {
     // SSE headers on client side — same shape the local deploy uses so the
@@ -2935,7 +2942,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
     // auto-publish 表面成功实际没切容器。
     // 分支实际部署清单 = 项目底座 + 本分支临时额外服务(branch-local);未声明额外服务 = 项目原样。
-    const profiles = stateService
+    const profiles = context.profiles || stateService
       .getEffectiveProfilesForBranch(entry)
       .map((p) => resolveEffectiveProfile(p, entry));
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
@@ -3052,6 +3059,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 // errorMessage 也要按权威值覆盖（Bugbot「Remote complete skips hostPort sync」）。否则 master 仍
                 // 持本地旧端口/旧容器名，预览与路由会用错端口直到下次心跳才纠偏。
                 if (typeof s?.deployedMode === 'string' && s.deployedMode.trim() !== '') existing.deployedMode = s.deployedMode.trim();
+                if (typeof s?.deployedImage === 'string' && s.deployedImage.trim() !== '') existing.deployedImage = s.deployedImage.trim();
                 if (typeof s?.status === 'string') existing.status = s.status as ServiceState['status'];
                 if (typeof s?.containerName === 'string' && s.containerName) existing.containerName = s.containerName;
                 if (typeof s?.hostPort === 'number' && s.hostPort > 0) existing.hostPort = s.hostPort;
@@ -3065,6 +3073,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   hostPort: typeof s.hostPort === 'number' ? s.hostPort : 0,
                   status: (typeof s.status === 'string' ? s.status : 'running') as ServiceState['status'],
                   ...(typeof s.deployedMode === 'string' ? { deployedMode: s.deployedMode } : {}),
+                  ...(typeof s.deployedImage === 'string' ? { deployedImage: s.deployedImage } : {}),
                   ...(typeof s.errorMessage === 'string' && s.errorMessage ? { errorMessage: s.errorMessage } : {}),
                 };
               }
@@ -3181,7 +3190,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 执行器的已 resolve profile** 的 activeDeployMode。因为 Codex P2
       // 修复后发过去的就是 resolveEffectiveProfile 结果，executor 实际
       // 构建的就是这个模式，所以这是远端真相。失败则不动（保留旧值）。
-      if (!proxyHasError) {
+      if (!proxyHasError && stateService.getBranch(entry.id) === entry) {
         for (const rp of profiles) {
           const svc = entry.services[rp.id];
           // 2026-06-24（Bugbot/Codex P2）：内嵌执行器与 master 共享同一 entry.services 对象，
@@ -3263,6 +3272,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
       recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
+      if (!proxyHasError && stateService.getBranch(entry.id) === entry) {
+        if (profiles.length === 0) {
+          entry.currentVersionId = undefined;
+        } else if (deploymentVersionService && context.deploymentRunId && context.deploymentConfigHash && entry.githubCommitSha) {
+          const version = context.deploymentVersionId
+            ? deploymentVersionService.get(context.deploymentVersionId)
+            : deploymentVersionService.create({
+                projectId: entry.projectId || 'default',
+                branchId: entry.id,
+                commitSha: entry.githubCommitSha,
+                configHash: context.deploymentConfigHash,
+                profiles,
+                branch: entry,
+                createdByRunId: context.deploymentRunId,
+              });
+          if (version) {
+            entry.currentVersionId = version.id;
+            deploymentRunService?.attachVersion(context.deploymentRunId, version.id, context.deploymentConfigHash);
+          }
+        }
+      }
       stateService.save();
       const flushResult = await flushBranchStateBeforeSuccess({
         source: 'branch-remote-deploy',
@@ -11002,7 +11032,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
-    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    const currentProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const requestedVersionId = typeof req.body?.versionId === 'string' ? req.body.versionId.trim() : '';
+    let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
+      ? deploymentVersionService.get(requestedVersionId)
+      : undefined;
+    if (requestedVersionId && !selectedDeploymentVersion) {
+      res.status(404).json({ error: 'deployment_version_not_found', message: `部署版本不存在: ${requestedVersionId}` });
+      return;
+    }
+    if (selectedDeploymentVersion
+      && (selectedDeploymentVersion.projectId !== (entry.projectId || 'default') || selectedDeploymentVersion.branchId !== entry.id)) {
+      res.status(409).json({ error: 'deployment_version_scope_mismatch', message: '部署版本不属于当前分支' });
+      return;
+    }
+    if (selectedDeploymentVersion) {
+      try {
+        deploymentVersionService!.assertReusable(selectedDeploymentVersion);
+      } catch (err) {
+        res.status(409).json({ error: 'deployment_version_not_reusable', message: (err as Error).message });
+        return;
+      }
+    }
+    let profiles = selectedDeploymentVersion
+      ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
+      : currentProfiles;
+    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+    let deploymentConfigHash = selectedDeploymentVersion?.configHash
+      || deploymentVersionService?.computeConfigHash(
+        effectiveProfilesForHash,
+        getMergedEnv(entry.projectId || 'default', entry.id),
+      );
     // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
     // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
     // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
@@ -11124,6 +11184,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           entry.status = 'idle';
           entry.errorMessage = undefined;
+          entry.currentVersionId = undefined;
           stateService.save();
           const flushResult = await flushBranchStateBeforeSuccess({
             source: 'branch-deploy',
@@ -11198,16 +11259,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    const requestCommitSha = typeof req.body?.commitSha === 'string'
-      && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
-      ? req.body.commitSha
-      : undefined;
+    const requestCommitSha = selectedDeploymentVersion?.commitSha || (
+      typeof req.body?.commitSha === 'string'
+        && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+        ? req.body.commitSha
+        : undefined
+    );
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const deploymentRun = deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
       branchId: entry.id,
       trigger: deploymentRunTriggerFromRequest(req, entry),
       commitSha: requestCommitSha || entry.githubCommitSha,
+      versionId: selectedDeploymentVersion?.id,
+      configHash: deploymentConfigHash,
       phase: 'accepted',
       message: '分支部署请求已受理',
     });
@@ -11263,6 +11328,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       operationId: branchOperationLease?.operationId,
       commitSha: entry.githubCommitSha,
     });
+    if (!selectedDeploymentVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
+      const reusable = deploymentVersionService.findReusable({
+        projectId: entry.projectId || 'default',
+        branchId: entry.id,
+        commitSha: requestCommitSha,
+        configHash: deploymentConfigHash,
+      });
+      if (reusable) {
+        selectedDeploymentVersion = reusable;
+        profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+        if (deploymentRun) deploymentRunService?.attachVersion(deploymentRun.id, reusable.id, deploymentConfigHash);
+      }
+    }
 
     // ── Cluster dispatch decision ──
     //
@@ -11285,6 +11363,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           deploymentRunId: deploymentRun?.id,
+          deploymentVersionId: selectedDeploymentVersion?.id,
+          deploymentConfigHash,
+          profiles: selectedDeploymentVersion ? profiles : undefined,
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -11428,20 +11509,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Pull latest code
-      logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
+      // 指定不可变版本时不触碰源码；普通部署仍先 pull，再按 commit + configHash 查找可复用版本。
+      logEvent({
+        step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
+        status: 'running',
+        title: selectedDeploymentVersion ? `正在准备部署版本 ${selectedDeploymentVersion.id}` : '正在拉取最新代码...',
+        timestamp: new Date().toISOString(),
+      });
       await checkRunRunner.progress(entry, {
-        title: '拉取最新代码…',
-        summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
+        title: selectedDeploymentVersion ? '准备不可变版本…' : '拉取最新代码…',
+        summary: selectedDeploymentVersion
+          ? `分支: \`${entry.branch}\`\n版本: \`${selectedDeploymentVersion.id}\``
+          : `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
         force: true,
       });
-      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+      const pullResult = selectedDeploymentVersion
+        ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
+        : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
-      logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+      logEvent({
+        step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
+        status: 'done',
+        title: selectedDeploymentVersion ? `已锁定版本: ${selectedDeploymentVersion.id}` : `已拉取: ${pullResult.head}`,
+        detail: pullResult as unknown as Record<string, unknown>,
+        timestamp: new Date().toISOString(),
+      });
       advanceDeploymentRun(deploymentRun?.id, 'building', {
         phase: 'build',
-        message: '源码准备完成，开始构建服务',
+        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
         operationId: branchOperationLease?.operationId,
         commitSha: entry.githubCommitSha,
       });
@@ -11475,7 +11571,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // Clear pinned commit — deploy always restores to branch HEAD
-      if (entry.pinnedCommit) {
+      if (entry.pinnedCommit && !selectedDeploymentVersion) {
         entry.pinnedCommit = undefined;
         logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
       }
@@ -11609,16 +11705,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      await runDatabaseInitializationForDeploy({
-        entry,
-        profiles,
-        requestId,
-        operationId: branchOperationLease?.operationId || undefined,
-        actor: resolveActorFromRequest(req),
-        trigger: triggerFromRequest(req),
-        assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
-        logEvent,
-      });
+      if (!selectedDeploymentVersion && deploymentVersionService && entry.githubCommitSha) {
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+        deploymentConfigHash = deploymentVersionService.computeConfigHash(
+          refreshedEffectiveProfiles,
+          getMergedEnv(entry.projectId || 'default', entry.id),
+        );
+        const reusable = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: entry.githubCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        if (reusable) {
+          selectedDeploymentVersion = reusable;
+          profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+          logEvent({
+            step: 'version-reuse',
+            status: 'done',
+            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
+            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
+        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
+      }
+
+      if (selectedDeploymentVersion) {
+        logEvent({
+          step: 'database-init',
+          status: 'done',
+          title: '复用版本不重复执行构建期数据库初始化',
+          detail: { versionId: selectedDeploymentVersion.id },
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        await runDatabaseInitializationForDeploy({
+          entry,
+          profiles,
+          requestId,
+          operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
+          assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          logEvent,
+        });
+      }
 
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
@@ -11696,8 +11830,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         await Promise.all(layer.items.map(async (profile) => {
           // Resolve baseline → 项目默认 → 分支 override → mode override
-          const effectiveProfile = resolveEffectiveProfile(profile, entry);
-          const branchOverride = entry.profileOverrides?.[profile.id];
+          const effectiveProfile = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
+          const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
             ? ` [${effectiveProfile.deployModes[activeMode].label}]`
@@ -12117,7 +12251,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.deployMode = deriveDeployMode(
         ranDeployModes.length > 0
           ? ranDeployModes
-          : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) => resolveEffectiveProfile(p, entry)),
+          : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) =>
+              selectedDeploymentVersion ? p : resolveEffectiveProfile(p, entry)),
       );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
@@ -12144,6 +12279,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const completeMsg = hasError
         ? (noServiceStarted ? '部署失败: 没有服务进入运行流程' : `部分服务启动失败: ${failedNames.join(', ')}`)
         : '所有服务已启动';
+      if (
+        !hasError
+        && deploymentVersionService
+        && deploymentRun
+        && deploymentConfigHash
+        && entry.githubCommitSha
+        && stateService.getBranch(entry.id) === entry
+      ) {
+        if (!selectedDeploymentVersion) {
+          const versionProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+          selectedDeploymentVersion = deploymentVersionService.create({
+            projectId: entry.projectId || 'default',
+            branchId: entry.id,
+            commitSha: entry.githubCommitSha,
+            configHash: deploymentConfigHash,
+            profiles: versionProfiles,
+            branch: entry,
+            createdByRunId: deploymentRun.id,
+          });
+          logEvent({
+            step: 'version-create',
+            status: 'done',
+            title: `已生成不可变部署版本 ${selectedDeploymentVersion.id}`,
+            detail: {
+              versionId: selectedDeploymentVersion.id,
+              reusable: selectedDeploymentVersion.profiles.every((profile) => profile.reusable),
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        entry.currentVersionId = selectedDeploymentVersion.id;
+        deploymentRunService?.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
+      }
       logDeploy(id, `部署完成: ${completeMsg}`);
       // PR_C.3: 部署计数 + 时间戳 + activity log（成功/失败分别记）
       stateService.incrementBranchStat(id, 'deployCount');
@@ -12188,6 +12356,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: completeMsg,
         services: entry.services,
         runId: deploymentRun?.id,
+        versionId: selectedDeploymentVersion?.id,
       });
 
       // Phase 4: auto-smoke after a green deploy (best-effort; never
@@ -12717,6 +12886,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // profile 判定发布版/源码），与多服务路径同一台账。失败不记。
       recordDeployDurationSample(stateService, entry, [profile], opLog);
       stateService.appendLog(id, opLog);
+      if (
+        svc.status === 'running'
+        && deploymentVersionService
+        && deploymentRun
+        && entry.githubCommitSha
+        && stateService.getBranch(entry.id) === entry
+        && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
+      ) {
+        const versionProfiles = profiles.map((candidate) => resolveEffectiveProfile(candidate, entry));
+        const configHash = deploymentVersionService.computeConfigHash(
+          versionProfiles,
+          getMergedEnv(entry.projectId || 'default', entry.id),
+        );
+        const version = deploymentVersionService.create({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: entry.githubCommitSha,
+          configHash,
+          profiles: versionProfiles,
+          branch: entry,
+          createdByRunId: deploymentRun.id,
+        });
+        entry.currentVersionId = version.id;
+        deploymentRunService?.attachVersion(deploymentRun.id, version.id, configHash);
+        logEvent({
+          step: 'version-create',
+          status: 'done',
+          title: `已更新完整分支部署版本 ${version.id}`,
+          detail: { versionId: version.id, reusable: version.profiles.every((candidate) => candidate.reusable) },
+          timestamp: new Date().toISOString(),
+        });
+      }
       stateService.save();
 
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
