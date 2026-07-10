@@ -234,6 +234,28 @@ describe('MongoStateBackingStore', () => {
           logs: [{ at: '2026-05-22T00:00:06.000Z', level: 'info', message: 'installed' }],
         },
       };
+      state.deploymentRuns = {
+        'dr-1': {
+          id: 'dr-1',
+          projectId: 'prd-agent',
+          branchId: 'feat-x',
+          trigger: 'webhook',
+          status: 'building',
+          phase: 'build',
+          seq: 1,
+          firstEventSeq: 1,
+          startedAt: '2026-05-22T00:00:05.000Z',
+          updatedAt: '2026-05-22T00:00:06.000Z',
+          events: [{
+            seq: 1,
+            at: '2026-05-22T00:00:06.000Z',
+            phase: 'build',
+            level: 'info',
+            status: 'building',
+            message: 'building',
+          }],
+        },
+      };
       state.selfUpdateHistory = [{
         ts: '2026-05-22T00:00:07.000Z',
         branch: 'main',
@@ -266,11 +288,13 @@ describe('MongoStateBackingStore', () => {
       expect(mainDoc.state.selfUpdateHistory).toBeUndefined();
       expect(mainDoc.state.dataMigrations).toBeUndefined();
       expect(mainDoc.state.serviceDeployments['deploy-1'].logs).toEqual([]);
+      expect(mainDoc.state.deploymentRuns['dr-1'].events).toEqual([]);
       expect(handle.fragments.docs.size).toBe(0);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'logs')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'containerLogArchives')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'activityLogs')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'serviceDeploymentLogs')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'deploymentRunEvents')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'selfUpdateHistory')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'dataMigrations')).toHaveLength(1);
       expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'githubWebhookDeliveries')).toHaveLength(1);
@@ -288,6 +312,21 @@ describe('MongoStateBackingStore', () => {
           seq: 1,
           startedAt: '2026-05-22T00:00:00.000Z',
           logs: [],
+        },
+      };
+      persisted.deploymentRuns = {
+        'dr-1': {
+          id: 'dr-1',
+          projectId: 'prd-agent',
+          branchId: 'feat-x',
+          trigger: 'manual',
+          status: 'preparing',
+          phase: 'pull',
+          seq: 1,
+          firstEventSeq: 1,
+          startedAt: '2026-05-22T00:00:00.000Z',
+          updatedAt: '2026-05-22T00:00:01.000Z',
+          events: [],
         },
       };
       delete (persisted as Partial<CdsState>).logs;
@@ -314,11 +353,28 @@ describe('MongoStateBackingStore', () => {
         orderKey: '2026-05-22T00:00:01.000Z',
         updatedAt: '2026-05-22T00:00:00.000Z',
       });
+      handle.logRecords.docs.set('log:deploymentRunEvents:dr-1:000000000001', {
+        _id: 'log:deploymentRunEvents:dr-1:000000000001',
+        scope: 'cds-state-log-record',
+        kind: 'deploymentRunEvents',
+        ownerId: 'dr-1',
+        value: {
+          seq: 1,
+          at: '2026-05-22T00:00:01.000Z',
+          phase: 'pull',
+          level: 'info',
+          status: 'preparing',
+          message: 'pulling',
+        },
+        orderKey: '000000000001',
+        updatedAt: '2026-05-22T00:00:00.000Z',
+      });
 
       await store.init();
       expect(store.load()!.defaultBranch).toBe('main');
       expect(store.load()!.logs['feat-x']).toHaveLength(1);
       expect(store.load()!.serviceDeployments!['deploy-1'].logs).toHaveLength(1);
+      expect(store.load()!.deploymentRuns!['dr-1'].events).toHaveLength(1);
     });
 
     it('trims oversized detached logs before writing mongo fragments', async () => {
