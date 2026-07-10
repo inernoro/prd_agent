@@ -451,16 +451,17 @@ public class GatewayKeyGateContractTests
 
     public static IEnumerable<object[]> ScopedStreamingRequests() => new[]
     {
-        new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[],\"stream\":true}" },
-        new object[] { "/v1/responses", "{\"model\":\"test\",\"input\":\"hello\",\"stream\":true}" },
-        new object[] { "/v1/messages", "{\"model\":\"test\",\"messages\":[],\"stream\":true}" },
-        new object[] { "/v1beta/models/test:streamGenerateContent", "{\"contents\":[]}" },
-        new object[] { "/gw/v1/client-stream", "{\"AppCallerCode\":\"caller-a::chat\",\"ModelType\":\"chat\",\"SystemPrompt\":\"\",\"Messages\":[]}" },
+        new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[],\"stream\":true}", "application/json" },
+        new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[],\"stream\":true}", "text/plain" },
+        new object[] { "/v1/responses", "{\"model\":\"test\",\"input\":\"hello\",\"stream\":true}", "application/json" },
+        new object[] { "/v1/messages", "{\"model\":\"test\",\"messages\":[],\"stream\":true}", "application/json" },
+        new object[] { "/v1beta/models/test:streamGenerateContent", "{\"contents\":[]}", "application/json" },
+        new object[] { "/gw/v1/client-stream", "{\"AppCallerCode\":\"caller-a::chat\",\"ModelType\":\"chat\",\"SystemPrompt\":\"\",\"Messages\":[]}", "application/json" },
     };
 
     [Theory]
     [MemberData(nameof(ScopedStreamingRequests))]
-    public async Task ScopedInvokeKey_CannotUseStreamingRoutes(string path, string json)
+    public async Task ScopedInvokeKey_CannotUseStreamingRoutes(string path, string json, string contentType)
     {
         var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
         await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
@@ -469,7 +470,7 @@ public class GatewayKeyGateContractTests
         {
             var request = new HttpRequestMessage(HttpMethod.Post, path)
             {
-                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent(json, System.Text.Encoding.UTF8, contentType),
             };
             request.Headers.Add("X-Gateway-Key", "scoped-test-key");
             request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");

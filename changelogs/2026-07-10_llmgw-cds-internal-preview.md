@@ -9,6 +9,7 @@
 | fix | prd-api | 原生 send、raw 与 profile-test 失败信封回写真实 HTTP 状态，避免预算把失败请求误判为成功 |
 | security | prd-api | scoped key 改用实际 body/query appCaller 鉴权并校验 header 一致性，兼容协议 body 流式请求强制 stream scope |
 | fix | prd-api | raw 幂等 replay 提前于预算预占返回，HTTP client 在非 2xx 时保留结构化网关错误信封 |
+| security | prd-api | 兼容协议鉴权按端点实际解析 JSON，不再允许伪造或省略 Content-Type 绕过 stream scope |
 | feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
 | feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
 | feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |

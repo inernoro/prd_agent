@@ -1252,7 +1252,7 @@ public static class GatewayHttpEndpoints
             appCallerCode = queryCaller.First()!.Trim();
         }
 
-        if (context.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) != true)
+        if (!ShouldInspectAuthorizationBody(path))
             return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
 
         context.Request.EnableBuffering();
@@ -1305,6 +1305,20 @@ public static class GatewayHttpEndpoints
 
         return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
     }
+
+    private static bool ShouldInspectAuthorizationBody(string path)
+        => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/raw", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/v1/responses", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
+           || path.Contains(":generateContent", StringComparison.OrdinalIgnoreCase)
+           || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase);
 
     private static string? ReadJsonString(JsonElement element, string propertyName)
         => TryGetJsonProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String
