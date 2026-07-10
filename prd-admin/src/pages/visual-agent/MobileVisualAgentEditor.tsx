@@ -366,34 +366,42 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             }
           },
         }).then(async () => {
-          let stillRunning = false;
-          setCards((prev) => {
-            stillRunning = prev.some((c) => c.key === key && c.status === 'running');
-            return prev;
-          });
-          if (!stillRunning) return;
-          try {
-            const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
-            if (res.success && res.data?.run) {
-              const run = res.data.run;
-              if (run.status === 'Completed') {
-                const it = res.data.items?.find((i) => i.url);
-                if (it?.url) {
-                  applyDone(it.url);
+          // SSE 结束 ≠ 生成失败（服务器权威：后端继续跑）。移动网络下 SSE 极易断流，
+          // 这里转入 run 状态轮询兜底：每 5s 查一次，直到终态或约 5 分钟超时。
+          const isCardRunning = () => {
+            let running = false;
+            setCards((prev) => {
+              running = prev.some((c) => c.key === key && c.status === 'running');
+              return prev;
+            });
+            return running;
+          };
+          if (!isCardRunning()) return;
+          for (let attempt = 0; attempt < 60; attempt++) {
+            if (ac.signal.aborted || !isCardRunning()) return;
+            try {
+              const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+              if (res.success && res.data?.run) {
+                const run = res.data.run;
+                if (run.status === 'Completed') {
+                  const it = res.data.items?.find((i) => i.url);
+                  if (it?.url) applyDone(it.url);
+                  else failCard('生成完成但无图片数据，请重试');
                   return;
                 }
-                failCard('生成完成但无图片数据，请重试');
-                return;
+                if (run.status === 'Failed' || run.status === 'Cancelled') {
+                  const errItem = res.data.items?.find((i) => i.errorMessage);
+                  failCard(run.status === 'Cancelled' ? '已取消' : errItem?.errorMessage || '生成失败');
+                  return;
+                }
+                // Queued / Running：继续轮询
               }
-              if (run.status === 'Queued' || run.status === 'Running') return; // 后端仍在跑，保留占位
-              const errItem = res.data.items?.find((i) => i.errorMessage);
-              failCard(run.status === 'Cancelled' ? '已取消' : errItem?.errorMessage || '生成失败');
-              return;
+            } catch {
+              // 单次查询失败不终止轮询
             }
-          } catch {
-            // 查询失败走默认文案
+            await new Promise((r) => setTimeout(r, 5000));
           }
-          failCard('生成超时或连接中断，请重试');
+          if (isCardRunning()) failCard('生成超时或连接中断，请重试');
         });
       } catch (e) {
         failCard(e instanceof Error ? e.message : '生成失败');
@@ -485,7 +493,9 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
     assetId?: string;
     refUrl?: string;
   }) => (
-    <div key={args.key} className="rounded-2xl overflow-hidden" style={{ background: 'var(--bg-card, rgba(255,255,255,0.04))', border: '1px solid rgba(255,255,255,0.08)' }}>
+    // shrink-0 必须有：滚动容器是 flex-col，卡片默认可收缩，会被压到容器高度内、
+    // footer 被 overflow-hidden 裁掉且无法滚动（2026-07-10 真机反馈"无法操作"的根因）
+    <div key={args.key} className="shrink-0 rounded-2xl overflow-hidden" style={{ background: 'var(--bg-card, rgba(255,255,255,0.04))', border: '1px solid rgba(255,255,255,0.08)' }}>
       <button
         type="button"
         className="block w-full"
@@ -547,13 +557,13 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             <button
               type="button"
               className="h-8 px-2.5 rounded-lg text-[11px] font-mono truncate max-w-[120px] active:opacity-70"
-              style={{ color: 'rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.06)' }}
+              style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.06)' }}
               onClick={() => setPoolSheetOpen(true)}
             >
               {pickedPool.name}
             </button>
           ) : (
-            <span className="text-[11px] font-mono truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            <span className="text-[11px] font-mono truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
               {pickedPool.name}
             </span>
           )
@@ -614,7 +624,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           }
           if (c.status === 'error') {
             return (
-              <div key={c.key} className="rounded-2xl px-3 py-3 flex flex-col gap-2" style={{ background: 'rgba(180,40,40,0.12)', border: '1px solid rgba(220,80,80,0.35)' }}>
+              <div key={c.key} className="shrink-0 rounded-2xl px-3 py-3 flex flex-col gap-2" style={{ background: 'rgba(180,40,40,0.12)', border: '1px solid rgba(220,80,80,0.35)' }}>
                 <div className="text-[12px] leading-snug" style={{ color: 'rgba(255,255,255,0.6)' }}>{c.prompt}</div>
                 <div className="text-[13px]" style={{ color: 'rgba(255,140,140,0.95)' }}>{c.errorMessage || '生成失败'}</div>
                 <div>
@@ -627,7 +637,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           }
           // 生成中：产物形状的骨架卡（按请求比例撑开）+ 计时
           return (
-            <div key={c.key} className="rounded-2xl overflow-hidden" style={{ background: 'var(--bg-card, rgba(255,255,255,0.04))', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div key={c.key} className="shrink-0 rounded-2xl overflow-hidden" style={{ background: 'var(--bg-card, rgba(255,255,255,0.04))', border: '1px solid rgba(255,255,255,0.08)' }}>
               <div className="relative w-full" style={{ paddingBottom: `${cardRatio(c.size) * 100}%` }}>
                 <div
                   className="absolute inset-0 animate-pulse"
