@@ -485,6 +485,53 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleRuntimeGateEvidenceLinks_CanDeepLinkToFilteredEvidence()
+    {
+        var overview = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
+        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+        var shadowPage = ReadRepoFile("prd-llmgw-web/src/pages/ShadowPage.tsx");
+        var auditsPage = ReadRepoFile("prd-llmgw-web/src/pages/AuditsPage.tsx");
+        var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
+
+        Assert.Contains("function runtimeGateActionLinks", overview);
+        Assert.Contains("const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();", overview);
+        Assert.Contains("const releaseQuery = releaseCommit ? `?releaseCommit=${encodeURIComponent(releaseCommit)}` : '';", overview);
+        Assert.Contains("case 'current_commit_http_transport':", overview);
+        Assert.Contains("case 'dropped_parameter_runtime_evidence':", overview);
+        Assert.Contains("case 'appcaller_runtime_coverage':", overview);
+        Assert.Contains("case 'shadow_runtime_evidence':", overview);
+        Assert.Contains("case 'full_http_rollout_ledger':", overview);
+        Assert.Contains("/logs${releaseQuery}", overview);
+        Assert.Contains("/shadow${releaseQuery}", overview);
+        Assert.Contains("/app-callers?status=active", overview);
+        Assert.Contains("/app-callers?drift=any", overview);
+        Assert.Contains("/audits?targetType=llmgw_config_authority", overview);
+
+        Assert.Contains("initialQueryValue('releaseCommit')", logsView);
+        Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
+        Assert.Contains("placeholder=\"Release commit\"", logsView);
+        Assert.Contains("setFilterReleaseCommit('')", logsView);
+
+        Assert.Contains("useSearchParams", shadowPage);
+        Assert.Contains("searchParams.get('releaseCommit')", shadowPage);
+        Assert.Contains("searchParams.get('appCallerCode')", shadowPage);
+        Assert.Contains("searchParams.get('kind')", shadowPage);
+        Assert.Contains("searchParams.get('sinceHours')", shadowPage);
+        Assert.Contains("searchParams.get('quick')", shadowPage);
+        Assert.Contains("releaseCommit: releaseCommit.trim() || undefined", shadowPage);
+        Assert.Contains("kind: kind.trim() || undefined", shadowPage);
+        Assert.Contains("sinceHours: Number.isFinite(parsedSinceHours) && parsedSinceHours > 0 ? parsedSinceHours : undefined", shadowPage);
+
+        Assert.Contains("useSearchParams", auditsPage);
+        Assert.Contains("searchParams.get('targetType')", auditsPage);
+        Assert.Contains("targetType: targetType || undefined", auditsPage);
+
+        Assert.Contains("runtimeGateActionLinks", protocolAudit);
+        Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
+        Assert.Contains("/audits?targetType=llmgw_config_authority", protocolAudit);
+    }
+
+    [Fact]
     public void ExecDep_ProvidesNoUnderscoreCompatibilityWrapper()
     {
         var wrapper = ReadRepoFile("execdep.sh");

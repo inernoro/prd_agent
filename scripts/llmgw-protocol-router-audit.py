@@ -111,6 +111,7 @@ def build_report() -> dict[str, Any]:
     details_drawer = _read("prd-llmgw-web/src/components/GenerationDetailsDrawer.tsx")
     overview_page = _read("prd-llmgw-web/src/pages/OverviewPage.tsx")
     app_callers_page = _read("prd-llmgw-web/src/pages/AppCallersPage.tsx")
+    shadow_page = _read("prd-llmgw-web/src/pages/ShadowPage.tsx")
     pools_page = _read("prd-llmgw-web/src/pages/ModelPoolsPage.tsx")
     models_page = _read("prd-llmgw-web/src/pages/ModelsPage.tsx")
     platforms_page = _read("prd-llmgw-web/src/pages/PlatformsPage.tsx")
@@ -389,6 +390,7 @@ def build_report() -> dict[str, Any]:
         details_drawer,
         overview_page,
         app_callers_page,
+        shadow_page,
         pools_page,
         models_page,
         platforms_page,
@@ -408,6 +410,15 @@ def build_report() -> dict[str, Any]:
             "routerTrace",
             "providerAttempts",
             "droppedParameters",
+            "initialQueryValue('releaseCommit')",
+            "releaseCommit: filterReleaseCommit.trim() || undefined",
+            "searchParams.get('releaseCommit')",
+            "getShadowComparisons({",
+            "runtimeGateActionLinks",
+            "/logs${releaseQuery}",
+            "/shadow${releaseQuery}",
+            "/app-callers?status=active",
+            "/audits?targetType=llmgw_config_authority",
             "configAuthority",
             "RuntimeGatePanel",
             "bulkUpdateGatewayAppCallers",
