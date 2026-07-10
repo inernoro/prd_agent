@@ -92,6 +92,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
         Assert.Contains(".Set(\"ModelPolicy\", \"pool\")", consoleProgram);
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
+        Assert.Contains("m.AsNullableBool(\"Enabled\") ?? true", consoleProgram);
+        Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
         Assert.Contains("gw-pool-without-usable-member", consoleProgram);
         Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
         Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));

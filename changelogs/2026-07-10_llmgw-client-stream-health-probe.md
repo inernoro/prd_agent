@@ -53,3 +53,4 @@
 | ops | scripts | LLM Gateway exec_dep 自动创建 post-deploy protocol canary 证据目录，提升生产阶段脚本可复跑性 |
 | ops | scripts | LLM Gateway exec_dep 禁用 post-deploy protocol canary 时不再把未验证 JSON 路径传给 runtime gates |
 | fix | prd-api | 注册 LLM Gateway route self-test 的四类 appCallerCode，并用注册表常量替换端点字面量 |
+| fix | prd-llmgw | 模型池可用性校验排除 disabled Exchange 子模型，避免配置权威和 runtime gate 误判 |

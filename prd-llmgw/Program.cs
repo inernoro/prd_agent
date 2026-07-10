@@ -988,7 +988,9 @@ app.MapGet("/gw/runtime-gates", async () =>
         return modelsArr
             .Where(x => x.IsBsonDocument)
             .Select(x => x.AsBsonDocument)
-            .Any(m => (m.AsNullableBool("Enabled") ?? true) && string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal));
+            .Any(m => (m.AsNullableBool("Enabled") ?? true)
+                      && (string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+                          || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
     }
 
     var gwPoolIds = IdSet(gwPoolDocs);
@@ -5095,8 +5097,9 @@ static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
     return modelsValue.AsBsonArray
         .Where(x => x.IsBsonDocument)
         .Select(x => x.AsBsonDocument)
-        .Any(m => string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
-                  || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal));
+        .Any(m => (m.AsNullableBool("Enabled") ?? true)
+                  && (string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
+                      || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
 }
 
 static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField)
