@@ -1,11 +1,11 @@
 // 概览：网关控制台的「全面视图」入口（用户 2026-07-02：希望在 gw 看到全面的，而不是只有一个日志）。
 // 一屏聚合：① 容器拓扑（每个容器的职责，治「多只脚」困惑）② 配置概览（平台/模型池/模型计数）
 // ③ 影子比对摘要（剥离干净度信号）④ 快速入口。数据全部复用现有只读端点，无新增后端。
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Boxes, Server, GitCompare, ScrollText, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
-import { bindActiveAppCallerPools, bulkClaimConfigAuthority, getPools, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates } from '@/lib/api';
-import type { ModelPool, PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData } from '@/lib/types';
+import { bindActiveAppCallerPools, bulkClaimConfigAuthority, getPools, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
+import type { ModelPool, PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 
 // 网关容器拓扑（SSOT：cds-compose.yml 的 services + .claude/rules/cds-dual-exit-topology.md）。
@@ -42,6 +42,7 @@ export function OverviewPage() {
   const [keyHealth, setKeyHealth] = useState<KeyHealthSummary | null>(null);
   const [configAuthority, setConfigAuthority] = useState<ConfigAuthoritySummary | null>(null);
   const [runtimeGates, setRuntimeGates] = useState<RuntimeGatesData | null>(null);
+  const [protocolCoverage, setProtocolCoverage] = useState<ProtocolCoverageData | null>(null);
   const [appCallerTotal, setAppCallerTotal] = useState<number | null>(null);
   const [shadow, setShadow] = useState<ShadowSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +52,8 @@ export function OverviewPage() {
   useEffect(() => {
     let alive = true;
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
-    Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
-      ([poolsRes, platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, appCallersRes, shadowRes]) => {
+    Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
+      ([poolsRes, platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
         if (!alive) return;
         if (poolsRes.success) setPools(poolsRes.data.items); else { setPools([]); setError((e) => e || poolsRes.error?.message || '加载失败'); }
         if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
@@ -61,13 +62,14 @@ export function OverviewPage() {
         if (keyHealthRes.success) setKeyHealth(keyHealthRes.data.summary); else { setKeyHealth(emptyKeyHealth()); setError((e) => e || keyHealthRes.error?.message || '加载失败'); }
         if (authorityRes.success) setConfigAuthority(authorityRes.data.summary); else { setConfigAuthority(emptyConfigAuthority()); setError((e) => e || authorityRes.error?.message || '加载失败'); }
         if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data); else { setRuntimeGates(emptyRuntimeGates()); setError((e) => e || runtimeGatesRes.error?.message || '加载失败'); }
+        if (protocolCoverageRes.success) setProtocolCoverage(protocolCoverageRes.data); else { setProtocolCoverage(emptyProtocolCoverage()); setError((e) => e || protocolCoverageRes.error?.message || '加载失败'); }
         if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total); else { setAppCallerTotal(0); setError((e) => e || appCallersRes.error?.message || '加载失败'); }
         if (shadowRes.success) setShadow(shadowRes.data.summary); else setShadow({ total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       },
     ).catch((err) => {
       // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
       if (!alive) return;
-      setPools((p) => p ?? []); setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setAppCallerTotal((p) => p ?? 0);
+      setPools((p) => p ?? []); setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
       setShadow((s) => s ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       setError((e) => e || (err instanceof Error ? err.message : '加载失败'));
     });
@@ -122,7 +124,7 @@ export function OverviewPage() {
     setActionMessage(`已绑定 ${res.data.bound} 个 active 调用方，跳过 ${res.data.skipped} 个，缺默认池 ${res.data.missingDefaultPool} 个`);
   }
 
-  const loading = pools === null || platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || appCallerTotal === null;
+  const loading = pools === null || platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || protocolCoverage === null || appCallerTotal === null;
   // 完全没加载出来（都还 null）时才整屏报错/转圈；有部分数据则进入下方渲染，用顶部横幅提示失败（不掩盖故障）。
   if (loading && error) return <Empty text={error} />;
   if (loading) return <SectionLoader text="正在加载网关概览…" />;
@@ -154,6 +156,7 @@ export function OverviewPage() {
         </div>
       ) : null}
       <RuntimeGatePanel gates={runtimeGates!} />
+      <ProtocolCoveragePanel coverage={protocolCoverage!} />
       {/* 配置概览计数 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <StatCard icon={<Server size={16} />} label="平台" value={`${enabledPlatforms}/${platforms!.length}`} sub="启用/总数" to="/platforms" />
@@ -366,6 +369,76 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
   );
 }
 
+function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData }) {
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+          <Shuffle size={16} /> 协议入口覆盖
+        </span>
+        <Chip
+          label={`${coverage.coveredProtocols}/${coverage.items.length} 有运行日志`}
+          color={coverage.missingRuntimeProtocols === 0 ? '#3fb950' : '#d29922'}
+          bg={coverage.missingRuntimeProtocols === 0 ? 'rgba(63,185,80,0.14)' : 'rgba(210,153,34,0.14)'}
+        />
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {coverage.releaseCommit ? `commit=${coverage.releaseCommit}` : `最近 ${coverage.sinceHours} 小时`}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+        这里只展示真实日志和 appCaller 注册表覆盖，不把“代码支持该协议”当作生产已通过。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
+        {coverage.items.map((item) => (
+          <div key={item.ingressProtocol} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 7 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
+              <Chip label={protocolCoverageLabel(item.status)} color={protocolCoverageColor(item.status)} bg={protocolCoverageBg(item.status)} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+              <MiniMetric label="请求" value={`${item.logRequests}`} />
+              <MiniMetric label="HTTP" value={`${item.httpRequests}`} />
+              <MiniMetric label="active 覆盖" value={`${item.coveredActiveAppCallers}/${item.activeAppCallers}`} />
+              <MiniMetric label="失败/丢参" value={`${item.failedRequests}/${item.droppedParameterRequests}`} />
+            </div>
+            <div style={{ minHeight: 18, fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.requestTypes.length > 0 ? item.requestTypes.join(', ') : '暂无 requestType 样本'}
+            </div>
+            {item.missingActiveAppCallerCodes.length > 0 ? (
+              <div style={{ fontSize: 11, color: '#d29922', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.missingActiveAppCallerCodes.join(', ')}>
+                缺样本：{item.missingActiveAppCallerCodes.join(', ')}
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <Link to={item.logsLink} style={miniLinkStyle}>日志</Link>
+              <Link to={item.appCallersLink} style={miniLinkStyle}>调用方</Link>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const miniLinkStyle: CSSProperties = {
+  textDecoration: 'none',
+  fontSize: 11,
+  color: 'var(--accent)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius-xs)',
+  padding: '4px 7px',
+  background: 'var(--bg-surface)',
+};
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ minWidth: 0, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xs)', padding: '6px 7px', background: 'var(--bg-surface)' }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+    </div>
+  );
+}
+
 function runtimeGateActionLinks(item: { id: string; facts?: Record<string, string> }, gates: RuntimeGatesData): Array<{ label: string; to: string }> {
   const facts = item.facts ?? {};
   const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();
@@ -545,12 +618,72 @@ function emptyRuntimeGates(): RuntimeGatesData {
   };
 }
 
+function emptyProtocolCoverage(): ProtocolCoverageData {
+  return {
+    releaseCommit: null,
+    sinceHours: 24,
+    generatedAt: '',
+    totalLogRequests: 0,
+    totalRegisteredAppCallers: 0,
+    totalActiveAppCallers: 0,
+    coveredProtocols: 0,
+    missingRuntimeProtocols: 4,
+    items: ['gw-native', 'openai-compatible', 'claude-compatible', 'gemini-compatible'].map((protocol) => ({
+      ingressProtocol: protocol,
+      label: protocolCoverageTitle(protocol),
+      status: 'no-evidence',
+      registeredAppCallers: 0,
+      activeAppCallers: 0,
+      coveredActiveAppCallers: 0,
+      missingActiveAppCallers: 0,
+      logRequests: 0,
+      httpRequests: 0,
+      failedRequests: 0,
+      droppedParameterRequests: 0,
+      requestTypes: [],
+      missingActiveAppCallerCodes: [],
+      lastSeenAt: null,
+      logsLink: `/logs?ingressProtocol=${encodeURIComponent(protocol)}`,
+      appCallersLink: `/app-callers?ingressProtocol=${encodeURIComponent(protocol)}`,
+    })),
+  };
+}
+
 function keyHealthLabel(summary: KeyHealthSummary) {
   if (summary.status === 'ok') return 'OK';
   if (summary.status === 'legacy') return 'Legacy';
   if (summary.status === 'config-missing') return '缺配置';
   if (summary.status === 'unreadable') return '不可解';
   return '未知';
+}
+
+function protocolCoverageTitle(protocol: string) {
+  if (protocol === 'gw-native') return 'GW Native';
+  if (protocol === 'openai-compatible') return 'OpenAI-compatible';
+  if (protocol === 'claude-compatible') return 'Claude-compatible';
+  if (protocol === 'gemini-compatible') return 'Gemini-compatible';
+  return protocol;
+}
+
+function protocolCoverageLabel(status: string) {
+  if (status === 'covered') return '已覆盖';
+  if (status === 'runtime-seen') return '有日志';
+  if (status === 'registry-only') return '仅注册';
+  return '无证据';
+}
+
+function protocolCoverageColor(status: string) {
+  if (status === 'covered') return '#3fb950';
+  if (status === 'runtime-seen') return '#d29922';
+  if (status === 'registry-only') return 'var(--accent)';
+  return 'var(--text-muted)';
+}
+
+function protocolCoverageBg(status: string) {
+  if (status === 'covered') return 'rgba(63,185,80,0.14)';
+  if (status === 'runtime-seen') return 'rgba(210,153,34,0.14)';
+  if (status === 'registry-only') return 'var(--accent-soft)';
+  return 'var(--bg-surface)';
 }
 
 function runtimeGateLabel(gates: RuntimeGatesData) {

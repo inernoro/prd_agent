@@ -297,6 +297,7 @@ def build_report() -> dict[str, Any]:
         [
             "app.MapGet(\"/gw/config-authority/report\"",
             "app.MapGet(\"/gw/runtime-gates\"",
+            "app.MapGet(\"/gw/protocol-coverage\"",
             "RuntimeGateLinks",
             "static RuntimeGateLink Link",
             "Links = RuntimeGateLinks",
@@ -327,6 +328,10 @@ def build_report() -> dict[str, Any]:
             "disableMapFallbackForActiveAppCallers",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
             "ReadLatestHttpFullRolloutLedgerEvidence",
+            "TargetIngressProtocols",
+            "NormalizeIngressProtocol",
+            "ProtocolCoverageData",
+            "DroppedParameterRequests",
             "ReadLatestConfigAuthorityRolloutLedgerEvidence",
             "LlmGateway:RolloutLedgerPath",
             "LLMGW_ROLLOUT_LEDGER",
@@ -429,6 +434,8 @@ def build_report() -> dict[str, Any]:
             "/audits?targetType=llmgw_config_authority",
             "configAuthority",
             "RuntimeGatePanel",
+            "ProtocolCoveragePanel",
+            "getProtocolCoverage({ sinceHours: 24 })",
             "bulkUpdateGatewayAppCallers",
         ],
     )

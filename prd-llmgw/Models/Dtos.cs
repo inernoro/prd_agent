@@ -267,6 +267,40 @@ public sealed class LogsBucketItem
     public long Count { get; set; }
 }
 
+// ── 协议入口运行覆盖 ──
+public sealed class ProtocolCoverageData
+{
+    public string? ReleaseCommit { get; set; }
+    public int SinceHours { get; set; }
+    public string GeneratedAt { get; set; } = "";
+    public long TotalLogRequests { get; set; }
+    public int TotalRegisteredAppCallers { get; set; }
+    public int TotalActiveAppCallers { get; set; }
+    public int CoveredProtocols { get; set; }
+    public int MissingRuntimeProtocols { get; set; }
+    public List<ProtocolCoverageItem> Items { get; set; } = new();
+}
+
+public sealed class ProtocolCoverageItem
+{
+    public string IngressProtocol { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Status { get; set; } = "";
+    public int RegisteredAppCallers { get; set; }
+    public int ActiveAppCallers { get; set; }
+    public int CoveredActiveAppCallers { get; set; }
+    public int MissingActiveAppCallers { get; set; }
+    public long LogRequests { get; set; }
+    public long HttpRequests { get; set; }
+    public long FailedRequests { get; set; }
+    public long DroppedParameterRequests { get; set; }
+    public List<string> RequestTypes { get; set; } = new();
+    public List<string> MissingActiveAppCallerCodes { get; set; } = new();
+    public string? LastSeenAt { get; set; }
+    public string LogsLink { get; set; } = "";
+    public string AppCallersLink { get; set; } = "";
+}
+
 // ── 时间序列 ──
 public sealed class TimeseriesPoint
 {

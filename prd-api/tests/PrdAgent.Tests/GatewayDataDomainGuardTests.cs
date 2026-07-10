@@ -130,6 +130,37 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void Console_ExposesProtocolCoverageFromGatewayLogsAndRegistry()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
+        var webApi = ReadRepoFile("prd-llmgw-web/src/lib/api.ts");
+        var webTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var overviewPage = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
+        var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
+
+        Assert.Contains("public sealed class ProtocolCoverageData", consoleDtos);
+        Assert.Contains("public sealed class ProtocolCoverageItem", consoleDtos);
+        Assert.Contains("DroppedParameterRequests", consoleDtos);
+        Assert.Contains("app.MapGet(\"/gw/protocol-coverage\"", consoleProgram);
+        Assert.Contains("TargetIngressProtocols", consoleProgram);
+        Assert.Contains("NormalizeIngressProtocol", consoleProgram);
+        Assert.Contains("IsRuntimeGovernedAppCallerStatus", consoleProgram);
+        Assert.Contains("HasDroppedParameters", consoleProgram);
+        Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
+        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_app_callers\")", consoleProgram);
+        Assert.Contains("GetCollection<BsonDocument>(\"llmrequestlogs\")", consoleProgram);
+        Assert.Contains("ProtocolCoverageData", webTypes);
+        Assert.Contains("ProtocolCoverageItem", webTypes);
+        Assert.Contains("getProtocolCoverage", webApi);
+        Assert.Contains("getProtocolCoverage({ sinceHours: 24 })", overviewPage);
+        Assert.Contains("ProtocolCoveragePanel", overviewPage);
+        Assert.Contains("协议入口覆盖", overviewPage);
+        Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
+        Assert.Contains("ProtocolCoveragePanel", protocolAudit);
+    }
+
+    [Fact]
     public void ConsoleWriteOperations_AreAuditedToGatewayDatabase()
     {
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");

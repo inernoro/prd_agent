@@ -230,6 +230,37 @@ export type LogsSummaryData = {
   modelPolicyDistribution: LogsBucketItem[];
 };
 
+export type ProtocolCoverageItem = {
+  ingressProtocol: string;
+  label: string;
+  status: string;
+  registeredAppCallers: number;
+  activeAppCallers: number;
+  coveredActiveAppCallers: number;
+  missingActiveAppCallers: number;
+  logRequests: number;
+  httpRequests: number;
+  failedRequests: number;
+  droppedParameterRequests: number;
+  requestTypes: string[];
+  missingActiveAppCallerCodes: string[];
+  lastSeenAt?: string | null;
+  logsLink: string;
+  appCallersLink: string;
+};
+
+export type ProtocolCoverageData = {
+  releaseCommit?: string | null;
+  sinceHours: number;
+  generatedAt: string;
+  totalLogRequests: number;
+  totalRegisteredAppCallers: number;
+  totalActiveAppCallers: number;
+  coveredProtocols: number;
+  missingRuntimeProtocols: number;
+  items: ProtocolCoverageItem[];
+};
+
 // ── 列表查询参数 ──
 export type LogsListParams = {
   page?: number;

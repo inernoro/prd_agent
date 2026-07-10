@@ -468,6 +468,108 @@ app.MapGet("/gw/logs/summary", async (
     return Json(ApiEnvelope<LogsSummaryData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ───────────────────────────── 协议入口运行覆盖（需鉴权）─────────────────────────────
+app.MapGet("/gw/protocol-coverage", async (string? releaseCommit, int? sinceHours) =>
+{
+    var hours = sinceHours is > 0 and <= 24 * 30 ? sinceHours.Value : 24;
+    var runtimeCommit = NormalizeCommitFilter(releaseCommit);
+    var since = DateTime.UtcNow.AddHours(-hours);
+    var logFilter = runtimeCommit is null
+        ? Builders<BsonDocument>.Filter.Gte("StartedAt", since)
+        : Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit);
+    logFilter = Builders<BsonDocument>.Filter.And(
+        logFilter,
+        Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true));
+
+    var logProjection = Builders<BsonDocument>.Projection
+        .Include("IngressProtocol")
+        .Include("AppCallerCode")
+        .Include("RequestType")
+        .Include("GatewayTransport")
+        .Include("Status")
+        .Include("StartedAt")
+        .Include("DroppedParameters");
+    var logDocs = await logs.Find(logFilter).Project(logProjection).ToListAsync();
+    var appCallerDocs = await gwAppCallers.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
+
+    var items = TargetIngressProtocols().Select(protocol =>
+    {
+        var registryDocs = appCallerDocs
+            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .ToList();
+        var activeDocs = registryDocs
+            .Where(d => IsRuntimeGovernedAppCallerStatus(d.AsNullableString("Status")))
+            .ToList();
+        var activeCodes = activeDocs
+            .Select(d => d.AsNullableString("AppCallerCode"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.Ordinal);
+        var protocolLogs = logDocs
+            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .ToList();
+        var loggedCodes = protocolLogs
+            .Select(d => d.AsNullableString("AppCallerCode"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.Ordinal);
+        var coveredActive = activeCodes.Count(loggedCodes.Contains);
+        var missingActive = activeCodes
+            .Where(code => !loggedCodes.Contains(code))
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+        var registryLastSeen = registryDocs
+            .Select(d => d.AsNullableUtcDateTime("LastSeenAt"))
+            .Where(x => x is not null)
+            .Select(x => x!.Value);
+        var logLastSeen = protocolLogs
+            .Select(d => d.AsNullableUtcDateTime("StartedAt"))
+            .Where(x => x is not null)
+            .Select(x => x!.Value);
+        var lastSeen = registryLastSeen.Concat(logLastSeen).DefaultIfEmpty().Max();
+        var status = registryDocs.Count == 0 && protocolLogs.Count == 0
+            ? "no-evidence"
+            : activeCodes.Count > 0 && missingActive.Count == 0 && protocolLogs.Count > 0
+                ? "covered"
+                : protocolLogs.Count > 0
+                    ? "runtime-seen"
+                    : "registry-only";
+
+        return new ProtocolCoverageItem
+        {
+            IngressProtocol = protocol.Key,
+            Label = protocol.Label,
+            Status = status,
+            RegisteredAppCallers = registryDocs.Count,
+            ActiveAppCallers = activeCodes.Count,
+            CoveredActiveAppCallers = coveredActive,
+            MissingActiveAppCallers = missingActive.Count,
+            LogRequests = protocolLogs.Count,
+            HttpRequests = protocolLogs.LongCount(d => string.Equals(d.AsNullableString("GatewayTransport"), "http", StringComparison.OrdinalIgnoreCase)),
+            FailedRequests = protocolLogs.LongCount(d => string.Equals(d.AsNullableString("Status"), "failed", StringComparison.OrdinalIgnoreCase)),
+            DroppedParameterRequests = protocolLogs.LongCount(HasDroppedParameters),
+            RequestTypes = NormalizeDistinct(protocolLogs.Select(d => d.AsNullableString("RequestType")), 20),
+            MissingActiveAppCallerCodes = missingActive.Take(20).ToList(),
+            LastSeenAt = lastSeen == default ? null : lastSeen.ToString("O"),
+            LogsLink = $"/logs?ingressProtocol={Uri.EscapeDataString(protocol.Key)}{(runtimeCommit is null ? string.Empty : $"&releaseCommit={Uri.EscapeDataString(runtimeCommit)}")}",
+            AppCallersLink = $"/app-callers?ingressProtocol={Uri.EscapeDataString(protocol.Key)}",
+        };
+    }).ToList();
+
+    return Json(ApiEnvelope<ProtocolCoverageData>.Ok(new ProtocolCoverageData
+    {
+        ReleaseCommit = runtimeCommit,
+        SinceHours = hours,
+        GeneratedAt = DateTime.UtcNow.ToString("O"),
+        TotalLogRequests = logDocs.Count,
+        TotalRegisteredAppCallers = items.Sum(x => x.RegisteredAppCallers),
+        TotalActiveAppCallers = items.Sum(x => x.ActiveAppCallers),
+        CoveredProtocols = items.Count(x => x.LogRequests > 0),
+        MissingRuntimeProtocols = items.Count(x => x.LogRequests == 0),
+        Items = items,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // ───────────────────────────── 会话聚合（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
@@ -4063,6 +4165,42 @@ static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string f
         .OrderByDescending(x => x.Count)
         .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
         .ToList();
+
+static IReadOnlyList<(string Key, string Label)> TargetIngressProtocols() => new[]
+{
+    ("gw-native", "GW Native"),
+    ("openai-compatible", "OpenAI-compatible"),
+    ("claude-compatible", "Claude-compatible"),
+    ("gemini-compatible", "Gemini-compatible"),
+};
+
+static string NormalizeIngressProtocol(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value)) return "unknown";
+    var normalized = value.Trim().ToLowerInvariant().Replace('_', '-');
+    return normalized switch
+    {
+        "native" or "gw" or "gateway-native" => "gw-native",
+        "openai" or "openai-compatible" or "openai-chat" => "openai-compatible",
+        "claude" or "anthropic" or "anthropic-compatible" => "claude-compatible",
+        "gemini" or "google" or "google-compatible" => "gemini-compatible",
+        _ => normalized,
+    };
+}
+
+static bool IsRuntimeGovernedAppCallerStatus(string? value)
+{
+    var normalized = string.IsNullOrWhiteSpace(value) ? "discovered" : value.Trim().ToLowerInvariant();
+    return normalized is "active" or "configured";
+}
+
+static bool HasDroppedParameters(BsonDocument doc)
+{
+    if (!doc.TryGetValue("DroppedParameters", out var value) || value.IsBsonNull) return false;
+    if (value.IsBsonArray) return value.AsBsonArray.Count > 0;
+    if (value.IsString) return !string.IsNullOrWhiteSpace(value.AsString);
+    return false;
+}
 
 static LlmLogListItem MapListItem(BsonDocument d) => new()
 {
