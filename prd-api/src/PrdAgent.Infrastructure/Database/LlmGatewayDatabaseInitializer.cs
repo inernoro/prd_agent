@@ -33,6 +33,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         var callers = _data.Database.GetCollection<GatewayAppCallerRecord>(AppCallerCollectionName);
         await ConsolidateDuplicateAppCallersAsync(callers, cancellationToken);
+        await EnsureBudgetConfigurationIntegrityAsync(callers, cancellationToken);
 
         var indexes = new[]
         {
@@ -223,6 +224,38 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         await _data.Database.GetCollection<BsonDocument>(collectionName)
             .Indexes.CreateManyAsync(indexes, cancellationToken: ct);
+    }
+
+    private async Task EnsureBudgetConfigurationIntegrityAsync(
+        IMongoCollection<GatewayAppCallerRecord> callers,
+        CancellationToken ct)
+    {
+        var fb = Builders<GatewayAppCallerRecord>.Filter;
+        var monthlyWithoutReservation = fb.Gt(x => x.MonthlyBudgetUsd, 0)
+                                        & (fb.Eq(x => x.BudgetReservationUsd, null)
+                                           | fb.Lte(x => x.BudgetReservationUsd, 0));
+        var reservationWithoutMonthly = fb.Gt(x => x.BudgetReservationUsd, 0)
+                                        & (fb.Eq(x => x.MonthlyBudgetUsd, null)
+                                           | fb.Lte(x => x.MonthlyBudgetUsd, 0));
+        FilterDefinition<GatewayAppCallerRecord> reservationExceedsMonthly =
+            new BsonDocumentFilterDefinition<GatewayAppCallerRecord>(new BsonDocument(
+                "$expr",
+                new BsonDocument("$gt", new BsonArray { "$BudgetReservationUsd", "$MonthlyBudgetUsd" })));
+        var invalid = await callers.Find(fb.Or(
+                monthlyWithoutReservation,
+                reservationWithoutMonthly,
+                reservationExceedsMonthly))
+            .Project(x => new { x.AppCallerCode, x.RequestType })
+            .Limit(20)
+            .ToListAsync(ct);
+        if (invalid.Count == 0) return;
+
+        var identities = string.Join(", ", invalid.Select(x => $"{x.AppCallerCode}::{x.RequestType}"));
+        _logger.LogCritical(
+            "[LlmGatewayData] 检测到无效预算配置，拒绝启动 serving；必须成对配置 MonthlyBudgetUsd 与 BudgetReservationUsd，且单次预占不能超过月预算。Callers={Callers}",
+            identities);
+        throw new InvalidOperationException(
+            $"APP_CALLER_BUDGET_MIGRATION_REQUIRED: {identities}");
     }
 
     private async Task ConsolidateDuplicateAppCallersAsync(

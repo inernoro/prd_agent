@@ -1895,6 +1895,18 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
     var doc = await gwAppCallers.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
 
+    var effectiveMonthlyBudget = body.MonthlyBudgetUsd is null
+        ? doc.AsNullableDecimal("MonthlyBudgetUsd")
+        : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+    var effectiveBudgetReservation = body.BudgetReservationUsd is null
+        ? body.MonthlyBudgetUsd == 0 ? null : doc.AsNullableDecimal("BudgetReservationUsd")
+        : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+    var budgetConfigurationError = ValidateBudgetConfiguration(effectiveMonthlyBudget, effectiveBudgetReservation);
+    if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+        budgetConfigurationError = "预算金额不能小于 0";
+    if (budgetConfigurationError is not null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", budgetConfigurationError), jsonOptions, 400);
+
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
     var effectiveStatus = doc.AsNullableString("Status") ?? "discovered";
@@ -2023,6 +2035,11 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddChange("monthlyBudgetUsd", doc.AsNullableDecimal("MonthlyBudgetUsd"), null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), null);
+            }
         }
         else
         {
@@ -2248,6 +2265,11 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddSetSummary("monthlyBudgetUsd", null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddSetSummary("budgetReservationUsd", null);
+            }
         }
         else
         {
@@ -2296,6 +2318,32 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
     }
 
     var filter = fb.And(filters);
+    if (body.MonthlyBudgetUsd is not null || body.BudgetReservationUsd is not null)
+    {
+        if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "预算金额不能小于 0"), jsonOptions, 400);
+
+        var budgetDocuments = await gwAppCallers.Find(filter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("AppCallerCode")
+                .Include("RequestType")
+                .Include("MonthlyBudgetUsd")
+                .Include("BudgetReservationUsd"))
+            .ToListAsync();
+        foreach (var budgetDocument in budgetDocuments)
+        {
+            var monthlyBudget = body.MonthlyBudgetUsd is null
+                ? budgetDocument.AsNullableDecimal("MonthlyBudgetUsd")
+                : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+            var reservation = body.BudgetReservationUsd is null
+                ? body.MonthlyBudgetUsd == 0 ? null : budgetDocument.AsNullableDecimal("BudgetReservationUsd")
+                : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+            var error = ValidateBudgetConfiguration(monthlyBudget, reservation);
+            if (error is null) continue;
+            var identity = $"{budgetDocument.GetStringOrEmpty("AppCallerCode")}::{budgetDocument.GetStringOrEmpty("RequestType")}";
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", $"{identity}: {error}"), jsonOptions, 400);
+        }
+    }
     var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
         gwAppCallers,
         gwModelPools,
@@ -5671,6 +5719,19 @@ static bool IsTruthy(string? value)
            || string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "y", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase);
+}
+
+static decimal? NormalizePositiveBudget(decimal value) => value > 0 ? value : null;
+
+static string? ValidateBudgetConfiguration(decimal? monthlyBudgetUsd, decimal? budgetReservationUsd)
+{
+    if (monthlyBudgetUsd is null or <= 0)
+        return budgetReservationUsd is > 0 ? "配置单次预算预占前必须先配置月预算" : null;
+    if (budgetReservationUsd is null or <= 0)
+        return "配置月预算时必须同时配置大于 0 的单次预算预占";
+    if (budgetReservationUsd > monthlyBudgetUsd)
+        return "单次预算预占不能超过月预算";
+    return null;
 }
 
 // 统一 JSON 输出（带信封 + 指定状态码）。

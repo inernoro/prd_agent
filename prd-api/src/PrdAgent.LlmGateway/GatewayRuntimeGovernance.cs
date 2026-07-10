@@ -568,6 +568,9 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
 
         var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
         var expired = await multipart.Find(x => x.Status != "deleted" && x.ExpiresAt <= DateTime.UtcNow).Limit(200).ToListAsync(ct);
+        // Budget reservation expiry is runtime accounting, not data retention. It must run
+        // even while destructive retention remains in dry-run mode.
+        await _budgets.ReleaseExpiredAsync(ct);
         if (apply)
         {
             foreach (var item in expired)
@@ -586,7 +589,6 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
                     _logger.LogWarning(ex, "[GatewayLifecycle] multipart cleanup failed ref={RefKey}", item.RefKey);
                 }
             }
-            await _budgets.ReleaseExpiredAsync(ct);
         }
 
         _logger.LogInformation(

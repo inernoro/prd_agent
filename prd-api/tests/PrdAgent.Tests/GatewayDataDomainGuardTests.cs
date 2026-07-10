@@ -1375,6 +1375,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway serving probe", script);
         Assert.Contains("/healthz", script);
         Assert.Contains("/readyz", script);
+        Assert.Contains("_request(base, \"/readyz\", key=key)", script);
         Assert.Contains("readyz not ready", script);
         Assert.Contains("components", script);
         Assert.Contains("--expect-commit", script);
@@ -1394,7 +1395,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("protected endpoint {method} {path} should reject missing key with 401", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
-        Assert.DoesNotContain("GW_KEY", script);
     }
 
     [Fact]
@@ -2036,6 +2036,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("uniq_llmgw_provider_concurrency_slot", initializer);
         Assert.Contains("ttl_llmgw_provider_concurrency_slot", initializer);
         Assert.Contains("LlmGateway:Retention:EnableTtlIndexes", initializer);
+        Assert.Contains("EnsureBudgetConfigurationIntegrityAsync", initializer);
+        Assert.Contains("APP_CALLER_BUDGET_MIGRATION_REQUIRED", initializer);
 
         Assert.Contains("class GatewayBudgetCoordinator", runtime);
         Assert.Contains("FindOneAndUpdateAsync", runtime);
@@ -2045,6 +2047,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GATEWAY_KEY_SCOPE_DENIED", runtime);
         Assert.Contains("class GatewayCancellationRegistry", runtime);
         Assert.Contains("class GatewayDataLifecycleWorker", runtime);
+        Assert.True(
+            runtime.IndexOf("await _budgets.ReleaseExpiredAsync(ct);", StringComparison.Ordinal)
+            < runtime.IndexOf("if (apply)", runtime.IndexOf("var multipart", StringComparison.Ordinal), StringComparison.Ordinal),
+            "预算过期结算必须独立于 retention apply 开关");
 
         Assert.Contains("class GatewayProviderConcurrencyCoordinator", concurrency);
         Assert.Contains("PROVIDER_CONCURRENCY_EXHAUSTED", concurrency);
@@ -2065,6 +2071,11 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("ensure_serving_probe_evidence", stage);
         Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);
+
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        Assert.Contains("ValidateBudgetConfiguration", console);
+        Assert.Contains("配置月预算时必须同时配置大于 0 的单次预算预占", console);
+        Assert.Contains("单次预算预占不能超过月预算", console);
     }
 
     private static string ReadRepoFile(string relativePath)

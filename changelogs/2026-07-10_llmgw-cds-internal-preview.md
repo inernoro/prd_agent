@@ -3,6 +3,8 @@
 | security | prd-api | 将显式取消注册表按 appCallerCode 与 requestId 联合隔离，阻止跨调用方取消运行中请求 |
 | security | prd-api | scoped key 的空来源、空协议、空调用方或空 scope 改为拒绝，仅显式星号允许通配 |
 | fix | prd-api | unknown 上游结果的预算预占到期后改为保守结算，避免成功受理但响应丢失时低估月消费 |
+| fix | prd-api | serving readiness 探针携带网关 key，并让预算过期结算独立于数据保留开关 |
+| fix | prd-llmgw | 禁止保存月预算与单次预占不成对或预占超过月预算的 appCaller 配置，并在 serving 启动时阻断无效存量配置 |
 | feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
 | feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
 | feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |
