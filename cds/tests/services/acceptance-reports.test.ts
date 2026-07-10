@@ -17,6 +17,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('StateService acceptance reports', () => {
   let stateFile: string;
   let service: StateService;
@@ -31,10 +32,11 @@ describe('StateService acceptance reports', () => {
     service.load();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_CACHE_BASE;
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('creates a report: writes content file + metadata, records sizeBytes', () => {
@@ -127,8 +129,10 @@ describe('StateService acceptance reports', () => {
     expect(service.deleteAcceptanceReport('nope')).toBe(false);
   });
 
-  it('persists metadata across a reload (file-backed state round-trip)', () => {
+  it('persists metadata across a reload (file-backed state round-trip)', async () => {
     const meta = service.createAcceptanceReport({ title: 'Persisted', format: 'md', content: '# kept' });
+    // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+    await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
     const reloaded = new StateService(stateFile);
     reloaded.load();

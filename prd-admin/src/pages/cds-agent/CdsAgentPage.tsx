@@ -1135,7 +1135,7 @@ export default function CdsAgentPage() {
         }
       : null,
     nextActions: backendR1RepairPlan?.nextActions ?? [
-      '使用 claude-sdk runtime + anthropic protocol 保存 Claude Code provider-switch profile。',
+      '使用 Claude sidecar runtime（标识 claude-sdk，自研 sidecar / Anthropic 协议）保存 Claude Code provider-switch profile。',
       'DeepSeek/cc-switch 可使用自定义 provider secret；只有原生 api.anthropic.com 才要求 sk-ant。',
       '点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。',
     ],
@@ -1594,7 +1594,7 @@ export default function CdsAgentPage() {
           ? `${defaultRuntimeProfile?.name} 已兼容 ${desiredRuntimeAdapter || 'claude-agent-sdk'}，且 provider secret 已保存。`
           : defaultRuntimeProfile
           ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Claude Code provider-switch profile，真实 S1/S2/S3 会被阻断。`
-          : '需要保存 claude-sdk runtime + anthropic protocol 的默认 CDS-managed runtime profile，并保存 provider secret.'),
+          : '需要保存 Claude sidecar runtime（标识 claude-sdk，Anthropic 协议）的默认 CDS-managed runtime profile，并保存 provider secret.'),
         state: backendGateState('R1', defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending'),
         reasonCode: backendGateReasonCode('R1') || profileCompatibilityReasonCode || null,
       },

@@ -18,6 +18,14 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
         {
             context = context with { ForceFullShadowSample = true };
         }
+        if (prev?.IsHealthProbe == true && context.IsHealthProbe != true)
+        {
+            context = context with { IsHealthProbe = true };
+        }
+        if (!string.IsNullOrWhiteSpace(prev?.RunId) && string.IsNullOrWhiteSpace(context.RunId))
+        {
+            context = context with { RunId = prev.RunId };
+        }
         _current.Value = context;
         return new Scope(() => _current.Value = prev);
     }

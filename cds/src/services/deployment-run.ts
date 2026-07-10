@@ -61,7 +61,7 @@ export class DeploymentRunService {
     this.maxEvents = Math.max(1, options.maxEvents || 500);
   }
 
-  begin(input: BeginDeploymentRunInput): DeploymentRun {
+  async begin(input: BeginDeploymentRunInput): Promise<DeploymentRun> {
     const at = this.nowIso();
     const phase = input.phase || 'accepted';
     const run: DeploymentRun = {
@@ -90,7 +90,9 @@ export class DeploymentRunService {
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
-    return this.stateService.addDeploymentRun(run);
+    const persisted = this.stateService.addDeploymentRun(run);
+    await this.stateService.flush();
+    return persisted;
   }
 
   get(id: string): DeploymentRun | undefined {

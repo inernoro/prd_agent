@@ -10,6 +10,7 @@ import { CdsPairingService } from '../../src/services/connection/pairing-service
 import { StateService } from '../../src/services/state.js';
 import type { BuildProfile, Project } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server,
   method: string,
@@ -76,10 +77,11 @@ describe('Remote hosts project instances route', () => {
   let runtimeServer: http.Server | undefined;
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (runtimeServer) await new Promise<void>((resolve) => runtimeServer!.close(() => resolve()));
     runtimeServer = undefined;
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     for (const key of previewEnvKeys) delete process.env[key];
   });
 

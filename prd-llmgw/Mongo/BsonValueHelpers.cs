@@ -22,6 +22,26 @@ public static class BsonValueHelpers
     public static string GetStringOrEmpty(this BsonDocument doc, string name)
         => doc.AsNullableString(name) ?? string.Empty;
 
+    public static List<string> AsStringList(this BsonDocument doc, string name)
+    {
+        if (!doc.TryGetValue(name, out var v) || v.IsBsonNull) return new List<string>();
+        if (v.IsBsonArray)
+        {
+            return v.AsBsonArray
+                .Where(x => !x.IsBsonNull)
+                .Select(x => x.BsonType == BsonType.String ? x.AsString : x.ToString())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+        if (v.BsonType == BsonType.String && !string.IsNullOrWhiteSpace(v.AsString))
+        {
+            return new List<string> { v.AsString };
+        }
+        return new List<string>();
+    }
+
     public static int? AsNullableInt(this BsonDocument doc, string name)
     {
         if (!doc.TryGetValue(name, out var v) || v.IsBsonNull) return null;

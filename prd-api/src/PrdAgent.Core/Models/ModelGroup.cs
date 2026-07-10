@@ -1,4 +1,5 @@
 using PrdAgent.Core.Attributes;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
@@ -6,6 +7,7 @@ namespace PrdAgent.Core.Models;
 /// 模型分组 - 按模型类型组织的模型列表
 /// </summary>
 [AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
+[BsonIgnoreExtraElements]
 public class ModelGroup
 {
     /// <summary>分组ID（UUID，唯一标识）</summary>
@@ -96,6 +98,24 @@ public class ModelGroupItem
     /// </summary>
     public int? MaxTokens { get; set; }
 
+    /// <summary>是否为主对话模型（保存池成员时从模型配置复制的能力快照）</summary>
+    public bool IsMain { get; set; } = false;
+
+    /// <summary>是否为意图模型（保存池成员时从模型配置复制的能力快照）</summary>
+    public bool IsIntent { get; set; } = false;
+
+    /// <summary>是否为视觉模型（保存池成员时从模型配置复制的能力快照）</summary>
+    public bool IsVision { get; set; } = false;
+
+    /// <summary>是否为生图模型（保存池成员时从模型配置复制的能力快照）</summary>
+    public bool IsImageGen { get; set; } = false;
+
+    /// <summary>
+    /// 模型能力快照。GW 控制台保存池成员时从 LLMModel.Capabilities 复制，
+    /// 供 router 做能力门与日志解释；旧数据为空时保持 best-effort。
+    /// </summary>
+    public List<LLMModelCapability>? Capabilities { get; set; }
+
     /// <summary>
     /// 输入 Token 单价（元/百万 Token）
     /// - null: 未配置，成本中心不计算该模型的 Token 成本
@@ -113,6 +133,11 @@ public class ModelGroupItem
     /// - null: 不按次计费
     /// </summary>
     public decimal? PricePerCall { get; set; }
+
+    /// <summary>
+    /// 价格币种（CNY/USD）。null 表示历史数据，按 CNY 解释。
+    /// </summary>
+    public string? PriceCurrency { get; set; }
 }
 
 /// <summary>

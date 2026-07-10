@@ -101,9 +101,16 @@ export interface JanitorSweepReport {
   diskWarning: boolean;
   /** Docker 垃圾清理结果(悬空镜像 + 构建缓存)。null = 本次未执行。 */
   dockerPrune: DockerPruneResult | null;
+  /** 孤儿 infra 容器对账(在 Docker 里但不在 CDS 台账上,2026-07-09)。
+   *  只报不删——infra 容器是项目级共享,误删代价高;删除决策留给运维。
+   *  null = 本次未执行(未注入扫描函数)。 */
+  orphanInfraContainers: string[] | null;
   /** Any errors encountered (non-fatal). */
   errors: string[];
 }
+
+/** Callback: 返回孤儿 infra 容器名列表(在 Docker 但不在 state 台账)。 */
+export type OrphanInfraScanFn = () => Promise<string[]>;
 
 export interface JanitorSnapshot {
   enabled: boolean;
@@ -179,6 +186,7 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
 export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
   private removeFn: RemoveBranchFn | null = null;
+  private orphanInfraScan: OrphanInfraScanFn | null = null;
 
   constructor(
     private readonly stateService: StateService,
@@ -191,6 +199,11 @@ export class JanitorService {
 
   setRemoveFn(fn: RemoveBranchFn): void {
     this.removeFn = fn;
+  }
+
+  /** 注入孤儿 infra 对账扫描（index.ts 组装 containerService + state 台账 + 告警落点）。 */
+  setOrphanInfraScan(fn: OrphanInfraScanFn): void {
+    this.orphanInfraScan = fn;
   }
 
   isEnabled(): boolean {
@@ -251,6 +264,7 @@ export class JanitorService {
       disk: null,
       diskWarning: false,
       dockerPrune: null,
+      orphanInfraContainers: null,
       errors: [],
     };
 
@@ -281,6 +295,20 @@ export class JanitorService {
         for (const e of report.dockerPrune.errors) report.errors.push(`docker prune ${e}`);
       } catch (err) {
         report.errors.push(`docker prune: ${(err as Error).message}`);
+      }
+    }
+
+    // 1.7 孤儿 infra 容器对账(2026-07-09,debt.cds.performance 根因 #2 降级实施):
+    //     不在 CDS 台账上的 infra 容器(历史遗留/手工启动)会长期吃 CPU/内存且无人知晓。
+    //     只报不删——把启动时的一次性 warn 周期化,让运维每次 sweep 都能看到。
+    if (this.orphanInfraScan) {
+      try {
+        report.orphanInfraContainers = await this.orphanInfraScan();
+        if (report.orphanInfraContainers.length > 0) {
+          console.warn(`[janitor] orphan infra containers (not in CDS state): ${report.orphanInfraContainers.join(', ')}`);
+        }
+      } catch (err) {
+        report.errors.push(`orphan infra scan: ${(err as Error).message}`);
       }
     }
 

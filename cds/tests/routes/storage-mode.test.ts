@@ -28,6 +28,7 @@ import { MongoStateBackingStore } from '../../src/infra/state-store/mongo-backin
 import type { IMongoHandle, IMongoCollection } from '../../src/infra/state-store/mongo-backing-store.js';
 import type { ISplitMongoCollection, ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 // ── Mongo fake (copied from mongo-backing-store.test.ts) ────────────
 class FakeCollection implements IMongoCollection {
   docs = new Map<string, any>();
@@ -89,6 +90,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: any; updatedAt: string }>();
   deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: any; updatedAt: string }>();
+  webhookDeliveries = new FakeSplitCollection<{ _id: string; receivedAt: string; doc: any; updatedAt: string }>();
+  activityLogs = new FakeSplitCollection<{ _id: string; projectId: string; at: string; doc: any; updatedAt: string }>();
   closed = false;
   async connect(): Promise<void> {}
   globalCollection() { return this.global; }
@@ -97,6 +100,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   deploymentRunsCollection() { return this.deploymentRuns; }
   deploymentVersionsCollection() { return this.deploymentVersions; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
+  webhookDeliveriesCollection() { return this.webhookDeliveries; }
+  activityLogsCollection() { return this.activityLogs; }
   async close(): Promise<void> { this.closed = true; }
   async ping(): Promise<boolean> { return true; }
 }
@@ -176,8 +181,9 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('GET /api/storage-mode', () => {

@@ -32,9 +32,9 @@ cd cds && pnpm tsc --noEmit        # 类型检查
 | `cds/web/` | React + Vite + TS + Tailwind + shadcn/ui（**新功能写这里**） | `cd cds/web && pnpm dev`（HMR）；`pnpm build` 出 `cds/web/dist/`；启动脚本会自动 build |
 | `cds/web-legacy/` | 原生 HTML/JS/CSS（仅修 bug，逐页迁完后删除） | 修改后刷新浏览器即可生效 |
 
-URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > React 已迁移路由（见 `server.ts` 的 `MIGRATED_REACT_ROUTES`） > legacy 静态 fallback。
+URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > React SPA 兜底（`server.ts` 的 `installSpaFallback()` 注册 `app.get('*')`）。**React Router 是 dashboard 唯一权威**：所有非 API 的 HTML 路由都由 Vite bundle 服务，旧 `.html` 文件名只保留显式 redirect，**不存在 legacy 静态 fallback**（`web-legacy/` 不再被服务，仅作代码对照层）。
 
-当前 React 已接管：`/hello`、`/cds-settings`、`/project-list`、`/branches/:projectId`、`/branch-list?project=<id>`、`/branch-panel/:branchId`、`/branch-topology?project=<id>`、`/settings/:projectId`。`/settings.html?project=<id>` 兼容入口会重定向到 `/settings/<id>`。
+路由清单以 `cds/web/src/App.tsx` 的 `<Route>` 表为准（本文件不维护副本，避免漂移）。`/settings.html?project=<id>` 等兼容入口会重定向到对应 React 路由。
 
 删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds.web-migration.md` 的 Week 4.5 做功能差距收敛。
 
@@ -63,7 +63,7 @@ color = 深色 (如 var(--text-primary) = 深棕)
 - `color: #e8e8ec` / `#cbd5e1` / `#fff` 之类的字面量
 - 在 `[data-theme="light"]` 块里把 `--bg-*` 定义成暗色
 
-提交前检查清单见 `.claude/rules/cds-theme-tokens.md` 顶部。
+提交前检查清单见仓库根 `.claude/rules/cds-theme-tokens.md` 顶部。
 
 ### 0.1. API label 全量覆盖（Activity Monitor 必须可读）
 
@@ -125,20 +125,20 @@ Flex 子元素默认 `min-height: auto`，会阻止 `max-height: 0` 的收缩生
 .collapsible.open { max-height: 480px; }
 ```
 
-详见 `.claude/rules/frontend-modal.md` 第 3 条。
+详见仓库根 `.claude/rules/frontend-modal.md` 第 3 条。
 
 ### 3. 主题 token 双写 + 禁止暗色 fallback
 
 所有 `--bg-*` / `--text-*` token 必须在 `cds/web-legacy/style.css` 的 `:root` 和 `[data-theme="light"]` **同时定义**（新栈 `cds/web/` 走 Tailwind tokens，规则等价但实现位于 `cds/web/src/index.css` 的 `:root` + `[data-theme="light"]` 块）。
 禁止 `var(--x, #darkColor)` 这种兜底色——缺定义时直接 `transparent` 或不写 fallback。
 
-详见 `.claude/rules/cds-theme-tokens.md`（含完整 token 表 + z-index 分层表）。
+详见仓库根 `.claude/rules/cds-theme-tokens.md`（含完整 token 表 + z-index 分层表）。
 
 ### 4. Bridge 操作（`cds/src/routes/bridge.ts`）
 
 > 暂停状态（2026-05-28）：Bridge HTTP 轮询默认关闭。除非显式设置 `CDS_BRIDGE_ENABLED=1`，Widget 不会轮询 `/api/bridge/*`，Dashboard 也不主动查询 Bridge 状态。
 
-Agent 通过 CDS 操作用户浏览器的规范见 `.claude/rules/bridge-ops.md`：
+Agent 通过 CDS 操作用户浏览器的规范见仓库根 `.claude/rules/bridge-ops.md`：
 - 端点 `POST /api/bridge/command/:branchId`（branchId 在 URL **不**在 body）
 - 每条指令必须带 `description`（中文，用户可见）
 - 登录后页面跳转用 `spa-navigate` 不用 `navigate`（避免 token 丢失）
@@ -182,14 +182,16 @@ cds/
 
 ## 相关规则速查
 
-| 规则 | 触发范围 | 核心 |
-|------|---------|------|
-| `.claude/rules/scope-naming.md` | 任何 UI 文案 / API 路径 / 状态字段 / commit | **强命名规范**：「CDS 系统设置」vs「项目设置」必须明示，禁裸用「设置」「用户设置」「全局设置」 |
-| `.claude/rules/cds-theme-tokens.md` | `cds/web-legacy/*.css`, `cds/web/src/index.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
-| `.claude/rules/frontend-modal.md` | `cds/web-legacy/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0`（新栈 `cds/web/` 走 shadcn Dialog 自动满足） |
-| `.claude/rules/bridge-ops.md` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |
-| `.claude/rules/cds-auto-deploy.md` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
-| `.claude/rules/quickstart-zero-friction.md` | `exec_cds.sh` | 一键启动包办所有依赖 |
-| `.claude/rules/content-fills-canvas.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | 内容填满画布：预览/详情/结果区必须 flex-1 填满占主导，禁小盒子 + 大片留白；高度从外壳（`.cds-workspace--fill`）一路传到产物 |
-| `.claude/rules/mobile-layout-fallback.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | desktop-fill 必须配 mobile-flow 兜底：< lg 从「填满」切到「自然流」（`flex flex-col` + 限高滚动区 + 模态 body 可滚 + 浮层限宽截断），desktop 用 `lg:` 叠回 fill；防止富面板在手机重叠/塌陷/溢出 |
-| `.claude/rules/expectation-management.md` | 任何用户感知的交互/等待/反馈 | 预期管理总纲：让用户随时知道在做什么/还要多久/接下来怎样/变了什么；CDS 的 ETA 等待页、构建进度即其落地 |
+> 路径说明：CDS 本地规则在 `cds/.claude/rules/`（下表前两条）；其余规则在**仓库根** `.claude/rules/`（从 cds/ 目录看是 `../.claude/rules/`），不要在 cds/.claude/rules/ 下找。
+
+| 规则 | 所在 | 触发范围 | 核心 |
+|------|------|---------|------|
+| `scope-naming.md` | `cds/.claude/rules/` | 任何 UI 文案 / API 路径 / 状态字段 / commit | **强命名规范**：「CDS 系统设置」vs「项目设置」必须明示，禁裸用「设置」「用户设置」「全局设置」 |
+| `mobile-layout-fallback.md` | `cds/.claude/rules/` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | desktop-fill 必须配 mobile-flow 兜底：< lg 从「填满」切到「自然流」（`flex flex-col` + 限高滚动区 + 模态 body 可滚 + 浮层限宽截断），desktop 用 `lg:` 叠回 fill；防止富面板在手机重叠/塌陷/溢出 |
+| `cds-theme-tokens.md` | 仓库根 `.claude/rules/` | `cds/web-legacy/*.css`, `cds/web/src/index.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
+| `frontend-modal.md` | 仓库根 `.claude/rules/` | `cds/web-legacy/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0`（新栈 `cds/web/` 走 shadcn Dialog 自动满足） |
+| `bridge-ops.md` | 仓库根 `.claude/rules/` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |
+| `cds-auto-deploy.md` | 仓库根 `.claude/rules/` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
+| `quickstart-zero-friction.md` | 仓库根 `.claude/rules/` | `exec_cds.sh` | 一键启动包办所有依赖 |
+| `content-fills-canvas.md` | 仓库根 `.claude/rules/` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | 内容填满画布：预览/详情/结果区必须 flex-1 填满占主导，禁小盒子 + 大片留白；高度从外壳（`.cds-workspace--fill`）一路传到产物 |
+| `expectation-management.md` | 仓库根 `.claude/rules/` | 任何用户感知的交互/等待/反馈 | 预期管理总纲：让用户随时知道在做什么/还要多久/接下来怎样/变了什么；CDS 的 ETA 等待页、构建进度即其落地 |

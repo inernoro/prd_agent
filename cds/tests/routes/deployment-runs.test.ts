@@ -72,12 +72,13 @@ describe('Deployment runs router', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stateService.flush();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('scopes list results to a project key and omits event payloads', async () => {
-    runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
-    runService.begin({ projectId: 'p2', branchId: 'b-p2', trigger: 'webhook' });
+    await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    await runService.begin({ projectId: 'p2', branchId: 'b-p2', trigger: 'webhook' });
 
     const response = await request(server, 'GET', '/api/deployment-runs', undefined, {
       'x-test-project': 'p1',
@@ -97,7 +98,7 @@ describe('Deployment runs router', () => {
   });
 
   it('enforces project access for run detail', async () => {
-    runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
     const response = await request(server, 'GET', '/api/deployment-runs/dr_1', undefined, {
       'x-test-project': 'p2',
     });
@@ -106,7 +107,7 @@ describe('Deployment runs router', () => {
   });
 
   it('resumes terminal SSE output after the requested sequence', async () => {
-    runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
     runService.transition('dr_1', 'preparing', { phase: 'pull', message: '正在准备源码' });
     runService.fail('dr_1', {
       code: 'cds.test.failed',
@@ -129,7 +130,7 @@ describe('Deployment runs router', () => {
   });
 
   it('returns deterministic diagnosis and streams visible AI explanation stages', async () => {
-    runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
     runService.fail('dr_1', {
       code: 'build.compile.typescript', owner: 'code', retryable: false,
       summary: 'TypeScript 编译失败', phase: 'build', evidenceRefs: ['deployment-run:dr_1:event:1'],

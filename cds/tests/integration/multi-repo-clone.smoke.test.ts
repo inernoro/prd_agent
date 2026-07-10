@@ -34,6 +34,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 interface SseEvent {
   event: string;
   data: any;
@@ -244,8 +245,9 @@ describe('P4 Part 18 (G1) multi-repo clone + worktree smoke test', () => {
   }, 30000);
 
   afterAll(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('completes the full clone → worktree → file landing round trip', async () => {

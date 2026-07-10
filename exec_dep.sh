@@ -478,9 +478,6 @@ config_value() {
 
 llmgw_mode_value() {
   value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  if [ -z "$value" ]; then
-    value="inproc"
-  fi
   printf '%s' "$value"
 }
 
@@ -503,6 +500,17 @@ llmgw_shadow_sample_allowlist_value() {
 guard_llmgw_prod_stage_context_if_needed() {
   mode_raw="$(llmgw_mode_value)"
   mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  if [ -z "$mode" ]; then
+    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
+    exit 1
+  fi
+  case "$mode" in
+    http|shadow|inproc) ;;
+    *)
+      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
+      exit 1
+      ;;
+  esac
   allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
@@ -802,7 +810,7 @@ run_llmgw_release_gate_if_needed() {
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 
@@ -952,6 +960,11 @@ run_llmgw_release_gate_if_needed() {
     args="$args --min-coverage-hours $gate_min_coverage_hours"
   fi
   args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
+  require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
+  if [ "$mode" = "http" ] || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
+    args="$args --require-config-authority"
+    echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
+  fi
   if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
     args="$args --json-out $LLMGW_GATE_JSON_OUT"
   fi
@@ -1052,7 +1065,7 @@ run_llmgw_release_gate_if_needed() {
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
@@ -1100,6 +1113,74 @@ run_llmgw_post_deploy_verification_if_needed() {
     GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
   else
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+  fi
+
+  protocol_canary_arg=""
+  run_protocol_canary="$(printf '%s' "${LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY:-0}" | xargs || true)"
+  case "$run_protocol_canary" in
+    1|true|TRUE|yes|YES|on|ON)
+      if [ ! -f "scripts/llmgw-protocol-canary.py" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requested but scripts/llmgw-protocol-canary.py is missing." >&2
+        exit 1
+      fi
+      if [ -z "$expect_commit" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requires immutable --commit/sha tag so --expect-commit can be enforced." >&2
+        exit 1
+      fi
+      protocol_canary_json="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}"
+      protocol_canary_md="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-}"
+      protocol_canary_max_runtime_calls="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-${LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}}"
+      if [ -z "$(printf '%s' "$protocol_canary_json" | xargs || true)" ]; then
+        echo "ERROR: LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=1 requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT." >&2
+        exit 1
+      fi
+      protocol_canary_json_dir="$(dirname -- "$protocol_canary_json")"
+      if [ -n "$protocol_canary_json_dir" ] && [ "$protocol_canary_json_dir" != "." ]; then
+        mkdir -p "$protocol_canary_json_dir"
+      fi
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_md_dir="$(dirname -- "$protocol_canary_md")"
+        if [ -n "$protocol_canary_md_dir" ] && [ "$protocol_canary_md_dir" != "." ]; then
+          mkdir -p "$protocol_canary_md_dir"
+        fi
+      fi
+      protocol_canary_report_args=""
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_report_args="--report-md $protocol_canary_md"
+      fi
+      echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
+      # shellcheck disable=SC2086
+      GW_KEY="$gate_key" python3 scripts/llmgw-protocol-canary.py \
+        --base "$gate_base" \
+        --expect-commit "$expect_commit" \
+        --execute \
+        --max-runtime-calls "$protocol_canary_max_runtime_calls" \
+        --json-out "$protocol_canary_json" \
+        $protocol_canary_report_args
+      protocol_canary_arg="--protocol-canary-json $protocol_canary_json"
+      ;;
+    *)
+      if [ -n "$(printf '%s' "${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}" | xargs || true)" ]; then
+        echo "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates"
+      fi
+      ;;
+  esac
+
+  require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
+  if [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
+    echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
+    runtime_gate_expect_arg=""
+    if [ -n "$expect_commit" ]; then
+      runtime_gate_expect_arg="--expect-commit $expect_commit"
+    fi
+    if [ "$mode" = "http" ] && [ "${LLMGW_PROD_STAGE:-}" = "http-full" ]; then
+      echo "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only"
+      runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
+    fi
+    # shellcheck disable=SC2086
+    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates
+  else
+    echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
   fi
 }
 

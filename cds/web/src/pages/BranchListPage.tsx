@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -37,7 +37,9 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { useNowTick } from '@/hooks/useNowTick';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
+import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
@@ -105,6 +107,10 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
 /* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。 */
 const APP_CHIP_FOLD_THRESHOLD = 8;
 
+/* 稳定的空数组引用：给 memo 化的 BranchCard 当默认值，避免每次渲染新建 [] 打破浅比较。 */
+const EMPTY_RESOURCES: BranchResource[] = [];
+const EMPTY_ACTIVITY: ActivityEvent[] = [];
+
 /* 基础容器托盘里的短名:托盘空间金贵,MongoDB → Mongo 这种通行缩写不损失辨识。 */
 const INFRA_RUNTIME_SHORT_NAME: Record<string, string> = {
   MongoDB: 'Mongo',
@@ -141,6 +147,16 @@ interface BranchSummary {
   lastPullAt?: string;
   lastDeployAt?: string;
   lastDeployStartedAt?: string;
+  /** 构建并发闸排队快照（2026-07-09）：存在 = 有服务仍在排队等构建槽位。 */
+  buildQueue?: {
+    queuedAt: string;
+    ahead: number;
+    active: number;
+    max: number;
+    serviceIds: string[];
+  };
+  /** 本轮部署累计排队等待毫秒（耗时对比与 ETA 均需剔除）。 */
+  lastDeployQueueWaitMs?: number;
   lastDeployDispatchAt?: string;
   lastStoppedAt?: string;
   lastStopReason?: string;
@@ -843,6 +859,21 @@ function formatDurationMs(ms: number | null | undefined): string {
 }
 
 /**
+ * 本轮部署的「净构建耗时」（2026-07-09 构建排队可视化）：
+ * 从 busySince 起算，剔除已结清的排队等待（lastDeployQueueWaitMs）与
+ * 仍在排队的进行中等待（buildQueue.queuedAt → now）。排队 ≠ 构建慢，
+ * 混进耗时会让「耗时 vs 预计」在多分支并发 push 时必然误报琥珀色超时。
+ */
+function effectiveDeployElapsedMs(branch: BranchSummary, busySince: string | undefined, now: number): number {
+  const startMs = busySince ? Date.parse(busySince) : NaN;
+  if (!Number.isFinite(startMs)) return 0;
+  const settledQueueMs = branch.lastDeployQueueWaitMs || 0;
+  const inflightQueuedAt = branch.buildQueue ? Date.parse(branch.buildQueue.queuedAt) : NaN;
+  const inflightQueueMs = Number.isFinite(inflightQueuedAt) ? Math.max(0, now - inflightQueuedAt) : 0;
+  return Math.max(0, now - startMs - settledQueueMs - inflightQueueMs);
+}
+
+/**
  * 根据分支当前运行模式（deployRuntime.kind）选对应的历史预计耗时。
  *   - kind='release'/'mixed' → 发布版样本
  *   - 其余 → 源码/热加载样本
@@ -1322,8 +1353,21 @@ export function BranchListPage(): JSX.Element {
   const [highlightPulseBranchId, setHighlightPulseBranchId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
-  const [actionClock, setActionClock] = useState(Date.now());
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  // 2026-07-09：perf-health 的 critical 告警前置到「运维」入口按钮（红点 + 红描边）。
+  // 此前唯一消费方是运维弹窗打开后的 useMonitoringData——调度器禁用/主机过载这类
+  // 会拖垮主机的状态用户不点开弹窗就永远看不到，「避免静默复发」的目标落空一半。
+  // 挂载轻量拉一次即可（弹窗内已有实时链路），旧版无端点/失败一律静默。
+  const [perfCriticals, setPerfCriticals] = useState<PerfWarning[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<PerfHealth>('/api/cds-system/perf-health')
+      .then((res) => {
+        if (!cancelled) setPerfCriticals((res.warnings || []).filter((w) => w.level === 'critical'));
+      })
+      .catch(() => { /* best-effort */ });
+    return () => { cancelled = true; };
+  }, []);
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -1398,13 +1442,10 @@ export function BranchListPage(): JSX.Element {
     });
   }, [setAction]);
 
-  useEffect(() => {
-    const hasRunningAction = Object.values(actions).some((action) => action.status === 'running');
-    const hasInterimBranch = state.status === 'ok' && state.branches.some((branch) => isBusy(branch));
-    if (!hasRunningAction && !hasInterimBranch) return;
-    const timer = window.setInterval(() => setActionClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [actions, state]);
+  // 2026-07-09 性能重构：删除页面顶层 1s setInterval(setActionClock)。
+  // 它曾把 5800 行页面 + 全部分支卡每秒整树重渲染（59 分支实测掉帧）。
+  // 「已用时」计时下沉到 BranchCard / BranchDetailDrawer 内部的 useNowTick
+  //（hooks/useNowTick.ts），滴答只重渲染需要计时的那张卡。
 
   // refresh 拆分(2026-04-30):远程分支独立 lazy load,不阻塞主区
   // ----------------------------------------------------------
@@ -2073,6 +2114,35 @@ export function BranchListPage(): JSX.Element {
     branches.forEach((b) => (b.tags || []).forEach((t) => set.add(t)));
     return Array.from(set).sort();
   }, [branches]);
+  // 2026-07-09 性能重构：卡片的派生数据一次性建 Map，不再在渲染循环里
+  // 逐卡重算（旧写法每次渲染都对每张卡跑 buildBranchResources + 全量
+  // activityEvents.filter，且产生新数组引用，React.memo 永远打不中）。
+  const branchResourcesById = useMemo(() => {
+    const map = new Map<string, BranchResource[]>();
+    if (state.status !== 'ok') return map;
+    for (const branch of state.branches) {
+      map.set(branch.id, branch.resources && branch.resources.length > 0 ? branch.resources : buildBranchResources({
+        branchId: branch.id,
+        branchName: branch.branch,
+        services: branch.services || {},
+        profiles: state.buildProfiles,
+        infraServices: state.infraServices,
+        previewUrl: state.previewMode === 'simple'
+          ? simplePreviewUrl(state.config)
+          : multiPreviewUrl(branch, state.config),
+      }));
+    }
+    return map;
+  }, [state]);
+  const aiActivityByBranch = useMemo(() => {
+    const map = new Map<string, ActivityEvent[]>();
+    const aiEvents = activityEvents.filter((event) => event.source === 'ai');
+    for (const branch of branches) {
+      const matched = aiEvents.filter((event) => activityBranchMatches(event, branch.id)).slice(0, 5);
+      if (matched.length > 0) map.set(branch.id, matched);
+    }
+    return map;
+  }, [activityEvents, branches]);
   // 当前过滤的标签已被全部分支删除时,自动清除过滤
   useEffect(() => {
     if (activeTagFilter && !allTags.includes(activeTagFilter)) {
@@ -2480,11 +2550,6 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
-  // 点击 chip → toggle 过滤(已激活同标签则清除,否则切到该标签)
-  const toggleTagFilter = useCallback((tag: string): void => {
-    setActiveTagFilter((current) => (current === tag ? null : tag));
-  }, []);
-
   const pullBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
     setAction(branch.id, createAction('pull', '正在拉取代码'));
     try {
@@ -2526,6 +2591,39 @@ export function BranchListPage(): JSX.Element {
       setToast(message);
     }
   }, [deployBranch, setAction]);
+
+  // 2026-07-09 性能重构：BranchCard 的回调走「latest ref」模式——
+  // cardHandlers 本身 useMemo([]) 恒定引用（配合 React.memo 让未变化的卡
+  // 跳过重渲染），实际实现每次渲染写进 ref，调用时读最新值，规避 stale closure。
+  const cardCallbacksRef = useRef({
+    openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
+    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
+    setReleaseBranchId,
+  });
+  cardCallbacksRef.current = {
+    openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
+    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
+    setReleaseBranchId,
+  };
+  const cardHandlers = useMemo(() => ({
+    onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false),
+    onRelease: (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id),
+    onDeploy: (branch: BranchSummary) => void cardCallbacksRef.current.deployBranch(branch, false),
+    onDetail: (branch: BranchSummary) => cardCallbacksRef.current.openBranchDetail(branch.id),
+    onResourcePanel: (branch: BranchSummary, resource: BranchResource) => cardCallbacksRef.current.openBranchResourcePanel(branch, resource),
+    onPull: (branch: BranchSummary) => void cardCallbacksRef.current.pullBranch(branch),
+    onStop: (branch: BranchSummary) => void cardCallbacksRef.current.stopBranch(branch),
+    onForceRebuild: (branch: BranchSummary) => void cardCallbacksRef.current.forceRebuildBranch(branch),
+    onToggleFavorite: (branch: BranchSummary) => void cardCallbacksRef.current.patchBranch(branch, { isFavorite: !branch.isFavorite }),
+    onToggleDebug: (branch: BranchSummary) => void cardCallbacksRef.current.patchBranch(branch, { isColorMarked: !branch.isColorMarked }),
+    onReset: (branch: BranchSummary) => void cardCallbacksRef.current.resetBranch(branch),
+    onDelete: (branch: BranchSummary) => void cardCallbacksRef.current.deleteBranch(branch),
+    onEditTags: (branch: BranchSummary) => void cardCallbacksRef.current.editTags(branch),
+    onAddTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.addTagToBranch(branch, tag),
+    onRemoveTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.removeTagFromBranch(branch, tag),
+  }), []);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -3083,10 +3181,16 @@ export function BranchListPage(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => setOpsDrawerOpen(true)}
-                title="运维（性能 / 执行器 / 活动 / 运维操作）"
+                title={perfCriticals.length > 0
+                  ? `运维健康告警：${perfCriticals[0].message}${perfCriticals.length > 1 ? `（共 ${perfCriticals.length} 条，点击查看）` : ''}`
+                  : '运维（性能 / 执行器 / 活动 / 运维操作）'}
+                className={perfCriticals.length > 0 ? 'relative text-red-600 ring-1 ring-red-500/45 dark:text-red-400' : undefined}
               >
                 <Activity />
                 运维
+                {perfCriticals.length > 0 ? (
+                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive" aria-hidden />
+                ) : null}
               </Button>
               {!sseConnected ? (
                 <Button
@@ -3217,44 +3321,17 @@ export function BranchListPage(): JSX.Element {
                   <BranchCard
                     key={branch.id}
                     branch={branch}
-                    resources={branch.resources && branch.resources.length > 0 ? branch.resources : state.status === 'ok' ? buildBranchResources({
-                      branchId: branch.id,
-                      branchName: branch.branch,
-                      services: branch.services || {},
-                      profiles: state.buildProfiles,
-                      infraServices: state.infraServices,
-                      previewUrl: state.previewMode === 'simple'
-                        ? simplePreviewUrl(state.config)
-                        : multiPreviewUrl(branch, state.config),
-                    }) : []}
+                    resources={branchResourcesById.get(branch.id) || EMPTY_RESOURCES}
                     action={actions[branch.id]}
-                    now={actionClock}
                     projectId={projectId}
                     resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
                     highlighted={highlightedBranchId === branch.id}
                     highlightPulse={highlightPulseBranchId === branch.id}
                     phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
-                    activityEvents={activityEvents
-                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
-                      .slice(0, 5)}
+                    activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
-                    onPreview={() => void openPreview(branch, false)}
-                    onRelease={() => setReleaseBranchId(branch.id)}
-                    onDeploy={() => void deployBranch(branch, false)}
-                    onDetail={() => openBranchDetail(branch.id)}
-                    onResourcePanel={(resource) => openBranchResourcePanel(branch, resource)}
-                    onPull={() => void pullBranch(branch)}
-                    onStop={() => void stopBranch(branch)}
-                    onForceRebuild={() => void forceRebuildBranch(branch)}
-                    onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
-                    onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
-                    onReset={() => void resetBranch(branch)}
-                    onDelete={() => void deleteBranch(branch)}
-                    onEditTags={() => void editTags(branch)}
-                    onAddTag={(tag) => void addTagToBranch(branch, tag)}
-                    onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
-                    onClickTag={toggleTagFilter}
+                    handlers={cardHandlers}
                   />
                 ))}
               </div>
@@ -3285,7 +3362,6 @@ export function BranchListPage(): JSX.Element {
           projectId={projectId}
           deployments={deployments}
           activityEvents={activityEvents}
-          now={actionClock}
           previewUrl={(() => {
             // Compute preview URL once at the call site so the Drawer
             // doesn't need to load /api/config separately. running 时
@@ -4497,44 +4573,51 @@ function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): strin
   return '失败';
 }
 
-function BranchCard({
-  branch,
-  resources,
-  action,
-  now,
-  capacityWarning,
-  resourceChipDisplay,
-  highlighted,
-  highlightPulse,
-  phase,
-  activityEvents = [],
-  activeTagFilter,
-  onPreview,
-  onRelease,
+/**
+ * 卡片回调集合（2026-07-09 性能重构）：所有回调接收 branch 参数、由父组件
+ * 经 latest-ref 模式产出**恒定引用**的一个对象——这是 BranchCard 能被
+ * React.memo 跳过重渲染的前提（旧写法每张卡 17 个内联箭头，浅比较永远不中）。
+ */
+interface BranchCardHandlers {
+  onPreview: (branch: BranchSummary) => void;
+  onRelease: (branch: BranchSummary) => void;
   // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // 2026-05-29 P0 复活:onDeploy 重新被卡片使用 —— 漂移徽标「一键收敛」点击时
   // 调它（= deployBranch → POST /deploy，读项目全部 build profile，补齐缺失服务）。
   // 注意收敛必须走 /deploy 而非 force-rebuild：后者只 rebuild branch.services 快照
   // 里已有的服务，补不回缺失的 profile（正是本次 openvisual 漂移的病根）。
-  onDeploy,
-  onDetail,
-  onResourcePanel,
-  onPull,
-  onStop,
-  onForceRebuild,
-  onToggleFavorite,
-  onToggleDebug,
-  onReset,
-  onDelete,
-  onEditTags,
-  onAddTag,
-  onRemoveTag,
-  onClickTag,
+  onDeploy: (branch: BranchSummary) => void;
+  onDetail: (branch: BranchSummary) => void;
+  onResourcePanel: (branch: BranchSummary, resource: BranchResource) => void;
+  onPull: (branch: BranchSummary) => void;
+  onStop: (branch: BranchSummary) => void;
+  onForceRebuild: (branch: BranchSummary) => void;
+  onToggleFavorite: (branch: BranchSummary) => void;
+  onToggleDebug: (branch: BranchSummary) => void;
+  onReset: (branch: BranchSummary) => void;
+  onDelete: (branch: BranchSummary) => void;
+  onEditTags: (branch: BranchSummary) => void;
+  // 单条标签操作(还原 legacy 卡片上的 chips + ×/+ 按钮)
+  onAddTag: (branch: BranchSummary, tag: string) => void;
+  onRemoveTag: (branch: BranchSummary, tag: string) => void;
+}
+
+const BranchCard = memo(function BranchCard({
+  branch,
+  resources,
+  action,
+  capacityWarning,
+  resourceChipDisplay,
+  highlighted,
+  highlightPulse,
+  phase,
+  activityEvents = EMPTY_ACTIVITY,
+  activeTagFilter,
+  handlers,
 }: {
   branch: BranchSummary;
   resources: BranchResource[];
   action?: BranchAction;
-  now: number;
   capacityWarning?: string;
   activityEvents?: ActivityEvent[];
   // projectId is reserved for future inline modes; the call site already
@@ -4554,31 +4637,38 @@ function BranchCard({
   phase?: 'entering' | 'leaving';
   // 当前激活的标签过滤(给 chip 高亮显示用)
   activeTagFilter?: string | null;
-  onSelect?: () => void;
-  onPreview: () => void;
-  onRelease: () => void;
-  onDeploy: () => void;
-  onDetail: () => void;
-  onResourcePanel?: (resource: BranchResource) => void;
-  onPull: () => void;
-  onStop: () => void;
-  onForceRebuild: () => void;
-  onToggleFavorite: () => void;
-  onToggleDebug: () => void;
-  onReset: () => void;
-  onDelete: () => void;
-  onEditTags: () => void;
-  // 单条标签操作(还原 legacy 卡片上的 chips + ×/+ 按钮)
-  onAddTag?: (tag: string) => void | Promise<void>;
-  onRemoveTag?: (tag: string) => void | Promise<void>;
-  onClickTag?: (tag: string) => void;
+  handlers: BranchCardHandlers;
 }): JSX.Element {
   /*
    * BranchTile — compact card inside the adaptive branch grid. Primary
    * preview/release actions are merged into one split button; low-frequency
    * branch operations live in the kebab dropdown.
    */
+  // 把 handlers 重绑定回旧的本地名（绑定当前 branch），卡片主体的调用点零改动。
+  const onPreview = () => handlers.onPreview(branch);
+  const onRelease = () => handlers.onRelease(branch);
+  const onDeploy = () => handlers.onDeploy(branch);
+  const onDetail = () => handlers.onDetail(branch);
+  const onResourcePanel = (resource: BranchResource) => handlers.onResourcePanel(branch, resource);
+  const onPull = () => handlers.onPull(branch);
+  const onStop = () => handlers.onStop(branch);
+  const onForceRebuild = () => handlers.onForceRebuild(branch);
+  const onToggleFavorite = () => handlers.onToggleFavorite(branch);
+  const onToggleDebug = () => handlers.onToggleDebug(branch);
+  const onReset = () => handlers.onReset(branch);
+  const onDelete = () => handlers.onDelete(branch);
+  const onEditTags = () => handlers.onEditTags(branch);
+  const onAddTag = (tag: string) => handlers.onAddTag(branch, tag);
+  const onRemoveTag = (tag: string) => handlers.onRemoveTag(branch, tag);
   const busy = action?.status === 'running' || isBusy(branch);
+  // 计时时钟下沉到卡片内部（原页面级 1s tick 已删）：仅本卡忙碌或 AI 活跃期内
+  // 才起 interval，空闲卡零滴答零重渲染。AI 活跃判定用 Date.now() 预探——
+  // 活跃时时钟跑起来，TTL 到期后 aiState.active 翻 false 自动停表。
+  const now = useNowTick(
+    busy
+    || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status)
+    || aiOperationState(branch, Date.now()).active,
+  );
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
   /* 容器分类(2026-07-05 方案 C「托盘胶囊」):应用容器与基础容器分开渲染——
@@ -4824,7 +4914,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -5144,29 +5234,50 @@ function BranchCard({
           </span>
         ) : null}
         {/*
+          2026-07-09 构建排队可视化：buildQueue 存在 = 有服务在等构建槽位。
+          排队 chip 单独渲染（禁止空白等待：动点 + 位置 + 等待时长），且排队
+          期间不判 overdue——排队 ≠ 构建慢，不该被琥珀色误报「超预计」。
+        */}
+        {isInterim && branch.buildQueue ? (
+          <span
+            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+            title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
+          >
+            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-sky-400" aria-hidden />
+            排队中 · 前面还有 {branch.buildQueue.ahead} 个
+            <span className="text-muted-foreground/70">（{branch.buildQueue.active}/{branch.buildQueue.max} 构建中）</span>
+          </span>
+        ) : null}
+        {/*
           2026-06-20：构建中显示「模式 · 已耗时 · 历史中位预计耗时」。
           - 模式标签区分 发布版 / 热加载（来自 deployRuntime.kind）。
           - 已耗时实时累加（formatElapsedFrom 走 1s tick 的 now）。
           - 预计耗时为静态历史中位（近 N 次），无样本则不显示预计（no-rootless-tree：
             不编造数据）。下方细进度条对比已耗时 vs 预计，纯主题 token 着色，不喧宾夺主。
+          - 2026-07-09：耗时改用 effectiveDeployElapsedMs（剔除排队等待），排队中不判 overdue。
         */}
         {isInterim ? (() => {
           const estimate = pickDeployEstimate(branch);
-          const elapsedMs = busySince ? Math.max(0, now - new Date(busySince).getTime()) : 0;
+          const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
+          const queuedNow = Boolean(branch.buildQueue);
           const ratio = estimate && estimate.medianMs > 0
             ? Math.min(1, elapsedMs / estimate.medianMs)
             : 0;
-          const overdue = estimate ? elapsedMs > estimate.medianMs : false;
+          const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
+          const elapsedText = formatDurationMs(elapsedMs);
+          const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow
+            ? `（另有排队等待，不计入耗时）`
+            : '';
           return (
             <span
               className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
               title={estimate
-                ? `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
-                : `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}；暂无历史样本，完成后将累积预计耗时`}
+                ? `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                : `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
             >
               <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
               <span className="text-muted-foreground/80">耗时</span>
-              <span className="branch-deploy-timer-value font-mono text-foreground/85">{formatElapsedFrom(busySince, now)}</span>
+              <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
               {estimate ? (
                 <>
                   <span className="text-muted-foreground/80">预计</span>
@@ -5385,7 +5496,8 @@ function BranchCard({
           - "+ 标签"按钮 → 原地浮层输入,单条新增(乐观更新 + 失败回滚)
           - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
           - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
-      {(onAddTag || onRemoveTag || onClickTag) ? (
+      {/* handlers 重构后标签回调恒定存在，原可选 prop 守卫移除 */}
+      {(
         <div className="relative flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
@@ -5401,21 +5513,19 @@ function BranchCard({
               >
                 <Tags className="h-3 w-3 shrink-0" aria-hidden />
                 <span className="max-w-[120px] truncate">{tag}</span>
-                {onRemoveTag ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setTagEditorOpen(false);
-                      setTagDeleteTarget((current) => (current === tag ? null : tag));
-                    }}
-                    className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
-                    title="删除标签"
-                    aria-label={`删除标签 ${tag}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setTagEditorOpen(false);
+                    setTagDeleteTarget((current) => (current === tag ? null : tag));
+                  }}
+                  className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
+                  title="删除标签"
+                  aria-label={`删除标签 ${tag}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
               </span>
             );
           })}
@@ -5432,24 +5542,22 @@ function BranchCard({
               +{(branch.tags || []).length - 3}
             </button>
           ) : null}
-          {onAddTag ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setTagEditorOpen((current) => !current);
-                setTagDeleteTarget(null);
-                setTagDraftError('');
-              }}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              title="添加标签"
-              aria-expanded={tagEditorOpen}
-            >
-              <Plus className="h-3 w-3" />
-              <span>标签</span>
-            </button>
-          ) : null}
-          {tagEditorOpen && onAddTag ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setTagEditorOpen((current) => !current);
+              setTagDeleteTarget(null);
+              setTagDraftError('');
+            }}
+            className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            title="添加标签"
+            aria-expanded={tagEditorOpen}
+          >
+            <Plus className="h-3 w-3" />
+            <span>标签</span>
+          </button>
+          {tagEditorOpen ? (
             <form
               className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(280px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
               onClick={(event) => event.stopPropagation()}
@@ -5533,7 +5641,7 @@ function BranchCard({
             </div>
           ) : null}
         </div>
-      ) : null}
+      )}
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
@@ -5643,7 +5751,7 @@ function BranchCard({
       </footer>
     </article>
   );
-}
+});
 
 function BranchMoreMenu({
   busy,

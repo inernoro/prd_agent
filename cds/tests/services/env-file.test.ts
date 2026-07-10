@@ -26,7 +26,7 @@ describe('env-file helper', () => {
   });
 
   afterEach(() => {
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── parseEnvFile ──

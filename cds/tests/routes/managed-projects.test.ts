@@ -58,6 +58,7 @@ describe('managed project delivery routes', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stateService.flush();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

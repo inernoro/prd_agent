@@ -26,6 +26,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,
   headers?: Record<string, string>,
@@ -138,8 +139,9 @@ describe('Cross-project isolation on profiles/rules/export', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('PUT /api/build-profiles/:id', () => {

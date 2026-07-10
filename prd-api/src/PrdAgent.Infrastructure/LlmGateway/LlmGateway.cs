@@ -27,6 +27,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
+    private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "seed",
+        "stop",
+        "frequency_penalty",
+        "presence_penalty",
+        "modalities",
+        "audio",
+        "prediction",
+        "stream_options",
+        "service_tier",
+        "store",
+        "user",
+        "n"
+    };
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
     private const string MaxTokensField = "max_tokens";
 
@@ -92,6 +107,85 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
+    private static JsonObject CloneEffectiveRequestBody(GatewayRequest request)
+    {
+        var body = request.GetEffectiveRequestBody();
+        return body.DeepClone() as JsonObject ?? new JsonObject();
+    }
+
+    private static List<ModelResolutionResult> GetProviderRetryResolutions(
+        ModelResolutionResult resolution,
+        GatewayRequest request)
+    {
+        var candidates = new List<ModelResolutionResult> { resolution };
+        if (request.Context?.IsHealthProbe == true
+            || !string.IsNullOrWhiteSpace(request.ExpectedModel)
+            || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
+            || !string.IsNullOrWhiteSpace(request.PinnedModelId))
+        {
+            return candidates;
+        }
+
+        if (resolution.RetryCandidates is { Count: > 0 })
+        {
+            candidates.AddRange(resolution.RetryCandidates.Where(c =>
+                c.Success
+                && !string.IsNullOrWhiteSpace(c.ActualModel)
+                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        var maxAttempts = GetProviderRetryMaxAttempts();
+        return candidates
+            .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Take(maxAttempts)
+            .ToList();
+    }
+
+    private static List<ModelResolutionResult> GetProviderRetryResolutions(
+        ModelResolutionResult resolution,
+        GatewayRawRequest request)
+    {
+        var candidates = new List<ModelResolutionResult> { resolution };
+        if (request.Context?.IsHealthProbe == true
+            || !string.IsNullOrWhiteSpace(request.ExpectedModel)
+            || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
+            || !string.IsNullOrWhiteSpace(request.PinnedModelId))
+        {
+            return candidates;
+        }
+
+        if (resolution.RetryCandidates is { Count: > 0 })
+        {
+            candidates.AddRange(resolution.RetryCandidates.Where(c =>
+                c.Success
+                && !string.IsNullOrWhiteSpace(c.ActualModel)
+                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        var maxAttempts = GetProviderRetryMaxAttempts();
+        return candidates
+            .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Take(maxAttempts)
+            .ToList();
+    }
+
+    private static int GetProviderRetryMaxAttempts()
+    {
+        var raw = Environment.GetEnvironmentVariable("LLMGW_PROVIDER_RETRY_MAX_ATTEMPTS");
+        if (!int.TryParse(raw, out var parsed))
+            parsed = 2;
+        return Math.Clamp(parsed, 1, 4);
+    }
+
+    private static bool ShouldRetryProviderStatus(int statusCode)
+        => statusCode is 402 or 408 or 409 or 425 or 429
+           || statusCode is >= 500 and <= 599;
+
+    private static bool IsAutoModelPolicy(GatewayRequest request)
+        => string.Equals(request.Context?.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase);
+
     private static bool TryReadInt(JsonNode node, out int value)
     {
         if (node is JsonValue jsonValue)
@@ -129,7 +223,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         try
         {
             // 1. 使用 ModelResolver 解析模型
-            var effectiveExpectedModel = request.GetEffectiveExpectedModel();
+            var effectiveExpectedModel = IsAutoModelPolicy(request)
+                ? request.ExpectedModel
+                : request.GetEffectiveExpectedModel();
             resolution = await _modelResolver.ResolveAsync(
                 request.AppCallerCode, request.ModelType, effectiveExpectedModel, request.PinnedPlatformId, request.PinnedModelId, ct);
 
@@ -142,92 +238,171 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     resolution.ErrorMessage ?? "未找到可用模型", 404);
             }
 
-            // 2. 选择适配器
+            // 2. 选择首个适配器；若首个候选不支持，发送循环会记录失败并尝试后续候选。
             var adapter = GetAdapterForResolution(resolution);
-            if (adapter == null)
-            {
-                return GatewayResponse.Fail("UNSUPPORTED_PLATFORM",
-                    $"不支持的平台类型: {resolution.PlatformType}", 400);
-            }
 
-            // 3. 构建请求
-            var requestBody = request.GetEffectiveRequestBody();
-            requestBody["model"] = resolution.ActualModel;
-            requestBody["stream"] = false;
-            var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
-            if (cappedMaxTokens.HasValue)
-            {
-                _logger.LogInformation(
-                    "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
-                    request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
-            }
-
-            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。
-            // 未知/未分类（null）放行（best-effort）。
-            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
-            {
-                return GatewayResponse.Fail("FUNCTION_CALLING_UNSUPPORTED",
-                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。", 400);
-            }
-
-            var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
-            var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
-            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
-
-            // 4. 写入日志（开始）
-            var gatewayResolution = resolution.ToGatewayResolution();
-            logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
-
-            // 5. 发送请求
+            // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
+            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+            var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
+            var retryResolutions = GetProviderRetryResolutions(resolution, request);
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
-
-            _logger.LogInformation(
-                "[LlmGateway] 向 LLM 发起非流式请求\n" +
-                "  AppCallerCode: {AppCallerCode}\n" +
-                "  ExpectedModel: {ExpectedModel}\n" +
-                "  ActualModel: {ActualModel}\n" +
-                "  Platform: {Platform}\n" +
-                "  Endpoint: {Endpoint}",
-                request.AppCallerCode,
-                effectiveExpectedModel ?? "(无)",
-                resolution.ActualModel,
-                resolution.ActualPlatformName ?? resolution.ActualPlatformId,
-                endpoint);
-
-            var response = await httpClient.SendAsync(httpRequest, ct);
-            var responseBody = await response.Content.ReadAsStringAsync(ct);
-
-            var endedAt = DateTime.UtcNow;
-            var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
-
-            // 6. 解析响应
+            HttpResponseMessage? response = null;
+            var responseBody = string.Empty;
+            var durationMs = 0L;
+            var activeResolution = resolution;
+            IGatewayAdapter? activeAdapter = adapter;
             GatewayTokenUsage? tokenUsage = null;
             System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            Dictionary<string, System.Text.Json.Nodes.JsonNode?>? extensions = null;
             string? finishReason = null;
-            if (response.IsSuccessStatusCode)
-            {
-                tokenUsage = adapter.ParseTokenUsage(responseBody);
-                // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
-                toolCalls = adapter.ParseToolCalls(responseBody);
-                finishReason = ExtractFinishReason(responseBody);
-            }
 
-            // 7. 更新健康状态
-            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
+                activeResolution = retryResolutions[attemptIndex];
+                activeAdapter = GetAdapterForResolution(activeResolution);
+                if (activeAdapter == null)
+                {
+                    var unsupported = $"不支持的平台类型: {activeResolution.PlatformType}";
+                    if (attemptIndex == 0 && retryResolutions.Count == 1)
+                        return GatewayResponse.Fail("UNSUPPORTED_PLATFORM", unsupported, 400);
+                    if (attemptIndex == 0)
+                    {
+                        CompleteLastSendAttempt(providerAttempts, 400, 0, unsupported);
+                    }
+                    else
+                    {
+                        AddProviderAttempt(
+                            providerAttempts,
+                            activeResolution,
+                            stage: "send",
+                            transport: gatewayTransport,
+                            statusCode: 400,
+                            durationMs: 0,
+                            error: unsupported,
+                            reason: unsupported);
+                    }
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate had unsupported platform type");
+                    }
+                    continue;
+                }
+
+                var requestBody = CloneEffectiveRequestBody(request);
+                requestBody["model"] = activeResolution.ActualModel;
+                requestBody["stream"] = false;
+                var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, activeResolution);
+                if (cappedMaxTokens.HasValue)
+                {
+                    _logger.LogInformation(
+                        "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
+                        request.AppCallerCode, activeResolution.ActualModel, cappedMaxTokens.Value);
+                }
+
+                if (TryBuildCapabilityFailure(request, activeResolution, requestBody, out var capabilityError))
+                {
+                    var capabilityMessage = capabilityError!.ErrorMessage ?? "模型能力不匹配";
+                    if (attemptIndex == 0 && retryResolutions.Count == 1)
+                        return capabilityError;
+                    CompleteLastSendAttempt(providerAttempts, capabilityError.StatusCode, 0, capabilityMessage);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate failed capability gate");
+                    }
+                    continue;
+                }
+
+                var endpoint = activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType);
+                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
+                ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
+
+                if (logId == null)
+                {
+                    var gatewayResolution = activeResolution.ToGatewayResolution();
+                    logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
+                }
+
+                _logger.LogInformation(
+                    "[LlmGateway] 向 LLM 发起非流式请求\n" +
+                    "  AppCallerCode: {AppCallerCode}\n" +
+                    "  ExpectedModel: {ExpectedModel}\n" +
+                    "  ActualModel: {ActualModel}\n" +
+                    "  Platform: {Platform}\n" +
+                    "  Endpoint: {Endpoint}\n" +
+                    "  Attempt: {Attempt}/{AttemptCount}",
+                    request.AppCallerCode,
+                    effectiveExpectedModel ?? "(无)",
+                    activeResolution.ActualModel,
+                    activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId,
+                    endpoint,
+                    attemptIndex + 1,
+                    retryResolutions.Count);
+
+                var attemptStartedAt = DateTime.UtcNow;
+                response = await httpClient.SendAsync(httpRequest, ct);
+                responseBody = await response.Content.ReadAsStringAsync(ct);
+                var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
+                var attemptError = response.IsSuccessStatusCode
+                    ? null
+                    : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
+                CompleteLastSendAttempt(providerAttempts, (int)response.StatusCode, attemptDurationMs, attemptError);
+
                 if (response.IsSuccessStatusCode)
                 {
-                    await _modelResolver.RecordSuccessAsync(resolution, ct);
+                    tokenUsage = activeAdapter.ParseTokenUsage(responseBody);
+                    // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
+                    toolCalls = activeAdapter.ParseToolCalls(responseBody);
+                    extensions = activeAdapter.ParseExtensions(responseBody);
+                    finishReason = ExtractFinishReason(responseBody);
                 }
-                else
+
+                // 4. 更新健康状态
+                if (!string.IsNullOrWhiteSpace(activeResolution.ModelGroupId))
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        await _modelResolver.RecordSuccessAsync(activeResolution, ct);
+                    }
+                    else
+                    {
+                        await _modelResolver.RecordFailureAsync(activeResolution, ct);
+                    }
                 }
+
+                var shouldRetry = !response.IsSuccessStatusCode
+                                  && attemptIndex < retryResolutions.Count - 1
+                                  && ShouldRetryProviderStatus((int)response.StatusCode);
+                if (!shouldRetry)
+                    break;
+
+                _logger.LogWarning(
+                    "[LlmGateway] 非流式请求失败，切换下一个 Provider candidate: status={StatusCode}, model={Model}, nextModel={NextModel}",
+                    (int)response.StatusCode,
+                    activeResolution.ActualModel,
+                    retryResolutions[attemptIndex + 1].ActualModel);
+                AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                    $"previous candidate failed with HTTP {(int)response.StatusCode}");
+                response.Dispose();
             }
 
-            // 8. 写入日志（完成）
-            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, finishReason, ct);
+            if (response == null)
+            {
+                var message = "没有可用的 provider retry candidate";
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, message, 400);
+                }
+                return GatewayResponse.Fail("MODEL_NOT_FOUND", message, 400);
+            }
+
+            var endedAt = DateTime.UtcNow;
+            durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
+
+            // 5. 写入日志（完成）
+            await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, finishReason, activeResolution, gatewayTransport, ct, providerAttempts);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -241,7 +416,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 从原始响应中提取消息文本内容
-            var messageContent = adapter.ParseMessageContent(responseBody);
+            var messageContent = activeAdapter!.ParseMessageContent(responseBody);
 
             return new GatewayResponse
             {
@@ -250,7 +425,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
-                Resolution = gatewayResolution,
+                Extensions = extensions,
+                Resolution = activeResolution.ToGatewayResolution(),
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
                 LogId = logId
@@ -293,7 +469,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         try
         {
             // 1. 使用 ModelResolver 解析模型
-            var effectiveExpectedModel = request.GetEffectiveExpectedModel();
+            var effectiveExpectedModel = IsAutoModelPolicy(request)
+                ? request.ExpectedModel
+                : request.GetEffectiveExpectedModel();
             resolution = await _modelResolver.ResolveAsync(
                 request.AppCallerCode, request.ModelType, effectiveExpectedModel, request.PinnedPlatformId, request.PinnedModelId, ct);
 
@@ -306,128 +484,169 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 yield break;
             }
 
-            gatewayResolution = resolution.ToGatewayResolution();
-
-            // 2. 选择适配器
-            var adapter = GetAdapterForResolution(resolution);
-            if (adapter == null)
-            {
-                yield return GatewayStreamChunk.Fail($"不支持的平台类型: {resolution.PlatformType}");
-                yield break;
-            }
-
-            // 3. 构建请求
-            var requestBody = request.GetEffectiveRequestBody();
-            requestBody["model"] = resolution.ActualModel;
-            requestBody["stream"] = true;
-            var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
-            if (cappedMaxTokens.HasValue)
-            {
-                _logger.LogInformation(
-                    "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
-                    request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
-            }
-
-            // G4 能力软门：带 tools 但模型能力明确不支持 function_calling → 熔断报错（不骗用户）。未知放行。
-            if (RequestHasTools(requestBody) && resolution.SupportsFunctionCalling == false)
-            {
-                yield return GatewayStreamChunk.Fail(
-                    $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。");
-                yield break;
-            }
-
-            var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
-            var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
-            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
-
-            // 4. 写入日志（开始）
-            logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
-
-            // 5. 发送请求
+            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+            var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
+            var retryResolutions = GetProviderRetryResolutions(resolution, request);
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
-
-            _logger.LogInformation(
-                "[LlmGateway] 向 LLM 发起流式请求\n" +
-                "  AppCallerCode: {AppCallerCode}\n" +
-                "  ExpectedModel: {ExpectedModel}\n" +
-                "  ActualModel: {ActualModel}\n" +
-                "  Platform: {Platform}",
-                request.AppCallerCode,
-                effectiveExpectedModel ?? "(无)",
-                resolution.ActualModel,
-                resolution.ActualPlatformName ?? resolution.ActualPlatformId);
-
-            // 5.1 SendAsync 异常捕获：HttpClient 超时 / 连接失败等传输层异常必须落日志，
-            //     否则日志会滞留 status=running，直到 LlmRequestLogWatchdog 5 分钟后强写
-            //     error="TIMEOUT"、dur=300000，真实错误信息和状态码被彻底吞掉。
             HttpResponseMessage? rawResponse = null;
-            Exception? sendException = null;
-            try
-            {
-                rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-            }
-            catch (Exception ex)
-            {
-                sendException = ex;
-            }
+            IGatewayAdapter? adapter = null;
+            string? terminalError = null;
+            int? terminalStatusCode = null;
 
-            if (sendException != null)
+            for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
-                var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
-                _logger.LogWarning(sendException,
-                    "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
-                    sendCode, resolution.ActualModel);
-                if (logId != null)
+                resolution = retryResolutions[attemptIndex];
+                gatewayResolution = resolution.ToGatewayResolution();
+                adapter = GetAdapterForResolution(resolution);
+                if (adapter == null)
                 {
-                    _logWriter?.MarkError(logId, sendMsg, sendCode);
+                    terminalError = $"不支持的平台类型: {resolution.PlatformType}";
+                    terminalStatusCode = 400;
+                    if (attemptIndex == 0)
+                        CompleteLastSendAttempt(providerAttempts, 400, 0, terminalError);
+                    else
+                        AddProviderAttempt(providerAttempts, resolution, "send", gatewayTransport, 400, 0, terminalError, terminalError);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate had unsupported platform type");
+                    }
+                    continue;
                 }
+
+                var requestBody = CloneEffectiveRequestBody(request);
+                requestBody["model"] = resolution.ActualModel;
+                requestBody["stream"] = true;
+                var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
+                if (cappedMaxTokens.HasValue)
+                {
+                    _logger.LogInformation(
+                        "[LlmGateway] max_tokens 已按模型上限裁剪: AppCallerCode={AppCallerCode}, Model={Model}, MaxTokens={MaxTokens}",
+                        request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
+                }
+
+                if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                {
+                    terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
+                    terminalStatusCode = capabilityError.StatusCode;
+                    CompleteLastSendAttempt(providerAttempts, capabilityError.StatusCode, 0, terminalError);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate failed capability gate");
+                    }
+                    continue;
+                }
+
+                var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
+                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+                ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
+                if (logId == null)
+                {
+                    logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
+                }
+
+                _logger.LogInformation(
+                    "[LlmGateway] 向 LLM 发起流式请求\n" +
+                    "  AppCallerCode: {AppCallerCode}\n" +
+                    "  ExpectedModel: {ExpectedModel}\n" +
+                    "  ActualModel: {ActualModel}\n" +
+                    "  Platform: {Platform}\n" +
+                    "  Attempt: {Attempt}/{AttemptCount}",
+                    request.AppCallerCode,
+                    effectiveExpectedModel ?? "(无)",
+                    resolution.ActualModel,
+                    resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                    attemptIndex + 1,
+                    retryResolutions.Count);
+
+                Exception? sendException = null;
+                var attemptStartedAt = DateTime.UtcNow;
+                try
+                {
+                    rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+                }
+                catch (Exception ex)
+                {
+                    sendException = ex;
+                }
+
+                var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
+                if (sendException != null)
+                {
+                    var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
+                    terminalError = sendMsg;
+                    terminalStatusCode = sendCode;
+                    _logger.LogWarning(sendException,
+                        "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                        sendCode, resolution.ActualModel);
+                    CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
+                    if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                        await _modelResolver.RecordFailureAsync(resolution, ct);
+                    if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            $"previous candidate failed with transport status {sendCode}");
+                        continue;
+                    }
+                    break;
+                }
+
+                if (rawResponse!.IsSuccessStatusCode)
+                {
+                    CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, null);
+                    break;
+                }
+
+                var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
+                var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
+                terminalError = errorMsg;
+                terminalStatusCode = (int)rawResponse.StatusCode;
+                CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
-                {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
+
+                if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus((int)rawResponse.StatusCode))
+                {
+                    AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                        $"previous candidate failed with HTTP {(int)rawResponse.StatusCode}");
+                    rawResponse.Dispose();
+                    rawResponse = null;
+                    continue;
                 }
-                yield return GatewayStreamChunk.Fail(sendMsg);
-                yield break;
+
+                break;
             }
 
-            using var response = rawResponse!;
-
-            if (!response.IsSuccessStatusCode)
+            if (rawResponse == null || !rawResponse.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)response.StatusCode}";
-
-                // 先落日志再 yield：caller 收到 Error chunk 后可能立刻 return 释放迭代器，
-                // 导致 yield 之后的代码永不执行。这样 MarkError 就会被跳过，日志滞留 running
-                // 直到 Watchdog 5 分钟后盖成 "TIMEOUT"——这正是"禁用 key 秒级返回但日志仍
-                // 显示 TIMEOUT"的罪魁祸首。
                 if (logId != null)
+                    _logWriter?.MarkError(logId, terminalError ?? "流式请求失败", terminalStatusCode);
+                if (terminalStatusCode.HasValue && IsQuotaExceeded(terminalStatusCode.Value, terminalError))
                 {
-                    _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
-                }
-
-                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
-                {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
-                }
-
-                // 额度用尽/限额：与非流式 SendAsync/Raw 路径对齐——触发站内告警 + 透传友好额度文案。
-                // 流式 Fail chunk 无独立 code 字段，退而把 LLM_QUOTA_EXCEEDED 友好 message 作为 Error 透传；
-                // toolbox/defect/literary/polish 等主聊天走 StreamAsync，OpenRouter 402 / Key limit exceeded
-                // 同样需要触发 admin 额度通知，不能只在非流式路径生效（Codex review）。
-                if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
-                {
-                    var (_, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg);
+                    var (_, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, terminalError ?? "");
                     yield return GatewayStreamChunk.Fail(qMsg);
                     yield break;
                 }
+                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
+                yield break;
+            }
 
-                yield return GatewayStreamChunk.Fail(errorMsg);
+            using var response = rawResponse;
+            var finalResolution = resolution;
+            var finalGatewayResolution = gatewayResolution ?? finalResolution?.ToGatewayResolution();
+            if (finalResolution == null || finalGatewayResolution == null)
+            {
+                if (logId != null)
+                    _logWriter?.MarkError(logId, "流式请求缺少最终路由信息", 500);
+                yield return GatewayStreamChunk.Fail("流式请求缺少最终路由信息");
                 yield break;
             }
 
             // 发送开始块（包含调度信息）
-            yield return GatewayStreamChunk.Start(gatewayResolution);
+            yield return GatewayStreamChunk.Start(finalGatewayResolution);
 
             // 6. 读取流式响应
             using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -475,7 +694,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
                     _logger.LogWarning(readException,
                         "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
-                        readCode, resolution.ActualModel, firstByteAt);
+                        readCode, finalResolution.ActualModel, firstByteAt);
                     streamAborted = true;
                     streamAbortMsg = readMsg;
                     streamAbortCode = readCode;
@@ -498,7 +717,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 GatewayStreamChunk? chunk;
                 try
                 {
-                    chunk = adapter.ParseStreamChunk(data);
+                    chunk = adapter!.ParseStreamChunk(data);
                 }
                 catch (Exception parseEx)
                 {
@@ -598,9 +817,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     _logWriter?.MarkError(logId, streamAbortMsg!, streamAbortCode);
                 }
-                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                if (!string.IsNullOrWhiteSpace(finalResolution.ModelGroupId))
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    await _modelResolver.RecordFailureAsync(finalResolution, ct);
                 }
                 yield return GatewayStreamChunk.Fail(streamAbortMsg!);
                 yield break;
@@ -625,9 +844,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 7. 更新健康状态（成功）
-            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            if (resolution is not null && !string.IsNullOrWhiteSpace(resolution.ModelGroupId))
             {
-                await _modelResolver.RecordSuccessAsync(resolution, ct);
+                await _modelResolver.RecordSuccessAsync(finalResolution, ct);
             }
 
             // 8. 发送完成块
@@ -651,7 +870,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var assembledThinking = thinkingBuilder.ToString();
             var assembledToolCalls = BuildAccumulatedToolCalls(toolCallAccum);
-            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, finishReason, ct);
+            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, finishReason, finalResolution, gatewayTransport, ct, providerAttempts);
         }
         finally
         {
@@ -686,6 +905,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ActualPlatformId = resolution.ActualPlatformId,
             ActualPlatformName = resolution.ActualPlatformName,
             PlatformType = resolution.PlatformType,
+            Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
             ModelGroupId = resolution.ModelGroupId,
@@ -710,7 +930,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ExchangeName = resolution.ExchangeName,
             ExchangeTransformerType = resolution.ExchangeTransformerType,
             ExchangeAuthScheme = resolution.ExchangeAuthScheme,
-            ExchangeTransformerConfig = resolution.ExchangeTransformerConfig
+            ExchangeTransformerConfig = resolution.ExchangeTransformerConfig,
+            SupportsFunctionCalling = resolution.SupportsFunctionCalling,
+            SupportsVision = resolution.SupportsVision,
+            SupportsImageGeneration = resolution.SupportsImageGeneration,
+            SupportsThinking = resolution.SupportsThinking,
+            SupportsStructuredOutput = resolution.SupportsStructuredOutput,
+            SupportsLogprobs = resolution.SupportsLogprobs,
+            SupportsParallelToolCalls = resolution.SupportsParallelToolCalls,
+            ParameterCapabilities = resolution.ParameterCapabilities,
+            InputPricePerMillion = resolution.InputPricePerMillion,
+            OutputPricePerMillion = resolution.OutputPricePerMillion,
+            PricePerCall = resolution.PricePerCall,
+            PriceCurrency = resolution.PriceCurrency,
+            RetryCandidates = resolution.RetryCandidates
         };
 
         var startedAt = DateTime.UtcNow;
@@ -733,6 +966,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var profileName = string.IsNullOrWhiteSpace(request.ProfileName)
             ? "Runtime profile test"
             : request.ProfileName.Trim();
+        var sourceContext = request.Context;
 
         var resolution = new GatewayModelResolution
         {
@@ -778,12 +1012,223 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
-                UserId = request.UserId,
-                QuestionText = "[Runtime Profile Test] Reply with ok."
+                SessionId = sourceContext?.SessionId,
+                RunId = sourceContext?.RunId,
+                GroupId = sourceContext?.GroupId,
+                UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
+                ViewRole = sourceContext?.ViewRole,
+                DocumentChars = sourceContext?.DocumentChars,
+                DocumentHash = sourceContext?.DocumentHash,
+                QuestionText = "[Runtime Profile Test] Reply with ok.",
+                SystemPromptChars = sourceContext?.SystemPromptChars,
+                SystemPromptText = sourceContext?.SystemPromptText,
+                ImageReferences = sourceContext?.ImageReferences,
+                GatewayTransport = sourceContext?.GatewayTransport,
+                SourceSystem = sourceContext?.SourceSystem,
+                IngressProtocol = sourceContext?.IngressProtocol,
+                AppCallerTitle = sourceContext?.AppCallerTitle,
+                ModelPolicy = sourceContext?.ModelPolicy,
+                ModelPoolId = sourceContext?.ModelPoolId,
+                ParameterPolicy = sourceContext?.ParameterPolicy,
+                DroppedParameters = sourceContext?.DroppedParameters,
+                IsHealthProbe = sourceContext?.IsHealthProbe,
             }
         };
 
         return SendRawWithResolutionAsync(rawRequest, resolution, ct);
+    }
+
+    private sealed record RawHttpRequestBuildResult(
+        HttpRequestMessage HttpRequest,
+        string Endpoint,
+        string RequestBodyForLog,
+        bool IsExchange);
+
+    private GatewayRawResponse? TryBuildRawHttpRequest(
+        GatewayRawRequest request,
+        ModelResolutionResult resolution,
+        out RawHttpRequestBuildResult? result)
+    {
+        result = null;
+        var isExchange = resolution.IsExchange;
+        var adapter = isExchange ? null : GetAdapterForResolution(resolution);
+        string endpoint;
+
+        if (isExchange)
+        {
+            endpoint = ResolveEndpointTemplate(resolution.ApiUrl!, resolution.ActualModel);
+        }
+        else if (string.IsNullOrWhiteSpace(request.EndpointPath))
+        {
+            endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
+                ?? $"{resolution.ApiUrl!.TrimEnd('/')}/v1/chat/completions";
+        }
+        else
+        {
+            var baseUrl = resolution.ApiUrl!.TrimEnd('/');
+            var endpointPath = request.EndpointPath;
+            var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
+                baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (hasVersionSuffix)
+            {
+                if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpointPath = endpointPath[3..];
+                }
+                else if (endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpointPath = endpointPath[2..];
+                }
+
+                endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+            }
+            else
+            {
+                if (System.Text.RegularExpressions.Regex.IsMatch(
+                    endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                {
+                    endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                }
+                else
+                {
+                    endpoint = $"{baseUrl}/v1{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
+                }
+            }
+        }
+
+        HttpRequestMessage httpRequest;
+        string requestBodyForLog;
+
+        if (isExchange)
+        {
+            var transformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
+            if (transformer == null)
+            {
+                return GatewayRawResponse.Fail("EXCHANGE_TRANSFORMER_NOT_FOUND",
+                    $"Exchange 转换器未找到: {resolution.ExchangeTransformerType}", 400);
+            }
+
+            var rawBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+            if (request.IsMultipart)
+            {
+                rawBody = ConsolidateMultipartToJson(request);
+                _logger.LogInformation(
+                    "[LlmGateway.Exchange] Multipart → JSON 合并完成，字段数: {FieldCount}, 文件数: {FileCount}",
+                    request.MultipartFields?.Count ?? 0,
+                    request.MultipartFiles?.Count ?? 0);
+            }
+
+            if (TryBuildRawCapabilityFailure(request, resolution, rawBody, out var capabilityError))
+            {
+                return capabilityError!;
+            }
+
+            ApplyResolvedMaxTokensCap(rawBody, resolution);
+            var resolvedUrl = transformer.ResolveTargetUrl(endpoint, rawBody, resolution.ExchangeTransformerConfig);
+            if (resolvedUrl != null) endpoint = resolvedUrl;
+
+            var transformedBody = transformer.TransformRequest(rawBody, resolution.ExchangeTransformerConfig);
+            _logger.LogInformation(
+                "[LlmGateway.Exchange] 请求转换完成\n" +
+                "  Exchange: {ExchangeName}\n" +
+                "  Transformer: {Transformer}\n" +
+                "  TargetUrl: {TargetUrl}",
+                resolution.ExchangeName, resolution.ExchangeTransformerType, endpoint);
+
+            var jsonContent = transformedBody.ToJsonString();
+            httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint);
+            if (!HttpMethodAllowsEmptyBody(request.HttpMethod))
+            {
+                httpRequest.Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json");
+            }
+            requestBodyForLog = jsonContent;
+
+            var extraTransformerHeaders = transformer.GetExtraHeaders(resolution.ExchangeTransformerConfig);
+            if (extraTransformerHeaders != null)
+            {
+                foreach (var (key, value) in extraTransformerHeaders)
+                {
+                    httpRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
+        }
+        else if (request.IsMultipart)
+        {
+            if (TryBuildRawCapabilityFailure(request, resolution, null, out var capabilityError))
+            {
+                return capabilityError!;
+            }
+
+            var multipartContent = new MultipartFormDataContent();
+            multipartContent.Add(new StringContent(resolution.ActualModel ?? string.Empty), "model");
+
+            if (request.MultipartFields != null)
+            {
+                foreach (var (key, value) in request.MultipartFields)
+                {
+                    if (key != "model")
+                    {
+                        multipartContent.Add(new StringContent(value?.ToString() ?? ""), key);
+                    }
+                }
+            }
+
+            if (request.MultipartFiles != null)
+            {
+                foreach (var (fieldName, fileInfo) in request.MultipartFiles)
+                {
+                    var fileContent = new ByteArrayContent(fileInfo.Content);
+                    fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(fileInfo.MimeType);
+                    multipartContent.Add(fileContent, NormalizeMultipartSendFieldName(fieldName), fileInfo.FileName);
+                }
+            }
+
+            httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+            {
+                Content = multipartContent
+            };
+            requestBodyForLog = "[multipart/form-data]";
+        }
+        else
+        {
+            var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+            requestBody["model"] = resolution.ActualModel;
+            ApplyResolvedMaxTokensCap(requestBody, resolution);
+            if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+            {
+                return capabilityError!;
+            }
+
+            var jsonContent = requestBody.ToJsonString();
+            httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
+            {
+                Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
+            };
+            requestBodyForLog = jsonContent;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
+        {
+            var authScheme = isExchange
+                ? resolution.ExchangeAuthScheme
+                : GetDefaultAuthSchemeForResolution(resolution);
+            SetAuthHeader(httpRequest, authScheme ?? "Bearer", resolution.ApiKey);
+        }
+        ApplyRequiredProviderHeaders(httpRequest, resolution);
+
+        if (request.ExtraHeaders != null)
+        {
+            foreach (var (key, value) in request.ExtraHeaders)
+            {
+                httpRequest.Headers.TryAddWithoutValidation(key, value);
+            }
+        }
+
+        ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
+        result = new RawHttpRequestBuildResult(httpRequest, endpoint, requestBodyForLog, isExchange);
+        return null;
     }
 
     /// <summary>
@@ -898,6 +1343,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         request.MultipartFields?.Count ?? 0,
                         request.MultipartFiles?.Count ?? 0);
                 }
+                if (TryBuildRawCapabilityFailure(request, resolution, rawBody, out var capabilityError))
+                {
+                    return capabilityError!;
+                }
 
                 // 智能路由：根据请求内容决定实际目标 URL
                 ApplyResolvedMaxTokensCap(rawBody, resolution);
@@ -933,6 +1382,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
             else if (request.IsMultipart)
             {
+                if (TryBuildRawCapabilityFailure(request, resolution, null, out var capabilityError))
+                {
+                    return capabilityError!;
+                }
+
                 // multipart/form-data 请求
                 var multipartContent = new MultipartFormDataContent();
 
@@ -958,7 +1412,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     {
                         var fileContent = new ByteArrayContent(fileInfo.Content);
                         fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(fileInfo.MimeType);
-                        multipartContent.Add(fileContent, fieldName, fileInfo.FileName);
+                        multipartContent.Add(fileContent, NormalizeMultipartSendFieldName(fieldName), fileInfo.FileName);
                     }
                 }
 
@@ -974,6 +1428,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = request.RequestBody ?? new JsonObject();
                 requestBody["model"] = resolution.ActualModel;
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
+                if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                {
+                    return capabilityError!;
+                }
 
                 var jsonContent = requestBody.ToJsonString();
                 httpRequest = new HttpRequestMessage(new HttpMethod(request.HttpMethod), endpoint)
@@ -1009,6 +1467,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 发送请求
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
+            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+            var rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
+            var retryResolutions = GetProviderRetryResolutions(resolution, request);
 
             _logger.LogInformation(
                 "[LlmGateway.SendRaw] 向 LLM 发起原始请求\n" +
@@ -1023,6 +1484,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 endpoint,
                 request.IsMultipart);
 
+            var submitStartedAt = DateTime.UtcNow;
             var response = await httpClient.SendAsync(httpRequest, ct);
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
@@ -1030,6 +1492,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // （OpenRouter 视频下载实际回 mp4 却标 application/json）时用 ReadAsString 损坏字节。
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
             var rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
             var isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
                                    contentType.StartsWith("video/") ||
@@ -1049,6 +1512,112 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 responseBody = System.Text.Encoding.UTF8.GetString(rawBytes);
             }
+            CompleteLastSendAttempt(
+                rawProviderAttempts,
+                (int)response.StatusCode,
+                submitDurationMs,
+                response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+
+            for (var attemptIndex = 1;
+                 !response.IsSuccessStatusCode
+                 && attemptIndex < retryResolutions.Count
+                 && ShouldRetryProviderStatus((int)response.StatusCode);
+                 attemptIndex++)
+            {
+                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+
+                var nextResolution = retryResolutions[attemptIndex];
+                _logger.LogWarning(
+                    "[LlmGateway.SendRaw] 原始请求失败，切换下一个 Provider candidate: status={StatusCode}, model={Model}, nextModel={NextModel}",
+                    (int)response.StatusCode,
+                    resolution.ActualModel,
+                    nextResolution.ActualModel);
+
+                AddPendingProviderAttempt(rawProviderAttempts, nextResolution, gatewayTransport,
+                    $"previous candidate failed with HTTP {(int)response.StatusCode}");
+                response.Dispose();
+
+                var buildError = TryBuildRawHttpRequest(request, nextResolution, out var nextBuild);
+                resolution = nextResolution;
+                gatewayResolution = resolution.ToGatewayResolution();
+
+                if (buildError != null || nextBuild == null)
+                {
+                    var buildStatusCode = buildError?.StatusCode > 0 ? buildError.StatusCode : 400;
+                    var buildMessage = buildError?.ErrorMessage ?? buildError?.Content ?? "raw retry candidate build failed";
+                    CompleteLastSendAttempt(rawProviderAttempts, buildStatusCode, 0, buildMessage);
+
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        continue;
+                    }
+
+                    var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    await FinishRawLogAsync(logId, buildStatusCode, buildMessage, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    return new GatewayRawResponse
+                    {
+                        Success = false,
+                        StatusCode = buildStatusCode,
+                        Content = buildMessage,
+                        ErrorCode = buildError?.ErrorCode ?? "RAW_RETRY_BUILD_FAILED",
+                        ErrorMessage = buildMessage,
+                        Resolution = gatewayResolution,
+                        DurationMs = dur,
+                        LogId = logId
+                    };
+                }
+
+                endpoint = nextBuild.Endpoint;
+                isExchange = nextBuild.IsExchange;
+
+                _logger.LogInformation(
+                    "[LlmGateway.SendRaw] 向 LLM 发起原始请求 retry\n" +
+                    "  AppCallerCode: {AppCallerCode}\n" +
+                    "  ActualModel: {ActualModel}\n" +
+                    "  Platform: {Platform}\n" +
+                    "  Endpoint: {Endpoint}\n" +
+                    "  IsMultipart: {IsMultipart}\n" +
+                    "  Attempt: {Attempt}/{AttemptCount}",
+                    request.AppCallerCode,
+                    resolution.ActualModel,
+                    resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                    endpoint,
+                    request.IsMultipart,
+                    attemptIndex + 1,
+                    retryResolutions.Count);
+
+                submitStartedAt = DateTime.UtcNow;
+                response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+                rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+                submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
+                isBinaryResponse = request.ExpectBinaryResponse ||
+                                   contentType.StartsWith("audio/") ||
+                                   contentType.StartsWith("video/") ||
+                                   contentType.StartsWith("image/") ||
+                                   contentType == "application/octet-stream" ||
+                                   LooksBinary(rawBytes, contentType);
+
+                if (isBinaryResponse && response.IsSuccessStatusCode)
+                {
+                    binaryContent = rawBytes;
+                    responseBody = $"[binary:{contentType}, {rawBytes.Length} bytes]";
+                }
+                else
+                {
+                    binaryContent = null;
+                    responseBody = System.Text.Encoding.UTF8.GetString(rawBytes);
+                }
+
+                CompleteLastSendAttempt(
+                    rawProviderAttempts,
+                    (int)response.StatusCode,
+                    submitDurationMs,
+                    response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+            }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
             var submitResponseHeaders = new Dictionary<string, string>();
@@ -1064,7 +1633,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var endedNow = DateTime.UtcNow;
                     var dur = (long)(endedNow - startedAt).TotalMilliseconds;
-                    await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, dur, ct);
+                    CompleteLastSendAttempt(rawProviderAttempts, (int)response.StatusCode, submitDurationMs, submitError);
+                    await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
                     return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
                 }
 
@@ -1111,6 +1681,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                         var queryClient = _httpClientFactory.CreateClient();
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
+                        var queryStartedAt = DateTime.UtcNow;
                         var queryResp = await queryClient.SendAsync(queryRequest, CancellationToken.None);
 
                         var queryHeaders = new Dictionary<string, string>();
@@ -1118,10 +1689,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             queryHeaders[h.Key] = string.Join(", ", h.Value);
 
                         responseBody = await queryResp.Content.ReadAsStringAsync(CancellationToken.None);
+                        var queryDurationMs = (long)(DateTime.UtcNow - queryStartedAt).TotalMilliseconds;
                         response = queryResp;
 
                         if (asyncTransformer.IsTaskComplete((int)queryResp.StatusCode, queryHeaders, responseBody))
                         {
+                            AddProviderAttempt(
+                                rawProviderAttempts,
+                                resolution,
+                                stage: "poll",
+                                transport: gatewayTransport,
+                                statusCode: (int)queryResp.StatusCode,
+                                durationMs: queryDurationMs,
+                                error: null,
+                                reason: $"exchange async poll attempt {pollAttempt} complete");
                             _logger.LogInformation(
                                 "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
                                 resolution.ExchangeName, pollAttempt);
@@ -1132,11 +1713,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                         if (asyncTransformer.IsTaskFailed((int)queryResp.StatusCode, queryHeaders, responseBody, out var queryError))
                         {
+                            AddProviderAttempt(
+                                rawProviderAttempts,
+                                resolution,
+                                stage: "poll",
+                                transport: gatewayTransport,
+                                statusCode: (int)queryResp.StatusCode,
+                                durationMs: queryDurationMs,
+                                error: queryError,
+                                reason: $"exchange async poll attempt {pollAttempt} failed");
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
-                            await FinishRawLogAsync(logId, (int)queryResp.StatusCode, responseBody, dur, ct);
+                            await FinishRawLogAsync(logId, (int)queryResp.StatusCode, responseBody, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
                             return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
                         }
+
+                        AddProviderAttempt(
+                            rawProviderAttempts,
+                            resolution,
+                            stage: "poll",
+                            transport: gatewayTransport,
+                            statusCode: (int)queryResp.StatusCode,
+                            durationMs: queryDurationMs,
+                            error: null,
+                            reason: $"exchange async poll attempt {pollAttempt} pending",
+                            statusOverride: "pending");
 
                         if (pollAttempt % 10 == 0)
                         {
@@ -1150,7 +1751,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     {
                         var endedNow = DateTime.UtcNow;
                         var dur = (long)(endedNow - startedAt).TotalMilliseconds;
-                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, ct);
+                        AddProviderAttempt(
+                            rawProviderAttempts,
+                            resolution,
+                            stage: "poll-timeout",
+                            transport: gatewayTransport,
+                            statusCode: 408,
+                            durationMs: dur,
+                            error: "轮询超时",
+                            reason: $"exchange async poll timeout after {pollAttempt} attempts");
+                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, resolution, gatewayTransport, ct, rawProviderAttempts);
                         return GatewayRawResponse.Fail("EXCHANGE_ASYNC_TIMEOUT",
                             $"异步任务超时，已轮询 {pollAttempt} 次 ({pollAttempt * asyncTransformer.PollIntervalMs / 1000}秒)", 408);
                     }
@@ -1204,7 +1814,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 9. 写入日志（完成）
-            await FinishRawLogAsync(logId, (int)response.StatusCode, finalResponseBody, durationMs, ct);
+            await FinishRawLogAsync(logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, gatewayTransport, ct, rawProviderAttempts);
 
             // 10. 返回响应
             var responseHeaders = new Dictionary<string, string>();
@@ -1274,7 +1884,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                await FinishRawLogAsync(logId, 400, audioError, duration, ct);
+                await FinishRawLogAsync(logId, 400, audioError, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -1293,7 +1903,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                 var message = "doubao-asr-stream 缺少 Access Key，无法建立 WebSocket ASR 连接。";
-                await FinishRawLogAsync(logId, 401, message, duration, ct);
+                await FinishRawLogAsync(logId, 401, message, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -1335,7 +1945,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await _modelResolver.RecordFailureAsync(resolution, ct);
             }
 
-            await FinishRawLogAsync(logId, statusCode, content, durationMs, ct);
+            await FinishRawLogAsync(logId, statusCode, content, durationMs, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
 
             var headers = new Dictionary<string, string>
             {
@@ -1820,6 +2430,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return normalized is "GET" or "HEAD";
     }
 
+    private static string NormalizeMultipartSendFieldName(string fieldName)
+    {
+        if (string.Equals(fieldName, "image[]", StringComparison.Ordinal)
+            || IsIndexedMultipartArrayField(fieldName, "image"))
+        {
+            return "image[]";
+        }
+
+        return fieldName;
+    }
+
+    private static bool IsIndexedMultipartArrayField(string fieldName, string root)
+    {
+        var prefix = root + "[";
+        if (!fieldName.StartsWith(prefix, StringComparison.Ordinal) || !fieldName.EndsWith("]", StringComparison.Ordinal))
+            return false;
+
+        var inner = fieldName.Substring(prefix.Length, fieldName.Length - prefix.Length - 1);
+        return inner.Length > 0 && inner.All(char.IsDigit);
+    }
+
     /// <summary>
     /// 将 multipart 请求的字段和文件合并为 JSON 对象，供 Exchange 转换器使用。
     /// MultipartFields → JSON 属性，MultipartFiles 中的图片 → base64 data URI 放入 image_urls。
@@ -1894,6 +2525,384 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => requestBody.TryGetPropertyValue("tools", out var tools)
            && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
 
+    private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error)
+    {
+        error = null;
+        var strict = IsStrictParameterPolicy(request.Context);
+
+        if (TryBuildStrictDroppedParameterFailure(request.Context, out var droppedError))
+        {
+            error = droppedError;
+            return true;
+        }
+
+        if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
+        {
+            error = parameterError;
+            return true;
+        }
+
+        if (RequestHasTools(requestBody) && CapabilityRejected(resolution.SupportsFunctionCalling, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsFunctionCalling == false ? "FUNCTION_CALLING_UNSUPPORTED" : "FUNCTION_CALLING_UNVERIFIED",
+                resolution.SupportsFunctionCalling == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持函数调用（function_calling），请改用支持函数调用的模型或移除 tools。"
+                    : $"strict-require 要求函数调用（function_calling）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持的模型。",
+                400);
+            return true;
+        }
+
+        if (RequestNeedsVision(request.ModelType, requestBody, hasMultipartImage: false)
+            && CapabilityRejected(resolution.SupportsVision, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsVision == false ? "VISION_UNSUPPORTED" : "VISION_UNVERIFIED",
+                resolution.SupportsVision == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持视觉输入（vision/image_input），请改用视觉模型或移除图片输入。"
+                    : $"strict-require 要求视觉输入（vision/image_input）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持的视觉模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsImageGeneration(request.ModelType, requestBody, endpointPath: null)
+            && CapabilityRejected(resolution.SupportsImageGeneration, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsImageGeneration == false ? "IMAGE_GENERATION_UNSUPPORTED" : "IMAGE_GENERATION_UNVERIFIED",
+                resolution.SupportsImageGeneration == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持图片生成（image_generation），请改用生图模型。"
+                    : $"strict-require 要求图片生成（image_generation）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持的生图模型。",
+                400);
+            return true;
+        }
+        if (IsThinkingEffective(request.IncludeThinking, request.ModelType)
+            && CapabilityRejected(resolution.SupportsThinking, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsThinking == false ? "THINKING_UNSUPPORTED" : "THINKING_UNVERIFIED",
+                resolution.SupportsThinking == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持 thinking/reasoning 输出，请关闭 thinking 或改用支持推理输出的模型。"
+                    : $"strict-require 要求 thinking/reasoning 输出能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持推理输出的模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsStructuredOutput(requestBody)
+            && CapabilityRejected(resolution.SupportsStructuredOutput, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsStructuredOutput == false ? "STRUCTURED_OUTPUT_UNSUPPORTED" : "STRUCTURED_OUTPUT_UNVERIFIED",
+                resolution.SupportsStructuredOutput == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持结构化输出（json_schema/json_object），请改用支持结构化输出的模型或移除 response_format。"
+                    : $"strict-require 要求结构化输出（json_schema/json_object）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持结构化输出的模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsLogprobs(requestBody)
+            && CapabilityRejected(resolution.SupportsLogprobs, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsLogprobs == false ? "LOGPROBS_UNSUPPORTED" : "LOGPROBS_UNVERIFIED",
+                resolution.SupportsLogprobs == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持 logprobs/top_logprobs，请改用支持 token logprobs 的模型或移除相关参数。"
+                    : $"strict-require 要求 logprobs/top_logprobs 能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持 token logprobs 的模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsParallelToolCalls(requestBody)
+            && CapabilityRejected(resolution.SupportsParallelToolCalls, strict))
+        {
+            error = GatewayResponse.Fail(
+                resolution.SupportsParallelToolCalls == false ? "PARALLEL_TOOL_CALLS_UNSUPPORTED" : "PARALLEL_TOOL_CALLS_UNVERIFIED",
+                resolution.SupportsParallelToolCalls == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持 parallel_tool_calls，请关闭并行工具调用或改用支持该能力的模型。"
+                    : $"strict-require 要求 parallel_tool_calls 能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持并行工具调用的模型。",
+                400);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryBuildRawCapabilityFailure(GatewayRawRequest request, ModelResolutionResult resolution, JsonObject? requestBody, out GatewayRawResponse? error)
+    {
+        error = null;
+        var strict = IsStrictParameterPolicy(request.Context);
+        if (TryBuildStrictDroppedParameterRawFailure(request.Context, out var droppedError))
+        {
+            error = droppedError;
+            return true;
+        }
+
+        if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
+        {
+            error = parameterError;
+            return true;
+        }
+
+        var hasMultipartImage = request.MultipartFiles?.Values.Any(f => f.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) == true
+                                || request.MultipartFileRefs?.Values.Any(f => f.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) == true;
+        if (RequestNeedsVision(request.ModelType, requestBody, hasMultipartImage)
+            && CapabilityRejected(resolution.SupportsVision, strict))
+        {
+            error = GatewayRawResponse.Fail(
+                resolution.SupportsVision == false ? "VISION_UNSUPPORTED" : "VISION_UNVERIFIED",
+                resolution.SupportsVision == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持视觉输入（vision/image_input），请改用视觉模型或移除图片输入。"
+                    : $"strict-require 要求视觉输入（vision/image_input）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持的视觉模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsImageGeneration(request.ModelType, requestBody, request.EndpointPath)
+            && CapabilityRejected(resolution.SupportsImageGeneration, strict))
+        {
+            error = GatewayRawResponse.Fail(
+                resolution.SupportsImageGeneration == false ? "IMAGE_GENERATION_UNSUPPORTED" : "IMAGE_GENERATION_UNVERIFIED",
+                resolution.SupportsImageGeneration == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持图片生成（image_generation），请改用生图模型。"
+                    : $"strict-require 要求图片生成（image_generation）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持的生图模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsStructuredOutput(requestBody)
+            && CapabilityRejected(resolution.SupportsStructuredOutput, strict))
+        {
+            error = GatewayRawResponse.Fail(
+                resolution.SupportsStructuredOutput == false ? "STRUCTURED_OUTPUT_UNSUPPORTED" : "STRUCTURED_OUTPUT_UNVERIFIED",
+                resolution.SupportsStructuredOutput == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持结构化输出（json_schema/json_object），请改用支持结构化输出的模型或移除 response_format。"
+                    : $"strict-require 要求结构化输出（json_schema/json_object）能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持结构化输出的模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsLogprobs(requestBody)
+            && CapabilityRejected(resolution.SupportsLogprobs, strict))
+        {
+            error = GatewayRawResponse.Fail(
+                resolution.SupportsLogprobs == false ? "LOGPROBS_UNSUPPORTED" : "LOGPROBS_UNVERIFIED",
+                resolution.SupportsLogprobs == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持 logprobs/top_logprobs，请改用支持 token logprobs 的模型或移除相关参数。"
+                    : $"strict-require 要求 logprobs/top_logprobs 能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持 token logprobs 的模型。",
+                400);
+            return true;
+        }
+        if (RequestNeedsParallelToolCalls(requestBody)
+            && CapabilityRejected(resolution.SupportsParallelToolCalls, strict))
+        {
+            error = GatewayRawResponse.Fail(
+                resolution.SupportsParallelToolCalls == false ? "PARALLEL_TOOL_CALLS_UNSUPPORTED" : "PARALLEL_TOOL_CALLS_UNVERIFIED",
+                resolution.SupportsParallelToolCalls == false
+                    ? $"模型 {resolution.ActualModel} 未声明支持 parallel_tool_calls，请关闭并行工具调用或改用支持该能力的模型。"
+                    : $"strict-require 要求 parallel_tool_calls 能力，但模型 {resolution.ActualModel} 未确认支持；请配置模型能力或改用已确认支持并行工具调用的模型。",
+                400);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool IsStrictParameterPolicy(GatewayRequestContext? context)
+        => string.Equals(context?.ParameterPolicy, "strict-require", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryBuildStrictDroppedParameterFailure(GatewayRequestContext? context, out GatewayResponse? error)
+    {
+        error = null;
+        if (!IsStrictParameterPolicy(context) || context?.DroppedParameters is not { Count: > 0 } dropped)
+            return false;
+
+        error = GatewayResponse.Fail(
+            "DROPPED_PARAMETERS_UNSUPPORTED",
+            $"strict-require 不允许入口适配器丢弃参数: {string.Join(", ", dropped)}",
+            400);
+        return true;
+    }
+
+    private static bool TryBuildStrictDroppedParameterRawFailure(GatewayRequestContext? context, out GatewayRawResponse? error)
+    {
+        error = null;
+        if (!IsStrictParameterPolicy(context) || context?.DroppedParameters is not { Count: > 0 } dropped)
+            return false;
+
+        error = GatewayRawResponse.Fail(
+            "DROPPED_PARAMETERS_UNSUPPORTED",
+            $"strict-require 不允许入口适配器丢弃参数: {string.Join(", ", dropped)}",
+            400);
+        return true;
+    }
+
+    private static bool TryBuildStrictParameterCapabilityFailure(
+        GatewayRequestContext? context,
+        ModelResolutionResult resolution,
+        JsonObject? requestBody,
+        out GatewayResponse? error)
+    {
+        error = null;
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+            return false;
+
+        error = GatewayResponse.Fail(
+            supported == false ? "PARAMETER_UNSUPPORTED" : "PARAMETER_UNVERIFIED",
+            supported == false
+                ? $"模型 {resolution.ActualModel} 未声明支持参数 {parameter}，请移除该参数或改用支持它的模型。"
+                : $"strict-require 要求参数 {parameter}，但模型 {resolution.ActualModel} 未确认支持；请配置 parameter:{parameter} 能力或改用已确认支持的模型。",
+            400);
+        return true;
+    }
+
+    private static bool TryBuildStrictParameterCapabilityRawFailure(
+        GatewayRequestContext? context,
+        ModelResolutionResult resolution,
+        JsonObject? requestBody,
+        out GatewayRawResponse? error)
+    {
+        error = null;
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+            return false;
+
+        error = GatewayRawResponse.Fail(
+            supported == false ? "PARAMETER_UNSUPPORTED" : "PARAMETER_UNVERIFIED",
+            supported == false
+                ? $"模型 {resolution.ActualModel} 未声明支持参数 {parameter}，请移除该参数或改用支持它的模型。"
+                : $"strict-require 要求参数 {parameter}，但模型 {resolution.ActualModel} 未确认支持；请配置 parameter:{parameter} 能力或改用已确认支持的模型。",
+            400);
+        return true;
+    }
+
+    private static bool TryFindRejectedStrictParameter(
+        GatewayRequestContext? context,
+        ModelResolutionResult resolution,
+        JsonObject? requestBody,
+        out string parameter,
+        out bool? supported)
+    {
+        parameter = string.Empty;
+        supported = null;
+        if (requestBody is null)
+            return false;
+
+        var strict = IsStrictParameterPolicy(context);
+        foreach (var key in StrictParameterCapabilityKeys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsRequestedJsonParameter(requestBody, key)) continue;
+            parameter = key;
+            supported = resolution.ParameterCapabilities is not null
+                        && resolution.ParameterCapabilities.TryGetValue(key, out var value)
+                ? value
+                : null;
+            return CapabilityRejected(supported, strict);
+        }
+
+        return false;
+    }
+
+    private static bool CapabilityRejected(bool? supported, bool strict)
+        => supported == false || (strict && supported != true);
+
+    private static bool RequestNeedsVision(string modelType, JsonObject? requestBody, bool hasMultipartImage)
+        => string.Equals(modelType, ModelTypes.Vision, StringComparison.OrdinalIgnoreCase)
+           || hasMultipartImage
+           || JsonContainsImageInput(requestBody);
+
+    private static bool RequestNeedsImageGeneration(string modelType, JsonObject? requestBody, string? endpointPath)
+        => string.Equals(modelType, ModelTypes.ImageGen, StringComparison.OrdinalIgnoreCase)
+           || (endpointPath?.Contains("/images/generations", StringComparison.OrdinalIgnoreCase) == true)
+           || (requestBody?.TryGetPropertyValue("response_format", out var responseFormat) == true
+               && responseFormat?.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) == true);
+
+    private static bool RequestNeedsStructuredOutput(JsonObject? requestBody)
+    {
+        if (requestBody?.TryGetPropertyValue("response_format", out var responseFormat) != true
+            || responseFormat is null)
+        {
+            return false;
+        }
+
+        if (responseFormat is JsonObject responseFormatObject)
+        {
+            if (responseFormatObject.ContainsKey("json_schema"))
+            {
+                return true;
+            }
+
+            var type = responseFormatObject.TryGetPropertyValue("type", out var typeNode)
+                ? typeNode?.ToString()
+                : null;
+            return IsStructuredResponseFormatType(type);
+        }
+
+        return IsStructuredResponseFormatType(responseFormat.ToString());
+    }
+
+    private static bool IsStructuredResponseFormatType(string? type)
+        => string.Equals(type, "json_schema", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(type, "json_object", StringComparison.OrdinalIgnoreCase);
+
+    private static bool RequestNeedsLogprobs(JsonObject? requestBody)
+        => IsRequestedJsonParameter(requestBody, "logprobs")
+           || IsRequestedJsonParameter(requestBody, "top_logprobs");
+
+    private static bool RequestNeedsParallelToolCalls(JsonObject? requestBody)
+        => IsRequestedJsonParameter(requestBody, "parallel_tool_calls");
+
+    private static bool IsRequestedJsonParameter(JsonObject? requestBody, string key)
+    {
+        if (requestBody?.TryGetPropertyValue(key, out var node) != true || node is null)
+        {
+            return false;
+        }
+
+        if (node is JsonValue value)
+        {
+            if (value.TryGetValue<bool>(out var boolValue)) return boolValue;
+            if (value.TryGetValue<int>(out var intValue)) return intValue > 0;
+            if (value.TryGetValue<long>(out var longValue)) return longValue > 0;
+            if (value.TryGetValue<double>(out var doubleValue)) return doubleValue > 0;
+            if (value.TryGetValue<string>(out var stringValue))
+            {
+                var normalized = stringValue.Trim();
+                return normalized.Length > 0
+                       && !string.Equals(normalized, "false", StringComparison.OrdinalIgnoreCase)
+                       && normalized != "0";
+            }
+        }
+
+        return true;
+    }
+
+    private static bool JsonContainsImageInput(JsonNode? node)
+    {
+        if (node is null) return false;
+        if (node is JsonObject obj)
+        {
+            if (obj.TryGetPropertyValue("type", out var type)
+                && type?.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return true;
+            }
+            foreach (var (key, value) in obj)
+            {
+                if (IsImageInputKey(key) && value is not null)
+                {
+                    return true;
+                }
+                if (JsonContainsImageInput(value)) return true;
+            }
+            return false;
+        }
+        if (node is JsonArray arr)
+        {
+            return arr.Any(JsonContainsImageInput);
+        }
+        return false;
+    }
+
+    private static bool IsImageInputKey(string key)
+        => string.Equals(key, "image_url", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "image_urls", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "input_image", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "input_images", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "images", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "frame_images", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "inlineData", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(key, "fileData", StringComparison.OrdinalIgnoreCase);
+
     // 按「解析出的 wire 协议」选适配器，而非平台类型。pool-item 可覆盖 Protocol（混合/代理平台
     // 走不同 wire），此时必须按 resolution.Protocol 选 adapter，否则请求仍用旧平台适配器构造、只有
     // 日志显示 protocol-from-pool-item（Codex P2）。Protocol 默认回落 PlatformType，普通平台零差异；
@@ -1908,14 +2917,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
-        if (string.IsNullOrWhiteSpace(platformType))
+        var adapterKey = NormalizeAdapterKey(platformType);
+        if (string.IsNullOrWhiteSpace(adapterKey))
             return _adapters.GetValueOrDefault("openai"); // 默认 OpenAI
 
-        if (_adapters.TryGetValue(platformType, out var adapter))
+        if (_adapters.TryGetValue(adapterKey, out var adapter))
             return adapter;
 
         // OpenAI 兼容
         return _adapters.GetValueOrDefault("openai");
+    }
+
+    internal static string? NormalizeAdapterKey(string? platformType)
+    {
+        var normalized = platformType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            null or "" or "unknown" => null,
+            "anthropic" or "claude-compatible" => "claude",
+            "openai-compatible" or "openrouter" or "gemini-compatible" => "openai",
+            _ => normalized
+        };
     }
 
     private async Task<string?> StartLogAsync(
@@ -1977,12 +2999,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
                     ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
                     ExpectedModel: resolution.ExpectedModel,
                     IsHealthProbe: request.Context?.IsHealthProbe,
                     IsStreaming: isStreaming,
+                    ParameterPolicy: request.Context?.ParameterPolicy,
+                    DroppedParameters: request.Context?.DroppedParameters,
+                    SourceSystem: request.Context?.SourceSystem,
+                    IngressProtocol: request.Context?.IngressProtocol,
+                    AppCallerTitle: request.Context?.AppCallerTitle,
+                    ModelPolicy: request.Context?.ModelPolicy,
+                    ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
+                    InputPricePerMillion: resolution.InputPricePerMillion,
+                    OutputPricePerMillion: resolution.OutputPricePerMillion,
+                    PricePerCall: resolution.PricePerCall,
+                    PriceCurrency: resolution.PriceCurrency,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -1995,7 +3030,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
     }
 
-    private async Task FinishLogAsync(
+    private Task FinishLogAsync(
         string? logId,
         HttpResponseMessage response,
         string responseBody,
@@ -2003,9 +3038,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         long durationMs,
         System.Text.Json.Nodes.JsonArray? toolCalls,
         string? finishReason,
-        CancellationToken ct)
+        ModelResolutionResult resolution,
+        string gatewayTransport,
+        CancellationToken ct,
+        List<LlmProviderAttempt>? providerAttempts = null)
     {
-        if (_logWriter == null || logId == null) return;
+        if (_logWriter == null || logId == null) return Task.CompletedTask;
 
         try
         {
@@ -2013,6 +3051,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var answerText = responseBody.Length > 10000
                 ? responseBody.Substring(0, 10000) + "...[truncated]"
                 : responseBody;
+            var cost = EstimateCost(resolution, tokenUsage, countCall: true);
 
             _logWriter.MarkDone(
                 logId,
@@ -2037,12 +3076,37 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     DurationMs: durationMs,
                     ResponseToolCalls: toolCalls?.ToJsonString(),
                     ToolCallCount: toolCalls?.Count,
-                    FinishReason: finishReason));
+                    FinishReason: finishReason,
+                    EstimatedInputCost: cost.Input,
+                    EstimatedOutputCost: cost.Output,
+                    EstimatedCallCost: cost.Call,
+                    EstimatedCost: cost.Total,
+                    EstimatedCostCurrency: cost.Currency,
+                    EstimatedCostUsd: cost.Usd,
+                    ProviderAttempts: providerAttempts ?? CompleteProviderAttempts(
+                        resolution,
+                        requestTransport: gatewayTransport,
+                        statusCode: (int)response.StatusCode,
+                        durationMs: durationMs,
+                        error: response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}"),
+                    Provider: resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? "unknown",
+                    Model: resolution.ActualModel ?? "unknown",
+                    ApiBase: resolution.ApiUrl,
+                    Path: response.RequestMessage?.RequestUri?.AbsolutePath,
+                    PlatformId: resolution.ActualPlatformId,
+                    PlatformName: resolution.ActualPlatformName,
+                    Protocol: resolution.Protocol,
+                    ResolutionReason: resolution.ResolutionReason,
+                    ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
+                    ModelGroupId: resolution.ModelGroupId,
+                    ModelGroupName: resolution.ModelGroupName));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成日志失败");
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -2072,7 +3136,34 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
-    private async Task FinishStreamLogAsync(
+    private static GatewayEstimatedCost EstimateCost(
+        ModelResolutionResult? resolution,
+        GatewayTokenUsage? tokenUsage,
+        bool countCall)
+    {
+        var currency = string.IsNullOrWhiteSpace(resolution?.PriceCurrency)
+            ? null
+            : resolution.PriceCurrency.Trim().ToUpperInvariant();
+        var inputCost = tokenUsage?.InputTokens is > 0 && resolution?.InputPricePerMillion is decimal inputPrice
+            ? Math.Round(tokenUsage.InputTokens.Value * inputPrice / 1_000_000m, 8, MidpointRounding.AwayFromZero)
+            : (decimal?)null;
+        var outputCost = tokenUsage?.OutputTokens is > 0 && resolution?.OutputPricePerMillion is decimal outputPrice
+            ? Math.Round(tokenUsage.OutputTokens.Value * outputPrice / 1_000_000m, 8, MidpointRounding.AwayFromZero)
+            : (decimal?)null;
+        var callCost = countCall && resolution?.PricePerCall is decimal pricePerCall
+            ? Math.Round(Math.Max(0, pricePerCall), 8, MidpointRounding.AwayFromZero)
+            : (decimal?)null;
+
+        var parts = new[] { inputCost, outputCost, callCost }.Where(x => x is not null).Select(x => x!.Value).ToList();
+        if (parts.Count == 0)
+            return new GatewayEstimatedCost(null, null, null, null, currency, null);
+
+        var total = Math.Round(parts.Sum(), 8, MidpointRounding.AwayFromZero);
+        var usd = string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase) ? total : (decimal?)null;
+        return new GatewayEstimatedCost(inputCost, outputCost, callCost, total, currency, usd);
+    }
+
+    private Task FinishStreamLogAsync(
         string? logId,
         string assembledText,
         string assembledThinking,
@@ -2080,12 +3171,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         long durationMs,
         System.Text.Json.Nodes.JsonArray? toolCalls,
         string? finishReason,
-        CancellationToken ct)
+        ModelResolutionResult? resolution,
+        string gatewayTransport,
+        CancellationToken ct,
+        List<LlmProviderAttempt>? providerAttempts = null)
     {
-        if (_logWriter == null || logId == null) return;
+        if (_logWriter == null || logId == null) return Task.CompletedTask;
 
         try
         {
+            var cost = EstimateCost(resolution, tokenUsage, countCall: true);
             _logWriter.MarkDone(
                 logId,
                 new LlmLogDone(
@@ -2109,12 +3204,38 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     DurationMs: durationMs,
                     ResponseToolCalls: toolCalls?.ToJsonString(),
                     ToolCallCount: toolCalls?.Count,
-                    FinishReason: finishReason));
+                    FinishReason: finishReason,
+                    EstimatedInputCost: cost.Input,
+                    EstimatedOutputCost: cost.Output,
+                    EstimatedCallCost: cost.Call,
+                    EstimatedCost: cost.Total,
+                    EstimatedCostCurrency: cost.Currency,
+                    EstimatedCostUsd: cost.Usd,
+                    ProviderAttempts: providerAttempts ?? (resolution is null
+                        ? null
+                        : CompleteProviderAttempts(
+                            resolution,
+                            requestTransport: gatewayTransport,
+                            statusCode: 200,
+                            durationMs: durationMs,
+                            error: null)),
+                    Provider: resolution?.ActualPlatformName ?? resolution?.ActualPlatformId,
+                    Model: resolution?.ActualModel,
+                    ApiBase: resolution?.ApiUrl,
+                    PlatformId: resolution?.ActualPlatformId,
+                    PlatformName: resolution?.ActualPlatformName,
+                    Protocol: resolution?.Protocol,
+                    ResolutionReason: resolution?.ResolutionReason,
+                    ModelResolutionType: resolution is null ? null : ParseResolutionType(resolution.ResolutionType),
+                    ModelGroupId: resolution?.ModelGroupId,
+                    ModelGroupName: resolution?.ModelGroupName));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成流式日志失败");
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -2169,6 +3290,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 日志累积容错：解析异常不影响主流程
         }
     }
+
+    private sealed record GatewayEstimatedCost(
+        decimal? Input,
+        decimal? Output,
+        decimal? Call,
+        decimal? Total,
+        string? Currency,
+        decimal? Usd);
 
     /// <summary>累加器 → 按 index 排序的 OpenAI 形状 tool_calls 数组；空则 null。</summary>
     private static System.Text.Json.Nodes.JsonArray? BuildAccumulatedToolCalls(
@@ -2239,11 +3368,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
                     ExchangeTransformerType: resolution.ExchangeTransformerType,
+                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
                     ExpectedModel: resolution.ExpectedModel,
                     IsHealthProbe: request.Context?.IsHealthProbe,
+                    ParameterPolicy: request.Context?.ParameterPolicy,
+                    DroppedParameters: request.Context?.DroppedParameters,
+                    SourceSystem: request.Context?.SourceSystem,
+                    IngressProtocol: request.Context?.IngressProtocol,
+                    AppCallerTitle: request.Context?.AppCallerTitle,
+                    ModelPolicy: request.Context?.ModelPolicy,
+                    ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
+                    InputPricePerMillion: resolution.InputPricePerMillion,
+                    OutputPricePerMillion: resolution.OutputPricePerMillion,
+                    PricePerCall: resolution.PricePerCall,
+                    PriceCurrency: resolution.PriceCurrency,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -2256,14 +3398,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
     }
 
-    private async Task FinishRawLogAsync(
+    private Task FinishRawLogAsync(
         string? logId,
         int statusCode,
         string responseBody,
         long durationMs,
-        CancellationToken ct)
+        ModelResolutionResult resolution,
+        string gatewayTransport,
+        CancellationToken ct,
+        List<LlmProviderAttempt>? providerAttempts = null)
     {
-        if (_logWriter == null || logId == null) return;
+        if (_logWriter == null || logId == null) return Task.CompletedTask;
 
         try
         {
@@ -2271,6 +3416,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var answerText = responseBody.Length > 10000
                 ? responseBody.Substring(0, 10000) + "...[truncated]"
                 : responseBody;
+            var cost = EstimateCost(resolution, tokenUsage: null, countCall: statusCode >= 200 && statusCode < 300);
 
             _logWriter.MarkDone(
                 logId,
@@ -2292,12 +3438,36 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AssembledTextHash: LlmLogRedactor.Sha256Hex(responseBody),
                     Status: status,
                     EndedAt: DateTime.UtcNow,
-                    DurationMs: durationMs));
+                    DurationMs: durationMs,
+                    EstimatedInputCost: cost.Input,
+                    EstimatedOutputCost: cost.Output,
+                    EstimatedCallCost: cost.Call,
+                    EstimatedCost: cost.Total,
+                    EstimatedCostCurrency: cost.Currency,
+                    EstimatedCostUsd: cost.Usd,
+                    ProviderAttempts: providerAttempts ?? CompleteProviderAttempts(
+                        resolution,
+                        requestTransport: gatewayTransport,
+                        statusCode: statusCode,
+                        durationMs: durationMs,
+                        error: statusCode >= 200 && statusCode < 300 ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {statusCode}"),
+                    Provider: resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                    Model: resolution.ActualModel,
+                    ApiBase: resolution.ApiUrl,
+                    PlatformId: resolution.ActualPlatformId,
+                    PlatformName: resolution.ActualPlatformName,
+                    Protocol: resolution.Protocol,
+                    ResolutionReason: resolution.ResolutionReason,
+                    ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
+                    ModelGroupId: resolution.ModelGroupId,
+                    ModelGroupName: resolution.ModelGroupName));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LlmGateway] 完成 Raw 日志失败");
         }
+
+        return Task.CompletedTask;
     }
 
     private static string? TryExtractErrorMessage(string responseBody)
@@ -2331,6 +3501,186 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             "Legacy" => ModelResolutionType.Legacy,
             _ => null
         };
+    }
+
+    private static List<LlmProviderAttempt> BuildProviderAttempts(ModelResolutionResult resolution, string transport)
+    {
+        var attempts = new List<LlmProviderAttempt>();
+        if (resolution.OriginalModels is { Count: > 0 })
+        {
+            foreach (var model in resolution.OriginalModels)
+            {
+                attempts.Add(new LlmProviderAttempt
+                {
+                    Order = attempts.Count + 1,
+                    Stage = "candidate",
+                    Provider = resolution.OriginalPoolName,
+                    PlatformId = model.PlatformId,
+                    Model = model.ModelId,
+                    ModelGroupId = resolution.OriginalPoolId,
+                    ModelGroupName = resolution.OriginalPoolName,
+                    Transport = transport,
+                    Status = model.IsAvailable ? "candidate" : "skipped",
+                    Reason = model.IsAvailable
+                        ? $"health={model.HealthStatus}"
+                        : $"unavailable health={model.HealthStatus} failures={model.ConsecutiveFailures}",
+                });
+            }
+        }
+
+        attempts.Add(new LlmProviderAttempt
+        {
+            Order = attempts.Count + 1,
+            Stage = "send",
+            Provider = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName,
+            Model = resolution.ActualModel,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            Protocol = resolution.Protocol,
+            Transport = transport,
+            Status = "sent",
+            Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
+        });
+
+        return attempts;
+    }
+
+    private static List<LlmProviderAttempt> CompleteProviderAttempts(
+        ModelResolutionResult resolution,
+        string requestTransport,
+        int statusCode,
+        long durationMs,
+        string? error)
+    {
+        var attempts = BuildProviderAttempts(resolution, requestTransport);
+        CompleteLastSendAttempt(attempts, statusCode, durationMs, error);
+        return attempts;
+    }
+
+    private static void AddProviderAttempt(
+        List<LlmProviderAttempt> attempts,
+        ModelResolutionResult resolution,
+        string stage,
+        string transport,
+        int statusCode,
+        long durationMs,
+        string? error,
+        string? reason = null,
+        string? statusOverride = null)
+    {
+        attempts.Add(new LlmProviderAttempt
+        {
+            Order = attempts.Count + 1,
+            Stage = stage,
+            Provider = resolution.ExchangeName
+                       ?? resolution.ActualPlatformName
+                       ?? resolution.ActualPlatformId,
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName,
+            Model = resolution.ActualModel,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            Protocol = resolution.Protocol,
+            Transport = transport,
+            Status = statusOverride
+                     ?? (statusCode >= 200 && statusCode < 300 && string.IsNullOrWhiteSpace(error)
+                         ? "succeeded"
+                         : "failed"),
+            Reason = reason ?? error,
+            StatusCode = statusCode,
+            DurationMs = durationMs,
+            Error = string.IsNullOrWhiteSpace(error) ? null : error,
+            EndedAt = DateTime.UtcNow,
+        });
+    }
+
+    private static void AddPendingProviderAttempt(
+        List<LlmProviderAttempt> attempts,
+        ModelResolutionResult resolution,
+        string transport,
+        string? reason)
+    {
+        attempts.Add(new LlmProviderAttempt
+        {
+            Order = attempts.Count + 1,
+            Stage = "send",
+            Provider = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName,
+            Model = resolution.ActualModel,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            Protocol = resolution.Protocol,
+            Transport = transport,
+            Status = "sent",
+            Reason = reason,
+        });
+    }
+
+    private static List<LlmProviderAttempt> BuildProviderAttempts(GatewayModelResolution resolution, string transport)
+    {
+        var attempts = new List<LlmProviderAttempt>();
+        if (resolution.OriginalModels is { Count: > 0 })
+        {
+            foreach (var model in resolution.OriginalModels)
+            {
+                attempts.Add(new LlmProviderAttempt
+                {
+                    Order = attempts.Count + 1,
+                    Stage = "candidate",
+                    Provider = resolution.OriginalPoolName,
+                    PlatformId = model.PlatformId,
+                    Model = model.ModelId,
+                    ModelGroupId = resolution.OriginalPoolId,
+                    ModelGroupName = resolution.OriginalPoolName,
+                    Transport = transport,
+                    Status = model.IsAvailable ? "candidate" : "skipped",
+                    Reason = model.IsAvailable
+                        ? $"health={model.HealthStatus}"
+                        : $"unavailable health={model.HealthStatus} failures={model.ConsecutiveFailures}",
+                });
+            }
+        }
+
+        attempts.Add(new LlmProviderAttempt
+        {
+            Order = attempts.Count + 1,
+            Stage = "send",
+            Provider = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+            PlatformId = resolution.ActualPlatformId,
+            PlatformName = resolution.ActualPlatformName,
+            Model = resolution.ActualModel,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            Protocol = resolution.Protocol,
+            Transport = transport,
+            Status = "sent",
+            Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
+        });
+
+        return attempts;
+    }
+
+    private static void CompleteLastSendAttempt(
+        List<LlmProviderAttempt> attempts,
+        int statusCode,
+        long durationMs,
+        string? error)
+    {
+        var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase))
+                      ?? attempts.LastOrDefault();
+        if (attempt is null)
+            return;
+
+        attempt.StatusCode = statusCode;
+        attempt.DurationMs = durationMs;
+        attempt.EndedAt = DateTime.UtcNow;
+        attempt.Error = string.IsNullOrWhiteSpace(error) ? null : error;
+        attempt.Status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
+        if (!string.IsNullOrWhiteSpace(error))
+            attempt.Reason = error;
     }
 
     #endregion

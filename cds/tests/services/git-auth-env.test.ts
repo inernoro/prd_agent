@@ -55,7 +55,7 @@ describe('resolveGitAuthEnv', () => {
       expect(String(auth.env?.GIT_CONFIG_VALUE_0 || '')).toContain('AUTHORIZATION: basic ');
       expect(String(auth.env?.GIT_CONFIG_VALUE_0 || '')).not.toContain('token-123');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -101,7 +101,7 @@ describe('resolveGitAuthEnv', () => {
       expect(auth.projectId).toBe('p1');
       expect(auth.env?.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

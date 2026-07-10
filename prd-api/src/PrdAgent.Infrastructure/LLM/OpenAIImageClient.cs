@@ -189,20 +189,27 @@ public class OpenAIImageClient : IImageGenerationClient
         }
 
         // Anthropic 不支持 images endpoint；避免误配后 500
-        var platformType = resolution.PlatformType?.ToLowerInvariant();
-        if (string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase) ||
+        var platformType = resolution.PlatformType?.Trim().ToLowerInvariant();
+        var wireProtocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? platformType
+            : resolution.Protocol.Trim().ToLowerInvariant();
+        if (string.Equals(wireProtocol, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            wireProtocol = null;
+        }
+        if (wireProtocol is "anthropic" or "claude" ||
             apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型不支持 Anthropic 平台（请配置 OpenAI 兼容的 images API）");
         }
 
-        // 获取平台适配器（优先使用模型配置，fallback 到 URL 检测）
-        var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName);
+        // 获取平台适配器（优先使用 Gateway 解析出的 wire 协议，避免同平台多协议时被 URL/模型名猜回旧适配器）。
+        var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName, wireProtocol);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
         // OpenRouter 图片生成不走 /images/generations，而是 /chat/completions + modalities:[image,text]，
         // 图片在 choices[0].message.images[].image_url.url（base64 data URI）返回。详见 doc 与 LiteLLM 同款适配。
         var isOpenRouter = apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(platformType, "openrouter", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase);
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
@@ -428,7 +435,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     }, resolution, token);
                 }
                 // Google 原生路径：文生图/图生图/局部重绘统一用 generateContent 格式
-                else if (platformType == "google" || platformType == "gemini")
+                else if (platformAdapter.PlatformType == "google")
                 {
                     var (googleAspectRatio, googleImageSize) = GooglePlatformAdapter.ParseSizeToGoogleParams(requestedSizeNorm);
                     var googleImages = initImageBase64 != null ? new List<string> { initImageBase64 } : null;
@@ -769,8 +776,8 @@ public class OpenAIImageClient : IImageGenerationClient
         try
         {
             // Google 响应格式检测：{ candidates: [{ content: { parts: [{ inlineData: { data } }] } }] }
-            // 双重检测：1) platformType 标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 Gemini 的情况）
-            var isGoogleResponse = (platformType == "google" || platformType == "gemini")
+            // 双重检测：1) 解析后的适配器标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 Gemini 的情况）
+            var isGoogleResponse = platformAdapter.PlatformType == "google"
                 || body.Contains("\"candidates\"", StringComparison.Ordinal);
             if (isGoogleResponse)
             {

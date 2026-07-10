@@ -201,6 +201,44 @@ public class GatewayModelResolution
     /// </summary>
     public int? MaxTokens { get; init; }
 
+    /// <summary>是否支持函数调用。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsFunctionCalling { get; init; }
+
+    /// <summary>是否支持视觉输入。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsVision { get; init; }
+
+    /// <summary>是否支持图片生成。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsImageGeneration { get; init; }
+
+    /// <summary>是否支持 thinking/reasoning 输出。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsThinking { get; init; }
+
+    /// <summary>是否支持结构化输出（json_schema/json_object/response_format）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsStructuredOutput { get; init; }
+
+    /// <summary>是否支持 token logprobs/top_logprobs。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsLogprobs { get; init; }
+
+    /// <summary>是否支持并行工具调用（parallel_tool_calls）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsParallelToolCalls { get; init; }
+
+    /// <summary>
+    /// 字段级参数能力矩阵。key 为请求参数名（如 seed/stop），value=false 表示明确不支持，缺失表示未知。
+    /// </summary>
+    public Dictionary<string, bool>? ParameterCapabilities { get; init; }
+
+    /// <summary>输入 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? InputPricePerMillion { get; init; }
+
+    /// <summary>输出 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? OutputPricePerMillion { get; init; }
+
+    /// <summary>每次调用固定费用快照（币种由 PriceCurrency 指定）。</summary>
+    public decimal? PricePerCall { get; init; }
+
+    /// <summary>价格币种。当前 MAP 模型池价格字段历史语义为 CNY；未来可迁移为 USD 或显式币种。</summary>
+    public string? PriceCurrency { get; init; }
+
     /// <summary>
     /// 是否匹配期望（ExpectedModel == ActualModel）
     /// </summary>
@@ -266,6 +304,12 @@ public class GatewayModelResolution
     /// <summary>Exchange 转换器配置</summary>
     [JsonIgnore]
     public Dictionary<string, object>? ExchangeTransformerConfig { get; init; }
+
+    /// <summary>
+    /// 同一次解析阶段预计算出的后续可重试候选。仅进程内发送使用，包含敏感发送字段，禁止序列化。
+    /// </summary>
+    [JsonIgnore]
+    public List<ModelResolutionResult>? RetryCandidates { get; init; }
 }
 
 /// <summary>

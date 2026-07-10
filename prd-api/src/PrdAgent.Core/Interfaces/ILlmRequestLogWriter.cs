@@ -42,6 +42,7 @@ public record LlmLogStart(
     string? ExchangeId = null,
     string? ExchangeName = null,
     string? ExchangeTransformerType = null,
+    List<LlmProviderAttempt>? ProviderAttempts = null,
     // 图片引用（参考图 COS URL，用于日志页展示）
     List<LlmImageReference>? ImageReferences = null,
     // 模型降级信息
@@ -56,7 +57,29 @@ public record LlmLogStart(
     /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
     /// 由构建日志的位置权威标注；为 null 时写入器兜底为调用上下文的 GatewayTransport（默认 direct）。
     /// </summary>
-    string? GatewayTransport = null);
+    string? GatewayTransport = null,
+    /// <summary>入口/Provider 参数策略：default-drop / strict-require。</summary>
+    string? ParameterPolicy = null,
+    /// <summary>入口适配器或 Provider adapter 丢弃的参数名。</summary>
+    List<string>? DroppedParameters = null,
+    /// <summary>调用来源系统：map / external / console / workflow 等。</summary>
+    string? SourceSystem = null,
+    /// <summary>入口协议：gw-native / openai-compatible / claude-compatible / gemini-compatible。</summary>
+    string? IngressProtocol = null,
+    /// <summary>调用方展示标题，优先来自 GW 入口上下文。</summary>
+    string? AppCallerTitle = null,
+    /// <summary>模型策略：auto / pool / pinned。</summary>
+    string? ModelPolicy = null,
+    /// <summary>显式指定的 GW 模型池 ID。</summary>
+    string? ModelPoolId = null,
+    decimal? InputPricePerMillion = null,
+    decimal? OutputPricePerMillion = null,
+    decimal? PricePerCall = null,
+    string? PriceCurrency = null,
+    /// <summary>产生本条请求日志的发布 commit；为空时写入器从 GIT_COMMIT 兜底。</summary>
+    string? ReleaseCommit = null,
+    /// <summary>MAP 业务运行 ID，用于把 GW 请求日志反查到业务 run。</summary>
+    string? RunId = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -80,7 +103,25 @@ public record LlmLogDone(
     /// <summary>函数调用条数</summary>
     int? ToolCallCount = null,
     /// <summary>完成原因（上游 finish_reason / stop_reason）</summary>
-    string? FinishReason = null);
+    string? FinishReason = null,
+    decimal? EstimatedInputCost = null,
+    decimal? EstimatedOutputCost = null,
+    decimal? EstimatedCallCost = null,
+    decimal? EstimatedCost = null,
+    string? EstimatedCostCurrency = null,
+    decimal? EstimatedCostUsd = null,
+    List<LlmProviderAttempt>? ProviderAttempts = null,
+    string? Provider = null,
+    string? Model = null,
+    string? ApiBase = null,
+    string? Path = null,
+    string? PlatformId = null,
+    string? PlatformName = null,
+    string? Protocol = null,
+    string? ResolutionReason = null,
+    ModelResolutionType? ModelResolutionType = null,
+    string? ModelGroupId = null,
+    string? ModelGroupName = null);
 
 public interface ILlmRequestLogWriter
 {
@@ -89,4 +130,3 @@ public interface ILlmRequestLogWriter
     void MarkDone(string logId, LlmLogDone done);
     void MarkError(string logId, string error, int? statusCode = null);
 }
-

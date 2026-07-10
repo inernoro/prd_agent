@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Gateway Target Architecture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --panel: #121a2c;
+        --panel-2: #172238;
+        --line: #33415f;
+        --text: #eef3ff;
+        --muted: #99a7c2;
+        --accent: #7aa2ff;
+        --ok: #55c7a5;
+        --warn: #e4b25b;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 40px 28px 56px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+        font-weight: 720;
+        letter-spacing: 0;
+      }
+      .subtitle {
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+      .diagram {
+        display: grid;
+        grid-template-columns: 1.05fr 1.35fr 1.35fr 1.15fr;
+        gap: 12px;
+        align-items: stretch;
+      }
+      .lane {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 8px;
+        padding: 16px;
+        min-height: 320px;
+      }
+      .lane h2 {
+        margin: 0 0 14px;
+        font-size: 14px;
+        color: var(--accent);
+        letter-spacing: 0;
+      }
+      .node {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+      }
+      .node strong {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 5px;
+      }
+      .node span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .flow {
+        margin: 22px 0;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0f1728;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        color: #d8e4ff;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+      .evidence {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .evidence .node {
+        min-height: 100px;
+      }
+      .ownership {
+        margin-top: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        padding: 11px 12px;
+        text-align: left;
+        font-size: 12px;
+        vertical-align: top;
+      }
+      th {
+        color: var(--accent);
+        background: #10182a;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 7px;
+        margin: 2px 4px 2px 0;
+        font-size: 11px;
+        color: #dbe6ff;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      @media (max-width: 900px) {
+        .diagram,
+        .evidence {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LLM Gateway Target Architecture</h1>
+      <p class="subtitle">
+        This page describes the target architecture. 模型池最终归属是 GW.
+        MAP keeps business protocol and lifecycle. MAP does not own model routing in target state.
+      </p>
+
+      <div class="flow">
+        MAP / external systems -> GW ingress adapter -> GW Request IR -> appCaller registry -> GW router -> GW model pools -> provider adapter -> upstream model provider
+      </div>
+
+      <section class="diagram" aria-label="LLM Gateway architecture">
+        <div class="lane">
+          <h2>Callers</h2>
+          <div class="node"><strong>MAP</strong><span>Business API, run lifecycle, sessions, canvas, assets, and user-facing workflow state.</span></div>
+          <div class="node"><strong>External systems</strong><span>Use GW-compatible protocols instead of calling MAP internals or provider keys.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Ingress and IR</h2>
+          <div class="node"><strong>GW ingress adapter</strong><span>Normalizes GW Native, OpenAI-compatible, Claude-compatible, and Gemini-compatible requests.</span></div>
+          <div class="node"><strong>GW Request IR</strong><span>Preserves appCallerCode, requestType, modelPolicy, modelPoolId, pinned target, parameterPolicy, and droppedParameters.</span></div>
+          <div class="node"><strong>appCaller registry</strong><span>Passive discovery, configured/active state, budget, rate limit, owner, and drift evidence.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Gateway routing</h2>
+          <div class="node"><strong>GW router</strong><span>Owns auto, pool, pinned, fallback, strict parameter policy, and provider retry decisions.</span></div>
+          <div class="node"><strong>GW model pools</strong><span>Owns appCaller-specific pools, pool members, capability snapshots, provider and exchange binding.</span></div>
+          <div class="node"><strong>provider adapter</strong><span>Maps protocol-specific bodies, auth, raw/multipart rehydration, and response normalization.</span></div>
+        </div>
+        <div class="lane">
+          <h2>Upstream</h2>
+          <div class="node"><strong>OpenAI / Claude / Gemini</strong><span>Provider APIs reached only through Gateway-owned keys and routing decisions.</span></div>
+          <div class="node"><strong>OpenRouter / Volcengine Ark / Doubao ASR</strong><span>Exchange transformers and provider adapters keep raw protocols outside MAP.</span></div>
+        </div>
+      </section>
+
+      <section class="evidence" aria-label="Evidence surfaces">
+        <div class="node"><strong class="ok">Request linkage</strong><span>requestId, sessionId, runId, appCallerCode.</span></div>
+        <div class="node"><strong class="ok">GW observability</strong><span>routerTrace, providerAttempts, droppedParameters, transport.</span></div>
+        <div class="node"><strong class="ok">Migration evidence</strong><span>shadow comparisons, release gates, rollout ledger.</span></div>
+        <div class="node"><strong class="warn">Runtime gates</strong><span>config authority execution, active MAP fallback exit, http-full acceptance, legacy cleanup.</span></div>
+      </section>
+
+      <section class="ownership" aria-label="Ownership table">
+        <table>
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Owner</th>
+              <th>Responsibility</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Business lifecycle</td><td>MAP</td><td>Runs, workflow, canvas, business data, user-facing state.</td></tr>
+            <tr><td>Request governance</td><td>LLM Gateway</td><td><span class="tag">appCaller registry</span><span class="tag">rate limit</span><span class="tag">budget</span><span class="tag">audit</span></td></tr>
+            <tr><td>Model routing</td><td>LLM Gateway</td><td><span class="tag">GW router</span><span class="tag">GW model pools</span><span class="tag">fallback</span><span class="tag">pinned</span></td></tr>
+            <tr><td>Provider access</td><td>LLM Gateway</td><td>Provider adapter, exchange, key encryption, upstream protocol compatibility.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>

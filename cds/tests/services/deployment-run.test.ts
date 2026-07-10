@@ -28,7 +28,8 @@ describe('DeploymentRunService', () => {
     clock = new Date('2026-07-10T01:00:00.000Z');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stateService.flush();
     const dir = path.dirname(stateFile);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -41,9 +42,9 @@ describe('DeploymentRunService', () => {
     });
   }
 
-  it('persists the run before execution and links it from the branch', () => {
+  it('persists the run before execution and links it from the branch', async () => {
     const service = createService();
-    const run = service.begin({
+    const run = await service.begin({
       projectId: 'p1',
       branchId: 'b1',
       trigger: 'webhook',
@@ -61,9 +62,9 @@ describe('DeploymentRunService', () => {
     expect(reloadedState.getBranch('b1')?.lastDeploymentRunId).toBe('dr_test');
   });
 
-  it('enforces legal transitions and keeps terminal runs immutable', () => {
+  it('enforces legal transitions and keeps terminal runs immutable', async () => {
     const service = createService();
-    service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
     service.transition('dr_test', 'preparing', { phase: 'pull', message: '正在准备源码' });
     service.transition('dr_test', 'building', { phase: 'build', message: '正在构建' });
     service.transition('dr_test', 'starting', { phase: 'start', message: '正在启动' });
@@ -78,18 +79,18 @@ describe('DeploymentRunService', () => {
     })).toThrow(/terminal/);
   });
 
-  it('rejects skipped states that would make the ledger ambiguous', () => {
+  it('rejects skipped states that would make the ledger ambiguous', async () => {
     const service = createService();
-    service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
     expect(() => service.transition('dr_test', 'running', {
       phase: 'complete',
       message: '跳过全部阶段',
     })).toThrow(/pending -> running/);
   });
 
-  it('supports afterSeq resume and reports a truncated event window', () => {
+  it('supports afterSeq resume and reports a truncated event window', async () => {
     const service = createService(3);
-    service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
     service.append('dr_test', { phase: 'one', level: 'info', status: 'running', message: 'one' });
     service.append('dr_test', { phase: 'two', level: 'info', status: 'running', message: 'two' });
     service.append('dr_test', { phase: 'three', level: 'info', status: 'running', message: 'three' });
@@ -101,9 +102,9 @@ describe('DeploymentRunService', () => {
     expect(service.getEventsAfter('dr_test', 0).truncated).toBe(true);
   });
 
-  it('reconciles stale non-terminal runs to a structured failure', () => {
+  it('reconciles stale non-terminal runs to a structured failure', async () => {
     const service = createService();
-    service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'system' });
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'system' });
     service.transition('dr_test', 'preparing', { phase: 'pull', message: '正在准备' });
     clock = new Date('2026-07-10T01:20:01.000Z');
 
@@ -117,12 +118,12 @@ describe('DeploymentRunService', () => {
     });
   });
 
-  it('refuses a project and branch mismatch', () => {
+  it('refuses a project and branch mismatch', async () => {
     const service = createService();
-    expect(() => service.begin({
+    await expect(service.begin({
       projectId: 'other',
       branchId: 'b1',
       trigger: 'manual',
-    })).toThrow(/project mismatch/);
+    })).rejects.toThrow(/project mismatch/);
   });
 });

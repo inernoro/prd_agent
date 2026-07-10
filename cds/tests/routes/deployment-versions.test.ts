@@ -60,6 +60,7 @@ describe('Deployment versions router', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stateService.flush();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

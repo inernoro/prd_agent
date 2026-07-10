@@ -15,6 +15,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import type { Project, CdsState, BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function writeRawState(filePath: string, state: Partial<CdsState>): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(state), 'utf-8');
@@ -60,8 +61,9 @@ describe('StateService — projects (P4 Part 1)', () => {
     stateFile = path.join(tmpDir, 'state.json');
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('migration on load()', () => {
@@ -116,11 +118,14 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(svc.getLegacyProject()).toBeUndefined();
     });
 
-    it('persists the migrated project so a second load is idempotent', () => {
+    it('persists the migrated project so a second load is idempotent', async () => {
       seedLegacyState(stateFile);
       const svc1 = new StateService(stateFile, tmpDir);
       svc1.load();
       const firstCreatedAt = svc1.getLegacyProject()!.createdAt;
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush，
+      // 否则 svc2 读到未迁移的旧文件会重新生成 createdAt（CI 曾差 1ms 抽风）。
+      await (svc1.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
       // Second instance reads the same file — should find the migrated
       // project already there and not re-create it.

@@ -292,6 +292,49 @@ describe('极速版 — dispatcher', () => {
     expect(branch?.profileOverrides?.api?.activeDeployMode).toBe('express');
   });
 
+  // 入口校验（debt.cds.removed-branch-pages #7，2026-07-09）
+  it('入口校验：仓库缺 branch-image.yml → 不进 waiting，直接归因 failed', async () => {
+    const shell = new MockShell();
+    const dispatcherWithApp = new GitHubWebhookDispatcher({
+      stateService,
+      worktreeService: new MockWorktree(shell),
+      shell,
+      config: buildConfig(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      githubApp: { workflowFileExists: async () => 'missing' } as any,
+    });
+    const result = await dispatcherWithApp.handle('push', {
+      ref: 'refs/heads/feature',
+      after: FULL_SHA,
+      repository: { id: 1, full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-workflow-missing');
+    expect(result.deployRequest).toBeUndefined();
+    const branch = stateService.getBranch(result.branchId!);
+    expect(branch?.ciImageStatus).toBe('failed');
+    expect(branch?.ciImageError).toContain('branch-image.yml');
+    expect(branch?.ciWaitingSince).toBeFalsy();
+  });
+
+  it('入口校验：contents API 异常（unknown）→ fail-open 照旧 waiting', async () => {
+    const shell = new MockShell();
+    const dispatcherWithApp = new GitHubWebhookDispatcher({
+      stateService,
+      worktreeService: new MockWorktree(shell),
+      shell,
+      config: buildConfig(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      githubApp: { workflowFileExists: async () => 'unknown' } as any,
+    });
+    const result = await dispatcherWithApp.handle('push', {
+      ref: 'refs/heads/feature',
+      after: FULL_SHA,
+      repository: { id: 1, full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-waiting');
+    expect(stateService.getBranch(result.branchId!)?.ciImageStatus).toBe('waiting');
+  });
+
   it('workflow_run(branch-image.yml, success) → ci-image-ready + deployRequest', async () => {
     const pushed = await pushOnce();
     const result = await dispatcher.handle('workflow_run', {

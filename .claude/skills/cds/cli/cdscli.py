@@ -437,16 +437,26 @@ def cmd_project_create(args: argparse.Namespace) -> None:
         payload["description"] = args.description.strip()
     body = _call("POST", "/api/projects", body=payload, timeout=30)
     proj = body.get("project") if isinstance(body, dict) else None
+    # 统一授权模型(2026-07-09):若本次是用「只能创建项目」的全局 cdsg_ key 建的项目,
+    # 后端会返回一把绑定到新项目的 cdsp_ scoped key(issuedProjectKey)。这把 key 明文
+    # 只此一次,后续对该项目的部署/操作应切到它(create-only 全局 key 碰不到新项目)。
+    issued = body.get("issuedProjectKey") if isinstance(body, dict) else None
     if proj and _HUMAN:
         pid = proj.get("id", "?")
         slug = proj.get("slug", "?")
         print(f"[OK] 已创建项目 {slug} id={pid}")
         if proj.get("gitRepoUrl"):
             print(f"  git: {proj['gitRepoUrl']}")
+        if isinstance(issued, dict) and issued.get("plaintext"):
+            print("  [新项目 Agent Key] 明文只显示一次,请立即保存并用于后续该项目操作:")
+            print(f"    CDS_PROJECT_ID={pid}")
+            print(f"    CDS_PROJECT_KEY={issued['plaintext']}")
         return
-    ok({"project": proj or body},
+    ok({"project": proj or body, "issuedProjectKey": issued},
        note=f"已创建项目 {(proj or {}).get('slug','?')} "
-            f"id={(proj or {}).get('id','?')}")
+            f"id={(proj or {}).get('id','?')}"
+            + ("；已返回新项目 scoped key(issuedProjectKey.plaintext,只此一次)"
+               if isinstance(issued, dict) and issued.get("plaintext") else ""))
 
 
 def cmd_project_clone(args: argparse.Namespace) -> None:

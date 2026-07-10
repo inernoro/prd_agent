@@ -7,7 +7,7 @@ import { Copy, X } from 'lucide-react';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
-import { DASH, computeTokPerSec, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { DASH, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
 function MetricCard({ title, value, note }: { title: string; value: string; note?: string }) {
   return (
@@ -87,6 +87,139 @@ function CodeBlock({ body, empty = 'No data' }: { body?: string | null; empty?: 
     >
       {body || empty}
     </pre>
+  );
+}
+
+function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
+  const trace = detail.routerTrace;
+  const steps = trace?.steps?.length
+    ? trace.steps
+    : [
+        { order: 1, stage: 'provider', label: 'actual model', value: detail.model, status: 'info' },
+        { order: 2, stage: 'transport', label: 'transport', value: detail.transport, status: 'info' },
+      ].filter((step) => step.value);
+  return (
+    <div
+      style={{
+        borderRadius: 'var(--radius-sm)',
+        border: '1px solid var(--border-subtle)',
+        background: 'var(--bg-surface)',
+        padding: 12,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-primary)' }}>Router trace</div>
+          <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)' }}>
+            {trace?.mode || detail.modelResolutionType || 'unknown'} · {trace?.transport || detail.transport || 'unknown transport'}
+          </div>
+        </div>
+        {trace?.isFallback || detail.isFallback ? (
+          <span style={{ borderRadius: 999, padding: '2px 8px', fontSize: 10, fontWeight: 650, color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>
+            fallback
+          </span>
+        ) : null}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 10 }}>
+        <TraceMini label="Source" value={trace?.sourceSystem || detail.sourceSystem} />
+        <TraceMini label="Ingress" value={trace?.ingressProtocol || detail.ingressProtocol} />
+        <TraceMini label="Run" value={trace?.runId || detail.runId} mono />
+        <TraceMini label="Policy" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
+        <TraceMini label="Requested" value={trace?.requestedModel || detail.expectedModel} mono />
+        <TraceMini label="Actual" value={trace?.actualModel || detail.model} mono />
+        <TraceMini label="Requested pool" value={trace?.modelPoolId || detail.modelPoolId} mono />
+        <TraceMini label="Actual pool" value={trace?.modelGroupName || detail.modelGroupName || trace?.modelGroupId || detail.modelGroupId} />
+        <TraceMini label="Platform" value={trace?.platformName || detail.platformName || trace?.platformId || detail.platformId} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {steps.map((step) => {
+          const warning = step.status === 'warning' || step.stage === 'fallback';
+          return (
+            <div key={`${step.order}-${step.stage}-${step.label}`} style={{ display: 'grid', gridTemplateColumns: '78px 120px minmax(0, 1fr)', gap: 8, alignItems: 'start' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{step.stage}</span>
+              <span style={{ fontSize: 11, color: warning ? '#f59e0b' : 'var(--text-secondary)' }}>{step.label}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-primary)', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                {step.value || DASH}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {trace?.fallbackReason || detail.fallbackReason ? (
+        <div style={{ marginTop: 10, fontSize: 11, color: '#f59e0b', wordBreak: 'break-word' }}>
+          {trace?.fallbackReason || detail.fallbackReason}
+        </div>
+      ) : null}
+      <ProviderAttempts attempts={detail.providerAttempts || []} />
+    </div>
+  );
+}
+
+function ProviderAttempts({ attempts }: { attempts: NonNullable<LlmLogDetail['providerAttempts']> }) {
+  if (!attempts.length) return null;
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }}>Provider attempts</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {attempts.map((attempt) => {
+          const warning = attempt.status === 'skipped' || attempt.status === 'failed';
+          const provider = attempt.platformName || attempt.provider || attempt.platformId || DASH;
+          const pool = attempt.modelGroupName || attempt.modelGroupId;
+          return (
+            <div
+              key={`${attempt.order}-${attempt.stage}-${attempt.model || provider}`}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '34px 92px minmax(0, 1fr)',
+                gap: 8,
+                alignItems: 'start',
+                borderRadius: 'var(--radius-sm)',
+                padding: '7px 8px',
+                background: warning ? 'rgba(245,158,11,0.08)' : 'var(--bg-input)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
+              <span style={{ fontSize: 11, color: warning ? '#f59e0b' : 'var(--text-secondary)' }}>{attempt.status || attempt.stage}</span>
+              <span style={{ minWidth: 0, fontSize: 11, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{attempt.model || DASH}</span>
+                <span style={{ color: 'var(--text-muted)' }}> · {provider}</span>
+                {pool ? <span style={{ color: 'var(--text-muted)' }}> · {pool}</span> : null}
+                <span style={{ display: 'block', marginTop: 2, color: 'var(--text-muted)' }}>
+                  {attempt.statusCode ? `HTTP ${attempt.statusCode}` : 'HTTP pending'}
+                  {attempt.durationMs == null ? '' : ` · ${fmtMs(attempt.durationMs)}`}
+                  {attempt.transport ? ` · ${attempt.transport}` : ''}
+                </span>
+                {attempt.error || attempt.reason ? (
+                  <span style={{ display: 'block', marginTop: 2, color: warning ? '#f59e0b' : 'var(--text-muted)' }}>
+                    {attempt.error || attempt.reason}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TraceMini({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  return (
+    <div style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', padding: '7px 8px', minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</div>
+      <div
+        style={{
+          marginTop: 2,
+          fontSize: 11,
+          color: 'var(--text-secondary)',
+          wordBreak: 'break-word',
+          fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+        }}
+      >
+        {value || DASH}
+      </div>
+    </div>
   );
 }
 
@@ -263,7 +396,11 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <MetricCard title="Provider latency" value={fmtMs(detail.durationMs)} />
                 <MetricCard title="First byte" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
                 <MetricCard title="Throughput" value={tps == null ? DASH : `${tps} tok/s`} />
-                <MetricCard title="Cost" value={DASH} note="暂无价格" />
+                <MetricCard
+                  title="Cost"
+                  value={fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)}
+                  note={detail.estimatedCost == null ? '缺价格快照' : undefined}
+                />
                 <MetricCard title="Tokens" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} />
                 <MetricCard
                   title="Fallbacks"
@@ -280,11 +417,23 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="Status" v={detail.status} />
                 <Row k="Status code" v={detail.statusCode == null ? null : String(detail.statusCode)} />
                 <Row k="Expected model" v={detail.expectedModel} mono />
+                <Row k="Price currency" v={detail.priceCurrency} />
+                <Row k="Input price / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
+                <Row k="Output price / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
+                <Row k="Price per call" v={detail.pricePerCall == null ? null : String(detail.pricePerCall)} />
+                <Row k="Estimated input cost" v={fmtCost(detail.estimatedInputCost, detail.estimatedCostCurrency)} />
+                <Row k="Estimated output cost" v={fmtCost(detail.estimatedOutputCost, detail.estimatedCostCurrency)} />
+                <Row k="Estimated call cost" v={fmtCost(detail.estimatedCallCost, detail.estimatedCostCurrency)} />
               </div>
+
+              <RouterTracePanel detail={detail} />
 
               <div>
                 <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 4, color: 'var(--text-primary)' }}>Request metadata</div>
-                <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerCode} />
+                <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerTitle ?? detail.appCallerCode} />
+                <Row k="App caller code" v={detail.appCallerCode} mono />
+                <Row k="Source system" v={detail.sourceSystem} />
+                <Row k="Ingress protocol" v={detail.ingressProtocol} />
                 <Row k="Request ID" v={detail.requestId} mono copy />
                 <Row k="Generation ID" v={detail.id} mono copy />
                 <Row k="Started" v={detail.startedAt} mono />
@@ -292,7 +441,11 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="Ended" v={detail.endedAt} mono />
                 <Row k="Finish reason" v={detail.finishReason} />
                 <Row k="Streaming" v={streaming} />
+                <Row k="Model policy" v={detail.modelPolicy} />
+                <Row k="Requested model pool" v={detail.modelPoolId} mono />
                 <Row k="Resolution" v={detail.resolutionReason} />
+                <Row k="Parameter policy" v={detail.parameterPolicy} />
+                <Row k="Dropped parameters" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
               </div>
 
               {detail.error ? (

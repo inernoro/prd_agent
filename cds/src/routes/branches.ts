@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
@@ -18,6 +18,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../servic
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
+import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
@@ -32,7 +33,7 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
-import { assertProjectAccess } from './projects.js';
+import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
@@ -492,7 +493,9 @@ function recordDeployDurationSample(
   const startMs = Date.parse(opLog.startedAt);
   const endMs = Date.parse(opLog.runtimeStartedAt);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
-  const elapsedMs = endMs - startMs;
+  // 剔除 build-gate 排队等待（2026-07-09）：排队不是构建耗时，混进样本会把
+  // 中位 ETA 越推越长，反过来又让排队中的分支更容易被误报「超预计」。
+  const elapsedMs = Math.max(0, endMs - startMs - (branch.lastDeployQueueWaitMs || 0));
   const mode = classifyBranchDeployModeForDuration(branch, profiles);
   // 上界：取参与本次部署的 profile 里最大的 buildTimeout * 2，兜底 30 分钟。
   const maxTimeout = profiles.reduce((acc, p) => Math.max(acc, p.buildTimeout || 0), 0);
@@ -1296,9 +1299,13 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
   const PATTERNS: Array<{ re: RegExp; side: ContainerFatalSide; category: string; label: string }> = [
     { re: /\berror\s+CS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · C# 编译错误' },
     { re: /\berror\s+TS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · TypeScript 编译错误' },
+    { re: /\.java:\[\d+,\d+\]\s+.+/i, side: 'code', category: 'build-failed', label: '构建失败 · Java 编译错误' },
+    { re: /\bCOMPILATION ERROR\b|\bBUILD FAILURE\b|Failed to execute goal org\.apache\.maven/i, side: 'code', category: 'build-failed', label: '构建失败 · Maven/编译' },
     { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED|构建失败/i, side: 'code', category: 'build-failed', label: '构建失败 · MSBuild/编译' },
+    { re: /NoClassDefFoundError|ClassNotFoundException/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Java 类未找到' },
     { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
     { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
+    { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, side: 'code', category: 'crashed', label: '应用启动失败 · Spring 初始化错误' },
     { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
     { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
     { re: /address already in use|EADDRINUSE|port is already allocated/i, side: 'config', category: 'port-conflict', label: '端口被占用' },
@@ -4600,18 +4607,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/cleanup-damaged-containers', async (req, res) => {
     let projectFilter = resolveProjectIdParam(req.query.project);
-    // 项目级访问控制（Codex P1 / learned rule，同 cleanup-stopped）：本接口删容器/服务条目，
-    // 项目级 cdsp_ key 不得跨项目操作 —— 未带 ?project= 锁到自身项目，带了则校验一致否则 403。
+    // 项目级访问控制（Codex P1，同 cleanup-stopped）：本接口删容器/服务条目，带作用域的
+    // 机器 key(cdsp_ 或 projects!=='all' 的 cdsg_)不得跨项目清扫 —— 未带 ?project= 时:
+    // cdsp_ 锁到自身项目、带作用域 cdsg_ 直接 403;带了则 assertProjectAccess 校验。
     {
-      const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
-      if (projectKey) {
-        if (!projectFilter) projectFilter = projectKey.projectId;
-        const m = assertProjectAccess(req as any, projectFilter);
-        if (m) {
-          res.status(m.status).json(m.body);
-          return;
-        }
+      const sweep = assertScopedSweep(req as any, projectFilter);
+      if (sweep.mismatch) {
+        res.status(sweep.mismatch.status).json(sweep.mismatch.body);
+        return;
       }
+      projectFilter = sweep.projectFilter ?? null;
     }
     const branches = Object.values(stateService.getState().branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
@@ -4767,19 +4772,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 让 /branches/stream 订阅者实时移除卡片，无需手动刷新。
   router.post('/branches/cleanup-stopped', async (req, res) => {
     let projectFilter = resolveProjectIdParam(req.query.project);
-    // 项目级访问控制（Bugbot High / learned rule: 所有项目级资源 handler 必须 assertProjectAccess）：
-    // 该接口会整条删除分支（容器 + worktree + entry），项目级 cdsp_ key 绝不能跨项目批量删。
-    //   - 项目级 key 未带 ?project= → 强制锁定到 key 自己的项目（不允许"清全部"）；
-    //   - 带了 ?project= → assertProjectAccess 校验与 key 一致，否则 403；
-    //   - bootstrap / cookie / 全局 key（cdsProjectKey 为空）→ 不受限，保持原行为。
-    const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
-    if (projectKey) {
-      if (!projectFilter) projectFilter = projectKey.projectId;
-      const m = assertProjectAccess(req as any, projectFilter);
-      if (m) {
-        res.status(m.status).json(m.body);
+    // 项目级访问控制（Bugbot High + Codex P1: 所有项目级资源 handler 必须 assertProjectAccess）：
+    // 该接口会整条删除分支（容器 + worktree + entry），带作用域的机器 key 绝不能跨项目批量删。
+    //   - 单项目 cdsp_ 未带 ?project= → 锁定到 key 自己的项目（不允许"清全部"）；
+    //   - 带作用域 cdsg_(projects!=='all') 未带 ?project= → 403（禁止清全部）；
+    //   - 带了 ?project= → assertProjectAccess 校验在授权范围内，否则 403；
+    //   - bootstrap / cookie / 全权 'all' cdsg_ → 不受限，保持原行为。
+    {
+      const sweep = assertScopedSweep(req as any, projectFilter);
+      if (sweep.mismatch) {
+        res.status(sweep.mismatch.status).json(sweep.mismatch.body);
         return;
       }
+      projectFilter = sweep.projectFilter ?? null;
     }
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
@@ -10093,7 +10098,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let envError: string | undefined;
       try {
         const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers, { jwtIssuer: config.jwt.issuer },
+          entry, effective, customLayers, profileLayers,
+          // injectBullmqPrefix 与部署路径（container.ts resolveProfileRuntimeEnv）同源同值
+          { jwtIssuer: config.jwt.issuer, injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0' },
         );
         // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
         const maskedEnv = maskSecrets(resolved.env);
@@ -10352,10 +10359,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 容器内 dotnet build / tsc 失败 → 进程没起来 → 就绪探测超时(症状),根因其实在编译错误。
       { re: /\berror\s+CS\d{3,5}\b/i, category: 'build-failed', hint: 'C# 编译失败 — 容器内 dotnet build 报错,进程无法启动。修复编译错误后重新部署', side: 'code' },
       { re: /\berror\s+TS\d{3,5}\b/i, category: 'build-failed', hint: 'TypeScript 编译失败 — 修复类型错误后重新部署', side: 'code' },
+      { re: /\.java:\[\d+,\d+\]\s+.+/i, category: 'build-failed', hint: 'Java 编译失败 — 检查日志里的 .java 行号错误,修复后重新部署', side: 'code' },
+      { re: /\bCOMPILATION ERROR\b|\bBUILD FAILURE\b|Failed to execute goal org\.apache\.maven/i, category: 'build-failed', hint: 'Maven/Java 构建失败 — 检查日志里的首个编译错误后重新部署', side: 'code' },
       { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED/i, category: 'build-failed', hint: '构建失败(MSBuild/编译) — 检查日志里的首个 error 行后重新部署', side: 'code' },
       { re: /EADDRINUSE|address already in use|port.+(in use|occupied)/i, category: 'port-conflict', hint: '端口被占用 — 可能其他分支占了同一端口,可在容量面板停掉旧分支再重试', side: 'config' },
       { re: /OOMKilled|out of memory|cannot allocate memory/i, category: 'oom', hint: '内存超限 — 调大 service 资源配额或减少并发', side: 'config' },
+      { re: /NoClassDefFoundError|ClassNotFoundException/i, category: 'missing-deps', hint: 'Java 类缺失 — 代码引用的类没有进入当前构建产物或依赖,补齐生成类/模块依赖后重新部署', side: 'code' },
       { re: /Cannot find module|Module not found|MODULE_NOT_FOUND/i, category: 'missing-deps', hint: '依赖缺失 — 检查 build 阶段 pnpm/npm install 是否成功', side: 'code' },
+      { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, category: 'crashed', hint: 'Spring 启动失败 — Bean 初始化或依赖注入失败,修复应用配置/代码后重新部署', side: 'code' },
       { re: /image.+(not found|pull access denied)|manifest unknown|repository does not exist/i, category: 'image-pull', hint: 'Docker 镜像拉取失败 — 检查镜像名 / registry 访问', side: 'cds' },
       { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)|就绪探测超时|容器进程未监听端口/i, category: 'health-timeout', hint: '就绪探测超时 — 容器起了但端口没响应,多半是应用启动崩溃或编译失败,翻日志看首个 error 行', side: 'code' },
       { re: /exit(\s+code|ed with code)?\s*[:=]?\s*(1[35][7-9]|139)/i, category: 'crashed', hint: '进程被强制终止(可能段错误 / 资源限制)', side: 'code' },
@@ -10515,6 +10526,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     const finalizeBranchDelete = async (message: string): Promise<void> => {
+      // 残留 app 容器 sweep(2026-07-09,debt.cds.performance 根因 #2):分支改名/删 profile
+      // 后,不在 entry.services 快照里的遗留容器不会被上面的删除循环覆盖,会在删分支后
+      // 继续占资源。按 label cds.branch.id 严格匹配本分支的 Docker 实况,补删快照外的残留。
+      // 只在显式 DELETE 路径做;严格 label 匹配保证永不触及 infra(cds.type=infra)容器;
+      // best-effort,任何失败不阻断删除主流程。
+      try {
+        const appDiscovery = await containerService.discoverAppContainersWithStatus();
+        if (appDiscovery.ok) {
+          const known = new Set(Object.values(entry.services || {}).map((svc) => svc.containerName));
+          for (const info of appDiscovery.containers.values()) {
+            if (info.branchId !== id || known.has(info.containerName)) continue;
+            await containerService.remove(info.containerName, {
+              projectId: entry.projectId,
+              branchId: id,
+              profileId: info.profileId,
+              operationId: branchOperationLease?.operationId || null,
+              actor,
+              trigger: trigger || null,
+              operation: 'delete-residue-sweep',
+              source: 'api.delete-branch',
+              reason: '删分支残留容器清扫：容器带本分支 label 但不在 services 快照（改名/删 profile 遗留）',
+            }).catch(() => { /* best-effort */ });
+          }
+        }
+      } catch { /* best-effort：发现失败不阻断删除 */ }
       // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
@@ -11137,7 +11173,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : undefined;
       const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
       if (!remoteOwned) {
-        const cleanupRun = deploymentRunService?.begin({
+        const cleanupRun = await deploymentRunService?.begin({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
           trigger: deploymentRunTriggerFromRequest(req, entry),
@@ -11293,7 +11329,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : undefined
     );
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
-    const deploymentRun = deploymentRunService?.begin({
+    const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
       branchId: entry.id,
       trigger: deploymentRunTriggerFromRequest(req, entry),
@@ -11449,6 +11485,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
 
+    // 构建排队可视化（2026-07-09）：把 build-gate 的排队状态挂到 entry.buildQueue，
+    // 分支卡显示「排队中 · 前面还有 N 个」并把排队时间从耗时对比中剔除。
+    // 声明在 try 外，finally 兜底 dispose（部署 throw 也不许留下「排队中」残影）。
+    const deployQueueTracker = createDeployQueueTracker({
+      entry,
+      save: () => stateService.save(),
+      emitBranchUpdated: () => branchEvents.emitEvent({
+        type: 'branch.updated',
+        // patch 只带排队白名单字段：/branches/stream 的 anyHandler 会自己取
+        // 最新分支并过 branchForView 脱敏管道，禁止在 payload 里塞原始 entry。
+        payload: {
+          branchId: id,
+          projectId: entry.projectId,
+          patch: { buildQueue: entry.buildQueue, lastDeployQueueWaitMs: entry.lastDeployQueueWaitMs },
+          ts: new Date().toISOString(),
+        },
+      }),
+    });
+
     try {
       logDeploy(id, '开始部署');
 
@@ -11477,6 +11532,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 本轮构建起点锚点 —— 预览等待页 ETA 以此计"已等待"，避免回退到上一轮
       // 已完成的历史 op-log 误算几小时（见 BranchEntry.lastDeployStartedAt）。
       entry.lastDeployStartedAt = new Date().toISOString();
+      // 排队快照按轮重置（deploy-queue-tracker 维护）。
+      entry.lastDeployQueueWaitMs = 0;
+      entry.buildQueue = undefined;
       stateService.save();
       // Live UI: surface the "building" transition to subscribed dashboards
       // so the branch card can flip to a spinner immediately on deploy kick-
@@ -11889,6 +11947,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
               sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
+              deployQueueTracker.onQueued(profile.id, { ahead, active, max });
               // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
               queueRefreshTimer = setInterval(() => {
                 const s = buildGateStatus();
@@ -11899,6 +11959,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   timestamp: new Date().toISOString(),
                 });
                 sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
+                deployQueueTracker.refresh();
               }, 15000);
               if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
             },
@@ -11911,6 +11972,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
               sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
+              deployQueueTracker.onStart(profile.id);
             },
           });
           clearQueueTimer();
@@ -12575,6 +12637,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           failDeploymentRun(deploymentRun?.id, entry.errorMessage || '部署未能完成', remainingRun.phase);
         }
       }
+      // 排队快照兜底清理：部署中途 throw / cancel 也不许在卡片上留下「排队中」残影。
+      deployQueueTracker.dispose();
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
@@ -12615,7 +12679,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    const deploymentRun = deploymentRunService?.begin({
+    const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
       branchId: entry.id,
       trigger: deploymentRunTriggerFromRequest(req, entry),
@@ -18254,7 +18318,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
-  router.get('/export-skill', (req, res) => {
+  // 2026-07-09：目录复制与 tar 打包全部异步化——原实现 statSync/readdirSync
+  // 递归复制 + execSync(tar) 在请求路径上同步阻塞整个事件循环。
+  router.get('/export-skill', async (req, res) => {
     try {
       const useLegacy = req.query.legacy === '1';
 
@@ -18273,18 +18339,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      const copyRecursive = (src: string, dst: string) => {
-        const stat = fs.statSync(src);
-        if (stat.isDirectory()) {
-          fs.mkdirSync(dst, { recursive: true });
-          for (const entry of fs.readdirSync(src)) {
-            copyRecursive(path.join(src, entry), path.join(dst, entry));
-          }
-        } else {
-          fs.copyFileSync(src, dst);
-        }
-      };
-
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
@@ -18295,8 +18349,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const skillDir = path.join(skillsRoot, skillName);
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
-        fs.mkdirSync(targetSkillDir, { recursive: true });
-        copyRecursive(skillDir, targetSkillDir);
+        await fs.promises.mkdir(targetSkillDir, { recursive: true });
+        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
         copiedCount++;
       }
 
@@ -18362,18 +18416,24 @@ cdscli project list --human
 
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
-      fs.writeFileSync(path.join(packDir, 'README.md'), readme, 'utf-8');
+      await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
 
-      // Create tar.gz using tar command (available on all Linux)
+      // Create tar.gz using tar command (available on all Linux) — 异步 execFile，
+      // 压缩期间事件循环不阻塞（原 execSync 会让所有请求/SSE/代理停摆）。
       const tarName = `${packName}.tar.gz`;
-      execSync(`cd "${tmpDir}" && tar -czf "${tarName}" "${packName}/"`, { stdio: 'pipe' });
+      await new Promise<void>((resolve, reject) => {
+        execFile('tar', ['-czf', tarName, `${packName}/`], { cwd: tmpDir }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
 
       // Clean up pack dir
-      fs.rmSync(packDir, { recursive: true, force: true });
+      await fs.promises.rm(packDir, { recursive: true, force: true });
 
       // Send tar.gz
       const tarPath = path.join(tmpDir, tarName);
-      const stat = fs.statSync(tarPath);
+      const stat = await fs.promises.stat(tarPath);
       res.setHeader('Content-Type', 'application/gzip');
       res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
       res.setHeader('Content-Length', stat.size);

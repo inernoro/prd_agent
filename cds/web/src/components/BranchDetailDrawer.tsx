@@ -4,6 +4,7 @@ import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, 
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
@@ -824,7 +825,6 @@ export function BranchDetailDrawer({
   onClose,
   deployments = [],
   activityEvents = [],
-  now = Date.now(),
   previewUrl = '',
   branchStatus,
   initialResourceId,
@@ -839,7 +839,6 @@ export function BranchDetailDrawer({
   onClose: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
-  now?: number;
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
   onToast?: (message: string) => void;
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
@@ -863,6 +862,10 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
+  // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
+  // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
+  const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
   // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
@@ -2119,16 +2122,14 @@ export function BranchDetailDrawer({
                               <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
                                 {diag.errorCategory.replace('-', ' ')}
                               </span>
-                              <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{
-                                background: diag.responsibilitySide === 'cds' ? 'rgba(245,158,11,0.15)'
-                                  : diag.responsibilitySide === 'code' ? 'rgba(239,68,68,0.15)'
-                                  : diag.responsibilitySide === 'config' ? 'rgba(59,130,246,0.15)'
-                                  : 'rgba(156,163,175,0.15)',
-                                color: diag.responsibilitySide === 'cds' ? '#f59e0b'
-                                  : diag.responsibilitySide === 'code' ? '#ef4444'
-                                  : diag.responsibilitySide === 'config' ? '#3b82f6'
-                                  : '#9ca3af',
-                              }}>
+                              {/* 主题感知的责任方徽章：白天用深色文字保证对比度（旧写法硬编码
+                                  亮系 #f59e0b/#9ca3af 落在 0.15 透明底上，白天对比度约 2:1 看不清） */}
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                diag.responsibilitySide === 'cds' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+                                  : diag.responsibilitySide === 'code' ? 'bg-red-500/15 text-red-700 dark:text-red-400'
+                                  : diag.responsibilitySide === 'config' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400'
+                                  : 'bg-gray-500/15 text-gray-600 dark:text-gray-400'
+                              }`}>
                                 {diag.responsibilitySide === 'cds' ? 'CDS 侧'
                                   : diag.responsibilitySide === 'code' ? '代码侧'
                                   : diag.responsibilitySide === 'config' ? '配置侧'

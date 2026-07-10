@@ -822,7 +822,13 @@ export class ContainerService {
       profile,
       customEnv ? [{ source: 'project', env: customEnv }] : [],
       profile.env ? [{ source: 'profile', env: profile.env }] : [],
-      { jwtIssuer: this.config.jwt.issuer },
+      {
+        jwtIssuer: this.config.jwt.issuer,
+        // BULLMQ_PREFIX 分支前缀兜底的系统级逃生阀（对齐 branch-network 的逃生阀风格）。
+        // 纯函数不读 process.env，由这里读取后传入；effective-env 检查器端点同值传入，
+        // 保证「检查器看到的」=「部署实际注入的」。
+        injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
+      },
     ).env;
   }
 

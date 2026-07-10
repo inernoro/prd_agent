@@ -34,13 +34,14 @@ describe('CheckRunRunner DeploymentRun projection', () => {
     stateService.addBranch(branch);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stateService.flush();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('uses runId for check correlation and projects structured failure events', async () => {
     const runs = new DeploymentRunService(stateService, { idFactory: () => 'dr_check' });
-    runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
+    await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
 
     const githubApp = {
       async createCheckRun(_installationId: number, _owner: string, _repo: string, payload: any) {

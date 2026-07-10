@@ -112,6 +112,8 @@ export interface WebhookDispatchResult {
     | 'ci-image-waiting'
     | 'ci-image-ready'
     | 'ci-image-failed'
+    // 2026-07-09 入口校验：仓库缺 branch-image.yml，不进 waiting 直接归因失败
+    | 'ci-image-workflow-missing'
     | 'workflow-acknowledged';
   /** Short human message for the response + logs. */
   message: string;
@@ -356,6 +358,33 @@ export class GitHubWebhookDispatcher {
    * 第二个永远不会来的 completion 事件（Bugbot/Codex P2:don't drop early
    * workflow_run completions）。进程内缓存(重启即丢,属可接受残留,见 debt 台账)。
    */
+  /**
+   * 极速版 workflow 存在性缓存（repo@branch → 结果 + 时间戳，TTL 10 分钟）。
+   * webhook 每次 push 都可能触发校验，同分支高频 push 不该每次都打一次
+   * GitHub contents API。只缓存确定性结果（exists/missing）；unknown 属瞬态
+   * API 异常，不缓存（下次 push 再试）。
+   */
+  private readonly workflowPresenceCache = new Map<string, { result: 'exists' | 'missing'; checkedAt: number }>();
+
+  private async checkExpressWorkflowPresence(
+    repoFullName: string,
+    branchName: string,
+    commitSha: string,
+    installationId: number | undefined,
+  ): Promise<'exists' | 'missing' | 'unknown'> {
+    if (!this.deps.githubApp || !installationId) return 'unknown';
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) return 'unknown';
+    const cacheKey = `${repoFullName}@${branchName}`;
+    const cached = this.workflowPresenceCache.get(cacheKey);
+    if (cached && Date.now() - cached.checkedAt < 10 * 60 * 1000) return cached.result;
+    const result = await this.deps.githubApp.workflowFileExists(installationId, owner, repo, commitSha);
+    if (result !== 'unknown') {
+      this.workflowPresenceCache.set(cacheKey, { result, checkedAt: Date.now() });
+    }
+    return result;
+  }
+
   private readonly recentCompletedRuns = new Map<
     string,
     { conclusion: string; htmlUrl?: string; at: number }
@@ -1384,6 +1413,46 @@ export class GitHubWebhookDispatcher {
         branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
       );
       if (claimed) return claimed;
+      // 入口校验（debt.cds.removed-branch-pages #7，2026-07-09）：进 waiting 前确认
+      // 仓库该 commit 下真的有 branch-image.yml。缺文件时 CI 完成事件永远不会来，
+      // 与其让分支苦等 15 分钟看门狗超时，不如立即按看门狗同一失败语义归因。
+      // API 失败/无凭据 = unknown → fail-open 照旧 waiting（看门狗仍兜底）。
+      const workflowPresence = await this.checkExpressWorkflowPresence(
+        repoFullName, branchName, commitSha, project.githubInstallationId ?? event.installation?.id,
+      );
+      if (workflowPresence === 'missing') {
+        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow，或在构建配置中把分支切回源码编译模式。';
+        this.deps.stateService.updateBranchGithubMeta(branchId, {
+          ciImageStatus: 'failed',
+          ciTargetSha: commitSha,
+          ciWorkflowConclusion: '',
+          ciWorkflowRunUrl: '',
+          ciWaitingSince: '',
+          ciImageError: missingError,
+        });
+        this.deps.stateService.save();
+        const failedEntry = this.deps.stateService.getBranch(branchId);
+        if (failedEntry) {
+          branchEvents.emitEvent({
+            type: 'branch.updated',
+            payload: {
+              branchId,
+              projectId: failedEntry.projectId,
+              patch: {
+                ciImageStatus: 'failed',
+                ciTargetSha: commitSha,
+                ciImageError: missingError,
+              },
+              ts: receivedAt,
+            },
+          });
+        }
+        return {
+          action: 'ci-image-workflow-missing',
+          message: `极速版分支 '${branchId}' 未进入等待：仓库缺少 branch-image.yml workflow（commit ${commitSha.slice(0, 7)}）`,
+          branchId,
+        };
+      }
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'waiting',
         ciTargetSha: commitSha,
