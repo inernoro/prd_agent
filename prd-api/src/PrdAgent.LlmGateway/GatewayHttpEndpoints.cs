@@ -701,7 +701,7 @@ public static class GatewayHttpEndpoints
             {
                 cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
                 var response = await gateway.SendAsync(routedRequest, cancellation?.Token ?? CancellationToken.None);
-                return Results.Json(response, jsonOpts);
+                return GatewayResponseResult(response, jsonOpts);
             }
             catch (InvalidOperationException)
             {
@@ -876,7 +876,7 @@ public static class GatewayHttpEndpoints
                 {
                     if (executionStore is not null && execution is not null)
                         await executionStore.FailAsync(execution.ExecutionId, rehydrated.Error?.ErrorCode ?? "MULTIPART_REHYDRATE_FAILED", CancellationToken.None);
-                    return JsonContentResult(rehydrated.Error, jsonOpts);
+                    return JsonContentResult(rehydrated.Error!, jsonOpts);
                 }
 
                 request = rehydrated.Request ?? request;
@@ -1195,6 +1195,7 @@ public static class GatewayHttpEndpoints
     private static string ResolveRequiredScope(string path)
     {
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return "readiness:read";
+        if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Contains("/stream", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
@@ -3996,8 +3997,19 @@ public static class GatewayHttpEndpoints
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
 
-    private static IResult JsonContentResult<T>(T value, JsonSerializerOptions jsonOpts)
-        => Results.Content(JsonSerializer.Serialize(value, jsonOpts), "application/json");
+    private static IResult GatewayResponseResult(GatewayResponse value, JsonSerializerOptions jsonOpts)
+        => Results.Json(value, jsonOpts, statusCode: NormalizeGatewayStatusCode(value.Success, value.StatusCode));
+
+    private static IResult JsonContentResult(GatewayRawResponse value, JsonSerializerOptions jsonOpts)
+        => Results.Content(
+            JsonSerializer.Serialize(value, jsonOpts),
+            "application/json",
+            statusCode: NormalizeGatewayStatusCode(value.Success, value.StatusCode));
+
+    private static int NormalizeGatewayStatusCode(bool success, int statusCode)
+        => statusCode is >= 200 and <= 599
+            ? statusCode
+            : success ? StatusCodes.Status200OK : StatusCodes.Status500InternalServerError;
 
     private static async Task<RehydrateResult> RehydrateMultipartFileRefsAsync(
         GatewayRawRequest request,

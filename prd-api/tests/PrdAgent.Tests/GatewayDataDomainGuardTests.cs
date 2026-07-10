@@ -2063,6 +2063,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RunWithRequestCancellationAsync", endpoints);
         Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
         Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        Assert.Contains("path.Equals(\"/gw/v1/profile-test\"", endpoints);
+        Assert.Contains("return \"profile:test\"", endpoints);
+        Assert.Contains("NormalizeGatewayStatusCode(value.Success, value.StatusCode)", endpoints);
         Assert.Contains("CleanupMultipartRefsAsync", endpoints);
         Assert.Contains("protectedGatewayPath", endpoints);
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);

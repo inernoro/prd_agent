@@ -2491,7 +2491,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     };
     var allowedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "*", "invoke", "stream:invoke", "raw:invoke", "route:read", "readiness:read", "request:cancel", "request:read",
+        "*", "invoke", "stream:invoke", "raw:invoke", "profile:test", "route:read", "readiness:read", "request:cancel", "request:read",
     };
     if (protocols.Any(x => !allowedProtocols.Contains(x)) || scopes.Any(x => !allowedScopes.Contains(x)))
     {

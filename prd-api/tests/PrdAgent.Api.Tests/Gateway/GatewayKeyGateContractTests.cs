@@ -332,6 +332,57 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    public static IEnumerable<object[]> NativeFailureResponses() => new[]
+    {
+        new object[]
+        {
+            "/gw/v1/send",
+            "{\"AppCallerCode\":\"failure-test::chat\",\"ModelType\":\"chat\"}",
+            HttpStatusCode.UnprocessableEntity,
+        },
+        new object[]
+        {
+            "/gw/v1/raw",
+            "{\"AppCallerCode\":\"failure-test::image\",\"ModelType\":\"generation\",\"EndpointPath\":\"/v1/images/generations\"}",
+            HttpStatusCode.BadGateway,
+        },
+        new object[]
+        {
+            "/gw/v1/profile-test",
+            "{\"AppCallerCode\":\"failure-test::profile\",\"Protocol\":\"openai\",\"BaseUrl\":\"https://example.invalid/v1\",\"Model\":\"failure-model\",\"ApiKey\":\"test-key\"}",
+            HttpStatusCode.ServiceUnavailable,
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(NativeFailureResponses))]
+    public async Task NativeFailureEnvelope_UsesEmbeddedHttpStatus(
+        string path,
+        string json,
+        HttpStatusCode expectedStatus)
+    {
+        await using var app = BuildHostWithGateway(new NativeFailureGateway());
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+            };
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var response = await app.GetTestClient().SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+
+            response.StatusCode.ShouldBe(expectedStatus);
+            body.ShouldContain("\"Success\":false");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
     {
@@ -1962,6 +2013,58 @@ public class GatewayKeyGateContractTests
             => throw new NotSupportedException();
 
         public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class NativeFailureGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+            => Task.FromResult(GatewayResponse.Fail("NATIVE_SEND_FAILED", "send failed", 422));
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+            GatewayRawRequest request,
+            GatewayModelResolution resolution,
+            CancellationToken ct = default)
+            => Task.FromResult(GatewayRawResponse.Fail("NATIVE_RAW_FAILED", "raw failed", 502));
+
+        public Task<GatewayRawResponse> TestUpstreamProfileAsync(
+            GatewayUpstreamProfileTestRequest request,
+            CancellationToken ct = default)
+            => Task.FromResult(GatewayRawResponse.Fail("PROFILE_TEST_FAILED", "profile failed", 503));
+
+        public Task<GatewayModelResolution> ResolveModelAsync(
+            string appCallerCode,
+            string modelType,
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null,
+            CancellationToken ct = default)
+            => Task.FromResult(new GatewayModelResolution
+            {
+                Success = true,
+                ActualModel = expectedModel ?? "failure-model",
+                ActualPlatformId = "failure-platform",
+                ResolutionType = "directModel",
+            });
+
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
+            string appCallerCode,
+            string modelType,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public ILLMClient CreateClient(
+            string appCallerCode,
+            string modelType,
+            int maxTokens = 4096,
+            double temperature = 0.2,
+            bool includeThinking = false,
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null)
             => throw new NotSupportedException();
     }
 

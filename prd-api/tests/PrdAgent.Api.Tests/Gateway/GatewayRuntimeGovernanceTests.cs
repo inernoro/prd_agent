@@ -49,6 +49,62 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ClientFailure_ReleasesBudgetReservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+        var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
+        {
+            AppCallerCode = "client-failure-test",
+            RequestType = "chat",
+            MonthlyBudgetUsd = 1m,
+            BudgetReservationUsd = 0.6m,
+        }, "client-failure-request", CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        await coordinator.FinalizeAsync(admission.Lease, 422, pipelineThrew: false);
+
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0m);
+        month.SpentUsd.ShouldBe(0m);
+    }
+
+    [Fact]
+    public async Task ServerFailure_KeepsBudgetReservationAsUnknown()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+        var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
+        {
+            AppCallerCode = "server-failure-test",
+            RequestType = "image-gen",
+            MonthlyBudgetUsd = 1m,
+            BudgetReservationUsd = 0.6m,
+        }, "server-failure-request", CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        await coordinator.FinalizeAsync(admission.Lease, 503, pipelineThrew: false);
+
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0.6m);
+        month.SpentUsd.ShouldBe(0m);
+        var reservation = await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations")
+            .Find(_ => true)
+            .SingleAsync();
+        reservation.Status.ShouldBe("unknown");
+    }
+
+    [Fact]
     public async Task DuplicateRawRequestId_HasSingleExecutionOwner()
     {
         var testDatabase = await TryCreateDatabaseAsync();
@@ -239,6 +295,40 @@ public sealed class GatewayRuntimeGovernanceTests
             "requested-caller",
             "openai-compatible",
             "invoke",
+            CancellationToken.None);
+
+        denied.Allowed.ShouldBeFalse();
+        denied.Authenticated.ShouldBeTrue();
+        denied.StatusCode.ShouldBe(403);
+    }
+
+    [Fact]
+    public async Task ScopedInvokeKey_CannotUseProfileTestScope()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_invoke_only_key";
+        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
+            .InsertOneAsync(new GatewayServiceKeyRecord
+            {
+                Name = "invoke-only",
+                KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+                SourceSystem = "external",
+                AppCallerCodes = ["profile-caller"],
+                IngressProtocols = ["gw-native"],
+                Scopes = ["invoke"],
+            });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var denied = await authorizer.AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external",
+            "profile-caller",
+            "gw-native",
+            "profile:test",
             CancellationToken.None);
 
         denied.Allowed.ShouldBeFalse();

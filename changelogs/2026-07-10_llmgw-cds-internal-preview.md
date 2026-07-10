@@ -5,6 +5,8 @@
 | fix | prd-api | unknown 上游结果的预算预占到期后改为保守结算，避免成功受理但响应丢失时低估月消费 |
 | fix | prd-api | serving readiness 探针携带网关 key，并让预算过期结算独立于数据保留开关 |
 | fix | prd-llmgw | 禁止保存月预算与单次预占不成对或预占超过月预算的 appCaller 配置，并在 serving 启动时阻断无效存量配置 |
+| security | prd-api | profile-test 使用独立特权 scope，普通 invoke key 不再能够探测任意上游地址 |
+| fix | prd-api | 原生 send、raw 与 profile-test 失败信封回写真实 HTTP 状态，避免预算把失败请求误判为成功 |
 | feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
 | feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
 | feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |

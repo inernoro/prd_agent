@@ -112,7 +112,7 @@ export function ServiceKeysPage() {
           <Field label="Source system" value={sourceSystem} onChange={setSourceSystem} placeholder="external" />
           <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="逗号分隔" />
           <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
-          <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, stream:invoke, raw:invoke" />
+          <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, stream:invoke, raw:invoke, profile:test" />
           <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
             <Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '创建密钥'}</Button>
