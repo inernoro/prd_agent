@@ -1168,23 +1168,15 @@ app.MapGet("/gw/runtime-gates", async () =>
         ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
     var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
     var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
-    var latestSuccessfulHttpFullCommit = httpFullLedgerEvidence.Facts.TryGetValue("latestCommit", out var latestCommitFact)
-        ? latestCommitFact
-        : string.Empty;
-    var retainedShadowEvidence = retainedShadowCandidates.FirstOrDefault(candidate =>
-        string.Equals(candidate.AsNullableString("_id"), latestSuccessfulHttpFullCommit, StringComparison.OrdinalIgnoreCase));
+    var successfulHttpFullCommits = ReadSuccessfulHttpFullRolloutCommits(ledgerPath);
+    var retainedShadowEvidence = successfulHttpFullCommits
+        .Select(commit => retainedShadowCandidates.FirstOrDefault(candidate =>
+            string.Equals(candidate.AsNullableString("_id"), commit, StringComparison.OrdinalIgnoreCase)))
+        .FirstOrDefault(candidate => candidate is not null);
     var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
     var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
     var retainedShadowMatchesPreviousFullHttp = retainedShadowCommit.Length > 0
-        && string.Equals(retainedShadowCommit, latestSuccessfulHttpFullCommit, StringComparison.OrdinalIgnoreCase)
-        && httpFullLedgerEvidence.Facts.TryGetValue("releaseGateRequired", out var previousReleaseGateRequired)
-        && string.Equals(previousReleaseGateRequired, "true", StringComparison.OrdinalIgnoreCase)
-        && httpFullLedgerEvidence.Facts.TryGetValue("disableMapConfigFallbackForActiveAppCallers", out var previousDisableMapFallback)
-        && string.Equals(previousDisableMapFallback, "true", StringComparison.OrdinalIgnoreCase)
-        && httpFullLedgerEvidence.Facts.TryGetValue("protocolCanaryRequired", out var previousProtocolCanaryRequired)
-        && string.Equals(previousProtocolCanaryRequired, "true", StringComparison.OrdinalIgnoreCase)
-        && httpFullLedgerEvidence.Facts.TryGetValue("protocolCanaryJson", out var previousProtocolCanaryJson)
-        && string.Equals(previousProtocolCanaryJson, "true", StringComparison.OrdinalIgnoreCase);
+        && successfulHttpFullCommits.Contains(retainedShadowCommit, StringComparer.OrdinalIgnoreCase);
     var canRetainPreviousShadowEvidence = shadowTotal == 0
         && retainedShadowMatchesPreviousFullHttp
         && configAuthorityLedgerEvidence.Ready
@@ -5681,6 +5673,47 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     facts["protocolCanaryJson"] = latestHasProtocolCanaryJson ? "true" : "false";
     facts["missing"] = string.Join(",", missing);
     return (ready, detail, evidence, facts);
+}
+
+static List<string> ReadSuccessfulHttpFullRolloutCommits(string path)
+{
+    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
+    if (!File.Exists(normalizedPath)) return new List<string>();
+
+    var commits = new List<string>();
+    foreach (var line in File.ReadLines(normalizedPath))
+    {
+        var raw = line.Trim();
+        if (raw.Length == 0) continue;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (!string.Equals(ReadJsonString(root, "stage"), "http-full", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(ReadJsonString(root, "status"), "success", StringComparison.OrdinalIgnoreCase)
+                || !ReadJsonBool(root, "releaseGateRequired")
+                || !ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"))
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"))
+                || !ReadJsonBool(root, "protocolCanaryRequired")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson")))
+            {
+                continue;
+            }
+
+            var commit = NormalizeCommitFilter(ReadJsonString(root, "commit"));
+            if (commit is null) continue;
+            commits.RemoveAll(existing => string.Equals(existing, commit, StringComparison.OrdinalIgnoreCase));
+            commits.Add(commit);
+        }
+        catch (JsonException)
+        {
+            // A malformed historical line cannot become release evidence.
+        }
+    }
+
+    commits.Reverse();
+    return commits;
 }
 
 static (bool Ready, string Detail, string Evidence, Dictionary<string, string> Facts) ReadLatestConfigAuthorityRolloutLedgerEvidence(string path, string currentCommit)

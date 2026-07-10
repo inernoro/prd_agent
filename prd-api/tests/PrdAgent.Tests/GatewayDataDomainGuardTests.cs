@@ -701,8 +701,11 @@ public class GatewayDataDomainGuardTests
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
 
         Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
-        Assert.Contains("latestSuccessfulHttpFullCommit", consoleProgram);
+        Assert.Contains("ReadSuccessfulHttpFullRolloutCommits", consoleProgram);
+        Assert.Contains("successfulHttpFullCommits", consoleProgram);
         Assert.Contains("retainedShadowCandidates.FirstOrDefault", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"releaseGateRequired\")", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"protocolCanaryRequired\")", consoleProgram);
         Assert.Contains("configAuthorityLedgerEvidence.Ready", consoleProgram);
         Assert.Contains("httpTransportLogs == releaseLogTotal", consoleProgram);
         Assert.Contains("missingIngressProtocols.Count == 0", consoleProgram);
