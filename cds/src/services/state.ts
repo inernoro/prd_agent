@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -22,6 +22,7 @@ import {
 } from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
 const PORT_ALLOC_SCAN_SPAN = 40_000;
 const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
@@ -131,6 +132,7 @@ function emptyState(): CdsState {
     branches: {},
     nextPortIndex: 0,
     logs: {},
+    deploymentRuns: {},
     containerLogArchives: {},
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
@@ -272,6 +274,7 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
       if (!this.state.releaseTargets) this.state.releaseTargets = {};
       if (!this.state.releasePlans) this.state.releasePlans = {};
       if (!this.state.releaseRuns) this.state.releaseRuns = {};
@@ -1121,6 +1124,59 @@ export class StateService {
   }
 
   // ── Operation logs ──
+
+  // ── Deployment runs（分支部署唯一事实源）──
+
+  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+    if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
+    if (this.state.deploymentRuns[run.id]) {
+      throw new Error(`DeploymentRun already exists: ${run.id}`);
+    }
+    const branch = this.state.branches[run.branchId];
+    if (!branch) throw new Error(`分支 "${run.branchId}" 不存在`);
+    if (branch.projectId !== run.projectId) {
+      throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
+    }
+    this.state.deploymentRuns[run.id] = run;
+    branch.lastDeploymentRunId = run.id;
+    this.pruneDeploymentRuns(run.projectId);
+    this.save();
+    return run;
+  }
+
+  getDeploymentRun(id: string): DeploymentRun | undefined {
+    return this.state.deploymentRuns?.[id];
+  }
+
+  getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
+    return Object.values(this.state.deploymentRuns || {})
+      .filter((run) => !filters.projectId || run.projectId === filters.projectId)
+      .filter((run) => !filters.branchId || run.branchId === filters.branchId)
+      .filter((run) => !filters.status || run.status === filters.status)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  updateDeploymentRun(id: string, mutate: (run: DeploymentRun) => void): DeploymentRun {
+    const run = this.state.deploymentRuns?.[id];
+    if (!run) throw new Error(`DeploymentRun not found: ${id}`);
+    mutate(run);
+    this.save();
+    return run;
+  }
+
+  private pruneDeploymentRuns(projectId: string): void {
+    const runs = Object.values(this.state.deploymentRuns || {})
+      .filter((run) => run.projectId === projectId)
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    let overflow = runs.length - MAX_DEPLOYMENT_RUNS_PER_PROJECT;
+    if (overflow <= 0) return;
+    for (const run of runs) {
+      if (overflow <= 0) break;
+      if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
+      delete this.state.deploymentRuns?.[run.id];
+      overflow -= 1;
+    }
+  }
 
   appendLog(branchId: string, log: OperationLog): void {
     if (!this.state.logs[branchId]) {

@@ -563,6 +563,10 @@ export interface BranchEntry {
    */
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   errorMessage?: string;
+  /** 最近一次分支部署事实记录。旧分支无该字段时按现有状态降级。 */
+  lastDeploymentRunId?: string;
+  /** 当前运行态对应的不可变部署版本。DeploymentVersion 落地前保持为空。 */
+  currentVersionId?: string;
   createdAt: string;
   lastAccessedAt?: string;
   /** User favorite flag — favorites are sorted to the top */
@@ -863,6 +867,73 @@ export interface ServiceState {
   deployedMode?: string;
 }
 
+/** 分支部署的触发来源。 */
+export type DeploymentRunTrigger = 'webhook' | 'manual' | 'retry' | 'scheduler' | 'system';
+
+/** DeploymentRun 的持久化状态机。running / failed / cancelled 为终态。 */
+export type DeploymentRunStatus =
+  | 'pending'
+  | 'queued'
+  | 'preparing'
+  | 'building'
+  | 'starting'
+  | 'verifying'
+  | 'running'
+  | 'failed'
+  | 'cancelled';
+
+/** 结构化失败事实。AI 解释层只能消费此结构和 evidenceRefs，不得反向改写。 */
+export interface DeploymentFailure {
+  code: string;
+  owner: 'code' | 'config' | 'cds' | 'external' | 'unknown';
+  retryable: boolean;
+  summary: string;
+  serviceId?: string;
+  phase?: string;
+  evidenceRefs: string[];
+  suggestedAction?: string;
+}
+
+/** DeploymentRun 内严格递增、可断线续传的事件。 */
+export interface DeploymentRunEvent {
+  seq: number;
+  at: string;
+  phase: string;
+  level: 'info' | 'warn' | 'error';
+  status: string;
+  message: string;
+  detail?: Record<string, unknown>;
+  evidenceRefs?: string[];
+}
+
+/**
+ * 一次分支部署的唯一事实记录。
+ *
+ * 记录必须在 pull / build / docker 等副作用之前创建。events 是有界窗口，
+ * seq 终身递增；firstEventSeq 告诉续传客户端窗口是否已经截断。
+ */
+export interface DeploymentRun {
+  id: string;
+  projectId: string;
+  branchId: string;
+  trigger: DeploymentRunTrigger;
+  status: DeploymentRunStatus;
+  phase: string;
+  seq: number;
+  firstEventSeq: number;
+  commitSha?: string;
+  versionId?: string;
+  operationId?: string;
+  executorId?: string;
+  configHash?: string;
+  startedAt: string;
+  updatedAt: string;
+  heartbeatAt?: string;
+  finishedAt?: string;
+  failure?: DeploymentFailure;
+  events: DeploymentRunEvent[];
+}
+
 /** A build/operation log event */
 export interface OperationLogEvent {
   step: string;
@@ -1131,6 +1202,8 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
+  deploymentRuns?: Record<string, DeploymentRun>;
   /** Release targets keyed by id. */
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
