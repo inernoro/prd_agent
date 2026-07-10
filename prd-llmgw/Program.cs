@@ -5229,6 +5229,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     var latestDisableMapFallback = false;
     var latestHasEvidenceJson = false;
     var latestHasReleaseGateJson = false;
+    var latestProtocolCanaryRequired = false;
+    var latestHasProtocolCanaryJson = false;
     var parseErrors = 0;
 
     foreach (var line in File.ReadLines(normalizedPath))
@@ -5253,6 +5255,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
             latestDisableMapFallback = ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers");
             latestHasEvidenceJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"));
             latestHasReleaseGateJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"));
+            latestProtocolCanaryRequired = ReadJsonBool(root, "protocolCanaryRequired");
+            latestHasProtocolCanaryJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson"));
         }
         catch (JsonException)
         {
@@ -5273,17 +5277,25 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     }
 
     var sameCommit = expectedCommit is not null && string.Equals(latestCommit, expectedCommit, StringComparison.OrdinalIgnoreCase);
-    var ready = sameCommit && latestReleaseGateRequired && latestDisableMapFallback && latestHasEvidenceJson && latestHasReleaseGateJson;
+    var ready = sameCommit
+                && latestReleaseGateRequired
+                && latestDisableMapFallback
+                && latestHasEvidenceJson
+                && latestHasReleaseGateJson
+                && latestProtocolCanaryRequired
+                && latestHasProtocolCanaryJson;
     var missing = new List<string>();
     if (!sameCommit) missing.Add("same-commit");
     if (!latestReleaseGateRequired) missing.Add("releaseGateRequired");
     if (!latestDisableMapFallback) missing.Add("disableMapConfigFallbackForActiveAppCallers");
     if (!latestHasEvidenceJson) missing.Add("evidenceJson");
     if (!latestHasReleaseGateJson) missing.Add("releaseGateJson");
+    if (!latestProtocolCanaryRequired) missing.Add("protocolCanaryRequired");
+    if (!latestHasProtocolCanaryJson) missing.Add("protocolCanaryJson");
     var detail = ready
         ? $"找到同 commit 的 http-full success 台账：{latestCommit}，recordedAt={latestRecordedAt}。"
         : $"找到 http-full success 台账，但仍缺 {string.Join(", ", missing)}；latestCommit={latestCommit}，currentCommit={expectedCommit ?? "empty"}。";
-    var evidence = $"rolloutLedger={normalizedPath}; stage=http-full; status=success; commit={latestCommit}; releaseGateRequired={latestReleaseGateRequired}; disableMapFallback={latestDisableMapFallback}";
+    var evidence = $"rolloutLedger={normalizedPath}; stage=http-full; status=success; commit={latestCommit}; releaseGateRequired={latestReleaseGateRequired}; disableMapFallback={latestDisableMapFallback}; protocolCanaryRequired={latestProtocolCanaryRequired}; protocolCanaryJson={latestHasProtocolCanaryJson}";
     facts["latestCommit"] = latestCommit;
     facts["recordedAt"] = latestRecordedAt;
     facts["sameCommit"] = sameCommit ? "true" : "false";
@@ -5291,6 +5303,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     facts["disableMapConfigFallbackForActiveAppCallers"] = latestDisableMapFallback ? "true" : "false";
     facts["evidenceJson"] = latestHasEvidenceJson ? "true" : "false";
     facts["releaseGateJson"] = latestHasReleaseGateJson ? "true" : "false";
+    facts["protocolCanaryRequired"] = latestProtocolCanaryRequired ? "true" : "false";
+    facts["protocolCanaryJson"] = latestHasProtocolCanaryJson ? "true" : "false";
     facts["missing"] = string.Join(",", missing);
     return (ready, detail, evidence, facts);
 }

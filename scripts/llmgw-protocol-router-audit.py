@@ -330,6 +330,8 @@ def build_report() -> dict[str, Any]:
             "disableMapFallbackForActiveAppCallers",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
             "ReadLatestHttpFullRolloutLedgerEvidence",
+            "latestProtocolCanaryRequired",
+            "latestHasProtocolCanaryJson",
             "TargetIngressProtocols",
             "NormalizeIngressProtocol",
             "ProtocolCoverageData",

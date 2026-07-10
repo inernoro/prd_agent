@@ -47,3 +47,5 @@
 | ops | scripts | LLM Gateway 生产 stage runner 自动生成 health preflight 证据，并在 ledger 中记录同 commit 健康检查结果 |
 | ops | scripts | LLM Gateway 生产 stage runner 支持显式开启四协议 canary 证据，绑定 release commit 并限制 runtime 调用次数 |
 | ops | scripts | LLM Gateway canary 与 http-full 生产阶段默认采集四协议 canary 证据，避免维护窗口遗漏协议入口验证 |
+| security | prd-llmgw | LLM Gateway full-http runtime gate 要求同 commit 台账包含 protocol canary required 与 JSON 证据，避免跳过四协议样本仍显示 ready |
+| polish | prd-llmgw-web | LLM Gateway 概览页 full-http 台账事实展示 protocol canary 状态，便于发布复核 |

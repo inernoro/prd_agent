@@ -533,6 +533,8 @@ function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, s
       'latestCommit',
       'recordedAt',
       'releaseGateJson',
+      'protocolCanaryRequired',
+      'protocolCanaryJson',
       'disableMapConfigFallbackForActiveAppCallers',
       'evidenceJson',
       'rolloutLedger',

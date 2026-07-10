@@ -162,6 +162,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ProtocolCoveragePanel", overviewPage);
         Assert.Contains("协议入口覆盖", overviewPage);
         Assert.Contains("case 'protocol_runtime_coverage':", overviewPage);
+        Assert.Contains("protocolCanaryRequired", overviewPage);
+        Assert.Contains("protocolCanaryJson", overviewPage);
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
         Assert.Contains("protocol_runtime_coverage", protocolAudit);
@@ -805,6 +807,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("append_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
         Assert.Contains("report_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
         Assert.Contains("protocol canary evidence", ledger);
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        Assert.Contains("latestProtocolCanaryRequired", consoleProgram);
+        Assert.Contains("latestHasProtocolCanaryJson", consoleProgram);
+        Assert.Contains("missing.Add(\"protocolCanaryRequired\")", consoleProgram);
+        Assert.Contains("missing.Add(\"protocolCanaryJson\")", consoleProgram);
         Assert.Contains("_canary_external_blockers", ledger);
         Assert.Contains("_merge_blockers", ledger);
         Assert.Contains("\"externalBlockers\": all_external_blockers", ledger);
