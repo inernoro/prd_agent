@@ -24,3 +24,4 @@
 | ops | scripts | LLM Gateway rollout ledger 强制校验 gw-smoke 的 invoke/send/stream/client-stream 低成本真实 provider canary 行 |
 | ops | scripts | LLM Gateway gw-smoke 默认真实 provider 调用收窄为 chat-only，intent/vision 改为显式环境变量打开以避免过量测试 |
 | security | scripts | LLM Gateway serving-probe 取消读取短名 `GW_KEY`，仅通过长名环境变量或显式参数取网关密钥 |
+| security | prd-api | LLM Gateway `/gw/v1/profile-test` 接入 appCaller 被动注册与状态、预算、限流治理，避免 runtime profile 测试绕过 GW 治理 |

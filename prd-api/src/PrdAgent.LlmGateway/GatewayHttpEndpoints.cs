@@ -696,9 +696,36 @@ public static class GatewayHttpEndpoints
         // 该端点只接受内部 M2M 调用（受 X-Gateway-Key 保护），上游 API key 只用于本次测试发送，
         // 不向 MAP 进程暴露任何网关发送细节。
         app.MapPost("/gw/v1/profile-test", async (
+            HttpContext http,
             GatewayUpstreamProfileTestRequest request,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
+            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim(),
+                SourceSystem = "map",
+                IngressProtocol = "gw-native",
+                AppCallerCode = request.AppCallerCode,
+                AppCallerTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? "Runtime profile test" : request.ProfileName.Trim(),
+                RequestType = ModelTypes.Chat,
+                ModelPolicy = "pinned",
+                ExpectedModel = request.Model,
+                PinnedModelId = request.Model,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = string.IsNullOrWhiteSpace(request.RequestId) ? null : request.RequestId.Trim(),
+                    UserId = request.UserId,
+                    SourceSystem = "map",
+                    IngressProtocol = "gw-native",
+                    ModelPolicy = "pinned",
+                    GatewayTransport = GatewayTransports.Http,
+                },
+            };
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governanceResult = GovernanceResult(http, governance, jsonOpts);
+            if (governanceResult is not null) return governanceResult;
+
             var raw = await gateway.TestUpstreamProfileAsync(request, CancellationToken.None);
             return JsonContentResult(raw, jsonOpts);
         });
