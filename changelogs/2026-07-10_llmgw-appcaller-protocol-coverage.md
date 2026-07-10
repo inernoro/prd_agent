@@ -5,3 +5,5 @@
 | feat | prd-llmgw | runtime gates 增加 appCaller 入口协议注册覆盖阻塞项，防止只看日志忽略注册表证据 |
 | polish | prd-llmgw-web | 概览页 runtime gate 为 appCaller 入口协议注册覆盖提供协议覆盖和调用方深链 |
 | test | scripts | release gate 自测覆盖 appCaller 入口协议注册 gate，protocol canary 文案同步说明注册表证据 |
+| test | prd-api | 增加模型池协议优先级防退化测试，守卫池条目 Protocol 优先于模型和平台 |
+| docs | doc | 更新 LLM Gateway 协议绑平台债务状态，区分已守卫文本解析链与剩余图片/raw 分支 |
