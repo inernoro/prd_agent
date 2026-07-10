@@ -81,6 +81,14 @@ ledger=""
 allow_out_of_order=0
 allow_out_of_order_reason="${LLMGW_ALLOW_OUT_OF_ORDER_REASON:-}"
 
+# 固定生产 Compose identity，禁止 release worktree 目录名改变审计或部署目标。
+compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
+if ! printf '%s' "$compose_project_name" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'; then
+  echo "ERROR: invalid Compose project name: $compose_project_name" >&2
+  exit 1
+fi
+export COMPOSE_PROJECT_NAME="$compose_project_name"
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --stage)

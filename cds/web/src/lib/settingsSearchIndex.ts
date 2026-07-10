@@ -42,7 +42,10 @@ export interface SettingsIndexEntry {
  * 与 CdsSettingsPage / ProjectSettingsPage 的 tab label 保持一致。
  */
 export const SYSTEM_TAB_LABELS: Record<string, string> = {
-  maintenance: '更新与重启',
+  maintenance: 'CDS 更新',
+  'update-history': '自更新历史',
+  'docker-network': 'Docker 网络容量',
+  danger: '危险操作',
   'access-keys': 'AI Access Key',
   overview: '概览',
   auth: '登录与认证',
@@ -137,11 +140,11 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
     keywords: ['固定分支', '固定', 'pin', 'pinned', '永不冷却', '永不下线', '常驻分支'],
   },
 
-  // —— 更新与重启（维护）——
+  // —— CDS 更新 ——
   {
     id: 'sys:maintenance:self-update',
     label: 'CDS 更新与重启',
-    hint: '维护 · self-update / 拉取最新源码并重启',
+    hint: 'CDS 更新 · self-update / 拉取最新源码并重启',
     tab: 'maintenance',
     scope: 'system',
     keywords: ['更新', '升级', '自更新', 'self-update', 'selfupdate', '重启', 'restart', '更新并重启', '拉取源码'],
@@ -149,7 +152,7 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
   {
     id: 'sys:maintenance:force-update',
     label: '强制更新',
-    hint: '维护 · 跳过校验强制拉取并重启',
+    hint: 'CDS 更新 · 跳过校验强制拉取并重启',
     tab: 'maintenance',
     scope: 'system',
     keywords: ['强制更新', '强制', 'force update', 'force', '强更'],
@@ -157,10 +160,26 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
   {
     id: 'sys:maintenance:update-history',
     label: '自更新历史',
-    hint: '维护 · 历次 self-update 记录与耗时',
-    tab: 'maintenance',
+    hint: '自更新历史 · 历次 self-update 记录与耗时',
+    tab: 'update-history',
     scope: 'system',
     keywords: ['更新历史', '自更新历史', 'update history', '升级记录', '历史'],
+  },
+  {
+    id: 'sys:docker-network:capacity',
+    label: 'Docker 网络容量',
+    hint: 'Docker 网络容量 · 分支隔离网络占用与可清理候选',
+    tab: 'docker-network',
+    scope: 'system',
+    keywords: ['docker 网络', '网络容量', '分支网络', 'address pool', '地址池', '网络清理', '空网络'],
+  },
+  {
+    id: 'sys:danger:factory-reset',
+    label: '恢复出厂设置',
+    hint: '危险操作 · 清空所有项目配置',
+    tab: 'danger',
+    scope: 'system',
+    keywords: ['危险操作', '恢复出厂设置', 'factory reset', '清空项目', '重置 CDS'],
   },
 
   // —— 存储后端 ——
@@ -327,7 +346,7 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
   {
     id: 'sys:mirror:registry',
     label: '镜像加速',
-    hint: '维护 · Docker 镜像加速源',
+    hint: 'CDS 更新 · Docker 镜像加速源',
     tab: 'maintenance',
     scope: 'system',
     keywords: ['镜像', '镜像加速', 'mirror', '加速', 'registry', '镜像源', 'docker mirror'],
@@ -335,7 +354,7 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
   {
     id: 'sys:mirror:tab-name',
     label: '浏览器标签名',
-    hint: '维护 · 自定义浏览器标签页标题',
+    hint: 'CDS 更新 · 自定义浏览器标签页标题',
     tab: 'maintenance',
     scope: 'system',
     keywords: ['标签名', '浏览器标签', 'tab name', '标题', 'title', '标签页'],

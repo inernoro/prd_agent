@@ -5,12 +5,15 @@ import {
   Boxes,
   Database,
   Github,
+  History,
   KeyRound,
   Monitor,
+  Network,
   Plug,
   Save,
   ServerCog,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   TerminalSquare,
   Timer,
@@ -35,6 +38,9 @@ const GitHubWebhookLogTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubW
 const GlobalVarsTab = lazy(() => import('@/pages/cds-settings/tabs/GlobalVarsTab').then((m) => ({ default: m.GlobalVarsTab })));
 const LoadingPagesTab = lazy(() => import('@/pages/cds-settings/tabs/LoadingPagesTab').then((m) => ({ default: m.LoadingPagesTab })));
 const MaintenanceTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.MaintenanceTab })));
+const SelfUpdateHistoryTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.SelfUpdateHistoryTab })));
+const DockerNetworkTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.DockerNetworkTab })));
+const DangerOperationsTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.DangerOperationsTab })));
 const MirrorTab = lazy(() => import('@/pages/cds-settings/tabs/MirrorTab').then((m) => ({ default: m.MirrorTab })));
 const OverviewTab = lazy(() => import('@/pages/cds-settings/tabs/OverviewTab').then((m) => ({ default: m.OverviewTab })));
 const RemoteHostsTab = lazy(() => import('@/pages/cds-settings/tabs/RemoteHostsTab').then((m) => ({ default: m.RemoteHostsTab })));
@@ -64,7 +70,10 @@ type TabValue =
   | 'global-vars'
   | 'loading-pages'
   | 'snapshots'
-  | 'maintenance';
+  | 'maintenance'
+  | 'update-history'
+  | 'docker-network'
+  | 'danger';
 
 interface TabItem {
   value: TabValue;
@@ -85,7 +94,10 @@ const tabGroups: TabGroup[] = [
   {
     label: '常用',
     items: [
-      { value: 'maintenance', label: '更新与重启', icon: Wrench },
+      { value: 'maintenance', label: 'CDS 更新', icon: Wrench },
+      { value: 'update-history', label: '自更新历史', icon: History },
+      { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
+      { value: 'danger', label: '危险操作', icon: ShieldAlert },
       // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
@@ -262,6 +274,15 @@ export function CdsSettingsPage(): JSX.Element {
                       </DisclosurePanel>
                     </div>
                   ) : null}
+                </TabsContent>
+                <TabsContent value="update-history">
+                  {activeTab === 'update-history' ? <SelfUpdateHistoryTab /> : null}
+                </TabsContent>
+                <TabsContent value="docker-network">
+                  {activeTab === 'docker-network' ? <DockerNetworkTab /> : null}
+                </TabsContent>
+                <TabsContent value="danger">
+                  {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
             </div>
