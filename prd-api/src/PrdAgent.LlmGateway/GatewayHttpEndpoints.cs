@@ -1160,7 +1160,7 @@ public static class GatewayHttpEndpoints
     {
         var nativeRequest = new GatewayRequest
         {
-            AppCallerCode = "self-test.native.chat::chat",
+            AppCallerCode = AppCallerRegistry.LlmGatewaySelfTest.Route.NativeChat,
             ModelType = ModelTypes.Chat,
             ExpectedModel = "ignored-native-model",
             RequestBody = new JsonObject
@@ -1189,7 +1189,7 @@ public static class GatewayHttpEndpoints
             RequestId = "route-self-test-openai",
             SourceSystem = "external",
             IngressProtocol = "openai-compatible",
-            AppCallerCode = "self-test.openai.chat::chat",
+            AppCallerCode = AppCallerRegistry.LlmGatewaySelfTest.Route.OpenAiChat,
             AppCallerTitle = "Route self-test OpenAI",
             RequestType = ModelTypes.Chat,
             ModelPolicy = "auto",
@@ -1211,7 +1211,7 @@ public static class GatewayHttpEndpoints
             RequestId = "route-self-test-claude",
             SourceSystem = "external",
             IngressProtocol = "claude-compatible",
-            AppCallerCode = "self-test.claude.chat::chat",
+            AppCallerCode = AppCallerRegistry.LlmGatewaySelfTest.Route.ClaudeChat,
             AppCallerTitle = "Route self-test Claude",
             RequestType = ModelTypes.Chat,
             ModelPolicy = "pinned",
@@ -1234,7 +1234,7 @@ public static class GatewayHttpEndpoints
             RequestId = "route-self-test-gemini",
             SourceSystem = "external",
             IngressProtocol = "gemini-compatible",
-            AppCallerCode = "self-test.gemini.chat::chat",
+            AppCallerCode = AppCallerRegistry.LlmGatewaySelfTest.Route.GeminiChat,
             AppCallerTitle = "Route self-test Gemini",
             RequestType = ModelTypes.Chat,
             ModelPolicy = "pool",

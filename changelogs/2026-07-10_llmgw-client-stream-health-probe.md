@@ -52,3 +52,4 @@
 | ops | scripts | LLM Gateway exec_dep 在 post-deploy runtime gates 前生成 protocol canary 证据，避免 full-http 阶段先判 gate 后产证据 |
 | ops | scripts | LLM Gateway exec_dep 自动创建 post-deploy protocol canary 证据目录，提升生产阶段脚本可复跑性 |
 | ops | scripts | LLM Gateway exec_dep 禁用 post-deploy protocol canary 时不再把未验证 JSON 路径传给 runtime gates |
+| fix | prd-api | 注册 LLM Gateway route self-test 的四类 appCallerCode，并用注册表常量替换端点字面量 |
