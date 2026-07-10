@@ -40,3 +40,4 @@
 | feat | prd-llmgw | LLM Gateway 发布 gate 纳入四类入口协议当前 commit 覆盖检查，缺少运行日志时保持等待并提供协议覆盖深链 |
 | ops | scripts | 新增 LLM Gateway 四协议 canary 脚本，默认 dry-run，显式 --execute 时才限量触发 GW Native、OpenAI、Claude、Gemini 入口运行日志 |
 | ops | scripts | LLM Gateway release gate 与 rollout ledger 支持 protocol canary JSON 证据，发布台账可校验四类入口协议同 commit 运行样本 |
+| ops | scripts | LLM Gateway 四协议 canary 增加已有 PASS 证据复用和 runtime call 上限，避免重复执行同 commit 样本造成过量请求 |

@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,7 @@ from typing import Any
 
 TARGET_PROTOCOLS = ("gw-native", "openai-compatible", "claude-compatible", "gemini-compatible")
 DEFAULT_APP_CALLER = "report-agent.generate::chat"
+DEFAULT_MAX_RUNTIME_CALLS = 4
 
 
 def _default_base() -> str:
@@ -98,6 +100,56 @@ def _normalize_commit(value: object) -> str:
     if raw.startswith("sha-"):
         raw = raw[4:]
     return raw
+
+
+def _normalized_root(value: object) -> str:
+    return _base_root(str(value or "")).rstrip("/")
+
+
+def _load_existing_report(path: str) -> dict[str, Any] | None:
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    if not isinstance(payload, dict):
+        raise ValueError(f"existing canary JSON is not an object: {path}")
+    return payload
+
+
+def _existing_report_covers(
+    payload: dict[str, Any],
+    root: str,
+    expected_commit: str,
+    selected_protocols: tuple[str, ...],
+) -> tuple[bool, str]:
+    verdict = str(payload.get("verdict") or payload.get("Verdict") or "").strip().lower()
+    mode = str(payload.get("mode") or payload.get("Mode") or "").strip().lower()
+    if verdict != "pass" or mode != "execute":
+        return False, f"existing verdict/mode is not reusable: verdict={verdict or 'empty'} mode={mode or 'empty'}"
+
+    existing_root = _normalized_root(payload.get("root") or payload.get("Root"))
+    if root and existing_root and existing_root != _normalized_root(root):
+        return False, f"existing root differs: actual={existing_root} expected={_normalized_root(root)}"
+
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    if expected_commit and health_commit and health_commit != expected_commit:
+        return False, f"existing health commit differs: actual={health_commit} expected={expected_commit}"
+
+    cases = payload.get("cases") or payload.get("Cases") or []
+    if not isinstance(cases, list):
+        return False, "existing cases are not a list"
+    passed_protocols = {
+        str((case.get("protocol") if isinstance(case, dict) else "") or (case.get("Protocol") if isinstance(case, dict) else "")).strip()
+        for case in cases
+        if isinstance(case, dict) and bool(case.get("ok") if "ok" in case else case.get("Ok"))
+    }
+    missing = sorted(set(selected_protocols).difference(passed_protocols))
+    if missing:
+        return False, f"existing report misses protocols: {','.join(missing)}"
+    return True, "existing execute/pass report covers selected protocols"
 
 
 def _body_for_protocol(protocol: str, max_tokens: int, prompt: str) -> tuple[str, dict[str, Any]]:
@@ -328,6 +380,37 @@ def _write_markdown(path: str, report: dict[str, Any]) -> None:
 
 
 def _self_test() -> int:
+    with tempfile.TemporaryDirectory(prefix="llmgw-protocol-canary-self-test-") as tmp:
+        reusable_path = os.path.join(tmp, "protocol-canary.json")
+        with open(reusable_path, "w", encoding="utf-8") as fh:
+            json.dump({
+                "verdict": "pass",
+                "mode": "execute",
+                "root": "https://example.test",
+                "health": {"commit": "abc123"},
+                "cases": [
+                    {"protocol": "gw-native", "ok": True},
+                    {"protocol": "openai-compatible", "ok": True},
+                    {"protocol": "claude-compatible", "ok": True},
+                    {"protocol": "gemini-compatible", "ok": True},
+                ],
+            }, fh)
+        loaded = _load_existing_report(reusable_path)
+        reusable, reuse_reason = _existing_report_covers(
+            loaded or {},
+            "https://example.test/",
+            "abc123",
+            TARGET_PROTOCOLS,
+        )
+        root_mismatch, _ = _existing_report_covers(
+            loaded or {},
+            "https://other.test/",
+            "abc123",
+            TARGET_PROTOCOLS,
+        )
+        if not reusable or root_mismatch:
+            print(f"LLM Gateway protocol canary self-test: FAIL reuse={reusable} reason={reuse_reason}", file=sys.stderr)
+            return 1
     cases = [
         _is_success("gw-native", 200, json.dumps({"Success": True, "Content": "OK", "Resolution": {"ActualModel": "m"}}))[0],
         _is_success("openai-compatible", 200, json.dumps({"choices": [{"message": {"content": "OK"}}], "model": "m"}))[0],
@@ -350,6 +433,10 @@ def main() -> int:
     parser.add_argument("--execute", action="store_true", help="send one real small request per protocol")
     parser.add_argument("--protocol", action="append", choices=TARGET_PROTOCOLS, help="limit protocols; repeatable")
     parser.add_argument("--max-tokens", type=int, default=8)
+    parser.add_argument("--max-runtime-calls", type=int, default=int(os.environ.get("LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", DEFAULT_MAX_RUNTIME_CALLS)),
+                        help="upper bound for real upstream calls when --execute is set")
+    parser.add_argument("--no-reuse-existing", action="store_true",
+                        help="do not reuse an existing pass JSON from --json-out; useful when intentionally refreshing evidence")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_PROTOCOL_CANARY_JSON_OUT", ""))
@@ -365,8 +452,29 @@ def main() -> int:
     key = args.key.strip()
     selected_protocols = tuple(args.protocol or TARGET_PROTOCOLS)
     max_tokens = max(1, min(args.max_tokens, 32))
+    max_runtime_calls = max(0, args.max_runtime_calls)
     run_id = args.run_id.strip() or f"llmgw-protocol-canary-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     expected_commit = _normalize_commit(args.expect_commit)
+    if args.execute and not args.no_reuse_existing and args.json_out:
+        try:
+            existing = _load_existing_report(args.json_out)
+            if existing is not None:
+                reusable, reason = _existing_report_covers(existing, root, expected_commit, selected_protocols)
+                if reusable:
+                    existing["reusedExisting"] = True
+                    existing["reuseReason"] = reason
+                    existing["maxRuntimeCalls"] = max_runtime_calls
+                    if args.print_json:
+                        print(json.dumps(existing, ensure_ascii=False, indent=2, sort_keys=True))
+                    print("LLM Gateway protocol canary: PASS mode=execute")
+                    print(f"- root={root or 'empty'}")
+                    print(f"- protocols={','.join(selected_protocols)}")
+                    print(f"- runId={existing.get('runId') or existing.get('RunId') or 'existing'}")
+                    print("- reusedExisting=true; no runtime LLM calls were created")
+                    return 0
+                print(f"LLM Gateway protocol canary: existing evidence not reused: {reason}")
+        except Exception as exc:
+            print(f"LLM Gateway protocol canary: existing evidence not reused: {exc}")
     report: dict[str, Any] = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "verdict": "fail",
@@ -376,6 +484,8 @@ def main() -> int:
         "expectedCommit": expected_commit,
         "runId": run_id,
         "maxTokens": max_tokens,
+        "maxRuntimeCalls": max_runtime_calls,
+        "reusedExisting": False,
         "protocols": list(selected_protocols),
         "health": {},
         "routeSelfTest": {},
@@ -387,6 +497,8 @@ def main() -> int:
         failures.append("missing --base/GW_BASE")
     if not key:
         failures.append("missing --key/GW_KEY/LLMGW_GATE_KEY")
+    if args.execute and len(selected_protocols) > max_runtime_calls:
+        failures.append(f"selected protocols exceed --max-runtime-calls: selected={len(selected_protocols)} max={max_runtime_calls}")
     if not failures:
         health, health_failures = _health_check(root, expected_commit, timeout=args.timeout)
         route, route_failures = _route_self_test(root, key, timeout=args.timeout)
