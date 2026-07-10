@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
+  ArrowLeft, Boxes, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
   GitPullRequest, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Pencil, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -191,6 +191,15 @@ export function ReportsPage(): JSX.Element {
     if (activeProjectFilter === 'self') return allReports.filter((r) => !r.projectId);
     return allReports.filter((r) => r.projectId === activeProjectFilter);
   }, [allReports, activeProjectFilter]);
+
+  // 文件夹与项目筛选联动（与 CreateReportDialog 同一防御）：全局页加载的是所有项目的
+  // 文件夹，若不按当前项目筛选过滤，切到某个项目后仍会渲染其它项目的文件夹树
+  // （跨项目串扰，2026-07-10 用户反馈）。'self' 只看无项目归属（CDS 自身）的文件夹。
+  const scopedFolders = useMemo(() => {
+    if (activeProjectFilter === 'all') return folders;
+    if (activeProjectFilter === 'self') return folders.filter((f) => !f.projectId);
+    return folders.filter((f) => (f.projectId || null) === activeProjectFilter);
+  }, [folders, activeProjectFilter]);
 
   const visibleReports = useMemo(() => {
     if (activeFolder === 'all') return projectFilteredReports;
@@ -389,7 +398,7 @@ export function ReportsPage(): JSX.Element {
                           />
                         ) : null}
                         <ReportFilterMenu
-                          folders={folders}
+                          folders={scopedFolders}
                           counts={folderCounts}
                           active={activeFolder}
                           onSelect={setActiveFolder}
@@ -402,7 +411,7 @@ export function ReportsPage(): JSX.Element {
                   <>
                     <ReportList
                       reports={visibleReports}
-                      folders={folders}
+                      folders={scopedFolders}
                       projects={projects}
                       projectCounts={projectCounts}
                       activeProjectFilter={activeProjectFilter}
@@ -443,7 +452,7 @@ export function ReportsPage(): JSX.Element {
                     </div>
                     <ReportList
                       reports={visibleReports}
-                      folders={folders}
+                      folders={scopedFolders}
                       projects={projects}
                       projectCounts={projectCounts}
                       activeProjectFilter={activeProjectFilter}
@@ -495,12 +504,13 @@ export function ReportsPage(): JSX.Element {
 }
 
 function ProjectFilterMenu({
-  projects, counts, active, onSelect,
+  projects, counts, active, onSelect, align = 'end',
 }: {
   projects: ProjectLite[];
   counts: ProjectCounts;
   active: ProjectFilter;
   onSelect: (f: ProjectFilter) => void;
+  align?: 'start' | 'end';
 }): JSX.Element {
   const activeProject = active === 'all' || active === 'self' ? null : projects.find((p) => p.id === active);
   const label = active === 'all'
@@ -511,7 +521,7 @@ function ProjectFilterMenu({
 
   return (
     <DropdownMenu
-      align="end"
+      align={align}
       width={268}
       trigger={(
         <Button variant="ghost" size="sm" className="h-7 min-w-0 shrink-0 gap-1.5 px-2" aria-label="打开项目筛选" title="项目筛选">
@@ -758,6 +768,13 @@ function ReportList({
     });
   }, []);
 
+  // 顶栏「全部折叠 / 全部展开」：一键作用于当前树里的所有文件夹。
+  const folderIds = useMemo(() => folders.map((folder) => folder.id), [folders]);
+  const allCollapsed = folderIds.length > 0 && folderIds.every((id) => collapsedFolderIds.has(id));
+  const toggleAllFolders = useCallback(() => {
+    setCollapsedFolderIds(allCollapsed ? new Set() : new Set(folderIds));
+  }, [allCollapsed, folderIds]);
+
   const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -856,17 +873,20 @@ function ReportList({
   return (
     <div className={`relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:flex-none lg:shrink-0 lg:w-[var(--report-nav-width)] ${className ?? ''}`}
       style={{ '--report-nav-width': `${navWidth}px` } as CSSProperties}>
-      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] py-1.5 pl-3 pr-1 text-xs font-medium text-muted-foreground">
-        <span>共 {reports.length} 份报告</span>
+      {/* 顶栏三件套（2026-07-10 用户定）：最左项目筛选，右侧筛选，最右全部折叠/展开；不再显示报告计数。 */}
+      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1 py-1.5">
         <div className="flex min-w-0 items-center gap-1">
           {showProjectFilter ? (
             <ProjectFilterMenu
+              align="start"
               projects={projects}
               counts={projectCounts}
               active={activeProjectFilter}
               onSelect={onProjectFilterSelect}
             />
           ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <ReportFilterMenu
             folders={folders}
             counts={counts}
@@ -874,6 +894,18 @@ function ReportList({
             onSelect={onFilterSelect}
             onRequestCreate={onCreateFolder}
           />
+          {folderIds.length > 0 ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              aria-label={allCollapsed ? '全部展开' : '全部折叠'}
+              title={allCollapsed ? '全部展开' : '全部折叠'}
+              onClick={toggleAllFolders}
+            >
+              {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5 pb-24 sm:pb-1.5" style={{ overscrollBehavior: 'contain' }}>
@@ -908,6 +940,9 @@ function ReportRowActions({
     if (window.confirm(`删除报告「${report.title}」？`)) onDelete();
   };
 
+  // 移动目标只列与报告同项目作用域的文件夹：跨项目移动会被服务端 400 拒绝，不该出现在菜单里。
+  const moveTargets = folders.filter((folder) => (folder.projectId || null) === (report.projectId || null));
+
   return (
     <DropdownMenu
       align="end"
@@ -939,12 +974,12 @@ function ReportRowActions({
         <span className="min-w-0 flex-1 truncate">未归类</span>
         {!report.folderId ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
       </DropdownItem>
-      {folders.length === 0 ? (
+      {moveTargets.length === 0 ? (
         <DropdownItem disabled>
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">暂无文件夹</span>
         </DropdownItem>
-      ) : folders.map((folder) => (
+      ) : moveTargets.map((folder) => (
         <DropdownItem key={folder.id} onSelect={() => onMove(folder.id)} disabled={report.folderId === folder.id}>
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate" title={folder.name}>{folder.name}</span>
