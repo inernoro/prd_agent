@@ -34,6 +34,68 @@ interface Section {
   items: LauncherItem[];
 }
 
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function launcherHaystack(item: LauncherItem): string {
+  return normalizeSearchText([
+    item.name,
+    item.description,
+    ...(item.tags ?? []),
+    item.agentKey,
+    item.route,
+  ].filter(Boolean).join(' '));
+}
+
+export function scoreLauncherSearchMatch(item: LauncherItem, query: string): number {
+  const q = normalizeSearchText(query);
+  if (!q) return 1;
+
+  const name = normalizeSearchText(item.name);
+  const route = normalizeSearchText(item.route);
+  const agentKey = normalizeSearchText(item.agentKey ?? '');
+  const tags = (item.tags ?? []).map(normalizeSearchText);
+  const description = normalizeSearchText(item.description);
+
+  if (name === q) return 1000;
+  if (tags.some((tag) => tag === q)) return 950;
+  if (agentKey === q || route === q) return 930;
+  if (name.includes(q)) return 900 - name.indexOf(q);
+  if (tags.some((tag) => tag.includes(q))) return 820;
+  if (route.includes(q) || agentKey.includes(q)) return 760;
+  if (description.includes(q)) return 620 - description.indexOf(q);
+
+  const haystack = launcherHaystack(item);
+  const parts = q.split(/\s+/).filter(Boolean);
+  if (parts.length > 1 && parts.every((part) => haystack.includes(part))) return 420;
+  return 0;
+}
+
+export function filterAndSortLauncherItems(
+  catalog: LauncherItem[],
+  query: string,
+  usageCounts: Record<string, number>,
+): LauncherItem[] {
+  const q = normalizeSearchText(query);
+  const scored = catalog
+    .map((item, index) => ({
+      item,
+      index,
+      score: scoreLauncherSearchMatch(item, q),
+    }))
+    .filter(({ score }) => score > 0);
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const usageDelta = (usageCounts[b.item.id] ?? 0) - (usageCounts[a.item.id] ?? 0);
+    if (usageDelta !== 0) return usageDelta;
+    return a.index - b.index;
+  });
+
+  return scored.map(({ item }) => item);
+}
+
 function getIcon(name: string, size = 18) {
   if (isPaSecretaryIcon(name)) return renderPaSecretaryIconNode(size);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -201,13 +263,7 @@ export function AgentSwitcher() {
   // 过滤 + 分组
   const sections = useMemo<Section[]>(() => {
     const query = searchQuery.trim().toLowerCase();
-    const match = (it: LauncherItem) => {
-      if (!query) return true;
-      const haystack = [it.name, it.description, ...(it.tags ?? [])].join(' ').toLowerCase();
-      return haystack.includes(query);
-    };
-
-    const filtered = catalog.filter(match);
+    const filtered = filterAndSortLauncherItems(catalog, query, usageCounts);
 
     // 置顶
     const pinnedSet = new Set(pinnedIds);
@@ -235,15 +291,7 @@ export function AgentSwitcher() {
     const rest = filtered.filter((it) => !pinnedSet.has(it.id));
     const byGroup = (g: LauncherGroup) => {
       const arr = rest.filter((it) => it.group === g);
-      // 有搜索时：按"匹配名称优先 + 使用次数"简易排序
-      arr.sort((a, b) => {
-        if (query) {
-          const aName = a.name.toLowerCase().includes(query) ? 0 : 1;
-          const bName = b.name.toLowerCase().includes(query) ? 0 : 1;
-          if (aName !== bName) return aName - bName;
-        }
-        return (usageCounts[b.id] ?? 0) - (usageCounts[a.id] ?? 0);
-      });
+      if (!query) arr.sort((a, b) => (usageCounts[b.id] ?? 0) - (usageCounts[a.id] ?? 0));
       return arr;
     };
 
@@ -324,10 +372,14 @@ export function AgentSwitcher() {
       if (selectedId !== null) setSelectedId(null);
       return;
     }
+    if (searchQuery.trim()) {
+      if (selectedId !== flatList[0].id) setSelectedId(flatList[0].id);
+      return;
+    }
     if (!selectedId || !flatList.some((it) => it.id === selectedId)) {
       setSelectedId(flatList[0].id);
     }
-  }, [isOpen, flatList, selectedId, setSelectedId]);
+  }, [isOpen, flatList, searchQuery, selectedId, setSelectedId]);
 
   // 输入框聚焦 + 面板关闭时复位键盘态 / hover
   useEffect(() => {
@@ -475,6 +527,17 @@ export function AgentSwitcher() {
                 ref={inputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  const liveQuery = e.currentTarget.value;
+                  const liveMatch = liveQuery.trim()
+                    ? filterAndSortLauncherItems(catalog, liveQuery, usageCounts)[0]
+                    : flatList.find((item) => item.id === selectedId) ?? flatList[0];
+                  if (!liveMatch) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  launchItem(liveMatch);
+                }}
                 placeholder="搜索 Agent、工具或页面..."
                 className="flex-1 bg-transparent outline-none text-[15px] no-focus-ring"
                 style={{ color: '#fff' }}
