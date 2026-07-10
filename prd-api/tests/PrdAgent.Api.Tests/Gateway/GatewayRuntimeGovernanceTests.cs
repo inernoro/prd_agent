@@ -1,0 +1,231 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.LlmGatewayHost;
+using Shouldly;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Gateway;
+
+public sealed class GatewayRuntimeGovernanceTests
+{
+    [Fact]
+    public async Task ConcurrentBudgetReservations_CannotExceedMonthlyBudget()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+
+        var caller = new GatewayAppCallerRecord
+        {
+            AppCallerCode = "budget-test",
+            RequestType = "chat",
+            MonthlyBudgetUsd = 1m,
+            BudgetReservationUsd = 0.6m,
+        };
+        var coordinators = Enumerable.Range(0, 8)
+            .Select(_ => new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance))
+            .ToArray();
+
+        var admissions = await Task.WhenAll(coordinators.Select((coordinator, index) =>
+            coordinator.ReserveAsync(caller, $"request-{index}", CancellationToken.None)));
+
+        admissions.Count(x => x.Allowed).ShouldBe(1);
+        admissions.Count(x => !x.Allowed && x.ErrorCode == "APP_CALLER_MONTHLY_BUDGET_EXCEEDED").ShouldBe(7);
+
+        var winner = admissions.Single(x => x.Allowed).Lease;
+        winner.ShouldNotBeNull();
+        await coordinators[0].FinalizeAsync(winner, 200, pipelineThrew: false);
+
+        var month = await scope.Context.Database
+            .GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0m);
+        month.SpentUsd.ShouldBe(0.6m);
+    }
+
+    [Fact]
+    public async Task DuplicateRawRequestId_HasSingleExecutionOwner()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+
+        var stores = Enumerable.Range(0, 8)
+            .Select(_ => new GatewayRequestExecutionStore(scope.Context))
+            .ToArray();
+        var begins = await Task.WhenAll(stores.Select(store => store.BeginAsync(
+            "idempotency-test",
+            "same-request-id",
+            "raw:/v1/images/generations",
+            "same-fingerprint",
+            CancellationToken.None)));
+
+        begins.Count(x => x.State == GatewayExecutionBeginState.Started).ShouldBe(1);
+        begins.Count(x => x.State == GatewayExecutionBeginState.Running).ShouldBe(7);
+        var owner = begins.Single(x => x.State == GatewayExecutionBeginState.Started);
+        await stores[0].UnknownAsync(owner.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+        var status = await stores[1].GetAsync(
+            "idempotency-test",
+            "same-request-id",
+            "raw:/v1/images/generations",
+            CancellationToken.None);
+        status.ShouldNotBeNull();
+        status.Status.ShouldBe("unknown");
+    }
+
+    [Fact]
+    public async Task ExpiredPendingReservation_DoesNotDecrementMonthThatWasNeverReserved()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+
+        var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months").InsertOneAsync(new GatewayBudgetMonthRecord
+        {
+            AppCallerCode = "pending-test",
+            RequestType = "chat",
+            MonthStart = monthStart,
+            BudgetUsd = 1m,
+            ReservedUsd = 0m,
+            SpentUsd = 0m,
+        });
+        await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations").InsertOneAsync(new GatewayBudgetReservationRecord
+        {
+            AppCallerCode = "pending-test",
+            RequestType = "chat",
+            RequestId = "pending-request",
+            MonthStart = monthStart,
+            ReservedUsd = 0.6m,
+            Status = "pending",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+        await coordinator.ReleaseExpiredAsync(CancellationToken.None);
+
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0m);
+    }
+
+    [Fact]
+    public async Task ScopedKey_RejectsCrossAppCallerAndWritesAudit()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_scoped_key";
+        var keyRecord = new GatewayServiceKeyRecord
+        {
+            Name = "test-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external-system",
+            AppCallerCodes = ["allowed-caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["chat"],
+        };
+        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
+            .InsertOneAsync(keyRecord);
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var allowed = await authorizer.AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external-system",
+            "allowed-caller",
+            "openai-compatible",
+            "chat",
+            CancellationToken.None);
+        var denied = await authorizer.AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external-system",
+            "other-caller",
+            "openai-compatible",
+            "chat",
+            CancellationToken.None);
+
+        allowed.Allowed.ShouldBeTrue();
+        denied.Allowed.ShouldBeFalse();
+        denied.Authenticated.ShouldBeTrue();
+        denied.StatusCode.ShouldBe(403);
+        var auditCount = await scope.Context.Database
+            .GetCollection<BsonDocument>("llmgw_operation_audits")
+            .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "service_key.scope_denied"));
+        auditCount.ShouldBe(1);
+    }
+
+    private static async Task<TestDatabase?> TryCreateDatabaseAsync()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://localhost:27017";
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(2);
+        var client = new MongoClient(settings);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(
+                new BsonDocument("ping", 1),
+                cancellationToken: cts.Token);
+            var databaseName = $"llmgw_governance_test_{Guid.NewGuid():N}";
+            return new TestDatabase(client, databaseName, new LlmGatewayDataContext(connectionString, databaseName));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class TestDatabase : IAsyncDisposable
+    {
+        private readonly MongoClient _client;
+        private readonly string _databaseName;
+
+        public TestDatabase(MongoClient client, string databaseName, LlmGatewayDataContext context)
+        {
+            _client = client;
+            _databaseName = databaseName;
+            Context = context;
+        }
+
+        public LlmGatewayDataContext Context { get; }
+
+        public async Task CreateGovernanceIndexesAsync()
+        {
+            var months = Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
+            await months.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetMonthRecord>(
+                Builders<GatewayBudgetMonthRecord>.IndexKeys
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType)
+                    .Ascending(x => x.MonthStart),
+                new CreateIndexOptions { Unique = true }));
+            var reservations = Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
+            await reservations.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetReservationRecord>(
+                Builders<GatewayBudgetReservationRecord>.IndexKeys
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType)
+                    .Ascending(x => x.RequestId),
+                new CreateIndexOptions { Unique = true }));
+            var executions = Context.Database.GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions");
+            await executions.Indexes.CreateOneAsync(new CreateIndexModel<GatewayRequestExecutionRecord>(
+                Builders<GatewayRequestExecutionRecord>.IndexKeys
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestId)
+                    .Ascending(x => x.Operation),
+                new CreateIndexOptions { Unique = true }));
+        }
+
+        public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
+    }
+}

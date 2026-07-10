@@ -47,6 +47,7 @@ public class GatewayKeyGateContractTests
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, ThrowingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        builder.Services.AddSingleton<GatewayCancellationRegistry>();
 
         var app = builder.Build();
         var pascalJson = new JsonSerializerOptions
@@ -69,6 +70,8 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
         new object[] { HttpMethod.Get, "/gw/v1/route-self-test" },
+        new object[] { HttpMethod.Get, "/gw/v1/readyz" },
+        new object[] { HttpMethod.Get, "/gw/v1/requests/test/status?operation=raw-submit" },
         new object[] { HttpMethod.Post, "/v1/chat/completions" },
         new object[] { HttpMethod.Post, "/v1/responses" },
         new object[] { HttpMethod.Post, "/v1/images/generations" },
@@ -130,7 +133,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task Readyz_IsPublic_AndReturns503WhenDependencyProbeFails()
+    public async Task Readyz_WithKey_Returns503WhenDependencyProbeFails()
     {
         var snapshot = new GatewayServingReadinessSnapshot(
             false,
@@ -143,7 +146,9 @@ public class GatewayKeyGateContractTests
         await app.StartAsync();
         try
         {
-            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/readyz");
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+            var response = await app.GetTestClient().SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
 
             response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
@@ -164,7 +169,9 @@ public class GatewayKeyGateContractTests
         await app.StartAsync();
         try
         {
-            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/readyz");
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+            var response = await app.GetTestClient().SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
 
             response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
@@ -191,12 +198,74 @@ public class GatewayKeyGateContractTests
         await app.StartAsync();
         try
         {
-            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/readyz");
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+            var response = await app.GetTestClient().SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
 
             response.StatusCode.ShouldBe(HttpStatusCode.OK);
             body.ShouldContain("ready");
             body.ShouldContain("router");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CancelEndpoint_CancelsOnlyRegisteredRequest()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
+            using var lease = registry.Register("cancel-me");
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-me/cancel");
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+            lease.Token.IsCancellationRequested.ShouldBeTrue();
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CancelEndpoint_StopsOpenAiCompatibleRequestWithSameRequestId()
+    {
+        var gateway = new CancellableGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var send = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    messages = new[] { new { role = "user", content = "wait" } },
+                }),
+            };
+            send.Headers.Add("X-Gateway-Key", GatewayKey);
+            send.Headers.Add("X-Request-Id", "cancel-openai-compatible");
+            var pending = client.SendAsync(send);
+            await gateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var cancel = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-openai-compatible/cancel");
+            cancel.Headers.Add("X-Gateway-Key", GatewayKey);
+            var cancelResponse = await client.SendAsync(cancel);
+            var sendResponse = await pending;
+
+            cancelResponse.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+            sendResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            gateway.Cancelled.Task.IsCompleted.ShouldBeTrue();
         }
         finally
         {
@@ -1809,6 +1878,7 @@ public class GatewayKeyGateContractTests
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        builder.Services.AddSingleton<GatewayCancellationRegistry>();
         if (readinessProbe != null)
             builder.Services.AddSingleton(readinessProbe);
 
@@ -1830,6 +1900,42 @@ public class GatewayKeyGateContractTests
 
         public Task<GatewayServingReadinessSnapshot> CheckAsync(CancellationToken cancellationToken)
             => Task.FromResult(_snapshot);
+    }
+
+    private sealed class CancellableGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                throw new InvalidOperationException("cancellable test request unexpectedly completed");
+            }
+            catch (OperationCanceledException)
+            {
+                Cancelled.TrySetResult();
+                throw;
+            }
+        }
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 
     private static void AssertRoutingContext(

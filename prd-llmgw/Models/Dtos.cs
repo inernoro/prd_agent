@@ -486,6 +486,7 @@ public sealed class UpdateGatewayAppCallerRequest
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
 }
@@ -503,6 +504,7 @@ public sealed class BulkUpdateGatewayAppCallersRequest
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
 }
 
@@ -775,6 +777,7 @@ public sealed class GatewayAppCallerItem
     public string? LastObservedRunId { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
     public long TotalSeen { get; set; }
@@ -815,3 +818,27 @@ public sealed class ShadowSnapshotItem
     public string? PlatformType { get; set; } public string? ResolutionType { get; set; } public string? ModelGroupId { get; set; } public bool IsFallback { get; set; }
 }
 public sealed class ShadowMismatchItem { public string Field { get; set; } = ""; public string? Inproc { get; set; } public string? Http { get; set; } public string Severity { get; set; } = ""; }
+
+public sealed class ServiceKeyCreateRequest
+{
+    public string? Name { get; set; }
+    public string? SourceSystem { get; set; }
+    public List<string>? AppCallerCodes { get; set; }
+    public List<string>? IngressProtocols { get; set; }
+    public List<string>? Scopes { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
+public sealed class ServiceKeyItem
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; }
+    public string SourceSystem { get; set; } = "";
+    public List<string> AppCallerCodes { get; set; } = new();
+    public List<string> IngressProtocols { get; set; } = new();
+    public List<string> Scopes { get; set; } = new();
+    public string? ExpiresAt { get; set; }
+    public string? LastUsedAt { get; set; }
+    public string? CreatedAt { get; set; }
+}

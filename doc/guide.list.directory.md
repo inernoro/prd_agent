@@ -655,8 +655,8 @@
 - [LLM 网关剥离活状态看板](plan.llm-gateway.status-dashboard) `plan.llm-gateway.status-dashboard`
   > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
 
-- [LLM Gateway 生产加固与架构收口计划](plan.platform.llm-gateway-production-hardening) `plan.platform.llm-gateway-production-hardening`
-  > 固化 full-http 当前生产事实与真实发布问题，区分已关闭和未关闭风险，明确 MAP/GW 架构边界、整改顺序、完成 Gate 和量化进度规则
+- [LLM Gateway 生产事实、隐性风险与架构修正 · 计划](plan.platform.llm-gateway-production-hardening) `plan.platform.llm-gateway-production-hardening`
+  > 固化代码合并与生产切换的真实状态，区分已关闭和未关闭风险，明确 MAP/GW 架构边界、整改顺序、完成 Gate 和量化进度规则
 
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
@@ -1062,7 +1062,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
-| 2026-07-10 | 新增 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产加固与架构收口计划 |
+| 2026-07-10 | 更新 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产事实、隐性风险与架构修正 · 计划 |
 | 2026-07-10 | 新增 | `design.platform.llm-gateway.migration-retrospective` | LLM Gateway 全量迁移与生产发布复盘 |
 | 2026-07-10 | 新增 | `plan.platform.llm-gateway-protocol-router-pr-split` | LLM Gateway 协议路由 PR 拆分计划 |
 | 2026-07-09 | 新增 | `plan.platform.llm-gateway-protocol-router` | LLM Gateway 协议入口与模型池迁移计划 |

@@ -1,7 +1,7 @@
 # LLM 网关物理独立设计 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-30 | **状态**：开发中
-> 类型: design | owner: inernoro | 进度: 阶段 0-2 影子模式 + CDS 命名子域已实现、预览真机跑通 serving resolve；灰度翻 http 待生产拍板
+> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：开发中
+> 类型: design | owner: inernoro | 进度: 生产 full-http 已落地；CDS 仅发布 llmgw-web 控制台，llmgw/llmgw-serve 后端保持容器内网
 > 来源: 多智能体工作流(5 路勘察 → 综合 → 2 路对抗评审 → 终稿)，两评审均判 needs-revision 并已吸收
 > 关联: .claude/rules/compute-then-send.md / cross-project-isolation.md / server-authority.md / llm-gateway.md / agent-runtime-sdk-boundary.md
 
@@ -162,26 +162,31 @@ flowchart TD
   class res,note1 sec;
 ```
 
-### 图 4：部署（CDS 单分支多容器 + 主应用域名 + 命名子域）
+### 图 4：部署（CDS 单分支多容器 + 单一控制台预览）
 
-一个预览分支起两个容器：api 主应用 + `llmgw-serve:8091`。主应用走 `<slug>.miduo.org`（path `/` 和 `/api/*` 都打 api）。serving 通过 BuildProfile 声明 `subdomain` 拿到**命名子域** `<slug>-llmgw.miduo.org`，forwarder 把该 host 根路径直达 serving 容器（不埋在主应用 `/gw/v1` 路径下）——见 `forwarder-route-publisher.ts` 的命名子域路由（`<previewSlug>-<sub>.<root>`）。生产 docker-compose 同构：api + llmgw 两个 service，同镜像不同 entrypoint，共享 env 锚点防配置漂移。
+一个 CDS 预览分支运行主应用、`llmgw` 控制面、`llmgw-serve` 数据面和 `llmgw-web` 控制台。浏览器只看到主应用域名和 `<previewSlug>-llmgw-web.<root>` 控制台域名；`llmgw` 与 `llmgw-serve` 不声明 `cds.subdomain` 或 `cds.path-prefix`，只通过分支容器网络被控制台和 API 调用。这样保留独立进程与内部探活，同时避免把两个后端健康端点误展示为业务 Web。
 
 ```mermaid
 flowchart TD
-  user["浏览器 / 外部调用方"]
+  user["浏览器"]
   fwd["CDS forwarder（host 路由）"]
   user --> fwd
 
   subgraph branch["CDS 单分支（预览环境）"]
     api["api 主应用容器<br/>path: / 和 /api/*"]
+    console["llmgw-web 控制台 :80"]
+    control["llmgw 控制面 :8090<br/>仅容器内网"]
     serve["llmgw-serve 容器 :8091<br/>/gw/v1/*"]
     api -->|"Mode=http: HttpLlmGatewayClient<br/>X-Gateway-Key"| serve
+    console -->|"/gw/*"| control
     api --- net["同分支 docker network"]
+    console --- net
+    control --- net
     serve --- net
   end
 
   fwd -->|"<slug>.miduo.org"| api
-  fwd -->|"<slug>-llmgw.miduo.org（命名子域，根路径直达）"| serve
+  fwd -->|"<slug>-llmgw-web.<root>"| console
 
   mongo[("共享 MongoDB / Redis")]
   api --- mongo
@@ -469,7 +474,7 @@ api:
 ### 5.2 CDS compose（预览）
 
 - `cds-compose.yml` 新增 `llmgw` 为应用 service。
-- **命名子域已落地**：serving 通过 BuildProfile 的 `subdomain` 拿到 `<previewSlug>-llmgw.<root>` 命名子域，forwarder 把该 host 根路径直达 serving 容器（**已实现**，见 `cds/src/services/forwarder-route-publisher.ts` 的命名子域路由分支 `<previewSlug>-<sub>.<root>`）。这让"可被别人调用"的网关有区别于主应用域名的入口，而不是埋在主应用 `/gw/v1` 路径下。
+- **只公开控制台**：`llmgw-web` 通过 `<previewSlug>-llmgw-web.<root>` 对外；`llmgw` 和 `llmgw-serve` 只保留容器内部端口与 readiness，不发布命名子域或 path route。外部系统接入 GW 使用正式受控入口，不把 CDS 分支后端当公共 API。
 - **DNS 串台是准入阻塞（§3.5），非 debt**：预览环境在"分支前缀别名"治理落地前，`LlmGateway__Mode=inproc` 强制兜底；治理落地后才允许 http。这条同时防 userId 串户与 `GW_AUTH_TOKEN` 被同 commit 邻分支照单全收。
 - 资源开销：每分支多约 +150MB 内存（http 模式时；inproc 兜底则无额外容器）。
 

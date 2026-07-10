@@ -60,6 +60,9 @@ import type {
   BulkClaimConfigAuthorityResult,
   BindActiveAppCallerPoolsResult,
   RuntimeGatesData,
+  ServiceKeyItem,
+  CreateServiceKeyRequest,
+  CreatedServiceKey,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -289,6 +292,15 @@ export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRe
 }
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
+}
+export function getServiceKeys(): Promise<ApiResponse<ServiceKeyItem[]>> {
+  return apiRequest<ServiceKeyItem[]>('/service-keys');
+}
+export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiResponse<CreatedServiceKey>> {
+  return apiRequest<CreatedServiceKey>('/service-keys', { method: 'POST', body: req });
+}
+export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
+  return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 export function getOperationAudits(params?: {
   page?: number;

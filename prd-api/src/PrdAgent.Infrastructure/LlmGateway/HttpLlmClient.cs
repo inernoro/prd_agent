@@ -89,7 +89,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         var current = _ctxAccessor?.Current;
         var context = new GatewayRequestContext
         {
-            RequestId = current?.RequestId,
+            RequestId = current?.RequestId ?? Guid.NewGuid().ToString("N"),
             GroupId = current?.GroupId,
             RunId = current?.RunId,
             SessionId = current?.SessionId,
@@ -98,6 +98,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             DocumentChars = current?.DocumentChars,
             DocumentHash = current?.DocumentHash,
             GatewayTransport = PrdAgent.Core.Models.GatewayTransports.Http,
+            SourceSystem = "map",
+            IngressProtocol = "gw-native",
             IsHealthProbe = current?.IsHealthProbe,
         };
 
@@ -130,6 +132,9 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                 Content = new StringContent(JsonSerializer.Serialize(payload, _jsonOpts), Encoding.UTF8, "application/json"),
             };
             reqMsg.Headers.Add("X-Gateway-Key", _gatewayKey);
+            reqMsg.Headers.Add("X-Gateway-App-Caller", _appCallerCode);
+            reqMsg.Headers.Add("X-Gateway-Source", "map");
+            reqMsg.Headers.Add("X-Request-Id", context.RequestId);
 
             resp = await http.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!resp.IsSuccessStatusCode)

@@ -88,7 +88,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GatewayTransport = GatewayTransports.Http", servingEndpoints);
         Assert.Contains("AppCallerTitle = profileTitle", servingEndpoints);
         Assert.Contains("PinnedModelId = profileRequest.Model", servingEndpoints);
-        Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, CancellationToken.None)", servingEndpoints);
+        Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, cancellation?.Token ?? CancellationToken.None)", servingEndpoints);
         Assert.Contains("public GatewayRequestContext? Context { get; init; }", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
         Assert.Contains("SourceSystem = sourceContext?.SourceSystem", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
         Assert.Contains("IngressProtocol = sourceContext?.IngressProtocol", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
@@ -1425,9 +1425,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("[ \"$health\" != \"healthy\" ]", deploy);
         Assert.Contains("llmgw-serve-b:", compose);
         Assert.Contains("condition: service_healthy", compose);
-        Assert.Contains("/gw/v1/readyz", compose);
+        Assert.Contains("/gw/v1/healthz", compose);
         Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
@@ -2014,6 +2014,57 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
         Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
         Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
+    }
+
+    [Fact]
+    public void GatewayProductionHardening_HasExecutableLifecycleBudgetKeyCancelAndIdempotencyGuards()
+    {
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var runtime = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayRuntimeGovernance.cs");
+        var concurrency = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayProviderConcurrencyCoordinator.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var httpClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
+        var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+
+        Assert.Contains("idx_llmgw_logs_time_caller_type_transport", initializer);
+        Assert.Contains("ttl_llmgw_logs_started", initializer);
+        Assert.Contains("uniq_llmgw_budget_month", initializer);
+        Assert.Contains("uniq_llmgw_execution_request", initializer);
+        Assert.Contains("uniq_llmgw_service_key_hash", initializer);
+        Assert.Contains("uniq_llmgw_multipart_ref", initializer);
+        Assert.Contains("uniq_llmgw_provider_concurrency_slot", initializer);
+        Assert.Contains("ttl_llmgw_provider_concurrency_slot", initializer);
+        Assert.Contains("LlmGateway:Retention:EnableTtlIndexes", initializer);
+
+        Assert.Contains("class GatewayBudgetCoordinator", runtime);
+        Assert.Contains("FindOneAndUpdateAsync", runtime);
+        Assert.Contains("class GatewayRequestExecutionStore", runtime);
+        Assert.Contains("GatewayExecutionBeginState.Unknown", runtime);
+        Assert.Contains("class GatewayScopedKeyAuthorizer", runtime);
+        Assert.Contains("GATEWAY_KEY_SCOPE_DENIED", runtime);
+        Assert.Contains("class GatewayCancellationRegistry", runtime);
+        Assert.Contains("class GatewayDataLifecycleWorker", runtime);
+
+        Assert.Contains("class GatewayProviderConcurrencyCoordinator", concurrency);
+        Assert.Contains("PROVIDER_CONCURRENCY_EXHAUSTED", concurrency);
+        Assert.Contains("FindOneAndUpdateAsync", concurrency);
+        Assert.Contains("MongoCommandException ex) when (ex.Code is 11000 or 11001)", concurrency);
+        Assert.Contains("AcquireProviderConcurrencyAsync", gateway);
+        Assert.Contains("GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null", gateway);
+
+        Assert.Contains("/gw/v1/requests/{requestId}/cancel", endpoints);
+        Assert.Contains("RunWithRequestCancellationAsync", endpoints);
+        Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
+        Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        Assert.Contains("CleanupMultipartRefsAsync", endpoints);
+        Assert.Contains("protectedGatewayPath", endpoints);
+        Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
+        Assert.Contains("llmgw_multipart_objects", httpClient);
+        Assert.Contains("X-Gateway-App-Caller", httpClient);
+
+        Assert.Contains("ensure_serving_probe_evidence", stage);
+        Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);
     }
 
     private static string ReadRepoFile(string relativePath)

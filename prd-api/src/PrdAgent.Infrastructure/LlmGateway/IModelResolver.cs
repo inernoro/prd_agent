@@ -145,6 +145,12 @@ public class ModelResolutionResult
     /// </summary>
     public int? MaxTokens { get; init; }
 
+    /// <summary>平台级跨实例最大并发；null/0 表示不启用平台并发门。</summary>
+    public int? PlatformMaxConcurrency { get; init; }
+
+    /// <summary>模型级跨实例最大并发；null/0 表示不启用模型并发门。</summary>
+    public int? ModelMaxConcurrency { get; init; }
+
     /// <summary>
     /// 是否支持函数调用（function_calling 能力）。
     /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
@@ -271,6 +277,8 @@ public class ModelResolutionResult
             ModelPriority = ModelPriority,
             HealthStatus = HealthStatus,
             MaxTokens = MaxTokens,
+            PlatformMaxConcurrency = PlatformMaxConcurrency,
+            ModelMaxConcurrency = ModelMaxConcurrency,
             SupportsFunctionCalling = SupportsFunctionCalling,
             SupportsVision = SupportsVision,
             SupportsImageGeneration = SupportsImageGeneration,
@@ -370,6 +378,8 @@ public class ModelResolutionResult
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
             MaxTokens = model.MaxTokens,
+            PlatformMaxConcurrency = platform.MaxConcurrency,
+            ModelMaxConcurrency = modelConfig?.MaxConcurrency,
             SupportsFunctionCalling = FunctionCallingCapability(model, modelConfig),
             SupportsVision = VisionCapability(model, modelConfig),
             SupportsImageGeneration = ImageGenerationCapability(model, modelConfig),
@@ -462,6 +472,8 @@ public class ModelResolutionResult
             ApiKey = apiKey,
             HealthStatus = "Healthy",
             MaxTokens = model.MaxTokens,
+            PlatformMaxConcurrency = platform.MaxConcurrency,
+            ModelMaxConcurrency = model.MaxConcurrency,
             // 直连/Legacy 路径持有真实 LLMModel，可读 function_calling 能力供 G4 软门使用
             SupportsFunctionCalling = FunctionCallingCapability(model),
             SupportsVision = VisionCapability(model),
@@ -496,6 +508,8 @@ public class ModelResolutionResult
             ApiKey = result.ApiKey,
             HealthStatus = result.HealthStatus,
             MaxTokens = result.MaxTokens,
+            PlatformMaxConcurrency = result.PlatformMaxConcurrency,
+            ModelMaxConcurrency = result.ModelMaxConcurrency,
             SupportsFunctionCalling = result.SupportsFunctionCalling,
             SupportsVision = result.SupportsVision,
             SupportsImageGeneration = result.SupportsImageGeneration,

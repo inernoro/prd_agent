@@ -193,14 +193,12 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 已知边界 / 后续（波3，未做）
 
-- **CDS 预览：网关 console + serving 仅内网、不公开 path-route**（Codex P1 ×2，PR #965 已修）：
+- **CDS 预览：后端仅内网、只公开 llmgw-web 控制台**（2026-07-10 已结清）：
   `cds-compose.yml` 原把 console（`/gw/`，固定 admin 密码 `llmgw-admin-2026` + 固定 JWT 密钥）与 serving
   （`/gw/v1/`，固定 key `dev-llmgw-serve-key`）公开 path-route 到每个 `*.miduo.org` 预览 → 任何人可用已知密码登录
-  读 LLM 日志、用已知 key 调 `/gw/v1/send` 烧 provider 额度。**已改**：两服务删 `cds.path-prefix`，加
-  `cds.no-http-readiness: "true"`，仅在项目内网起容器（api 经 docker 名 `http://llmgw[-serve]:809x` 内部可达；
-  预览默认 `Mode=inproc` 本就不调 serving）。**后续（波3 专项）**：公开网关命名 URL（含命名子域 `<slug>-llmgw`）
-  需配 **per-deploy 生成密钥 + 访问控制**再开放，不能用仓库已知占位值。本决策同时 moot 了命名子域 master 路由
-  两处局限（无公开路由即不触发）与 extra-services subdomain 撞名（无公开 subdomain 路由即 inert）。
+  读 LLM 日志、用已知 key 调 `/gw/v1/send` 烧 provider 额度。**最终状态**：`llmgw` 与 `llmgw-serve`
+  均不声明 `cds.subdomain`/`cds.path-prefix`，只通过容器网络被 `llmgw-web` 和 API 调用；CDS 只保留
+  `<previewSlug>-llmgw-web.<root>` 控制台入口。配置已通过 import `0564789a707b` 应用，两个旧健康域名返回 404。
 - **Claude OpenAI 兼容工具链（非流式已做透，流式聚合待补）**（Codex P2 ×3，PR #965）：
   - **已修（2/3，本轮）**：① `tool_choice:"none"` → 整段不附 `tools`（Claude 不可能 emit tool_use，兑现禁用意图）；
     ② `assistant.tool_calls` / `role:"tool"` 多轮消息 → 翻译成 Claude `tool_use` / `tool_result` content block，
@@ -274,7 +272,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
   ③ 前端标签「未发出」→「记录降级」（prd-admin + prd-llmgw-web），如实反映「请求可能已成功，只是这条日志没落库」。
 - **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
   影子比对通过才翻）。影子双发比对工具未做（计划：同请求 inproc+http 双发，diff 关键字段）。
-- **prd-llmgw-web 未上 CDS 预览**：观测前端独立站走 exec_dep / 后续 CDS 集成（需处理 SPA base-path 路由）。
+- **prd-llmgw-web CDS 预览已落地**：预构建 nginx 镜像使用独立 `llmgw-web` 命名子域，同源反代 `/gw/*` 到内网 `llmgw:8090`；两个后端不再单独展示为 Web。
 - **两个 LlmGateway 进程职责**：`prd-llmgw`（顶层，自包含观测控制台 + 登录，不引用 Infra）与
   `prd-api/src/PrdAgent.LlmGateway`（serving 引擎，引用 Infra 持有实现）。职责不同、刻意分离，不归并。
 - 计费、数据库分离、调度算法重写：本轮明确不做（用户「计费暂缓」「数据库暂不分离避免表撕裂」）。

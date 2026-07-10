@@ -14,6 +14,7 @@ import { ModelsPage } from '@/pages/ModelsPage';
 import { ExchangesPage } from '@/pages/ExchangesPage';
 import { AuditsPage } from '@/pages/AuditsPage';
 import { ShadowPage } from '@/pages/ShadowPage';
+import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 
 function getRouterBasename() {
   if (typeof window === 'undefined') return undefined;
@@ -68,6 +69,7 @@ export function App() {
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/exchanges" element={<ExchangesPage />} />
             <Route path="/audits" element={<AuditsPage />} />
+            <Route path="/service-keys" element={<ServiceKeysPage />} />
             <Route path="/shadow" element={<ShadowPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

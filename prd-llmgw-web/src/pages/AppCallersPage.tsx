@@ -22,6 +22,7 @@ type Draft = {
   parameterPolicy: string;
   owner: string;
   monthlyBudgetUsd: string;
+  budgetReservationUsd: string;
   rateLimitPerMinute: string;
 };
 type BulkDraft = {
@@ -30,6 +31,7 @@ type BulkDraft = {
   parameterPolicy: string;
   owner: string;
   monthlyBudgetUsd: string;
+  budgetReservationUsd: string;
   rateLimitPerMinute: string;
 };
 
@@ -70,6 +72,7 @@ export function AppCallersPage() {
     parameterPolicy: '',
     owner: '',
     monthlyBudgetUsd: '',
+    budgetReservationUsd: '',
     rateLimitPerMinute: '',
   });
   const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page') || '1') || 1));
@@ -137,6 +140,7 @@ export function AppCallersPage() {
     bulkDraft.parameterPolicy ||
     bulkDraft.owner.trim() ||
     bulkDraft.monthlyBudgetUsd.trim() ||
+    bulkDraft.budgetReservationUsd.trim() ||
     bulkDraft.rateLimitPerMinute.trim()
   );
   const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
@@ -161,6 +165,7 @@ export function AppCallersPage() {
     parameterPolicy: item.parameterPolicy || 'default-drop',
     owner: item.owner || '',
     monthlyBudgetUsd: item.monthlyBudgetUsd ? String(item.monthlyBudgetUsd) : '',
+    budgetReservationUsd: item.budgetReservationUsd ? String(item.budgetReservationUsd) : '',
     rateLimitPerMinute: item.rateLimitPerMinute ? String(item.rateLimitPerMinute) : '',
   };
   const patchDraft = (item: GatewayAppCaller, patch: Partial<Draft>) => setDrafts((prev) => ({
@@ -179,6 +184,7 @@ export function AppCallersPage() {
       parameterPolicy: draft.parameterPolicy,
       owner: draft.owner,
       monthlyBudgetUsd: parseNonNegativeNumber(draft.monthlyBudgetUsd),
+      budgetReservationUsd: parseNonNegativeNumber(draft.budgetReservationUsd),
       rateLimitPerMinute: parseNonNegativeInteger(draft.rateLimitPerMinute),
     });
     setSavingId(null);
@@ -213,6 +219,7 @@ export function AppCallersPage() {
       parameterPolicy: bulkDraft.parameterPolicy || undefined,
       owner: bulkDraft.owner.trim() || undefined,
       monthlyBudgetUsd: parseOptionalNonNegativeNumber(bulkDraft.monthlyBudgetUsd),
+      budgetReservationUsd: parseOptionalNonNegativeNumber(bulkDraft.budgetReservationUsd),
       rateLimitPerMinute: parseOptionalNonNegativeInteger(bulkDraft.rateLimitPerMinute),
     });
     setBulkSaving(false);
@@ -227,6 +234,7 @@ export function AppCallersPage() {
       parameterPolicy: '',
       owner: '',
       monthlyBudgetUsd: '',
+      budgetReservationUsd: '',
       rateLimitPerMinute: '',
     });
     await loadCurrentPage();
@@ -282,6 +290,14 @@ export function AppCallersPage() {
           inputMode="decimal"
           style={{ ...selectStyle, width: 120 }}
           aria-label="批量月预算 USD"
+        />
+        <input
+          value={bulkDraft.budgetReservationUsd}
+          onChange={(e) => setBulkDraft((prev) => ({ ...prev, budgetReservationUsd: e.target.value }))}
+          placeholder="单次预占 USD"
+          inputMode="decimal"
+          style={{ ...selectStyle, width: 112 }}
+          aria-label="批量单次预算预占 USD"
         />
         <input
           value={bulkDraft.rateLimitPerMinute}
@@ -440,7 +456,7 @@ function AppCallerRow({
         ) : null}
       </td>
       <td style={td}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', minWidth: 300 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', minWidth: 420 }}>
           <input
             value={draft.owner}
             onChange={(e) => onDraft({ owner: e.target.value })}
@@ -455,6 +471,14 @@ function AppCallerRow({
             inputMode="decimal"
             style={{ ...selectStyle, width: 112 }}
             aria-label="月预算 USD"
+          />
+          <input
+            value={draft.budgetReservationUsd}
+            onChange={(e) => onDraft({ budgetReservationUsd: e.target.value })}
+            placeholder="单次预占 USD"
+            inputMode="decimal"
+            style={{ ...selectStyle, width: 112 }}
+            aria-label="单次预算预占 USD"
           />
           <input
             value={draft.rateLimitPerMinute}

@@ -142,9 +142,60 @@ a:focus-visible {
   display: none;
 }
 
+.lg-console-nav > a {
+  flex-shrink: 0;
+}
+
 @media (max-width: 860px) {
   .lg-global-search {
     display: none !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .lg-console-header {
+    height: auto !important;
+    min-height: 54px;
+    flex-wrap: wrap;
+    gap: 6px !important;
+    padding: 8px 12px !important;
+  }
+
+  .lg-console-header-main {
+    display: contents !important;
+  }
+
+  .lg-console-brand {
+    order: 1;
+  }
+
+  .lg-console-session {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .lg-console-nav {
+    order: 3;
+    flex: 0 0 100%;
+    width: 100%;
+  }
+
+  .lg-console-content {
+    padding: 12px !important;
+  }
+
+  .lg-service-key-form {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .lg-service-key-table {
+    min-width: 920px;
+  }
+}
+
+@media (max-width: 480px) {
+  .lg-console-session > span {
+    display: none;
   }
 }
 

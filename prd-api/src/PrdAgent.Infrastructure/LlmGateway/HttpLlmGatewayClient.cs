@@ -5,7 +5,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
@@ -31,6 +33,7 @@ public sealed class HttpLlmGatewayClient
     private readonly ILogger<HttpLlmGatewayClient> _logger;
     private readonly PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? _ctxAccessor;
     private readonly IAssetStorage? _assetStorage;
+    private readonly LlmGatewayDataContext? _gatewayData;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
 
@@ -48,12 +51,14 @@ public sealed class HttpLlmGatewayClient
         IConfiguration config,
         ILogger<HttpLlmGatewayClient> logger,
         PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null,
-        IAssetStorage? assetStorage = null)
+        IAssetStorage? assetStorage = null,
+        LlmGatewayDataContext? gatewayData = null)
     {
         _httpFactory = httpFactory;
         _logger = logger;
         _ctxAccessor = ctxAccessor;
         _assetStorage = assetStorage;
+        _gatewayData = gatewayData;
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
@@ -101,7 +106,9 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/send", JsonBody(request), ct);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/send") { Content = JsonBody(request) };
+            ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
+            using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -136,6 +143,7 @@ public sealed class HttpLlmGatewayClient
             };
             reqMsg.Headers.Remove("X-Gateway-Key");
             reqMsg.Headers.Add("X-Gateway-Key", _gatewayKey);
+            ApplyRoutingHeaders(reqMsg, request.AppCallerCode, request.Context);
 
             resp = await http.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!resp.IsSuccessStatusCode)
@@ -228,7 +236,12 @@ public sealed class HttpLlmGatewayClient
 
             try
             {
-                multipartFileRefs = await UploadMultipartFileRefsAsync(request.MultipartFiles!, _assetStorage, ct);
+                multipartFileRefs = await UploadMultipartFileRefsAsync(
+                    request.MultipartFiles!,
+                    _assetStorage,
+                    _gatewayData,
+                    request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+                    ct);
             }
             catch (Exception ex)
             {
@@ -264,7 +277,9 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/raw", JsonBody(outboundRequest), ct);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(outboundRequest) };
+            ApplyRoutingHeaders(req, outboundRequest.AppCallerCode, outboundRequest.Context);
+            using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -288,7 +303,9 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/profile-test", JsonBody(request), ct);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/profile-test") { Content = JsonBody(request) };
+            ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
+            using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -309,32 +326,80 @@ public sealed class HttpLlmGatewayClient
     private static async Task<Dictionary<string, MultipartFileRef>> UploadMultipartFileRefsAsync(
         Dictionary<string, (string FileName, byte[] Content, string MimeType)> files,
         IAssetStorage storage,
+        LlmGatewayDataContext? gatewayData,
+        string requestId,
         CancellationToken ct)
     {
         var refs = new Dictionary<string, MultipartFileRef>(StringComparer.Ordinal);
         var requestSegment = Guid.NewGuid().ToString("N");
-        foreach (var (fieldName, fileInfo) in files)
+        try
         {
-            var safeField = SafeKeySegment(fieldName, "file");
-            var safeFileName = SafeFileName(fileInfo.FileName, $"{safeField}.bin");
-            var ext = SafeExtension(Path.GetExtension(safeFileName));
-            var sha256 = Sha256Hex(fileInfo.Content);
-            var key = $"llmgw/multipart/{DateTime.UtcNow:yyyyMMdd}/{requestSegment}/{safeField}-{sha256[..16]}{ext}";
-
-            await storage.UploadToKeyAsync(key, fileInfo.Content, fileInfo.MimeType, ct, "private, max-age=3600");
-
-            refs[fieldName] = new MultipartFileRef
+            foreach (var (fieldName, fileInfo) in files)
             {
-                RefKey = key,
-                FileName = safeFileName,
-                MimeType = string.IsNullOrWhiteSpace(fileInfo.MimeType) ? "application/octet-stream" : fileInfo.MimeType,
-                SizeBytes = fileInfo.Content.LongLength,
-                Sha256 = sha256,
-                Url = storage.BuildUrlForKey(key),
-            };
+                var safeField = SafeKeySegment(fieldName, "file");
+                var safeFileName = SafeFileName(fileInfo.FileName, $"{safeField}.bin");
+                var ext = SafeExtension(Path.GetExtension(safeFileName));
+                var sha256 = Sha256Hex(fileInfo.Content);
+                var key = $"llmgw/multipart/{DateTime.UtcNow:yyyyMMdd}/{requestSegment}/{safeField}-{sha256[..16]}{ext}";
+
+                await storage.UploadToKeyAsync(key, fileInfo.Content, fileInfo.MimeType, ct, "private, max-age=3600");
+
+                refs[fieldName] = new MultipartFileRef
+                {
+                    RefKey = key,
+                    FileName = safeFileName,
+                    MimeType = string.IsNullOrWhiteSpace(fileInfo.MimeType) ? "application/octet-stream" : fileInfo.MimeType,
+                    SizeBytes = fileInfo.Content.LongLength,
+                    Sha256 = sha256,
+                    Url = storage.BuildUrlForKey(key),
+                };
+
+                if (gatewayData is not null)
+                {
+                    await gatewayData.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+                        .ReplaceOneAsync(
+                            x => x.RefKey == key,
+                            new GatewayMultipartObjectRecord
+                            {
+                                RequestId = requestId,
+                                RefKey = key,
+                                Sha256 = sha256,
+                                SizeBytes = fileInfo.Content.LongLength,
+                                Status = "uploaded",
+                                ExpiresAt = DateTime.UtcNow.AddHours(24),
+                            },
+                            new ReplaceOptions { IsUpsert = true },
+                            ct);
+                }
+            }
+        }
+        catch
+        {
+            foreach (var fileRef in refs.Values)
+            {
+                try { await storage.DeleteByKeyAsync(fileRef.RefKey, CancellationToken.None); }
+                catch { /* lifecycle manifest retries cleanup if the process survives */ }
+            }
+            throw;
         }
 
         return refs;
+    }
+
+    private static void ApplyRoutingHeaders(
+        HttpRequestMessage message,
+        string appCallerCode,
+        GatewayRequestContext? context)
+    {
+        message.Headers.Remove("X-Gateway-App-Caller");
+        message.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", appCallerCode);
+        message.Headers.Remove("X-Gateway-Source");
+        message.Headers.TryAddWithoutValidation("X-Gateway-Source", context?.SourceSystem ?? "map");
+        if (!string.IsNullOrWhiteSpace(context?.RequestId))
+        {
+            message.Headers.Remove("X-Request-Id");
+            message.Headers.TryAddWithoutValidation("X-Request-Id", context.RequestId);
+        }
     }
 
     private static string Sha256Hex(byte[] bytes)
@@ -396,7 +461,9 @@ public sealed class HttpLlmGatewayClient
                 PinnedPlatformId = pinnedPlatformId,
                 PinnedModelId = pinnedModelId
             };
-            using var resp = await http.PostAsync($"{_baseUrl}/gw/v1/resolve", JsonBody(dto), ct);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
+            ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+            using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -425,7 +492,9 @@ public sealed class HttpLlmGatewayClient
         {
             using var http = CreateHttp(infiniteTimeout: false);
             var url = $"{_baseUrl}/gw/v1/pools?appCallerCode={Uri.EscapeDataString(appCallerCode)}&modelType={Uri.EscapeDataString(modelType)}";
-            using var resp = await http.GetAsync(url, ct);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+            using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
