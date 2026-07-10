@@ -78,6 +78,8 @@
 import type {
   CdsState,
   ContainerLogArchiveEntry,
+  DeploymentRun,
+  DeploymentRunEvent,
   OperationLog,
   OperationLogContainerSnapshot,
   OperationLogEvent,
@@ -126,6 +128,7 @@ type DetachedStateKey =
   | 'containerLogArchives'
   | 'activityLogs'
   | 'serviceDeploymentLogs'
+  | 'deploymentRunEvents'
   | 'selfUpdateHistory'
   | 'dataMigrations'
   | 'githubWebhookDeliveries';
@@ -163,12 +166,14 @@ const MAX_LOGS_PER_BRANCH = 10;
 const MAX_EVENTS_PER_OPERATION_LOG = 10;
 const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 10;
 const MAX_SERVICE_DEPLOYMENT_LOGS = 500;
+const MAX_DEPLOYMENT_RUN_EVENTS = 500;
 const MAX_DATA_MIGRATIONS = 100;
 const MAX_SINGLE_LOG_BYTES = 125 * 1024;
 const MAX_EVENT_TEXT_BYTES = 8 * 1024;
 const MAX_CONTAINER_SNAPSHOT_LOG_BYTES = 32 * 1024;
 const MAX_CONTAINER_ARCHIVE_LOG_BYTES = 120 * 1024;
 const MAX_SERVICE_DEPLOYMENT_LOG_BYTES = 16 * 1024;
+const MAX_DEPLOYMENT_RUN_EVENT_BYTES = 8 * 1024;
 const MAX_SELF_UPDATE_STEP_TEXT_BYTES = 8 * 1024;
 const MAX_DATA_MIGRATION_LOG_BYTES = 120 * 1024;
 
@@ -235,6 +240,30 @@ function sanitizeServiceDeployment(deployment: ServiceDeployment): ServiceDeploy
   };
 }
 
+function sanitizeDeploymentRunEvent(event: DeploymentRunEvent): DeploymentRunEvent {
+  return {
+    ...event,
+    message: truncateTail(event.message, MAX_DEPLOYMENT_RUN_EVENT_BYTES) || '',
+    evidenceRefs: event.evidenceRefs?.slice(0, 20),
+  };
+}
+
+function sanitizeDeploymentRun(run: DeploymentRun): DeploymentRun {
+  const events = (run.events || []).slice(-MAX_DEPLOYMENT_RUN_EVENTS).map(sanitizeDeploymentRunEvent);
+  return {
+    ...run,
+    events,
+    firstEventSeq: events[0]?.seq || run.seq,
+  };
+}
+
+function deploymentRunWithoutEvents(run: DeploymentRun): DeploymentRun {
+  return {
+    ...run,
+    events: [],
+  };
+}
+
 function serviceDeploymentWithoutLogs(deployment: ServiceDeployment): ServiceDeployment {
   return {
     ...deployment,
@@ -292,6 +321,12 @@ function sanitizeStateForPersistence(state: CdsState): CdsState {
       sanitizeServiceDeployment(deployment),
     ]),
   );
+  snapshot.deploymentRuns = Object.fromEntries(
+    Object.entries(state.deploymentRuns || {}).map(([runId, run]) => [
+      runId,
+      sanitizeDeploymentRun(run),
+    ]),
+  );
   snapshot.selfUpdateHistory = (state.selfUpdateHistory || []).map(sanitizeSelfUpdateRecord);
   snapshot.dataMigrations = (state.dataMigrations || []).slice(-MAX_DATA_MIGRATIONS).map(sanitizeDataMigration);
   return snapshot;
@@ -310,6 +345,14 @@ function withoutDetachedState(state: CdsState): Partial<CdsState> {
       Object.entries(mainState.serviceDeployments).map(([deploymentId, deployment]) => [
         deploymentId,
         serviceDeploymentWithoutLogs(deployment),
+      ]),
+    );
+  }
+  if (mainState.deploymentRuns) {
+    mainState.deploymentRuns = Object.fromEntries(
+      Object.entries(mainState.deploymentRuns).map(([runId, run]) => [
+        runId,
+        deploymentRunWithoutEvents(run),
       ]),
     );
   }
@@ -402,6 +445,20 @@ function stateToLogRecords(state: CdsState, updatedAt: string): StateLogRecordDo
       });
     });
   }
+  for (const [runId, run] of Object.entries(state.deploymentRuns || {})) {
+    (run.events || []).forEach((event) => {
+      const orderKey = String(event.seq).padStart(12, '0');
+      docs.push({
+        _id: logRecordId('deploymentRunEvents', runId, orderKey),
+        scope: LOG_RECORD_SCOPE,
+        kind: 'deploymentRunEvents',
+        ownerId: runId,
+        value: event,
+        orderKey,
+        updatedAt,
+      });
+    });
+  }
   (state.selfUpdateHistory || []).forEach((record, index) => {
     const orderKey = record.ts || `${index}`;
     docs.push({
@@ -445,6 +502,7 @@ function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragme
     state.containerLogArchives = state.containerLogArchives || {};
     state.activityLogs = state.activityLogs || {};
     state.serviceDeployments = state.serviceDeployments || {};
+    state.deploymentRuns = state.deploymentRuns || {};
     state.selfUpdateHistory = state.selfUpdateHistory || [];
     state.dataMigrations = state.dataMigrations || [];
     state.githubWebhookDeliveries = state.githubWebhookDeliveries || [];
@@ -455,6 +513,7 @@ function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragme
   state.containerLogArchives = {};
   state.activityLogs = {};
   state.serviceDeployments = state.serviceDeployments || {};
+  state.deploymentRuns = state.deploymentRuns || {};
   state.selfUpdateHistory = [];
   state.dataMigrations = [];
   state.githubWebhookDeliveries = [];
@@ -474,6 +533,12 @@ function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragme
       const deployment = state.serviceDeployments?.[fragment.ownerId];
       if (deployment) {
         deployment.logs = Array.isArray(fragment.value) ? fragment.value as ServiceDeploymentLogEntry[] : [];
+      }
+    } else if (fragment.kind === 'deploymentRunEvents' && fragment.ownerId) {
+      const run = state.deploymentRuns?.[fragment.ownerId];
+      if (run) {
+        run.events = Array.isArray(fragment.value) ? fragment.value as DeploymentRunEvent[] : [];
+        run.firstEventSeq = run.events[0]?.seq || run.seq;
       }
     } else if (fragment.kind === 'selfUpdateHistory') {
       state.selfUpdateHistory = Array.isArray(fragment.value)
@@ -495,10 +560,14 @@ function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragme
 function mergeLogRecordsIntoState(base: CdsState, records: StateLogRecordDoc[]): CdsState {
   if (records.length === 0) return base;
   base.serviceDeployments = base.serviceDeployments || {};
+  base.deploymentRuns = base.deploymentRuns || {};
   const kinds = new Set(records.map(record => record.kind));
   if (kinds.has('logs')) base.logs = {};
   if (kinds.has('containerLogArchives')) base.containerLogArchives = {};
   if (kinds.has('activityLogs')) base.activityLogs = {};
+  if (kinds.has('deploymentRunEvents')) {
+    for (const run of Object.values(base.deploymentRuns)) run.events = [];
+  }
   if (kinds.has('selfUpdateHistory')) base.selfUpdateHistory = [];
   if (kinds.has('dataMigrations')) base.dataMigrations = [];
   if (kinds.has('githubWebhookDeliveries')) base.githubWebhookDeliveries = [];
@@ -521,6 +590,13 @@ function mergeLogRecordsIntoState(base: CdsState, records: StateLogRecordDoc[]):
       if (deployment) {
         deployment.logs = deployment.logs || [];
         deployment.logs.push(record.value as ServiceDeploymentLogEntry);
+      }
+    } else if (record.kind === 'deploymentRunEvents' && record.ownerId) {
+      const run = base.deploymentRuns?.[record.ownerId];
+      if (run) {
+        run.events = run.events || [];
+        run.events.push(record.value as DeploymentRunEvent);
+        run.firstEventSeq = run.events[0]?.seq || run.seq;
       }
     } else if (record.kind === 'selfUpdateHistory') {
       base.selfUpdateHistory!.push(record.value as SelfUpdateRecord);
