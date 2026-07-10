@@ -44,3 +44,4 @@
 | ops | scripts | LLM Gateway 四协议 canary 执行态默认要求绑定 expected commit，避免对未知线上版本生成不可用发布证据 |
 | ops | scripts | 新增 LLM Gateway 正式环境只读 health preflight，发布前可确认线上 commit 与鉴权边界，不触发模型请求 |
 | ops | scripts | LLM Gateway rollout ledger 支持记录并校验正式环境 health preflight JSON，canary/http 阶段可绑定同 commit 线上健康证据 |
+| ops | scripts | LLM Gateway 生产 stage runner 自动生成 health preflight 证据，并在 ledger 中记录同 commit 健康检查结果 |

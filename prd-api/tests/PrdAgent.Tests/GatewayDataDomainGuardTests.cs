@@ -890,6 +890,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run_prod_preflight", readiness);
         Assert.Contains("scripts/llmgw-prod-preflight.py --mode start", readiness);
         Assert.Contains("--prod-preflight-json \\\"$prod_preflight_json\\\"", readiness);
+        Assert.Contains("run_prod_health_preflight", readiness);
+        Assert.Contains("scripts/llmgw-prod-health-preflight.py", readiness);
+        Assert.Contains("prod-health-preflight.json", readiness);
+        Assert.Contains("--prod-health-preflight-json \\\"$prod_health_preflight_json\\\"", readiness);
+        Assert.Contains("--prod-health-preflight-required \\\"$prod_health_preflight_required\\\"", readiness);
+        Assert.Contains("prodHealthPreflightRequired", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("rollout-status.json", readiness);
         Assert.Contains("rolloutStatusRequired", readiness);

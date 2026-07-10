@@ -329,6 +329,8 @@ serving_probe_md="${evidence_prefix}.serving-probe.md"
 smoke_json="${evidence_prefix}.gw-smoke.json"
 smoke_md="${evidence_prefix}.gw-smoke.md"
 prod_preflight_json="${evidence_prefix}.prod-preflight.json"
+prod_health_preflight_json="${evidence_prefix}.prod-health-preflight.json"
+prod_health_preflight_md="${evidence_prefix}.prod-health-preflight.md"
 shadow_seed_json="${evidence_prefix}.map-shadow-seed.json"
 upstream_readiness_json="${evidence_prefix}.upstream-readiness.json"
 upstream_readiness_md="${evidence_prefix}.upstream-readiness.md"
@@ -384,6 +386,15 @@ case "$stage" in
     ;;
 esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
+case "$stage" in
+  rollback-inproc|rollback-rehearsal|config-authority)
+    prod_health_preflight_default=0
+    ;;
+  *)
+    prod_health_preflight_default=1
+    ;;
+esac
+prod_health_preflight_required="${LLMGW_STAGE_RUN_PROD_HEALTH_PREFLIGHT:-$prod_health_preflight_default}"
 case "$stage" in
   http-full)
     disable_map_fallback_default=true
@@ -462,6 +473,8 @@ print_plan() {
     echo "  smokeRoutePinnedPlatformId: ${smoke_route_pinned_platform_id:-none}"
     echo "  smokeRoutePinnedModelId: ${smoke_route_pinned_model_id:-none}"
     echo "  prodPreflightJson: $prod_preflight_json"
+    echo "  prodHealthPreflightJson: $prod_health_preflight_json"
+    echo "  prodHealthPreflightRequired: $prod_health_preflight_required"
     echo "  shadowSeedJson: $shadow_seed_json"
     echo "  upstreamReadinessJson: $upstream_readiness_json"
     echo "  upstreamReadinessEnabled: $run_upstream_readiness"
@@ -548,6 +561,7 @@ scripts/llmgw-prod-stage.sh
 scripts/llmgw-rollout-ledger.py
 scripts/llmgw-rollout-status.py
 scripts/llmgw-prod-preflight.py
+scripts/llmgw-prod-health-preflight.py
 scripts/llmgw-upstream-readiness.py
 scripts/llmgw-prod-provider-config-audit.py
 scripts/llmgw-protocol-router-audit.py
@@ -648,6 +662,8 @@ append_ledger_entry() {
     --release-gate-json "$release_gate_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
+    --prod-health-preflight-json "$prod_health_preflight_json" \
+    --prod-health-preflight-required "$prod_health_preflight_required" \
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
@@ -696,6 +712,9 @@ write_dry_run_stage_report() {
   LLMGW_DRY_RUN_REUSE_STATIC_DIST="${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" \
   LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED="${release_gate_required:-0}" \
   LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON="${prod_preflight_json:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON="${prod_health_preflight_json:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_MD="${prod_health_preflight_md:-}" \
+  LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED="${prod_health_preflight_required:-0}" \
   LLMGW_DRY_RUN_SHADOW_SEED_JSON="${shadow_seed_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON="${upstream_readiness_json:-}" \
   LLMGW_DRY_RUN_UPSTREAM_READINESS_ENABLED="${run_upstream_readiness:-0}" \
@@ -765,6 +784,16 @@ else:
     commands.append(
         preflight
     )
+    if os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED", "0") == "1":
+        commands.append(
+            "python3 scripts/llmgw-prod-health-preflight.py --base ${LLMGW_GATE_BASE} "
+            "--expect-commit "
+            + commit
+            + " --check-auth-boundary --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON", "")
+            + " --report-md "
+            + os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_MD", "")
+        )
     if os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1":
         commands.append(
             "GW_KEY=${LLMGW_GATE_KEY} "
@@ -834,6 +863,8 @@ report = {
     "reuseExistingStaticDist": os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"),
     "releaseGateRequired": os.environ.get("LLMGW_DRY_RUN_RELEASE_GATE_REQUIRED", "0") == "1",
     "prodPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_PREFLIGHT_JSON", ""),
+    "prodHealthPreflightJson": os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_JSON", ""),
+    "prodHealthPreflightRequired": os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_REQUIRED", "0") == "1",
     "shadowSeedJson": os.environ.get("LLMGW_DRY_RUN_SHADOW_SEED_JSON", ""),
     "shadowSeedEnabled": os.environ.get("LLMGW_STAGE_RUN_SHADOW_SEED", "0") == "1",
     "upstreamReadinessJson": os.environ.get("LLMGW_DRY_RUN_UPSTREAM_READINESS_JSON", ""),
@@ -942,6 +973,32 @@ run_prod_preflight() {
       suffix="$suffix --allow-missing-map-logs"
     fi
     echo "+ python3 scripts/llmgw-prod-preflight.py --mode start --expect-commit \"$commit\" --json-out \"$prod_preflight_json\"$suffix"
+  fi
+}
+
+run_prod_health_preflight() {
+  if [ "$prod_health_preflight_required" != "1" ]; then
+    if [ "$execute" = "1" ]; then
+      echo "LLM Gateway production health preflight skipped: LLMGW_STAGE_RUN_PROD_HEALTH_PREFLIGHT is not 1"
+    else
+      echo "LLM Gateway production health preflight dry-run skipped for this stage"
+    fi
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-prod-health-preflight.py" ]; then
+    echo "ERROR: missing scripts/llmgw-prod-health-preflight.py; refusing staged rollout without deployed commit preflight." >&2
+    exit 1
+  fi
+  if [ "$execute" = "1" ]; then
+    mkdir -p "$evidence_dir"
+    python3 scripts/llmgw-prod-health-preflight.py \
+      --base "$gate_base" \
+      --expect-commit "$commit" \
+      --check-auth-boundary \
+      --json-out "$prod_health_preflight_json" \
+      --report-md "$prod_health_preflight_md"
+  else
+    echo "+ python3 scripts/llmgw-prod-health-preflight.py --base \"$gate_base\" --expect-commit \"$commit\" --check-auth-boundary --json-out \"$prod_health_preflight_json\" --report-md \"$prod_health_preflight_md\""
   fi
 }
 
@@ -1396,6 +1453,8 @@ else
   run_or_print ./exec_dep.sh --commit "$commit"
 fi
 
+run_prod_health_preflight
+
 run_video_canary_evidence
 
 run_asr_http_canary_evidence
@@ -1418,6 +1477,8 @@ if [ "$execute" = "1" ]; then
     --release-gate-json "$release_gate_json" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
+    --prod-health-preflight-json "$prod_health_preflight_json" \
+    --prod-health-preflight-required "$prod_health_preflight_required" \
     --shadow-seed-json "$shadow_seed_json" \
     --upstream-readiness-json "$upstream_readiness_json" \
     --upstream-readiness-required "$run_upstream_readiness" \
