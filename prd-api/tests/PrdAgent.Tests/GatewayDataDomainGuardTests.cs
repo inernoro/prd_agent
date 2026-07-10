@@ -1439,6 +1439,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("routableCallers", readiness);
         Assert.Contains("IsPoolRoutableForRequestType", readiness);
         Assert.Contains("pool.IsDefaultForType", readiness);
+        Assert.Contains("HasEnabledBackend", readiness);
         Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
         Assert.Contains("exceptionType={ExceptionType}", readiness);
         Assert.DoesNotContain("ex.Message", readiness);
@@ -1451,6 +1452,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("gatewayDb.llmgw_model_pools", providerAudit);
         Assert.Contains("deferredUnboundGroups", providerAudit);
         Assert.Contains("unbound-to-production-appCaller", providerAudit);
+        Assert.Contains("ASR appCaller RequestType mismatch", providerAudit);
+        Assert.Contains("video appCaller RequestType mismatch", providerAudit);
     }
 
     [Fact]

@@ -178,6 +178,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         {
             var callers = _gatewayDb.Database.GetCollection<GatewayAppCallerRecord>(AppCallerCollection);
             var pools = _gatewayDb.Database.GetCollection<ModelGroup>(PoolCollection);
+            var platforms = _gatewayDb.Database.GetCollection<LLMPlatform>(PlatformCollection);
+            var exchanges = _gatewayDb.Database.GetCollection<ModelExchange>(ExchangeCollection);
             var governed = await callers.Find(x => x.Status == "configured" || x.Status == "active")
                 .ToListAsync(cancellationToken);
             var poolIds = governed
@@ -202,8 +204,18 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                             Builders<ModelGroup>.Filter.Eq(x => x.IsDefaultForType, true),
                             Builders<ModelGroup>.Filter.In(x => x.ModelType, requestTypes)))
                     .ToListAsync(cancellationToken);
+            var enabledPlatformIds = (await platforms.Find(x => x.Enabled)
+                    .Project(x => x.Id)
+                    .ToListAsync(cancellationToken))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var enabledExchanges = await exchanges.Find(x => x.Enabled).ToListAsync(cancellationToken);
             var poolById = boundPools.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
-            var routableCallers = governed.Count(x => IsCallerRoutable(x, poolById, defaultPools));
+            var routableCallers = governed.Count(x => IsCallerRoutable(
+                x,
+                poolById,
+                defaultPools,
+                enabledPlatformIds,
+                enabledExchanges));
             var invalidCallers = governed.Count - routableCallers;
             // Readiness is instance-scoped. A single invalid caller is configuration degradation,
             // which the config-authority release gate blocks; taking every serving instance out
@@ -221,23 +233,59 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     public static bool IsCallerRoutable(
         GatewayAppCallerRecord caller,
         IReadOnlyDictionary<string, ModelGroup> poolById,
-        IReadOnlyCollection<ModelGroup> defaultPools)
+        IReadOnlyCollection<ModelGroup> defaultPools,
+        IReadOnlySet<string> enabledPlatformIds,
+        IReadOnlyCollection<ModelExchange> enabledExchanges)
     {
         if (!string.IsNullOrWhiteSpace(caller.ModelPoolId))
         {
             return poolById.TryGetValue(caller.ModelPoolId, out var boundPool) &&
-                   IsPoolRoutableForRequestType(boundPool, caller.RequestType);
+                   IsPoolRoutableForRequestType(
+                       boundPool,
+                       caller.RequestType,
+                       enabledPlatformIds,
+                       enabledExchanges);
         }
 
         return defaultPools.Any(pool =>
             pool.IsDefaultForType &&
-            IsPoolRoutableForRequestType(pool, caller.RequestType));
+            IsPoolRoutableForRequestType(
+                pool,
+                caller.RequestType,
+                enabledPlatformIds,
+                enabledExchanges));
     }
 
-    private static bool IsPoolRoutableForRequestType(ModelGroup pool, string requestType)
+    private static bool IsPoolRoutableForRequestType(
+        ModelGroup pool,
+        string requestType,
+        IReadOnlySet<string> enabledPlatformIds,
+        IReadOnlyCollection<ModelExchange> enabledExchanges)
         => pool.ModelType == requestType &&
            pool.Models.Count > 0 &&
-           pool.Models.Any(m => m.HealthStatus != ModelHealthStatus.Unavailable);
+           pool.Models.Any(model =>
+               model.HealthStatus != ModelHealthStatus.Unavailable &&
+               HasEnabledBackend(model, enabledPlatformIds, enabledExchanges));
+
+    private static bool HasEnabledBackend(
+        ModelGroupItem model,
+        IReadOnlySet<string> enabledPlatformIds,
+        IReadOnlyCollection<ModelExchange> enabledExchanges)
+    {
+        if (enabledPlatformIds.Contains(model.PlatformId))
+            return true;
+
+        if (model.PlatformId == ModelResolverConstants.ExchangePlatformId)
+        {
+            return enabledExchanges.Any(exchange => exchange.GetEffectiveModels().Any(candidate =>
+                candidate.Enabled && candidate.ModelId == model.ModelId));
+        }
+
+        return enabledExchanges.Any(exchange =>
+            exchange.Id == model.PlatformId &&
+            exchange.GetEffectiveModels().Any(candidate =>
+                candidate.Enabled && candidate.ModelId == model.ModelId));
+    }
 
     private async Task<GatewayServingReadinessComponent> MeasureAsync(
         string name,

@@ -648,6 +648,11 @@ def _audit(
             continue
         if str(caller.get("Status") or "").lower() not in {"configured", "active"}:
             failures.append(f"ASR appCaller is not governed: {code} status={caller.get('Status')}")
+        if str(caller.get("RequestType") or "").lower() != "asr":
+            failures.append(
+                f"ASR appCaller RequestType mismatch: {code} "
+                f"expected=asr actual={caller.get('RequestType')}"
+            )
         if str(caller.get("ModelPoolId") or "") != asr_pool_id:
             failures.append(f"ASR appCaller is not bound to {asr_pool_id}: {code}")
 
@@ -659,6 +664,11 @@ def _audit(
             continue
         if str(video_caller.get("Status") or "").lower() not in {"configured", "active"}:
             failures.append(f"video appCaller is not governed: {code} status={video_caller.get('Status')}")
+        if str(video_caller.get("RequestType") or "").lower() != "video-gen":
+            failures.append(
+                f"video appCaller RequestType mismatch: {code} "
+                f"expected=video-gen actual={video_caller.get('RequestType')}"
+            )
         pool_id = str(video_caller.get("ModelPoolId") or "").strip()
         if not pool_id:
             failures.append(f"video appCaller has no GW ModelPoolId: {code}")
@@ -1128,6 +1138,22 @@ def _self_test_report() -> dict[str, Any]:
         DEFAULT_ASR_MODEL_ID,
         DEFAULT_ASR_TRANSFORMER,
     )
+    wrong_type_data = json.loads(json.dumps(data))
+    wrong_type_data["appCallers"][0]["RequestType"] = "chat"
+    wrong_type_data["appCallers"][len(ASR_APP_CALLERS)]["RequestType"] = "asr"
+    wrong_type_audit = _audit(
+        wrong_type_data,
+        None,
+        seed_evidence,
+        DEFAULT_ASR_POOL_ID,
+        DEFAULT_ASR_MODEL_ID,
+        DEFAULT_ASR_TRANSFORMER,
+    )
+    wrong_type_failures = wrong_type_audit.get("failures") or []
+    request_type_validation_pass = (
+        any("ASR appCaller RequestType mismatch" in item for item in wrong_type_failures)
+        and any("video appCaller RequestType mismatch" in item for item in wrong_type_failures)
+    )
     blockers = audit.get("externalBlockers") or []
     actual_codes = sorted({str(item.get("code") or "") for item in blockers})
     actual_pairs = sorted({
@@ -1158,6 +1184,7 @@ def _self_test_report() -> dict[str, Any]:
         and not missing_pairs
         and deferred_ids == ["fixture-unbound-video-pool"]
         and not unbound_leaked_as_blocker
+        and request_type_validation_pass
     )
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1170,6 +1197,7 @@ def _self_test_report() -> dict[str, Any]:
         "missingPairs": missing_pairs,
         "deferredUnboundPoolIds": deferred_ids,
         "unboundPoolLeakedAsBlocker": unbound_leaked_as_blocker,
+        "requestTypeValidationPass": request_type_validation_pass,
         "sampleAuditVerdict": audit.get("verdict"),
         "sampleAuditExternalBlockers": blockers,
     }
