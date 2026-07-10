@@ -165,6 +165,41 @@ public sealed class GatewayRuntimeGovernanceTests
         auditCount.ShouldBe(1);
     }
 
+    [Fact]
+    public async Task ScopedKey_EmptyBindingsFailClosed()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_empty_binding_key";
+        var keyRecord = new GatewayServiceKeyRecord
+        {
+            Name = "empty-binding-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "*",
+            AppCallerCodes = [],
+            IngressProtocols = [],
+            Scopes = [],
+        };
+        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
+            .InsertOneAsync(keyRecord);
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var denied = await authorizer.AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external-system",
+            "requested-caller",
+            "openai-compatible",
+            "invoke",
+            CancellationToken.None);
+
+        denied.Allowed.ShouldBeFalse();
+        denied.Authenticated.ShouldBeTrue();
+        denied.StatusCode.ShouldBe(403);
+    }
+
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")

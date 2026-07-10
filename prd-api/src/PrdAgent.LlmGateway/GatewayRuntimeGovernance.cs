@@ -94,14 +94,14 @@ public sealed class GatewayScopedKeyAuthorizer
     }
 
     private static bool Matches(string configured, string actual)
-        => string.IsNullOrWhiteSpace(configured)
-           || configured == "*"
-           || string.Equals(configured.Trim(), actual.Trim(), StringComparison.OrdinalIgnoreCase);
+        => !string.IsNullOrWhiteSpace(configured)
+           && (configured.Trim() == "*"
+               || string.Equals(configured.Trim(), actual.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static bool MatchesAny(IEnumerable<string>? configured, string actual)
     {
         var values = configured?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? [];
-        return values.Count == 0 || values.Any(x => Matches(x, actual));
+        return values.Count > 0 && values.Any(x => Matches(x, actual));
     }
 }
 
