@@ -51,6 +51,18 @@ export interface BuildProfile {
    * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
    */
   command?: string;
+  /**
+   * CDS managed 车道的 build/start 分离契约。compose 车道不写此字段，继续使用
+   * command 的兼容语义。managed 构建先把源码复制进临时容器，执行 install/build，
+   * 再提交为本地不可变镜像；运行阶段只执行 startCommand。
+   */
+  managedBuild?: {
+    stack: string;
+    installCommand?: string;
+    buildCommand?: string;
+    startCommand: string;
+    artifactImage: string;
+  };
   /** Port the service listens on inside the container */
   containerPort: number;
   /** Extra environment variables for this profile (may contain ${CDS_*} template references) */
@@ -172,6 +184,8 @@ export interface BuildProfile {
    *   - 应用所有文件来自 image,workDir/cds-marker 仅给 CDS app 识别用,不影响运行
    */
   prebuiltImage?: boolean;
+  /** 运行期提示：镜像由当前 CDS 节点的 managed builder 生成，不尝试 registry pull。 */
+  localArtifact?: boolean;
   /**
    * 2026-06-23 极速版「逐组件回退」新增 —— 预构建镜像缺失时的**有序回退链**（解析后）。
    * 由 DeployModeOverride.fallbackImage 经 resolveEffectiveProfile 解析模板得到。
@@ -563,6 +577,10 @@ export interface BranchEntry {
    */
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   errorMessage?: string;
+  /** 最近一次分支部署事实记录。旧分支无该字段时按现有状态降级。 */
+  lastDeploymentRunId?: string;
+  /** 当前运行态对应的不可变部署版本。DeploymentVersion 落地前保持为空。 */
+  currentVersionId?: string;
   createdAt: string;
   lastAccessedAt?: string;
   /** User favorite flag — favorites are sorted to the top */
@@ -886,6 +904,107 @@ export interface ServiceState {
    * undefined = 该容器在本字段引入前启动（旧数据），徽章回退到配置语义。
    */
   deployedMode?: string;
+  /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
+  deployedImage?: string;
+}
+
+/** 分支部署的触发来源。 */
+export type DeploymentRunTrigger = 'webhook' | 'manual' | 'retry' | 'scheduler' | 'system';
+
+/** DeploymentRun 的持久化状态机。running / failed / cancelled 为终态。 */
+export type DeploymentRunStatus =
+  | 'pending'
+  | 'queued'
+  | 'preparing'
+  | 'building'
+  | 'starting'
+  | 'verifying'
+  | 'running'
+  | 'failed'
+  | 'cancelled';
+
+/** 结构化失败事实。AI 解释层只能消费此结构和 evidenceRefs，不得反向改写。 */
+export interface DeploymentFailure {
+  code: string;
+  owner: 'code' | 'config' | 'cds' | 'external' | 'unknown';
+  retryable: boolean;
+  summary: string;
+  serviceId?: string;
+  phase?: string;
+  evidenceRefs: string[];
+  suggestedAction?: string;
+}
+
+/** DeploymentRun 内严格递增、可断线续传的事件。 */
+export interface DeploymentRunEvent {
+  seq: number;
+  at: string;
+  phase: string;
+  level: 'info' | 'warn' | 'error';
+  status: string;
+  message: string;
+  detail?: Record<string, unknown>;
+  evidenceRefs?: string[];
+}
+
+/**
+ * 一次分支部署的唯一事实记录。
+ *
+ * 记录必须在 pull / build / docker 等副作用之前创建。events 是有界窗口，
+ * seq 终身递增；firstEventSeq 告诉续传客户端窗口是否已经截断。
+ */
+export interface DeploymentRun {
+  id: string;
+  projectId: string;
+  branchId: string;
+  trigger: DeploymentRunTrigger;
+  status: DeploymentRunStatus;
+  phase: string;
+  seq: number;
+  firstEventSeq: number;
+  commitSha?: string;
+  versionId?: string;
+  operationId?: string;
+  executorId?: string;
+  configHash?: string;
+  startedAt: string;
+  updatedAt: string;
+  heartbeatAt?: string;
+  finishedAt?: string;
+  failure?: DeploymentFailure;
+  events: DeploymentRunEvent[];
+}
+
+export interface DeploymentVersionProfile {
+  profileId: string;
+  name: string;
+  artifactImage: string;
+  artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
+  reusable: boolean;
+  reuseBlockedReason?: string;
+  runtimeCommand?: string;
+  containerPort: number;
+  containerWorkDir?: string;
+  pathPrefixes?: string[];
+  subdomain?: string;
+  dependsOn?: string[];
+  readinessProbe?: ReadinessProbe;
+  startupSignal?: string;
+  deployedMode?: string;
+}
+
+/** 构建成功后生成的不可变部署版本；不保存环境变量明文或密钥。 */
+export interface DeploymentVersion {
+  id: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  configHash: string;
+  profiles: DeploymentVersionProfile[];
+  migrations: Array<{ id: string; checksum?: string; status?: string }>;
+  capabilities: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
+  createdByRunId: string;
+  createdAt: string;
 }
 
 /** A build/operation log event */
@@ -1156,6 +1275,10 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
+  deploymentRuns?: Record<string, DeploymentRun>;
+  /** 不可变部署版本，key 为 DeploymentVersion.id。旧状态可缺省。 */
+  deploymentVersions?: Record<string, DeploymentVersion>;
   /** Release targets keyed by id. */
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
@@ -2270,6 +2393,37 @@ export interface GitHubDeviceAuth {
  * actually use them. Adding them prematurely would create dead fields
  * in state.json that mislead future readers.
  */
+export type ProjectDeliveryMode = 'managed' | 'compose';
+
+export interface ManagedCapabilityBinding {
+  id: string;
+  kind: 'database' | 'cache' | 'assets' | 'identity' | 'secrets';
+  /** InfraService.id，或 assets/identity 的逻辑资源 id。 */
+  bindingId: string;
+  /** secrets 能力声明需要注入的项目环境变量 key，不存值。 */
+  envKeys?: string[];
+}
+
+export interface ManagedAppSpec {
+  id: string;
+  name?: string;
+  appPath: string;
+  workload: 'web' | 'api' | 'worker';
+  /** 未填写时由 StackDetector 生成。 */
+  dockerImage?: string;
+  installCommand?: string;
+  buildCommand?: string;
+  startCommand?: string;
+  containerPort?: number;
+  health?: { type: 'http'; path: string } | { type: 'tcp' };
+  capabilityIds?: string[];
+}
+
+export interface ManagedProjectSpec {
+  apps: ManagedAppSpec[];
+  capabilities?: ManagedCapabilityBinding[];
+}
+
 export interface Project {
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
@@ -2303,6 +2457,13 @@ export interface Project {
   aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
+  /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */
+  deliveryMode?: ProjectDeliveryMode;
+  /** managed 车道的最小声明；不保存资源密钥。 */
+  managedSpec?: ManagedProjectSpec;
+  /** StackDetector 生成的只读生效配置，供部署和 Dashboard 查看。 */
+  managedProfiles?: BuildProfile[];
+  managedPlanUpdatedAt?: string;
   /**
    * Infrastructure 隔离模式（mongo / redis 等基础设施容器与分支的关系）。
    *

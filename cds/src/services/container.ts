@@ -685,6 +685,80 @@ export class ContainerService {
     recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
+  private async buildManagedArtifact(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    service: ServiceState,
+    network: string,
+    customEnv?: Record<string, string>,
+    onOutput?: (chunk: string) => void,
+    assertCurrent?: (step: string) => void,
+  ): Promise<BuildProfile> {
+    const contract = profile.managedBuild;
+    if (!contract) return profile;
+    const artifactImage = contract.artifactImage.trim();
+    const inspect = await this.shell.exec(`docker image inspect ${this.shellQuote(artifactImage)}`);
+    if (inspect.exitCode === 0) {
+      onOutput?.(`── managed 产物已存在，跳过构建: ${artifactImage} ──\n`);
+      return {
+        ...profile,
+        dockerImage: artifactImage,
+        command: contract.startCommand,
+        prebuiltImage: true,
+        localArtifact: true,
+        managedBuild: undefined,
+        sourceFallbackProfile: undefined,
+      };
+    }
+
+    const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
+    if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
+    const builderName = `${service.containerName}-managed-build`;
+    const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
+    const envFilePath = this.writeEnvFile(resolvedEnv);
+    const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
+    onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
+    await this.shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
+    try {
+      assertCurrent?.(`managed build before create ${profile.id}`);
+      const create = await this.shell.exec([
+        'docker create',
+        `--name ${this.shellQuote(builderName)}`,
+        `--network ${this.shellQuote(network)}`,
+        '--entrypoint=""',
+        '-w /app',
+        `--env-file ${this.shellQuote(envFilePath)}`,
+        this.shellQuote(profile.dockerImage),
+        `sh -c ${this.shellQuote('tail -f /dev/null')}`,
+      ].join(' '));
+      if (create.exitCode !== 0) throw new Error(`managed 构建容器创建失败:\n${combinedOutput(create)}`);
+      const copy = await this.shell.exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${builderName}:/app`)}`);
+      if (copy.exitCode !== 0) throw new Error(`managed 源码复制失败:\n${combinedOutput(copy)}`);
+      const start = await this.shell.exec(`docker start ${this.shellQuote(builderName)}`);
+      if (start.exitCode !== 0) throw new Error(`managed 构建容器启动失败:\n${combinedOutput(start)}`);
+      assertCurrent?.(`managed build before exec ${profile.id}`);
+      onOutput?.(`── managed build 命令: ${buildCommand} ──\n`);
+      const build = await this.shell.exec(`docker exec ${this.shellQuote(builderName)} sh -c ${this.shellQuote(buildCommand)}`);
+      if (build.stdout) onOutput?.(`${build.stdout}\n`);
+      if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
+      const commit = await this.shell.exec(`docker commit ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
+      if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
+      onOutput?.(`── managed 产物已固化: ${artifactImage} ──\n`);
+      return {
+        ...profile,
+        dockerImage: artifactImage,
+        command: contract.startCommand,
+        prebuiltImage: true,
+        localArtifact: true,
+        managedBuild: undefined,
+        sourceFallbackProfile: undefined,
+      };
+    } finally {
+      await this.shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
+      try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ }
+    }
+  }
+
   /**
    * 解析特定项目的 docker network 名称。Week 4.9 多项目网络隔离：
    *   1. 调用方传 projectId 且 networkResolver 已注入 → 优先用 project.dockerNetwork
@@ -1026,6 +1100,23 @@ export class ContainerService {
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    const managedArtifactReady = !!profile.managedBuild || profile.localArtifact === true;
+    if (profile.managedBuild) {
+      profile = await this.buildManagedArtifact(
+        entry,
+        profile,
+        service,
+        network,
+        customEnv,
+        onOutput,
+        context.assertCurrent,
+      );
+    } else if (profile.localArtifact) {
+      const localInspect = await this.shell.exec(`docker image inspect ${this.shellQuote(profile.dockerImage)}`);
+      if (localInspect.exitCode !== 0) {
+        throw new Error(`managed 本地产物不存在: ${profile.dockerImage}。请重新执行源码构建生成该版本。`);
+      }
+    }
     const profileAliases = computeProfileAliases(
       profile.id,
       this.getProjectMarkers(entry.projectId),
@@ -1100,7 +1191,7 @@ export class ContainerService {
     // 显式 pull 而非依赖 docker run 隐式拉取,是为了把「镜像缺失/拉取失败」第一时间
     // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
     // 而非空白等待。
-    if (profile.prebuiltImage === true) {
+    if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
       //   ① 本 commit 镜像(dockerImage,:sha-<X>)
@@ -1349,6 +1440,7 @@ export class ContainerService {
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
+      service.deployedImage = runImage;
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
