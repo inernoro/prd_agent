@@ -1166,3 +1166,4 @@
 | 2026-06-26 | 新增 | `report.cds.visual-deploy` | CDS 绝对可视化一键部署 完整报告 |
 | 2026-06-26 | 新增 | `report.daily-tips.tutorial-coverage` | 页面教程小技巧 全量路由覆盖审计报告 |
 | 2026-06-26 | 新增 | `report.frontend.prd-admin-surface-style-migration` | prd-admin 样式统一统计报表 |
+| 2026-07-10 | 新增 | `debt.cds.reports` | CDS 验收中心报告治理债务台账（存量未归类迁移 / 保留策略 / 批量操作 / 日期文件夹归并） |
