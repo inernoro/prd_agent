@@ -168,9 +168,12 @@ function resolveProjectFilter(
   return projectId;
 }
 
-function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events'> & { eventCount: number } {
+function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events'> & {
+  eventCount: number;
+  latestEvent?: DeploymentRun['events'][number];
+} {
   const { events, ...summary } = run;
-  return { ...summary, eventCount: events.length };
+  return { ...summary, eventCount: events.length, latestEvent: events.at(-1) };
 }
 
 function writeSse(res: Response, eventName: string, data: unknown, id?: number): void {

@@ -12227,6 +12227,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const summary = smokeResult
         ? `${completeMsg} | 冒烟 ${smokeOk ? '通过' : '失败'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
         : completeMsg;
+      if (hasError) {
+        failDeploymentRun(deploymentRun?.id, entry.errorMessage || completeMsg, 'ready');
+      } else {
+        advanceDeploymentRun(deploymentRun?.id, 'running', {
+          phase: 'complete',
+          message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
+          operationId: branchOperationLease?.operationId,
+          commitSha: entry.githubCommitSha,
+          detail: { smokeOk },
+        });
+      }
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
         const failureDetail = finalConclusion === 'failure'
@@ -12253,17 +12264,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           log: stack ? `${msg}\n${stack}` : msg,
           detail: { conclusion: finalConclusion },
           timestamp: new Date().toISOString(),
-        });
-      }
-      if (hasError) {
-        failDeploymentRun(deploymentRun?.id, entry.errorMessage || completeMsg, 'ready');
-      } else {
-        advanceDeploymentRun(deploymentRun?.id, 'running', {
-          phase: 'complete',
-          message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
-          operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
-          detail: { smokeOk },
         });
       }
     } catch (err) {

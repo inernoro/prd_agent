@@ -19,7 +19,7 @@
 
 import type { StateService } from './state.js';
 import type { GitHubAppClient } from './github-app-client.js';
-import type { BranchEntry, CdsConfig } from '../types.js';
+import type { BranchEntry, CdsConfig, DeploymentRun } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 
 export interface CheckRunRunnerDeps {
@@ -47,9 +47,17 @@ export class CheckRunRunner {
    * this branch's deploy panel. Falls back to a stable "branch list"
    * path when publicBaseUrl isn't set (dev-only install).
    */
-  private buildDetailsUrl(branchId: string): string {
+  private buildDetailsUrl(branchId: string, runId?: string): string {
     const base = this.deps.config.publicBaseUrl?.replace(/\/$/, '') || `http://localhost:${this.deps.config.masterPort}`;
-    return `${base}/branch-panel?id=${encodeURIComponent(branchId)}`;
+    const params = new URLSearchParams({ id: branchId });
+    if (runId) params.set('runId', runId);
+    return `${base}/branch-panel?${params.toString()}`;
+  }
+
+  private currentDeploymentRun(entry: BranchEntry): DeploymentRun | undefined {
+    return entry.lastDeploymentRunId
+      ? this.deps.stateService.getDeploymentRun(entry.lastDeploymentRunId)
+      : undefined;
   }
 
   /**
@@ -78,6 +86,7 @@ export class CheckRunRunner {
     if (!repoFullName || !headSha || !instId) return;
     const parsed = this.parseRepo(repoFullName);
     if (!parsed) return;
+    const run = this.currentDeploymentRun(entry);
 
     try {
       const result = await this.deps.githubApp!.createCheckRun(
@@ -88,12 +97,12 @@ export class CheckRunRunner {
           name: 'CDS Deploy',
           headSha,
           status: 'in_progress',
-          detailsUrl: this.buildDetailsUrl(entry.id),
-          externalId: entry.id,
+          detailsUrl: this.buildDetailsUrl(entry.id, run?.id),
+          externalId: run?.id || entry.id,
           startedAt: new Date().toISOString(),
           output: {
             title: 'Deploying to CDS…',
-            summary: `分支 \`${entry.branch}\` 正在构建部署,完成后会在此更新预览链接。`,
+            summary: `分支 \`${entry.branch}\` 正在构建部署,完成后会在此更新预览链接。${run ? `\n\nDeploymentRun: \`${run.id}\`` : ''}`,
           },
         },
       );
@@ -132,6 +141,7 @@ export class CheckRunRunner {
     if (!id || !repoFullName || !instId) return;
     const parsed = this.parseRepo(repoFullName);
     if (!parsed) return;
+    const run = this.currentDeploymentRun(entry);
 
     if (!opts.force) {
       const last = this._lastProgressMs.get(id) || 0;
@@ -142,10 +152,10 @@ export class CheckRunRunner {
     try {
       await this.deps.githubApp!.updateCheckRun(instId, parsed.owner, parsed.repo, id, {
         status: 'in_progress',
-        detailsUrl: this.buildDetailsUrl(entry.id),
+        detailsUrl: this.buildDetailsUrl(entry.id, run?.id),
         output: {
           title: opts.title,
-          summary: opts.summary,
+          summary: run ? `${opts.summary}\n\nDeploymentRun: \`${run.id}\` · ${run.status} · ${run.phase}` : opts.summary,
         },
       });
     } catch (err) {
@@ -187,6 +197,7 @@ export class CheckRunRunner {
     if (!id || !repoFullName || !instId) return;
     const parsed = this.parseRepo(repoFullName);
     if (!parsed) return;
+    const run = this.currentDeploymentRun(entry);
 
     const title =
       opts.conclusion === 'success'
@@ -198,6 +209,7 @@ export class CheckRunRunner {
         : 'Deploy finished';
     const summaryLines = [opts.summary];
     if (opts.previewUrl) summaryLines.push('', `预览地址: ${opts.previewUrl}`);
+    if (run) summaryLines.push('', `DeploymentRun: \`${run.id}\` · ${run.status} · ${run.phase}`);
 
     // GitHub's output.text caps at 65535 chars; we trim to 30k to stay
     // comfortably under the limit with room for markdown chrome.
@@ -205,8 +217,23 @@ export class CheckRunRunner {
     // 关键:截断只能砍 logTail 的尾部,绝不能把顶部的 failureDetail(根因)截掉
     // —— 否则 sandbox agent 在大日志失败时反而读不到根因(整个特性失去意义)。
     const CAP = 30_000;
-    const detailBlock = (opts.failureDetail || '').trim();
-    const logBlock = (opts.logTail || '').trim();
+    const structuredFailure = run?.failure
+      ? [
+          '### DeploymentRun 结构化失败',
+          '',
+          `- code: \`${run.failure.code}\``,
+          `- owner: \`${run.failure.owner}\``,
+          `- retryable: \`${String(run.failure.retryable)}\``,
+          `- phase: \`${run.failure.phase || run.phase}\``,
+          `- summary: ${run.failure.summary}`,
+          ...(run.failure.suggestedAction ? [`- suggestedAction: ${run.failure.suggestedAction}`] : []),
+        ].join('\n')
+      : '';
+    const detailBlock = [structuredFailure, opts.failureDetail || ''].filter(Boolean).join('\n\n').trim();
+    const runLogBlock = run?.events.map((event) =>
+      `[${event.seq}] [${event.status}] ${event.phase}: ${event.message}`,
+    ).join('\n') || '';
+    const logBlock = (runLogBlock || opts.logTail || '').trim();
     const parts: string[] = [];
     if (detailBlock) parts.push(detailBlock.length > CAP ? detailBlock.slice(0, CAP) : detailBlock);
     if (logBlock) {
@@ -225,7 +252,7 @@ export class CheckRunRunner {
         status: 'completed',
         conclusion: opts.conclusion,
         completedAt: new Date().toISOString(),
-        detailsUrl: this.buildDetailsUrl(entry.id),
+        detailsUrl: this.buildDetailsUrl(entry.id, run?.id),
         output: {
           title,
           summary: summaryLines.join('\n'),
@@ -310,7 +337,7 @@ export class CheckRunRunner {
           status: 'completed',
           conclusion: 'neutral',
           completedAt: new Date().toISOString(),
-          detailsUrl: this.buildDetailsUrl(entry.id),
+          detailsUrl: this.buildDetailsUrl(entry.id, entry.lastDeploymentRunId),
           output: {
             title: 'Deploy state unknown after CDS restart',
             summary:

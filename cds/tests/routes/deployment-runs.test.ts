@@ -79,6 +79,7 @@ describe('Deployment runs router', () => {
     expect(response.status).toBe(200);
     expect(response.body.total).toBe(1);
     expect(response.body.runs[0]).toMatchObject({ id: 'dr_1', projectId: 'p1', eventCount: 1 });
+    expect(response.body.runs[0].latestEvent).toMatchObject({ seq: 1, status: 'pending' });
     expect(response.body.runs[0]).not.toHaveProperty('events');
   });
 
