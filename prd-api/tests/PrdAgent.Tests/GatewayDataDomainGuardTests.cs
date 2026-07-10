@@ -159,6 +159,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("IsRuntimeGovernedAppCallerStatus", consoleProgram);
         Assert.Contains("HasDroppedParameters", consoleProgram);
         Assert.Contains("protocol_runtime_coverage", consoleProgram);
+        Assert.Contains("appcaller_ingress_registry_coverage", consoleProgram);
+        Assert.Contains(".Include(\"ObservedIngressProtocols\")", consoleProgram);
+        Assert.Contains("registryObservedProtocols", consoleProgram);
+        Assert.Contains("missingRegistryProtocols", consoleProgram);
         Assert.Contains("missingIngressProtocols", consoleProgram);
         Assert.Contains("/gw/protocol-coverage?releaseCommit=", consoleProgram);
         Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
@@ -172,6 +176,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ProtocolCoveragePanel", overviewPage);
         Assert.Contains("协议入口覆盖", overviewPage);
         Assert.Contains("case 'protocol_runtime_coverage':", overviewPage);
+        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overviewPage);
+        Assert.Contains("appcaller_ingress_registry_coverage: [", overviewPage);
         Assert.Contains("protocolCanaryRequired", overviewPage);
         Assert.Contains("protocolCanaryJson", overviewPage);
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
@@ -596,6 +602,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("case 'current_commit_http_transport':", overview);
         Assert.Contains("case 'dropped_parameter_runtime_evidence':", overview);
         Assert.Contains("case 'appcaller_runtime_coverage':", overview);
+        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overview);
         Assert.Contains("case 'protocol_runtime_coverage':", overview);
         Assert.Contains("case 'shadow_runtime_evidence':", overview);
         Assert.Contains("case 'full_http_rollout_ledger':", overview);

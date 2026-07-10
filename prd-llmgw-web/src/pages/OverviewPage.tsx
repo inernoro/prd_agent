@@ -469,6 +469,11 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
       ];
     case 'appcaller_policy_drift':
       return [{ label: '漂移调用方', to: '/app-callers?drift=any' }];
+    case 'appcaller_ingress_registry_coverage':
+      return [
+        { label: '协议覆盖', to: '/?protocolCoverage=1' },
+        { label: '调用方', to: '/app-callers' },
+      ];
     case 'gateway_pool_member_readiness':
       return [{ label: '检查模型池', to: '/pools' }];
     case 'active_appcaller_map_fallback_exit':
@@ -545,6 +550,12 @@ function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, s
       'activeMissingGatewayPool',
       'discoveredAppCallers',
       'withoutUsableMember',
+    ],
+    appcaller_ingress_registry_coverage: [
+      'registeredAppCallers',
+      'coveredProtocols',
+      'missingProtocols',
+      'missingIngressProtocols',
     ],
     current_commit_http_transport: [
       'releaseCommit',
