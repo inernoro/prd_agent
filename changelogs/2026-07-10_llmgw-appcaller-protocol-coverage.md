@@ -9,3 +9,5 @@
 | docs | doc | 更新 LLM Gateway 协议绑平台债务状态，区分已守卫文本解析链与剩余图片/raw 分支 |
 | fix | prd-api | 生图 adapter 选择改为优先使用 Gateway 解析出的 Protocol，避免同平台多协议被 URL 或模型名猜回旧适配器 |
 | test | prd-api | 增加生图 adapter 显式协议覆盖 URL/模型名检测的防退化测试 |
+| fix | prd-api | Agent runtime profile 从模型池导入时优先使用模型 Protocol，避免按平台类型或 URL 误判运行协议 |
+| test | prd-api | 增加 runtime profile 协议解析防退化测试，守卫模型 Protocol 覆盖平台和 URL 推断 |
