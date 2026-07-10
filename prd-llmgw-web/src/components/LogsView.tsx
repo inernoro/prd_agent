@@ -47,6 +47,11 @@ function getTransportMeta(t?: string | null) {
   return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
 }
 
+function initialQueryValue(key: string) {
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.search).get(key) ?? '';
+}
+
 export function LogsView() {
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
@@ -59,6 +64,10 @@ export function LogsView() {
   const [filterSourceSystem, setFilterSourceSystem] = useState('');
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
+  const [filterReleaseCommit, setFilterReleaseCommit] = useState(() => initialQueryValue('releaseCommit'));
+  const [filterRunId, setFilterRunId] = useState(() => initialQueryValue('runId'));
+  const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
+  const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -117,8 +126,12 @@ export function LogsView() {
       sourceSystem: filterSourceSystem || undefined,
       ingressProtocol: filterIngressProtocol || undefined,
       modelPolicy: filterModelPolicy || undefined,
+      releaseCommit: filterReleaseCommit.trim() || undefined,
+      runId: filterRunId.trim() || undefined,
+      requestId: filterRequestId.trim() || undefined,
+      sessionId: filterSessionId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId],
   );
 
   useEffect(() => {
@@ -524,6 +537,11 @@ export function LogsView() {
     padding: '0 9px',
     fontSize: 12,
   };
+  const inputStyle: CSSProperties = {
+    ...selectStyle,
+    width: 180,
+    minWidth: 150,
+  };
 
   const emptyCell = (text: string) => (
     <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
@@ -539,6 +557,10 @@ export function LogsView() {
     filterSourceSystem,
     filterIngressProtocol,
     filterModelPolicy,
+    filterReleaseCommit.trim(),
+    filterRunId.trim(),
+    filterRequestId.trim(),
+    filterSessionId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -550,6 +572,10 @@ export function LogsView() {
     setFilterSourceSystem('');
     setFilterIngressProtocol('');
     setFilterModelPolicy('');
+    setFilterReleaseCommit('');
+    setFilterRunId('');
+    setFilterRequestId('');
+    setFilterSessionId('');
   };
 
   function SummaryTile({
@@ -581,6 +607,57 @@ export function LogsView() {
           {value}
         </div>
         <div style={{ marginTop: 3, fontSize: 10, color: 'var(--text-muted)' }}>{sub}</div>
+      </div>
+    );
+  }
+
+  function DistributionStrip({
+    label,
+    items,
+    selected,
+    onSelect,
+  }: {
+    label: string;
+    items?: { key: string; count: number }[];
+    selected: string;
+    onSelect: (v: string) => void;
+  }) {
+    const visible = (items ?? []).filter((x) => x.key && x.count > 0).slice(0, 6);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
+        {visible.length === 0 ? (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>
+        ) : (
+          visible.map((item) => {
+            const active = selected === item.key;
+            return (
+              <button
+                key={`${label}:${item.key}`}
+                type="button"
+                onClick={() => onSelect(active ? '' : item.key)}
+                title={`${label}: ${item.key} (${fmtCompact(item.count)} requests)`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  maxWidth: 220,
+                  height: 24,
+                  padding: '0 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: active ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                  background: active ? 'var(--accent-soft)' : 'var(--bg-input)',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                <span className="lg-truncate" style={{ minWidth: 0 }}>{item.key}</span>
+                <span className="tabular" style={{ color: 'var(--text-muted)' }}>{fmtCompact(item.count)}</span>
+              </button>
+            );
+          })
+        )}
       </div>
     );
   }
@@ -660,6 +737,34 @@ export function LogsView() {
               </option>
             ))}
           </select>
+          <input
+            value={filterReleaseCommit}
+            onChange={(e) => setFilterReleaseCommit(e.target.value)}
+            placeholder="Release commit"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterRunId}
+            onChange={(e) => setFilterRunId(e.target.value)}
+            placeholder="Run ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterRequestId}
+            onChange={(e) => setFilterRequestId(e.target.value)}
+            placeholder="Request ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterSessionId}
+            onChange={(e) => setFilterSessionId(e.target.value)}
+            placeholder="Session ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
           <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
             <option value="">All providers</option>
             {meta.providers.map((p) => (
@@ -743,6 +848,23 @@ export function LogsView() {
         <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <MiniBarChart data={series} height={82} />
         </Card>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: 8,
+          flexShrink: 0,
+          padding: '8px 10px',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--bg-surface)',
+        }}
+      >
+        <DistributionStrip label="Ingress" items={summary?.ingressProtocolDistribution} selected={filterIngressProtocol} onSelect={setFilterIngressProtocol} />
+        <DistributionStrip label="Policy" items={summary?.modelPolicyDistribution} selected={filterModelPolicy} onSelect={setFilterModelPolicy} />
+        <DistributionStrip label="Source" items={summary?.sourceSystemDistribution} selected={filterSourceSystem} onSelect={setFilterSourceSystem} />
       </div>
 
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />

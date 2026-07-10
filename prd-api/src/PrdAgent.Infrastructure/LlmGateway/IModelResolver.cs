@@ -148,7 +148,7 @@ public class ModelResolutionResult
     /// <summary>
     /// 是否支持函数调用（function_calling 能力）。
     /// null = 未知（能力未分类，best-effort 放行）；true = 支持；false = 明确不支持（带 tools 时网关熔断报错，不骗用户）。
-    /// 池路径优先读取 ModelGroupItem.Capabilities 快照；旧池成员无快照时留 null。
+    /// 池路径优先读取 ModelGroupItem.Capabilities 快照；旧池成员无快照时可由解析阶段匹配的 LLMModel 能力兜底。
     /// </summary>
     public bool? SupportsFunctionCalling { get; init; }
 
@@ -344,13 +344,13 @@ public class ModelResolutionResult
         ModelGroupItem model,
         ModelGroup group,
         LLMPlatform platform,
-        string? apiKey)
+        string? apiKey,
+        LLMModel? modelConfig = null)
     {
         // P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType。
-        // 注意：池条目（ModelGroupItem.ModelId）引用的模型级 Protocol 不在本上下文，
-        // 改动前路由完全依赖 platform.PlatformType，故此处模型级以 null 参与链，
-        // 等价于直接落到 platform.PlatformType（向后兼容零差异）。
-        var (protocol, reason) = ResolveProtocol(model.Protocol, null, platform.PlatformType);
+        // 旧池成员可能没有能力快照；解析阶段可传入匹配到的 LLMModel，只补协议/能力元数据，
+        // 不参与选路、不覆盖池成员价格和 MaxTokens，避免发送阶段二次 resolve。
+        var (protocol, reason) = ResolveProtocol(model.Protocol, modelConfig?.Protocol, platform.PlatformType);
         return new ModelResolutionResult
         {
             Success = true,
@@ -370,14 +370,14 @@ public class ModelResolutionResult
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
             MaxTokens = model.MaxTokens,
-            SupportsFunctionCalling = FunctionCallingCapability(model),
-            SupportsVision = VisionCapability(model),
-            SupportsImageGeneration = ImageGenerationCapability(model),
-            SupportsThinking = ThinkingCapability(model),
-            SupportsStructuredOutput = StructuredOutputCapability(model),
-            SupportsLogprobs = LogprobsCapability(model),
-            SupportsParallelToolCalls = ParallelToolCallsCapability(model),
-            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities),
+            SupportsFunctionCalling = FunctionCallingCapability(model, modelConfig),
+            SupportsVision = VisionCapability(model, modelConfig),
+            SupportsImageGeneration = ImageGenerationCapability(model, modelConfig),
+            SupportsThinking = ThinkingCapability(model, modelConfig),
+            SupportsStructuredOutput = StructuredOutputCapability(model, modelConfig),
+            SupportsLogprobs = LogprobsCapability(model, modelConfig),
+            SupportsParallelToolCalls = ParallelToolCallsCapability(model, modelConfig),
+            ParameterCapabilities = ExtractParameterCapabilities(EffectiveCapabilities(model, modelConfig)),
             InputPricePerMillion = model.InputPricePerMillion,
             OutputPricePerMillion = model.OutputPricePerMillion,
             PricePerCall = model.PricePerCall,
@@ -564,6 +564,9 @@ public class ModelResolutionResult
         return CapabilityValue(model.Capabilities, "function_calling", "tool_calling", "tools");
     }
 
+    private static bool? FunctionCallingCapability(ModelGroupItem model, LLMModel? modelConfig)
+        => CapabilityValue(EffectiveCapabilities(model, modelConfig), "function_calling", "tool_calling", "tools");
+
     private static bool? VisionCapability(LLMModel model)
         => model.IsVision || CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal") == true
             ? true
@@ -573,6 +576,14 @@ public class ModelResolutionResult
         => model.IsVision || CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal") == true
             ? true
             : CapabilityValue(model.Capabilities, "vision", "image_input", "multimodal");
+
+    private static bool? VisionCapability(ModelGroupItem model, LLMModel? modelConfig)
+    {
+        var capabilities = EffectiveCapabilities(model, modelConfig);
+        return model.IsVision || modelConfig?.IsVision == true || CapabilityValue(capabilities, "vision", "image_input", "multimodal") == true
+            ? true
+            : CapabilityValue(capabilities, "vision", "image_input", "multimodal");
+    }
 
     private static bool? ImageGenerationCapability(LLMModel model)
         => model.IsImageGen || CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image") == true
@@ -584,11 +595,22 @@ public class ModelResolutionResult
             ? true
             : CapabilityValue(model.Capabilities, "image_generation", "text_to_image", "image");
 
+    private static bool? ImageGenerationCapability(ModelGroupItem model, LLMModel? modelConfig)
+    {
+        var capabilities = EffectiveCapabilities(model, modelConfig);
+        return model.IsImageGen || modelConfig?.IsImageGen == true || CapabilityValue(capabilities, "image_generation", "text_to_image", "image") == true
+            ? true
+            : CapabilityValue(capabilities, "image_generation", "text_to_image", "image");
+    }
+
     private static bool? ThinkingCapability(LLMModel model)
         => CapabilityValue(model.Capabilities, "thinking", "reasoning");
 
     private static bool? ThinkingCapability(ModelGroupItem model)
         => CapabilityValue(model.Capabilities, "thinking", "reasoning");
+
+    private static bool? ThinkingCapability(ModelGroupItem model, LLMModel? modelConfig)
+        => CapabilityValue(EffectiveCapabilities(model, modelConfig), "thinking", "reasoning");
 
     private static bool? StructuredOutputCapability(LLMModel model)
         => CapabilityValue(model.Capabilities, "structured_output", "json_schema", "json_mode", "response_format");
@@ -596,17 +618,29 @@ public class ModelResolutionResult
     private static bool? StructuredOutputCapability(ModelGroupItem model)
         => CapabilityValue(model.Capabilities, "structured_output", "json_schema", "json_mode", "response_format");
 
+    private static bool? StructuredOutputCapability(ModelGroupItem model, LLMModel? modelConfig)
+        => CapabilityValue(EffectiveCapabilities(model, modelConfig), "structured_output", "json_schema", "json_mode", "response_format");
+
     private static bool? LogprobsCapability(LLMModel model)
         => CapabilityValue(model.Capabilities, "logprobs", "top_logprobs", "token_logprobs");
 
     private static bool? LogprobsCapability(ModelGroupItem model)
         => CapabilityValue(model.Capabilities, "logprobs", "top_logprobs", "token_logprobs");
 
+    private static bool? LogprobsCapability(ModelGroupItem model, LLMModel? modelConfig)
+        => CapabilityValue(EffectiveCapabilities(model, modelConfig), "logprobs", "top_logprobs", "token_logprobs");
+
     private static bool? ParallelToolCallsCapability(LLMModel model)
         => CapabilityValue(model.Capabilities, "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
 
     private static bool? ParallelToolCallsCapability(ModelGroupItem model)
         => CapabilityValue(model.Capabilities, "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
+
+    private static bool? ParallelToolCallsCapability(ModelGroupItem model, LLMModel? modelConfig)
+        => CapabilityValue(EffectiveCapabilities(model, modelConfig), "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
+
+    private static IEnumerable<LLMModelCapability>? EffectiveCapabilities(ModelGroupItem model, LLMModel? modelConfig)
+        => model.Capabilities is { Count: > 0 } ? model.Capabilities : modelConfig?.Capabilities;
 
     private static bool? CapabilityValue(IEnumerable<LLMModelCapability>? capabilities, params string[] types)
     {

@@ -66,8 +66,11 @@ def _write_markdown(path: str, payload: dict[str, Any]) -> None:
         f"- verdict: `{cell(payload['verdict'])}`",
         f"- scope: `{cell(payload['scope'])}`",
         f"- targetComplete: `{cell(payload['targetComplete'])}`",
+        f"- runtimeEvidenceComplete: `{cell(payload['runtimeEvidenceComplete'])}`",
         f"- passed: `{payload['passedChecks']}/{payload['totalChecks']}`",
         f"- staticEvidencePercent: `{payload['staticEvidencePercent']}`",
+        f"- progressPercent: `{cell(payload.get('progressPercent'))}`",
+        f"- progressSemantics: `{cell(payload['progressSemantics'])}`",
         "",
         "## Checks",
         "",
@@ -111,6 +114,7 @@ def build_report() -> dict[str, Any]:
     details_drawer = _read("prd-llmgw-web/src/components/GenerationDetailsDrawer.tsx")
     overview_page = _read("prd-llmgw-web/src/pages/OverviewPage.tsx")
     app_callers_page = _read("prd-llmgw-web/src/pages/AppCallersPage.tsx")
+    shadow_page = _read("prd-llmgw-web/src/pages/ShadowPage.tsx")
     pools_page = _read("prd-llmgw-web/src/pages/ModelPoolsPage.tsx")
     models_page = _read("prd-llmgw-web/src/pages/ModelsPage.tsx")
     platforms_page = _read("prd-llmgw-web/src/pages/PlatformsPage.tsx")
@@ -118,6 +122,8 @@ def build_report() -> dict[str, Any]:
     audits_page = _read("prd-llmgw-web/src/pages/AuditsPage.tsx")
     prod_stage = _read("scripts/llmgw-prod-stage.sh")
     rollout_ledger = _read("scripts/llmgw-rollout-ledger.py")
+    protocol_canary = _read("scripts/llmgw-protocol-canary.py")
+    release_gate = _read("scripts/llmgw-release-gate.py")
     compose = _read("docker-compose.yml")
     cds_compose = _read("cds-compose.yml")
     readiness = _read("scripts/llmgw-readiness-audit.py")
@@ -293,6 +299,11 @@ def build_report() -> dict[str, Any]:
         [
             "app.MapGet(\"/gw/config-authority/report\"",
             "app.MapGet(\"/gw/runtime-gates\"",
+            "app.MapGet(\"/gw/protocol-coverage\"",
+            "RuntimeGateLinks",
+            "static RuntimeGateLink Link",
+            "Links = RuntimeGateLinks",
+            "/audits?targetType=llmgw_config_authority",
             "app.MapPost(\"/gw/config-authority/bulk-claim\"",
             "app.MapPost(\"/gw/config-authority/bind-active-app-callers\"",
             "app.MapGet(\"/gw/app-callers\"",
@@ -319,6 +330,12 @@ def build_report() -> dict[str, Any]:
             "disableMapFallbackForActiveAppCallers",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
             "ReadLatestHttpFullRolloutLedgerEvidence",
+            "latestProtocolCanaryRequired",
+            "latestHasProtocolCanaryJson",
+            "TargetIngressProtocols",
+            "NormalizeIngressProtocol",
+            "ProtocolCoverageData",
+            "DroppedParameterRequests",
             "ReadLatestConfigAuthorityRolloutLedgerEvidence",
             "LlmGateway:RolloutLedgerPath",
             "LLMGW_ROLLOUT_LEDGER",
@@ -327,8 +344,11 @@ def build_report() -> dict[str, Any]:
             "var runtimeCommit = NormalizeCommitFilter(gitCommit)",
             "Builders<BsonDocument>.Filter.Eq(\"ReleaseCommit\", runtimeCommit)",
             "current_commit_http_transport",
+            "protocol_runtime_coverage",
             "httpTransportLogs",
             "nonHttpTransportLogs",
+            "missingIngressProtocols",
+            "/gw/protocol-coverage?releaseCommit=",
             "Builders<BsonDocument>.Filter.Ne(\"GatewayTransport\", \"http\")",
             "dropped_parameter_runtime_evidence",
             "Builders<BsonDocument>.Filter.Exists(\"DroppedParameters.0\", true)",
@@ -347,7 +367,7 @@ def build_report() -> dict[str, Any]:
     ))
 
     ok, detail = _contains_all(
-        prod_stage + "\n" + rollout_ledger + "\n" + full_cutover_doc,
+        prod_stage + "\n" + rollout_ledger + "\n" + release_gate + "\n" + protocol_canary + "\n" + full_cutover_doc,
         [
             "config-authority",
             "scripts/llmgw-config-authority-backup.sh",
@@ -362,6 +382,17 @@ def build_report() -> dict[str, Any]:
             "protocolRouterAuditJson",
             "targetComplete must remain false until runtime gates pass",
             "activeAppCallerMapFallbackReady=true",
+            "LLM Gateway four-protocol runtime canary",
+            "--execute",
+            "gw-native",
+            "openai-compatible",
+            "claude-compatible",
+            "gemini-compatible",
+            "--protocol-canary-json",
+            "protocolCanary",
+            "protocolCanaryJson",
+            "protocolCanaryRequired",
+            "_require_protocol_canary_for_commit",
         ],
     )
     backup_before_apply = (
@@ -378,6 +409,7 @@ def build_report() -> dict[str, Any]:
         [
             "scripts/llmgw-prod-stage.sh",
             "scripts/llmgw-rollout-ledger.py",
+            "scripts/llmgw-protocol-canary.py",
             "doc/plan.llm-gateway.full-cutover.md",
         ],
     ))
@@ -389,6 +421,7 @@ def build_report() -> dict[str, Any]:
         details_drawer,
         overview_page,
         app_callers_page,
+        shadow_page,
         pools_page,
         models_page,
         platforms_page,
@@ -408,8 +441,21 @@ def build_report() -> dict[str, Any]:
             "routerTrace",
             "providerAttempts",
             "droppedParameters",
+            "initialQueryValue('releaseCommit')",
+            "releaseCommit: filterReleaseCommit.trim() || undefined",
+            "searchParams.get('releaseCommit')",
+            "getShadowComparisons({",
+            "runtimeGateActionLinks",
+            "item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks",
+            "/logs${releaseQuery}",
+            "/shadow${releaseQuery}",
+            "/app-callers?status=active",
+            "/audits?targetType=llmgw_config_authority",
             "configAuthority",
             "RuntimeGatePanel",
+            "ProtocolCoveragePanel",
+            "getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 })",
+            "case 'protocol_runtime_coverage':",
             "bulkUpdateGatewayAppCallers",
         ],
     )
@@ -467,11 +513,13 @@ def build_report() -> dict[str, Any]:
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "scope": "static-code-and-document-evidence",
         "targetComplete": False,
+        "runtimeEvidenceComplete": False,
         "verdict": "pass" if passed == total else "fail",
         "totalChecks": total,
         "passedChecks": passed,
         "staticEvidencePercent": static_percent,
-        "progressPercent": static_percent,
+        "progressPercent": None,
+        "progressSemantics": "staticEvidencePercent covers code/doc evidence only; runtime gates and rollout ledger prove target completion.",
         "remainingRuntimeGates": remaining_runtime_gates,
         "checks": checks,
     }

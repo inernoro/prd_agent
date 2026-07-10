@@ -345,6 +345,7 @@ def _config_authority_check(
         "mapFallbackObjectsRemaining": None,
         "activeAppCallerMapFallbackReady": False,
         "activeMissingGatewayPool": None,
+        "activeBoundPoolWithoutUsableMember": None,
         "readinessPercent": None,
         "failures": [],
     }
@@ -368,6 +369,7 @@ def _config_authority_check(
     map_remaining_raw = _get_nested(summary, "mapFallbackObjectsRemaining")
     active_ready = bool(_get_nested(summary, "activeAppCallerMapFallbackReady") or False)
     active_missing_raw = _get_nested(summary, "activeMissingGatewayPool")
+    active_without_usable_raw = _get_nested(summary, "activeBoundPoolWithoutUsableMember")
     readiness_raw = _get_nested(summary, "readinessPercent")
     try:
         map_remaining = int(map_remaining_raw or 0)
@@ -378,6 +380,10 @@ def _config_authority_check(
     except (TypeError, ValueError):
         active_missing = -1
     try:
+        active_without_usable = int(active_without_usable_raw or 0)
+    except (TypeError, ValueError):
+        active_without_usable = -1
+    try:
         readiness = int(readiness_raw or 0)
     except (TypeError, ValueError):
         readiness = None
@@ -386,6 +392,7 @@ def _config_authority_check(
     result["mapFallbackObjectsRemaining"] = map_remaining
     result["activeAppCallerMapFallbackReady"] = active_ready
     result["activeMissingGatewayPool"] = active_missing
+    result["activeBoundPoolWithoutUsableMember"] = active_without_usable
     result["readinessPercent"] = readiness
 
     failures: list[str] = []
@@ -397,6 +404,8 @@ def _config_authority_check(
         failures.append("active appCaller 尚未全部绑定有效 GW 模型池")
     if active_missing != 0:
         failures.append(f"active appCaller 缺 GW 池: activeMissingGatewayPool={active_missing}")
+    if active_without_usable != 0:
+        failures.append(f"active appCaller 绑定的 GW 池不可用: activeBoundPoolWithoutUsableMember={active_without_usable}")
 
     result["failures"] = failures
     result["ok"] = not failures
@@ -517,6 +526,71 @@ def _runtime_gates_result_from_data(
     return result
 
 
+def _protocol_canary_check(path: str, expected_commit: str = "") -> dict:
+    result = {
+        "required": bool(path),
+        "ok": False,
+        "path": path,
+        "mode": "",
+        "expectedCommit": _normalize_commit(expected_commit),
+        "healthCommit": "",
+        "runId": "",
+        "protocols": [],
+        "missingProtocols": ["gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"],
+        "failures": [],
+    }
+    if not path:
+        result["ok"] = True
+        result["missingProtocols"] = []
+        return result
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception as exc:
+        result["failures"].append(f"protocol canary JSON 读取失败: {path}: {exc}")
+        return result
+    if not isinstance(payload, dict):
+        result["failures"].append(f"protocol canary JSON 不是 object: {path}")
+        return result
+    verdict = str(payload.get("verdict") or payload.get("Verdict") or "").strip().lower()
+    mode = str(payload.get("mode") or payload.get("Mode") or "").strip().lower()
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    run_id = str(payload.get("runId") or payload.get("RunId") or "").strip()
+    cases = payload.get("cases") or payload.get("Cases") or []
+    if not isinstance(cases, list):
+        cases = []
+    protocols = sorted({
+        str((case.get("protocol") if isinstance(case, dict) else "") or (case.get("Protocol") if isinstance(case, dict) else "")).strip()
+        for case in cases
+        if isinstance(case, dict) and bool(case.get("ok") if "ok" in case else case.get("Ok"))
+    })
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    missing = sorted(required_protocols.difference(protocols))
+    failures: list[str] = []
+    if verdict != "pass":
+        failures.append(f"protocol canary verdict 不是 pass: {verdict or 'empty'}")
+    if mode != "execute":
+        failures.append(f"protocol canary mode 不是 execute: {mode or 'empty'}")
+    expected = _normalize_commit(expected_commit)
+    if expected and health_commit and health_commit != expected:
+        failures.append(f"protocol canary commit mismatch: actual={health_commit} expected={expected}")
+    if missing:
+        failures.append(f"protocol canary 缺少协议样本: {','.join(missing)}")
+    result.update({
+        "ok": not failures,
+        "mode": mode,
+        "healthCommit": health_commit,
+        "runId": run_id,
+        "protocols": protocols,
+        "missingProtocols": missing,
+        "failures": failures,
+    })
+    return result
+
+
 def _self_test() -> int:
     ready = _runtime_gates_result_from_data("http://console/gw", {
         "status": "ready",
@@ -591,6 +665,29 @@ def _self_test() -> int:
     if not self_finalizing["ok"] or self_finalizing["allowedPendingRuntimeGates"] != ["full_http_rollout_ledger"]:
         failures.append(f"self-finalizing http-full ledger should pass only for rollout ledger gate: {self_finalizing}")
     with tempfile.TemporaryDirectory(prefix="llmgw-release-gate-self-test-") as tmp:
+        canary_path = os.path.join(tmp, "protocol-canary.json")
+        with open(canary_path, "w", encoding="utf-8") as fh:
+            json.dump({
+                "verdict": "pass",
+                "mode": "execute",
+                "health": {"commit": "abc123"},
+                "runId": "canary-1",
+                "cases": [
+                    {"protocol": "gw-native", "ok": True},
+                    {"protocol": "openai-compatible", "ok": True},
+                    {"protocol": "claude-compatible", "ok": True},
+                    {"protocol": "gemini-compatible", "ok": True},
+                ],
+            }, fh)
+        canary = _protocol_canary_check(canary_path, expected_commit="abc123")
+        if not canary["ok"] or canary["missingProtocols"]:
+            failures.append(f"protocol canary evidence should pass: {canary}")
+        dry_run_path = os.path.join(tmp, "protocol-canary-dry-run.json")
+        with open(dry_run_path, "w", encoding="utf-8") as fh:
+            json.dump({"verdict": "pass", "mode": "dry-run", "health": {"commit": "abc123"}, "cases": []}, fh)
+        dry_run = _protocol_canary_check(dry_run_path, expected_commit="abc123")
+        if dry_run["ok"] or not any("mode" in item for item in dry_run["failures"]):
+            failures.append(f"protocol canary dry-run evidence should fail when supplied: {dry_run}")
         md_path = os.path.join(tmp, "release-gate.md")
         _write_markdown(md_path, {
             "generatedAt": "2026-07-10T00:00:00Z",
@@ -600,6 +697,7 @@ def _self_test() -> int:
             "health": {"httpStatus": 200, "commit": "abc123", "stable": True, "sampleCount": 1},
             "configAuthority": {},
             "runtimeGates": blocked,
+            "protocolCanary": canary,
             "shadowChecks": [],
             "thresholds": {},
             "failures": blocked.get("failures") or [],
@@ -607,6 +705,8 @@ def _self_test() -> int:
         md = open(md_path, "r", encoding="utf-8").read()
         if "current_commit_http_transport" not in md or "nonHttpTransportLogs=1" not in md:
             failures.append(f"runtime gate markdown should include transport facts: {md}")
+        if "Protocol Canary" not in md or "claude-compatible, gemini-compatible, gw-native, openai-compatible" not in md:
+            failures.append(f"release gate markdown should include protocol canary evidence: {md}")
     if failures:
         print("LLM Gateway release gate self-test: FAIL")
         for failure in failures:
@@ -660,6 +760,7 @@ def _write_markdown(path: str, report: dict) -> None:
     checks = report.get("shadowChecks") or []
     config_authority = report.get("configAuthority") or {}
     runtime_gates = report.get("runtimeGates") or {}
+    protocol_canary = report.get("protocolCanary") or {}
     failures = report.get("failures") or []
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# LLM Gateway Release Gate Report\n\n")
@@ -678,6 +779,7 @@ def _write_markdown(path: str, report: dict) -> None:
             fh.write(f"- mapFallbackObjectsRemaining: `{cell(config_authority.get('mapFallbackObjectsRemaining'))}`\n")
             fh.write(f"- activeAppCallerMapFallbackReady: `{cell(config_authority.get('activeAppCallerMapFallbackReady'))}`\n")
             fh.write(f"- activeMissingGatewayPool: `{cell(config_authority.get('activeMissingGatewayPool'))}`\n")
+            fh.write(f"- activeBoundPoolWithoutUsableMember: `{cell(config_authority.get('activeBoundPoolWithoutUsableMember'))}`\n")
             fh.write(f"- readinessPercent: `{cell(config_authority.get('readinessPercent'))}`\n\n")
         if runtime_gates:
             fh.write("## Runtime Gates\n\n")
@@ -701,6 +803,15 @@ def _write_markdown(path: str, report: dict) -> None:
                     facts_text = ", ".join(f"{k}={v}" for k, v in sorted((facts or {}).items())) if isinstance(facts, dict) else ""
                     fh.write(f"| {cell(item.get('id') if isinstance(item, dict) else '')} | {cell(item.get('status') if isinstance(item, dict) else '')} | {cell(facts_text)} |\n")
                 fh.write("\n")
+        if protocol_canary:
+            fh.write("## Protocol Canary\n\n")
+            fh.write(f"- required: `{cell(protocol_canary.get('required'))}`\n")
+            fh.write(f"- ok: `{cell(protocol_canary.get('ok'))}`\n")
+            fh.write(f"- mode: `{cell(protocol_canary.get('mode') or '')}`\n")
+            fh.write(f"- healthCommit: `{cell(protocol_canary.get('healthCommit') or '')}`\n")
+            fh.write(f"- runId: `{cell(protocol_canary.get('runId') or '')}`\n")
+            fh.write(f"- protocols: `{cell(', '.join(protocol_canary.get('protocols') or []))}`\n")
+            fh.write(f"- missingProtocols: `{cell(', '.join(protocol_canary.get('missingProtocols') or []) or 'none')}`\n\n")
         fh.write(f"- shadowReleaseCommit: `{cell(report.get('shadowReleaseCommit') or '')}`\n")
         fh.write(f"- shadowSinceHours: `{cell((report.get('thresholds') or {}).get('shadowSinceHours'))}`\n")
         fh.write(f"- minCoverageHours: `{cell((report.get('thresholds') or {}).get('minCoverageHours'))}`\n\n")
@@ -763,6 +874,8 @@ def main() -> int:
                         help="要求 GW 控制台 /runtime-gates readyForHttpFull=true；用于 http-full 部署后最终放行")
     parser.add_argument("--allow-pending-http-full-ledger", action="store_true",
                         help="仅用于 http-full 自举：允许 runtime-gates 只剩 full_http_rollout_ledger，待本阶段成功后由 ledger 补齐")
+    parser.add_argument("--protocol-canary-json", default=os.environ.get("LLMGW_PROTOCOL_CANARY_JSON", ""),
+                        help="可选：要求四协议 canary JSON 为 execute/pass 且覆盖 GW/OpenAI/Claude/Gemini")
     parser.add_argument("--config-authority-base", default=os.environ.get("LLMGW_CONSOLE_BASE", ""),
                         help="GW 控制台 API base，例如 https://host/gw；未以 /gw 结尾时自动追加")
     parser.add_argument("--config-authority-token", default=os.environ.get("LLMGW_CONSOLE_TOKEN", ""),
@@ -816,6 +929,7 @@ def main() -> int:
             "mapFallbackObjectsRemaining": None,
             "activeAppCallerMapFallbackReady": None,
             "activeMissingGatewayPool": None,
+            "activeBoundPoolWithoutUsableMember": None,
             "readinessPercent": None,
             "failures": [],
         },
@@ -835,6 +949,18 @@ def main() -> int:
             "generatedAt": None,
             "remainingRuntimeGates": [],
             "remainingRuntimeGateDetails": [],
+            "failures": [],
+        },
+        "protocolCanary": {
+            "required": bool(args.protocol_canary_json),
+            "ok": None,
+            "path": args.protocol_canary_json,
+            "mode": "",
+            "expectedCommit": _normalize_commit(args.expect_commit),
+            "healthCommit": "",
+            "runId": "",
+            "protocols": [],
+            "missingProtocols": [],
             "failures": [],
         },
         "shadowChecks": [],
@@ -868,6 +994,10 @@ def main() -> int:
     health = _health_check(base, args.expect_commit, args.health_samples, args.health_interval)
     report["health"] = health
     failures.extend(health.get("failures") or [])
+
+    protocol_canary = _protocol_canary_check(args.protocol_canary_json, expected_commit=args.expect_commit)
+    report["protocolCanary"] = protocol_canary
+    failures.extend(protocol_canary.get("failures") or [])
 
     if args.require_config_authority or args.require_runtime_gates:
         console_base = _normalize_console_base(args.config_authority_base)

@@ -5755,7 +5755,8 @@ function safeChart(canvasId, config) {
                     StartedAt: startedAt,
                     RequestType: "agent",
                     AppCallerCode: appCallerCode,
-                    GatewayTransport: GatewayTransports.Http));
+                    GatewayTransport: GatewayTransports.Http,
+                    RunId: runId));
             }
             catch (Exception ex)
             {

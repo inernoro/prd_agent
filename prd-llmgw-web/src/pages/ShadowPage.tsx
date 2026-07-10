@@ -1,5 +1,6 @@
 // 影子比对（只读）：顶部四个汇总 tile + 最近 N 条 inproc vs http 逐条对照（去黑盒，翻 http 前的一致性证据）。
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getLogsMeta, getShadowComparisons } from '@/lib/api';
 import type { ShadowData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -7,11 +8,18 @@ import { Button, Chip, SectionLoader } from '@/components/ui';
 type QuickFilter = 'all' | 'critical' | 'httpFail';
 
 export function ShadowPage() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<ShadowData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appCallers, setAppCallers] = useState<string[]>([]);
-  const [appCaller, setAppCaller] = useState('');
-  const [quick, setQuick] = useState<QuickFilter>('all');
+  const [appCaller, setAppCaller] = useState(() => searchParams.get('appCallerCode') || searchParams.get('appCaller') || '');
+  const [releaseCommit, setReleaseCommit] = useState(() => searchParams.get('releaseCommit') || '');
+  const [kind, setKind] = useState(() => searchParams.get('kind') || '');
+  const [sinceHours, setSinceHours] = useState(() => searchParams.get('sinceHours') || '');
+  const [quick, setQuick] = useState<QuickFilter>(() => {
+    const q = searchParams.get('quick');
+    return q === 'critical' || q === 'httpFail' ? q : 'all';
+  });
 
   useEffect(() => {
     let alive = true;
@@ -28,7 +36,14 @@ export function ShadowPage() {
     let alive = true;
     setData(null);
     setError(null);
-    getShadowComparisons({ limit: 100, appCallerCode: appCaller || undefined }).then((res) => {
+    const parsedSinceHours = Number(sinceHours);
+    getShadowComparisons({
+      limit: 100,
+      appCallerCode: appCaller || undefined,
+      releaseCommit: releaseCommit.trim() || undefined,
+      kind: kind.trim() || undefined,
+      sinceHours: Number.isFinite(parsedSinceHours) && parsedSinceHours > 0 ? parsedSinceHours : undefined,
+    }).then((res) => {
       if (!alive) return;
       if (res.success) setData(res.data);
       else setError(res.error?.message || '加载失败');
@@ -36,7 +51,7 @@ export function ShadowPage() {
     return () => {
       alive = false;
     };
-  }, [appCaller]);
+  }, [appCaller, releaseCommit, kind, sinceHours]);
 
   if (error) return <Empty text={error} />;
   if (!data) return <SectionLoader text="正在加载影子比对…" />;
@@ -67,6 +82,19 @@ export function ShadowPage() {
     padding: '0 8px',
     fontSize: 12,
   };
+  const inputStyle: React.CSSProperties = {
+    ...selectStyle,
+    width: 180,
+    minWidth: 140,
+  };
+  const clearFilters = () => {
+    setAppCaller('');
+    setReleaseCommit('');
+    setKind('');
+    setSinceHours('');
+    setQuick('all');
+  };
+  const activeFilterCount = [appCaller, releaseCommit.trim(), kind.trim(), sinceHours.trim(), quick === 'all' ? '' : quick].filter(Boolean).length;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -84,6 +112,28 @@ export function ShadowPage() {
               </option>
             ))}
           </select>
+          <input
+            value={releaseCommit}
+            onChange={(e) => setReleaseCommit(e.target.value)}
+            placeholder="Release commit"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            placeholder="Kind"
+            spellCheck={false}
+            style={{ ...inputStyle, width: 120 }}
+          />
+          <input
+            value={sinceHours}
+            onChange={(e) => setSinceHours(e.target.value)}
+            placeholder="Since hours"
+            inputMode="decimal"
+            spellCheck={false}
+            style={{ ...inputStyle, width: 120 }}
+          />
           <Button variant={quick === 'all' ? 'secondary' : 'ghost'} size="sm" onClick={() => setQuick('all')}>
             全部
           </Button>
@@ -93,6 +143,11 @@ export function ShadowPage() {
           <Button variant={quick === 'httpFail' ? 'secondary' : 'ghost'} size="sm" onClick={() => setQuick('httpFail')}>
             http 失败
           </Button>
+          {activeFilterCount > 0 ? (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              清除 {activeFilterCount}
+            </Button>
+          ) : null}
         </div>
       </div>
 

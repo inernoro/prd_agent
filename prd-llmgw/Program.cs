@@ -335,13 +335,14 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
 app.MapGet("/gw/logs", async (
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -394,10 +395,11 @@ app.MapGet("/gw/logs/meta", async () =>
 app.MapGet("/gw/logs/timeseries", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -424,10 +426,11 @@ app.MapGet("/gw/logs/timeseries", async (
 app.MapGet("/gw/logs/summary", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -435,7 +438,10 @@ app.MapGet("/gw/logs/summary", async (
         .Include("OutputTokens")
         .Include("EstimatedCostUsd")
         .Include("IsFallback")
-        .Include("GatewayTransport");
+        .Include("GatewayTransport")
+        .Include("SourceSystem")
+        .Include("IngressProtocol")
+        .Include("ModelPolicy");
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
@@ -453,23 +459,129 @@ app.MapGet("/gw/logs/summary", async (
         AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
         TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
         StatusDistribution = BuildBucket(docs, "Status", fallbackKey: "unknown"),
+        SourceSystemDistribution = BuildBucket(docs, "SourceSystem", fallbackKey: "unknown"),
+        IngressProtocolDistribution = BuildBucket(docs, "IngressProtocol", fallbackKey: "unknown"),
+        ModelPolicyDistribution = BuildBucket(docs, "ModelPolicy", fallbackKey: "unknown"),
     };
     data.TotalTokens = data.InputTokens + data.OutputTokens;
 
     return Json(ApiEnvelope<LogsSummaryData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ───────────────────────────── 协议入口运行覆盖（需鉴权）─────────────────────────────
+app.MapGet("/gw/protocol-coverage", async (string? releaseCommit, int? sinceHours) =>
+{
+    var hours = sinceHours is > 0 and <= 24 * 30 ? sinceHours.Value : 24;
+    var runtimeCommit = NormalizeCommitFilter(releaseCommit);
+    var since = DateTime.UtcNow.AddHours(-hours);
+    var logFilter = runtimeCommit is null
+        ? Builders<BsonDocument>.Filter.Gte("StartedAt", since)
+        : Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit);
+    logFilter = Builders<BsonDocument>.Filter.And(
+        logFilter,
+        Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true));
+
+    var logProjection = Builders<BsonDocument>.Projection
+        .Include("IngressProtocol")
+        .Include("AppCallerCode")
+        .Include("RequestType")
+        .Include("GatewayTransport")
+        .Include("Status")
+        .Include("StartedAt")
+        .Include("DroppedParameters");
+    var logDocs = await logs.Find(logFilter).Project(logProjection).ToListAsync();
+    var appCallerDocs = await gwAppCallers.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
+
+    var items = TargetIngressProtocols().Select(protocol =>
+    {
+        var registryDocs = appCallerDocs
+            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .ToList();
+        var activeDocs = registryDocs
+            .Where(d => IsRuntimeGovernedAppCallerStatus(d.AsNullableString("Status")))
+            .ToList();
+        var activeCodes = activeDocs
+            .Select(d => d.AsNullableString("AppCallerCode"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.Ordinal);
+        var protocolLogs = logDocs
+            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .ToList();
+        var loggedCodes = protocolLogs
+            .Select(d => d.AsNullableString("AppCallerCode"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.Ordinal);
+        var coveredActive = activeCodes.Count(loggedCodes.Contains);
+        var missingActive = activeCodes
+            .Where(code => !loggedCodes.Contains(code))
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+        var registryLastSeen = registryDocs
+            .Select(d => d.AsNullableUtcDateTime("LastSeenAt"))
+            .Where(x => x is not null)
+            .Select(x => x!.Value);
+        var logLastSeen = protocolLogs
+            .Select(d => d.AsNullableUtcDateTime("StartedAt"))
+            .Where(x => x is not null)
+            .Select(x => x!.Value);
+        var lastSeen = registryLastSeen.Concat(logLastSeen).DefaultIfEmpty().Max();
+        var status = registryDocs.Count == 0 && protocolLogs.Count == 0
+            ? "no-evidence"
+            : activeCodes.Count > 0 && missingActive.Count == 0 && protocolLogs.Count > 0
+                ? "covered"
+                : protocolLogs.Count > 0
+                    ? "runtime-seen"
+                    : "registry-only";
+
+        return new ProtocolCoverageItem
+        {
+            IngressProtocol = protocol.Key,
+            Label = protocol.Label,
+            Status = status,
+            RegisteredAppCallers = registryDocs.Count,
+            ActiveAppCallers = activeCodes.Count,
+            CoveredActiveAppCallers = coveredActive,
+            MissingActiveAppCallers = missingActive.Count,
+            LogRequests = protocolLogs.Count,
+            HttpRequests = protocolLogs.LongCount(d => string.Equals(d.AsNullableString("GatewayTransport"), "http", StringComparison.OrdinalIgnoreCase)),
+            FailedRequests = protocolLogs.LongCount(d => string.Equals(d.AsNullableString("Status"), "failed", StringComparison.OrdinalIgnoreCase)),
+            DroppedParameterRequests = protocolLogs.LongCount(HasDroppedParameters),
+            RequestTypes = NormalizeDistinct(protocolLogs.Select(d => d.AsNullableString("RequestType")), 20),
+            MissingActiveAppCallerCodes = missingActive.Take(20).ToList(),
+            LastSeenAt = lastSeen == default ? null : lastSeen.ToString("O"),
+            LogsLink = $"/logs?ingressProtocol={Uri.EscapeDataString(protocol.Key)}{(runtimeCommit is null ? string.Empty : $"&releaseCommit={Uri.EscapeDataString(runtimeCommit)}")}",
+            AppCallersLink = $"/app-callers?ingressProtocol={Uri.EscapeDataString(protocol.Key)}",
+        };
+    }).ToList();
+
+    return Json(ApiEnvelope<ProtocolCoverageData>.Ok(new ProtocolCoverageData
+    {
+        ReleaseCommit = runtimeCommit,
+        SinceHours = hours,
+        GeneratedAt = DateTime.UtcNow.ToString("O"),
+        TotalLogRequests = logDocs.Count,
+        TotalRegisteredAppCallers = items.Sum(x => x.RegisteredAppCallers),
+        TotalActiveAppCallers = items.Sum(x => x.ActiveAppCallers),
+        CoveredProtocols = items.Count(x => x.LogRequests > 0),
+        MissingRuntimeProtocols = items.Count(x => x.LogRequests == 0),
+        Items = items,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // ───────────────────────────── 会话聚合（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
-    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit) =>
+    string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
+    string? runId, string? requestId, string? sessionId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit);
+    var filter = BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId);
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -659,6 +771,15 @@ app.MapGet("/gw/config-authority/report", async () =>
     var gwPlatformIds = IdSet(gwPlatformDocs);
     var gwModelIds = IdSet(gwModelDocs);
     var gwExchangeIds = IdSet(gwExchangeDocs);
+    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var pool in gwPoolDocs)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+        {
+            usableGwPoolIds.Add(poolId);
+        }
+    }
 
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
@@ -668,7 +789,13 @@ app.MapGet("/gw/config-authority/report", async () =>
         var poolId = d.AsNullableString("ModelPoolId");
         return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId);
     });
+    var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
+    {
+        var poolId = d.AsNullableString("ModelPoolId");
+        return !string.IsNullOrWhiteSpace(poolId) && usableGwPoolIds.Contains(poolId);
+    });
     var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
+    var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var configured = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "configured", StringComparison.OrdinalIgnoreCase));
     var disabled = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "disabled", StringComparison.OrdinalIgnoreCase));
@@ -678,11 +805,21 @@ app.MapGet("/gw/config-authority/report", async () =>
     var mapOnlyModels = MapOnlyCount(mapModelDocs, gwModelIds);
     var mapOnlyExchanges = MapOnlyCount(mapExchangeDocs, gwExchangeIds);
     var mapFallbackObjectsRemaining = mapOnlyPools + mapOnlyPlatforms + mapOnlyModels + mapOnlyExchanges;
-    var activeAppCallerMapFallbackReady = activeMissingGatewayPool == 0;
-    var blockers = mapOnlyPools + mapOnlyPlatforms + mapOnlyModels + mapOnlyExchanges + activeMissingGatewayPool + discovered;
+    var activeAppCallerMapFallbackReady = activeMissingGatewayPool == 0
+        && discovered == 0
+        && activeBoundPoolWithoutUsableMember == 0;
+    var blockers = mapOnlyPools
+        + mapOnlyPlatforms
+        + mapOnlyModels
+        + mapOnlyExchanges
+        + activeMissingGatewayPool
+        + activeBoundPoolWithoutUsableMember
+        + discovered;
     var totalSurface = mapPoolDocs.Count + mapPlatformDocs.Count + mapModelDocs.Count + mapExchangeDocs.Count + Math.Max(1, appCallerDocs.Count);
     var readinessPercent = totalSurface == 0 ? 100 : Math.Clamp((int)Math.Round(((double)(totalSurface - blockers) / totalSurface) * 100), 0, 100);
-    var status = activeMissingGatewayPool > 0 ? "blocked" : blockers > 0 ? "partial" : "ready";
+    var status = activeMissingGatewayPool > 0 || activeBoundPoolWithoutUsableMember > 0
+        ? "blocked"
+        : blockers > 0 ? "partial" : "ready";
 
     var gaps = new List<ConfigAuthorityGapItem>();
     void AddMapOnlyGaps(IEnumerable<BsonDocument> docs, HashSet<string> gwIds, string objectType, Func<BsonDocument, string> nameSelector)
@@ -718,6 +855,21 @@ app.MapGet("/gw/config-authority/report", async () =>
             Status = "active-missing-gw-pool",
             Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
         }));
+    gaps.AddRange(activeAppCallers
+        .Where(d =>
+        {
+            var poolId = d.AsNullableString("ModelPoolId");
+            return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId) && !usableGwPoolIds.Contains(poolId);
+        })
+        .Take(30)
+        .Select(d => new ConfigAuthorityGapItem
+        {
+            ObjectType = "appCaller",
+            Id = d.GetStringOrEmpty("_id"),
+            Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
+            Status = "gw-pool-without-usable-member",
+            Detail = "active appCaller 已绑定 GW 模型池，但该池没有可解析、非 unavailable 的成员；MAP fallback 退场前必须修复。",
+        }));
 
     var summary = new ConfigAuthoritySummary
     {
@@ -736,7 +888,9 @@ app.MapGet("/gw/config-authority/report", async () =>
         AppCallersTotal = appCallerDocs.Count,
         ActiveAppCallers = activeAppCallers.Count,
         ActiveWithGatewayPool = activeWithGatewayPool,
+        ActiveWithUsableGatewayPool = activeWithUsableGatewayPool,
         ActiveMissingGatewayPool = activeMissingGatewayPool,
+        ActiveBoundPoolWithoutUsableMember = activeBoundPoolWithoutUsableMember,
         DiscoveredAppCallers = discovered,
         ConfiguredAppCallers = configured,
         DisabledAppCallers = disabled,
@@ -834,7 +988,9 @@ app.MapGet("/gw/runtime-gates", async () =>
         return modelsArr
             .Where(x => x.IsBsonDocument)
             .Select(x => x.AsBsonDocument)
-            .Any(m => (m.AsNullableBool("Enabled") ?? true) && string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal));
+            .Any(m => (m.AsNullableBool("Enabled") ?? true)
+                      && (string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+                          || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
     }
 
     var gwPoolIds = IdSet(gwPoolDocs);
@@ -910,6 +1066,31 @@ app.MapGet("/gw/runtime-gates", async () =>
     var releaseLogAppCallers = runtimeCommit is null
         ? new List<string>()
         : await logs.Distinct<string>("AppCallerCode", logReleaseFilter).ToListAsync();
+    var targetProtocols = TargetIngressProtocols();
+    var targetProtocolKeys = targetProtocols.Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
+    var releaseProtocolLogDocs = runtimeCommit is null
+        ? new List<BsonDocument>()
+        : await logs.Find(logReleaseFilter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("IngressProtocol")
+                .Include("GatewayTransport")
+                .Include("Status")
+                .Include("DroppedParameters"))
+            .ToListAsync();
+    var coveredIngressProtocols = releaseProtocolLogDocs
+        .Select(d => NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        .Where(targetProtocolKeys.Contains)
+        .ToHashSet(StringComparer.Ordinal);
+    var missingIngressProtocols = targetProtocols
+        .Where(p => !coveredIngressProtocols.Contains(p.Key))
+        .Select(p => p.Key)
+        .ToList();
+    var protocolFailedLogs = releaseProtocolLogDocs.LongCount(d =>
+        targetProtocolKeys.Contains(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        && string.Equals(d.AsNullableString("Status"), "failed", StringComparison.OrdinalIgnoreCase));
+    var protocolDroppedParameterLogs = releaseProtocolLogDocs.LongCount(d =>
+        targetProtocolKeys.Contains(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        && HasDroppedParameters(d));
     var releaseShadowAppCallers = runtimeCommit is null
         ? new List<string>()
         : await shadows.Distinct<string>("AppCallerCode", shadowFilter).ToListAsync();
@@ -941,8 +1122,91 @@ app.MapGet("/gw/runtime-gates", async () =>
         && activeBoundPoolWithoutUsableMember == 0;
 
     var items = new List<RuntimeGateItem>();
+    static RuntimeGateLink Link(string label, string to) => new() { Label = label, To = to };
+    static string Query(string key, string? value)
+        => string.IsNullOrWhiteSpace(value) ? string.Empty : $"?{key}={Uri.EscapeDataString(value.Trim())}";
+    static List<RuntimeGateLink> RuntimeGateLinks(string id, Dictionary<string, string> facts, string? releaseCommit)
+    {
+        var commit = facts.TryGetValue("releaseCommit", out var factCommit) && !string.IsNullOrWhiteSpace(factCommit)
+            ? factCommit
+            : releaseCommit;
+        var releaseQuery = Query("releaseCommit", commit);
+        var missingCode = facts.TryGetValue("missingAppCallerCodes", out var missingCodes)
+            ? missingCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault()
+            : null;
+        return id switch
+        {
+            "config_authority_objects" => new()
+            {
+                Link("模型池", "/pools"),
+                Link("平台", "/platforms"),
+                Link("模型", "/models"),
+                Link("Exchange", "/exchanges"),
+            },
+            "config_authority_rollout_ledger" => new()
+            {
+                Link("审计", "/audits?targetType=llmgw_config_authority"),
+                Link("概览", "/"),
+            },
+            "active_appcaller_pool_binding" => new()
+            {
+                Link("active 调用方", "/app-callers?status=active"),
+                Link("discovered 调用方", "/app-callers?status=discovered"),
+                Link("模型池", "/pools"),
+            },
+            "appcaller_policy_drift" => new() { Link("漂移调用方", "/app-callers?drift=any") },
+            "gateway_pool_member_readiness" => new() { Link("检查模型池", "/pools") },
+            "active_appcaller_map_fallback_exit" => new()
+            {
+                Link("active 调用方", "/app-callers?status=active"),
+                Link("模型池", "/pools"),
+                Link("平台密钥", "/platforms"),
+            },
+            "gateway_key_integrity" => new()
+            {
+                Link("平台密钥", "/platforms"),
+                Link("模型密钥", "/models"),
+                Link("Exchange 密钥", "/exchanges"),
+            },
+            "current_commit_http_transport" => new() { Link("当前 commit 日志", $"/logs{releaseQuery}") },
+            "dropped_parameter_runtime_evidence" => new() { Link("参数证据日志", $"/logs{releaseQuery}") },
+            "appcaller_runtime_coverage" => new()
+            {
+                Link("active 调用方", string.IsNullOrWhiteSpace(missingCode)
+                    ? "/app-callers?status=active"
+                    : $"/app-callers?status=active&search={Uri.EscapeDataString(missingCode)}"),
+                Link("当前 commit 日志", $"/logs{releaseQuery}"),
+                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
+            },
+            "protocol_runtime_coverage" => new()
+            {
+                Link("协议覆盖", $"/?protocolCoverage=1{(string.IsNullOrWhiteSpace(commit) ? string.Empty : $"&releaseCommit={Uri.EscapeDataString(commit)}")}"),
+                Link("协议日志", $"/logs{releaseQuery}"),
+                Link("调用方", "/app-callers"),
+            },
+            "shadow_runtime_evidence" => new()
+            {
+                Link("shadow 样本", $"/shadow{releaseQuery}{(releaseQuery.Length > 0 ? "&" : "?")}{ShadowQuickQuery(facts)}"),
+            },
+            "full_http_rollout_ledger" => new()
+            {
+                Link("当前 commit 日志", $"/logs{releaseQuery}"),
+                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
+            },
+            _ => new(),
+        };
+    }
+    static string ShadowQuickQuery(Dictionary<string, string> facts)
+    {
+        var critical = facts.TryGetValue("critical", out var c) && int.TryParse(c, out var criticalCount) ? criticalCount : 0;
+        var httpFail = facts.TryGetValue("httpFail", out var h) && int.TryParse(h, out var httpFailCount) ? httpFailCount : 0;
+        if (critical > 0) return "quick=critical";
+        if (httpFail > 0) return "quick=httpFail";
+        return "quick=all";
+    }
     void AddGate(string id, string label, string status, bool blocking, string detail, string evidence, string nextAction, Dictionary<string, string>? facts = null)
     {
+        var gateFacts = facts ?? new Dictionary<string, string>();
         items.Add(new RuntimeGateItem
         {
             Id = id,
@@ -952,7 +1216,8 @@ app.MapGet("/gw/runtime-gates", async () =>
             Detail = detail,
             Evidence = evidence,
             NextAction = nextAction,
-            Facts = facts ?? new Dictionary<string, string>(),
+            Facts = gateFacts,
+            Links = RuntimeGateLinks(id, gateFacts, runtimeCommit),
         });
     }
 
@@ -1136,6 +1401,35 @@ app.MapGet("/gw/runtime-gates", async () =>
         });
 
     AddGate(
+        "protocol_runtime_coverage",
+        "四类入口协议当前 commit 覆盖",
+        runtimeCommit is null || releaseLogTotal == 0 || missingIngressProtocols.Count > 0 ? "waiting" : "pass",
+        runtimeCommit is null || releaseLogTotal == 0 || missingIngressProtocols.Count > 0,
+        runtimeCommit is null
+            ? "当前进程缺少 GIT_COMMIT，不能证明协议入口样本属于本次发布版本。"
+            : releaseLogTotal == 0
+            ? "尚未看到当前 commit 的 LLM 请求日志，不能证明四类入口协议的运行覆盖。"
+            : missingIngressProtocols.Count == 0
+            ? $"当前 commit 已覆盖 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 四类入口协议，协议日志 {releaseProtocolLogDocs.Count} 条。"
+            : $"当前 commit 尚缺 {missingIngressProtocols.Count}/{targetProtocols.Count} 类入口协议运行日志：{string.Join(", ", missingIngressProtocols)}。",
+        $"/gw/protocol-coverage?releaseCommit={runtimeCommit ?? "empty"}; covered={coveredIngressProtocols.Count}; missing={missingIngressProtocols.Count}; failed={protocolFailedLogs}; dropped={protocolDroppedParameterLogs}",
+        runtimeCommit is null || releaseLogTotal == 0
+            ? "先设置 GIT_COMMIT，并用当前 commit 触发 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 的真实或 canary 样本。"
+            : missingIngressProtocols.Count == 0
+            ? "保留四类入口协议当前 commit 运行证据。"
+            : "补触发缺失协议的真实兼容入口样本；静态路由审计不能替代运行日志证据。",
+        new Dictionary<string, string>
+        {
+            ["releaseCommit"] = runtimeCommit ?? "",
+            ["coveredProtocols"] = coveredIngressProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingProtocols"] = missingIngressProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingIngressProtocols"] = string.Join(",", missingIngressProtocols),
+            ["protocolLogTotal"] = releaseProtocolLogDocs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["failedProtocolLogs"] = protocolFailedLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["droppedParameterProtocolLogs"] = protocolDroppedParameterLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
+
+    AddGate(
         "appcaller_runtime_coverage",
         "active appCaller 当前 commit 覆盖",
         runtimeCommit is null || activeAppCallerCodes.Count == 0 || missingRuntimeCoverageAppCallers.Count > 0 ? "waiting" : "pass",
@@ -1313,6 +1607,15 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         .Select(d => d.GetStringOrEmpty("_id"))
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .ToHashSet(StringComparer.Ordinal);
+    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var pool in gwPoolDocs)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+        {
+            usableGwPoolIds.Add(poolId);
+        }
+    }
     var defaultPoolByType = gwPoolDocs
         .Where(d => d.AsNullableBool("IsDefaultForType") == true)
         .Select(d => new
@@ -1321,7 +1624,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
             Type = d.GetStringOrEmpty("ModelType").Trim(),
             Name = d.AsNullableString("Name") ?? d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"),
         })
-        .Where(x => x.Id.Length > 0 && x.Type.Length > 0)
+        .Where(x => x.Id.Length > 0 && x.Type.Length > 0 && usableGwPoolIds.Contains(x.Id))
         .GroupBy(x => x.Type, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Name, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
 
@@ -1335,9 +1638,50 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         var appCallerId = appCaller.GetStringOrEmpty("_id");
         var appCallerCode = appCaller.AsNullableString("AppCallerCode") ?? appCallerId;
         var currentPoolId = appCaller.AsNullableString("ModelPoolId");
+        var currentModelPolicy = appCaller.AsNullableString("ModelPolicy");
         if (!string.IsNullOrWhiteSpace(currentPoolId) && gwPoolIds.Contains(currentPoolId))
         {
-            result.Skipped++;
+            if (!usableGwPoolIds.Contains(currentPoolId))
+            {
+                result.Skipped++;
+                result.Items.Add(new ConfigAuthorityGapItem
+                {
+                    ObjectType = "appCaller",
+                    Id = appCallerId,
+                    Name = appCallerCode,
+                    Status = "gw-pool-without-usable-member",
+                    Detail = $"active appCaller 当前绑定的 GW 模型池 {currentPoolId} 没有可解析成员；请先在 /pools 补齐 enabled 模型或 Exchange。",
+                });
+                continue;
+            }
+
+            if (string.Equals(currentModelPolicy, "pool", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Skipped++;
+                continue;
+            }
+
+            var policyUpdateResult = await gwAppCallers.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", appCallerId),
+                Builders<BsonDocument>.Update
+                    .Set("ModelPolicy", "pool")
+                    .Set("UpdatedAt", now));
+            if (policyUpdateResult.ModifiedCount > 0)
+            {
+                result.Bound++;
+                result.Items.Add(new ConfigAuthorityGapItem
+                {
+                    ObjectType = "appCaller",
+                    Id = appCallerId,
+                    Name = appCallerCode,
+                    Status = "normalized-to-gw-pool-policy",
+                    Detail = $"已保留现有 GW 模型池 {currentPoolId}，并将路由策略收敛为 pool。",
+                });
+            }
+            else
+            {
+                result.Skipped++;
+            }
             continue;
         }
 
@@ -1362,12 +1706,9 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
         var updates = new List<UpdateDefinition<BsonDocument>>
         {
             Builders<BsonDocument>.Update.Set("ModelPoolId", defaultPool.Id),
+            Builders<BsonDocument>.Update.Set("ModelPolicy", "pool"),
             Builders<BsonDocument>.Update.Set("UpdatedAt", now),
         };
-        if (string.IsNullOrWhiteSpace(appCaller.AsNullableString("ModelPolicy")))
-        {
-            updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", "pool"));
-        }
 
         var updateResult = await gwAppCallers.UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", appCallerId),
@@ -1381,7 +1722,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                 Id = appCallerId,
                 Name = appCallerCode,
                 Status = "bound-to-gw-default-pool",
-                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}。",
+                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}，并将路由策略收敛为 pool。",
             });
         }
         else
@@ -1436,7 +1777,10 @@ app.MapGet("/gw/app-callers", async (
         var pattern = new BsonRegularExpression(search.Trim(), "i");
         filters.Add(fb.Or(
             fb.Regex("AppCallerCode", pattern),
-            fb.Regex("Title", pattern)));
+            fb.Regex("Title", pattern),
+            fb.Regex("LastObservedRequestId", pattern),
+            fb.Regex("LastObservedSessionId", pattern),
+            fb.Regex("LastObservedRunId", pattern)));
     }
     var filter = filters.Count > 0 ? fb.And(filters) : fb.Empty;
     var total = await gwAppCallers.CountDocumentsAsync(filter);
@@ -1465,7 +1809,7 @@ app.MapGet("/gw/app-callers", async (
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// GW appCaller 配置：状态、模型池绑定与参数策略先落 GW 自有库，resolver 消费在下一阶段接入。
+// GW appCaller 配置：状态、模型池绑定与参数策略落 GW 自有库；active 状态必须绑定可用的 GW 权威池。
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
 {
     if (body is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
@@ -1476,6 +1820,9 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
+    var effectiveStatus = doc.AsNullableString("Status") ?? "discovered";
+    var effectiveModelPoolId = doc.AsNullableString("ModelPoolId");
+    var effectiveModelPolicy = doc.AsNullableString("ModelPolicy");
     void AddChange(string field, object? from, object? to) =>
         changes[field] = new BsonDocument { { "from", ToBsonAuditValue(from) }, { "to", ToBsonAuditValue(to) } };
 
@@ -1489,6 +1836,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         }
         updates.Add(Builders<BsonDocument>.Update.Set("Status", normalizedStatus));
         AddChange("status", doc.AsNullableString("Status") ?? "discovered", normalizedStatus);
+        effectiveStatus = normalizedStatus;
     }
 
     if (body.ModelPoolId is not null)
@@ -1498,6 +1846,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPoolId"));
             AddChange("modelPoolId", doc.AsNullableString("ModelPoolId"), null);
+            effectiveModelPoolId = null;
         }
         else
         {
@@ -1516,12 +1865,14 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPoolId", modelPoolId));
             AddChange("modelPoolId", doc.AsNullableString("ModelPoolId"), modelPoolId);
+            effectiveModelPoolId = modelPoolId;
 
             var currentStatus = doc.AsNullableString("Status") ?? "discovered";
             if (!statusExplicit && string.Equals(currentStatus, "discovered", StringComparison.OrdinalIgnoreCase))
             {
                 updates.Add(Builders<BsonDocument>.Update.Set("Status", "configured"));
                 AddChange("status", currentStatus, "configured");
+                effectiveStatus = "configured";
             }
         }
     }
@@ -1533,6 +1884,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPolicy"));
             AddChange("modelPolicy", doc.AsNullableString("ModelPolicy"), null);
+            effectiveModelPolicy = null;
         }
         else
         {
@@ -1542,6 +1894,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", modelPolicy));
             AddChange("modelPolicy", doc.AsNullableString("ModelPolicy"), modelPolicy);
+            effectiveModelPolicy = modelPolicy;
         }
     }
 
@@ -1638,6 +1991,20 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         }
     }
 
+    var activeConfigError = await ValidateActiveGatewayAppCallerConfigAsync(
+        gwModelPools,
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        effectiveStatus,
+        effectiveModelPoolId,
+        effectiveModelPolicy,
+        doc.GetStringOrEmpty("RequestType"));
+    if (activeConfigError is not null)
+    {
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", activeConfigError), jsonOptions, 400);
+    }
+
     if (updates.Count == 0)
     {
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
@@ -1701,6 +2068,9 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var setSummary = new BsonDocument();
+    string? targetStatus = null;
+    var targetModelPolicyTouched = false;
+    string? targetModelPolicy = null;
     void AddSetSummary(string field, object? to) => setSummary[field] = ToBsonAuditValue(to);
 
     if (body.TargetStatus is not null)
@@ -1712,15 +2082,18 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         }
         updates.Add(Builders<BsonDocument>.Update.Set("Status", normalizedStatus));
         AddSetSummary("status", normalizedStatus);
+        targetStatus = normalizedStatus;
     }
 
     if (body.ModelPolicy is not null)
     {
+        targetModelPolicyTouched = true;
         var modelPolicy = body.ModelPolicy.Trim().ToLowerInvariant();
         if (modelPolicy.Length == 0)
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("ModelPolicy"));
             AddSetSummary("modelPolicy", null);
+            targetModelPolicy = null;
         }
         else
         {
@@ -1730,6 +2103,7 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
             }
             updates.Add(Builders<BsonDocument>.Update.Set("ModelPolicy", modelPolicy));
             AddSetSummary("modelPolicy", modelPolicy);
+            targetModelPolicy = modelPolicy;
         }
     }
 
@@ -1812,8 +2186,23 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     }
 
-    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var filter = fb.And(filters);
+    var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
+        gwAppCallers,
+        gwModelPools,
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        filter,
+        targetStatus,
+        targetModelPolicyTouched,
+        targetModelPolicy);
+    if (bulkActiveConfigError is not null)
+    {
+        return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", bulkActiveConfigError), jsonOptions, 400);
+    }
+
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var result = await gwAppCallers.UpdateManyAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
     var filterText = string.Join(", ", filterSummary);
     await WriteOperationAuditAsync(
@@ -2653,6 +3042,16 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
     };
     if (description.Length > 0) doc["Description"] = description;
 
+    if (body.IsDefaultForType == true
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先创建为非默认池并添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
+
     await gwModelPools.InsertOneAsync(doc);
     if (body.IsDefaultForType == true)
     {
@@ -2769,9 +3168,20 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
 
     var now = DateTime.UtcNow;
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", now));
-    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
 
     var shouldBeDefault = body.IsDefaultForType ?? (doc.AsNullableBool("IsDefaultForType") ?? false);
+    if (shouldBeDefault
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
+
+    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
+
     if (shouldBeDefault)
     {
         var fb = Builders<BsonDocument>.Filter;
@@ -3051,6 +3461,17 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
 
     if (imported > 0 || updated > 0)
     {
+        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
+            pool,
+            new BsonArray(nextMembers));
+        if (validationError is not null)
+        {
+            return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        }
+
         await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
             .Set("Models", new BsonArray(nextMembers))
             .Set("UpdatedAt", DateTime.UtcNow));
@@ -3232,6 +3653,17 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         .ToList();
 
     var nextModels = new BsonArray(members);
+    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        pool,
+        nextModels);
+    if (validationError is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+    }
+
     await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
         .Set("Models", nextModels)
         .Set("UpdatedAt", DateTime.UtcNow));
@@ -3279,8 +3711,20 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     }
 
     members = members.Except(removed).ToList();
+    var nextModels = new BsonArray(members);
+    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwPlatforms,
+        gwModels,
+        gwModelExchanges,
+        pool,
+        nextModels);
+    if (validationError is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+    }
+
     await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-        .Set("Models", new BsonArray(members))
+        .Set("Models", nextModels)
         .Set("UpdatedAt", DateTime.UtcNow));
     await WriteOperationAuditAsync(
         operationAudits,
@@ -3326,6 +3770,15 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     }
     if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
+    if (targetAuthority == "llm_gateway"
+        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            jsonOptions,
+            400);
+    }
     // 非事务安全次序：先置本池为默认、再清同类型其它池。第二步万一失败是「暂时两个默认」（MAP 仍能选到一个），
     // 远好于「先清后置」失败=零默认。
     await targetPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
@@ -3729,7 +4182,10 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? sourceSystem,
     string? ingressProtocol,
     string? modelPolicy,
-    string? releaseCommit)
+    string? releaseCommit,
+    string? runId,
+    string? requestId,
+    string? sessionId)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -3746,6 +4202,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(sourceSystem)) filters.Add(fb.Eq("SourceSystem", sourceSystem));
     if (!string.IsNullOrWhiteSpace(ingressProtocol)) filters.Add(fb.Eq("IngressProtocol", ingressProtocol));
     if (!string.IsNullOrWhiteSpace(modelPolicy)) filters.Add(fb.Eq("ModelPolicy", modelPolicy));
+    if (!string.IsNullOrWhiteSpace(runId)) filters.Add(fb.Eq("RunId", runId.Trim()));
+    if (!string.IsNullOrWhiteSpace(requestId)) filters.Add(fb.Eq("RequestId", requestId.Trim()));
+    if (!string.IsNullOrWhiteSpace(sessionId)) filters.Add(fb.Eq("SessionId", sessionId.Trim()));
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
@@ -3769,6 +4228,42 @@ static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string f
         .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
+static IReadOnlyList<(string Key, string Label)> TargetIngressProtocols() => new[]
+{
+    ("gw-native", "GW Native"),
+    ("openai-compatible", "OpenAI-compatible"),
+    ("claude-compatible", "Claude-compatible"),
+    ("gemini-compatible", "Gemini-compatible"),
+};
+
+static string NormalizeIngressProtocol(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value)) return "unknown";
+    var normalized = value.Trim().ToLowerInvariant().Replace('_', '-');
+    return normalized switch
+    {
+        "native" or "gw" or "gateway-native" => "gw-native",
+        "openai" or "openai-compatible" or "openai-chat" => "openai-compatible",
+        "claude" or "anthropic" or "anthropic-compatible" => "claude-compatible",
+        "gemini" or "google" or "google-compatible" => "gemini-compatible",
+        _ => normalized,
+    };
+}
+
+static bool IsRuntimeGovernedAppCallerStatus(string? value)
+{
+    var normalized = string.IsNullOrWhiteSpace(value) ? "discovered" : value.Trim().ToLowerInvariant();
+    return normalized is "active" or "configured";
+}
+
+static bool HasDroppedParameters(BsonDocument doc)
+{
+    if (!doc.TryGetValue("DroppedParameters", out var value) || value.IsBsonNull) return false;
+    if (value.IsBsonArray) return value.AsBsonArray.Count > 0;
+    if (value.IsString) return !string.IsNullOrWhiteSpace(value.AsString);
+    return false;
+}
+
 static LlmLogListItem MapListItem(BsonDocument d) => new()
 {
     Id = d.GetStringOrEmpty("_id"),
@@ -3780,6 +4275,7 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     PlatformName = d.AsNullableString("PlatformName"),
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
+    RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
     Username = null,
     DisplayName = null,
@@ -3820,6 +4316,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ReleaseCommit = d.AsNullableString("ReleaseCommit"),
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
+    RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
     RequestType = d.AsNullableString("RequestType"),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
@@ -3890,6 +4387,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
     var transport = d.AsNullableString("GatewayTransport");
     var sourceSystem = d.AsNullableString("SourceSystem");
     var ingressProtocol = d.AsNullableString("IngressProtocol");
+    var runId = d.AsNullableString("RunId");
     var modelPolicy = d.AsNullableString("ModelPolicy");
     var modelPoolId = d.AsNullableString("ModelPoolId");
     var parameterPolicy = d.AsNullableString("ParameterPolicy");
@@ -3914,6 +4412,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
 
     Add("ingress", "source", sourceSystem);
     Add("ingress", "protocol", ingressProtocol);
+    Add("ingress", "run", runId);
     Add("ingress", "appCaller", d.AsNullableString("AppCallerCode") ?? d.AsNullableString("AppCallerCodeDisplayName") ?? d.AsNullableString("AppCallerTitle"));
     Add("ingress", "request type", d.AsNullableString("RequestType"));
     Add("policy", "model policy", modelPolicy ?? mode);
@@ -3945,6 +4444,7 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
         Transport = transport,
         SourceSystem = sourceSystem,
         IngressProtocol = ingressProtocol,
+        RunId = runId,
         ModelPolicy = modelPolicy,
         ModelPoolId = modelPoolId,
         IsFallback = isFallback,
@@ -4391,6 +4891,9 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     LastObservedModelPoolId = d.AsNullableString("LastObservedModelPoolId"),
     LastObservedModelPolicy = d.AsNullableString("LastObservedModelPolicy"),
     LastObservedParameterPolicy = d.AsNullableString("LastObservedParameterPolicy"),
+    LastObservedRequestId = d.AsNullableString("LastObservedRequestId"),
+    LastObservedSessionId = d.AsNullableString("LastObservedSessionId"),
+    LastObservedRunId = d.AsNullableString("LastObservedRunId"),
     Owner = d.AsNullableString("Owner"),
     MonthlyBudgetUsd = d.AsNullableDecimal("MonthlyBudgetUsd"),
     RateLimitPerMinute = d.AsNullableInt("RateLimitPerMinute"),
@@ -4418,6 +4921,185 @@ static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
         "any" => new BsonDocument("$expr", new BsonDocument("$or", new BsonArray { routePolicy, routePool, parameter })),
         _ => null,
     };
+}
+
+static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
+    IMongoCollection<BsonDocument> appCallers,
+    IMongoCollection<BsonDocument> gwModelPools,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    FilterDefinition<BsonDocument> filter,
+    string? targetStatus,
+    bool targetModelPolicyTouched,
+    string? targetModelPolicy)
+{
+    var projection = Builders<BsonDocument>.Projection
+        .Include("_id")
+        .Include("AppCallerCode")
+        .Include("RequestType")
+        .Include("Status")
+        .Include("ModelPoolId")
+        .Include("ModelPolicy");
+    var docs = await appCallers.Find(filter).Project(projection).ToListAsync();
+    foreach (var doc in docs)
+    {
+        var effectiveStatus = targetStatus ?? doc.AsNullableString("Status") ?? "discovered";
+        var effectiveModelPoolId = doc.AsNullableString("ModelPoolId");
+        var effectiveModelPolicy = targetModelPolicyTouched ? targetModelPolicy : doc.AsNullableString("ModelPolicy");
+        var error = await ValidateActiveGatewayAppCallerConfigAsync(
+            gwModelPools,
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
+            effectiveStatus,
+            effectiveModelPoolId,
+            effectiveModelPolicy,
+            doc.GetStringOrEmpty("RequestType"));
+        if (error is not null)
+        {
+            var code = doc.AsNullableString("AppCallerCode") ?? doc.GetStringOrEmpty("_id");
+            return $"{code}: {error}";
+        }
+    }
+    return null;
+}
+
+static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
+    IMongoCollection<BsonDocument> gwModelPools,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    string? status,
+    string? modelPoolId,
+    string? modelPolicy,
+    string? requestType)
+{
+    if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
+    {
+        return null;
+    }
+
+    if (!string.Equals(modelPolicy, "pool", StringComparison.OrdinalIgnoreCase))
+    {
+        return "active appCaller 必须使用 modelPolicy=pool；请绑定 GW 模型池并使用 pool 策略。";
+    }
+
+    if (string.IsNullOrWhiteSpace(modelPoolId))
+    {
+        return "active appCaller 必须绑定 llm_gateway.llmgw_model_pools 中的 GW 权威模型池。";
+    }
+
+    var pool = await gwModelPools
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", modelPoolId.Trim()))
+        .FirstOrDefaultAsync();
+    if (pool is null)
+    {
+        return $"active appCaller 绑定的模型池 {modelPoolId.Trim()} 不是 GW 权威模型池；请先在 /pools 认领或创建。";
+    }
+
+    var poolType = pool.AsNullableString("ModelType");
+    if (!string.IsNullOrWhiteSpace(poolType)
+        && !string.IsNullOrWhiteSpace(requestType)
+        && !string.Equals(poolType, requestType, StringComparison.OrdinalIgnoreCase))
+    {
+        return $"active appCaller 绑定的 GW 模型池类型 {poolType} 与调用类型 {requestType} 不一致。";
+    }
+
+    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+    {
+        return $"active appCaller 绑定的 GW 模型池 {modelPoolId.Trim()} 没有可解析、非 unavailable 的成员；请先在 /pools 补齐 enabled 模型或 Exchange。";
+    }
+
+    return null;
+}
+
+static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    BsonDocument pool,
+    BsonArray nextModels)
+{
+    if (pool.AsNullableBool("IsDefaultForType") != true)
+    {
+        return null;
+    }
+
+    var nextPool = new BsonDocument(pool)
+    {
+        ["Models"] = nextModels,
+    };
+    if (await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, nextPool))
+    {
+        return null;
+    }
+
+    return "默认 GW 模型池必须保留至少一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange，再删除或覆盖现有成员。";
+}
+
+static async Task<bool> HasUsableGatewayPoolMemberAsync(
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    BsonDocument pool)
+{
+    var enabledPlatformIds = (await gwPlatforms.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
+            .ToListAsync())
+        .Where(d => d.AsNullableBool("Enabled") ?? true)
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var enabledModels = await gwModels.Find(Builders<BsonDocument>.Filter.Ne("Enabled", false))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId").Include("Enabled"))
+        .ToListAsync();
+    var enabledExchanges = await gwModelExchanges.Find(Builders<BsonDocument>.Filter.Ne("Enabled", false))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("Enabled").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+
+    var members = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    return members
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Any(member => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
+}
+
+static bool IsResolvableGatewayPoolMember(
+    BsonDocument member,
+    HashSet<string> enabledPlatformIds,
+    List<BsonDocument> enabledModels,
+    List<BsonDocument> enabledExchanges)
+{
+    if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
+    var modelId = member.GetStringOrEmpty("ModelId");
+    var platformId = member.GetStringOrEmpty("PlatformId");
+    if (modelId.Length == 0 || platformId.Length == 0) return false;
+    if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
+    {
+        return enabledExchanges.Any(exchange => GatewayExchangeSupportsModel(exchange, modelId));
+    }
+    var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
+    if (exchangeById is not null) return GatewayExchangeSupportsModel(exchangeById, modelId);
+    if (!enabledPlatformIds.Contains(platformId)) return false;
+    return enabledModels.Any(model =>
+        string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
+        && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
+            || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
+            || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
+}
+
+static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
+{
+    if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
+    if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
+    if (!exchange.TryGetValue("Models", out var modelsValue) || !modelsValue.IsBsonArray) return false;
+    return modelsValue.AsBsonArray
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Any(m => (m.AsNullableBool("Enabled") ?? true)
+                  && (string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
+                      || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
 }
 
 static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField)
@@ -4550,6 +5232,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     var latestDisableMapFallback = false;
     var latestHasEvidenceJson = false;
     var latestHasReleaseGateJson = false;
+    var latestProtocolCanaryRequired = false;
+    var latestHasProtocolCanaryJson = false;
     var parseErrors = 0;
 
     foreach (var line in File.ReadLines(normalizedPath))
@@ -4574,6 +5258,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
             latestDisableMapFallback = ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers");
             latestHasEvidenceJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"));
             latestHasReleaseGateJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"));
+            latestProtocolCanaryRequired = ReadJsonBool(root, "protocolCanaryRequired");
+            latestHasProtocolCanaryJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson"));
         }
         catch (JsonException)
         {
@@ -4594,17 +5280,25 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     }
 
     var sameCommit = expectedCommit is not null && string.Equals(latestCommit, expectedCommit, StringComparison.OrdinalIgnoreCase);
-    var ready = sameCommit && latestReleaseGateRequired && latestDisableMapFallback && latestHasEvidenceJson && latestHasReleaseGateJson;
+    var ready = sameCommit
+                && latestReleaseGateRequired
+                && latestDisableMapFallback
+                && latestHasEvidenceJson
+                && latestHasReleaseGateJson
+                && latestProtocolCanaryRequired
+                && latestHasProtocolCanaryJson;
     var missing = new List<string>();
     if (!sameCommit) missing.Add("same-commit");
     if (!latestReleaseGateRequired) missing.Add("releaseGateRequired");
     if (!latestDisableMapFallback) missing.Add("disableMapConfigFallbackForActiveAppCallers");
     if (!latestHasEvidenceJson) missing.Add("evidenceJson");
     if (!latestHasReleaseGateJson) missing.Add("releaseGateJson");
+    if (!latestProtocolCanaryRequired) missing.Add("protocolCanaryRequired");
+    if (!latestHasProtocolCanaryJson) missing.Add("protocolCanaryJson");
     var detail = ready
         ? $"找到同 commit 的 http-full success 台账：{latestCommit}，recordedAt={latestRecordedAt}。"
         : $"找到 http-full success 台账，但仍缺 {string.Join(", ", missing)}；latestCommit={latestCommit}，currentCommit={expectedCommit ?? "empty"}。";
-    var evidence = $"rolloutLedger={normalizedPath}; stage=http-full; status=success; commit={latestCommit}; releaseGateRequired={latestReleaseGateRequired}; disableMapFallback={latestDisableMapFallback}";
+    var evidence = $"rolloutLedger={normalizedPath}; stage=http-full; status=success; commit={latestCommit}; releaseGateRequired={latestReleaseGateRequired}; disableMapFallback={latestDisableMapFallback}; protocolCanaryRequired={latestProtocolCanaryRequired}; protocolCanaryJson={latestHasProtocolCanaryJson}";
     facts["latestCommit"] = latestCommit;
     facts["recordedAt"] = latestRecordedAt;
     facts["sameCommit"] = sameCommit ? "true" : "false";
@@ -4612,6 +5306,8 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     facts["disableMapConfigFallbackForActiveAppCallers"] = latestDisableMapFallback ? "true" : "false";
     facts["evidenceJson"] = latestHasEvidenceJson ? "true" : "false";
     facts["releaseGateJson"] = latestHasReleaseGateJson ? "true" : "false";
+    facts["protocolCanaryRequired"] = latestProtocolCanaryRequired ? "true" : "false";
+    facts["protocolCanaryJson"] = latestHasProtocolCanaryJson ? "true" : "false";
     facts["missing"] = string.Join(",", missing);
     return (ready, detail, evidence, facts);
 }

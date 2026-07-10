@@ -557,6 +557,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var sw = Stopwatch.StartNew();
         try
         {
+            var requestId = Guid.NewGuid().ToString("N");
             var resp = await _gateway.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
             {
                 AppCallerCode = AppCallerRegistry.InfraAgent.RuntimeProfileTest.Chat,
@@ -567,6 +568,17 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 ProfileId = secret.Id,
                 ProfileName = secret.Name,
                 UserId = userId,
+                RequestId = requestId,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    UserId = userId,
+                    SourceSystem = "map",
+                    IngressProtocol = "gw-native",
+                    AppCallerTitle = secret.Name,
+                    ModelPolicy = "pinned",
+                    ParameterPolicy = "default-drop",
+                },
                 TimeoutSeconds = 30
             }, ct);
             sw.Stop();

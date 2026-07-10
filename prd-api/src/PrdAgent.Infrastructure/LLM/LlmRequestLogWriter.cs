@@ -91,6 +91,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 SystemPromptHash = start.SystemPromptHash,
                 SystemPromptText = string.IsNullOrWhiteSpace(start.SystemPromptText) ? null : Truncate(start.SystemPromptText, requestBodyMaxChars),
                 MessageCount = start.MessageCount,
+                RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim(),
                 DocumentChars = start.DocumentChars,
                 DocumentHash = start.DocumentHash,
                 UserPromptChars = start.UserPromptChars,
