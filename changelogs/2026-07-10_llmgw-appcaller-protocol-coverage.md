@@ -13,3 +13,5 @@
 | test | prd-api | 增加 runtime profile 协议解析防退化测试，守卫模型 Protocol 覆盖平台和 URL 推断 |
 | fix | prd-api | ASR chat-audio 路由改为优先依据 Gateway 解析出的 Protocol，避免同平台多协议被 PlatformType 误分流 |
 | test | prd-api | 增加 ASR chat-audio 路由策略测试，覆盖协议优先和旧平台兜底 |
+| fix | prd-api | Gateway adapter 选择支持协议别名映射，避免 anthropic/claude-compatible 被误落到 OpenAI 兜底 |
+| test | prd-api | 增加 Gateway adapter 协议别名映射防退化测试 |
