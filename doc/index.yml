@@ -104,6 +104,7 @@ docs:
   design.frontend.toast: Toast 通知系统实现
   design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds.managed-delivery: CDS 托管交付契约（DeploymentRun 唯一事实源 + 不可变 DeploymentVersion + managed/compose 双模式 + 结构化诊断）
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
@@ -160,6 +161,7 @@ docs:
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
+  guide.cds.managed-delivery: CDS 托管交付使用指南
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程

@@ -696,6 +696,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleRuntimeGate_MaintenanceReleaseRetainsOnlyQualifiedPriorShadowEvidence()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
+        Assert.Contains("ReadSuccessfulHttpFullRolloutCommits", consoleProgram);
+        Assert.Contains("successfulHttpFullCommits", consoleProgram);
+        Assert.Contains("retainedShadowCandidates.FirstOrDefault", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"releaseGateRequired\")", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"protocolCanaryRequired\")", consoleProgram);
+        Assert.Contains("configAuthorityLedgerEvidence.Ready", consoleProgram);
+        Assert.Contains("httpTransportLogs == releaseLogTotal", consoleProgram);
+        Assert.Contains("missingIngressProtocols.Count == 0", consoleProgram);
+        Assert.Contains("protocolFailedLogs == 0", consoleProgram);
+        Assert.Contains("missingRuntimeCoverageAppCallers.Count == 0", consoleProgram);
+        Assert.Contains("canRetainPreviousShadowEvidence ? \"retained\" : \"waiting\"", consoleProgram);
+        Assert.Contains("首次切流必须跑当前 commit 的真实 appCaller shadow 样本", consoleProgram);
+    }
+
+    [Fact]
     public void ExecDep_ProvidesNoUnderscoreCompatibilityWrapper()
     {
         var wrapper = ReadRepoFile("execdep.sh");
@@ -1744,6 +1764,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--include-model-lab-run", script);
         Assert.Contains("--include-arena-run", script);
         Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("--skip-text-seeds", script);
+        Assert.Contains("skipTextSeeds", script);
+        Assert.Contains("--skip-text-seeds cannot be combined", script);
+        Assert.Contains("--skip-text-seeds requires at least one image, vision, video, or ASR include flag", script);
+        Assert.Contains("focused_non_text_seed_requested", script);
         Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
         Assert.Contains("\"LLMGW_SHADOW_SAMPLE_KEY\": FORCE_SHADOW_SAMPLE_KEY", script);
         Assert.Contains("/api/v1/chat-runs/", script);

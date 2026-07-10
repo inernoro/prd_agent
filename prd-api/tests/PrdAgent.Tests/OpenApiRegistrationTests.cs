@@ -8,11 +8,11 @@ namespace PrdAgent.Tests;
 ///
 /// 守护「make-or-break」不变量：OpenApi 的两个伞形 appCallerCode 必须已在
 /// <see cref="AppCallerRegistry"/> 静态注册。原因（见 doc/debt.open-platform.open-api.md）：
-/// 1. <c>LlmGateway.TryValidateAppCaller</c> 用静态注册表反射校验，未注册的 code 直接
-///    APP_CALLER_INVALID（400），网关根本不会调度；
+/// 1. MAP 自有调用点仍通过静态注册表获得编译期拼写守卫和展示元数据；
 /// 2. <c>AppCallerRegistrySyncService</c> 启动时把已注册 code 同步成 llm_app_callers DB 记录，
 ///    没有这条记录，<c>ModelResolver.ResolveAsync</c> 会直接返回 NotFound，
 ///    未绑定的 Key 无法回落到 default:chat / default:image。
+/// 外部系统和新 GW caller 不再受静态注册表硬门限制，运行时权威是 llm_gateway registry。
 ///
 /// 一旦有人误删这两个常量，本测试立刻 fail，避免对外网关整体瘫痪。
 /// </summary>
