@@ -26,7 +26,7 @@ builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
 builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));
 builder.Services.AddHostedService<LlmGatewayDatabaseInitializer>();
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddSingleton<GatewayScopedKeyAuthorizer>();
+builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();

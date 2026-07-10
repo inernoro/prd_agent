@@ -2066,6 +2066,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("path.Equals(\"/gw/v1/profile-test\"", endpoints);
         Assert.Contains("return \"profile:test\"", endpoints);
         Assert.Contains("NormalizeGatewayStatusCode(value.Success, value.StatusCode)", endpoints);
+        Assert.Contains("ResolveScopedAuthorizationInputsAsync", endpoints);
+        Assert.Contains("GATEWAY_APP_CALLER_MISMATCH", endpoints);
+        Assert.Contains("ReadJsonBool(root, \"stream\")", endpoints);
+        Assert.Contains("path.Equals(\"/gw/v1/client-stream\"", endpoints);
+        Assert.Contains("path.Contains(\":streamGenerateContent\"", endpoints);
         Assert.Contains("CleanupMultipartRefsAsync", endpoints);
         Assert.Contains("protectedGatewayPath", endpoints);
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);

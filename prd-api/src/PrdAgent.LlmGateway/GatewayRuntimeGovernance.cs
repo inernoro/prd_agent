@@ -21,7 +21,19 @@ public sealed record GatewayKeyAuthorization(
     string? KeyId = null,
     bool LegacySharedKey = false);
 
-public sealed class GatewayScopedKeyAuthorizer
+public interface IGatewayScopedKeyAuthorizer
+{
+    Task<GatewayKeyAuthorization> AuthorizeAsync(
+        string providedKey,
+        string legacySharedKey,
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        string requiredScope,
+        CancellationToken ct);
+}
+
+public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 {
     private readonly LlmGatewayDataContext _data;
 

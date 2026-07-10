@@ -65,7 +65,8 @@ public sealed class GatewayRuntimeGovernanceTests
         }, "client-failure-request", CancellationToken.None);
 
         admission.Allowed.ShouldBeTrue();
-        await coordinator.FinalizeAsync(admission.Lease, 422, pipelineThrew: false);
+        admission.Lease.ShouldNotBeNull();
+        await coordinator.FinalizeAsync(admission.Lease!, 422, pipelineThrew: false);
 
         var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
             .Find(_ => true)
@@ -91,7 +92,8 @@ public sealed class GatewayRuntimeGovernanceTests
         }, "server-failure-request", CancellationToken.None);
 
         admission.Allowed.ShouldBeTrue();
-        await coordinator.FinalizeAsync(admission.Lease, 503, pipelineThrew: false);
+        admission.Lease.ShouldNotBeNull();
+        await coordinator.FinalizeAsync(admission.Lease!, 503, pipelineThrew: false);
 
         var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
             .Find(_ => true)

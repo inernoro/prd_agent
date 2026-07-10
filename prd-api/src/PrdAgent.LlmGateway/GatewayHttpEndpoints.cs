@@ -60,7 +60,24 @@ public static class GatewayHttpEndpoints
             if (protectedGatewayPath || protectedCompatPath)
             {
                 var providedKey = ResolveProvidedGatewayKey(context);
-                var authorizer = context.RequestServices.GetService<GatewayScopedKeyAuthorizer>();
+                var authorizer = context.RequestServices.GetService<IGatewayScopedKeyAuthorizer>();
+                var authorizationInputs = authorizer != null && !HasGatewayKey(context, gatewayApiKey)
+                    ? await ResolveScopedAuthorizationInputsAsync(context, path)
+                    : new GatewayAuthorizationInputs(
+                        ResolveHeader(context, "X-Gateway-Source") ?? "external",
+                        ResolveHeader(context, "X-Gateway-App-Caller") ?? string.Empty,
+                        ResolveIngressProtocol(path),
+                        ResolveRequiredScope(path));
+                if (authorizationInputs.ErrorCode is not null)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                    {
+                        error = new { code = authorizationInputs.ErrorCode, message = authorizationInputs.ErrorDetail },
+                    }, jsonOpts));
+                    return;
+                }
                 var authorization = authorizer == null
                     ? new GatewayKeyAuthorization(
                         HasGatewayKey(context, gatewayApiKey),
@@ -71,10 +88,10 @@ public static class GatewayHttpEndpoints
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,
                         gatewayApiKey,
-                        ResolveHeader(context, "X-Gateway-Source") ?? "external",
-                        ResolveHeader(context, "X-Gateway-App-Caller") ?? string.Empty,
-                        ResolveIngressProtocol(path),
-                        ResolveRequiredScope(path),
+                        authorizationInputs.SourceSystem,
+                        authorizationInputs.AppCallerCode,
+                        authorizationInputs.IngressProtocol,
+                        authorizationInputs.RequiredScope,
                         context.RequestAborted);
                 if (!authorization.Allowed)
                 {
@@ -1198,7 +1215,9 @@ public static class GatewayHttpEndpoints
         if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
-        if (path.Contains("/stream", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
+        if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
+            || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
             || path.Contains("route-self-test", StringComparison.OrdinalIgnoreCase)
@@ -1207,6 +1226,104 @@ public static class GatewayHttpEndpoints
         if (path.Contains("/requests/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/status", StringComparison.OrdinalIgnoreCase)) return "request:read";
         return "invoke";
+    }
+
+    private static async Task<GatewayAuthorizationInputs> ResolveScopedAuthorizationInputsAsync(
+        HttpContext context,
+        string path)
+    {
+        var headerSource = ResolveHeader(context, "X-Gateway-Source");
+        var headerAppCaller = ResolveHeader(context, "X-Gateway-App-Caller");
+        var ingressProtocol = ResolveIngressProtocol(path);
+        var sourceSystem = headerSource ?? "external";
+        var appCallerCode = headerAppCaller ?? string.Empty;
+        var requiredScope = ResolveRequiredScope(path);
+
+        if (path.Equals("/gw/v1/pools", StringComparison.OrdinalIgnoreCase)
+            && context.Request.Query.TryGetValue("appCallerCode", out var queryCaller)
+            && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
+        {
+            appCallerCode = queryCaller.First()!.Trim();
+        }
+
+        if (context.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) != true)
+            return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+
+        context.Request.EnableBuffering();
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            if (body.RootElement.ValueKind != JsonValueKind.Object)
+                return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+
+            var root = body.RootElement;
+            if (ReadJsonBool(root, "stream") && string.Equals(requiredScope, "invoke", StringComparison.Ordinal))
+                requiredScope = "stream:invoke";
+
+            if (string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal))
+            {
+                var bodyAppCaller = ReadJsonString(root, "AppCallerCode");
+                if (!string.IsNullOrWhiteSpace(bodyAppCaller))
+                {
+                    if (!string.IsNullOrWhiteSpace(headerAppCaller)
+                        && !string.Equals(headerAppCaller, bodyAppCaller, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new(sourceSystem, bodyAppCaller, ingressProtocol, requiredScope,
+                            "GATEWAY_APP_CALLER_MISMATCH",
+                            "X-Gateway-App-Caller 与请求体 AppCallerCode 不一致");
+                    }
+                    appCallerCode = bodyAppCaller;
+                }
+
+                var handlerForcesMap = path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)
+                                       || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase);
+                var bodySource = handlerForcesMap ? "map" : ReadNestedJsonString(root, "Context", "SourceSystem") ?? "map";
+                if (!string.IsNullOrWhiteSpace(headerSource)
+                    && !string.Equals(headerSource, bodySource, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new(bodySource, appCallerCode, ingressProtocol, requiredScope,
+                        "GATEWAY_SOURCE_SYSTEM_MISMATCH",
+                        "X-Gateway-Source 与请求实际 SourceSystem 不一致");
+                }
+                sourceSystem = bodySource;
+            }
+        }
+        catch (JsonException)
+        {
+            // 端点自身会返回 invalid_json；鉴权仍按 header/path 执行且不会触达上游。
+        }
+        finally
+        {
+            context.Request.Body.Position = 0;
+        }
+
+        return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+    }
+
+    private static string? ReadJsonString(JsonElement element, string propertyName)
+        => TryGetJsonProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()?.Trim()
+            : null;
+
+    private static bool ReadJsonBool(JsonElement element, string propertyName)
+        => TryGetJsonProperty(element, propertyName, out var value)
+           && value.ValueKind is JsonValueKind.True;
+
+    private static string? ReadNestedJsonString(JsonElement element, string objectName, string propertyName)
+        => TryGetJsonProperty(element, objectName, out var nested) && nested.ValueKind == JsonValueKind.Object
+            ? ReadJsonString(nested, propertyName)
+            : null;
+
+    private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+            value = property.Value;
+            return true;
+        }
+        value = default;
+        return false;
     }
 
     private static bool IsOpenAiCompatibleProtectedPath(string path)
@@ -4151,6 +4268,14 @@ public static class GatewayHttpEndpoints
         public static RehydrateResult Fail(string code, string message, int statusCode = 500)
             => new(false, null, GatewayRawResponse.Fail(code, message, statusCode));
     }
+
+    private sealed record GatewayAuthorizationInputs(
+        string SourceSystem,
+        string AppCallerCode,
+        string IngressProtocol,
+        string RequiredScope,
+        string? ErrorCode = null,
+        string? ErrorDetail = null);
 
     private sealed record AppCallerStatusDecision(
         bool Rejected,

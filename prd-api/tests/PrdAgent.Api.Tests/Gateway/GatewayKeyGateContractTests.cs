@@ -384,6 +384,109 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task ScopedNativeKey_RejectsHeaderBodyAppCallerMismatch()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "caller-b::chat",
+                    ModelType = "chat",
+                    Context = new { SourceSystem = "external" },
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            body.ShouldContain("GATEWAY_APP_CALLER_MISMATCH");
+            authorizer.CallCount.ShouldBe(0);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ScopedNativeKey_AuthorizesBodyAppCallerUsedByHandler()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(new EchoingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "caller-b::chat",
+                    ModelType = "chat",
+                    Context = new { SourceSystem = "external" },
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.AppCallerCode.ShouldBe("caller-b::chat");
+            authorizer.RequiredScope.ShouldBe("invoke");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    public static IEnumerable<object[]> ScopedStreamingRequests() => new[]
+    {
+        new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[],\"stream\":true}" },
+        new object[] { "/v1/responses", "{\"model\":\"test\",\"input\":\"hello\",\"stream\":true}" },
+        new object[] { "/v1/messages", "{\"model\":\"test\",\"messages\":[],\"stream\":true}" },
+        new object[] { "/v1beta/models/test:streamGenerateContent", "{\"contents\":[]}" },
+        new object[] { "/gw/v1/client-stream", "{\"AppCallerCode\":\"caller-a::chat\",\"ModelType\":\"chat\",\"SystemPrompt\":\"\",\"Messages\":[]}" },
+    };
+
+    [Theory]
+    [MemberData(nameof(ScopedStreamingRequests))]
+    public async Task ScopedInvokeKey_CannotUseStreamingRoutes(string path, string json)
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
+            request.Headers.Add("X-Gateway-Source", path.StartsWith("/gw/", StringComparison.Ordinal) ? "map" : "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
     {
         await using var app = BuildHostWithGateway(new EchoingGateway());
@@ -1948,7 +2051,8 @@ public class GatewayKeyGateContractTests
 
     private static WebApplication BuildHostWithGateway(
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-        IGatewayServingReadinessProbe? readinessProbe = null)
+        IGatewayServingReadinessProbe? readinessProbe = null,
+        IGatewayScopedKeyAuthorizer? keyAuthorizer = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -1959,6 +2063,8 @@ public class GatewayKeyGateContractTests
         builder.Services.AddSingleton<GatewayCancellationRegistry>();
         if (readinessProbe != null)
             builder.Services.AddSingleton(readinessProbe);
+        if (keyAuthorizer != null)
+            builder.Services.AddSingleton(keyAuthorizer);
 
         var app = builder.Build();
         var pascalJson = new JsonSerializerOptions
@@ -1978,6 +2084,39 @@ public class GatewayKeyGateContractTests
 
         public Task<GatewayServingReadinessSnapshot> CheckAsync(CancellationToken cancellationToken)
             => Task.FromResult(_snapshot);
+    }
+
+    private sealed class CapturingScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        private readonly Func<string, bool> _scopeAllowed;
+
+        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed) => _scopeAllowed = scopeAllowed;
+
+        public int CallCount { get; private set; }
+        public string? AppCallerCode { get; private set; }
+        public string? RequiredScope { get; private set; }
+
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(
+            string providedKey,
+            string legacySharedKey,
+            string sourceSystem,
+            string appCallerCode,
+            string ingressProtocol,
+            string requiredScope,
+            CancellationToken ct)
+        {
+            CallCount++;
+            AppCallerCode = appCallerCode;
+            RequiredScope = requiredScope;
+            var allowed = _scopeAllowed(requiredScope);
+            return Task.FromResult(new GatewayKeyAuthorization(
+                allowed,
+                true,
+                allowed ? 200 : 403,
+                allowed ? string.Empty : "GATEWAY_KEY_SCOPE_DENIED",
+                allowed ? "allowed" : "scope denied",
+                "capturing-key"));
+        }
     }
 
     private sealed class CancellableGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
