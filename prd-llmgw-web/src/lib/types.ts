@@ -618,6 +618,7 @@ export type GatewayAppCaller = {
   requestType: string;
   sourceSystem: string;
   ingressProtocol: string;
+  observedIngressProtocols?: string[];
   title?: string | null;
   status: string;
   modelPoolId?: string | null;

@@ -385,6 +385,7 @@ function AppCallerRow({
   const compatiblePools = pools.filter((p) => !item.requestType || p.modelType.toLowerCase() === item.requestType.toLowerCase());
   const observedPolicy = [item.lastObservedModelPolicy, item.lastObservedModelPoolId].filter(Boolean).join(' / ');
   const observedParameter = item.lastObservedParameterPolicy ? `参数 ${item.lastObservedParameterPolicy}` : '';
+  const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
   const routeDrift = Boolean(item.lastObservedModelPolicy && item.lastObservedModelPolicy !== item.modelPolicy)
     || Boolean(item.lastObservedModelPoolId && item.lastObservedModelPoolId !== item.modelPoolId);
   const parameterDrift = Boolean(item.lastObservedParameterPolicy && item.lastObservedParameterPolicy !== item.parameterPolicy);
@@ -398,7 +399,15 @@ function AppCallerRow({
       </td>
       <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
       <td style={td}>{item.requestType || '—'}</td>
-      <td style={td}>{item.ingressProtocol || '—'}</td>
+      <td style={td}>
+        {observedIngressProtocols.length ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 220 }}>
+            {observedIngressProtocols.map((protocol) => (
+              <Chip key={protocol} label={protocol} color="var(--text)" bg="var(--surface-muted)" />
+            ))}
+          </div>
+        ) : '—'}
+      </td>
       <td style={td}>{item.sourceSystem || '—'}</td>
       <td style={td}>
         <select value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={{ ...selectStyle, width: 180 }}>

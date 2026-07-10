@@ -905,6 +905,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ActualPlatformId = resolution.ActualPlatformId,
             ActualPlatformName = resolution.ActualPlatformName,
             PlatformType = resolution.PlatformType,
+            Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
             ModelGroupId = resolution.ModelGroupId,
@@ -2916,14 +2917,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
-        if (string.IsNullOrWhiteSpace(platformType))
+        var adapterKey = NormalizeAdapterKey(platformType);
+        if (string.IsNullOrWhiteSpace(adapterKey))
             return _adapters.GetValueOrDefault("openai"); // 默认 OpenAI
 
-        if (_adapters.TryGetValue(platformType, out var adapter))
+        if (_adapters.TryGetValue(adapterKey, out var adapter))
             return adapter;
 
         // OpenAI 兼容
         return _adapters.GetValueOrDefault("openai");
+    }
+
+    internal static string? NormalizeAdapterKey(string? platformType)
+    {
+        var normalized = platformType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            null or "" or "unknown" => null,
+            "anthropic" or "claude-compatible" => "claude",
+            "openai-compatible" or "openrouter" or "gemini-compatible" => "openai",
+            _ => normalized
+        };
     }
 
     private async Task<string?> StartLogAsync(

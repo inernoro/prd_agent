@@ -87,6 +87,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         Assert.Contains("ValidateActiveGatewayAppCallerConfigAsync", consoleProgram);
+        Assert.Contains("ObservedIngressProtocols", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
+        Assert.Contains(".AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)", servingEndpoints);
+        Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
+        Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
         Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
         Assert.Contains("active appCaller 必须使用 modelPolicy=pool", consoleProgram);
         Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
@@ -119,6 +123,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("lastObservedRequestId?: string | null", logsTypes);
         Assert.Contains("lastObservedSessionId?: string | null", logsTypes);
         Assert.Contains("lastObservedRunId?: string | null", logsTypes);
+        Assert.Contains("observedIngressProtocols?: string[]", logsTypes);
         var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
         Assert.Contains("runId: filterRunId.trim() || undefined", logsView);
         Assert.Contains("requestId: filterRequestId.trim() || undefined", logsView);
@@ -128,6 +133,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("logsHref('requestId', item.lastObservedRequestId)", appCallersPage);
         Assert.Contains("logsHref('sessionId', item.lastObservedSessionId)", appCallersPage);
         Assert.Contains("logsHref('runId', item.lastObservedRunId)", appCallersPage);
+        Assert.Contains("item.observedIngressProtocols?.length", appCallersPage);
         Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
     }
 
@@ -148,9 +154,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("app.MapGet(\"/gw/protocol-coverage\"", consoleProgram);
         Assert.Contains("TargetIngressProtocols", consoleProgram);
         Assert.Contains("NormalizeIngressProtocol", consoleProgram);
+        Assert.Contains("GetObservedIngressProtocols", consoleProgram);
+        Assert.Contains("Where(d => GetObservedIngressProtocols(d).Contains(protocol.Key", consoleProgram);
         Assert.Contains("IsRuntimeGovernedAppCallerStatus", consoleProgram);
         Assert.Contains("HasDroppedParameters", consoleProgram);
         Assert.Contains("protocol_runtime_coverage", consoleProgram);
+        Assert.Contains("appcaller_ingress_registry_coverage", consoleProgram);
+        Assert.Contains(".Include(\"ObservedIngressProtocols\")", consoleProgram);
+        Assert.Contains("registryObservedProtocols", consoleProgram);
+        Assert.Contains("missingRegistryProtocols", consoleProgram);
         Assert.Contains("missingIngressProtocols", consoleProgram);
         Assert.Contains("/gw/protocol-coverage?releaseCommit=", consoleProgram);
         Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
@@ -164,12 +176,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ProtocolCoveragePanel", overviewPage);
         Assert.Contains("协议入口覆盖", overviewPage);
         Assert.Contains("case 'protocol_runtime_coverage':", overviewPage);
+        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overviewPage);
+        Assert.Contains("appcaller_ingress_registry_coverage: [", overviewPage);
         Assert.Contains("protocolCanaryRequired", overviewPage);
         Assert.Contains("protocolCanaryJson", overviewPage);
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
         Assert.Contains("protocol_runtime_coverage", protocolAudit);
         Assert.Contains("LLM Gateway four-protocol runtime canary", protocolCanary);
+        Assert.Contains("appCaller ingress registry coverage", protocolCanary);
         Assert.Contains("TARGET_PROTOCOLS = (\"gw-native\", \"openai-compatible\", \"claude-compatible\", \"gemini-compatible\")", protocolCanary);
         Assert.Contains("parser.add_argument(\"--execute\", action=\"store_true\"", protocolCanary);
         Assert.Contains("dry-run only; add --execute to create runtime logs", protocolCanary);
@@ -556,6 +571,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allowedPendingRuntimeGates", releaseGate);
         Assert.Contains("selfFinalizingHttpFullLedger", releaseGate);
         Assert.Contains("remaining == [\"full_http_rollout_ledger\"]", releaseGate);
+        Assert.Contains("appcaller_ingress_registry_coverage", releaseGate);
+        Assert.Contains("blocked runtime gates missing registry facts", releaseGate);
         Assert.Contains("\"stable\"", releaseGate);
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);
@@ -588,6 +605,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("case 'current_commit_http_transport':", overview);
         Assert.Contains("case 'dropped_parameter_runtime_evidence':", overview);
         Assert.Contains("case 'appcaller_runtime_coverage':", overview);
+        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overview);
         Assert.Contains("case 'protocol_runtime_coverage':", overview);
         Assert.Contains("case 'shadow_runtime_evidence':", overview);
         Assert.Contains("case 'full_http_rollout_ledger':", overview);
@@ -1856,6 +1874,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<DistributionStrip label=\"Source\"", logsView);
         Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
         Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
+    }
+
+    [Fact]
+    public void ModelLabAndArena_PinSelectedModelThroughGateway()
+    {
+        var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
+        var arenaWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs");
+
+        Assert.Contains("_gateway.CreateClient(", modelLab);
+        Assert.Contains("Admin.ModelLab.Run", modelLab);
+        Assert.Contains("expectedModel: modelName", modelLab);
+        Assert.Contains("pinnedPlatformId: platform.Id", modelLab);
+        Assert.Contains("pinnedModelId: modelName", modelLab);
+        Assert.Contains("expectedModel: model.ModelName", modelLab);
+        Assert.Contains("pinnedPlatformId: resolvedPlatformId", modelLab);
+        Assert.Contains("pinnedModelId: model.ModelName", modelLab);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", modelLab);
+
+        Assert.Contains("gateway.CreateClient(", arenaWorker);
+        Assert.Contains("AppCallerRegistry.Desktop.Arena.BattleChat", arenaWorker);
+        Assert.Contains("expectedModel: slot.ModelId", arenaWorker);
+        Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
+        Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
     }
 
     private static string ReadRepoFile(string relativePath)

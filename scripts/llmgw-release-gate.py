@@ -596,7 +596,7 @@ def _self_test() -> int:
         "status": "ready",
         "releaseCommit": "abc123",
         "readyForHttpFull": True,
-        "passed": 8,
+        "passed": 9,
         "blocked": 0,
         "waiting": 0,
         "retained": 1,
@@ -616,6 +616,7 @@ def _self_test() -> int:
         "retained": 1,
         "items": [
             {"id": "appcaller_runtime_coverage", "status": "waiting", "blocking": True, "facts": {"missingAppCallers": "2"}},
+            {"id": "appcaller_ingress_registry_coverage", "status": "waiting", "blocking": True, "facts": {"missingProtocols": "1", "missingIngressProtocols": "gemini-compatible"}},
             {"id": "current_commit_http_transport", "status": "blocked", "blocking": True, "facts": {"nonHttpTransportLogs": "1"}},
             {"id": "dropped_parameter_runtime_evidence", "status": "blocked", "blocking": True, "facts": {"droppedParameterLogs": "1"}},
             {"id": "legacy_cleanup_after_stability", "status": "retained", "blocking": False},
@@ -634,7 +635,7 @@ def _self_test() -> int:
         failures.append(f"ready runtime gates should pass: {ready}")
     if blocked["ok"]:
         failures.append(f"blocked runtime gates should fail: {blocked}")
-    if set(blocked["remainingRuntimeGates"]) != {"appcaller_runtime_coverage", "current_commit_http_transport", "dropped_parameter_runtime_evidence"}:
+    if set(blocked["remainingRuntimeGates"]) != {"appcaller_runtime_coverage", "appcaller_ingress_registry_coverage", "current_commit_http_transport", "dropped_parameter_runtime_evidence"}:
         failures.append(f"blocked runtime gates missing remaining ids: {blocked}")
     if mismatch["ok"] or not any("releaseCommit mismatch" in item for item in mismatch["failures"]):
         failures.append(f"runtime gates commit mismatch should fail: {mismatch}")
@@ -642,6 +643,8 @@ def _self_test() -> int:
     detail_facts = {item.get("id"): item.get("facts") for item in details if isinstance(item, dict)}
     if (detail_facts.get("appcaller_runtime_coverage") or {}).get("missingAppCallers") != "2":
         failures.append(f"blocked runtime gates missing structured facts: {blocked}")
+    if (detail_facts.get("appcaller_ingress_registry_coverage") or {}).get("missingIngressProtocols") != "gemini-compatible":
+        failures.append(f"blocked runtime gates missing registry facts: {blocked}")
     if (detail_facts.get("current_commit_http_transport") or {}).get("nonHttpTransportLogs") != "1":
         failures.append(f"blocked runtime gates missing transport facts: {blocked}")
     self_finalizing = _runtime_gates_result_from_data(

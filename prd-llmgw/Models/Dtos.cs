@@ -761,6 +761,7 @@ public sealed class GatewayAppCallerItem
     public string RequestType { get; set; } = "";
     public string SourceSystem { get; set; } = "";
     public string IngressProtocol { get; set; } = "";
+    public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }
     public string Status { get; set; } = "";
     public string? ModelPoolId { get; set; }
