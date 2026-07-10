@@ -5,3 +5,4 @@
 | feat | cds | 「全部项目」视图报告树按项目一级分组（CDS 自身 + 各项目各成一组，可折叠），全部折叠/展开按钮同时作用于分组行 |
 | polish | cds | 报告与文件夹删除确认从原生 window.confirm 统一为 Dialog 风格 |
 | rule | skills | 每日验收 SOP 固化归档必须带 --folder-path「每日验收/YYYY-MM」按月分桶；新增 doc/debt.cds.reports.md 记录存量迁移/保留策略/批量操作等剩余债务 |
+| chore | prd-api | 每日验收 SOP 的 --folder-path 要求改到源文档 doc/guide.acceptance.daily-sop.md 并重跑快照同步与官方技能打包，official-skills.generated.json 同步收录 archive_report.py 新归类行为（Codex review P1/P2） |
