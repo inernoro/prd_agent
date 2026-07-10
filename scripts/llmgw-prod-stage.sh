@@ -43,6 +43,8 @@ Required environment for deploy stages:
   LLMGW_GATE_SMOKE_ROUTE_POOL_ID and LLMGW_GATE_SMOKE_ROUTE_PINNED_PLATFORM_ID/MODEL_ID
                               Required when LLMGW_GATE_SMOKE_ROUTE_MATRIX=1
   LLMGW_STAGE_RUN_PROVIDER_AUDIT=1 enables read-only video/ASR provider config audit
+  LLMGW_STAGE_RUN_PROTOCOL_CANARY=0 disables default four-protocol runtime canary on canary/http-full stages
+  LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS caps protocol canary runtime requests, default 4
   LLMGW_STAGE_RUN_VIDEO_CANARY=1 enables /gw/v1/raw video exchange canary evidence
   LLMGW_CONSOLE_BASE and LLMGW_CONSOLE_TOKEN, or LLMGW_CONSOLE_USER/PASSWORD
                               Required for config-authority and http-full stages
@@ -388,7 +390,15 @@ case "$stage" in
     ;;
 esac
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
-run_protocol_canary="${LLMGW_STAGE_RUN_PROTOCOL_CANARY:-0}"
+case "$stage" in
+  canary-*|http-full)
+    protocol_canary_default=1
+    ;;
+  *)
+    protocol_canary_default=0
+    ;;
+esac
+run_protocol_canary="${LLMGW_STAGE_RUN_PROTOCOL_CANARY:-$protocol_canary_default}"
 protocol_canary_max_runtime_calls="${LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}"
 case "$stage" in
   rollback-inproc|rollback-rehearsal|config-authority)

@@ -899,6 +899,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("protocol-canary.json", readiness);
         Assert.Contains("LLMGW_STAGE_RUN_PROTOCOL_CANARY", readiness);
         Assert.Contains("LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", readiness);
+        Assert.Contains("protocol_canary_default=1", readiness);
+        Assert.Contains("canary-*|http-full", readiness);
         Assert.Contains("run_protocol_canary_evidence", readiness);
         Assert.Contains("scripts/llmgw-protocol-canary.py", readiness);
         Assert.Contains("--expect-commit \\\"$commit\\\"", readiness);
