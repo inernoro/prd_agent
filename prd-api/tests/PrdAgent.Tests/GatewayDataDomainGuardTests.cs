@@ -696,6 +696,23 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleRuntimeGate_MaintenanceReleaseRetainsOnlyQualifiedPriorShadowEvidence()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
+        Assert.Contains("latestSuccessfulHttpFullCommit", consoleProgram);
+        Assert.Contains("retainedShadowCandidates.FirstOrDefault", consoleProgram);
+        Assert.Contains("configAuthorityLedgerEvidence.Ready", consoleProgram);
+        Assert.Contains("httpTransportLogs == releaseLogTotal", consoleProgram);
+        Assert.Contains("missingIngressProtocols.Count == 0", consoleProgram);
+        Assert.Contains("protocolFailedLogs == 0", consoleProgram);
+        Assert.Contains("missingRuntimeCoverageAppCallers.Count == 0", consoleProgram);
+        Assert.Contains("canRetainPreviousShadowEvidence ? \"retained\" : \"waiting\"", consoleProgram);
+        Assert.Contains("首次切流必须跑当前 commit 的真实 appCaller shadow 样本", consoleProgram);
+    }
+
+    [Fact]
     public void ExecDep_ProvidesNoUnderscoreCompatibilityWrapper()
     {
         var wrapper = ReadRepoFile("execdep.sh");
