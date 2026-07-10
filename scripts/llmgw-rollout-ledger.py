@@ -205,6 +205,37 @@ def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
     _require_smoke_provider_canary_rows(payload, label, path)
 
 
+def _require_protocol_canary_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    mode = str(payload.get("mode") or payload.get("Mode") or "").strip().lower()
+    if mode != "execute":
+        raise SystemExit(f"ERROR: {label} mode is not execute: {path} mode={mode or 'empty'}")
+
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        raise SystemExit(f"ERROR: {label} missing health object: {path}")
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    if health_commit and health_commit != expected:
+        raise SystemExit(f"ERROR: {label} health commit mismatch: {path} actual={health_commit} expected={expected}")
+
+    cases = payload.get("cases") or payload.get("Cases") or []
+    if not isinstance(cases, list):
+        raise SystemExit(f"ERROR: {label} cases are not a list: {path}")
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    passed_protocols = {
+        str(case.get("protocol") or case.get("Protocol") or "").strip()
+        for case in cases
+        if isinstance(case, dict) and (case.get("ok") is True or case.get("Ok") is True)
+    }
+    missing = sorted(required_protocols.difference(passed_protocols))
+    if missing:
+        raise SystemExit(f"ERROR: {label} missing protocol canary samples: {path} missing={','.join(missing)}")
+
+
 def _require_smoke_provider_canary_rows(payload: dict, label: str, path: str) -> None:
     rows = payload.get("rows") or payload.get("Rows") or []
     if not isinstance(rows, list):
@@ -746,6 +777,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
     evidence_checks = [
         ("servingProbeJson", "serving probe evidence", True),
         ("smokeJson", "D-layer smoke evidence", _bool_flag(str(entry.get("smokeRequired", True)))),
+        ("protocolCanaryJson", "protocol canary evidence", _bool_flag(str(entry.get("protocolCanaryRequired", False)))),
     ]
     for key, label, required in evidence_checks:
         if not required:
@@ -753,6 +785,8 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         try:
             if key == "servingProbeJson":
                 _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
+            elif key == "protocolCanaryJson":
+                _require_protocol_canary_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
             else:
                 _require_smoke_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
                 if _bool_flag(str(entry.get("smokeRouteMatrixRequired", False))):
@@ -984,6 +1018,8 @@ def append(args: argparse.Namespace) -> int:
                     args.commit,
                     require_config_authority=args.stage == "http-full",
                 )
+            if _bool_flag(args.protocol_canary_required):
+                _require_protocol_canary_for_commit(args.protocol_canary_json, "protocol canary evidence", args.commit)
             if _bool_flag(args.upstream_readiness_required):
                 _require_upstream_readiness(args.upstream_readiness_json, "upstream readiness evidence")
             if _bool_flag(args.provider_audit_required):
@@ -1024,6 +1060,8 @@ def append(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
         "protocolRouterAuditJson": args.protocol_router_audit_json,
+        "protocolCanaryJson": args.protocol_canary_json,
+        "protocolCanaryRequired": _bool_flag(args.protocol_canary_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
@@ -1096,6 +1134,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
         fh.write(f"- providerAuditExternalBlockers: `{len(report.get('providerAuditExternalBlockers') or [])}`\n")
         fh.write(f"- protocolRouterAuditJson: `{cell(report['protocolRouterAuditJson'])}`\n")
+        fh.write(f"- protocolCanaryRequired: `{cell(report['protocolCanaryRequired'])}`\n")
+        fh.write(f"- protocolCanaryJson: `{cell(report['protocolCanaryJson'])}`\n")
         fh.write(f"- videoCanaryRequired: `{cell(report['videoCanaryRequired'])}`\n")
         fh.write(f"- videoCanaryJson: `{cell(report['videoCanaryJson'])}`\n")
         fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
@@ -1165,6 +1205,7 @@ def stage_report(args: argparse.Namespace) -> int:
             ("servingProbeJson", args.serving_probe_json, True),
             ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
             ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
+            ("protocolCanaryJson", args.protocol_canary_json, _bool_flag(args.protocol_canary_required)),
             ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
             ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
             ("videoCanaryJson", args.video_canary_json, _bool_flag(args.video_canary_required)),
@@ -1202,6 +1243,8 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_provider_audit(path, label)
             elif label == "protocolRouterAuditJson":
                 _require_protocol_router_audit(path, label)
+            elif label == "protocolCanaryJson":
+                _require_protocol_canary_for_commit(path, label, args.commit)
             elif label == "videoCanaryJson":
                 _require_video_canary(path, label)
             elif label == "asrHttpCanaryJson":
@@ -1243,6 +1286,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
         "protocolRouterAuditJson": args.protocol_router_audit_json,
+        "protocolCanaryJson": args.protocol_canary_json,
+        "protocolCanaryRequired": _bool_flag(args.protocol_canary_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
@@ -1314,6 +1359,8 @@ def audit(args: argparse.Namespace) -> int:
                 "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
                 "providerAuditExternalBlockers": latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
                 "protocolRouterAuditJson": latest.get("protocolRouterAuditJson") or "",
+                "protocolCanaryJson": latest.get("protocolCanaryJson") or "",
+                "protocolCanaryRequired": _bool_flag(str(latest.get("protocolCanaryRequired") or "0")),
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
                 "videoCanaryExternalBlockers": latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
@@ -1438,6 +1485,8 @@ def main() -> int:
     append_parser.add_argument("--provider-audit-json", default="")
     append_parser.add_argument("--provider-audit-required", default="0")
     append_parser.add_argument("--protocol-router-audit-json", default="")
+    append_parser.add_argument("--protocol-canary-json", default="")
+    append_parser.add_argument("--protocol-canary-required", default="0")
     append_parser.add_argument("--video-canary-json", default="")
     append_parser.add_argument("--video-canary-required", default="0")
     append_parser.add_argument("--asr-http-canary-json", default="")
@@ -1476,6 +1525,8 @@ def main() -> int:
     report_parser.add_argument("--provider-audit-json", default="")
     report_parser.add_argument("--provider-audit-required", default="0")
     report_parser.add_argument("--protocol-router-audit-json", default="")
+    report_parser.add_argument("--protocol-canary-json", default="")
+    report_parser.add_argument("--protocol-canary-required", default="0")
     report_parser.add_argument("--video-canary-json", default="")
     report_parser.add_argument("--video-canary-required", default="0")
     report_parser.add_argument("--asr-http-canary-json", default="")

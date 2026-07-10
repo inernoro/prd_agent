@@ -520,6 +520,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--health-interval", releaseGate);
         Assert.Contains("--require-runtime-gates", releaseGate);
         Assert.Contains("--allow-pending-http-full-ledger", releaseGate);
+        Assert.Contains("--protocol-canary-json", releaseGate);
+        Assert.Contains("_protocol_canary_check", releaseGate);
+        Assert.Contains("\"protocolCanary\"", releaseGate);
+        Assert.Contains("protocol canary mode 不是 execute", releaseGate);
+        Assert.Contains("protocol canary 缺少协议样本", releaseGate);
         Assert.Contains("allowedPendingRuntimeGates", releaseGate);
         Assert.Contains("selfFinalizingHttpFullLedger", releaseGate);
         Assert.Contains("remaining == [\"full_http_rollout_ledger\"]", releaseGate);
@@ -780,6 +785,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_provider_external_blockers", ledger);
         Assert.Contains("contains external blockers", ledger);
         Assert.Contains("providerExternalBlockers", ledger);
+        Assert.Contains("_require_protocol_canary_for_commit", ledger);
+        Assert.Contains("\"protocolCanaryJson\": args.protocol_canary_json", ledger);
+        Assert.Contains("\"protocolCanaryRequired\": _bool_flag(args.protocol_canary_required)", ledger);
+        Assert.Contains("append_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
+        Assert.Contains("report_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
+        Assert.Contains("protocol canary evidence", ledger);
         Assert.Contains("_canary_external_blockers", ledger);
         Assert.Contains("_merge_blockers", ledger);
         Assert.Contains("\"externalBlockers\": all_external_blockers", ledger);

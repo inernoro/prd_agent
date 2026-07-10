@@ -123,6 +123,7 @@ def build_report() -> dict[str, Any]:
     prod_stage = _read("scripts/llmgw-prod-stage.sh")
     rollout_ledger = _read("scripts/llmgw-rollout-ledger.py")
     protocol_canary = _read("scripts/llmgw-protocol-canary.py")
+    release_gate = _read("scripts/llmgw-release-gate.py")
     compose = _read("docker-compose.yml")
     cds_compose = _read("cds-compose.yml")
     readiness = _read("scripts/llmgw-readiness-audit.py")
@@ -364,7 +365,7 @@ def build_report() -> dict[str, Any]:
     ))
 
     ok, detail = _contains_all(
-        prod_stage + "\n" + rollout_ledger + "\n" + protocol_canary + "\n" + full_cutover_doc,
+        prod_stage + "\n" + rollout_ledger + "\n" + release_gate + "\n" + protocol_canary + "\n" + full_cutover_doc,
         [
             "config-authority",
             "scripts/llmgw-config-authority-backup.sh",
@@ -385,6 +386,11 @@ def build_report() -> dict[str, Any]:
             "openai-compatible",
             "claude-compatible",
             "gemini-compatible",
+            "--protocol-canary-json",
+            "protocolCanary",
+            "protocolCanaryJson",
+            "protocolCanaryRequired",
+            "_require_protocol_canary_for_commit",
         ],
     )
     backup_before_apply = (
