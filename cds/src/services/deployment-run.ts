@@ -117,6 +117,7 @@ export class DeploymentRunService {
       detail?: Record<string, unknown>;
       evidenceRefs?: string[];
       versionId?: string;
+      commitSha?: string;
       configHash?: string;
       operationId?: string;
       executorId?: string;
@@ -131,6 +132,7 @@ export class DeploymentRunService {
       run.updatedAt = at;
       run.heartbeatAt = at;
       if (input.versionId !== undefined) run.versionId = input.versionId;
+      if (input.commitSha !== undefined) run.commitSha = input.commitSha;
       if (input.configHash !== undefined) run.configHash = input.configHash;
       if (input.operationId !== undefined) run.operationId = input.operationId;
       if (input.executorId !== undefined) run.executorId = input.executorId;

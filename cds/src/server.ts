@@ -3508,6 +3508,7 @@ export function createServer(deps: ServerDeps): express.Express {
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
     branchOperationCoordinator: deps.branchOperationCoordinator,
+    deploymentRunService,
   }));
 
   // 2026-05-28: 单一 SSE 通道 + 任务化刷新。

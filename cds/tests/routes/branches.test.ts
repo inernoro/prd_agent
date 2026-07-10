@@ -13,6 +13,7 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -142,6 +143,7 @@ describe('Branch Routes', () => {
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
   let branchOperationCoordinator: BranchOperationCoordinator;
+  let deploymentRunService: DeploymentRunService;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -233,6 +235,7 @@ describe('Branch Routes', () => {
       },
     };
     branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
+    deploymentRunService = new DeploymentRunService(stateService);
 
     const app = express();
     app.use(express.json());
@@ -244,6 +247,7 @@ describe('Branch Routes', () => {
     });
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
+      deploymentRunService,
     }));
 
     await new Promise<void>((resolve) => {
@@ -1896,6 +1900,17 @@ describe('Branch Routes', () => {
       }
       const deploy = await deployPromise;
       expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('event: deployment-run');
+      const localRunId = String(deploy.headers['x-cds-deployment-run-id']);
+      const localRun = deploymentRunService.get(localRunId);
+      expect(localRun).toMatchObject({
+        branchId: 'cross-cleanup-busy',
+        status: 'running',
+        phase: 'complete',
+      });
+      expect(localRun?.events.map((event) => event.status)).toEqual(expect.arrayContaining([
+        'pending', 'preparing', 'building', 'starting', 'verifying', 'running',
+      ]));
     });
 
     it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
@@ -2061,7 +2076,16 @@ describe('Branch Routes', () => {
         );
         expect(deploy.status).toBe(200);
         expect(String(deploy.body)).toContain('complete');
+        expect(String(deploy.body)).toContain('event: deployment-run');
         expect(stateService.getBranch('force-webhook')?.status).toBe('running');
+        const profileRunId = String(deploy.headers['x-cds-deployment-run-id']);
+        expect(profileRunId).toMatch(/^dr_/);
+        expect(deploymentRunService.get(profileRunId)).toMatchObject({
+          branchId: 'force-webhook',
+          status: 'running',
+          phase: 'complete',
+          operationId: forceOperationId,
+        });
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
         expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
@@ -2493,10 +2517,20 @@ describe('Branch Routes', () => {
       expect(res.headers['content-type']).toContain('text/event-stream');
       const sse = String(res.body);
       expect(sse).toContain('event: complete');
+      expect(sse).toContain('event: deployment-run');
       expect(sse).toContain('demo-extra'); // cleared 列表在 complete data 里
       // The lingering service row is gone (container was torn down + entry removed).
       expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
       expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+      const runId = String(res.headers['x-cds-deployment-run-id']);
+      expect(runId).toMatch(/^dr_/);
+      expect(stateService.getBranch('empty-cleanup')?.lastDeploymentRunId).toBe(runId);
+      expect(deploymentRunService.get(runId)).toMatchObject({
+        branchId: 'empty-cleanup',
+        trigger: 'manual',
+        status: 'running',
+        phase: 'complete',
+      });
     });
 
     it('deploy with empty profiles refuses (503) when the owning executor is offline — no state mutation (Bugbot High)', async () => {
@@ -3229,6 +3263,14 @@ describe('Branch Routes', () => {
           { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-a' },
         );
         expect(first.status).toBe(200);
+        expect(String(first.body)).toContain('event: deployment-run');
+        const firstRunId = String(first.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(firstRunId)).toMatchObject({
+          branchId: 'remote-lease',
+          status: 'running',
+          executorId: 'exec-1',
+          trigger: 'webhook',
+        });
 
         const second = await request(
           server,
@@ -3240,6 +3282,10 @@ describe('Branch Routes', () => {
         expect(second.status).toBe(200);
         expect(String(second.body)).not.toContain('merged');
         expect(fetchCalls).toHaveLength(2);
+        const secondRunId = String(second.headers['x-cds-deployment-run-id']);
+        expect(secondRunId).not.toBe(firstRunId);
+        expect(fetchCalls[0].body.deploymentRunId).toBe(firstRunId);
+        expect(fetchCalls[1].body.deploymentRunId).toBe(secondRunId);
 
         const events = operationEvents.filter((event) => event.branchId === 'remote-lease');
         const started = events.filter((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy');

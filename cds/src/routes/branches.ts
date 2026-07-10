@@ -70,6 +70,8 @@ import {
 } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
+import type { DeploymentRunService } from '../services/deployment-run.js';
+import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -1774,6 +1776,8 @@ export interface RouterDeps {
   serverEventLogStore?: ServerEventLogSink | null;
   /** Serializes/fences branch container lifecycle writes. */
   branchOperationCoordinator?: BranchOperationCoordinator;
+  /** Persistent deployment ledger shared by all deploy entry points. */
+  deploymentRunService?: DeploymentRunService;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -1979,6 +1983,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     serverEventLogStore,
     branchOperationCoordinator,
+    deploymentRunService,
   } = deps;
 
   const router = Router();
@@ -2111,6 +2116,91 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (raw === 'janitor') return 'janitor';
     if (raw === 'system') return 'system';
     return 'manual';
+  }
+
+  function deploymentRunTriggerFromRequest(req: Request, entry: BranchEntry): DeploymentRunTrigger {
+    const source = classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount);
+    if (source === 'webhook' || source === 'manual' || source === 'retry') return source;
+    if (source === 'cooldown-rewarm') return 'scheduler';
+    return 'system';
+  }
+
+  const deploymentRunProgression: DeploymentRunStatus[] = [
+    'pending',
+    'queued',
+    'preparing',
+    'building',
+    'starting',
+    'verifying',
+    'running',
+  ];
+
+  function advanceDeploymentRun(
+    runId: string | undefined,
+    target: Extract<DeploymentRunStatus, 'preparing' | 'building' | 'starting' | 'verifying' | 'running'>,
+    input: {
+      phase: string;
+      message: string;
+      operationId?: string;
+      executorId?: string;
+      commitSha?: string;
+      detail?: Record<string, unknown>;
+    },
+  ): void {
+    if (!deploymentRunService || !runId) return;
+    const current = deploymentRunService.get(runId);
+    if (!current || current.status === 'running' || current.status === 'failed' || current.status === 'cancelled') return;
+    const fromIndex = deploymentRunProgression.indexOf(current.status);
+    const targetIndex = deploymentRunProgression.indexOf(target);
+    if (fromIndex < 0 || targetIndex <= fromIndex) return;
+    for (let index = fromIndex + 1; index <= targetIndex; index += 1) {
+      const nextStatus = deploymentRunProgression[index];
+      if (nextStatus === 'queued') continue;
+      deploymentRunService.transition(runId, nextStatus, {
+        phase: index === targetIndex ? input.phase : nextStatus,
+        message: index === targetIndex ? input.message : `部署进入 ${nextStatus} 阶段`,
+        operationId: input.operationId,
+        executorId: input.executorId,
+        commitSha: input.commitSha,
+        detail: index === targetIndex ? input.detail : undefined,
+      });
+    }
+  }
+
+  function appendDeploymentRunEvent(runId: string | undefined, event: OperationLogEvent): void {
+    if (!deploymentRunService || !runId) return;
+    const run = deploymentRunService.get(runId);
+    if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
+    deploymentRunService.append(runId, {
+      at: event.timestamp,
+      phase: event.step,
+      level: event.status === 'error' ? 'error' : event.status === 'warning' ? 'warn' : 'info',
+      status: event.status,
+      message: event.title || event.log || event.step,
+      detail: event.detail,
+    });
+  }
+
+  function failDeploymentRun(runId: string | undefined, message: string, phase: string): void {
+    if (!deploymentRunService || !runId) return;
+    const run = deploymentRunService.get(runId);
+    if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
+    deploymentRunService.fail(runId, {
+      code: 'cds.deploy.failed',
+      owner: 'unknown',
+      retryable: true,
+      summary: message,
+      phase,
+      evidenceRefs: run.operationId ? [`operation:${run.operationId}`] : [],
+      suggestedAction: '查看本次部署的结构化事件和容器证据后重试',
+    });
+  }
+
+  function cancelDeploymentRun(runId: string | undefined, message: string): void {
+    if (!deploymentRunService || !runId) return;
+    const run = deploymentRunService.get(runId);
+    if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
+    deploymentRunService.cancel(runId, message, 'cancelled');
   }
 
   function stopAttributionFromRequest(req: Request): {
@@ -2758,7 +2848,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     executor: ExecutorNode,
     entry: BranchEntry,
     res: import('express').Response,
-    context: { requestId?: string | null; operationId?: string | null; actor?: string | null; trigger?: string | null } = {},
+    context: {
+      requestId?: string | null;
+      operationId?: string | null;
+      actor?: string | null;
+      trigger?: string | null;
+      deploymentRunId?: string;
+    } = {},
   ): Promise<'completed' | 'failed'> {
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
@@ -2768,6 +2864,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
+    if (context.deploymentRunId) {
+      res.write(`event: deployment-run\ndata: ${JSON.stringify({
+        runId: context.deploymentRunId,
+        streamUrl: `/api/deployment-runs/${context.deploymentRunId}/stream`,
+      })}\n\n`);
+    }
 
     // Record the ownership eagerly so GET /api/branches reflects the new
     // placement even before deploy finishes. If something goes wrong, the
@@ -2778,6 +2880,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
     entry.lastDeployStartedAt = new Date().toISOString();
     stateService.save();
+    advanceDeploymentRun(context.deploymentRunId, 'building', {
+      phase: 'dispatch',
+      message: `部署已派发到执行器 ${executor.id}`,
+      operationId: context.operationId || undefined,
+      executorId: executor.id,
+      commitSha: entry.githubCommitSha,
+    });
 
     // Tell the client we're proxying — gives the transit page a nice hint
     // and makes the log box show meaningful context on the very first event.
@@ -2788,6 +2897,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       timestamp: new Date().toISOString(),
     };
     res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
+    appendDeploymentRunEvent(context.deploymentRunId, preamble);
 
     // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,
     // GET /api/branches/:id/logs 永远空 → "部署" tab 显示 "还没有构建记录"。
@@ -2844,6 +2954,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env,
       requestId: context.requestId || null,
       operationId: context.operationId || null,
+      deploymentRunId: context.deploymentRunId || null,
       actor: context.actor || null,
       trigger: context.trigger || 'manual',
     };
@@ -3011,13 +3122,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
             Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
           }
         }
-        opLog.events.push({
+        const mirroredEvent: OperationLogEvent = {
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
           status: typeof parsed.status === 'string' ? parsed.status : eventName,
           title: typeof parsed.title === 'string' ? parsed.title : (typeof parsed.message === 'string' ? parsed.message : undefined),
           detail: parsed,
           timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
-        });
+        };
+        opLog.events.push(mirroredEvent);
+        appendDeploymentRunEvent(context.deploymentRunId, mirroredEvent);
       };
 
       while (true) {
@@ -3151,7 +3264,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       stateService.save();
-      await flushBranchStateBeforeSuccess({
+      const flushResult = await flushBranchStateBeforeSuccess({
         source: 'branch-remote-deploy',
         actionPrefix: 'branch.remote-deploy',
         branch: entry,
@@ -3160,6 +3273,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: context.actor || null,
         trigger: context.trigger || null,
       });
+      if (flushResult !== 'flushed') {
+        proxyHasError = true;
+        if (!entry.errorMessage) entry.errorMessage = branchStateFlushFailureMessage(flushResult, '远端部署执行完成');
+      }
+      if (proxyHasError) {
+        failDeploymentRun(context.deploymentRunId, entry.errorMessage || '远端执行器部署失败', 'remote-finalize');
+      } else {
+        advanceDeploymentRun(context.deploymentRunId, 'running', {
+          phase: 'complete',
+          message: profiles.length > 0 ? '远端部署完成并通过就绪检查' : '远端残留服务已清理',
+          operationId: context.operationId || undefined,
+          executorId: executor.id,
+          commitSha: entry.githubCommitSha,
+        });
+      }
       try { res.end(); } catch { /* ignore */ }
     }
     return proxyHasError ? 'failed' : 'completed';
@@ -10922,6 +11050,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : undefined;
       const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
       if (!remoteOwned) {
+        const cleanupRun = deploymentRunService?.begin({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          trigger: deploymentRunTriggerFromRequest(req, entry),
+          commitSha: entry.githubCommitSha,
+          phase: 'accepted',
+          message: '空期望清单清理请求已受理',
+        });
+        if (cleanupRun) res.setHeader('X-CDS-Deployment-Run-Id', cleanupRun.id);
         const cleanupLease = beginBranchOperation(req, res, entry, {
           kind: 'deploy',
           source: 'api.deploy-branch',
@@ -10931,17 +11068,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 拿不到租约时 beginBranchOperation 直接发 SSE 终止事件；拿到后下面 initSSE 开流、逐步 push、complete 收尾。
           sse: true,
         });
-        if (branchOperationCoordinator && !cleanupLease) return; // 被拒时 beginBranchOperation 已发 SSE 终止事件
+        if (branchOperationCoordinator && !cleanupLease) {
+          cancelDeploymentRun(cleanupRun?.id, '清理请求未取得分支操作租约');
+          return;
+        }
+        advanceDeploymentRun(cleanupRun?.id, 'preparing', {
+          phase: 'prepare',
+          message: '残留服务清理上下文已准备完成',
+          operationId: cleanupLease?.operationId,
+          commitSha: entry.githubCommitSha,
+        });
         initSSE(res);
+        if (cleanupRun) {
+          sendSSE(res, 'deployment-run', {
+            runId: cleanupRun.id,
+            streamUrl: `/api/deployment-runs/${cleanupRun.id}/stream`,
+          });
+        }
         const cleanupReqId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
         const cActor = resolveActorFromRequest(req);
         const cTrigger = triggerFromRequest(req);
         let cleanupStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         const cleared: string[] = [];
         try {
+          advanceDeploymentRun(cleanupRun?.id, 'starting', {
+            phase: 'cleanup',
+            message: '开始下掉不再需要的服务容器',
+            operationId: cleanupLease?.operationId,
+          });
           for (const [sid, svc] of existingServices) {
             assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup before ${sid}`);
-            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'running', title: `正在下掉残留服务 "${sid}"`, timestamp: new Date().toISOString() });
+            const startingEvent: OperationLogEvent = { step: 'remove-orphan-service', status: 'running', title: `正在下掉残留服务 "${sid}"`, timestamp: new Date().toISOString() };
+            appendDeploymentRunEvent(cleanupRun?.id, startingEvent);
+            sendSSE(res, 'step', startingEvent);
             try {
               await containerService.remove(svc.containerName, {
                 projectId: entry.projectId,
@@ -10959,7 +11118,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup after ${sid}`);
             delete entry.services[sid];
             cleared.push(sid);
-            sendSSE(res, 'step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() });
+            const doneEvent: OperationLogEvent = { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉`, timestamp: new Date().toISOString() };
+            appendDeploymentRunEvent(cleanupRun?.id, doneEvent);
+            sendSSE(res, 'step', doneEvent);
           }
           entry.status = 'idle';
           entry.errorMessage = undefined;
@@ -10975,9 +11136,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           if (flushResult !== 'flushed') {
             cleanupStatus = 'failed';
-            completeBranchOperation(cleanupLease, cleanupStatus, branchStateFlushFailureMessage(flushResult, '残留服务已清理'));
+            const flushMessage = branchStateFlushFailureMessage(flushResult, '残留服务已清理');
+            failDeploymentRun(cleanupRun?.id, flushMessage, 'state-flush');
+            completeBranchOperation(cleanupLease, cleanupStatus, flushMessage);
             sendSSE(res, 'error', {
-              message: branchStateFlushFailureMessage(flushResult, '残留服务已清理'),
+              message: flushMessage,
               stateFlush: flushResult,
             });
             res.end();
@@ -10985,6 +11148,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         } catch (err) {
           cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          if (cleanupStatus === 'cancelled') cancelDeploymentRun(cleanupRun?.id, '残留服务清理被更高优先级操作取代');
+          else failDeploymentRun(cleanupRun?.id, (err as Error).message, 'cleanup');
           completeBranchOperation(cleanupLease, cleanupStatus);
           sendSSE(res, 'error', cleanupStatus === 'cancelled'
             ? { message: '清理被更高优先级操作取代', operationStatus: 'cancelled' }
@@ -10992,8 +11157,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           res.end();
           return;
         }
+        advanceDeploymentRun(cleanupRun?.id, 'running', {
+          phase: 'complete',
+          message: `残留服务清理完成，共下掉 ${cleared.length} 个容器`,
+          operationId: cleanupLease?.operationId,
+          detail: { cleared },
+        });
         completeBranchOperation(cleanupLease, cleanupStatus);
-        sendSSE(res, 'complete', { ok: true, cleared, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
+        sendSSE(res, 'complete', { ok: true, cleared, runId: cleanupRun?.id, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
         res.end();
         return;
       }
@@ -11027,15 +11198,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
-    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
-
     const requestCommitSha = typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    const deploymentRun = deploymentRunService?.begin({
+      projectId: entry.projectId || 'default',
+      branchId: entry.id,
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: requestCommitSha || entry.githubCommitSha,
+      phase: 'accepted',
+      message: '分支部署请求已受理',
+    });
+    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
+
+    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
+    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
+
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
@@ -11043,7 +11224,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
     });
-    if (branchOperationCoordinator && !branchOperationLease) return;
+    if (branchOperationCoordinator && !branchOperationLease) {
+      cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
+      return;
+    }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
 
@@ -11073,6 +11257,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     stateService.save();
+    advanceDeploymentRun(deploymentRun?.id, 'preparing', {
+      phase: 'prepare',
+      message: '部署上下文与分支操作租约已准备完成',
+      operationId: branchOperationLease?.operationId,
+      commitSha: entry.githubCommitSha,
+    });
 
     // ── Cluster dispatch decision ──
     //
@@ -11094,6 +11284,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           operationId: branchOperationLease?.operationId || null,
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
+          deploymentRunId: deploymentRun?.id,
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -11115,6 +11306,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     initSSE(res);
+    if (deploymentRun) {
+      sendSSE(res, 'deployment-run', {
+        runId: deploymentRun.id,
+        streamUrl: `/api/deployment-runs/${deploymentRun.id}/stream`,
+      });
+    }
 
     const opLog: OperationLog = {
       type: 'build',
@@ -11129,6 +11326,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     function logEvent(ev: OperationLogEvent) {
       opLog.events.push(ev);
+      appendDeploymentRunEvent(deploymentRun?.id, ev);
       sendSSE(res, 'step', ev);
       logDeploy(id, `[${ev.status}] ${ev.title || ev.step}${ev.log ? ' — ' + ev.log : ''}`);
     }
@@ -11241,6 +11439,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: '源码准备完成，开始构建服务',
+        operationId: branchOperationLease?.operationId,
+        commitSha: entry.githubCommitSha,
+      });
 
       // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
@@ -11763,6 +11967,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── Update overall status ──
       assertBranchOperationCurrent(branchOperationLease, 'before-deploy-finalize');
+      advanceDeploymentRun(deploymentRun?.id, 'verifying', {
+        phase: 'ready',
+        message: '服务构建与启动阶段结束，开始汇总就绪结果',
+        operationId: branchOperationLease?.operationId,
+        commitSha: entry.githubCommitSha,
+      });
       //
       // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
       //
@@ -11965,6 +12175,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           detail: { result: flushResult },
           timestamp: new Date().toISOString(),
         });
+        failDeploymentRun(deploymentRun?.id, message, 'state-flush');
         sendSSE(res, 'error', { message, stateFlush: flushResult });
         return;
       }
@@ -11976,6 +12187,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ok: !hasError,
         message: completeMsg,
         services: entry.services,
+        runId: deploymentRun?.id,
       });
 
       // Phase 4: auto-smoke after a green deploy (best-effort; never
@@ -12043,6 +12255,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           timestamp: new Date().toISOString(),
         });
       }
+      if (hasError) {
+        failDeploymentRun(deploymentRun?.id, entry.errorMessage || completeMsg, 'ready');
+      } else {
+        advanceDeploymentRun(deploymentRun?.id, 'running', {
+          phase: 'complete',
+          message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
+          operationId: branchOperationLease?.operationId,
+          commitSha: entry.githubCommitSha,
+          detail: { smokeOk },
+        });
+      }
     } catch (err) {
       // 2026-04-27 (用户明确反馈"日志看不到原因"): 这里以前只把错误塞进
       // entry.errorMessage + sendSSE，opLog.events 里没有任何 error 事件，
@@ -12053,6 +12276,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       const errStack = (err as Error)?.stack || '';
       if (err instanceof BranchOperationSupersededError) {
+        cancelDeploymentRun(deploymentRun?.id, '部署操作被更高优先级操作取代');
         await cleanupFencedDeployContainers(
           entry,
           new Set(profiles.map((profile) => profile.id)),
@@ -12082,6 +12306,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         log: errStack ? `${errMsg}\n${errStack}` : errMsg,
         timestamp: new Date().toISOString(),
       });
+      failDeploymentRun(deploymentRun?.id, errMsg, 'deploy');
       entry.status = 'error';
       entry.errorMessage = errMsg;
       opLog.status = 'error';
@@ -12141,6 +12366,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } finally {
+      const remainingRun = deploymentRunService && deploymentRun
+        ? deploymentRunService.get(deploymentRun.id)
+        : undefined;
+      if (remainingRun && !['running', 'failed', 'cancelled'].includes(remainingRun.status)) {
+        if (branchOperationFinalStatus === 'cancelled') {
+          cancelDeploymentRun(deploymentRun?.id, '部署操作已取消');
+        } else if (branchOperationFinalStatus === 'failed') {
+          failDeploymentRun(deploymentRun?.id, entry.errorMessage || '部署未能完成', remainingRun.phase);
+        }
+      }
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
@@ -12162,6 +12397,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
+    {
+      const access = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (access) { res.status(access.status).json(access.body); return; }
+    }
 
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
@@ -12173,6 +12412,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const profileRequestCommitSha = typeof req.body?.commitSha === 'string'
+      && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+      ? req.body.commitSha
+      : undefined;
+    const deploymentRun = deploymentRunService?.begin({
+      projectId: entry.projectId || 'default',
+      branchId: entry.id,
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: profileRequestCommitSha || entry.githubCommitSha,
+      phase: 'accepted',
+      message: `单服务部署请求已受理: ${profile.name}`,
+    });
+    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
+
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
@@ -12181,10 +12434,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,
     });
-    if (branchOperationCoordinator && !branchOperationLease) return;
+    if (branchOperationCoordinator && !branchOperationLease) {
+      cancelDeploymentRun(deploymentRun?.id, '单服务部署请求未取得分支操作租约');
+      return;
+    }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    advanceDeploymentRun(deploymentRun?.id, 'preparing', {
+      phase: 'prepare',
+      message: `单服务部署上下文已准备完成: ${profile.name}`,
+      operationId: branchOperationLease?.operationId,
+      commitSha: entry.githubCommitSha,
+      detail: { profileId },
+    });
 
     initSSE(res);
+    if (deploymentRun) {
+      sendSSE(res, 'deployment-run', {
+        runId: deploymentRun.id,
+        streamUrl: `/api/deployment-runs/${deploymentRun.id}/stream`,
+      });
+    }
 
     const opLog: OperationLog = {
       type: 'build',
@@ -12199,6 +12468,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     function logEvent(ev: OperationLogEvent) {
       opLog.events.push(ev);
+      appendDeploymentRunEvent(deploymentRun?.id, ev);
       sendSSE(res, 'step', ev);
       logDeploy(id, `[${ev.status}] ${ev.title || ev.step}${ev.log ? ' — ' + ev.log : ''}`);
     }
@@ -12223,6 +12493,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: `源码准备完成，开始构建 ${profile.name}`,
+        operationId: branchOperationLease?.operationId,
+        commitSha: entry.githubCommitSha,
+        detail: { profileId },
+      });
 
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
@@ -12333,6 +12610,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
         svc.status = 'starting';
         stateService.save();
+        advanceDeploymentRun(deploymentRun?.id, 'starting', {
+          phase: 'start',
+          message: `${profile.name} 容器已启动`,
+          operationId: branchOperationLease?.operationId,
+          detail: { profileId, hostPort: svc.hostPort },
+        });
         logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待就绪 :${svc.hostPort}`, timestamp: new Date().toISOString() });
 
         let ready = false;
@@ -12345,6 +12628,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           ready = signalReady;
         }
         if (!profile.startupSignal || ready) {
+          advanceDeploymentRun(deploymentRun?.id, 'verifying', {
+            phase: 'ready',
+            message: `开始验证 ${profile.name} 就绪状态`,
+            operationId: branchOperationLease?.operationId,
+            detail: { profileId, hostPort: svc.hostPort },
+          });
           ready = await containerService.waitForReadiness(
             svc.hostPort,
             // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
@@ -12443,8 +12732,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       if (flushResult !== 'flushed') {
         branchOperationFinalStatus = 'failed';
+        const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
+        failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
         sendSSE(res, 'error', {
-          message: branchStateFlushFailureMessage(flushResult, completeMsg),
+          message: flushMessage,
           stateFlush: flushResult,
         });
         return;
@@ -12455,11 +12746,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ok: svc.status === 'running',
         message: completeMsg,
         services: entry.services,
+        runId: deploymentRun?.id,
       });
+      if (svc.status === 'running') {
+        advanceDeploymentRun(deploymentRun?.id, 'running', {
+          phase: 'complete',
+          message: `${profile.name} 部署完成并通过就绪检查`,
+          operationId: branchOperationLease?.operationId,
+          commitSha: entry.githubCommitSha,
+          detail: { profileId, hostPort: svc.hostPort },
+        });
+      } else {
+        failDeploymentRun(deploymentRun?.id, svc.errorMessage || completeMsg, 'ready');
+      }
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       if (err instanceof BranchOperationSupersededError) {
         const errMsg = (err as Error).message;
+        cancelDeploymentRun(deploymentRun?.id, '单服务部署被更高优先级操作取代');
         await cleanupFencedDeployContainers(
           entry,
           new Set([profile.id]),
@@ -12484,6 +12788,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
+      failDeploymentRun(deploymentRun?.id, entry.errorMessage, 'deploy-profile');
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
       opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
@@ -12507,6 +12812,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             stateMessage: branchStateFlushFailureMessage(flushResult, '单服务部署失败状态已写入内存'),
           });
     } finally {
+      const remainingRun = deploymentRunService && deploymentRun
+        ? deploymentRunService.get(deploymentRun.id)
+        : undefined;
+      if (remainingRun && !['running', 'failed', 'cancelled'].includes(remainingRun.status)) {
+        if (branchOperationFinalStatus === 'cancelled') {
+          cancelDeploymentRun(deploymentRun?.id, '单服务部署已取消');
+        } else if (branchOperationFinalStatus === 'failed') {
+          failDeploymentRun(deploymentRun?.id, entry.errorMessage || '单服务部署未能完成', remainingRun.phase);
+        }
+      }
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
