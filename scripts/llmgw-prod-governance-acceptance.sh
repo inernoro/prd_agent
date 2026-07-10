@@ -171,14 +171,14 @@ docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
   if (!sourceModel || !sourcePlatform || !sourceEntry) throw new Error('source model/platform missing');
   db.llmgw_platforms.insertOne({ ...sourcePlatform,
     _id: '$temp_platform', Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url',
-    MaxConcurrency: 1, CreatedAt: now, UpdatedAt: now });
+    PlatformType: 'openai', MaxConcurrency: 1, CreatedAt: now, UpdatedAt: now });
   db.llmgw_models.insertOne({ ...sourceModel,
     _id: '$temp_model_id', PlatformId: '$temp_platform', ModelName: '$temp_model_name',
-    Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url', MaxConcurrency: 1,
+    Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url', Protocol: 'openai', MaxConcurrency: 1,
     MaxRetries: 0, Timeout: 15000, CreatedAt: now, UpdatedAt: now });
   db.llmgw_model_pools.insertOne({ ...sourcePool,
     _id: '$temp_pool', Code: '$temp_pool', Name: 'LLMGW acceptance pool',
-    Models: [{ ModelId: '$temp_model_name', PlatformId: '$temp_platform', Priority: 1,
+    Models: [{ ModelId: '$temp_model_name', PlatformId: '$temp_platform', Protocol: 'openai', Priority: 1,
       HealthStatus: 0, ConsecutiveFailures: 0, ConsecutiveSuccesses: 0 }],
     IsDefaultForType: false, CreatedAt: now, UpdatedAt: now });
   db.llmgw_app_callers.insertOne({

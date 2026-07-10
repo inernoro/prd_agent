@@ -12,6 +12,8 @@ public sealed class GatewayProductionGovernanceScriptTests
         Assert.Contains("LLMGW_GOVERNANCE_ACCEPTANCE_EXECUTE:-0", script);
         Assert.Contains("paid upstream calls: 0", script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fake_upstream.py", script);
+        Assert.Contains("PlatformType: 'openai'", script);
+        Assert.Contains("Protocol: 'openai'", script);
         Assert.Contains("cleanup_database", script);
         Assert.Contains("db.llmgw_app_callers.deleteMany", script);
         Assert.Contains("db.llmgw_service_keys.deleteMany", script);
