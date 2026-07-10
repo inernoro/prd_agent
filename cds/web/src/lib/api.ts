@@ -408,6 +408,20 @@ export interface CdsUserActivity {
   at: string;
 }
 
+export interface CdsAuthPublicStatus {
+  mode: 'disabled' | 'basic' | 'github';
+  enabled: boolean;
+  loginMethods: {
+    github: boolean;
+    local: boolean;
+  };
+}
+
+/** Public auth capability probe for the login page. Does not expose current user details. */
+export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
+  return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+}
+
 /** Whether the system needs first-run bootstrap (zero users). Public. */
 export async function fetchBootstrapStatus(): Promise<{ needsBootstrap: boolean }> {
   return apiRequest<{ needsBootstrap: boolean }>('/api/auth/bootstrap-status');

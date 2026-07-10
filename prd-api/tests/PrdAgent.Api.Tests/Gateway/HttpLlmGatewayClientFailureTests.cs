@@ -15,6 +15,17 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class HttpLlmGatewayClientFailureTests
 {
     [Fact]
+    public async Task ProductionGatewayRoot_AppendsServingPathExactlyOnce()
+    {
+        var factory = new RecordingHttpClientFactory();
+        var client = BuildClient(factory, "http://gateway");
+
+        await client.SendAsync(Request());
+
+        factory.RequestUri.ShouldBe(new Uri("http://gateway/gw/v1/send"));
+    }
+
+    [Fact]
     public async Task ServingTransportFailure_FailsClosed_ForEveryHttpBoundary()
     {
         var client = BuildClient(new ThrowingHttpClientFactory(new HttpRequestException("serving down")));
@@ -107,11 +118,13 @@ public class HttpLlmGatewayClientFailureTests
         ShouldContainText(llmStream[0].ErrorMessage, "401");
     }
 
-    private static HttpLlmGatewayClient BuildClient(IHttpClientFactory factory)
+    private static HttpLlmGatewayClient BuildClient(
+        IHttpClientFactory factory,
+        string baseUrl = "http://llmgw-serve.test")
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve.test",
+            ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = "test-key",
         }).Build();
 
@@ -182,6 +195,31 @@ public class HttpLlmGatewayClientFailureTests
 
         public HttpClient CreateClient(string name)
             => new(new StaticResponseHandler(_statusCode, _body));
+    }
+
+    private sealed class RecordingHttpClientFactory : IHttpClientFactory
+    {
+        private readonly RecordingHandler _handler = new();
+
+        public Uri? RequestUri => _handler.RequestUri;
+
+        public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
+
+        private sealed class RecordingHandler : HttpMessageHandler
+        {
+            public Uri? RequestUri { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                RequestUri = request.RequestUri;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = new StringContent("{\"error\":\"test\"}"),
+                });
+            }
+        }
     }
 
     private sealed class ThrowingHandler : HttpMessageHandler

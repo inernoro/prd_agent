@@ -24,6 +24,7 @@ var mongoDb = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var gatewayDb = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
 builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));
+builder.Services.AddHostedService<LlmGatewayDatabaseInitializer>();
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
@@ -219,6 +220,8 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return new RegistryAssetStorage(inner, db, providerName, regLogger);
     }
 });
+
+builder.Services.AddSingleton<IGatewayServingReadinessProbe, GatewayServingReadinessProbe>();
 
 // 模型池故障通知与自动探活（ModelResolver 解析结果发往健康管理）
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();

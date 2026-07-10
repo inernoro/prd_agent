@@ -42,6 +42,8 @@ set -eu
 #     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
+#   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
 #   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
 #   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 48
@@ -478,9 +480,6 @@ config_value() {
 
 llmgw_mode_value() {
   value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  if [ -z "$value" ]; then
-    value="inproc"
-  fi
   printf '%s' "$value"
 }
 
@@ -503,6 +502,17 @@ llmgw_shadow_sample_allowlist_value() {
 guard_llmgw_prod_stage_context_if_needed() {
   mode_raw="$(llmgw_mode_value)"
   mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  if [ -z "$mode" ]; then
+    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
+    exit 1
+  fi
+  case "$mode" in
+    http|shadow|inproc) ;;
+    *)
+      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
+      exit 1
+      ;;
+  esac
   allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
@@ -549,6 +559,22 @@ else
   echo "ERROR: 未找到 docker-compose 或 docker 命令" >&2
   exit 1
 fi
+
+# 生产 Compose identity 必须与 release worktree 目录名无关。否则从
+# prd_agent_release_<sha> 执行时会创建另一套 project，审计脚本也会找错 Mongo。
+compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
+if ! printf '%s' "$compose_project_name" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'; then
+  echo "ERROR: invalid Compose project name: $compose_project_name" >&2
+  exit 1
+fi
+export COMPOSE_PROJECT_NAME="$compose_project_name"
+echo "Compose project: $COMPOSE_PROJECT_NAME"
+
+if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
+  echo "ERROR: missing executable scripts/llmgw-prod-topology-preflight.sh" >&2
+  exit 1
+fi
+scripts/llmgw-prod-topology-preflight.sh
 
 persist_release_image_pins
 
@@ -802,7 +828,7 @@ run_llmgw_release_gate_if_needed() {
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 
@@ -1057,7 +1083,7 @@ run_llmgw_release_gate_if_needed() {
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
@@ -1186,7 +1212,7 @@ else
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
   pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-30}"
   if command -v timeout >/dev/null 2>&1; then
-    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api llmgw llmgw-serve llmgw-web; then
+    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
       if [ "$TAG" = "latest" ]; then
         echo "WARN: release image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local images" >&2
       else
@@ -1194,7 +1220,7 @@ else
         exit 1
       fi
     fi
-  elif ! $COMPOSE pull api llmgw llmgw-serve llmgw-web; then
+  elif ! $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
     if [ "$TAG" = "latest" ]; then
       echo "WARN: release image pull failed; continuing with existing local images" >&2
     else
@@ -1221,11 +1247,71 @@ refresh_gateway_after_compose() {
   fi
 }
 
+wait_for_llmgw_serving_readiness() {
+  timeout_seconds="${LLMGW_SERVING_READY_TIMEOUT_SECONDS:-180}"
+  if ! printf '%s' "$timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$timeout_seconds" -lt 1 ]; then
+    echo "ERROR: LLMGW_SERVING_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+
+  services=""
+  for service in llmgw-serve llmgw-serve-b; do
+    if $COMPOSE config --services 2>/dev/null | grep -Fxq "$service"; then
+      services="$services $service"
+    fi
+  done
+  services="$(printf '%s' "$services" | xargs || true)"
+  if [ -z "$services" ]; then
+    echo "LLM Gateway serving readiness wait skipped: no serving services in compose"
+    return 0
+  fi
+
+  echo "Waiting for LLM Gateway serving readiness: services=$services timeout=${timeout_seconds}s"
+  deadline=$(( $(date +%s) + timeout_seconds ))
+  while :; do
+    all_ready=1
+    states=""
+    for service in $services; do
+      container_id="$($COMPOSE ps -q "$service" 2>/dev/null | head -n 1)"
+      if [ -z "$container_id" ]; then
+        state="missing"
+        all_ready=0
+      else
+        running="$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null || true)"
+        health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id" 2>/dev/null || true)"
+        state="running=$running,health=$health"
+        if [ "$running" != "true" ] || [ "$health" != "healthy" ]; then
+          all_ready=0
+        fi
+        if [ "$health" = "unhealthy" ] || [ "$running" = "false" ]; then
+          echo "ERROR: serving service $service cannot become ready ($state)" >&2
+          $COMPOSE ps >&2 || true
+          exit 1
+        fi
+      fi
+      states="$states $service[$state]"
+    done
+
+    if [ "$all_ready" = "1" ]; then
+      echo "LLM Gateway serving readiness: PASS$states"
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "ERROR: serving readiness timeout after ${timeout_seconds}s:$states" >&2
+      $COMPOSE ps >&2 || true
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
 echo "Ensuring Docker network exists..."
 docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
+
+wait_for_llmgw_serving_readiness
 
 refresh_gateway_after_compose
 

@@ -50,7 +50,8 @@ public static class GatewayHttpEndpoints
         {
             var path = context.Request.Path.Value ?? string.Empty;
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-                                       && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase);
+                                       && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
+                                       && !path.StartsWith("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -74,6 +75,44 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        app.MapGet("/gw/v1/readyz", async (
+            HttpContext http,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+        {
+            var probe = services.GetService<IGatewayServingReadinessProbe>();
+            if (probe == null)
+            {
+                return Results.Content(JsonSerializer.Serialize(new
+                {
+                    status = "not-ready",
+                    commit = gitCommit,
+                    time = DateTime.UtcNow.ToString("o"),
+                    reason = "readiness-probe-not-registered",
+                }, jsonOpts), "application/json", statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var snapshot = await probe.CheckAsync(http.RequestAborted);
+            var payload = JsonSerializer.Serialize(new
+            {
+                status = snapshot.Ready ? "ready" : "not-ready",
+                commit = gitCommit,
+                time = snapshot.CheckedAt.ToString("o"),
+                components = snapshot.Components.Select(x => new
+                {
+                    name = x.Name,
+                    ready = x.Ready,
+                    durationMs = x.DurationMs,
+                    summary = x.Summary,
+                }),
+            }, jsonOpts);
+            return Results.Content(
+                payload,
+                "application/json",
+                statusCode: snapshot.Ready
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status503ServiceUnavailable);
+        });
 
         // 协议路由 dry-run 自检：不访问上游、不写 appCaller 注册表、不递增限流窗口。
         // 用于维护窗口第一步确认四类入口协议能落到同一套 IR 与路由元数据。
@@ -1389,9 +1428,12 @@ public static class GatewayHttpEndpoints
         try
         {
             var callers = gatewayData.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            var normalizedAppCallerCode = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
+            var normalizedRequestType = GatewayAppCallerIdentity.NormalizePart(requestType);
             var caller = await callers.Find(Builders<GatewayAppCallerRecord>.Filter.And(
-                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
-                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType)))
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, normalizedAppCallerCode),
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, normalizedRequestType)),
+                    new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
                 .FirstOrDefaultAsync(ct);
             var status = CheckAppCallerStatus(appCallerCode, requestType, caller?.Status);
             if (status.Rejected)
@@ -1447,10 +1489,10 @@ public static class GatewayHttpEndpoints
 
     private static AppCallerStatusDecision CheckAppCallerStatus(string appCallerCode, string requestType, string? status)
     {
-        var normalized = string.IsNullOrWhiteSpace(status) ? "discovered" : status.Trim().ToLowerInvariant();
-        return normalized is "disabled" or "archived"
-            ? AppCallerStatusDecision.Reject(appCallerCode, requestType, normalized)
-            : AppCallerStatusDecision.Allow(appCallerCode, requestType, normalized);
+        var normalized = GatewayAppCallerPolicy.NormalizeStatus(status);
+        return GatewayAppCallerPolicy.AllowsTraffic(normalized)
+            ? AppCallerStatusDecision.Allow(appCallerCode, requestType, normalized)
+            : AppCallerStatusDecision.Reject(appCallerCode, requestType, normalized);
     }
 
     private static async Task<AppCallerBudgetDecision> CheckAppCallerMonthlyBudgetAsync(
@@ -3545,6 +3587,8 @@ public static class GatewayHttpEndpoints
             return;
 
         var collection = gatewayData.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+        var appCallerCode = GatewayAppCallerIdentity.NormalizePart(ingress.AppCallerCode);
+        var requestType = GatewayAppCallerIdentity.NormalizePart(ingress.RequestType);
         var now = DateTime.UtcNow;
         var modelPolicy = string.IsNullOrWhiteSpace(ingress.ModelPolicy) ? "auto" : ingress.ModelPolicy.Trim().ToLowerInvariant();
         var modelPoolId = string.IsNullOrWhiteSpace(ingress.ModelPoolId) ? null : ingress.ModelPoolId.Trim();
@@ -3554,14 +3598,14 @@ public static class GatewayHttpEndpoints
         var sessionId = NormalizeOptionalTraceId(ingress.Context?.SessionId);
         var runId = NormalizeOptionalTraceId(ingress.Context?.RunId);
         var filter = Builders<GatewayAppCallerRecord>.Filter.And(
-            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, ingress.AppCallerCode),
-            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, ingress.RequestType));
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType));
         var updates = new List<UpdateDefinition<GatewayAppCallerRecord>>
         {
             Builders<GatewayAppCallerRecord>.Update
             .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-            .SetOnInsert(x => x.AppCallerCode, ingress.AppCallerCode)
-            .SetOnInsert(x => x.RequestType, ingress.RequestType)
+            .SetOnInsert(x => x.AppCallerCode, appCallerCode)
+            .SetOnInsert(x => x.RequestType, requestType)
             .SetOnInsert(x => x.Status, "discovered")
             .SetOnInsert(x => x.ModelPolicy, modelPolicy)
             .SetOnInsert(x => x.ParameterPolicy, parameterPolicy)
@@ -3570,7 +3614,7 @@ public static class GatewayHttpEndpoints
             .Set(x => x.SourceSystem, string.IsNullOrWhiteSpace(ingress.SourceSystem) ? "external" : ingress.SourceSystem)
             .Set(x => x.IngressProtocol, ingressProtocol)
             .AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)
-            .Set(x => x.Title, string.IsNullOrWhiteSpace(ingress.AppCallerTitle) ? ingress.AppCallerCode : ingress.AppCallerTitle)
+            .Set(x => x.Title, string.IsNullOrWhiteSpace(ingress.AppCallerTitle) ? appCallerCode : ingress.AppCallerTitle)
             .Set(x => x.LastObservedModelPolicy, modelPolicy)
             .Set(x => x.LastObservedModelPoolId, modelPoolId)
             .Set(x => x.LastObservedParameterPolicy, parameterPolicy)
@@ -3589,7 +3633,11 @@ public static class GatewayHttpEndpoints
 
         try
         {
-            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions
+            {
+                IsUpsert = true,
+                Collation = GatewayAppCallerIdentity.Collation,
+            }, ct);
         }
         catch
         {

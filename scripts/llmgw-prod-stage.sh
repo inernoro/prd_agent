@@ -81,6 +81,14 @@ ledger=""
 allow_out_of_order=0
 allow_out_of_order_reason="${LLMGW_ALLOW_OUT_OF_ORDER_REASON:-}"
 
+# 固定生产 Compose identity，禁止 release worktree 目录名改变审计或部署目标。
+compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
+if ! printf '%s' "$compose_project_name" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'; then
+  echo "ERROR: invalid Compose project name: $compose_project_name" >&2
+  exit 1
+fi
+export COMPOSE_PROJECT_NAME="$compose_project_name"
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --stage)
@@ -474,7 +482,7 @@ print_plan() {
     echo "  allowlist: ${allowlist:-empty}"
     echo "  shadowFullSamplePercent: $shadow_percent"
     echo "  shadowFullSampleAppCallerAllowlist: ${shadow_full_sample_allowlist:-empty}"
-    echo "  disableMapConfigFallbackForActiveAppCallers: $disable_map_fallback_for_active_app_callers"
+    echo "  disableMapConfigFallbackForRegisteredAppCallers: $disable_map_fallback_for_active_app_callers"
     echo "  gateBase: ${gate_base:-none}"
     echo "  releaseGateJson: $release_gate_json"
     echo "  rolloutStatusJson: $rollout_status_json"
@@ -1466,6 +1474,8 @@ export LLMGW_HTTP_APP_CALLER_ALLOWLIST="$allowlist"
 export LLMGW_CANARY_STAGE="$canary_stage"
 export LLMGW_SHADOW_FULL_SAMPLE_PERCENT="$shadow_percent"
 export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST="$shadow_full_sample_allowlist"
+export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS="$disable_map_fallback_for_active_app_callers"
+# 兼容一版旧镜像和 rollout ledger 字段；新 serving 使用 registered 变量。
 export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS="$disable_map_fallback_for_active_app_callers"
 export LLMGW_GATE_BASE="$gate_base"
 export LLMGW_GATE_KEY="${LLMGW_GATE_KEY:-$gate_key}"

@@ -76,7 +76,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LastObservedSessionId", servingEndpoints);
         Assert.Contains("LastObservedRunId", servingEndpoints);
         Assert.Contains("private static AppCallerStatusDecision CheckAppCallerStatus", servingEndpoints);
-        Assert.Contains("normalized is \"disabled\" or \"archived\"", servingEndpoints);
+        Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic(normalized)", servingEndpoints);
         Assert.Contains("APP_CALLER_DISABLED", servingEndpoints);
         Assert.Contains("StatusCodes.Status403Forbidden", servingEndpoints);
         Assert.Contains("if (decision.Status.Rejected)", servingEndpoints);
@@ -107,7 +107,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("active appCaller 必须使用 modelPolicy=auto/pool/pinned", consoleProgram);
         var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
         Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
-        Assert.Contains("allowMapFallback: !activeGatewayAppCallerRequiresGwConfig", modelResolver);
+        Assert.Contains("allowMapFallback: !gatewayConfigRequired", modelResolver);
+        Assert.Contains("TryGetGatewayRegistryGroupsAsync", modelResolver);
+        Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic", modelResolver);
+        Assert.Contains("FindGatewayOwnedDefaultModelPoolsAsync", modelResolver);
+        Assert.Contains("gatewayRegistry.TrafficRejected", modelResolver);
+        Assert.Contains("DisableMapConfigFallbackForRegisteredAppCallers", modelResolver);
+        Assert.True(
+            modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal)
+            < modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal),
+            "pinned 精确模型必须先于默认池缺失检查，且在 GW-only 模式下只读 GW-owned 配置");
         Assert.Contains("FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback)", modelResolver);
         Assert.Contains("normalized-to-supported-model-policy", consoleProgram);
         Assert.Contains("IsSupportedAppCallerModelPolicy(currentModelPolicy)", consoleProgram);
@@ -251,6 +260,24 @@ public class GatewayDataDomainGuardTests
         var cdsCompose = ReadRepoFile("cds-compose.yml");
 
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
+        Assert.Contains("LlmGateway__Mode=${LLMGW_MODE}", dockerCompose);
+        Assert.DoesNotContain("LlmGateway__Mode=${LLMGW_MODE:-inproc}", dockerCompose);
+        Assert.Contains("LlmGateway__Mode: \"inproc\"", cdsCompose);
+        Assert.True(
+            dockerCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=", StringSplitOptions.None).Length - 1 >= 3,
+            "api、llmgw-serve、llmgw 必须同时收到 registered appCaller 配置权威退场开关");
+        Assert.Contains("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}\"", cdsCompose);
+        Assert.True(
+            cdsCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers:", StringSplitOptions.None).Length - 1 >= 2,
+            "CDS api 与 llmgw-serve 必须同时收到 registered appCaller 配置权威退场开关");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        Assert.Contains("llmgw_app_caller_duplicate_archive", initializer);
+        Assert.Contains("app_caller.deduplicate", initializer);
+        Assert.Contains("duplicate.ToBsonDocument()", initializer);
+        Assert.True(
+            initializer.IndexOf("archive.ReplaceOneAsync", StringComparison.Ordinal)
+            < initializer.IndexOf("callers.DeleteManyAsync", StringComparison.Ordinal),
+            "重复 appCaller 必须先完整归档再删除");
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}", dockerCompose);
@@ -1347,6 +1374,9 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("LLM Gateway serving probe", script);
         Assert.Contains("/healthz", script);
+        Assert.Contains("/readyz", script);
+        Assert.Contains("readyz not ready", script);
+        Assert.Contains("components", script);
         Assert.Contains("--expect-commit", script);
         Assert.Contains("--samples", script);
         Assert.Contains("--interval", script);
@@ -1365,6 +1395,65 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.DoesNotContain("GW_KEY", script);
+    }
+
+    [Fact]
+    public void ProductionServing_HasDeterministicComposeIdentityDeepReadinessAndTwoInstances()
+    {
+        var compose = ReadRepoFile("docker-compose.yml");
+        var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var readiness = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayServingReadinessProbe.cs");
+        var nginx = ReadRepoFile("deploy/nginx/conf.d/branches/_standalone.conf");
+        var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
+        var topologyPreflight = ReadRepoFile("scripts/llmgw-prod-topology-preflight.sh");
+        var cdsServingStart = cdsCompose.LastIndexOf("\n  llmgw-serve:\n", StringComparison.Ordinal);
+        var cdsServingEnd = cdsCompose.IndexOf("\n  llmgw-web:\n", cdsServingStart, StringComparison.Ordinal);
+        Assert.True(cdsServingStart >= 0 && cdsServingEnd > cdsServingStart, "CDS llmgw-serve service block missing");
+        var cdsServing = cdsCompose[cdsServingStart..cdsServingEnd];
+
+        Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", deploy);
+        Assert.Contains("COMPOSE_PROJECT_NAME", deploy);
+        Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", stage);
+        Assert.Contains("wait_for_llmgw_serving_readiness", deploy);
+        Assert.Contains("llmgw-prod-topology-preflight.sh", deploy);
+        Assert.Contains("LLMGW_SERVE_BASE_URL must be", topologyPreflight);
+        Assert.Contains("LLMGW_READINESS_ASSET_PROBE_KEY", topologyPreflight);
+        Assert.Contains("LLMGW_READINESS_REQUIRE_ASSET_PROBE=true", topologyPreflight);
+        Assert.Contains("[ \"$health\" != \"healthy\" ]", deploy);
+        Assert.Contains("llmgw-serve-b:", compose);
+        Assert.Contains("condition: service_healthy", compose);
+        Assert.Contains("/gw/v1/readyz", compose);
+        Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
+        Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
+        Assert.DoesNotContain("http://gateway/gw/v1", compose);
+        Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
+        Assert.Contains("map-mongo", readiness);
+        Assert.Contains("gateway-mongo", readiness);
+        Assert.Contains("asset-storage", readiness);
+        Assert.Contains("key-integrity", readiness);
+        Assert.Contains("router", readiness);
+        Assert.Contains("routableCallers", readiness);
+        Assert.Contains("IsPoolRoutableForRequestType", readiness);
+        Assert.Contains("pool.IsDefaultForType", readiness);
+        Assert.Contains("HasEnabledBackend", readiness);
+        Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
+        Assert.Contains("exceptionType={ExceptionType}", readiness);
+        Assert.DoesNotContain("ex.Message", readiness);
+        Assert.Contains("server llmgw-serve:8091", nginx);
+        Assert.Contains("server llmgw-serve-b:8091", nginx);
+        Assert.Contains("llmgw-serve-b:8091 backup", nginx);
+        Assert.Contains("proxy_next_upstream", nginx);
+        Assert.DoesNotContain("non_idempotent", nginx);
+        Assert.Contains("gatewayDb.llmgw_app_callers", providerAudit);
+        Assert.Contains("gatewayDb.llmgw_model_pools", providerAudit);
+        Assert.Contains("deferredUnboundGroups", providerAudit);
+        Assert.Contains("unbound-to-production-appCaller", providerAudit);
+        Assert.Contains("ASR appCaller RequestType mismatch", providerAudit);
+        Assert.Contains("video appCaller RequestType mismatch", providerAudit);
     }
 
     [Fact]
