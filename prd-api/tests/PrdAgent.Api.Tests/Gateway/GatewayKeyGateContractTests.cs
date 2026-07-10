@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
@@ -1753,6 +1754,7 @@ public class GatewayKeyGateContractTests
         context.ShouldNotBeNull();
         context!.SourceSystem.ShouldBe(sourceSystem);
         context.IngressProtocol.ShouldBe(ingressProtocol);
+        context.GatewayTransport.ShouldBe(GatewayTransports.Http);
         context.ModelPolicy.ShouldBe(modelPolicy);
         context.ModelPoolId.ShouldBe(modelPoolId);
         context.ParameterPolicy.ShouldBe(parameterPolicy);
