@@ -197,8 +197,12 @@ export function OverviewPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>配置权威迁移</span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>将 MAP-only 配置复制到 llm_gateway，并把 active 调用方绑定到同类型 GW 默认池。</span>
-        <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? '#d29922' : '#3fb950'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'rgba(210,153,34,0.14)' : 'rgba(63,185,80,0.14)'} />
-        <Chip label={`不可用池 ${unusableActivePools}`} color={unusableActivePools > 0 ? '#f85149' : '#3fb950'} bg={unusableActivePools > 0 ? 'rgba(248,81,73,0.12)' : 'rgba(63,185,80,0.14)'} />
+        <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}>
+          <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? '#d29922' : '#3fb950'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'rgba(210,153,34,0.14)' : 'rgba(63,185,80,0.14)'} />
+        </Link>
+        <Link to="/pools" style={{ textDecoration: 'none' }}>
+          <Chip label={`不可用池 ${unusableActivePools}`} color={unusableActivePools > 0 ? '#f85149' : '#3fb950'} bg={unusableActivePools > 0 ? 'rgba(248,81,73,0.12)' : 'rgba(63,185,80,0.14)'} />
+        </Link>
         <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
           {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
         </Button>

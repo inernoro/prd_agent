@@ -1,6 +1,7 @@
 // GW appCaller 注册表：展示 llmgw-serve 被动发现的调用方。
 // 这是目标架构里“appCaller 权威迁到 GW”的第一步，只读，不修改 MAP 旧配置。
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -54,6 +55,7 @@ function logsHref(key: 'requestId' | 'sessionId' | 'runId', value?: string | nul
 }
 
 export function AppCallersPage() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -70,13 +72,13 @@ export function AppCallersPage() {
     monthlyBudgetUsd: '',
     rateLimitPerMinute: '',
   });
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [sourceSystem, setSourceSystem] = useState('');
-  const [ingressProtocol, setIngressProtocol] = useState('');
-  const [requestType, setRequestType] = useState('');
-  const [drift, setDrift] = useState('');
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page') || '1') || 1));
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [status, setStatus] = useState(() => searchParams.get('status') || '');
+  const [sourceSystem, setSourceSystem] = useState(() => searchParams.get('sourceSystem') || '');
+  const [ingressProtocol, setIngressProtocol] = useState(() => searchParams.get('ingressProtocol') || '');
+  const [requestType, setRequestType] = useState(() => searchParams.get('requestType') || '');
+  const [drift, setDrift] = useState(() => searchParams.get('drift') || '');
 
   const loadCurrentPage = async () => {
     setError(null);

@@ -30,3 +30,4 @@
 | fix | prd-api | Infra Agent runtime profile 测试调用 LLM Gateway 时携带统一 requestId 与路由上下文，使 inproc/http 两种模式日志字段一致 |
 | ops | prd-llmgw | LLM Gateway 配置权威 summary 与发布 gate 增加 activeBoundPoolWithoutUsableMember 校验，防止 active appCaller 绑定不可用 GW 池时误判 ready |
 | polish | prd-llmgw-web | LLM Gateway 概览页展示 active appCaller 未绑池与不可用池计数，便于定位配置权威退场阻塞原因 |
+| polish | prd-llmgw-web | LLM Gateway 概览页配置权威阻塞计数支持跳转到 active appCaller 与模型池治理页面 |
