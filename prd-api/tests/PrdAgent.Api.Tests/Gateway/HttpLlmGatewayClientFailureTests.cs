@@ -137,6 +137,21 @@ public class HttpLlmGatewayClientFailureTests
         profile.StatusCode.ShouldBe(422);
     }
 
+    [Fact]
+    public async Task StructuredSendFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":503,\"ErrorCode\":\"MODEL_POOL_UNAVAILABLE\",\"ErrorMessage\":\"no healthy model\",\"LogId\":\"log-send-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.ServiceUnavailable, body));
+
+        var response = await client.SendAsync(Request());
+
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("MODEL_POOL_UNAVAILABLE");
+        response.ErrorMessage.ShouldBe("no healthy model");
+        response.StatusCode.ShouldBe(503);
+        response.LogId.ShouldBe("log-send-123");
+    }
+
     private static HttpLlmGatewayClient BuildClient(
         IHttpClientFactory factory,
         string baseUrl = "http://llmgw-serve.test")

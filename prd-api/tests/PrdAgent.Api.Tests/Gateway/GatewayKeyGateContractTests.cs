@@ -487,6 +487,49 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    public static IEnumerable<object[]> CompatibleDefaultCallerRequests() => new[]
+    {
+        new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[]}", "application/json", AppCallerRegistry.PageAgent.Generate },
+        new object[] { "/v1/responses", "{\"model\":\"test\",\"input\":\"hello\"}", "application/json", AppCallerRegistry.OpenApi.Proxy.Chat },
+        new object[] { "/v1/responses", "{\"model\":\"test\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_image\",\"image_url\":\"https://example.test/a.png\"}]}]}", "application/json", AppCallerRegistry.OpenApi.Proxy.Vision },
+        new object[] { "/v1/messages", "{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AA==\"}}]}]}", "application/json", AppCallerRegistry.OpenApi.Proxy.Vision },
+        new object[] { "/v1beta/models/test:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"AA==\"}}]}]}", "application/json", AppCallerRegistry.OpenApi.Proxy.Vision },
+        new object[] { "/v1/images/generations", "{\"model\":\"test\",\"prompt\":\"draw\"}", "application/json", AppCallerRegistry.OpenApi.Proxy.Generation },
+        new object[] { "/v1/images/edits", "placeholder", "multipart/form-data; boundary=test", AppCallerRegistry.OpenApi.Proxy.Generation },
+    };
+
+    [Theory]
+    [MemberData(nameof(CompatibleDefaultCallerRequests))]
+    public async Task ScopedCompatibleKey_UsesHandlerDefaultAppCaller(
+        string path,
+        string body,
+        string contentType,
+        string expectedAppCaller)
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => false);
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8),
+            };
+            request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(contentType);
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            authorizer.AppCallerCode.ShouldBe(expectedAppCaller);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
     {

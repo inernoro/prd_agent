@@ -2086,6 +2086,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw_multipart_objects", httpClient);
         Assert.Contains("X-Gateway-App-Caller", httpClient);
         Assert.Contains("TryDeserializeRawResponse", httpClient);
+        Assert.Contains("TryDeserializeGatewayResponse", httpClient);
+        Assert.Contains("ResolveCompatibleDefaultAppCaller", endpoints);
 
         Assert.Contains("ensure_serving_probe_evidence", stage);
         Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);

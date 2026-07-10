@@ -1245,6 +1245,10 @@ public static class GatewayHttpEndpoints
         var appCallerCode = headerAppCaller ?? string.Empty;
         var requiredScope = ResolveRequiredScope(path);
 
+        if (!string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal)
+            && string.IsNullOrWhiteSpace(appCallerCode))
+            appCallerCode = ResolveCompatibleDefaultAppCaller(path, null);
+
         if (path.Equals("/gw/v1/pools", StringComparison.OrdinalIgnoreCase)
             && context.Request.Query.TryGetValue("appCallerCode", out var queryCaller)
             && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
@@ -1265,6 +1269,13 @@ public static class GatewayHttpEndpoints
             var root = body.RootElement;
             if (ReadJsonBool(root, "stream") && string.Equals(requiredScope, "invoke", StringComparison.Ordinal))
                 requiredScope = "stream:invoke";
+
+            if (!string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal)
+                && string.IsNullOrWhiteSpace(headerAppCaller)
+                && JsonNode.Parse(root.GetRawText()) is JsonObject compatibleBody)
+            {
+                appCallerCode = ResolveCompatibleDefaultAppCaller(path, compatibleBody);
+            }
 
             if (string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal))
             {
@@ -1319,6 +1330,31 @@ public static class GatewayHttpEndpoints
            || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
            || path.Contains(":generateContent", StringComparison.OrdinalIgnoreCase)
            || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase);
+
+    private static string ResolveCompatibleDefaultAppCaller(string path, JsonObject? body)
+    {
+        if (path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+            return AppCallerRegistry.PageAgent.Generate;
+        if (path.Equals("/v1/images/generations", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/v1/images/edits", StringComparison.OrdinalIgnoreCase))
+            return AppCallerRegistry.OpenApi.Proxy.Generation;
+
+        JsonObject? normalized = null;
+        if (body is not null)
+        {
+            if (path.Equals("/v1/responses", StringComparison.OrdinalIgnoreCase))
+                normalized = ConvertOpenAiResponsesToChatBody(body);
+            else if (path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase))
+                normalized = ConvertClaudeMessagesToOpenAiBody(body);
+            else if (path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase)
+                     || path.StartsWith("/gemini/v1beta/models/", StringComparison.OrdinalIgnoreCase))
+                normalized = ConvertGeminiGenerateContentToOpenAiBody(body);
+        }
+
+        return normalized is not null && ContainsOpenAiImageInput(normalized)
+            ? AppCallerRegistry.OpenApi.Proxy.Vision
+            : AppCallerRegistry.OpenApi.Proxy.Chat;
+    }
 
     private static string? ReadJsonString(JsonElement element, string propertyName)
         => TryGetJsonProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String
