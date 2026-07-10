@@ -1,6 +1,6 @@
 # LLM Gateway 生产加固与架构收口 · 计划
 
-> **版本**：v1.0 | **日期**：2026-07-10 | **状态**：规划中
+> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：开发中
 >
 > **审计基线**：本文中的生产数字均为 `2026-07-10` 只读快照，不是实时状态。实施任何阶段前必须重新取证。
 > **关联文档**：`design.platform.llm-gateway.migration-retrospective.md`（历史复盘）、`plan.platform.llm-gateway-protocol-router.md`（目标协议路由）、`debt.llm-gateway.md`（债务台账）
