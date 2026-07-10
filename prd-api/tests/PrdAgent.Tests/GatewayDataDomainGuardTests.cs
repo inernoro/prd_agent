@@ -1866,6 +1866,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
     }
 
+    [Fact]
+    public void ModelLabAndArena_PinSelectedModelThroughGateway()
+    {
+        var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
+        var arenaWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs");
+
+        Assert.Contains("_gateway.CreateClient(", modelLab);
+        Assert.Contains("Admin.ModelLab.Run", modelLab);
+        Assert.Contains("expectedModel: modelName", modelLab);
+        Assert.Contains("pinnedPlatformId: platform.Id", modelLab);
+        Assert.Contains("pinnedModelId: modelName", modelLab);
+        Assert.Contains("expectedModel: model.ModelName", modelLab);
+        Assert.Contains("pinnedPlatformId: resolvedPlatformId", modelLab);
+        Assert.Contains("pinnedModelId: model.ModelName", modelLab);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", modelLab);
+
+        Assert.Contains("gateway.CreateClient(", arenaWorker);
+        Assert.Contains("AppCallerRegistry.Desktop.Arena.BattleChat", arenaWorker);
+        Assert.Contains("expectedModel: slot.ModelId", arenaWorker);
+        Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
+        Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();
