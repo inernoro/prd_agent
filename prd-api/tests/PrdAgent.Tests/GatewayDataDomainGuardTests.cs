@@ -1374,6 +1374,9 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("LLM Gateway serving probe", script);
         Assert.Contains("/healthz", script);
+        Assert.Contains("/readyz", script);
+        Assert.Contains("readyz not ready", script);
+        Assert.Contains("components", script);
         Assert.Contains("--expect-commit", script);
         Assert.Contains("--samples", script);
         Assert.Contains("--interval", script);
@@ -1392,6 +1395,59 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.DoesNotContain("GW_KEY", script);
+    }
+
+    [Fact]
+    public void ProductionServing_HasDeterministicComposeIdentityDeepReadinessAndTwoInstances()
+    {
+        var compose = ReadRepoFile("docker-compose.yml");
+        var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var readiness = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayServingReadinessProbe.cs");
+        var nginx = ReadRepoFile("deploy/nginx/conf.d/branches/_standalone.conf");
+        var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
+        var topologyPreflight = ReadRepoFile("scripts/llmgw-prod-topology-preflight.sh");
+        var cdsServingStart = cdsCompose.LastIndexOf("\n  llmgw-serve:\n", StringComparison.Ordinal);
+        var cdsServingEnd = cdsCompose.IndexOf("\n  llmgw-web:\n", cdsServingStart, StringComparison.Ordinal);
+        Assert.True(cdsServingStart >= 0 && cdsServingEnd > cdsServingStart, "CDS llmgw-serve service block missing");
+        var cdsServing = cdsCompose[cdsServingStart..cdsServingEnd];
+
+        Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", deploy);
+        Assert.Contains("COMPOSE_PROJECT_NAME", deploy);
+        Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", stage);
+        Assert.Contains("wait_for_llmgw_serving_readiness", deploy);
+        Assert.Contains("llmgw-prod-topology-preflight.sh", deploy);
+        Assert.Contains("LLMGW_SERVE_BASE_URL must be", topologyPreflight);
+        Assert.Contains("LLMGW_READINESS_ASSET_PROBE_KEY", topologyPreflight);
+        Assert.Contains("LLMGW_READINESS_REQUIRE_ASSET_PROBE=true", topologyPreflight);
+        Assert.Contains("[ \"$health\" != \"healthy\" ]", deploy);
+        Assert.Contains("llmgw-serve-b:", compose);
+        Assert.Contains("condition: service_healthy", compose);
+        Assert.Contains("/gw/v1/readyz", compose);
+        Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
+        Assert.Contains("http://gateway/gw/v1", compose);
+        Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
+        Assert.Contains("map-mongo", readiness);
+        Assert.Contains("gateway-mongo", readiness);
+        Assert.Contains("asset-storage", readiness);
+        Assert.Contains("key-integrity", readiness);
+        Assert.Contains("router", readiness);
+        Assert.Contains("routableCallers", readiness);
+        Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
+        Assert.Contains("exceptionType={ExceptionType}", readiness);
+        Assert.DoesNotContain("ex.Message", readiness);
+        Assert.Contains("server llmgw-serve:8091", nginx);
+        Assert.Contains("server llmgw-serve-b:8091", nginx);
+        Assert.Contains("llmgw-serve-b:8091 backup", nginx);
+        Assert.Contains("proxy_next_upstream", nginx);
+        Assert.DoesNotContain("non_idempotent", nginx);
+        Assert.Contains("gatewayDb.llmgw_app_callers", providerAudit);
+        Assert.Contains("gatewayDb.llmgw_model_pools", providerAudit);
+        Assert.Contains("deferredUnboundGroups", providerAudit);
+        Assert.Contains("unbound-to-production-appCaller", providerAudit);
     }
 
     [Fact]

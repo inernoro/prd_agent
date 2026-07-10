@@ -50,7 +50,8 @@ public static class GatewayHttpEndpoints
         {
             var path = context.Request.Path.Value ?? string.Empty;
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-                                       && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase);
+                                       && !path.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
+                                       && !path.StartsWith("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -74,6 +75,44 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        app.MapGet("/gw/v1/readyz", async (
+            HttpContext http,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+        {
+            var probe = services.GetService<IGatewayServingReadinessProbe>();
+            if (probe == null)
+            {
+                return Results.Content(JsonSerializer.Serialize(new
+                {
+                    status = "not-ready",
+                    commit = gitCommit,
+                    time = DateTime.UtcNow.ToString("o"),
+                    reason = "readiness-probe-not-registered",
+                }, jsonOpts), "application/json", statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var snapshot = await probe.CheckAsync(http.RequestAborted);
+            var payload = JsonSerializer.Serialize(new
+            {
+                status = snapshot.Ready ? "ready" : "not-ready",
+                commit = gitCommit,
+                time = snapshot.CheckedAt.ToString("o"),
+                components = snapshot.Components.Select(x => new
+                {
+                    name = x.Name,
+                    ready = x.Ready,
+                    durationMs = x.DurationMs,
+                    summary = x.Summary,
+                }),
+            }, jsonOpts);
+            return Results.Content(
+                payload,
+                "application/json",
+                statusCode: snapshot.Ready
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status503ServiceUnavailable);
+        });
 
         // 协议路由 dry-run 自检：不访问上游、不写 appCaller 注册表、不递增限流窗口。
         // 用于维护窗口第一步确认四类入口协议能落到同一套 IR 与路由元数据。

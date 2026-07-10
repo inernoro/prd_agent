@@ -656,7 +656,7 @@
   > 网关剥离唯一进度真相：一句话现状 + 能不能发布 + 记分卡 + Gate + 下一步 + 验收证据
 
 - [LLM Gateway 生产加固与架构收口计划](plan.platform.llm-gateway-production-hardening) `plan.platform.llm-gateway-production-hardening`
-  > 汇总生产隐性风险与审计快照，明确全部 appCaller 配置权威归 GW 的整改顺序、完成 Gate 和量化进度规则
+  > 固化 full-http 当前生产事实与真实发布问题，区分已关闭和未关闭风险，明确 MAP/GW 架构边界、整改顺序、完成 Gate 和量化进度规则
 
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理

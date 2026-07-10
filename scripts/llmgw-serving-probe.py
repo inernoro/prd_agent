@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """LLM Gateway serving availability and auth probe.
 
-This read-only probe is meant for S5/S6 rollout evidence. It repeatedly checks
-/gw/v1/healthz without a key, verifies the reported commit is stable, and checks
-that protected endpoints reject unauthenticated access.
+This read-only probe is meant for S5/S6 rollout evidence. It checks deep
+/gw/v1/readyz dependencies, repeatedly checks /gw/v1/healthz without a key,
+verifies the reported commit is stable, and checks that protected endpoints
+reject unauthenticated access.
 """
 
 from __future__ import annotations
@@ -175,6 +176,12 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- sampleCount: `{cell(report['sampleCount'])}`\n")
         fh.write(f"- intervalSeconds: `{cell(report['intervalSeconds'])}`\n")
         fh.write(f"- p95LatencyMs: `{cell(report['latencyMs']['p95'])}`\n\n")
+        readiness = report.get("readiness") or {}
+        fh.write("## Deep Readiness\n\n")
+        fh.write(f"- status: `{cell(readiness.get('status') or '')}`\n")
+        fh.write(f"- httpStatus: `{cell(readiness.get('httpStatus'))}`\n")
+        fh.write(f"- commit: `{cell(readiness.get('commit') or '')}`\n")
+        fh.write(f"- components: `{cell(','.join(readiness.get('components') or []))}`\n\n")
         fh.write("| sample | status | commit | latencyMs |\n")
         fh.write("|---:|---:|---|---:|\n")
         for sample in report["healthSamples"]:
@@ -314,6 +321,13 @@ def main() -> int:
         "sampleCount": sample_count,
         "intervalSeconds": interval,
         "latencyMs": {"p50": 0, "p95": 0, "max": 0},
+        "readiness": {
+            "httpStatus": None,
+            "status": "",
+            "commit": "",
+            "components": [],
+            "latencyMs": 0,
+        },
         "healthSamples": [],
         "protectedChecks": [],
         "routeSelfTest": {
@@ -332,6 +346,37 @@ def main() -> int:
     if protected_parse_failure:
         report["failures"].append(protected_parse_failure)
     if not report["failures"]:
+        ready_code, ready_raw, ready_latency = _request(base, "/readyz")
+        readiness = {
+            "httpStatus": ready_code,
+            "status": "",
+            "commit": "",
+            "components": [],
+            "latencyMs": ready_latency,
+            "raw": ready_raw[:500],
+        }
+        try:
+            ready_payload = _json(ready_raw)
+            readiness["status"] = str(ready_payload.get("status") or ready_payload.get("Status") or "")
+            readiness["commit"] = str(ready_payload.get("commit") or ready_payload.get("Commit") or "")
+            components = ready_payload.get("components") or ready_payload.get("Components") or []
+            readiness["components"] = [
+                str(item.get("name") or item.get("Name") or "")
+                for item in components
+                if isinstance(item, dict)
+            ]
+        except Exception as exc:
+            report["failures"].append(f"readyz invalid JSON: {exc}")
+        report["readiness"] = readiness
+        if ready_code != 200 or readiness["status"].lower() not in {"ready", "ok"}:
+            report["failures"].append(
+                f"readyz not ready: HTTP {ready_code}, status={readiness['status'] or 'empty'}"
+            )
+        if args.expect_commit and readiness["commit"] and readiness["commit"] != args.expect_commit:
+            report["failures"].append(
+                f"readyz commit mismatch: actual={readiness['commit']}, expected={args.expect_commit}"
+            )
+
         commits: list[str] = []
         latencies: list[float] = []
         for index in range(sample_count):
@@ -406,6 +451,7 @@ def main() -> int:
 
     print(f"LLM Gateway serving probe: {report['verdict'].upper()}")
     print(f"- samples={len(report['healthSamples'])}")
+    print(f"- readiness={report['readiness'].get('status')}")
     print(f"- protected_checks={len(report['protectedChecks'])}")
     print(f"- route_self_test={report['routeSelfTest'].get('ok')}")
     print(f"- failures={len(report['failures'])}")

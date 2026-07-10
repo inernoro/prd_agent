@@ -82,11 +82,12 @@ const asrCallers = [
 const gatewayDbName = __GATEWAY_DB__;
 const recentLogHours = __RECENT_LOG_HOURS__;
 const collectGatewayLogs = __COLLECT_GATEWAY_LOGS__;
+const gatewayDb = db.getSiblingDB(gatewayDbName);
 const data = {
   generatedAt: new Date().toISOString(),
   gatewayDatabase: gatewayDbName,
   recentGatewayLogHours: recentLogHours,
-  exchanges: db.model_exchanges.find({
+  exchanges: gatewayDb.llmgw_model_exchanges.find({
     $or: [
       { TransformerType: /asr|video/i },
       { Name: /ASR|asr|视频|video|豆包|wan|seedance/i },
@@ -107,20 +108,21 @@ const data = {
     TargetApiKeyEncrypted: 1,
     UpdatedAt: 1
   }).toArray(),
-  modelGroups: db.model_groups.find({
+  modelGroups: gatewayDb.llmgw_model_pools.find({
     $or: [
       { ModelType: { $in: ["asr", "video-gen"] } },
       { Code: /asr|video/i },
       { Name: /ASR|asr|视频|video/i }
     ]
   }).toArray(),
-  appCallers: db.llm_app_callers.find({
-    AppCode: { $in: asrCallers }
+  appCallers: gatewayDb.llmgw_app_callers.find({
+    AppCallerCode: { $in: asrCallers }
   }, {
     _id: 1,
-    AppCode: 1,
-    DisplayName: 1,
-    ModelRequirements: 1,
+    AppCallerCode: 1,
+    RequestType: 1,
+    Status: 1,
+    ModelPoolId: 1,
     UpdatedAt: 1
   }).toArray(),
   platforms: [],
@@ -133,7 +135,7 @@ const platformIds = Array.from(new Set(
     .filter(id => !!id)
 ));
 if (platformIds.length > 0) {
-  data.platforms = db.llmplatforms.find({
+  data.platforms = gatewayDb.llmgw_platforms.find({
     _id: { $in: platformIds }
   }, {
     _id: 1,
@@ -149,7 +151,6 @@ if (platformIds.length > 0) {
 }
 if (collectGatewayLogs) {
 try {
-  const gatewayDb = db.getSiblingDB(gatewayDbName);
   const since = new Date(Date.now() - recentLogHours * 60 * 60 * 1000);
   data.recentGatewayLogs = gatewayDb.llmrequestlogs.find({
     AppCallerCode: { $in: asrCallers },
@@ -252,13 +253,6 @@ def _decrypt_shape(encrypted: str, secret: str) -> dict[str, Any]:
         "looksUuidOnly": bool(re.fullmatch(r"[0-9a-fA-F-]{32,36}", plain)),
         "hasWhitespace": any(ch.isspace() for ch in plain),
     }
-
-
-def _req_for(caller: dict[str, Any], model_type: str) -> dict[str, Any] | None:
-    for req in caller.get("ModelRequirements") or []:
-        if str(req.get("ModelType") or "").lower() == model_type.lower():
-            return req
-    return None
 
 
 def _health_name(value: Any) -> str:
@@ -646,28 +640,46 @@ def _audit(
                     step=asr_pool_id,
                 ))
 
-    by_caller = {str(c.get("AppCode") or ""): c for c in callers}
+    by_caller = {str(c.get("AppCallerCode") or ""): c for c in callers}
     for code in ASR_APP_CALLERS:
         caller = by_caller.get(code)
         if not caller:
             failures.append(f"ASR appCaller missing: {code}")
             continue
-        req = _req_for(caller, "asr")
-        ids = [str(x) for x in ((req or {}).get("ModelGroupIds") or [])]
-        if not req or asr_pool_id not in ids:
+        if str(caller.get("Status") or "").lower() not in {"configured", "active"}:
+            failures.append(f"ASR appCaller is not governed: {code} status={caller.get('Status')}")
+        if str(caller.get("ModelPoolId") or "") != asr_pool_id:
             failures.append(f"ASR appCaller is not bound to {asr_pool_id}: {code}")
 
+    bound_video_pool_ids: set[str] = set()
     for code in VIDEO_APP_CALLERS:
         video_caller = by_caller.get(code)
         if not video_caller:
             failures.append(f"video appCaller missing: {code}")
             continue
-        req = _req_for(video_caller, "video-gen")
-        ids = [str(x) for x in ((req or {}).get("ModelGroupIds") or [])]
-        if not ids:
-            failures.append(f"video appCaller has no video-gen ModelGroupIds: {code}")
+        if str(video_caller.get("Status") or "").lower() not in {"configured", "active"}:
+            failures.append(f"video appCaller is not governed: {code} status={video_caller.get('Status')}")
+        pool_id = str(video_caller.get("ModelPoolId") or "").strip()
+        if not pool_id:
+            failures.append(f"video appCaller has no GW ModelPoolId: {code}")
+        else:
+            bound_video_pool_ids.add(pool_id)
 
-    video_groups = [g for g in groups if str(g.get("ModelType") or "").lower() == "video-gen"]
+    all_video_groups = [g for g in groups if str(g.get("ModelType") or "").lower() == "video-gen"]
+    video_groups = [g for g in all_video_groups if str(g.get("_id") or "") in bound_video_pool_ids]
+    found_video_pool_ids = {str(g.get("_id") or "") for g in video_groups}
+    for missing_pool_id in sorted(bound_video_pool_ids - found_video_pool_ids):
+        failures.append(f"bound video model pool missing: {missing_pool_id}")
+    deferred_video_groups = [
+        {
+            "groupId": g.get("_id"),
+            "groupName": g.get("Name"),
+            "reason": "unbound-to-production-appCaller",
+            "modelCount": len(g.get("Models") or []),
+        }
+        for g in all_video_groups
+        if str(g.get("_id") or "") not in bound_video_pool_ids
+    ]
     healthy_video_models: list[dict[str, Any]] = []
     video_models: list[dict[str, Any]] = []
     for group in video_groups:
@@ -885,9 +897,11 @@ def _audit(
         },
         "video": {
             "appCallers": VIDEO_APP_CALLERS,
+            "boundPoolIds": sorted(bound_video_pool_ids),
             "groupCount": len(video_groups),
             "models": video_models,
             "healthyModels": healthy_video_models,
+            "deferredUnboundGroups": deferred_video_groups,
         },
         "recentGatewayLogs": {
             "database": data.get("gatewayDatabase"),
@@ -931,6 +945,8 @@ def _write_md(path: str, report: dict[str, Any]) -> None:
         fh.write(f"- ASR exchange: `{((report.get('asr') or {}).get('exchange') or {}).get('name') or ((report.get('asr') or {}).get('exchange') or {}).get('Name') or ''}`\n")
         fh.write(f"- video candidate models: `{len((report.get('video') or {}).get('models') or [])}`\n")
         fh.write(f"- video healthy models: `{len((report.get('video') or {}).get('healthyModels') or [])}`\n\n")
+        fh.write(f"- video bound pool ids: `{','.join((report.get('video') or {}).get('boundPoolIds') or [])}`\n")
+        fh.write(f"- video deferred unbound pools: `{len((report.get('video') or {}).get('deferredUnboundGroups') or [])}`\n\n")
         recent = report.get("recentGatewayLogs") or {}
         fh.write(f"- recent gateway log hours: `{recent.get('hours') or ''}`\n")
         fh.write(f"- recent gateway log collected: `{recent.get('collected') or 0}`\n")
@@ -1021,23 +1037,35 @@ def _self_test_report() -> dict[str, Any]:
                     },
                 ],
             },
+            {
+                "_id": "fixture-unbound-video-pool",
+                "Name": "Fixture Unbound Video Pool",
+                "ModelType": "video-gen",
+                "Models": [
+                    {
+                        "ModelId": "unbound-video-model",
+                        "PlatformId": video_exchange_id,
+                        "HealthStatus": 2,
+                    },
+                ],
+            },
         ],
         "appCallers": [
             *[
                 {
-                    "AppCode": code,
-                    "ModelRequirements": [
-                        {"ModelType": "asr", "ModelGroupIds": [DEFAULT_ASR_POOL_ID]},
-                    ],
+                    "AppCallerCode": code,
+                    "RequestType": "asr",
+                    "Status": "configured",
+                    "ModelPoolId": DEFAULT_ASR_POOL_ID,
                 }
                 for code in ASR_APP_CALLERS
             ],
             *[
                 {
-                    "AppCode": code,
-                    "ModelRequirements": [
-                        {"ModelType": "video-gen", "ModelGroupIds": [video_pool_id]},
-                    ],
+                    "AppCallerCode": code,
+                    "RequestType": "video-gen",
+                    "Status": "configured",
+                    "ModelPoolId": video_pool_id,
                 }
                 for code in VIDEO_APP_CALLERS
             ],
@@ -1119,7 +1147,18 @@ def _self_test_report() -> dict[str, Any]:
     ])
     missing = [code for code in required_codes if code not in actual_codes]
     missing_pairs = [pair for pair in required_pairs if pair not in actual_pairs]
-    ok = not missing and not missing_pairs
+    deferred = (audit.get("video") or {}).get("deferredUnboundGroups") or []
+    deferred_ids = sorted(str(x.get("groupId") or "") for x in deferred)
+    unbound_leaked_as_blocker = any(
+        str(item.get("step") or "") == "fixture-unbound-video-pool"
+        for item in blockers
+    )
+    ok = (
+        not missing
+        and not missing_pairs
+        and deferred_ids == ["fixture-unbound-video-pool"]
+        and not unbound_leaked_as_blocker
+    )
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "verdict": "pass" if ok else "fail",
@@ -1129,6 +1168,8 @@ def _self_test_report() -> dict[str, Any]:
         "requiredPairs": required_pairs,
         "actualPairs": actual_pairs,
         "missingPairs": missing_pairs,
+        "deferredUnboundPoolIds": deferred_ids,
+        "unboundPoolLeakedAsBlocker": unbound_leaked_as_blocker,
         "sampleAuditVerdict": audit.get("verdict"),
         "sampleAuditExternalBlockers": blockers,
     }
