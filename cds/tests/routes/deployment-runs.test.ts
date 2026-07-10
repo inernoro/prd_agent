@@ -6,6 +6,8 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDeploymentRunsRouter } from '../../src/routes/deployment-runs.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { DeploymentVersionService } from '../../src/services/deployment-version.js';
+import { DeploymentDiagnosisService } from '../../src/services/deployment-diagnosis.js';
 import { StateService } from '../../src/services/state.js';
 
 interface TestResponse {
@@ -51,6 +53,11 @@ describe('Deployment runs router', () => {
     });
     app.use('/api', createDeploymentRunsRouter({
       deploymentRunService: runService,
+      deploymentDiagnosisService: new DeploymentDiagnosisService(
+        runService,
+        new DeploymentVersionService(stateService),
+        { explain: async () => ({ summary: '结构化事实表明构建失败', actions: ['修复编译错误'] }) },
+      ),
       assertProjectAccess: (req, projectId) => {
         const key = (req as any).cdsProjectKey as { projectId: string } | undefined;
         return !key || key.projectId === projectId
@@ -119,6 +126,32 @@ describe('Deployment runs router', () => {
     expect(response.raw).not.toContain('id: 1\n');
     expect(response.raw).toContain('event: done');
     expect(response.raw).toContain('"status":"failed"');
+  });
+
+  it('returns deterministic diagnosis and streams visible AI explanation stages', async () => {
+    runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    runService.fail('dr_1', {
+      code: 'build.compile.typescript', owner: 'code', retryable: false,
+      summary: 'TypeScript 编译失败', phase: 'build', evidenceRefs: ['deployment-run:dr_1:event:1'],
+      suggestedAction: '修复首个类型错误',
+    });
+
+    const deterministic = await request(server, 'GET', '/api/deployment-runs/dr_1/diagnosis');
+    expect(deterministic.status).toBe(200);
+    expect(deterministic.body.diagnosis).toMatchObject({
+      runId: 'dr_1',
+      failure: { code: 'build.compile.typescript', owner: 'code' },
+      ai: { status: 'ready' },
+    });
+
+    const stream = await request(server, 'GET', '/api/deployment-runs/dr_1/diagnosis/stream?ai=1');
+    expect(stream.status).toBe(200);
+    expect(stream.raw).toContain('event: facts-ready');
+    expect(stream.raw).toContain('event: ai-stage');
+    expect(stream.raw).toContain('AI Gateway 正在解释结构化部署事实');
+    expect(stream.raw).toContain('event: explanation');
+    expect(stream.raw).toContain('结构化事实表明构建失败');
+    expect(stream.raw).toContain('event: complete');
   });
 });
 

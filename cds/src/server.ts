@@ -84,6 +84,10 @@ import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
 import { ManagedProjectService } from './services/managed-project.js';
+import {
+  DeploymentDiagnosisService,
+  GatewayDeploymentExplanationProvider,
+} from './services/deployment-diagnosis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -882,6 +886,8 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
+    [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
     [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
@@ -1260,6 +1266,19 @@ export function createServer(deps: ServerDeps): express.Express {
   const deploymentRunService = new DeploymentRunService(deps.stateService);
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
+  const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();
+  const aiExplanationModel = String(process.env.CDS_AI_EXPLANATION_MODEL || '').trim();
+  const deploymentDiagnosisService = new DeploymentDiagnosisService(
+    deploymentRunService,
+    deploymentVersionService,
+    aiExplanationEndpoint && aiExplanationModel
+      ? new GatewayDeploymentExplanationProvider({
+          endpoint: aiExplanationEndpoint,
+          model: aiExplanationModel,
+          apiKey: String(process.env.CDS_AI_EXPLANATION_GATEWAY_KEY || '').trim() || undefined,
+        })
+      : undefined,
+  );
   deploymentRunService.reconcileInterrupted();
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -3508,6 +3527,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   app.use('/api', createDeploymentRunsRouter({
     deploymentRunService,
+    deploymentDiagnosisService,
     assertProjectAccess: assertProjectAccess as any,
   }));
 

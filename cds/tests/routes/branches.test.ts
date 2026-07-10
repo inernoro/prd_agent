@@ -2083,6 +2083,44 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('structured deployment diagnosis', () => {
+    it('classifies the first concrete build error and keeps evidence references on the run', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node:22', command: 'pnpm build && pnpm start', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'structured-failure', projectId: 'default', branch: 'feature/structured-failure',
+        worktreePath: path.join(tmpDir, 'worktrees', 'structured-failure'), status: 'idle',
+        createdAt: new Date().toISOString(), services: {},
+      });
+      stateService.save();
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('cds-structured-failure-api')) {
+          return { stdout: '', stderr: 'src/index.ts(4,2): error TS2322: Type string is not assignable', exitCode: 1 };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const response = await request(server, 'POST', '/api/branches/structured-failure/deploy');
+        const runId = String(response.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(runId)?.failure).toMatchObject({
+          code: 'build.compile.typescript',
+          owner: 'code',
+          retryable: false,
+          serviceId: 'api',
+        });
+        expect(deploymentRunService.get(runId)?.failure?.evidenceRefs).toEqual(expect.arrayContaining([
+          `deployment-run:${runId}`,
+          expect.stringMatching(new RegExp(`^deployment-run:${runId}:event:`)),
+          'service:structured-failure:api',
+        ]));
+      } finally {
+        mock.exec = originalExec;
+      }
+    });
+  });
+
   describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
     it('can reserve the next deploy as the same operation chain', async () => {
       const now = new Date().toISOString();

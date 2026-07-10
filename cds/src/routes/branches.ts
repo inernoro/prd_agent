@@ -73,6 +73,7 @@ import { ensureDockerNetworkWithReclaim } from '../services/docker-network-recla
 import type { DeploymentRunService } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
+import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
 import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
@@ -2184,8 +2185,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       phase: event.step,
       level: event.status === 'error' ? 'error' : event.status === 'warning' ? 'warn' : 'info',
       status: event.status,
-      message: event.title || event.log || event.step,
+      message: event.log
+        ? `${event.title || event.step}\n${event.log}`
+        : event.title || event.step,
       detail: event.detail,
+      evidenceRefs: [
+        `deployment-run:${run.id}:event:${run.seq + 1}`,
+        ...(typeof event.detail?.profileId === 'string' ? [`service:${run.branchId}:${event.detail.profileId}`] : []),
+      ],
     });
   }
 
@@ -2193,15 +2200,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!deploymentRunService || !runId) return;
     const run = deploymentRunService.get(runId);
     if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
-    deploymentRunService.fail(runId, {
-      code: 'cds.deploy.failed',
-      owner: 'unknown',
-      retryable: true,
-      summary: message,
-      phase,
-      evidenceRefs: run.operationId ? [`operation:${run.operationId}`] : [],
-      suggestedAction: '查看本次部署的结构化事件和容器证据后重试',
-    });
+    deploymentRunService.fail(runId, classifyDeploymentFailure({ message, phase, run }));
   }
 
   function cancelDeploymentRun(runId: string | undefined, message: string): void {
@@ -10412,6 +10411,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({
       branchId: branch.id,
       branchStatus: branch.status,
+      diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
+        ? 'deployment-run'
+        : 'legacy-container-pattern',
+      structuredFailure: branch.lastDeploymentRunId
+        ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
+        : undefined,
       failedServices,
     });
   });
@@ -12088,7 +12093,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 step: `build-${profile.id}`,
                 status: 'error',
                 title: `${profile.name} 就绪探测超时`,
-                detail: { elapsedMs: Date.now() - serviceStartTime },
+                detail: { elapsedMs: Date.now() - serviceStartTime, profileId: profile.id },
                 timestamp: new Date().toISOString(),
               });
             }
@@ -12103,7 +12108,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               status: 'error',
               title: `${profile.name} 失败`,
               log: (err as Error).message,
-              detail: { elapsedMs: elapsed },
+              detail: { elapsedMs: elapsed, profileId: profile.id },
               timestamp: new Date().toISOString(),
             });
           } finally {
@@ -12867,7 +12872,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (err instanceof BranchOperationSupersededError) throw err;
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
-        logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
+        logEvent({
+          step: `build-${profile.id}`,
+          status: 'error',
+          title: `${profile.name} 失败`,
+          log: (err as Error).message,
+          detail: { profileId: profile.id },
+          timestamp: new Date().toISOString(),
+        });
       }
 
       // Update overall status

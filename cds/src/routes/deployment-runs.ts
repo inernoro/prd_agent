@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { DeploymentRun, DeploymentRunStatus } from '../types.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
+import type { DeploymentDiagnosisService } from '../services/deployment-diagnosis.js';
 
 const DEPLOYMENT_RUN_STATUSES = new Set<DeploymentRunStatus>([
   'pending',
@@ -25,6 +26,7 @@ export interface DeploymentRunsRouterDeps {
   ) => { status: number; body: unknown } | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  deploymentDiagnosisService?: DeploymentDiagnosisService;
 }
 
 export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Router {
@@ -132,6 +134,47 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
     heartbeatTimer = setInterval(() => {
       if (!closed) res.write(': keepalive\n\n');
     }, heartbeatIntervalMs);
+  });
+
+  router.get('/deployment-runs/:id/diagnosis', (req, res) => {
+    const run = deps.deploymentRunService.get(req.params.id);
+    if (!run) { res.status(404).json({ error: '部署运行不存在' }); return; }
+    const access = deps.assertProjectAccess(req, run.projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    if (!deps.deploymentDiagnosisService) {
+      res.status(503).json({ error: '部署诊断服务未启用' });
+      return;
+    }
+    res.json({ diagnosis: deps.deploymentDiagnosisService.deterministic(run.id) });
+  });
+
+  router.get('/deployment-runs/:id/diagnosis/stream', async (req, res) => {
+    const run = deps.deploymentRunService.get(req.params.id);
+    if (!run) { res.status(404).json({ error: '部署运行不存在' }); return; }
+    const access = deps.assertProjectAccess(req, run.projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    if (!deps.deploymentDiagnosisService) {
+      res.status(503).json({ error: '部署诊断服务未启用' });
+      return;
+    }
+    res.set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'close',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
+    const deterministic = deps.deploymentDiagnosisService.deterministic(run.id);
+    writeSse(res, 'facts-ready', deterministic);
+    if (req.query.ai === '1' || req.query.ai === 'true') {
+      writeSse(res, 'ai-stage', { stage: 'explaining', message: 'AI Gateway 正在解释结构化部署事实' });
+      const diagnosis = await deps.deploymentDiagnosisService.explain(run.id);
+      writeSse(res, 'explanation', diagnosis.ai);
+      writeSse(res, 'complete', diagnosis);
+    } else {
+      writeSse(res, 'complete', deterministic);
+    }
+    res.end();
   });
 
   router.get('/deployment-runs/:id', (req, res) => {
