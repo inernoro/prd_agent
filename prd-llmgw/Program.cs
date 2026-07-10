@@ -669,6 +669,15 @@ app.MapGet("/gw/config-authority/report", async () =>
     var gwPlatformIds = IdSet(gwPlatformDocs);
     var gwModelIds = IdSet(gwModelDocs);
     var gwExchangeIds = IdSet(gwExchangeDocs);
+    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var pool in gwPoolDocs)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
+        {
+            usableGwPoolIds.Add(poolId);
+        }
+    }
 
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
@@ -678,7 +687,13 @@ app.MapGet("/gw/config-authority/report", async () =>
         var poolId = d.AsNullableString("ModelPoolId");
         return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId);
     });
+    var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
+    {
+        var poolId = d.AsNullableString("ModelPoolId");
+        return !string.IsNullOrWhiteSpace(poolId) && usableGwPoolIds.Contains(poolId);
+    });
     var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
+    var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var configured = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "configured", StringComparison.OrdinalIgnoreCase));
     var disabled = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "disabled", StringComparison.OrdinalIgnoreCase));
@@ -688,11 +703,21 @@ app.MapGet("/gw/config-authority/report", async () =>
     var mapOnlyModels = MapOnlyCount(mapModelDocs, gwModelIds);
     var mapOnlyExchanges = MapOnlyCount(mapExchangeDocs, gwExchangeIds);
     var mapFallbackObjectsRemaining = mapOnlyPools + mapOnlyPlatforms + mapOnlyModels + mapOnlyExchanges;
-    var activeAppCallerMapFallbackReady = activeMissingGatewayPool == 0;
-    var blockers = mapOnlyPools + mapOnlyPlatforms + mapOnlyModels + mapOnlyExchanges + activeMissingGatewayPool + discovered;
+    var activeAppCallerMapFallbackReady = activeMissingGatewayPool == 0
+        && discovered == 0
+        && activeBoundPoolWithoutUsableMember == 0;
+    var blockers = mapOnlyPools
+        + mapOnlyPlatforms
+        + mapOnlyModels
+        + mapOnlyExchanges
+        + activeMissingGatewayPool
+        + activeBoundPoolWithoutUsableMember
+        + discovered;
     var totalSurface = mapPoolDocs.Count + mapPlatformDocs.Count + mapModelDocs.Count + mapExchangeDocs.Count + Math.Max(1, appCallerDocs.Count);
     var readinessPercent = totalSurface == 0 ? 100 : Math.Clamp((int)Math.Round(((double)(totalSurface - blockers) / totalSurface) * 100), 0, 100);
-    var status = activeMissingGatewayPool > 0 ? "blocked" : blockers > 0 ? "partial" : "ready";
+    var status = activeMissingGatewayPool > 0 || activeBoundPoolWithoutUsableMember > 0
+        ? "blocked"
+        : blockers > 0 ? "partial" : "ready";
 
     var gaps = new List<ConfigAuthorityGapItem>();
     void AddMapOnlyGaps(IEnumerable<BsonDocument> docs, HashSet<string> gwIds, string objectType, Func<BsonDocument, string> nameSelector)
@@ -728,6 +753,21 @@ app.MapGet("/gw/config-authority/report", async () =>
             Status = "active-missing-gw-pool",
             Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
         }));
+    gaps.AddRange(activeAppCallers
+        .Where(d =>
+        {
+            var poolId = d.AsNullableString("ModelPoolId");
+            return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId) && !usableGwPoolIds.Contains(poolId);
+        })
+        .Take(30)
+        .Select(d => new ConfigAuthorityGapItem
+        {
+            ObjectType = "appCaller",
+            Id = d.GetStringOrEmpty("_id"),
+            Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
+            Status = "gw-pool-without-usable-member",
+            Detail = "active appCaller 已绑定 GW 模型池，但该池没有可解析、非 unavailable 的成员；MAP fallback 退场前必须修复。",
+        }));
 
     var summary = new ConfigAuthoritySummary
     {
@@ -746,7 +786,9 @@ app.MapGet("/gw/config-authority/report", async () =>
         AppCallersTotal = appCallerDocs.Count,
         ActiveAppCallers = activeAppCallers.Count,
         ActiveWithGatewayPool = activeWithGatewayPool,
+        ActiveWithUsableGatewayPool = activeWithUsableGatewayPool,
         ActiveMissingGatewayPool = activeMissingGatewayPool,
+        ActiveBoundPoolWithoutUsableMember = activeBoundPoolWithoutUsableMember,
         DiscoveredAppCallers = discovered,
         ConfiguredAppCallers = configured,
         DisabledAppCallers = disabled,

@@ -301,6 +301,9 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
         active_ready = config.get("activeAppCallerMapFallbackReady")
         if active_ready is None:
             active_ready = config.get("ActiveAppCallerMapFallbackReady")
+        active_without_usable = config.get("activeBoundPoolWithoutUsableMember")
+        if active_without_usable is None:
+            active_without_usable = config.get("ActiveBoundPoolWithoutUsableMember")
         if not required or not ok:
             raise SystemExit(
                 f"ERROR: {label} configAuthority is not required+ok for http-full gate: "
@@ -315,6 +318,11 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             )
         if active_ready is not True:
             raise SystemExit(f"ERROR: {label} activeAppCallerMapFallbackReady is not true: {path}")
+        if int(active_without_usable or 0) != 0:
+            raise SystemExit(
+                f"ERROR: {label} activeBoundPoolWithoutUsableMember is not zero: "
+                f"{path} value={active_without_usable}"
+            )
 
         runtime = payload.get("runtimeGates") or payload.get("RuntimeGates") or {}
         if not isinstance(runtime, dict):
@@ -517,6 +525,9 @@ def _require_config_authority_apply(path: str, label: str) -> None:
     active_missing = after.get("activeMissingGatewayPool")
     if active_missing is None:
         active_missing = after.get("ActiveMissingGatewayPool")
+    active_without_usable = after.get("activeBoundPoolWithoutUsableMember")
+    if active_without_usable is None:
+        active_without_usable = after.get("ActiveBoundPoolWithoutUsableMember")
 
     if status != "ready":
         raise SystemExit(f"ERROR: {label} final status is not ready: {path} status={status or 'empty'}")
@@ -528,6 +539,11 @@ def _require_config_authority_apply(path: str, label: str) -> None:
         raise SystemExit(f"ERROR: {label} final activeAppCallerMapFallbackReady is not true: {path}")
     if int(active_missing or 0) != 0:
         raise SystemExit(f"ERROR: {label} final activeMissingGatewayPool is not zero: {path} value={active_missing}")
+    if int(active_without_usable or 0) != 0:
+        raise SystemExit(
+            f"ERROR: {label} final activeBoundPoolWithoutUsableMember is not zero: "
+            f"{path} value={active_without_usable}"
+        )
 
 
 def _require_external_backup(path: str, label: str) -> None:

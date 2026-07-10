@@ -94,6 +94,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
         Assert.Contains("gw-pool-without-usable-member", consoleProgram);
         Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
+        Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
+        Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
+        Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
+        Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
         Assert.Contains("默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员", consoleProgram);
         Assert.Contains("body.IsDefaultForType == true", consoleProgram);
         Assert.Contains("targetAuthority == \"llm_gateway\"", consoleProgram);

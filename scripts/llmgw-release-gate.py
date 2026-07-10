@@ -345,6 +345,7 @@ def _config_authority_check(
         "mapFallbackObjectsRemaining": None,
         "activeAppCallerMapFallbackReady": False,
         "activeMissingGatewayPool": None,
+        "activeBoundPoolWithoutUsableMember": None,
         "readinessPercent": None,
         "failures": [],
     }
@@ -368,6 +369,7 @@ def _config_authority_check(
     map_remaining_raw = _get_nested(summary, "mapFallbackObjectsRemaining")
     active_ready = bool(_get_nested(summary, "activeAppCallerMapFallbackReady") or False)
     active_missing_raw = _get_nested(summary, "activeMissingGatewayPool")
+    active_without_usable_raw = _get_nested(summary, "activeBoundPoolWithoutUsableMember")
     readiness_raw = _get_nested(summary, "readinessPercent")
     try:
         map_remaining = int(map_remaining_raw or 0)
@@ -378,6 +380,10 @@ def _config_authority_check(
     except (TypeError, ValueError):
         active_missing = -1
     try:
+        active_without_usable = int(active_without_usable_raw or 0)
+    except (TypeError, ValueError):
+        active_without_usable = -1
+    try:
         readiness = int(readiness_raw or 0)
     except (TypeError, ValueError):
         readiness = None
@@ -386,6 +392,7 @@ def _config_authority_check(
     result["mapFallbackObjectsRemaining"] = map_remaining
     result["activeAppCallerMapFallbackReady"] = active_ready
     result["activeMissingGatewayPool"] = active_missing
+    result["activeBoundPoolWithoutUsableMember"] = active_without_usable
     result["readinessPercent"] = readiness
 
     failures: list[str] = []
@@ -397,6 +404,8 @@ def _config_authority_check(
         failures.append("active appCaller 尚未全部绑定有效 GW 模型池")
     if active_missing != 0:
         failures.append(f"active appCaller 缺 GW 池: activeMissingGatewayPool={active_missing}")
+    if active_without_usable != 0:
+        failures.append(f"active appCaller 绑定的 GW 池不可用: activeBoundPoolWithoutUsableMember={active_without_usable}")
 
     result["failures"] = failures
     result["ok"] = not failures
@@ -678,6 +687,7 @@ def _write_markdown(path: str, report: dict) -> None:
             fh.write(f"- mapFallbackObjectsRemaining: `{cell(config_authority.get('mapFallbackObjectsRemaining'))}`\n")
             fh.write(f"- activeAppCallerMapFallbackReady: `{cell(config_authority.get('activeAppCallerMapFallbackReady'))}`\n")
             fh.write(f"- activeMissingGatewayPool: `{cell(config_authority.get('activeMissingGatewayPool'))}`\n")
+            fh.write(f"- activeBoundPoolWithoutUsableMember: `{cell(config_authority.get('activeBoundPoolWithoutUsableMember'))}`\n")
             fh.write(f"- readinessPercent: `{cell(config_authority.get('readinessPercent'))}`\n\n")
         if runtime_gates:
             fh.write("## Runtime Gates\n\n")
@@ -816,6 +826,7 @@ def main() -> int:
             "mapFallbackObjectsRemaining": None,
             "activeAppCallerMapFallbackReady": None,
             "activeMissingGatewayPool": None,
+            "activeBoundPoolWithoutUsableMember": None,
             "readinessPercent": None,
             "failures": [],
         },

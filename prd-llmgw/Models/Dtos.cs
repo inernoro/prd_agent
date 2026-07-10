@@ -653,7 +653,9 @@ public sealed class ConfigAuthoritySummary
     public long AppCallersTotal { get; set; }
     public int ActiveAppCallers { get; set; }
     public int ActiveWithGatewayPool { get; set; }
+    public int ActiveWithUsableGatewayPool { get; set; }
     public int ActiveMissingGatewayPool { get; set; }
+    public int ActiveBoundPoolWithoutUsableMember { get; set; }
     public int DiscoveredAppCallers { get; set; }
     public int ConfiguredAppCallers { get; set; }
     public int DisabledAppCallers { get; set; }
