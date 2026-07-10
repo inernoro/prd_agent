@@ -65,6 +65,7 @@ docs:
   design.skill.unified-skill-system: 技能系统统一设计
   design.platform.llm-gateway: LLM Gateway 统一调用架构设计
   design.platform.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
+  design.platform.llm-gateway.migration-retrospective: LLM Gateway 全量迁移与生产发布复盘（full-http 执行成功、active 配置权威边界与长期证据纠偏）
   design.llm-gateway-physical-isolation: LLM 网关物理独立设计（从 MAP 剥离 + 跨进程 serving + flag）
   design.llm-gateway-unification: LLM 网关与模型池统一（协议下沉 + 池减负 + 接口绑模型）
   design.platform.model-pool: 大模型池设计（三级调度/三级链路）
@@ -275,6 +276,7 @@ docs:
   plan.llm-gateway.full-cutover: LLM 网关全面切换执行计划（撤销 MAP 直连 + 清理旧代码 + 全接口 MECE 复测 + CDS 多出口面板）
   plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
   plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
+  plan.platform.llm-gateway-production-hardening: LLM Gateway 生产加固与架构收口计划（隐性风险、生产事实、配置权威收口、整改 Gate 与进度规则）
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一

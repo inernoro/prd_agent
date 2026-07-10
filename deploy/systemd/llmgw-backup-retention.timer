@@ -1,0 +1,11 @@
+[Unit]
+Description=Run LLM Gateway backup retention daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=llmgw-backup-retention.service
+
+[Install]
+WantedBy=timers.target

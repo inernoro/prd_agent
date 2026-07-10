@@ -1122,7 +1122,10 @@ app.MapGet("/gw/runtime-gates", async () =>
     var keyStubUnreadable = keyHealthItems.Count(x => x.Status == "stub-unreadable");
     var keyMissingBlocking = keyHealthItems.Count(x => x.Enabled && x.Status == "missing" && (x.ObjectType == "platform" || x.ObjectType == "exchange"));
     var keyGateReady = keyPrimaryConfigured && keyUnreadable == 0 && keyLegacyReadable == 0 && keyStubUnreadable == 0 && keyMissingBlocking == 0;
-    var disableMapFallbackForActiveAppCallers = IsTruthy(config["LlmGateway:DisableMapConfigFallbackForActiveAppCallers"])
+    var disableMapFallbackForActiveAppCallers = IsTruthy(config["LlmGateway:DisableMapConfigFallbackForRegisteredAppCallers"])
+        || IsTruthy(Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS"))
+        // 兼容现有生产变量和历史 rollout ledger 字段。
+        || IsTruthy(config["LlmGateway:DisableMapConfigFallbackForActiveAppCallers"])
         || IsTruthy(Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS"));
     var ledgerPath = config["LlmGateway:RolloutLedgerPath"]
         ?? Environment.GetEnvironmentVariable("LLMGW_ROLLOUT_LEDGER")

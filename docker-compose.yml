@@ -97,12 +97,14 @@ services:
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
-      # 跨进程 LLM 网关开关：默认 inproc（进程内直调，行为不变）；置 http 则 MAP 自身 LLM
-      # 调用经 HttpLlmGatewayClient 打到 llmgw-serve（/gw/v1/*）。ServeBaseUrl 指向 serving 容器。
-      - LlmGateway__Mode=${LLMGW_MODE:-inproc}
+      # 跨进程 LLM 网关开关：生产必须显式设置。http 让 MAP 调用经 HttpLlmGatewayClient
+      # 打到 llmgw-serve；inproc 只允许破玻璃回滚脚本显式设置，禁止漏配静默回退。
+      - LlmGateway__Mode=${LLMGW_MODE}
       - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
       - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
       - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}
+      - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
+      # 旧变量保留一版兼容；运行时两者任一为 true 都会对全部 registered caller fail-closed。
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}
@@ -129,7 +131,7 @@ services:
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
   # 与 MAP 共享同一 Mongo 读取模型配置 + 同一 ApiKeyCrypto__Secret（resolve 要解密平台 key）+ 同一资产存储；
   # serving 自有请求日志与 shadow 证据写入 LlmGateway__DatabaseName（默认 llm_gateway）。
-  # MAP 置 LlmGateway__Mode=http 时跨进程打到这里；默认 inproc 时本服务可空跑/被外部调用。
+  # MAP 置 LlmGateway__Mode=http 时跨进程打到这里；生产缺少 mode 时 API 拒绝启动。
   llmgw-serve:
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
@@ -139,6 +141,8 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
+      - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       # 平台 API key 密文解密密钥：必须与 api 一致，否则 resolve 取不出可用 ApiKey
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
@@ -182,6 +186,7 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - LlmGateway__RolloutLedgerPath=/app/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台只在已认领到 GW 的平台/模型/Exchange 上写密钥；加密密钥必须与 api / llmgw-serve 一致。

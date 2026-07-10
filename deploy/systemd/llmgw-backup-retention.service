@@ -1,0 +1,9 @@
+[Unit]
+Description=LLM Gateway backup retention
+
+[Service]
+Type=oneshot
+StateDirectory=llmgw
+ExecStart=/usr/local/sbin/llmgw-backup-retention --root /root/backups --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --minimum-full-mb 256 --minimum-age-hours 24 --execute --confirm DELETE_REDUNDANT_FULL_BACKUPS --json-out /var/lib/llmgw/backup-retention-latest.json
+StandardOutput=journal
+StandardError=journal

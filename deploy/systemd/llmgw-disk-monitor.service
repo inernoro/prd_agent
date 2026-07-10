@@ -1,0 +1,9 @@
+[Unit]
+Description=LLM Gateway production disk usage monitor
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/llmgw-disk-monitor.env
+ExecStart=/usr/local/sbin/llmgw-disk-usage-monitor / 80 90 "LLM Gateway production disk"
+StandardOutput=journal
+StandardError=journal

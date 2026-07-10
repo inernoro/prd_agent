@@ -24,6 +24,7 @@ var mongoDb = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var gatewayDb = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
 builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));
+builder.Services.AddHostedService<LlmGatewayDatabaseInitializer>();
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
