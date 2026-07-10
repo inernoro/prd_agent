@@ -216,6 +216,12 @@
     ]
   },
   {
+    "code": "document-store.transcribe-summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "email-agent.draft::chat",
     "modelTypes": [
       "chat"
