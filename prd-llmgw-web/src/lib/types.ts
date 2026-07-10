@@ -529,7 +529,9 @@ export type ConfigAuthoritySummary = {
   appCallersTotal: number;
   activeAppCallers: number;
   activeWithGatewayPool: number;
+  activeWithUsableGatewayPool: number;
   activeMissingGatewayPool: number;
+  activeBoundPoolWithoutUsableMember: number;
   discoveredAppCallers: number;
   configuredAppCallers: number;
   disabledAppCallers: number;

@@ -135,7 +135,10 @@ export function OverviewPage() {
   const keyHealthTone = keyHealth!.status === 'ok' ? '#3fb950' : keyHealth!.status === 'unreadable' ? '#f85149' : '#d29922';
   const authorityTone = configAuthority!.status === 'ready' ? '#3fb950' : configAuthority!.status === 'blocked' ? '#f85149' : '#d29922';
   const mapOnlyTotal = configAuthority!.mapOnlyPools + configAuthority!.mapOnlyPlatforms + configAuthority!.mapOnlyModels + configAuthority!.mapOnlyExchanges;
-  const activeFallbackStatus = configAuthority!.activeAppCallerMapFallbackReady ? 'active fallback 可关闭' : `${configAuthority!.activeMissingGatewayPool} 个 active 未绑 GW 池`;
+  const unusableActivePools = configAuthority!.activeBoundPoolWithoutUsableMember ?? 0;
+  const activeFallbackStatus = configAuthority!.activeAppCallerMapFallbackReady
+    ? 'active fallback 可关闭'
+    : `${configAuthority!.activeMissingGatewayPool} 未绑池 · ${unusableActivePools} 不可用池`;
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -194,6 +197,8 @@ export function OverviewPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>配置权威迁移</span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>将 MAP-only 配置复制到 llm_gateway，并把 active 调用方绑定到同类型 GW 默认池。</span>
+        <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? '#d29922' : '#3fb950'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'rgba(210,153,34,0.14)' : 'rgba(63,185,80,0.14)'} />
+        <Chip label={`不可用池 ${unusableActivePools}`} color={unusableActivePools > 0 ? '#f85149' : '#3fb950'} bg={unusableActivePools > 0 ? 'rgba(248,81,73,0.12)' : 'rgba(63,185,80,0.14)'} />
         <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
           {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
         </Button>
@@ -415,7 +420,9 @@ function emptyConfigAuthority(): ConfigAuthoritySummary {
     appCallersTotal: 0,
     activeAppCallers: 0,
     activeWithGatewayPool: 0,
+    activeWithUsableGatewayPool: 0,
     activeMissingGatewayPool: 0,
+    activeBoundPoolWithoutUsableMember: 0,
     discoveredAppCallers: 0,
     configuredAppCallers: 0,
     disabledAppCallers: 0,
