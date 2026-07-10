@@ -410,6 +410,36 @@ def _require_prod_preflight_for_commit(path: str, label: str, commit: str, stage
         _require_prod_preflight_route_self_test(payload, label, path)
 
 
+def _require_prod_health_preflight_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    actual = _normalize_commit(payload.get("actualCommit") or payload.get("ActualCommit") or health.get("commit") or health.get("Commit"))
+    expected_from_payload = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
+    if expected_from_payload and expected_from_payload != expected:
+        raise SystemExit(
+            f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_from_payload} expected={expected}"
+        )
+    if actual != expected:
+        raise SystemExit(f"ERROR: {label} actualCommit mismatch: {path} actual={actual or 'empty'} expected={expected}")
+
+    auth_checks = payload.get("authBoundaryChecks") or payload.get("AuthBoundaryChecks") or []
+    if auth_checks and not isinstance(auth_checks, list):
+        raise SystemExit(f"ERROR: {label} authBoundaryChecks are not a list: {path}")
+    failed = [
+        str(item.get("path") or item.get("Path") or "unknown")
+        for item in auth_checks
+        if isinstance(item, dict) and item.get("ok") is not True and item.get("Ok") is not True
+    ]
+    if failed:
+        raise SystemExit(f"ERROR: {label} auth boundary failed: {path} failed={','.join(failed)}")
+
+
 def _require_prod_preflight_route_self_test(payload: dict, label: str, path: str) -> None:
     checks = payload.get("checks") or payload.get("Checks") or []
     if not isinstance(checks, list):
@@ -773,6 +803,15 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit, stage)
     except SystemExit as exc:
         failures.append(str(exc))
+    if _bool_flag(str(entry.get("prodHealthPreflightRequired") or "0")):
+        try:
+            _require_prod_health_preflight_for_commit(
+                str(entry.get("prodHealthPreflightJson") or ""),
+                f"{stage} production health preflight evidence",
+                commit,
+            )
+        except SystemExit as exc:
+            failures.append(str(exc))
 
     evidence_checks = [
         ("servingProbeJson", "serving probe evidence", True),
@@ -1006,6 +1045,8 @@ def append(args: argparse.Namespace) -> int:
             _require_config_authority_apply(args.config_authority_json, "config authority evidence")
         elif args.stage != ROLLBACK_REHEARSAL_STAGE:
             _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit, args.stage)
+            if _bool_flag(args.prod_health_preflight_required):
+                _require_prod_health_preflight_for_commit(args.prod_health_preflight_json, "production health preflight evidence", args.commit)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             if _bool_flag(args.smoke_required):
                 _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
@@ -1053,6 +1094,8 @@ def append(args: argparse.Namespace) -> int:
         "releaseGateJson": args.release_gate_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "prodPreflightJson": args.prod_preflight_json,
+        "prodHealthPreflightJson": args.prod_health_preflight_json,
+        "prodHealthPreflightRequired": _bool_flag(args.prod_health_preflight_required),
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
@@ -1127,6 +1170,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- prodPreflightJson: `{cell(report['prodPreflightJson'])}`\n")
+        fh.write(f"- prodHealthPreflightRequired: `{cell(report['prodHealthPreflightRequired'])}`\n")
+        fh.write(f"- prodHealthPreflightJson: `{cell(report['prodHealthPreflightJson'])}`\n")
         fh.write(f"- shadowSeedJson: `{cell(report['shadowSeedJson'])}`\n")
         fh.write(f"- upstreamReadinessRequired: `{cell(report['upstreamReadinessRequired'])}`\n")
         fh.write(f"- upstreamReadinessJson: `{cell(report['upstreamReadinessJson'])}`\n")
@@ -1202,6 +1247,7 @@ def stage_report(args: argparse.Namespace) -> int:
         checks = [
             ("protocolRouterAuditJson", args.protocol_router_audit_json, True),
             ("prodPreflightJson", args.prod_preflight_json, True),
+            ("prodHealthPreflightJson", args.prod_health_preflight_json, _bool_flag(args.prod_health_preflight_required)),
             ("servingProbeJson", args.serving_probe_json, True),
             ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
             ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
@@ -1237,6 +1283,8 @@ def stage_report(args: argparse.Namespace) -> int:
                 )
             elif label == "prodPreflightJson":
                 _require_prod_preflight_for_commit(path, label, args.commit, args.stage)
+            elif label == "prodHealthPreflightJson":
+                _require_prod_health_preflight_for_commit(path, label, args.commit)
             elif label == "upstreamReadinessJson":
                 _require_upstream_readiness(path, label)
             elif label == "providerAuditJson":
@@ -1279,6 +1327,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "prodPreflightJson": args.prod_preflight_json,
+        "prodHealthPreflightJson": args.prod_health_preflight_json,
+        "prodHealthPreflightRequired": _bool_flag(args.prod_health_preflight_required),
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
@@ -1352,6 +1402,8 @@ def audit(args: argparse.Namespace) -> int:
                 "servingProbeJson": latest.get("servingProbeJson") or "",
                 "smokeJson": latest.get("smokeJson") or "",
                 "releaseGateJson": latest.get("releaseGateJson") or "",
+                "prodHealthPreflightJson": latest.get("prodHealthPreflightJson") or "",
+                "prodHealthPreflightRequired": _bool_flag(str(latest.get("prodHealthPreflightRequired") or "0")),
                 "shadowSeedJson": latest.get("shadowSeedJson") or "",
                 "upstreamReadinessJson": latest.get("upstreamReadinessJson") or "",
                 "upstreamReadinessRequired": _bool_flag(str(latest.get("upstreamReadinessRequired") or "0")),
@@ -1479,6 +1531,8 @@ def main() -> int:
     append_parser.add_argument("--release-gate-json", default="")
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--prod-preflight-json", default="")
+    append_parser.add_argument("--prod-health-preflight-json", default="")
+    append_parser.add_argument("--prod-health-preflight-required", default="0")
     append_parser.add_argument("--shadow-seed-json", default="")
     append_parser.add_argument("--upstream-readiness-json", default="")
     append_parser.add_argument("--upstream-readiness-required", default="0")
@@ -1519,6 +1573,8 @@ def main() -> int:
     report_parser.add_argument("--release-gate-json", default="")
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--prod-preflight-json", default="")
+    report_parser.add_argument("--prod-health-preflight-json", default="")
+    report_parser.add_argument("--prod-health-preflight-required", default="0")
     report_parser.add_argument("--shadow-seed-json", default="")
     report_parser.add_argument("--upstream-readiness-json", default="")
     report_parser.add_argument("--upstream-readiness-required", default="0")

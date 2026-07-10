@@ -793,6 +793,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_provider_external_blockers", ledger);
         Assert.Contains("contains external blockers", ledger);
         Assert.Contains("providerExternalBlockers", ledger);
+        Assert.Contains("_require_prod_health_preflight_for_commit", ledger);
+        Assert.Contains("\"prodHealthPreflightJson\": args.prod_health_preflight_json", ledger);
+        Assert.Contains("\"prodHealthPreflightRequired\": _bool_flag(args.prod_health_preflight_required)", ledger);
+        Assert.Contains("append_parser.add_argument(\"--prod-health-preflight-json\", default=\"\")", ledger);
+        Assert.Contains("report_parser.add_argument(\"--prod-health-preflight-json\", default=\"\")", ledger);
+        Assert.Contains("production health preflight evidence", ledger);
         Assert.Contains("_require_protocol_canary_for_commit", ledger);
         Assert.Contains("\"protocolCanaryJson\": args.protocol_canary_json", ledger);
         Assert.Contains("\"protocolCanaryRequired\": _bool_flag(args.protocol_canary_required)", ledger);
