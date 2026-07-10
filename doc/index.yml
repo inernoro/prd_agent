@@ -161,7 +161,7 @@ docs:
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
-  guide.cds.managed-delivery: CDS 托管交付操作指南
+  guide.cds.managed-delivery: CDS 托管交付使用指南
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程

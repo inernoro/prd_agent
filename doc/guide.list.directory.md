@@ -398,8 +398,8 @@
 - [Claude Code 云开发教程](guide.cds.cloud-dev-tutorial) `guide.cds.cloud-dev-tutorial`
   > 使用 Claude Code 进行云端协作开发的操作指南
 
-- [CDS 托管交付操作指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
-  > 从模式选择、最小声明、部署事实账本到不可变版本复用、结构化诊断和回滚的完整操作路径
+- [CDS 托管交付使用指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
+  > 面向普通用户介绍新增功能、3 分钟 Quick Start、日常上线、失败处理和版本恢复
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
@@ -1068,7 +1068,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
-| 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付操作指南 |
+| 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |
 | 2026-07-10 | 新增 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产加固与架构收口计划 |
 | 2026-07-10 | 新增 | `design.platform.llm-gateway.migration-retrospective` | LLM Gateway 全量迁移与生产发布复盘 |
 | 2026-07-10 | 新增 | `plan.platform.llm-gateway-protocol-router-pr-split` | LLM Gateway 协议路由 PR 拆分计划 |
