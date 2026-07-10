@@ -442,6 +442,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT", script);
         Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD", script);
         Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", script);
+        Assert.Contains("protocol_canary_json_dir=\"$(dirname -- \"$protocol_canary_json\")\"", script);
+        Assert.Contains("protocol_canary_md_dir=\"$(dirname -- \"$protocol_canary_md\")\"", script);
+        Assert.Contains("mkdir -p \"$protocol_canary_json_dir\"", script);
+        Assert.Contains("mkdir -p \"$protocol_canary_md_dir\"", script);
         Assert.Contains("LLM Gateway post-deploy protocol canary: required before runtime gates", script);
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);

@@ -1126,6 +1126,16 @@ run_llmgw_post_deploy_verification_if_needed() {
         echo "ERROR: LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=1 requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT." >&2
         exit 1
       fi
+      protocol_canary_json_dir="$(dirname -- "$protocol_canary_json")"
+      if [ -n "$protocol_canary_json_dir" ] && [ "$protocol_canary_json_dir" != "." ]; then
+        mkdir -p "$protocol_canary_json_dir"
+      fi
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_md_dir="$(dirname -- "$protocol_canary_md")"
+        if [ -n "$protocol_canary_md_dir" ] && [ "$protocol_canary_md_dir" != "." ]; then
+          mkdir -p "$protocol_canary_md_dir"
+        fi
+      fi
       protocol_canary_report_args=""
       if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
         protocol_canary_report_args="--report-md $protocol_canary_md"
