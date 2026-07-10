@@ -86,12 +86,16 @@ class FakeSplitHandle implements ISplitMongoHandle {
   global = new FakeSplitCollection<{ _id: string; state: Omit<any, 'projects' | 'branches'>; updatedAt: string }>();
   projects = new FakeSplitCollection<{ _id: string; doc: any; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
+  deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: any; updatedAt: string }>();
+  deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: any; updatedAt: string }>();
   closed = false;
   async connect(): Promise<void> {}
   globalCollection() { return this.global; }
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
+  deploymentRunsCollection() { return this.deploymentRuns; }
+  deploymentVersionsCollection() { return this.deploymentVersions; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
   async close(): Promise<void> { this.closed = true; }
   async ping(): Promise<boolean> { return true; }
