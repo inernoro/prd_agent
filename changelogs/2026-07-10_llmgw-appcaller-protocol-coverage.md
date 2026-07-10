@@ -7,3 +7,5 @@
 | test | scripts | release gate 自测覆盖 appCaller 入口协议注册 gate，protocol canary 文案同步说明注册表证据 |
 | test | prd-api | 增加模型池协议优先级防退化测试，守卫池条目 Protocol 优先于模型和平台 |
 | docs | doc | 更新 LLM Gateway 协议绑平台债务状态，区分已守卫文本解析链与剩余图片/raw 分支 |
+| fix | prd-api | 生图 adapter 选择改为优先使用 Gateway 解析出的 Protocol，避免同平台多协议被 URL 或模型名猜回旧适配器 |
+| test | prd-api | 增加生图 adapter 显式协议覆盖 URL/模型名检测的防退化测试 |
