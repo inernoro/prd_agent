@@ -404,13 +404,12 @@ public class ModelResolver : IModelResolver
                     expectedModel ?? "(无)", selectedModel.ModelId,
                     platform.Name, selectedModel.HealthStatus);
 
-                var modelConfig = NeedsModelConfigFallback(selectedModel)
-                    ? await FindGatewayOwnedOrMapModelAsync(
-                        selectedModel.PlatformId,
-                        selectedModel.ModelId,
-                        ct,
-                        allowMapFallback: !gatewayConfigRequired)
-                    : null;
+                // 并发治理需要真实模型级 MaxConcurrency；能力/协议字段仍沿用池快照优先级。
+                var modelConfig = await FindGatewayOwnedOrMapModelAsync(
+                    selectedModel.PlatformId,
+                    selectedModel.ModelId,
+                    ct,
+                    allowMapFallback: !gatewayConfigRequired);
 
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
                     resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
@@ -486,6 +485,8 @@ public class ModelResolver : IModelResolver
                     ApiKey = fallbackApiKey,
                     HealthStatus = "Healthy",
                     MaxTokens = fallbackLegacyModel.MaxTokens,
+                    PlatformMaxConcurrency = fallbackPlatform.MaxConcurrency,
+                    ModelMaxConcurrency = fallbackLegacyModel.MaxConcurrency,
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,
@@ -1449,9 +1450,7 @@ public class InMemoryModelResolver : IModelResolver
                     continue;
 
                 _apiKeys.TryGetValue(platform.Id, out var apiKey);
-                var modelConfig = ModelResolver.NeedsModelConfigFallback(selectedModel)
-                    ? FindModelConfigForInMemory(selectedModel)
-                    : null;
+                var modelConfig = FindModelConfigForInMemory(selectedModel);
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
                     resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
@@ -1495,6 +1494,8 @@ public class InMemoryModelResolver : IModelResolver
                     ApiUrl = fallbackLegacy.ApiUrl ?? fbPlatform.ApiUrl,
                     ApiKey = fbKey,
                     HealthStatus = "Healthy",
+                    PlatformMaxConcurrency = fbPlatform.MaxConcurrency,
+                    ModelMaxConcurrency = fallbackLegacy.MaxConcurrency,
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,

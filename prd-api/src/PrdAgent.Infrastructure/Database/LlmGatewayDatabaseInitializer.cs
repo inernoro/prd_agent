@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -15,13 +16,16 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     private const string DuplicateArchiveCollectionName = "llmgw_app_caller_duplicate_archive";
     private const string OperationAuditCollectionName = "llmgw_operation_audits";
     private readonly LlmGatewayDataContext _data;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<LlmGatewayDatabaseInitializer> _logger;
 
     public LlmGatewayDatabaseInitializer(
         LlmGatewayDataContext data,
+        IConfiguration configuration,
         ILogger<LlmGatewayDatabaseInitializer> logger)
     {
         _data = data;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -29,6 +33,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         var callers = _data.Database.GetCollection<GatewayAppCallerRecord>(AppCallerCollectionName);
         await ConsolidateDuplicateAppCallersAsync(callers, cancellationToken);
+        await EnsureBudgetConfigurationIntegrityAsync(callers, cancellationToken);
 
         var indexes = new[]
         {
@@ -50,10 +55,208 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 new CreateIndexOptions { Name = "idx_llmgw_app_callers_status_type_seen" }),
         };
         await callers.Indexes.CreateManyAsync(indexes, cancellationToken);
-        _logger.LogInformation("[LlmGatewayData] appCaller 唯一性与查询索引已就绪");
+        await EnsureGovernanceIndexesAsync(cancellationToken);
+        _logger.LogInformation("[LlmGatewayData] appCaller、日志与治理索引已就绪");
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task EnsureGovernanceIndexesAsync(CancellationToken ct)
+    {
+        var logs = _data.Database.GetCollection<BsonDocument>("llmrequestlogs");
+        await logs.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Descending("StartedAt")
+                    .Ascending("AppCallerCode")
+                    .Ascending("RequestType")
+                    .Ascending("GatewayTransport"),
+                new CreateIndexOptions { Name = "idx_llmgw_logs_time_caller_type_transport" }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("ReleaseCommit")
+                    .Ascending("AppCallerCode")
+                    .Descending("StartedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_logs_release_caller_time" }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("RequestId")
+                    .Descending("StartedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_logs_request_time" }),
+        }, cancellationToken: ct);
+
+        var shadows = _data.Database.GetCollection<BsonDocument>("llmshadow_comparisons");
+        await shadows.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("ReleaseCommit")
+                    .Ascending("AppCallerCode")
+                    .Ascending("Kind")
+                    .Descending("ComparedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_shadow_release_caller_kind_time" }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("HasCritical")
+                    .Ascending("HttpOk")
+                    .Descending("ComparedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_shadow_failure_time" }),
+        }, cancellationToken: ct);
+
+        await CreateBsonIndexesAsync("llmgw_operation_audits", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Descending("CreatedAt").Ascending("Action"),
+                new CreateIndexOptions { Name = "idx_llmgw_audit_time_action" }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_app_caller_rate_windows", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+                new CreateIndexOptions { Name = "ttl_llmgw_rate_windows", ExpireAfter = TimeSpan.Zero }),
+        }, ct);
+
+        var budgets = _data.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
+        await budgets.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetMonthRecord>(
+            Builders<GatewayBudgetMonthRecord>.IndexKeys
+                .Ascending(x => x.AppCallerCode)
+                .Ascending(x => x.RequestType)
+                .Ascending(x => x.MonthStart),
+            new CreateIndexOptions { Name = "uniq_llmgw_budget_month", Unique = true }), cancellationToken: ct);
+
+        var reservations = _data.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
+        await reservations.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayBudgetReservationRecord>(
+                Builders<GatewayBudgetReservationRecord>.IndexKeys
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType)
+                    .Ascending(x => x.RequestId),
+                new CreateIndexOptions { Name = "uniq_llmgw_budget_reservation_request", Unique = true }),
+            new CreateIndexModel<GatewayBudgetReservationRecord>(
+                Builders<GatewayBudgetReservationRecord>.IndexKeys
+                    .Ascending(x => x.Status)
+                    .Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "idx_llmgw_budget_reservation_status_expiry" }),
+        }, cancellationToken: ct);
+
+        var executions = _data.Database.GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions");
+        await executions.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayRequestExecutionRecord>(
+                Builders<GatewayRequestExecutionRecord>.IndexKeys
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestId)
+                    .Ascending(x => x.Operation),
+                new CreateIndexOptions { Name = "uniq_llmgw_execution_request", Unique = true }),
+            new CreateIndexModel<GatewayRequestExecutionRecord>(
+                Builders<GatewayRequestExecutionRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "ttl_llmgw_request_executions", ExpireAfter = TimeSpan.Zero }),
+        }, cancellationToken: ct);
+
+        var serviceKeys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
+        await serviceKeys.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyRecord>(
+            Builders<GatewayServiceKeyRecord>.IndexKeys.Ascending(x => x.KeyHash),
+            new CreateIndexOptions { Name = "uniq_llmgw_service_key_hash", Unique = true }), cancellationToken: ct);
+
+        var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
+        await multipart.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayMultipartObjectRecord>(
+                Builders<GatewayMultipartObjectRecord>.IndexKeys.Ascending(x => x.RefKey),
+                new CreateIndexOptions { Name = "uniq_llmgw_multipart_ref", Unique = true }),
+            new CreateIndexModel<GatewayMultipartObjectRecord>(
+                Builders<GatewayMultipartObjectRecord>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "idx_llmgw_multipart_status_expiry" }),
+        }, cancellationToken: ct);
+
+        var concurrencySlots = _data.Database.GetCollection<GatewayProviderConcurrencySlotRecord>("llmgw_provider_concurrency_slots");
+        await concurrencySlots.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayProviderConcurrencySlotRecord>(
+                Builders<GatewayProviderConcurrencySlotRecord>.IndexKeys
+                    .Ascending(x => x.ResourceKey)
+                    .Ascending(x => x.Slot),
+                new CreateIndexOptions { Name = "uniq_llmgw_provider_concurrency_slot", Unique = true }),
+            new CreateIndexModel<GatewayProviderConcurrencySlotRecord>(
+                Builders<GatewayProviderConcurrencySlotRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "ttl_llmgw_provider_concurrency_slot", ExpireAfter = TimeSpan.Zero }),
+        }, cancellationToken: ct);
+
+        if (_configuration.GetValue("LlmGateway:Retention:EnableTtlIndexes", false))
+        {
+            await EnsureRetentionTtlIndexesAsync(logs, shadows, ct);
+        }
+        else
+        {
+            _logger.LogWarning("[LlmGatewayData] TTL 删除索引未启用；先运行生命周期 dry-run，再设置 LlmGateway:Retention:EnableTtlIndexes=true");
+        }
+    }
+
+    private async Task EnsureRetentionTtlIndexesAsync(
+        IMongoCollection<BsonDocument> logs,
+        IMongoCollection<BsonDocument> shadows,
+        CancellationToken ct)
+    {
+        var logDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:RequestLogDays", 90));
+        var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
+        var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:OperationAuditDays", 365));
+        await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("StartedAt"),
+            new CreateIndexOptions { Name = "ttl_llmgw_logs_started", ExpireAfter = TimeSpan.FromDays(logDays) }), cancellationToken: ct);
+        await shadows.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("ComparedAt"),
+            new CreateIndexOptions { Name = "ttl_llmgw_shadow_compared", ExpireAfter = TimeSpan.FromDays(shadowDays) }), cancellationToken: ct);
+        await CreateBsonIndexesAsync("llmgw_operation_audits", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("CreatedAt"),
+                new CreateIndexOptions { Name = "ttl_llmgw_operation_audits", ExpireAfter = TimeSpan.FromDays(auditDays) }),
+        }, ct);
+        _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d shadow={ShadowDays}d audit={AuditDays}d", logDays, shadowDays, auditDays);
+    }
+
+    private async Task CreateBsonIndexesAsync(
+        string collectionName,
+        IEnumerable<CreateIndexModel<BsonDocument>> indexes,
+        CancellationToken ct)
+    {
+        await _data.Database.GetCollection<BsonDocument>(collectionName)
+            .Indexes.CreateManyAsync(indexes, cancellationToken: ct);
+    }
+
+    private async Task EnsureBudgetConfigurationIntegrityAsync(
+        IMongoCollection<GatewayAppCallerRecord> callers,
+        CancellationToken ct)
+    {
+        var fb = Builders<GatewayAppCallerRecord>.Filter;
+        var monthlyWithoutReservation = fb.Gt(x => x.MonthlyBudgetUsd, 0)
+                                        & (fb.Eq(x => x.BudgetReservationUsd, null)
+                                           | fb.Lte(x => x.BudgetReservationUsd, 0));
+        var reservationWithoutMonthly = fb.Gt(x => x.BudgetReservationUsd, 0)
+                                        & (fb.Eq(x => x.MonthlyBudgetUsd, null)
+                                           | fb.Lte(x => x.MonthlyBudgetUsd, 0));
+        FilterDefinition<GatewayAppCallerRecord> reservationExceedsMonthly =
+            new BsonDocumentFilterDefinition<GatewayAppCallerRecord>(new BsonDocument(
+                "$expr",
+                new BsonDocument("$gt", new BsonArray { "$BudgetReservationUsd", "$MonthlyBudgetUsd" })));
+        var invalid = await callers.Find(fb.Or(
+                monthlyWithoutReservation,
+                reservationWithoutMonthly,
+                reservationExceedsMonthly))
+            .Project(x => new { x.AppCallerCode, x.RequestType })
+            .Limit(20)
+            .ToListAsync(ct);
+        if (invalid.Count == 0) return;
+
+        var identities = string.Join(", ", invalid.Select(x => $"{x.AppCallerCode}::{x.RequestType}"));
+        _logger.LogCritical(
+            "[LlmGatewayData] 检测到无效预算配置，拒绝启动 serving；必须成对配置 MonthlyBudgetUsd 与 BudgetReservationUsd，且单次预占不能超过月预算。Callers={Callers}",
+            identities);
+        throw new InvalidOperationException(
+            $"APP_CALLER_BUDGET_MIGRATION_REQUIRED: {identities}");
+    }
 
     private async Task ConsolidateDuplicateAppCallersAsync(
         IMongoCollection<GatewayAppCallerRecord> callers,

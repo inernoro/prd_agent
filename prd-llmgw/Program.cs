@@ -9,6 +9,7 @@
 
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -152,6 +153,7 @@ var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
+var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var managedParameterCapabilities = new (string Name, string Label, string Category)[]
 {
     ("temperature", "Temperature", "sampling"),
@@ -1893,6 +1895,18 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
     var doc = await gwAppCallers.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
 
+    var effectiveMonthlyBudget = body.MonthlyBudgetUsd is null
+        ? doc.AsNullableDecimal("MonthlyBudgetUsd")
+        : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+    var effectiveBudgetReservation = body.BudgetReservationUsd is null
+        ? body.MonthlyBudgetUsd == 0 ? null : doc.AsNullableDecimal("BudgetReservationUsd")
+        : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+    var budgetConfigurationError = ValidateBudgetConfiguration(effectiveMonthlyBudget, effectiveBudgetReservation);
+    if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+        budgetConfigurationError = "预算金额不能小于 0";
+    if (budgetConfigurationError is not null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", budgetConfigurationError), jsonOptions, 400);
+
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
     var effectiveStatus = doc.AsNullableString("Status") ?? "discovered";
@@ -2021,11 +2035,32 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddChange("monthlyBudgetUsd", doc.AsNullableDecimal("MonthlyBudgetUsd"), null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), null);
+            }
         }
         else
         {
-            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", body.MonthlyBudgetUsd.Value));
+            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", new BsonDecimal128(body.MonthlyBudgetUsd.Value)));
             AddChange("monthlyBudgetUsd", doc.AsNullableDecimal("MonthlyBudgetUsd"), body.MonthlyBudgetUsd.Value);
+        }
+    }
+
+    if (body.BudgetReservationUsd is not null)
+    {
+        if (body.BudgetReservationUsd.Value < 0)
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "budgetReservationUsd 不能小于 0"), jsonOptions, 400);
+        if (body.BudgetReservationUsd.Value == 0)
+        {
+            updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+            AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), null);
+        }
+        else
+        {
+            updates.Add(Builders<BsonDocument>.Update.Set("BudgetReservationUsd", new BsonDecimal128(body.BudgetReservationUsd.Value)));
+            AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), body.BudgetReservationUsd.Value);
         }
     }
 
@@ -2230,11 +2265,32 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddSetSummary("monthlyBudgetUsd", null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddSetSummary("budgetReservationUsd", null);
+            }
         }
         else
         {
-            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", body.MonthlyBudgetUsd.Value));
+            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", new BsonDecimal128(body.MonthlyBudgetUsd.Value)));
             AddSetSummary("monthlyBudgetUsd", body.MonthlyBudgetUsd.Value);
+        }
+    }
+
+    if (body.BudgetReservationUsd is not null)
+    {
+        if (body.BudgetReservationUsd.Value < 0)
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "budgetReservationUsd 不能小于 0"), jsonOptions, 400);
+        if (body.BudgetReservationUsd.Value == 0)
+        {
+            updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+            AddSetSummary("budgetReservationUsd", null);
+        }
+        else
+        {
+            updates.Add(Builders<BsonDocument>.Update.Set("BudgetReservationUsd", new BsonDecimal128(body.BudgetReservationUsd.Value)));
+            AddSetSummary("budgetReservationUsd", body.BudgetReservationUsd.Value);
         }
     }
 
@@ -2262,6 +2318,32 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
     }
 
     var filter = fb.And(filters);
+    if (body.MonthlyBudgetUsd is not null || body.BudgetReservationUsd is not null)
+    {
+        if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "预算金额不能小于 0"), jsonOptions, 400);
+
+        var budgetDocuments = await gwAppCallers.Find(filter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("AppCallerCode")
+                .Include("RequestType")
+                .Include("MonthlyBudgetUsd")
+                .Include("BudgetReservationUsd"))
+            .ToListAsync();
+        foreach (var budgetDocument in budgetDocuments)
+        {
+            var monthlyBudget = body.MonthlyBudgetUsd is null
+                ? budgetDocument.AsNullableDecimal("MonthlyBudgetUsd")
+                : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+            var reservation = body.BudgetReservationUsd is null
+                ? body.MonthlyBudgetUsd == 0 ? null : budgetDocument.AsNullableDecimal("BudgetReservationUsd")
+                : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+            var error = ValidateBudgetConfiguration(monthlyBudget, reservation);
+            if (error is null) continue;
+            var identity = $"{budgetDocument.GetStringOrEmpty("AppCallerCode")}::{budgetDocument.GetStringOrEmpty("RequestType")}";
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", $"{identity}: {error}"), jsonOptions, 400);
+        }
+    }
     var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
         gwAppCallers,
         gwModelPools,
@@ -2368,6 +2450,125 @@ app.MapGet("/gw/audits", async (
     };
     return Json(ApiEnvelope<OperationAuditsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// M2M scoped key：明文只在创建响应返回一次，数据库只保存 SHA-256。
+app.MapGet("/gw/service-keys", async () =>
+{
+    var docs = await serviceKeys.Find(Builders<BsonDocument>.Filter.Empty)
+        .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+        .Limit(500)
+        .ToListAsync();
+    var items = docs.Select(d => new ServiceKeyItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Name = d.GetStringOrEmpty("Name"),
+        Enabled = d.AsNullableBool("Enabled") ?? false,
+        SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
+        AppCallerCodes = d.AsStringList("AppCallerCodes"),
+        IngressProtocols = d.AsStringList("IngressProtocols"),
+        Scopes = d.AsStringList("Scopes"),
+        ExpiresAt = d.AsNullableUtcDateTime("ExpiresAt").ToIso(),
+        LastUsedAt = d.AsNullableUtcDateTime("LastUsedAt").ToIso(),
+        CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+    }).ToList();
+    return Json(ApiEnvelope<List<ServiceKeyItem>>.Ok(items), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest body) =>
+{
+    var name = (body.Name ?? string.Empty).Trim();
+    var sourceSystem = (body.SourceSystem ?? "external").Trim();
+    var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
+    var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
+    var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
+    if (name.Length == 0 || sourceSystem.Length == 0 || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+    }
+    var allowedProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "*", "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
+    };
+    var allowedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "*", "invoke", "stream:invoke", "raw:invoke", "profile:test", "route:read", "readiness:read", "request:cancel", "request:read",
+    };
+    if (protocols.Any(x => !allowedProtocols.Contains(x)) || scopes.Any(x => !allowedScopes.Contains(x)))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_SERVICE_KEY_SCOPE",
+            "ingressProtocols 或 scopes 包含未支持值"), jsonOptions, 400);
+    }
+
+    var secretBytes = RandomNumberGenerator.GetBytes(32);
+    var plainKey = "gwk_" + Convert.ToBase64String(secretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
+    var id = Guid.NewGuid().ToString("N");
+    var now = DateTime.UtcNow;
+    var expiresAt = body.ExpiresAt?.ToUniversalTime();
+    await serviceKeys.InsertOneAsync(new BsonDocument
+    {
+        { "_id", id },
+        { "Name", name },
+        { "KeyHash", keyHash },
+        { "Enabled", true },
+        { "SourceSystem", sourceSystem },
+        { "AppCallerCodes", new BsonArray(appCallerCodes) },
+        { "IngressProtocols", new BsonArray(protocols) },
+        { "Scopes", new BsonArray(scopes) },
+        { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
+        { "CreatedAt", now },
+        { "UpdatedAt", now },
+    });
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.create",
+        "llmgw_service_key",
+        id,
+        name,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "sourceSystem", sourceSystem },
+            { "appCallerCount", appCallerCodes.Count },
+            { "protocolCount", protocols.Count },
+            { "scopeCount", scopes.Count },
+        });
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        name,
+        key = plainKey,
+        warning = "该 key 只显示一次；数据库未保存明文",
+        sourceSystem,
+        appCallerCodes,
+        ingressProtocols = protocols,
+        scopes,
+        expiresAt,
+    }), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
+{
+    var existing = await serviceKeys.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    await serviceKeys.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", id),
+        Builders<BsonDocument>.Update.Set("Enabled", false).Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.revoke",
+        "llmgw_service_key",
+        id,
+        existing.AsNullableString("Name"),
+        true,
+        null);
+    return Json(ApiEnvelope<object>.Ok(new { id, revoked = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 // 影子比对：汇总 + 最近 N 条
 app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
@@ -4991,6 +5192,7 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     LastObservedRunId = d.AsNullableString("LastObservedRunId"),
     Owner = d.AsNullableString("Owner"),
     MonthlyBudgetUsd = d.AsNullableDecimal("MonthlyBudgetUsd"),
+    BudgetReservationUsd = d.AsNullableDecimal("BudgetReservationUsd"),
     RateLimitPerMinute = d.AsNullableInt("RateLimitPerMinute"),
     Notes = d.AsNullableString("Notes"),
     TotalSeen = d.AsNullableLong("TotalSeen") ?? 0,
@@ -5517,6 +5719,19 @@ static bool IsTruthy(string? value)
            || string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "y", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase);
+}
+
+static decimal? NormalizePositiveBudget(decimal value) => value > 0 ? value : null;
+
+static string? ValidateBudgetConfiguration(decimal? monthlyBudgetUsd, decimal? budgetReservationUsd)
+{
+    if (monthlyBudgetUsd is null or <= 0)
+        return budgetReservationUsd is > 0 ? "配置单次预算预占前必须先配置月预算" : null;
+    if (budgetReservationUsd is null or <= 0)
+        return "配置月预算时必须同时配置大于 0 的单次预算预占";
+    if (budgetReservationUsd > monthlyBudgetUsd)
+        return "单次预算预占不能超过月预算";
+    return null;
 }
 
 // 统一 JSON 输出（带信封 + 指定状态码）。

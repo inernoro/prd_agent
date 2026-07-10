@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.6 | **日期**：2026-07-10 | **状态**：开发中
+> **版本**：v1.7 | **日期**：2026-07-10 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 24 / in-progress: 4 / paid: 5 / 总计: 33
+当前 open: 19 / in-progress: 8 / paid: 6 / 总计: 33
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -19,13 +19,13 @@
 | 2026-07-10-appcaller-unique-index | high | 2026-07-10 | `llmgw_app_callers` 缺少 `(AppCallerCode, RequestType)` 复合唯一索引；生产已出现 `literary-agent.illustration.text2img::generation` 重复 configured 记录，并发首次登记可能继续制造重复 | appCaller 被动注册、状态变更或模型池绑定时 | paid | 历史重复已归档并写操作审计，生产重复为 0，大小写不敏感复合唯一索引已建立并通过幂等迁移验证 |
 | 2026-07-10-gw-pool-health-wrong-database | high | 2026-07-10 | active 路由读取 `llm_gateway.llmgw_model_pools`，但成功/失败健康更新仍可能写 MAP `model_groups`，导致 GW-owned 成员的健康状态陈旧 | provider 失败、fallback 或健康熔断时 | paid | 合同测试断言 GW 数据域写回；生产快照显示 GW 池健康时间更新而 MAP 池停留在部署前 |
 | 2026-07-10-production-mode-fail-open | critical | 2026-07-10 | Program、compose 和发布脚本在 mode 缺失时默认 `inproc`，生产漏配环境变量会静默退回旧执行架构 | 新主机部署、环境变量丢失或脚本重构时 | paid | 生产缺 Mode 已改为拒绝启动；同一生产镜像隔离运行验证 fail-closed，回滚仍要求显式破玻璃动作 |
-| 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | open | 为筛选和预算查询建立复合索引；定义正文、元数据、shadow、审计的不同保留和归档策略；启用前先 dry-run 统计 |
-| 2026-07-10-multipart-object-lifecycle | high | 2026-07-10 | multipart HTTP 会上传临时文件引用，serving rehydrate 后未发现成功、失败、超时统一清理和兜底生命周期 | 图生图、ASR、字幕等跨进程文件调用时 | open | 每次请求记录临时对象归属；终态清理加后台兜底任务；对象存储生命周期覆盖异常退出并保留删除审计 |
-| 2026-07-10-budget-cancel-idempotency | critical | 2026-07-10 | 月预算按日志估算且无原子预占，成本证据缺失时放行；客户端断开不取消上游；非幂等图片/视频提交超时重试可能重复计费 | 并发请求、用户取消、provider 超时或响应丢失时 | open | 实现预算预占/结算/释放、显式取消、requestId 幂等和 unknown-outcome 查询；昂贵 provider canary 保持硬上限 |
-| 2026-07-10-serving-readiness-ha | critical | 2026-07-10 | `/gw/v1/healthz` 只证明进程与 commit 存活，未覆盖 Mongo、对象存储、key integrity 和路由；生产 serving 为单实例 | 依赖故障、容器重启或节点故障时 | in-progress | `/readyz` 五组件探针、发布等待、主备 Compose/nginx 和 fail-fast preflight 已实现；611 项测试与容器故障注入通过，待同提交生产发布和真实摘流演练 |
-| 2026-07-10-scoped-service-keys | high | 2026-07-10 | serving 使用共享 Gateway Key，兼容入口允许请求声明 appCallerCode；同一 key 的持有者可能冒用其他 caller 的模型池、预算和权限 | 允许 MAP 之外的系统接入 GW 前 | open | 每个接入方独立 key，绑定 sourceSystem、appCaller allowlist、协议和能力 scope；越权请求 403 并写审计 |
+| 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | in-progress | 查询索引、敏感正文清理和分层 TTL 已实现；删除默认关闭，待生产 dry-run 统计后启用 |
+| 2026-07-10-multipart-object-lifecycle | high | 2026-07-10 | multipart HTTP 会上传临时文件引用，serving rehydrate 后未发现成功、失败、超时统一清理和兜底生命周期 | 图生图、ASR、字幕等跨进程文件调用时 | in-progress | 已记录 ref manifest，并在请求 finally 与后台生命周期任务清理；待生产 dry-run 和单次 ASR/图片验收 |
+| 2026-07-10-budget-cancel-idempotency | critical | 2026-07-10 | 月预算按日志估算且无原子预占，成本证据缺失时放行；客户端断开不取消上游；非幂等图片/视频提交超时重试可能重复计费 | 并发请求、用户取消、provider 超时或响应丢失时 | in-progress | Decimal128 原子预算、显式 cancel、raw requestId 状态机和 unknown outcome 已实现；本地 Mongo 并发测试通过，待生产部署验证 |
+| 2026-07-10-serving-readiness-ha | critical | 2026-07-10 | `/gw/v1/healthz` 只证明进程与 commit 存活，未覆盖 Mongo、对象存储、key integrity 和路由；生产 serving 为单实例 | 依赖故障、容器重启或节点故障时 | paid | 生产 `92fac961...` 已运行主备，带 key deep readiness 为 ready；停主由备用接管、恢复后双实例健康，full-http gate 14/14 |
+| 2026-07-10-scoped-service-keys | high | 2026-07-10 | serving 使用共享 Gateway Key，兼容入口允许请求声明 appCallerCode；同一 key 的持有者可能冒用其他 caller 的模型池、预算和权限 | 允许 MAP 之外的系统接入 GW 前 | in-progress | scoped key、控制台页面、source/appCaller/protocol/scope 绑定、403 与操作审计已实现；待生产部署和接入方换发，MAP 共享 key 暂作迁移兼容 |
 | 2026-07-10-serving-map-config-dependency | high | 2026-07-10 | serving 的请求数据已进入 `llm_gateway`，但资产存储和 AppSettings 仍依赖 MAP 配置域，readiness 仍检查 MAP Mongo | MAP Mongo 或 MAP 配置域故障、或宣称 GW 已完全物理隔离时 | open | 把 serving 所需资产与运行配置迁入 GW-owned 配置域，移除 MAP Mongo 必要依赖后再宣称物理隔离 |
-| 2026-07-10-distributed-provider-concurrency | high | 2026-07-10 | 平台 `MaxConcurrency` 尚未形成跨 serving 实例的分布式令牌；月预算也未原子预占 | serving 从主备改为双活，或同一平台并发流量增长时 | open | Phase 3 保持主备；Phase 4 增加分布式并发令牌与原子预算，通过双实例竞争测试后才允许双活 |
+| 2026-07-10-distributed-provider-concurrency | high | 2026-07-10 | 平台 `MaxConcurrency` 尚未形成跨 serving 实例的分布式令牌；月预算也未原子预占 | serving 从主备改为双活，或同一平台并发流量增长时 | in-progress | platform/model 双层 Mongo 槽位租约已实现；8 路竞争只放行 1 路且释放后可复用，待生产部署验证后才允许评估双活 |
 | 2026-06-24-dead-strategy-engines | medium | 2026-06-24 | 6 个策略引擎 + ModelPoolDispatcher 不在服务链路，唯一调用是管理预览；纯死复杂度 | 可删（已取证：main 17 池 100% FailFast，2026-06-25） | open | 取证已过，删除排在 P3 黄金快照建立之后 |
 | 2026-06-24-legacy-flag-tier | high | 2026-06-24 | 调度第 3 层 legacy 标记与默认池功能重叠。**取证升级（2026-06-25）：91/153 (60%) code 实际经 legacy 层路由**（非遗迹，是承重墙） | 必须先建 chat/intent/vision/generation 默认池 + 黄金快照确认 91 个 code 改走 DefaultPool 后 | open | 顺序硬约束：直接删 = 砸 60% 调用方；删除前全栈审计（enum-ripple-audit） |
 | 2026-06-25-seven-notfound-codes | medium | 2026-06-25 | 7 个 code 解析到空(NotFound)：open-platform-agent.proxy::embedding/rerank、video-agent.audio::tts、video/visual-agent.scene.codegen::code、workflow-agent.cli-agent/webpage-generator::code | 这些 code 真被调用时 | open | 存量隐患（无池无默认无 legacy 的冷门 modelType）；统一设计应显式暴露缺口或补默认 |

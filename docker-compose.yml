@@ -181,7 +181,7 @@ services:
     depends_on:
       - mongodb
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8091/gw/v1/readyz"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8091/gw/v1/healthz"]
       interval: 5s
       timeout: 15s
       retries: 24
@@ -231,7 +231,7 @@ services:
     depends_on:
       - mongodb
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8091/gw/v1/readyz"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8091/gw/v1/healthz"]
       interval: 5s
       timeout: 15s
       retries: 24

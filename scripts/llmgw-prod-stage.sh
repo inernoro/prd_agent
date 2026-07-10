@@ -1054,6 +1054,25 @@ run_prod_health_preflight() {
   fi
 }
 
+ensure_serving_probe_evidence() {
+  if [ "$prod_health_preflight_required" != "1" ] || [ "$execute" != "1" ] || [ -f "$serving_probe_json" ]; then
+    return 0
+  fi
+  if [ ! -f "scripts/llmgw-serving-probe.py" ]; then
+    echo "ERROR: missing scripts/llmgw-serving-probe.py; stage report requires serving evidence." >&2
+    exit 1
+  fi
+  echo "LLM Gateway stage: collecting missing serving probe evidence without upstream model calls"
+  LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py \
+    --base "$gate_base" \
+    --expect-commit "$commit" \
+    --samples "${LLMGW_GATE_HEALTH_SAMPLES:-3}" \
+    --interval "${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}" \
+    --require-route-self-test \
+    --json-out "$serving_probe_json" \
+    --report-md "$serving_probe_md"
+}
+
 run_protocol_canary_evidence() {
   if [ "$run_protocol_canary" != "1" ]; then
     if [ "$execute" = "1" ]; then
@@ -1540,6 +1559,8 @@ else
 fi
 
 run_prod_health_preflight
+
+ensure_serving_probe_evidence
 
 run_protocol_canary_evidence
 
