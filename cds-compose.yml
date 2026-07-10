@@ -157,6 +157,9 @@ x-cds-deploy-modes:
       env:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8091"
+        # CDS 预览没有稳定对象存储探针对象；深度 readiness 仍检查 Mongo、key 和 router，
+        # 正式 docker-compose 则默认强制对象存储探针。
+        LlmGateway__Readiness__RequireAssetProbe: "false"
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -199,6 +202,7 @@ services:
       LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__Readiness__RequireAssetProbe: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -314,6 +318,8 @@ services:
       LlmGateway__DatabaseName: llm_gateway
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
+      LlmGateway__Readiness__RequireAssetProbe: "false"
       # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 已公网命名路由
       # （见 labels.cds.subdomain=llmgw-serve），/gw/v1/send|stream|raw 对外可达；若回落仓库可见 fallback，
       # 任何缺该 env 的预览/fork 都暴露已知 X-Gateway-Key 可烧 provider 额度。去掉 fallback → 未注入时解析为空 →
@@ -324,7 +330,7 @@ services:
       # （非仓库默认）。/gw/v1/* 走 X-Gateway-Key 门（无 key 一律 401），故对外发布命名子域后仍需密钥才能调
       # /gw/v1/send，不再是"任何人可烧额度"。<previewSlug>-llmgw-serve.<root> 根路径直达 8091 serving 网关。
       cds.subdomain: "llmgw-serve"
-      cds.readiness-path: "/gw/v1/healthz"
+      cds.readiness-path: "/gw/v1/readyz"
 
   # 独立 LLM 网关前端控制台 llmgw-web —— Vite React SPA（登录页 POST /gw/auth/login → JWT；
   # LLM 日志页调 /gw/logs），容器内 nginx 监听 80：SPA 回退 index.html + /gw/* 反代到 llmgw:8090。
