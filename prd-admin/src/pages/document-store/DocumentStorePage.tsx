@@ -129,6 +129,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
+import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -874,6 +875,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
+  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
+  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
   /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
   const [reprocessTarget, setReprocessTarget] = useState<{
     id?: string;
@@ -905,6 +908,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 替换文件：记录待替换的 entryId + 独立 file input
   const replaceTargetRef = useRef<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  // 上传录音转笔记：独立 audio input（选中即进入转录全链路卡）
+  const audioInputRef = useRef<HTMLInputElement>(null);
   // tag 颜色保存的 single-flight 队列：
   // 不只是防 rollback race，还要保证"老请求成功后到达"不会覆盖新意图。
   // 实现：当前在飞 = inFlight=true；新意图来了写 pending；当前结束后若 pending 非空则继续发，
@@ -1410,6 +1415,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
       <input ref={replaceInputRef} type="file" className="hidden" accept={ACCEPT_TYPES}
         onChange={e => { const f = e.target.files?.[0]; if (f) doReplaceFile(f); e.target.value = ''; }} />
+      <input ref={audioInputRef} type="file" className="hidden" accept="audio/*"
+        onChange={e => {
+          const f = e.target.files?.[0];
+          if (f) setTranscribeFlow({ file: f, title: f.name });
+          e.target.value = '';
+        }} />
 
       <TabBar
         title={
@@ -1718,6 +1729,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
+          onTranscribe={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setTranscribeFlow({ entryId: id, title: entry.title });
+          }}
+          onUploadAudio={() => audioInputRef.current?.click()}
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
@@ -1830,6 +1846,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               // 1.5s 后再兜底刷一次：兼容 DB 副本同步延迟 / 后端进度状态稍后才稳定的情况
               setTimeout(() => { void loadEntries(); }, 1500);
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 录音转录全链路（Notion 式）：上传音频 → 转录 → AI 摘要 → 转录笔记 */}
+      <AnimatePresence>
+        {transcribeFlow && (
+          <TranscribeFlowDrawer
+            storeId={storeId}
+            file={transcribeFlow.file}
+            entryId={transcribeFlow.entryId}
+            entryTitle={transcribeFlow.title}
+            onClose={() => setTranscribeFlow(null)}
+            onEntryCreated={(entry) => setEntries(prev => [entry, ...prev])}
+            onDone={() => {
+              void loadEntries();
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+            onOpenEntry={(id) => setSelectedEntryId(id)}
           />
         )}
       </AnimatePresence>

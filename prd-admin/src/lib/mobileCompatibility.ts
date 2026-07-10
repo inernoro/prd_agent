@@ -37,6 +37,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/literary-agent':          { level: 'full', note: '阅读/查看正常，深度编辑建议 PC' },
   '/marketplace':             { level: 'full' },
   '/library':                 { level: 'full' },
+  '/document-store':          { level: 'full', note: '阅读/上传录音转笔记正常，深度编辑建议 PC' },
   '/shortcuts-agent':         { level: 'full' },
 
   // ── 受限：可以用但体验降级 ──

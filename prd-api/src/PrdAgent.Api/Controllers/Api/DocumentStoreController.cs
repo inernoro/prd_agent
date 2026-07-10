@@ -2976,7 +2976,35 @@ public class DocumentStoreController : ControllerBase
         if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
 
-        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回。
+        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Subtitle);
+    }
+
+    /// <summary>
+    /// 发起录音转录全链路任务（音视频 → ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档）。
+    /// 移动端 Notion 式录音流程的后端入口。
+    /// </summary>
+    [HttpPost("entries/{entryId}/transcribe")]
+    public async Task<IActionResult> TranscribeEntry(string entryId)
+    {
+        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持转录"));
+
+        var ct = (entry.ContentType ?? "").ToLowerInvariant();
+        if (!ct.StartsWith("audio/") && !ct.StartsWith("video/"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频文件转录"));
+
+        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Transcribe);
+    }
+
+    /// <summary>
+    /// 字幕生成 / 录音转录共用的排队逻辑（去重 + 定向消费认领 + 新建）。
+    /// </summary>
+    private async Task<IActionResult> QueueMediaAgentRunAsync(DocumentEntry entry, DocumentStore store, string kind)
+    {
+        var entryId = entry.Id;
+        // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
         var selfInstanceId = InstanceIdentity.Get(_config);
@@ -2988,7 +3016,7 @@ public class DocumentStoreController : ControllerBase
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
@@ -3005,7 +3033,7 @@ public class DocumentStoreController : ControllerBase
         var selfRun = await _db.DocumentStoreAgentRuns.Find(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
@@ -3020,9 +3048,9 @@ public class DocumentStoreController : ControllerBase
         var userId = GetUserId();
         var run = new DocumentStoreAgentRun
         {
-            Kind = DocumentStoreAgentRunKind.Subtitle,
+            Kind = kind,
             SourceEntryId = entryId,
-            StoreId = store!.Id,
+            StoreId = store.Id,
             UserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
@@ -3031,7 +3059,7 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
 
-        _logger.LogInformation("[doc-store-agent] Subtitle run queued: {RunId} entry={EntryId}", run.Id, entryId);
+        _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
 

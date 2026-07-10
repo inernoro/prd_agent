@@ -143,6 +143,187 @@ public class SubtitleGenerationProcessor
             entry.Id, newEntry.Id, subtitleMd.Length);
     }
 
+    /// <summary>
+    /// 录音转录全链路（kind = transcribe）：ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新 entry。
+    /// 与字幕生成共用 ASR 三路分发；差异在产物：字幕是逐句时间轴，转录笔记是摘要在上、全文在下。
+    /// </summary>
+    public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
+    {
+        var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
+        if (entry == null)
+            throw new InvalidOperationException("源文档条目不存在");
+        if (entry.IsFolder)
+            throw new InvalidOperationException("文件夹不支持转录");
+
+        var contentType = (entry.ContentType ?? "").ToLowerInvariant();
+        var isAudio = contentType.StartsWith("audio/");
+        var isVideo = contentType.StartsWith("video/");
+        if (!isAudio && !isVideo)
+            throw new InvalidOperationException($"不支持的文件类型: {contentType}（转录仅支持音频/视频）");
+
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+        if (string.IsNullOrEmpty(fileUrl))
+            throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
+
+        await UpdateProgressAsync(db, runStore, run, 10, "准备中");
+
+        // 1) ASR 转录（共用字幕生成的三路分发：豆包流式 / 豆包异步 / Whisper HTTP / chat-audio）
+        var segments = await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo);
+        var transcriptPlain = string.Join("\n", segments
+            .Where(s => !string.IsNullOrWhiteSpace(s.Text))
+            .Select(s => s.Text.Trim()));
+        if (string.IsNullOrWhiteSpace(transcriptPlain))
+            throw new InvalidOperationException("转录结果为空（音频可能无人声或识别失败）");
+
+        // 2) AI 摘要（流式 delta 推给前端逐字生长）。摘要失败不摧毁整条链路：转录稿仍然交付。
+        await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
+        var summary = "";
+        try
+        {
+            summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-store-agent] 转录摘要生成失败，降级为仅转录全文 run={RunId}", run.Id);
+            try
+            {
+                await runStore.AppendEventAsync(
+                    DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
+                    new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
+                    ct: CancellationToken.None);
+            }
+            catch { /* ignore */ }
+        }
+
+        await UpdateProgressAsync(db, runStore, run, 90, "写入中");
+
+        // 3) 落库：摘要 + 转录全文 → 新 entry
+        var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
+        var parsed = await _documentService.ParseAsync(noteMd);
+        parsed.Title = BuildTranscriptTitle(entry.Title);
+        await _documentService.SaveAsync(parsed);
+
+        var newEntry = new DocumentEntry
+        {
+            StoreId = entry.StoreId,
+            ParentId = entry.ParentId,
+            Title = BuildTranscriptTitle(entry.Title),
+            Summary = string.IsNullOrWhiteSpace(summary)
+                ? (transcriptPlain.Length > 200 ? transcriptPlain[..200] : transcriptPlain)
+                : (summary.Length > 200 ? summary[..200] : summary),
+            SourceType = DocumentSourceType.Upload,
+            ContentType = "text/markdown",
+            FileSize = Encoding.UTF8.GetByteCount(noteMd),
+            DocumentId = parsed.Id,
+            CreatedBy = run.UserId,
+            ContentIndex = noteMd.Length > 2000 ? noteMd[..2000] : noteMd,
+            LastChangedAt = DateTime.UtcNow,
+            Metadata = new Dictionary<string, string>
+            {
+                ["generated_kind"] = "transcribe",
+                ["source_entry_id"] = entry.Id,
+            },
+        };
+        await db.DocumentEntries.InsertOneAsync(newEntry);
+
+        await db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        // 源音频 entry 标记「已生成转录笔记」，前端据此展示直达入口而非重复发起
+        var newMeta = entry.Metadata ?? new Dictionary<string, string>();
+        newMeta["transcribe_entry_id"] = newEntry.Id;
+        await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entry.Id,
+            Builders<DocumentEntry>.Update.Set(e => e.Metadata, newMeta),
+            cancellationToken: CancellationToken.None);
+
+        await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            r => r.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(r => r.OutputEntryId, newEntry.Id)
+                .Set(r => r.GeneratedText, summary)
+                .Set(r => r.Progress, 95),
+            cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Transcript note generated for {EntryId} → {NewEntryId}, transcript={TLen} chars summary={SLen} chars",
+            entry.Id, newEntry.Id, transcriptPlain.Length, summary.Length);
+    }
+
+    /// <summary>对转录全文生成结构化 Markdown 摘要，流式 delta 事件推给前端。</summary>
+    private async Task<string> SummarizeTranscriptAsync(
+        DocumentStoreAgentRun run, IRunEventStore runStore, string title, string transcript)
+    {
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: transcript.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_TRANSCRIBE_SUMMARY]",
+            RequestType: ModelTypes.Chat,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
+            ForceFullShadowSample: run.ForceFullShadowSample));
+
+        var client = _llmGateway.CreateClient(
+            AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
+            ModelTypes.Chat,
+            maxTokens: 2048,
+            temperature: 0.3);
+
+        var systemPrompt =
+            "你是录音笔记助手。根据用户提供的录音转录全文，输出一份结构化 Markdown 摘要：" +
+            "先用一段话概述，再列 3-8 条要点；如转录中有明确结论或待办事项，单独用「结论」「待办」小节列出。" +
+            "硬约束：1) 只依据转录内容，不得编造；2) 未提及的内容不要出现；" +
+            "3) 直接以摘要内容开头，不要任何标题、前言或结语；4) 禁止使用 emoji 字符。";
+
+        var maxChars = 30000;
+        var clipped = transcript.Length > maxChars ? transcript[..maxChars] : transcript;
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = $"录音标题：{title}\n\n转录全文：\n{clipped}" },
+        };
+
+        var sb = new StringBuilder();
+        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+            {
+                sb.Append(chunk.Content);
+                try
+                {
+                    await runStore.AppendEventAsync(
+                        DocumentStoreRunKinds.Transcribe, run.Id, "delta",
+                        new { text = chunk.Content }, ct: CancellationToken.None);
+                }
+                catch { /* 事件失败不阻塞主流程 */ }
+            }
+            else if (chunk.Type == "error")
+            {
+                throw new InvalidOperationException($"摘要生成失败: {chunk.ErrorMessage}");
+            }
+        }
+        return sb.ToString().Trim();
+    }
+
+    private static string BuildTranscriptTitle(string srcTitle)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
+        return $"{baseName}-转录笔记.md";
+    }
+
     // ──────────────────────────────────────────────────────
     // 音视频 ASR
     // ──────────────────────────────────────────────────────
@@ -746,8 +927,9 @@ public class SubtitleGenerationProcessor
             cancellationToken: CancellationToken.None);
         try
         {
+            // 事件 kind 按 run.Kind 路由（subtitle 与 transcribe 共用本处理器的 ASR 内部方法）
             await runStore.AppendEventAsync(
-                DocumentStoreRunKinds.Subtitle, run.Id, "progress",
+                DocumentStoreAgentWorker.KindForEvents(run.Kind), run.Id, "progress",
                 new { progress, phase }, ct: CancellationToken.None);
         }
         catch { /* ignore */ }
