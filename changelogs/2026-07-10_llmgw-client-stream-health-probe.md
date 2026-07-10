@@ -27,3 +27,4 @@
 | security | prd-api | LLM Gateway `/gw/v1/profile-test` 接入 appCaller 被动注册与状态、预算、限流治理，避免 runtime profile 测试绕过 GW 治理 |
 | fix | prd-api | LLM Gateway `/gw/v1/profile-test` 复用同一个 requestId 写 appCaller 观测与 raw 请求日志，保证控制台可按 requestId 串联排查 |
 | fix | prd-api | LLM Gateway runtime profile 测试 raw 日志补齐 sourceSystem、ingressProtocol、modelPolicy、transport 上下文，保证控制台筛选统计不漏该类请求 |
+| fix | prd-api | Infra Agent runtime profile 测试调用 LLM Gateway 时携带统一 requestId 与路由上下文，使 inproc/http 两种模式日志字段一致 |

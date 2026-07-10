@@ -80,6 +80,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("public GatewayRequestContext? Context { get; init; }", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
         Assert.Contains("SourceSystem = sourceContext?.SourceSystem", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
         Assert.Contains("IngressProtocol = sourceContext?.IngressProtocol", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
+        var runtimeProfileService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentRuntimeProfileService.cs");
+        Assert.Contains("Context = new GatewayRequestContext", runtimeProfileService);
+        Assert.Contains("SourceSystem = \"map\"", runtimeProfileService);
+        Assert.Contains("ModelPolicy = \"pinned\"", runtimeProfileService);
         Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         Assert.Contains("ValidateActiveGatewayAppCallerConfigAsync", consoleProgram);
