@@ -34,6 +34,37 @@ describe('detectContainerFatalCause', () => {
     expect(cause?.category).toBe('build-failed');
   });
 
+  it('识别 Maven Java 编译错误并保留具体 .java 行号', () => {
+    const logs = [
+      '[ERROR] COMPILATION ERROR :',
+      '[ERROR] /app/miduo-service/src/main/java/com/miduo/cloud/service/compliance/impl/ComplianceLegacySyncServiceImpl.java:[106,63] local variables referenced from a lambda expression must be final or effectively final',
+      '[INFO] BUILD FAILURE',
+    ].join('\n');
+    const cause = detectContainerFatalCause(logs);
+    expect(cause?.side).toBe('code');
+    expect(cause?.category).toBe('build-failed');
+    expect(cause?.summary).toContain('Java 编译错误');
+    expect(cause?.summary).toContain('ComplianceLegacySyncServiceImpl.java:[106,63]');
+  });
+
+  it('识别 Spring 启动时缺少 Java 类', () => {
+    const cause = detectContainerFatalCause(
+      'java.lang.NoClassDefFoundError: com/miduo/cloud/mbg/mapper/micode/MicodeCodeserviceProxyCallLogMapper',
+    );
+    expect(cause?.side).toBe('code');
+    expect(cause?.category).toBe('missing-deps');
+    expect(cause?.summary).toContain('Java 类未找到');
+  });
+
+  it('识别 Spring Bean 创建失败', () => {
+    const cause = detectContainerFatalCause(
+      "org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'fangweiLogDataSource'",
+    );
+    expect(cause?.side).toBe('code');
+    expect(cause?.category).toBe('crashed');
+    expect(cause?.summary).toContain('Spring 初始化错误');
+  });
+
   it('识别依赖缺失(模块未找到)', () => {
     const cause = detectContainerFatalCause("Error: Cannot find module 'express'");
     expect(cause?.side).toBe('code');

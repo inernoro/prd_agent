@@ -22,7 +22,7 @@ import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
-import { apiUrl, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
+import { apiUrl, fetchAuthPublicStatus, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 
 /* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
@@ -58,12 +58,16 @@ function AuthForm(): JSX.Element {
   // First-run bootstrap: when the system has zero users, the login form turns
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
   const [bootstrapName, setBootstrapName] = useState('');
   const target = useMemo(() => redirectTarget(), []);
   const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
 
   useEffect(() => {
     let alive = true;
+    fetchAuthPublicStatus()
+      .then((s) => { if (alive) setGithubLoginEnabled(s.loginMethods.github); })
+      .catch(() => { if (alive) setGithubLoginEnabled(false); });
     fetchBootstrapStatus()
       .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
       .catch(() => { /* endpoint absent in non-github modes — ignore */ });
@@ -211,7 +215,7 @@ function AuthForm(): JSX.Element {
         {busy ? null : <ArrowRight className="h-4 w-4" />}
       </Button>
 
-      {needsBootstrap ? null : (
+      {needsBootstrap || !githubLoginEnabled ? null : (
         <>
           <div className="cds-auth-divider" aria-hidden>
             <span>或</span>
