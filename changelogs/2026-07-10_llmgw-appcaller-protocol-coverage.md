@@ -11,3 +11,5 @@
 | test | prd-api | 增加生图 adapter 显式协议覆盖 URL/模型名检测的防退化测试 |
 | fix | prd-api | Agent runtime profile 从模型池导入时优先使用模型 Protocol，避免按平台类型或 URL 误判运行协议 |
 | test | prd-api | 增加 runtime profile 协议解析防退化测试，守卫模型 Protocol 覆盖平台和 URL 推断 |
+| fix | prd-api | ASR chat-audio 路由改为优先依据 Gateway 解析出的 Protocol，避免同平台多协议被 PlatformType 误分流 |
+| test | prd-api | 增加 ASR chat-audio 路由策略测试，覆盖协议优先和旧平台兜底 |
