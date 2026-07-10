@@ -636,6 +636,30 @@
     ]
   },
   {
+    "code": "self-test.claude.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.gemini.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.native.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.openai.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "shitu-agent.qa::chat",
     "modelTypes": [
       "chat"
