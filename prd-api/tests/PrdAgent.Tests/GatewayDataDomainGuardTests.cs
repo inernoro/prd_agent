@@ -35,6 +35,18 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void GatewayOwnedModelConfig_ModelsIgnoreExtraMetadataFields()
+    {
+        var modelGroup = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ModelGroup.cs");
+        var modelExchange = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ModelExchange.cs");
+
+        Assert.Contains("using MongoDB.Bson.Serialization.Attributes;", modelGroup);
+        Assert.Contains("[BsonIgnoreExtraElements]\npublic class ModelGroup", modelGroup);
+        Assert.Contains("using MongoDB.Bson.Serialization.Attributes;", modelExchange);
+        Assert.Contains("[BsonIgnoreExtraElements]\npublic class ModelExchange", modelExchange);
+    }
+
+    [Fact]
     public void ShadowReadEndpoints_UseGatewayDatabase()
     {
         var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
