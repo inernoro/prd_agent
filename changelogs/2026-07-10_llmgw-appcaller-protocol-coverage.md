@@ -15,3 +15,5 @@
 | test | prd-api | 增加 ASR chat-audio 路由策略测试，覆盖协议优先和旧平台兜底 |
 | fix | prd-api | Gateway adapter 选择支持协议别名映射，避免 anthropic/claude-compatible 被误落到 OpenAI 兜底 |
 | test | prd-api | 增加 Gateway adapter 协议别名映射防退化测试 |
+| fix | prd-api | 修复 raw 发送阶段漏传 Gateway Protocol 导致按 PlatformType 误选 adapter 的问题 |
+| test | prd-api | 增加 raw 路径按解析 Protocol 选择 adapter 的防退化测试 |

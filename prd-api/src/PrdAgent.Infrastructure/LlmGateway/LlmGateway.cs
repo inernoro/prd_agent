@@ -905,6 +905,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ActualPlatformId = resolution.ActualPlatformId,
             ActualPlatformName = resolution.ActualPlatformName,
             PlatformType = resolution.PlatformType,
+            Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
             ModelGroupId = resolution.ModelGroupId,
