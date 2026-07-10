@@ -118,6 +118,52 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ExpiredUnknownReservation_SettlesConservatively()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+
+        var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months").InsertOneAsync(new GatewayBudgetMonthRecord
+        {
+            AppCallerCode = "unknown-test",
+            RequestType = "image-gen",
+            MonthStart = monthStart,
+            BudgetUsd = 1m,
+            ReservedUsd = 0.6m,
+            SpentUsd = 0m,
+        });
+        var reservation = new GatewayBudgetReservationRecord
+        {
+            AppCallerCode = "unknown-test",
+            RequestType = "image-gen",
+            RequestId = "unknown-request",
+            MonthStart = monthStart,
+            ReservedUsd = 0.6m,
+            Status = "unknown",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+        await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations")
+            .InsertOneAsync(reservation);
+
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+        await coordinator.ReleaseExpiredAsync(CancellationToken.None);
+
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0m);
+        month.SpentUsd.ShouldBe(0.6m);
+        var updated = await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations")
+            .Find(x => x.Id == reservation.Id)
+            .SingleAsync();
+        updated.Status.ShouldBe("settled-unknown-expired");
+        updated.SettledUsd.ShouldBe(0.6m);
+    }
+
+    [Fact]
     public async Task ScopedKey_RejectsCrossAppCallerAndWritesAudit()
     {
         var testDatabase = await TryCreateDatabaseAsync();

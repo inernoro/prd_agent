@@ -282,13 +282,16 @@ public sealed class GatewayBudgetCoordinator
             .Limit(500)
             .ToListAsync(ct);
         foreach (var item in expired)
+        {
+            var outcomeUnknown = item.Status == "unknown";
             await SetReservationStatusAsync(
                 item.Id,
-                "released-expired",
-                "reservation-expired",
+                outcomeUnknown ? "settled-unknown-expired" : "released-expired",
+                outcomeUnknown ? "unknown-outcome-conservative-settlement" : "reservation-expired",
                 adjustMonth: item.Status != "pending",
-                settle: false,
+                settle: outcomeUnknown,
                 ct);
+        }
     }
 
     private async Task SetReservationStatusAsync(
