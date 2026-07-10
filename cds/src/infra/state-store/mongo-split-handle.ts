@@ -9,7 +9,7 @@
  */
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
-import type { BranchEntry, DeploymentRun, Project, SelfUpdateRecord } from '../../types.js';
+import type { BranchEntry, DeploymentRun, DeploymentVersion, Project, SelfUpdateRecord } from '../../types.js';
 import type {
   GlobalRest,
   ISplitMongoCollection,
@@ -24,6 +24,7 @@ export interface MongoSplitHandleOptions {
   branchesCollectionName?: string;
   selfUpdateHistoryCollectionName?: string;
   deploymentRunsCollectionName?: string;
+  deploymentVersionsCollectionName?: string;
   connectTimeoutMs?: number;
 }
 
@@ -61,6 +62,13 @@ interface DeploymentRunDoc {
   updatedAt: string;
 }
 
+interface DeploymentVersionDoc {
+  _id: string;
+  projectId: string;
+  doc: DeploymentVersion;
+  updatedAt: string;
+}
+
 export class RealMongoSplitHandle implements ISplitMongoHandle {
   private client: MongoClient | null = null;
   private db: Db | null = null;
@@ -69,6 +77,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   private branchesCol: Collection<BranchDoc> | null = null;
   private selfUpdateHistoryCol: Collection<SelfUpdateHistoryDoc> | null = null;
   private deploymentRunsCol: Collection<DeploymentRunDoc> | null = null;
+  private deploymentVersionsCol: Collection<DeploymentVersionDoc> | null = null;
 
   private readonly uri: string;
   private readonly databaseName: string;
@@ -77,6 +86,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   private readonly branchesName: string;
   private readonly selfUpdateHistoryName: string;
   private readonly deploymentRunsName: string;
+  private readonly deploymentVersionsName: string;
   private readonly connectTimeoutMs: number;
 
   constructor(opts: MongoSplitHandleOptions) {
@@ -87,6 +97,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     this.branchesName = opts.branchesCollectionName || 'cds_branches';
     this.selfUpdateHistoryName = opts.selfUpdateHistoryCollectionName || 'cds_self_update_history';
     this.deploymentRunsName = opts.deploymentRunsCollectionName || 'cds_deployment_runs';
+    this.deploymentVersionsName = opts.deploymentVersionsCollectionName || 'cds_deployment_versions';
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
   }
 
@@ -103,6 +114,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     this.branchesCol = this.db.collection<BranchDoc>(this.branchesName);
     this.selfUpdateHistoryCol = this.db.collection<SelfUpdateHistoryDoc>(this.selfUpdateHistoryName);
     this.deploymentRunsCol = this.db.collection<DeploymentRunDoc>(this.deploymentRunsName);
+    this.deploymentVersionsCol = this.db.collection<DeploymentVersionDoc>(this.deploymentVersionsName);
   }
 
   globalCollection(): ISplitMongoCollection<GlobalDoc> {
@@ -128,6 +140,11 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   deploymentRunsCollection(): ISplitMongoCollection<DeploymentRunDoc> {
     if (!this.deploymentRunsCol) throw new Error('MongoSplitHandle not connected');
     return this.adaptCollection(this.deploymentRunsCol);
+  }
+
+  deploymentVersionsCollection(): ISplitMongoCollection<DeploymentVersionDoc> {
+    if (!this.deploymentVersionsCol) throw new Error('MongoSplitHandle not connected');
+    return this.adaptCollection(this.deploymentVersionsCol);
   }
 
   /** 把 mongo Collection 适配到我们的最小接口。 */
@@ -175,6 +192,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
       this.branchesCol = null;
       this.selfUpdateHistoryCol = null;
       this.deploymentRunsCol = null;
+      this.deploymentVersionsCol = null;
     }
   }
 

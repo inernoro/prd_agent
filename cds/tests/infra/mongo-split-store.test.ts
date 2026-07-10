@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import type { BranchEntry, CdsState, DeploymentRun, Project, SelfUpdateRecord } from '../../src/types.js';
+import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, Project, SelfUpdateRecord } from '../../src/types.js';
 
 function emptyState(): CdsState {
   return {
@@ -74,6 +74,7 @@ class FakeSplitHandle implements ISplitMongoHandle {
   projects = new FakeSplitCollection<{ _id: string; doc: Project; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>();
   deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>();
+  deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>();
 
   async connect(): Promise<void> {}
@@ -81,6 +82,7 @@ class FakeSplitHandle implements ISplitMongoHandle {
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
   deploymentRunsCollection() { return this.deploymentRuns; }
+  deploymentVersionsCollection() { return this.deploymentVersions; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
   async close(): Promise<void> {}
   async ping(): Promise<boolean> { return true; }
@@ -124,6 +126,37 @@ describe('MongoSplitStateBackingStore', () => {
     const reloaded = new MongoSplitStateBackingStore(handle);
     await reloaded.init();
     expect(reloaded.load()?.deploymentRuns?.['dr-1'].events[0].message).toBe('building');
+  });
+
+  it('persists immutable deployment versions outside the global document and reloads them', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.deploymentVersions = {
+      'dv-1': {
+        id: 'dv-1',
+        projectId: 'prd-agent',
+        branchId: 'main',
+        commitSha: 'abcdef1234567',
+        configHash: 'config-hash',
+        profiles: [],
+        migrations: [],
+        capabilities: [],
+        createdByRunId: 'dr-1',
+        createdAt: '2026-07-10T00:00:00.000Z',
+      },
+    };
+    store.save(state);
+    await store.flush();
+
+    expect((handle.global.docs.get('global')!.state as CdsState).deploymentVersions).toBeUndefined();
+    expect(handle.deploymentVersions.docs.get('dv-1')?.doc.commitSha).toBe('abcdef1234567');
+
+    const reloaded = new MongoSplitStateBackingStore(handle);
+    await reloaded.init();
+    expect(reloaded.load()?.deploymentVersions?.['dv-1'].configHash).toBe('config-hash');
   });
 
   it('persists branch deletion with a single branch delete operation instead of full collection rewrites', async () => {

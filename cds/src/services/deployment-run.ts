@@ -29,6 +29,8 @@ export interface BeginDeploymentRunInput {
   commitSha?: string;
   operationId?: string;
   executorId?: string;
+  versionId?: string;
+  configHash?: string;
   phase?: string;
   message?: string;
 }
@@ -74,6 +76,8 @@ export class DeploymentRunService {
       commitSha: input.commitSha,
       operationId: input.operationId,
       executorId: input.executorId,
+      versionId: input.versionId,
+      configHash: input.configHash,
       startedAt: at,
       updatedAt: at,
       heartbeatAt: at,
@@ -157,6 +161,15 @@ export class DeploymentRunService {
       run.heartbeatAt = at;
       run.updatedAt = at;
       if (phase) run.phase = phase;
+    });
+  }
+
+  attachVersion(id: string, versionId: string, configHash: string): DeploymentRun {
+    return this.stateService.updateDeploymentRun(id, (run) => {
+      this.assertActive(run);
+      run.versionId = versionId;
+      run.configHash = configHash;
+      run.updatedAt = this.nowIso();
     });
   }
 

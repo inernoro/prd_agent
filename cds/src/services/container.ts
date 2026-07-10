@@ -1343,6 +1343,7 @@ export class ContainerService {
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
+      service.deployedImage = runImage;
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟

@@ -865,6 +865,8 @@ export interface ServiceState {
    * undefined = 该容器在本字段引入前启动（旧数据），徽章回退到配置语义。
    */
   deployedMode?: string;
+  /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
+  deployedImage?: string;
 }
 
 /** 分支部署的触发来源。 */
@@ -932,6 +934,38 @@ export interface DeploymentRun {
   finishedAt?: string;
   failure?: DeploymentFailure;
   events: DeploymentRunEvent[];
+}
+
+export interface DeploymentVersionProfile {
+  profileId: string;
+  name: string;
+  artifactImage: string;
+  artifactKind: 'prebuilt-image' | 'legacy-runtime';
+  reusable: boolean;
+  reuseBlockedReason?: string;
+  runtimeCommand?: string;
+  containerPort: number;
+  containerWorkDir?: string;
+  pathPrefixes?: string[];
+  subdomain?: string;
+  dependsOn?: string[];
+  readinessProbe?: ReadinessProbe;
+  startupSignal?: string;
+  deployedMode?: string;
+}
+
+/** 构建成功后生成的不可变部署版本；不保存环境变量明文或密钥。 */
+export interface DeploymentVersion {
+  id: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  configHash: string;
+  profiles: DeploymentVersionProfile[];
+  migrations: Array<{ id: string; checksum?: string; status?: string }>;
+  capabilities: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
+  createdByRunId: string;
+  createdAt: string;
 }
 
 /** A build/operation log event */
@@ -1204,6 +1238,8 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
   deploymentRuns?: Record<string, DeploymentRun>;
+  /** 不可变部署版本，key 为 DeploymentVersion.id。旧状态可缺省。 */
+  deploymentVersions?: Record<string, DeploymentVersion>;
   /** Release targets keyed by id. */
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */

@@ -42,6 +42,7 @@ import type {
   ContainerLogArchiveEntry,
   DeploymentRun,
   DeploymentRunEvent,
+  DeploymentVersion,
   OperationLog,
   OperationLogContainerSnapshot,
   OperationLogEvent,
@@ -76,6 +77,7 @@ export interface ISplitMongoHandle {
   projectsCollection(): ISplitMongoCollection<{ _id: string; doc: Project; updatedAt: string }>;
   branchesCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>;
   deploymentRunsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>;
+  deploymentVersionsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>;
   selfUpdateHistoryCollection(): ISplitMongoCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>;
   close(): Promise<void>;
   ping(): Promise<boolean>;
@@ -87,7 +89,7 @@ export const GLOBAL_DOC_ID = 'global';
  * "rest of CdsState" — 不含 projects 与 branches 的所有 root-level 字段。
  * 拆出来作为类型，方便 mongo 文档 schema 推导。
  */
-export type GlobalRest = Omit<CdsState, 'projects' | 'branches' | 'deploymentRuns'>;
+export type GlobalRest = Omit<CdsState, 'projects' | 'branches' | 'deploymentRuns' | 'deploymentVersions'>;
 
 const MAX_LOGS_PER_BRANCH = 5;
 const MAX_EVENTS_PER_OPERATION_LOG = 5;
@@ -258,6 +260,7 @@ function globalRestOf(state: CdsState): GlobalRest {
   delete (restOfState as Partial<CdsState>).projects;
   delete (restOfState as Partial<CdsState>).branches;
   delete (restOfState as Partial<CdsState>).deploymentRuns;
+  delete (restOfState as Partial<CdsState>).deploymentVersions;
   restOfState.logs = Object.fromEntries(
     Object.entries(state.logs || {}).map(([branchId, logs]) => [
       branchId,
@@ -352,20 +355,22 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     try {
       await this.handle.branchesCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
       await this.handle.deploymentRunsCollection().createIndex?.({ projectId: 1, branchId: 1 }, { name: 'projectId_1_branchId_1' });
+      await this.handle.deploymentVersionsCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
       await this.handle.selfUpdateHistoryCollection().createIndex?.({ ts: -1 }, { name: 'ts_-1' });
     } catch {
       // 如果 driver 不支持 createIndex 或权限不足，跳过 — 索引非功能必需。
     }
 
-    const [globalDoc, projectDocs, branchDocs, deploymentRunDocs, selfUpdateDocs] = await Promise.all([
+    const [globalDoc, projectDocs, branchDocs, deploymentRunDocs, deploymentVersionDocs, selfUpdateDocs] = await Promise.all([
       this.handle.globalCollection().findOne({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().find().toArray(),
       this.handle.branchesCollection().find().toArray(),
       this.handle.deploymentRunsCollection().find().toArray(),
+      this.handle.deploymentVersionsCollection().find().toArray(),
       this.handle.selfUpdateHistoryCollection().find().toArray(),
     ]);
 
-    if (!globalDoc && projectDocs.length === 0 && branchDocs.length === 0 && deploymentRunDocs.length === 0 && selfUpdateDocs.length === 0) {
+    if (!globalDoc && projectDocs.length === 0 && branchDocs.length === 0 && deploymentRunDocs.length === 0 && deploymentVersionDocs.length === 0 && selfUpdateDocs.length === 0) {
       // 全空 — fresh mongo, 让 StateService 走 emptyState + 跑 migration。
       this.cache = null;
     } else {
@@ -390,6 +395,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         projects: projectDocs.map((pd) => pd.doc),
         branches,
         deploymentRuns: Object.fromEntries(deploymentRunDocs.map((record) => [record.doc.id, sanitizeDeploymentRun(record.doc)])),
+        deploymentVersions: Object.fromEntries(deploymentVersionDocs.map((record) => [record.doc.id, record.doc])),
       } as CdsState;
     }
     this.persistedCache = this.cache ? structuredClone(this.cache) : null;
@@ -532,7 +538,35 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       await this.handle.deploymentRunsCollection().bulkWrite(runOps);
     }
 
-    // ── 5) Self-update history collection（日志类字段独立落库）──
+    // ── 5) Deployment versions collection（不可变交付物元数据独立于 global）──
+    const currentVersions = snapshot.deploymentVersions || {};
+    const previousVersions = previous?.deploymentVersions || {};
+    const versionOps: unknown[] = [];
+    for (const version of Object.values(currentVersions)) {
+      const previousVersion = previousVersions[version.id];
+      if (!previousVersion || stableJson(version) !== stableJson(previousVersion)) {
+        versionOps.push({
+          replaceOne: {
+            filter: { _id: version.id },
+            replacement: {
+              _id: version.id,
+              projectId: version.projectId,
+              doc: version,
+              updatedAt: now,
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of Object.keys(previousVersions)) {
+      if (!currentVersions[id]) versionOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (versionOps.length > 0) {
+      await this.handle.deploymentVersionsCollection().bulkWrite(versionOps);
+    }
+
+    // ── 6) Self-update history collection（日志类字段独立落库）──
     const selfUpdateHistory = (snapshot.selfUpdateHistory || [])
       .slice(-MAX_SELF_UPDATE_HISTORY)
       .map(sanitizeSelfUpdateRecord);
@@ -677,6 +711,26 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     }
     if (runOps.length > 0) await this.handle.deploymentRunsCollection().bulkWrite(runOps);
 
+    const versions = Object.values(snapshot.deploymentVersions || {});
+    const newVersionIds = new Set(versions.map((version) => version.id));
+    const existingVersions = await this.handle.deploymentVersionsCollection().find().toArray();
+    const versionOps: unknown[] = versions.map((version) => ({
+      replaceOne: {
+        filter: { _id: version.id },
+        replacement: {
+          _id: version.id,
+          projectId: version.projectId,
+          doc: version,
+          updatedAt: now,
+        },
+        upsert: true,
+      },
+    }));
+    for (const id of existingVersions.map((record) => record._id)) {
+      if (!newVersionIds.has(id)) versionOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (versionOps.length > 0) await this.handle.deploymentVersionsCollection().bulkWrite(versionOps);
+
     const history = (snapshot.selfUpdateHistory || [])
       .slice(-MAX_SELF_UPDATE_HISTORY)
       .map(sanitizeSelfUpdateRecord);
@@ -737,14 +791,15 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
    * 仅在 3 个集合都为空时执行，避免覆盖已迁数据。
    */
   async seedIfEmpty(state: CdsState): Promise<boolean> {
-    const [globalCount, projectsCount, branchesCount, deploymentRunsCount, historyCount] = await Promise.all([
+    const [globalCount, projectsCount, branchesCount, deploymentRunsCount, deploymentVersionsCount, historyCount] = await Promise.all([
       this.handle.globalCollection().countDocuments({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().countDocuments(),
       this.handle.branchesCollection().countDocuments(),
       this.handle.deploymentRunsCollection().countDocuments(),
+      this.handle.deploymentVersionsCollection().countDocuments(),
       this.handle.selfUpdateHistoryCollection().countDocuments(),
     ]);
-    if (globalCount > 0 || projectsCount > 0 || branchesCount > 0 || deploymentRunsCount > 0 || historyCount > 0) return false;
+    if (globalCount > 0 || projectsCount > 0 || branchesCount > 0 || deploymentRunsCount > 0 || deploymentVersionsCount > 0 || historyCount > 0) return false;
 
     await this.forceFullSave(state);
     return true;
