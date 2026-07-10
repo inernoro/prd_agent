@@ -175,8 +175,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--max-runtime-calls", protocolCanary);
         Assert.Contains("LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", protocolCanary);
         Assert.Contains("--no-reuse-existing", protocolCanary);
+        Assert.Contains("--allow-empty-expect-commit", protocolCanary);
         Assert.Contains("_existing_report_covers", protocolCanary);
         Assert.Contains("reusedExisting=true; no runtime LLM calls were created", protocolCanary);
+        Assert.Contains("missing --expect-commit for --execute", protocolCanary);
         Assert.Contains("selected protocols exceed --max-runtime-calls", protocolCanary);
     }
 

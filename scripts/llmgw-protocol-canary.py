@@ -437,6 +437,8 @@ def main() -> int:
                         help="upper bound for real upstream calls when --execute is set")
     parser.add_argument("--no-reuse-existing", action="store_true",
                         help="do not reuse an existing pass JSON from --json-out; useful when intentionally refreshing evidence")
+    parser.add_argument("--allow-empty-expect-commit", action="store_true",
+                        help="allow --execute without --expect-commit; intended only for local throwaway diagnostics")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_PROTOCOL_CANARY_JSON_OUT", ""))
@@ -497,6 +499,8 @@ def main() -> int:
         failures.append("missing --base/GW_BASE")
     if not key:
         failures.append("missing --key/GW_KEY/LLMGW_GATE_KEY")
+    if args.execute and not expected_commit and not args.allow_empty_expect_commit:
+        failures.append("missing --expect-commit for --execute; pass --allow-empty-expect-commit only for local throwaway diagnostics")
     if args.execute and len(selected_protocols) > max_runtime_calls:
         failures.append(f"selected protocols exceed --max-runtime-calls: selected={len(selected_protocols)} max={max_runtime_calls}")
     if not failures:
