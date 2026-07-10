@@ -3,8 +3,9 @@
 
 Default mode is dry-run: healthz + route-self-test only, no upstream model call.
 Use --execute to send one tiny request per protocol and generate real runtime
-logs for protocol_runtime_coverage. Keep this script explicit and bounded so it
-does not repeat costly tests by accident.
+logs for protocol_runtime_coverage plus appCaller ingress registry coverage.
+Keep this script explicit and bounded so it does not repeat costly tests by
+accident.
 """
 
 from __future__ import annotations

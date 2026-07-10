@@ -184,6 +184,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
         Assert.Contains("protocol_runtime_coverage", protocolAudit);
         Assert.Contains("LLM Gateway four-protocol runtime canary", protocolCanary);
+        Assert.Contains("appCaller ingress registry coverage", protocolCanary);
         Assert.Contains("TARGET_PROTOCOLS = (\"gw-native\", \"openai-compatible\", \"claude-compatible\", \"gemini-compatible\")", protocolCanary);
         Assert.Contains("parser.add_argument(\"--execute\", action=\"store_true\"", protocolCanary);
         Assert.Contains("dry-run only; add --execute to create runtime logs", protocolCanary);
@@ -570,6 +571,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allowedPendingRuntimeGates", releaseGate);
         Assert.Contains("selfFinalizingHttpFullLedger", releaseGate);
         Assert.Contains("remaining == [\"full_http_rollout_ledger\"]", releaseGate);
+        Assert.Contains("appcaller_ingress_registry_coverage", releaseGate);
+        Assert.Contains("blocked runtime gates missing registry facts", releaseGate);
         Assert.Contains("\"stable\"", releaseGate);
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);

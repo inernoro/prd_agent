@@ -4,3 +4,4 @@
 | test | prd-api | 增加 ModelLab/Arena pinned 经 GW 调用的防退化守卫 |
 | feat | prd-llmgw | runtime gates 增加 appCaller 入口协议注册覆盖阻塞项，防止只看日志忽略注册表证据 |
 | polish | prd-llmgw-web | 概览页 runtime gate 为 appCaller 入口协议注册覆盖提供协议覆盖和调用方深链 |
+| test | scripts | release gate 自测覆盖 appCaller 入口协议注册 gate，protocol canary 文案同步说明注册表证据 |
