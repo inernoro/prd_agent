@@ -2,7 +2,7 @@ namespace PrdAgent.Infrastructure.LLM.Adapters;
 
 /// <summary>
 /// 图片生成平台适配器工厂
-/// 根据 API URL 和模型名称选择合适的适配器
+/// 根据解析出的 wire 协议、模型名称和 API URL 选择合适的适配器。
 /// </summary>
 public static class ImageGenPlatformAdapterFactory
 {
@@ -15,7 +15,7 @@ public static class ImageGenPlatformAdapterFactory
     /// </summary>
     /// <param name="apiUrl">API 基础 URL</param>
     /// <param name="modelName">模型名称（可选，用于未来基于模型配置选择适配器）</param>
-    /// <param name="platformType">显式指定的平台类型（可选，优先级最高）</param>
+    /// <param name="platformType">显式指定的平台类型或 wire 协议（可选，优先级最高）</param>
     /// <returns>适配器实例</returns>
     public static IImageGenPlatformAdapter GetAdapter(
         string? apiUrl,
@@ -56,8 +56,8 @@ public static class ImageGenPlatformAdapterFactory
         return platformType.ToLowerInvariant() switch
         {
             "volces" => VolcesAdapter,
-            "google" or "gemini" => GoogleAdapter,
-            "openai" => OpenAIAdapter,
+            "google" or "gemini" or "gemini-compatible" => GoogleAdapter,
+            "openai" or "openai-compatible" or "openrouter" => OpenAIAdapter,
             _ => OpenAIAdapter
         };
     }

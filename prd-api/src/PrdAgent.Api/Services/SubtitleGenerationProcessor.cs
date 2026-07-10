@@ -227,7 +227,7 @@ public class SubtitleGenerationProcessor
 
         // 多模态 chat 音频模型（OpenRouter openai/gpt-audio、gemini 等）→ 没有 Whisper /v1/audio/transcriptions
         // 端点，只能把音频以 input_audio 发到 /v1/chat/completions 让多模态模型逐字转写。
-        if (IsChatAudioModel(resolution.ActualModel, resolution.PlatformType))
+        if (AsrAudioRoutePolicy.ShouldUseChatAudio(resolution.ActualModel, resolution.Protocol, resolution.PlatformType))
         {
             _logger.LogInformation(
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
@@ -356,26 +356,6 @@ public class SubtitleGenerationProcessor
     // 把音频 base64 作为 input_audio 发到 /v1/chat/completions，模型直接逐字转写。
     // 无逐句时间戳 → 返回单段（StartSec=EndSec=0）。
     // ──────────────────────────────────────────────────────
-
-    private static bool IsChatAudioModel(string? model, string? platformType)
-    {
-        if (string.IsNullOrWhiteSpace(model)) return false;
-        // 本路径发的是 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态的
-        // 平台不能走：claude/anthropic 走 ClaudeGatewayAdapter，请求体不同；google 原生 Gemini 用
-        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 完全不同。把 OpenAI 形态
-        // 请求发到这些原生端点会直接失败而非转写，所以仅 OpenAI 兼容平台可走（Codex P2）。
-        // OpenRouter 等 OpenAI 兼容平台注册为 openai，照常生效。
-        // 注意排除 google 与 gemini 两种 platformType——本仓库二者都指原生 Google 平台
-        // （见 ImageGenPlatformAdapterFactory），走 v1beta generateContent，与 OpenAI 形态不兼容。
-        var pt = (platformType ?? "").ToLowerInvariant();
-        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
-        var m = model.ToLowerInvariant();
-        if (m.Contains("whisper")) return false;
-        // 只认确实支持音频输入的多模态模型：名字含 audio（gpt-audio / gpt-4o-audio-preview /
-        // qwen*-audio 等）或 gemini（原生支持音频）。不能用裸 gpt-4o 匹配——gpt-4o / gpt-4o-mini
-        // 是文本+视觉模型，不接受 input_audio，会把这类 ASR 池绑定打挂（Bugbot Medium）。
-        return m.Contains("audio") || m.Contains("gemini");
-    }
 
     private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
         DocumentStoreAgentRun run,

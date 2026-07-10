@@ -6553,7 +6553,7 @@ function safeChart(canvasId, config) {
                         RequestType: ModelTypes.Asr,
                         AppCallerCode: resolvedCaller!,
                         ForceFullShadowSample: forceFullShadowSample));
-                    var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                    var gatewayResult = !gwRes.IsExchange && AsrAudioRoutePolicy.ShouldUseChatAudio(gwRes.ActualModel, gwRes.Protocol, gwRes.PlatformType)
                         ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
                         : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
                     transcript = gatewayResult.Transcript;
@@ -6732,30 +6732,6 @@ function safeChart(canvasId, config) {
         }
 
         return ParseGatewayAsrTranscript(rawResp.Content);
-    }
-
-    /// <summary>
-    /// 判断该模型是否走「多模态 chat + 音频输入」路径做转写（如 OpenRouter 的 openai/gpt-audio、
-    /// gemini 系等）。这些平台没有 Whisper 的 /v1/audio/transcriptions 端点，只能把音频当作
-    /// chat 消息里的 input_audio 发给多模态模型，让它逐字转写。whisper 仍走 multipart。
-    /// </summary>
-    private static bool IsChatAudioModel(string? model, string? platformType)
-    {
-        if (string.IsNullOrWhiteSpace(model)) return false;
-        // 本路径发 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态平台
-        // 不能走：claude/anthropic 走 ClaudeGatewayAdapter；google 原生 Gemini 用
-        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 不同，发过去直接失败
-        // 而非转写。仅 OpenAI 兼容平台（OpenRouter 等注册为 openai）可走（Codex P2）。
-        // google 与 gemini 两种 platformType 都是原生 Google 平台（见 ImageGenPlatformAdapterFactory），
-        // 走 v1beta generateContent，与 OpenAI input_audio 形态不兼容，必须一并排除。
-        var pt = (platformType ?? "").ToLowerInvariant();
-        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
-        var m = model.ToLowerInvariant();
-        if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
-        // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）
-        // 或 gemini。不能用裸 gpt-4o——gpt-4o / gpt-4o-mini 不接受 input_audio（Bugbot Medium）。
-        return m.Contains("audio")
-            || m.Contains("gemini");
     }
 
     /// <summary>

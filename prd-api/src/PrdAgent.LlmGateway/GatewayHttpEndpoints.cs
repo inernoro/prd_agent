@@ -1139,6 +1139,20 @@ public static class GatewayHttpEndpoints
         return normalized is "auto" or "pool" or "pinned" ? normalized : null;
     }
 
+    private static string NormalizeIngressProtocol(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "unknown";
+        var normalized = value.Trim().ToLowerInvariant().Replace('_', '-');
+        return normalized switch
+        {
+            "native" or "gw" or "gateway-native" => "gw-native",
+            "openai" or "openai-compatible" or "openai-chat" => "openai-compatible",
+            "claude" or "anthropic" or "anthropic-compatible" => "claude-compatible",
+            "gemini" or "google" or "google-compatible" => "gemini-compatible",
+            _ => normalized,
+        };
+    }
+
     private static async Task<bool> TryRejectStrictDroppedParametersAsync(HttpContext http, GatewayIngressRequest ingress)
     {
         if (!string.Equals(ingress.ParameterPolicy, "strict-require", StringComparison.OrdinalIgnoreCase)
@@ -3535,6 +3549,7 @@ public static class GatewayHttpEndpoints
         var modelPolicy = string.IsNullOrWhiteSpace(ingress.ModelPolicy) ? "auto" : ingress.ModelPolicy.Trim().ToLowerInvariant();
         var modelPoolId = string.IsNullOrWhiteSpace(ingress.ModelPoolId) ? null : ingress.ModelPoolId.Trim();
         var parameterPolicy = string.IsNullOrWhiteSpace(ingress.ParameterPolicy) ? "default-drop" : ingress.ParameterPolicy.Trim().ToLowerInvariant();
+        var ingressProtocol = NormalizeIngressProtocol(ingress.IngressProtocol);
         var requestId = NormalizeOptionalTraceId(ingress.Context?.RequestId) ?? NormalizeOptionalTraceId(ingress.RequestId);
         var sessionId = NormalizeOptionalTraceId(ingress.Context?.SessionId);
         var runId = NormalizeOptionalTraceId(ingress.Context?.RunId);
@@ -3553,7 +3568,8 @@ public static class GatewayHttpEndpoints
             .SetOnInsert(x => x.FirstSeenAt, now)
             .SetOnInsert(x => x.CreatedAt, now)
             .Set(x => x.SourceSystem, string.IsNullOrWhiteSpace(ingress.SourceSystem) ? "external" : ingress.SourceSystem)
-            .Set(x => x.IngressProtocol, ingress.IngressProtocol)
+            .Set(x => x.IngressProtocol, ingressProtocol)
+            .AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)
             .Set(x => x.Title, string.IsNullOrWhiteSpace(ingress.AppCallerTitle) ? ingress.AppCallerCode : ingress.AppCallerTitle)
             .Set(x => x.LastObservedModelPolicy, modelPolicy)
             .Set(x => x.LastObservedModelPoolId, modelPoolId)

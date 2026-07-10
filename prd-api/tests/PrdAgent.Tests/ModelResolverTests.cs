@@ -386,6 +386,38 @@ public class ModelResolverTests
         Assert.False(result.ParameterCapabilities!["seed"]);
     }
 
+    [Theory]
+    [InlineData("gemini", "claude", "gemini", "protocol-from-pool-item")]
+    [InlineData(null, "claude", "claude", "protocol-from-model")]
+    [InlineData(null, null, "openai", "protocol-from-platform-type")]
+    public async Task PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform(
+        string? poolItemProtocol,
+        string? modelProtocol,
+        string expectedProtocol,
+        string expectedReason)
+    {
+        var platform = CreatePlatform("plat-1", "Mixed Wire Platform", "openai");
+        var pool = CreateModelGroup(
+            "pool-protocol", "Protocol Priority Pool", "chat",
+            isDefault: true, priority: 0,
+            ("plat-1", "selected-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Protocol = poolItemProtocol;
+        var modelConfig = CreateLegacyModel("selected-model", "plat-1", "chat");
+        modelConfig.Protocol = modelProtocol;
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("any::chat", "chat");
+
+        Assert.True(result.Success);
+        Assert.Equal("selected-model", result.ActualModel);
+        Assert.Equal(expectedProtocol, result.Protocol);
+        Assert.Equal(expectedReason, result.ResolutionReason);
+    }
+
     [Fact]
     public async Task PoolModelCapability_WhenVisionImageThinkingFalse_ShouldFlowToResolution()
     {

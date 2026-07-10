@@ -495,7 +495,7 @@ app.MapGet("/gw/protocol-coverage", async (string? releaseCommit, int? sinceHour
     var items = TargetIngressProtocols().Select(protocol =>
     {
         var registryDocs = appCallerDocs
-            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .Where(d => GetObservedIngressProtocols(d).Contains(protocol.Key, StringComparer.Ordinal))
             .ToList();
         var activeDocs = registryDocs
             .Where(d => IsRuntimeGovernedAppCallerStatus(d.AsNullableString("Status")))
@@ -932,6 +932,8 @@ app.MapGet("/gw/runtime-gates", async () =>
             .Include("ModelPoolId")
             .Include("ModelPolicy")
             .Include("ParameterPolicy")
+            .Include("IngressProtocol")
+            .Include("ObservedIngressProtocols")
             .Include("LastObservedModelPoolId")
             .Include("LastObservedModelPolicy")
             .Include("LastObservedParameterPolicy")).ToListAsync();
@@ -1034,6 +1036,16 @@ app.MapGet("/gw/runtime-gates", async () =>
         + MapOnlyCount(mapPlatformDocs, IdSet(gwPlatformDocs))
         + MapOnlyCount(mapModelDocs, IdSet(gwModelDocs))
         + MapOnlyCount(mapExchangeDocs, IdSet(gwExchangeDocs));
+    var targetProtocols = TargetIngressProtocols();
+    var targetProtocolKeys = targetProtocols.Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
+    var registryObservedProtocols = appCallerDocs
+        .SelectMany(GetObservedIngressProtocols)
+        .Where(targetProtocolKeys.Contains)
+        .ToHashSet(StringComparer.Ordinal);
+    var missingRegistryProtocols = targetProtocols
+        .Where(p => !registryObservedProtocols.Contains(p.Key))
+        .Select(p => p.Key)
+        .ToList();
 
     var runtimeCommit = NormalizeCommitFilter(gitCommit);
     var shadowFilter = runtimeCommit is null
@@ -1066,8 +1078,6 @@ app.MapGet("/gw/runtime-gates", async () =>
     var releaseLogAppCallers = runtimeCommit is null
         ? new List<string>()
         : await logs.Distinct<string>("AppCallerCode", logReleaseFilter).ToListAsync();
-    var targetProtocols = TargetIngressProtocols();
-    var targetProtocolKeys = targetProtocols.Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
     var releaseProtocolLogDocs = runtimeCommit is null
         ? new List<BsonDocument>()
         : await logs.Find(logReleaseFilter)
@@ -1155,6 +1165,11 @@ app.MapGet("/gw/runtime-gates", async () =>
                 Link("模型池", "/pools"),
             },
             "appcaller_policy_drift" => new() { Link("漂移调用方", "/app-callers?drift=any") },
+            "appcaller_ingress_registry_coverage" => new()
+            {
+                Link("协议覆盖", "/?protocolCoverage=1"),
+                Link("调用方", "/app-callers"),
+            },
             "gateway_pool_member_readiness" => new() { Link("检查模型池", "/pools") },
             "active_appcaller_map_fallback_exit" => new()
             {
@@ -1287,6 +1302,26 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["governedAppCallers"] = governedAppCallers.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["routeDrift"] = appCallerRouteDrift.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["parameterDrift"] = appCallerParameterDrift.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
+
+    AddGate(
+        "appcaller_ingress_registry_coverage",
+        "appCaller 入口协议注册覆盖",
+        missingRegistryProtocols.Count == 0 ? "pass" : "waiting",
+        missingRegistryProtocols.Count > 0,
+        missingRegistryProtocols.Count == 0
+            ? $"appCaller 注册表已累计观察到四类目标入口协议，注册项 {appCallerDocs.Count}。"
+            : $"appCaller 注册表尚缺 {missingRegistryProtocols.Count}/{targetProtocols.Count} 类入口协议观察记录：{string.Join(", ", missingRegistryProtocols)}。",
+        $"/gw/protocol-coverage registryCovered={registryObservedProtocols.Count}; missing={missingRegistryProtocols.Count}; appCallers={appCallerDocs.Count}",
+        missingRegistryProtocols.Count == 0
+            ? "保留注册表累计协议覆盖证据。"
+            : "触发缺失协议入口的真实或 canary 请求，让 serving 被动注册 ObservedIngressProtocols；只改文档或静态配置不能替代该证据。",
+        new Dictionary<string, string>
+        {
+            ["registeredAppCallers"] = appCallerDocs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["coveredProtocols"] = registryObservedProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingProtocols"] = missingRegistryProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingIngressProtocols"] = string.Join(",", missingRegistryProtocols),
         });
 
     AddGate(
@@ -1768,7 +1803,16 @@ app.MapGet("/gw/app-callers", async (
     var filters = new List<FilterDefinition<BsonDocument>>();
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status.Trim()));
     if (!string.IsNullOrWhiteSpace(sourceSystem)) filters.Add(fb.Eq("SourceSystem", sourceSystem.Trim()));
-    if (!string.IsNullOrWhiteSpace(ingressProtocol)) filters.Add(fb.Eq("IngressProtocol", ingressProtocol.Trim()));
+    if (!string.IsNullOrWhiteSpace(ingressProtocol))
+    {
+        var protocolRaw = ingressProtocol.Trim();
+        var protocolNormalized = NormalizeIngressProtocol(protocolRaw);
+        filters.Add(fb.Or(
+            fb.Eq("IngressProtocol", protocolRaw),
+            fb.Eq("IngressProtocol", protocolNormalized),
+            fb.AnyEq("ObservedIngressProtocols", protocolRaw),
+            fb.AnyEq("ObservedIngressProtocols", protocolNormalized)));
+    }
     if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType.Trim()));
     var driftFilter = BuildAppCallerDriftFilter(drift);
     if (driftFilter is not null) filters.Add(driftFilter);
@@ -1793,7 +1837,10 @@ app.MapGet("/gw/app-callers", async (
     var recent = Builders<BsonDocument>.Filter.Empty;
     var statuses = NormalizeDistinct(await gwAppCallers.Distinct<string>("Status", recent).ToListAsync(), 80);
     var sourceSystems = NormalizeDistinct(await gwAppCallers.Distinct<string>("SourceSystem", recent).ToListAsync(), 80);
-    var ingressProtocols = NormalizeDistinct(await gwAppCallers.Distinct<string>("IngressProtocol", recent).ToListAsync(), 80);
+    var protocolDocs = await gwAppCallers.Find(recent)
+        .Project(Builders<BsonDocument>.Projection.Include("IngressProtocol").Include("ObservedIngressProtocols"))
+        .ToListAsync();
+    var ingressProtocols = NormalizeDistinct(protocolDocs.SelectMany(GetObservedIngressProtocols), 80);
     var requestTypes = NormalizeDistinct(await gwAppCallers.Distinct<string>("RequestType", recent).ToListAsync(), 80);
     var data = new GatewayAppCallersData
     {
@@ -4250,6 +4297,25 @@ static string NormalizeIngressProtocol(string? value)
     };
 }
 
+static List<string> GetObservedIngressProtocols(BsonDocument doc)
+{
+    var values = new List<string>();
+    if (doc.TryGetValue("ObservedIngressProtocols", out var observed) && observed.IsBsonArray)
+    {
+        values.AddRange(observed.AsBsonArray
+            .Where(x => x.IsString)
+            .Select(x => NormalizeIngressProtocol(x.AsString)));
+    }
+
+    var legacy = NormalizeIngressProtocol(doc.AsNullableString("IngressProtocol"));
+    if (legacy != "unknown") values.Add(legacy);
+    return values
+        .Where(x => !string.IsNullOrWhiteSpace(x) && x != "unknown")
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
+}
+
 static bool IsRuntimeGovernedAppCallerStatus(string? value)
 {
     var normalized = string.IsNullOrWhiteSpace(value) ? "discovered" : value.Trim().ToLowerInvariant();
@@ -4883,6 +4949,7 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     RequestType = d.GetStringOrEmpty("RequestType"),
     SourceSystem = d.GetStringOrEmpty("SourceSystem"),
     IngressProtocol = d.GetStringOrEmpty("IngressProtocol"),
+    ObservedIngressProtocols = GetObservedIngressProtocols(d),
     Title = d.AsNullableString("Title"),
     Status = d.AsNullableString("Status") ?? "discovered",
     ModelPoolId = d.AsNullableString("ModelPoolId"),
