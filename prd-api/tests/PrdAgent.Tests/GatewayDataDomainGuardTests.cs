@@ -92,9 +92,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
         Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
         Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
-        Assert.Contains("active appCaller 必须使用 modelPolicy=pool", consoleProgram);
-        Assert.Contains("normalized-to-gw-pool-policy", consoleProgram);
-        Assert.Contains(".Set(\"ModelPolicy\", \"pool\")", consoleProgram);
+        Assert.Contains("active appCaller 必须使用 modelPolicy=auto/pool/pinned", consoleProgram);
+        var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
+        Assert.Contains("allowMapFallback: !activeGatewayAppCallerRequiresGwConfig", modelResolver);
+        Assert.Contains("FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback)", modelResolver);
+        Assert.Contains("normalized-to-supported-model-policy", consoleProgram);
+        Assert.Contains("IsSupportedAppCallerModelPolicy(currentModelPolicy)", consoleProgram);
+        Assert.Contains("路由策略保留或补齐为 {targetModelPolicy}", consoleProgram);
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
         Assert.Contains("m.AsNullableBool(\"Enabled\") ?? true", consoleProgram);
         Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
