@@ -529,6 +529,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("runtimeGateActionLinks", protocolAudit);
         Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
         Assert.Contains("/audits?targetType=llmgw_config_authority", protocolAudit);
+        Assert.Contains("\"runtimeEvidenceComplete\": False", protocolAudit);
+        Assert.Contains("\"progressPercent\": None", protocolAudit);
+        Assert.Contains("staticEvidencePercent covers code/doc evidence only", protocolAudit);
+        Assert.DoesNotContain("\"progressPercent\": static_percent", protocolAudit);
     }
 
     [Fact]
@@ -705,6 +709,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("_require_serving_probe_for_commit", ledger);
         Assert.Contains("_require_smoke_for_commit", ledger);
         Assert.Contains("_require_release_gate_for_commit", ledger);
+        Assert.Contains("runtimeEvidenceComplete must remain false in static audit evidence", ledger);
+        Assert.Contains("progressPercent must not report 100 while targetComplete=false", ledger);
         Assert.Contains("allowedPendingRuntimeGates", ledger);
         Assert.Contains("selfFinalizingHttpFullLedger", ledger);
         Assert.Contains("pending_http_full_ledger_only", ledger);
@@ -831,6 +837,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("rollout_ledger_completion_state", readiness);
         Assert.Contains("scripts/llmgw-rollout-ledger.py", readiness);
         Assert.Contains("--require-rollout-complete", readiness);
+        Assert.Contains("runtimeEvidenceComplete", readiness);
+        Assert.Contains("progressPercent", readiness);
         Assert.Contains("leaksKeyArg", readiness);
     }
 

@@ -569,6 +569,16 @@ def _require_protocol_router_audit(path: str, label: str) -> None:
         raise SystemExit(f"ERROR: {label} scope is not static-code-and-document-evidence: {path} scope={scope or 'empty'}")
     if payload.get("targetComplete") is not False and payload.get("TargetComplete") is not False:
         raise SystemExit(f"ERROR: {label} targetComplete must remain false until runtime gates pass: {path}")
+    if payload.get("runtimeEvidenceComplete") is not False and payload.get("RuntimeEvidenceComplete") is not False:
+        raise SystemExit(f"ERROR: {label} runtimeEvidenceComplete must remain false in static audit evidence: {path}")
+    progress_percent = payload.get("progressPercent")
+    if progress_percent is None:
+        progress_percent = payload.get("ProgressPercent")
+    if isinstance(progress_percent, (int, float)) and progress_percent >= 100:
+        raise SystemExit(
+            f"ERROR: {label} progressPercent must not report 100 while targetComplete=false: "
+            f"{path} progressPercent={progress_percent}"
+        )
     remaining = payload.get("remainingRuntimeGates")
     if remaining is None:
         remaining = payload.get("RemainingRuntimeGates")

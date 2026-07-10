@@ -1675,13 +1675,17 @@ def _protocol_router_target_audit() -> dict:
                 and payload.get("verdict") == "pass"
                 and payload.get("scope") == "static-code-and-document-evidence"
                 and payload.get("targetComplete") is False
+                and payload.get("runtimeEvidenceComplete") is False
+                and payload.get("progressPercent") is None
                 and bool(remaining_names)
             )
             detail = json.dumps({
                 "verdict": payload.get("verdict"),
                 "scope": payload.get("scope"),
                 "targetComplete": payload.get("targetComplete"),
+                "runtimeEvidenceComplete": payload.get("runtimeEvidenceComplete"),
                 "staticEvidencePercent": payload.get("staticEvidencePercent"),
+                "progressPercent": payload.get("progressPercent"),
                 "remainingRuntimeGates": remaining_names,
             }, ensure_ascii=False, sort_keys=True)
         except Exception as exc:
