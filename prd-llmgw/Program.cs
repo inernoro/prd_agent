@@ -1056,10 +1056,10 @@ app.MapGet("/gw/runtime-gates", async () =>
     var shadowTotal = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(shadowFilter);
     var shadowCritical = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HasCritical", true)));
     var shadowHttpFail = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HttpOk", false)));
-    BsonDocument? retainedShadowEvidence = null;
+    var retainedShadowCandidates = new List<BsonDocument>();
     if (runtimeCommit is not null && shadowTotal == 0)
     {
-        retainedShadowEvidence = await shadows.Aggregate()
+        retainedShadowCandidates = await shadows.Aggregate()
             .Match(Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Ne("ReleaseCommit", runtimeCommit),
                 Builders<BsonDocument>.Filter.Exists("ReleaseCommit", true),
@@ -1088,10 +1088,8 @@ app.MapGet("/gw/runtime-gates", async () =>
                 Builders<BsonDocument>.Filter.Eq("Critical", 0),
                 Builders<BsonDocument>.Filter.Eq("HttpFail", 0)))
             .Sort(new BsonDocument("LastComparedAt", -1))
-            .FirstOrDefaultAsync();
+            .ToListAsync();
     }
-    var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
-    var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
     var logReleaseFilter = runtimeCommit is null
         ? FilterDefinition<BsonDocument>.Empty
         : Builders<BsonDocument>.Filter.And(
@@ -1170,9 +1168,15 @@ app.MapGet("/gw/runtime-gates", async () =>
         ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
     var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
     var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var latestSuccessfulHttpFullCommit = httpFullLedgerEvidence.Facts.TryGetValue("latestCommit", out var latestCommitFact)
+        ? latestCommitFact
+        : string.Empty;
+    var retainedShadowEvidence = retainedShadowCandidates.FirstOrDefault(candidate =>
+        string.Equals(candidate.AsNullableString("_id"), latestSuccessfulHttpFullCommit, StringComparison.OrdinalIgnoreCase));
+    var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
+    var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
     var retainedShadowMatchesPreviousFullHttp = retainedShadowCommit.Length > 0
-        && httpFullLedgerEvidence.Facts.TryGetValue("latestCommit", out var latestHttpFullCommit)
-        && string.Equals(retainedShadowCommit, latestHttpFullCommit, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(retainedShadowCommit, latestSuccessfulHttpFullCommit, StringComparison.OrdinalIgnoreCase)
         && httpFullLedgerEvidence.Facts.TryGetValue("releaseGateRequired", out var previousReleaseGateRequired)
         && string.Equals(previousReleaseGateRequired, "true", StringComparison.OrdinalIgnoreCase)
         && httpFullLedgerEvidence.Facts.TryGetValue("disableMapConfigFallbackForActiveAppCallers", out var previousDisableMapFallback)

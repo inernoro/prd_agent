@@ -701,6 +701,8 @@ public class GatewayDataDomainGuardTests
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
 
         Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
+        Assert.Contains("latestSuccessfulHttpFullCommit", consoleProgram);
+        Assert.Contains("retainedShadowCandidates.FirstOrDefault", consoleProgram);
         Assert.Contains("configAuthorityLedgerEvidence.Ready", consoleProgram);
         Assert.Contains("httpTransportLogs == releaseLogTotal", consoleProgram);
         Assert.Contains("missingIngressProtocols.Count == 0", consoleProgram);
