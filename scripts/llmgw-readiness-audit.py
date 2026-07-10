@@ -107,6 +107,8 @@ def _static_checks() -> list[dict]:
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
+    prod_health_preflight_path = ROOT / "scripts/llmgw-prod-health-preflight.py"
+    prod_health_preflight = prod_health_preflight_path.read_text(encoding="utf-8") if prod_health_preflight_path.exists() else ""
     upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
     upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
     disk_guard_path = ROOT / "scripts/llmgw-disk-space-guard.sh"
@@ -304,6 +306,23 @@ def _static_checks() -> list[dict]:
         ok and not leaks_preflight_secret,
         f"{detail}; leaksPreflightSecret={leaks_preflight_secret}",
     ))
+
+    ok, detail = _contains_all(
+        prod_health_preflight,
+        [
+            "Read-only LLM Gateway production health preflight",
+            "/gw/v1/healthz",
+            "--expect-current-head",
+            "--check-auth-boundary",
+            "/gw/v1/route-self-test",
+            "/gw/runtime-gates",
+            "healthz commit mismatch",
+            "auth boundary expected 401",
+            "LLMGW_PROD_HEALTH_PREFLIGHT_JSON_OUT",
+            "never calls model providers",
+        ],
+    )
+    checks.append(_check("prod_health_preflight_is_readonly_commit_gate", ok, detail))
 
     ok, detail = _contains_all(
         prod_stage_workflow,

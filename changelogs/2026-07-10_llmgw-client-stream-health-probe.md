@@ -42,3 +42,4 @@
 | ops | scripts | LLM Gateway release gate 与 rollout ledger 支持 protocol canary JSON 证据，发布台账可校验四类入口协议同 commit 运行样本 |
 | ops | scripts | LLM Gateway 四协议 canary 增加已有 PASS 证据复用和 runtime call 上限，避免重复执行同 commit 样本造成过量请求 |
 | ops | scripts | LLM Gateway 四协议 canary 执行态默认要求绑定 expected commit，避免对未知线上版本生成不可用发布证据 |
+| ops | scripts | 新增 LLM Gateway 正式环境只读 health preflight，发布前可确认线上 commit 与鉴权边界，不触发模型请求 |

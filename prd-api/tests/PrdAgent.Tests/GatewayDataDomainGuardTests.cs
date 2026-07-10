@@ -1218,6 +1218,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("scripts/llmgw-shadow-coverage-report.py", script);
         Assert.Contains("serving_probe_available", script);
         Assert.Contains("fast_writes_same_commit_release_intent", script);
+        Assert.Contains("prod_health_preflight_is_readonly_commit_gate", script);
+        Assert.Contains("scripts/llmgw-prod-health-preflight.py", script);
+        var prodHealthPreflight = ReadRepoFile("scripts/llmgw-prod-health-preflight.py");
+        Assert.Contains("Read-only LLM Gateway production health preflight", prodHealthPreflight);
+        Assert.Contains("/gw/v1/healthz", prodHealthPreflight);
+        Assert.Contains("--expect-current-head", prodHealthPreflight);
+        Assert.Contains("--check-auth-boundary", prodHealthPreflight);
+        Assert.Contains("healthz commit mismatch", prodHealthPreflight);
+        Assert.Contains("auth boundary expected 401", prodHealthPreflight);
+        Assert.Contains("never calls model providers", prodHealthPreflight);
         Assert.Contains("--run-serving-probe", script);
         Assert.Contains("scripts/llmgw-serving-probe.py", script);
         Assert.Contains("serving_stability_and_auth_probe", script);
