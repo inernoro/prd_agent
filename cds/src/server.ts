@@ -7,6 +7,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
@@ -78,6 +79,7 @@ import type { BranchOperationCoordinator } from './services/branch-operation-coo
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
+import { DeploymentRunService } from './services/deployment-run.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -673,6 +675,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/runs/:id/rollback': '回滚发布记录',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
+    'GET /deployment-runs': '列出部署运行',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -871,6 +874,8 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
+    [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
@@ -1238,6 +1243,8 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  deploymentRunService.reconcileInterrupted();
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -3482,6 +3489,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+
+  app.use('/api', createDeploymentRunsRouter({
+    deploymentRunService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
 
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
