@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clearDefectDeepLinkParams, getDefectDeepLinkId } from '../defectDeepLink';
+import {
+  clearDefectDeepLinkParams,
+  clearDefectSubmitActionParams,
+  getDefectDeepLinkId,
+  hasDefectSubmitAction,
+} from '../defectDeepLink';
 
 describe('defect deep link helpers', () => {
   it('reads canonical and legacy defect id params', () => {
@@ -14,5 +19,22 @@ describe('defect deep link helpers', () => {
     expect(next.get('defectId')).toBeNull();
     expect(next.get('id')).toBeNull();
     expect(next.get('tab')).toBe('open');
+  });
+
+  it('detects the submit action deep link (share_target redirect)', () => {
+    expect(hasDefectSubmitAction(new URLSearchParams('action=submit&shared=1'))).toBe(true);
+    expect(hasDefectSubmitAction(new URLSearchParams('action=submit'))).toBe(true);
+    expect(hasDefectSubmitAction(new URLSearchParams('action=other'))).toBe(false);
+    expect(hasDefectSubmitAction(new URLSearchParams('defectId=d1'))).toBe(false);
+  });
+
+  it('clears submit action params without dropping unrelated query state', () => {
+    const next = clearDefectSubmitActionParams(
+      new URLSearchParams('action=submit&shared=1&defectId=d1')
+    );
+
+    expect(next.get('action')).toBeNull();
+    expect(next.get('shared')).toBeNull();
+    expect(next.get('defectId')).toBe('d1');
   });
 });
