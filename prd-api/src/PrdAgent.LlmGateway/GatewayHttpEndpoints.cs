@@ -829,6 +829,7 @@ public static class GatewayHttpEndpoints
             }
             catch (OperationCanceledException)
             {
+                http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
                 // 只有显式 cancel endpoint 会取消上游；普通客户端断开仍只停止写响应。
             }
             catch (ObjectDisposedException)
@@ -1099,6 +1100,7 @@ public static class GatewayHttpEndpoints
             }
             catch (OperationCanceledException)
             {
+                http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
                 // 只有显式 cancel endpoint 会取消上游；普通客户端断开仍只停止写响应。
             }
             catch (ObjectDisposedException)

@@ -2063,6 +2063,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RunWithRequestCancellationAsync", endpoints);
         Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
         Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        var nativeStreamStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/stream\"", StringComparison.Ordinal);
+        var nativeStreamEnd = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", nativeStreamStart, StringComparison.Ordinal);
+        Assert.Contains(
+            "HttpContextOutcomeUnknownKey",
+            endpoints[nativeStreamStart..nativeStreamEnd]);
+        var clientStreamStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/client-stream\"", StringComparison.Ordinal);
+        var clientStreamEnd = endpoints.IndexOf("app.MapGet(\"/gw/v1/shadow-comparisons\"", clientStreamStart, StringComparison.Ordinal);
+        Assert.Contains(
+            "HttpContextOutcomeUnknownKey",
+            endpoints[clientStreamStart..clientStreamEnd]);
         var imageHelperStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
         var imageHelperEnd = endpoints.IndexOf("private static async Task SendOpenAiCompatibleAsync", imageHelperStart, StringComparison.Ordinal);
         var imageHelper = endpoints[imageHelperStart..imageHelperEnd];
