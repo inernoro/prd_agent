@@ -1064,6 +1064,31 @@ app.MapGet("/gw/runtime-gates", async () =>
     var releaseLogAppCallers = runtimeCommit is null
         ? new List<string>()
         : await logs.Distinct<string>("AppCallerCode", logReleaseFilter).ToListAsync();
+    var targetProtocols = TargetIngressProtocols();
+    var targetProtocolKeys = targetProtocols.Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
+    var releaseProtocolLogDocs = runtimeCommit is null
+        ? new List<BsonDocument>()
+        : await logs.Find(logReleaseFilter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("IngressProtocol")
+                .Include("GatewayTransport")
+                .Include("Status")
+                .Include("DroppedParameters"))
+            .ToListAsync();
+    var coveredIngressProtocols = releaseProtocolLogDocs
+        .Select(d => NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        .Where(targetProtocolKeys.Contains)
+        .ToHashSet(StringComparer.Ordinal);
+    var missingIngressProtocols = targetProtocols
+        .Where(p => !coveredIngressProtocols.Contains(p.Key))
+        .Select(p => p.Key)
+        .ToList();
+    var protocolFailedLogs = releaseProtocolLogDocs.LongCount(d =>
+        targetProtocolKeys.Contains(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        && string.Equals(d.AsNullableString("Status"), "failed", StringComparison.OrdinalIgnoreCase));
+    var protocolDroppedParameterLogs = releaseProtocolLogDocs.LongCount(d =>
+        targetProtocolKeys.Contains(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
+        && HasDroppedParameters(d));
     var releaseShadowAppCallers = runtimeCommit is null
         ? new List<string>()
         : await shadows.Distinct<string>("AppCallerCode", shadowFilter).ToListAsync();
@@ -1150,6 +1175,12 @@ app.MapGet("/gw/runtime-gates", async () =>
                     : $"/app-callers?status=active&search={Uri.EscapeDataString(missingCode)}"),
                 Link("当前 commit 日志", $"/logs{releaseQuery}"),
                 Link("当前 commit shadow", $"/shadow{releaseQuery}"),
+            },
+            "protocol_runtime_coverage" => new()
+            {
+                Link("协议覆盖", $"/?protocolCoverage=1{(string.IsNullOrWhiteSpace(commit) ? string.Empty : $"&releaseCommit={Uri.EscapeDataString(commit)}")}"),
+                Link("协议日志", $"/logs{releaseQuery}"),
+                Link("调用方", "/app-callers"),
             },
             "shadow_runtime_evidence" => new()
             {
@@ -1365,6 +1396,35 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["releaseCommit"] = runtimeCommit ?? "",
             ["releaseLogTotal"] = releaseLogTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["droppedParameterLogs"] = droppedParameterLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
+
+    AddGate(
+        "protocol_runtime_coverage",
+        "四类入口协议当前 commit 覆盖",
+        runtimeCommit is null || releaseLogTotal == 0 || missingIngressProtocols.Count > 0 ? "waiting" : "pass",
+        runtimeCommit is null || releaseLogTotal == 0 || missingIngressProtocols.Count > 0,
+        runtimeCommit is null
+            ? "当前进程缺少 GIT_COMMIT，不能证明协议入口样本属于本次发布版本。"
+            : releaseLogTotal == 0
+            ? "尚未看到当前 commit 的 LLM 请求日志，不能证明四类入口协议的运行覆盖。"
+            : missingIngressProtocols.Count == 0
+            ? $"当前 commit 已覆盖 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 四类入口协议，协议日志 {releaseProtocolLogDocs.Count} 条。"
+            : $"当前 commit 尚缺 {missingIngressProtocols.Count}/{targetProtocols.Count} 类入口协议运行日志：{string.Join(", ", missingIngressProtocols)}。",
+        $"/gw/protocol-coverage?releaseCommit={runtimeCommit ?? "empty"}; covered={coveredIngressProtocols.Count}; missing={missingIngressProtocols.Count}; failed={protocolFailedLogs}; dropped={protocolDroppedParameterLogs}",
+        runtimeCommit is null || releaseLogTotal == 0
+            ? "先设置 GIT_COMMIT，并用当前 commit 触发 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 的真实或 canary 样本。"
+            : missingIngressProtocols.Count == 0
+            ? "保留四类入口协议当前 commit 运行证据。"
+            : "补触发缺失协议的真实兼容入口样本；静态路由审计不能替代运行日志证据。",
+        new Dictionary<string, string>
+        {
+            ["releaseCommit"] = runtimeCommit ?? "",
+            ["coveredProtocols"] = coveredIngressProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingProtocols"] = missingIngressProtocols.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingIngressProtocols"] = string.Join(",", missingIngressProtocols),
+            ["protocolLogTotal"] = releaseProtocolLogDocs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["failedProtocolLogs"] = protocolFailedLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["droppedParameterProtocolLogs"] = protocolDroppedParameterLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
 
     AddGate(

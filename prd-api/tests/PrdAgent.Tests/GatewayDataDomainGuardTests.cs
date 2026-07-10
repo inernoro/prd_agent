@@ -147,17 +147,23 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("NormalizeIngressProtocol", consoleProgram);
         Assert.Contains("IsRuntimeGovernedAppCallerStatus", consoleProgram);
         Assert.Contains("HasDroppedParameters", consoleProgram);
+        Assert.Contains("protocol_runtime_coverage", consoleProgram);
+        Assert.Contains("missingIngressProtocols", consoleProgram);
+        Assert.Contains("/gw/protocol-coverage?releaseCommit=", consoleProgram);
         Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsHealthProbe\", true)", consoleProgram);
         Assert.Contains("GetCollection<BsonDocument>(\"llmgw_app_callers\")", consoleProgram);
         Assert.Contains("GetCollection<BsonDocument>(\"llmrequestlogs\")", consoleProgram);
         Assert.Contains("ProtocolCoverageData", webTypes);
         Assert.Contains("ProtocolCoverageItem", webTypes);
         Assert.Contains("getProtocolCoverage", webApi);
-        Assert.Contains("getProtocolCoverage({ sinceHours: 24 })", overviewPage);
+        Assert.Contains("getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 })", overviewPage);
+        Assert.Contains("new URLSearchParams(window.location.search).get('releaseCommit')", overviewPage);
         Assert.Contains("ProtocolCoveragePanel", overviewPage);
         Assert.Contains("协议入口覆盖", overviewPage);
+        Assert.Contains("case 'protocol_runtime_coverage':", overviewPage);
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
+        Assert.Contains("protocol_runtime_coverage", protocolAudit);
     }
 
     [Fact]
@@ -541,6 +547,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("case 'current_commit_http_transport':", overview);
         Assert.Contains("case 'dropped_parameter_runtime_evidence':", overview);
         Assert.Contains("case 'appcaller_runtime_coverage':", overview);
+        Assert.Contains("case 'protocol_runtime_coverage':", overview);
         Assert.Contains("case 'shadow_runtime_evidence':", overview);
         Assert.Contains("case 'full_http_rollout_ledger':", overview);
         Assert.Contains("/logs${releaseQuery}", overview);

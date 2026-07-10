@@ -51,8 +51,9 @@ export function OverviewPage() {
 
   useEffect(() => {
     let alive = true;
+    const protocolReleaseCommit = new URLSearchParams(window.location.search).get('releaseCommit')?.trim() || undefined;
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
-    Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
+    Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
       ([poolsRes, platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
         if (!alive) return;
         if (poolsRes.success) setPools(poolsRes.data.items); else { setPools([]); setError((e) => e || poolsRes.error?.message || '加载失败'); }
@@ -492,6 +493,12 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
         { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
         { label: '当前 commit shadow', to: `/shadow${releaseQuery}` },
       ];
+    case 'protocol_runtime_coverage':
+      return [
+        { label: '协议覆盖', to: `/${releaseCommit ? `?protocolCoverage=1&releaseCommit=${encodeURIComponent(releaseCommit)}` : '?protocolCoverage=1'}` },
+        { label: '协议日志', to: `/logs${releaseQuery}` },
+        { label: '调用方', to: '/app-callers' },
+      ];
     case 'shadow_runtime_evidence': {
       const critical = Number(facts.critical || 0);
       const httpFail = Number(facts.httpFail || 0);
@@ -542,6 +549,15 @@ function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, s
       'releaseLogTotal',
       'httpTransportLogs',
       'nonHttpTransportLogs',
+    ],
+    protocol_runtime_coverage: [
+      'releaseCommit',
+      'coveredProtocols',
+      'missingProtocols',
+      'missingIngressProtocols',
+      'protocolLogTotal',
+      'failedProtocolLogs',
+      'droppedParameterProtocolLogs',
     ],
   };
   const preferred = preferredByGate[item.id] ?? [];
