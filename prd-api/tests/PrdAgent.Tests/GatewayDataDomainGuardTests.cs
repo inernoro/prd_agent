@@ -108,6 +108,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
         Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
+        Assert.Contains("activeAppCallerMapFallbackCutoverPrerequisitesReady", consoleProgram);
+        Assert.Contains("http-full 阶段会开启运行态 fail-closed 开关", consoleProgram);
+        Assert.Contains("currentCommitHttpTransportReady", consoleProgram);
+        Assert.Contains("pre-http shadow/seed 日志不阻断进入 http-full", consoleProgram);
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));

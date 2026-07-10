@@ -1124,12 +1124,19 @@ app.MapGet("/gw/runtime-gates", async () =>
     var keyGateReady = keyPrimaryConfigured && keyUnreadable == 0 && keyLegacyReadable == 0 && keyStubUnreadable == 0 && keyMissingBlocking == 0;
     var disableMapFallbackForActiveAppCallers = IsTruthy(config["LlmGateway:DisableMapConfigFallbackForActiveAppCallers"])
         || IsTruthy(Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS"));
-    var activeAppCallerMapFallbackExitReady =
-        disableMapFallbackForActiveAppCallers
-        && mapFallbackObjectsRemaining == 0
+    var ledgerPath = config["LlmGateway:RolloutLedgerPath"]
+        ?? Environment.GetEnvironmentVariable("LLMGW_ROLLOUT_LEDGER")
+        ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
+    var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var activeAppCallerMapFallbackCutoverPrerequisitesReady =
+        mapFallbackObjectsRemaining == 0
         && activeMissingGatewayPool == 0
         && discoveredAppCallers == 0
         && activeBoundPoolWithoutUsableMember == 0;
+    var activeAppCallerMapFallbackExitReady =
+        activeAppCallerMapFallbackCutoverPrerequisitesReady
+        && (!httpFullLedgerEvidence.Ready || disableMapFallbackForActiveAppCallers);
 
     var items = new List<RuntimeGateItem>();
     static RuntimeGateLink Link(string label, string to) => new() { Label = label, To = to };
@@ -1236,11 +1243,6 @@ app.MapGet("/gw/runtime-gates", async () =>
         });
     }
 
-    var ledgerPath = config["LlmGateway:RolloutLedgerPath"]
-        ?? Environment.GetEnvironmentVariable("LLMGW_ROLLOUT_LEDGER")
-        ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
-    var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
-
     AddGate(
         "config_authority_objects",
         "MAP-only 配置退场",
@@ -1346,14 +1348,22 @@ app.MapGet("/gw/runtime-gates", async () =>
     AddGate(
         "active_appcaller_map_fallback_exit",
         "active appCaller MAP fallback 退场开关",
-        activeAppCallerMapFallbackExitReady ? "pass" : "blocked",
-        !activeAppCallerMapFallbackExitReady,
+        activeAppCallerMapFallbackExitReady ? "pass" : activeAppCallerMapFallbackCutoverPrerequisitesReady ? "waiting" : "blocked",
+        !activeAppCallerMapFallbackExitReady && !activeAppCallerMapFallbackCutoverPrerequisitesReady,
         activeAppCallerMapFallbackExitReady
-            ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且 active 调用方绑定的 GW 池可用。"
+            ? httpFullLedgerEvidence.Ready
+                ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且 active 调用方绑定的 GW 池可用。"
+                : "active appCaller MAP fallback 退场前置条件已满足；http-full 阶段会开启运行态 fail-closed 开关。"
+            : activeAppCallerMapFallbackCutoverPrerequisitesReady
+            ? "active appCaller MAP fallback 退场前置条件已满足；等待 http-full 阶段开启运行态 fail-closed 开关。"
             : $"DisableMapConfigFallbackForActiveAppCallers={disableMapFallbackForActiveAppCallers}，mapFallbackObjectsRemaining={mapFallbackObjectsRemaining}，activeMissingGatewayPool={activeMissingGatewayPool}，discoveredAppCallers={discoveredAppCallers}，withoutUsableMember={activeBoundPoolWithoutUsableMember}。",
         $"runtime config LlmGateway:DisableMapConfigFallbackForActiveAppCallers={disableMapFallbackForActiveAppCallers}; LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS={Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS") ?? "empty"}",
         activeAppCallerMapFallbackExitReady
-            ? "保留运行态配置和 runtime gate 证据。"
+            ? httpFullLedgerEvidence.Ready
+                ? "保留运行态配置和 runtime gate 证据。"
+                : "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
+            : activeAppCallerMapFallbackCutoverPrerequisitesReady
+            ? "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
             : "先完成 MAP-only 配置认领、active appCaller 绑池和池成员健康复核，再在 full-http 发布进程中启用 DisableMapConfigFallbackForActiveAppCallers。",
         new Dictionary<string, string>
         {
@@ -1362,6 +1372,7 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["activeMissingGatewayPool"] = activeMissingGatewayPool.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["discoveredAppCallers"] = discoveredAppCallers.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["withoutUsableMember"] = activeBoundPoolWithoutUsableMember.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["httpFullLedgerReady"] = httpFullLedgerEvidence.Ready ? "true" : "false",
         });
 
     AddGate(
@@ -1384,22 +1395,27 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["blockingMissing"] = keyMissingBlocking.ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
 
+    var currentCommitHttpTransportReady = httpTransportLogs > 0
+        && (!httpFullLedgerEvidence.Ready || nonHttpTransportLogs == 0);
+
     AddGate(
         "current_commit_http_transport",
         "当前 commit HTTP transport",
-        runtimeCommit is null || releaseLogTotal == 0 ? "waiting" : nonHttpTransportLogs == 0 && httpTransportLogs == releaseLogTotal ? "pass" : "blocked",
-        runtimeCommit is null || releaseLogTotal == 0 || nonHttpTransportLogs > 0 || httpTransportLogs != releaseLogTotal,
+        runtimeCommit is null || releaseLogTotal == 0 ? "waiting" : currentCommitHttpTransportReady ? "pass" : "blocked",
+        runtimeCommit is null || releaseLogTotal == 0 || !currentCommitHttpTransportReady,
         runtimeCommit is null
             ? "当前进程缺少 GIT_COMMIT，不能证明 transport 属于本次发布版本。"
             : releaseLogTotal == 0
             ? "尚未看到当前 commit 的 LLM 请求日志，不能证明请求已走 llmgw-serve HTTP。"
-            : nonHttpTransportLogs == 0 && httpTransportLogs == releaseLogTotal
+            : currentCommitHttpTransportReady && nonHttpTransportLogs == 0
             ? $"当前 commit 的 LLM 请求日志 {releaseLogTotal} 条，transport 均为 http。"
+            : currentCommitHttpTransportReady
+            ? $"当前 commit 已有 http transport 证据 {httpTransportLogs} 条；另有 {nonHttpTransportLogs} 条 pre-http shadow/seed 日志不阻断进入 http-full。"
             : $"当前 commit 的 LLM 请求日志 {releaseLogTotal} 条，其中 http={httpTransportLogs}，非 http 或缺失={nonHttpTransportLogs}。",
         $"/gw/logs?releaseCommit={runtimeCommit ?? "empty"} total={releaseLogTotal}; transport=http={httpTransportLogs}; nonHttpTransportLogs={nonHttpTransportLogs}",
         runtimeCommit is null || releaseLogTotal == 0
             ? "先用当前 commit 跑真实 send/stream/raw appCaller 样本，确保日志写入 ReleaseCommit 和 GatewayTransport；resolve-only route matrix 不计入该 gate。"
-            : nonHttpTransportLogs == 0 && httpTransportLogs == releaseLogTotal
+            : currentCommitHttpTransportReady
             ? "保留同 commit transport=http 证据。"
             : "打开 /logs 按 releaseCommit 过滤非 http transport；先移除 direct/inproc 路径或修复日志写入，再进入 full-http。",
         new Dictionary<string, string>
@@ -1408,6 +1424,7 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["releaseLogTotal"] = releaseLogTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["httpTransportLogs"] = httpTransportLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["nonHttpTransportLogs"] = nonHttpTransportLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["httpFullLedgerReady"] = httpFullLedgerEvidence.Ready ? "true" : "false",
         });
 
     AddGate(
@@ -1511,7 +1528,7 @@ app.MapGet("/gw/runtime-gates", async () =>
             ["httpFail"] = shadowHttpFail.ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
 
-    var ledgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var ledgerEvidence = httpFullLedgerEvidence;
     var ledgerReady = ledgerEvidence.Ready;
 
     AddGate(
