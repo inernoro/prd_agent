@@ -71,8 +71,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("if (await TryWriteGovernanceErrorAsync(http, governance)) return;", servingEndpoints);
         Assert.Contains("var governanceResult = GovernanceResult(http, governance, jsonOpts);", servingEndpoints);
         Assert.Contains("app.MapPost(\"/gw/v1/profile-test\", async (\n            HttpContext http,", servingEndpoints);
-        Assert.Contains("AppCallerTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? \"Runtime profile test\" : request.ProfileName.Trim()", servingEndpoints);
-        Assert.Contains("PinnedModelId = request.Model", servingEndpoints);
+        Assert.Contains("RequestId = requestId", servingEndpoints);
+        Assert.Contains("AppCallerTitle = string.IsNullOrWhiteSpace(profileRequest.ProfileName) ? \"Runtime profile test\" : profileRequest.ProfileName.Trim()", servingEndpoints);
+        Assert.Contains("PinnedModelId = profileRequest.Model", servingEndpoints);
+        Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, CancellationToken.None)", servingEndpoints);
         Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         Assert.Contains("ValidateActiveGatewayAppCallerConfigAsync", consoleProgram);

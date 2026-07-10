@@ -701,21 +701,35 @@ public static class GatewayHttpEndpoints
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
+            var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim();
+            var profileRequest = new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = request.AppCallerCode,
+                Protocol = request.Protocol,
+                BaseUrl = request.BaseUrl,
+                Model = request.Model,
+                ApiKey = request.ApiKey,
+                ProfileId = request.ProfileId,
+                ProfileName = request.ProfileName,
+                UserId = request.UserId,
+                RequestId = requestId,
+                TimeoutSeconds = request.TimeoutSeconds,
+            };
             var ingress = new GatewayIngressRequest
             {
-                RequestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim(),
+                RequestId = requestId,
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
-                AppCallerCode = request.AppCallerCode,
-                AppCallerTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? "Runtime profile test" : request.ProfileName.Trim(),
+                AppCallerCode = profileRequest.AppCallerCode,
+                AppCallerTitle = string.IsNullOrWhiteSpace(profileRequest.ProfileName) ? "Runtime profile test" : profileRequest.ProfileName.Trim(),
                 RequestType = ModelTypes.Chat,
                 ModelPolicy = "pinned",
-                ExpectedModel = request.Model,
-                PinnedModelId = request.Model,
+                ExpectedModel = profileRequest.Model,
+                PinnedModelId = profileRequest.Model,
                 Context = new GatewayRequestContext
                 {
-                    RequestId = string.IsNullOrWhiteSpace(request.RequestId) ? null : request.RequestId.Trim(),
-                    UserId = request.UserId,
+                    RequestId = requestId,
+                    UserId = profileRequest.UserId,
                     SourceSystem = "map",
                     IngressProtocol = "gw-native",
                     ModelPolicy = "pinned",
@@ -726,7 +740,7 @@ public static class GatewayHttpEndpoints
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
 
-            var raw = await gateway.TestUpstreamProfileAsync(request, CancellationToken.None);
+            var raw = await gateway.TestUpstreamProfileAsync(profileRequest, CancellationToken.None);
             return JsonContentResult(raw, jsonOpts);
         });
 
