@@ -301,45 +301,138 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
         {gates.releaseCommit ? <span style={{ fontFamily: 'ui-monospace, monospace' }}> commit={gates.releaseCommit}</span> : null}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-        {gates.items.map((item) => (
-          <div key={item.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
-              <Chip label={runtimeGateStatusLabel(item.status)} color={runtimeGateColor(item.status)} bg={runtimeGateBg(item.status)} />
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{item.detail}</div>
-            {item.facts && Object.keys(item.facts).length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {runtimeGateFactsForDisplay(item).map(([key, value]) => (
-                  <span
-                    key={key}
-                    title={`${key}: ${value}`}
-                    style={{
-                      maxWidth: '100%',
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      fontSize: 11,
-                      color: 'var(--text-secondary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-xs)',
-                      padding: '3px 6px',
-                      background: 'var(--bg-surface)',
-                    }}
-                  >
-                    <span style={{ color: 'var(--text-muted)' }}>{key}</span>: {value || 'empty'}
-                  </span>
-                ))}
+        {gates.items.map((item) => {
+          const actions = runtimeGateActionLinks(item, gates);
+          return (
+            <div key={item.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
+                <Chip label={runtimeGateStatusLabel(item.status)} color={runtimeGateColor(item.status)} bg={runtimeGateBg(item.status)} />
               </div>
-            ) : null}
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-word' }}>{item.evidence}</div>
-            <div style={{ fontSize: 11, color: item.blocking ? '#d29922' : 'var(--text-muted)', lineHeight: 1.45 }}>{item.nextAction}</div>
-          </div>
-        ))}
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{item.detail}</div>
+              {item.facts && Object.keys(item.facts).length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {runtimeGateFactsForDisplay(item).map(([key, value]) => (
+                    <span
+                      key={key}
+                      title={`${key}: ${value}`}
+                      style={{
+                        maxWidth: '100%',
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontSize: 11,
+                        color: 'var(--text-secondary)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-xs)',
+                        padding: '3px 6px',
+                        background: 'var(--bg-surface)',
+                      }}
+                    >
+                      <span style={{ color: 'var(--text-muted)' }}>{key}</span>: {value || 'empty'}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-word' }}>{item.evidence}</div>
+              {actions.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {actions.map((action) => (
+                    <Link
+                      key={`${item.id}:${action.to}:${action.label}`}
+                      to={action.to}
+                      style={{
+                        textDecoration: 'none',
+                        fontSize: 11,
+                        color: 'var(--accent)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-xs)',
+                        padding: '4px 7px',
+                        background: 'var(--bg-surface)',
+                      }}
+                    >
+                      {action.label}
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
+              <div style={{ fontSize: 11, color: item.blocking ? '#d29922' : 'var(--text-muted)', lineHeight: 1.45 }}>{item.nextAction}</div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
+}
+
+function runtimeGateActionLinks(item: { id: string; facts?: Record<string, string> }, gates: RuntimeGatesData): Array<{ label: string; to: string }> {
+  const facts = item.facts ?? {};
+  const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();
+  const releaseQuery = releaseCommit ? `?releaseCommit=${encodeURIComponent(releaseCommit)}` : '';
+  const missingCode = (facts.missingAppCallerCodes || '')
+    .split(',')
+    .map((x) => x.trim())
+    .find(Boolean);
+  switch (item.id) {
+    case 'config_authority_objects':
+      return [
+        { label: '模型池', to: '/pools' },
+        { label: '平台', to: '/platforms' },
+        { label: '模型', to: '/models' },
+        { label: 'Exchange', to: '/exchanges' },
+      ];
+    case 'config_authority_rollout_ledger':
+      return [
+        { label: '审计', to: '/audits?targetType=llmgw_config_authority' },
+        { label: '概览', to: '/' },
+      ];
+    case 'active_appcaller_pool_binding':
+      return [
+        { label: 'active 调用方', to: '/app-callers?status=active' },
+        { label: 'discovered 调用方', to: '/app-callers?status=discovered' },
+        { label: '模型池', to: '/pools' },
+      ];
+    case 'appcaller_policy_drift':
+      return [{ label: '漂移调用方', to: '/app-callers?drift=any' }];
+    case 'gateway_pool_member_readiness':
+      return [{ label: '检查模型池', to: '/pools' }];
+    case 'active_appcaller_map_fallback_exit':
+      return [
+        { label: 'active 调用方', to: '/app-callers?status=active' },
+        { label: '模型池', to: '/pools' },
+        { label: '平台密钥', to: '/platforms' },
+      ];
+    case 'gateway_key_integrity':
+      return [
+        { label: '平台密钥', to: '/platforms' },
+        { label: '模型密钥', to: '/models' },
+        { label: 'Exchange 密钥', to: '/exchanges' },
+      ];
+    case 'current_commit_http_transport':
+      return [{ label: '当前 commit 日志', to: `/logs${releaseQuery}` }];
+    case 'dropped_parameter_runtime_evidence':
+      return [{ label: '参数证据日志', to: `/logs${releaseQuery}` }];
+    case 'appcaller_runtime_coverage':
+      return [
+        { label: 'active 调用方', to: missingCode ? `/app-callers?status=active&search=${encodeURIComponent(missingCode)}` : '/app-callers?status=active' },
+        { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
+        { label: '当前 commit shadow', to: `/shadow${releaseQuery}` },
+      ];
+    case 'shadow_runtime_evidence': {
+      const critical = Number(facts.critical || 0);
+      const httpFail = Number(facts.httpFail || 0);
+      const quick = critical > 0 ? '&quick=critical' : httpFail > 0 ? '&quick=httpFail' : '';
+      return [{ label: 'shadow 样本', to: `/shadow${releaseQuery}${releaseQuery ? quick : quick.replace('&', '?')}` }];
+    }
+    case 'full_http_rollout_ledger':
+      return [
+        { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
+        { label: '当前 commit shadow', to: `/shadow${releaseQuery}` },
+      ];
+    default:
+      return [];
+  }
 }
 
 function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, string> }): Array<[string, string]> {

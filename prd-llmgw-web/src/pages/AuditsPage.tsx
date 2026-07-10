@@ -1,5 +1,6 @@
 // GW 操作审计：只读展示 llm_gateway.llmgw_operation_audits，追溯控制台配置动作。
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getOperationAudits } from '@/lib/api';
 import type { OperationAuditItem, OperationAuditsData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -13,15 +14,16 @@ const SINCE_OPTIONS = [
 ];
 
 export function AuditsPage() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<OperationAuditsData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [action, setAction] = useState('');
-  const [targetType, setTargetType] = useState('');
-  const [actor, setActor] = useState('');
-  const [success, setSuccess] = useState('');
-  const [search, setSearch] = useState('');
-  const [sinceHours, setSinceHours] = useState('');
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page') || '1') || 1));
+  const [action, setAction] = useState(() => searchParams.get('action') || '');
+  const [targetType, setTargetType] = useState(() => searchParams.get('targetType') || '');
+  const [actor, setActor] = useState(() => searchParams.get('actor') || '');
+  const [success, setSuccess] = useState(() => searchParams.get('success') || '');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [sinceHours, setSinceHours] = useState(() => searchParams.get('sinceHours') || '');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
