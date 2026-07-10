@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
-  GitPullRequest, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Pencil, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload,
+  ArrowLeft, Boxes, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
+  GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Pencil, Plus, RefreshCw, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { marked } from 'marked';
@@ -53,7 +53,7 @@ type ListState =
   | { status: 'error'; message: string; transient: boolean }
   | { status: 'ok'; reports: AcceptanceReport[] };
 
-type ReportSystemView = 'all' | 'none' | 'recent' | 'shared' | 'failed';
+type ReportSystemView = 'all' | 'none' | 'recent' | 'older' | 'shared' | 'failed';
 type ProjectFilter = 'all' | 'self' | string;
 
 // 当前筛选：系统视图 / '<id>' 指定文件夹。
@@ -63,6 +63,7 @@ type ReportCounts = {
   byFolder: Map<string, number>;
   unfiled: number;
   recent: number;
+  older: number;
   shared: number;
   failed: number;
   total: number;
@@ -83,9 +84,12 @@ const REPORT_SYSTEM_VIEW_DEFINITIONS: Array<{
   { id: 'all', label: '全部', Icon: Layers, count: (counts) => counts.total },
   { id: 'none', label: '未归类', Icon: Inbox, count: (counts) => counts.unfiled },
   { id: 'recent', label: '最近 7 天', Icon: Clock3, count: (counts) => counts.recent },
+  { id: 'older', label: '30 天前', Icon: History, count: (counts) => counts.older },
   { id: 'shared', label: '已分享', Icon: Share2, count: (counts) => counts.shared },
   { id: 'failed', label: '不通过', Icon: CircleAlert, count: (counts) => counts.failed },
 ];
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const REPORT_SYSTEM_VIEWS: ReportSystemView[] = REPORT_SYSTEM_VIEW_DEFINITIONS.map((item) => item.id);
 
@@ -124,6 +128,10 @@ export function ReportsPage(): JSX.Element {
   const [selected, setSelected] = useState<AcceptanceReport | null>(null);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  // 删除确认统一走 Dialog（替代原生 window.confirm，与重命名/分享撤销的风格一致）。
+  const [pendingDeleteReport, setPendingDeleteReport] = useState<AcceptanceReport | null>(null);
+  const [pendingDeleteFolder, setPendingDeleteFolder] = useState<ReportFolder | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -192,6 +200,15 @@ export function ReportsPage(): JSX.Element {
     return allReports.filter((r) => r.projectId === activeProjectFilter);
   }, [allReports, activeProjectFilter]);
 
+  // 文件夹与项目筛选联动（与 CreateReportDialog 同一防御）：全局页加载的是所有项目的
+  // 文件夹，若不按当前项目筛选过滤，切到某个项目后仍会渲染其它项目的文件夹树
+  // （跨项目串扰，2026-07-10 用户反馈）。'self' 只看无项目归属（CDS 自身）的文件夹。
+  const scopedFolders = useMemo(() => {
+    if (activeProjectFilter === 'all') return folders;
+    if (activeProjectFilter === 'self') return folders.filter((f) => !f.projectId);
+    return folders.filter((f) => (f.projectId || null) === activeProjectFilter);
+  }, [folders, activeProjectFilter]);
+
   const visibleReports = useMemo(() => {
     if (activeFolder === 'all') return projectFilteredReports;
     if (activeFolder === 'none') return projectFilteredReports.filter((r) => !r.folderId);
@@ -202,27 +219,46 @@ export function ReportsPage(): JSX.Element {
         return !Number.isNaN(created) && created >= since;
       });
     }
+    if (activeFolder === 'older') {
+      // 「30 天前」视图：给巡检/日报类只增不减的报告一个批量清理入口。
+      const before = Date.now() - THIRTY_DAYS_MS;
+      return projectFilteredReports.filter((r) => {
+        const created = new Date(r.createdAt).getTime();
+        return !Number.isNaN(created) && created < before;
+      });
+    }
     if (activeFolder === 'shared') return projectFilteredReports.filter((r) => Boolean(r.shareToken));
     if (activeFolder === 'failed') return projectFilteredReports.filter((r) => r.verdict === 'fail');
     return projectFilteredReports.filter((r) => r.folderId === activeFolder);
   }, [projectFilteredReports, activeFolder]);
 
+  // 标题搜索：在当前项目 + 视图筛选之上再过滤；搜索时列表平铺展示命中项（不走文件夹树）。
+  const searchedReports = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return visibleReports;
+    return visibleReports.filter((r) => r.title.toLowerCase().includes(q));
+  }, [visibleReports, searchQuery]);
+  const searching = searchQuery.trim().length > 0;
+
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
     let unfiled = 0;
     let recent = 0;
+    let older = 0;
     let shared = 0;
     let failed = 0;
     const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const before = Date.now() - THIRTY_DAYS_MS;
     for (const r of projectFilteredReports) {
       if (r.folderId) m.set(r.folderId, (m.get(r.folderId) ?? 0) + 1);
       else unfiled += 1;
       const created = new Date(r.createdAt).getTime();
       if (!Number.isNaN(created) && created >= since) recent += 1;
+      if (!Number.isNaN(created) && created < before) older += 1;
       if (r.shareToken) shared += 1;
       if (r.verdict === 'fail') failed += 1;
     }
-    return { byFolder: m, unfiled, recent, shared, failed, total: projectFilteredReports.length };
+    return { byFolder: m, unfiled, recent, older, shared, failed, total: projectFilteredReports.length };
   }, [projectFilteredReports]);
 
   const projectCounts = useMemo(() => {
@@ -250,6 +286,26 @@ export function ReportsPage(): JSX.Element {
   const handleSelectReport = useCallback((report: AcceptanceReport) => {
     setSelected(report);
     setNavDrawerOpen(false);
+  }, []);
+
+  // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
+  // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度
+  // 不回头抬高抽屉（见 .claude/rules/cds-theme-tokens.md §4 已知取舍），桌面路径无感。
+  const requestDeleteReport = useCallback((report: AcceptanceReport) => {
+    setNavDrawerOpen(false);
+    setPendingDeleteReport(report);
+  }, []);
+  const requestDeleteFolder = useCallback((folder: ReportFolder) => {
+    setNavDrawerOpen(false);
+    setPendingDeleteFolder(folder);
+  }, []);
+  const requestRenameFolder = useCallback((folder: ReportFolder) => {
+    setNavDrawerOpen(false);
+    setRenamingFolder(folder);
+  }, []);
+  const requestCreateFolder = useCallback(() => {
+    setNavDrawerOpen(false);
+    setFolderCreateOpen(true);
   }, []);
 
   const handleCreated = useCallback((report: AcceptanceReport) => {
@@ -389,11 +445,11 @@ export function ReportsPage(): JSX.Element {
                           />
                         ) : null}
                         <ReportFilterMenu
-                          folders={folders}
+                          folders={scopedFolders}
                           counts={folderCounts}
                           active={activeFolder}
                           onSelect={setActiveFolder}
-                          onRequestCreate={() => setFolderCreateOpen(true)}
+                          onRequestCreate={requestCreateFolder}
                         />
                       </div>
                     )}
@@ -401,23 +457,27 @@ export function ReportsPage(): JSX.Element {
                 ) : (
                   <>
                     <ReportList
-                      reports={visibleReports}
-                      folders={folders}
+                      reports={searchedReports}
+                      folders={scopedFolders}
                       projects={projects}
                       projectCounts={projectCounts}
                       activeProjectFilter={activeProjectFilter}
                       counts={folderCounts}
                       activeFilter={activeFolder}
                       selectedId={selected?.id ?? null}
+                      searchQuery={searchQuery}
+                      searching={searching}
+                      onSearchChange={setSearchQuery}
+                      groupByProject={!projectId && activeProjectFilter === 'all'}
                       onSelect={handleSelectReport}
-                      onDelete={handleDelete}
+                      onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
-                      onCreateFolder={() => setFolderCreateOpen(true)}
-                      onRenameFolderRequest={setRenamingFolder}
-                      onDeleteFolder={(folder) => void handleDeleteFolder(folder)}
+                      onCreateFolder={requestCreateFolder}
+                      onRenameFolderRequest={requestRenameFolder}
+                      onDeleteFolder={requestDeleteFolder}
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
@@ -442,23 +502,27 @@ export function ReportsPage(): JSX.Element {
                       <Button variant="ghost" size="sm" onClick={() => setNavDrawerOpen(false)}>关闭</Button>
                     </div>
                     <ReportList
-                      reports={visibleReports}
-                      folders={folders}
+                      reports={searchedReports}
+                      folders={scopedFolders}
                       projects={projects}
                       projectCounts={projectCounts}
                       activeProjectFilter={activeProjectFilter}
                       counts={folderCounts}
                       activeFilter={activeFolder}
                       selectedId={selected?.id ?? null}
+                      searchQuery={searchQuery}
+                      searching={searching}
+                      onSearchChange={setSearchQuery}
+                      groupByProject={!projectId && activeProjectFilter === 'all'}
                       onSelect={handleSelectReport}
-                      onDelete={handleDelete}
+                      onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
-                      onCreateFolder={() => setFolderCreateOpen(true)}
-                      onRenameFolderRequest={setRenamingFolder}
-                      onDeleteFolder={(folder) => void handleDeleteFolder(folder)}
+                      onCreateFolder={requestCreateFolder}
+                      onRenameFolderRequest={requestRenameFolder}
+                      onDeleteFolder={requestDeleteFolder}
                       showProjectFilter={!projectId}
                       resizable={false}
                       className="min-h-0 flex-1 rounded-none border-0"
@@ -490,17 +554,64 @@ export function ReportsPage(): JSX.Element {
         onOpenChange={(open) => { if (!open) setRenamingFolder(null); }}
         onRename={handleRenameFolder}
       />
+      <DeleteConfirmDialog
+        open={Boolean(pendingDeleteReport)}
+        title={`删除报告「${pendingDeleteReport?.title ?? ''}」？`}
+        description="报告内容与截图资产会一并删除，无法恢复。"
+        onOpenChange={(open) => { if (!open) setPendingDeleteReport(null); }}
+        onConfirm={() => {
+          if (pendingDeleteReport) void handleDelete(pendingDeleteReport);
+          setPendingDeleteReport(null);
+        }}
+      />
+      <DeleteConfirmDialog
+        open={Boolean(pendingDeleteFolder)}
+        title={`删除文件夹「${pendingDeleteFolder?.name ?? ''}」？`}
+        description="其中的报告会移到未归类，子文件夹会上移一层，不会删除任何报告内容。"
+        onOpenChange={(open) => { if (!open) setPendingDeleteFolder(null); }}
+        onConfirm={() => {
+          if (pendingDeleteFolder) void handleDeleteFolder(pendingDeleteFolder);
+          setPendingDeleteFolder(null);
+        }}
+      />
     </AppShell>
   );
 }
 
+/** 删除类操作的统一确认弹窗（替代原生 window.confirm，风格与其余 Dialog 一致）。 */
+function DeleteConfirmDialog({
+  open, title, description, onOpenChange, onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}): JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="destructive" onClick={onConfirm}>删除</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProjectFilterMenu({
-  projects, counts, active, onSelect,
+  projects, counts, active, onSelect, align = 'end',
 }: {
   projects: ProjectLite[];
   counts: ProjectCounts;
   active: ProjectFilter;
   onSelect: (f: ProjectFilter) => void;
+  align?: 'start' | 'end';
 }): JSX.Element {
   const activeProject = active === 'all' || active === 'self' ? null : projects.find((p) => p.id === active);
   const label = active === 'all'
@@ -511,7 +622,7 @@ function ProjectFilterMenu({
 
   return (
     <DropdownMenu
-      align="end"
+      align={align}
       width={268}
       trigger={(
         <Button variant="ghost" size="sm" className="h-7 min-w-0 shrink-0 gap-1.5 px-2" aria-label="打开项目筛选" title="项目筛选">
@@ -672,7 +783,8 @@ function reportTooltip(report: AcceptanceReport, projectName: string | undefined
 }
 
 function ReportList({
-  reports, folders, projects, projectCounts, activeProjectFilter, counts, activeFilter, selectedId, onSelect, onDelete, onMove, onCopy,
+  reports, folders, projects, projectCounts, activeProjectFilter, counts, activeFilter, selectedId, searchQuery, searching, onSearchChange,
+  groupByProject, onSelect, onDelete, onMove, onCopy,
   onProjectFilterSelect, onFilterSelect, onCreateFolder, onRenameFolderRequest, onDeleteFolder, showProjectFilter, resizable = true, className,
 }: {
   reports: AcceptanceReport[];
@@ -683,6 +795,10 @@ function ReportList({
   counts: ReportCounts;
   activeFilter: FolderFilter;
   selectedId: string | null;
+  searchQuery: string;
+  searching: boolean;
+  onSearchChange: (query: string) => void;
+  groupByProject: boolean;
   onSelect: (report: AcceptanceReport) => void;
   onDelete: (report: AcceptanceReport) => void;
   onMove: (report: AcceptanceReport, folderId: string | null) => void;
@@ -757,6 +873,30 @@ function ReportList({
       return next;
     });
   }, []);
+
+  // 「全部项目」视图按项目分组：分组行与文件夹共用折叠状态集合，键加 `project:` 前缀防撞。
+  const grouping = groupByProject && !searching;
+  const groupKeys = useMemo(() => {
+    if (!grouping) return [] as Array<string | null>;
+    const present = new Set<string | null>();
+    for (const folder of folders) present.add(folder.projectId || null);
+    for (const report of reports) present.add(report.projectId || null);
+    const ordered: Array<string | null> = [];
+    if (present.has(null)) ordered.push(null);
+    for (const project of projects) if (present.has(project.id)) ordered.push(project.id);
+    for (const key of present) if (key !== null && !ordered.includes(key)) ordered.push(key);
+    return ordered;
+  }, [grouping, folders, reports, projects]);
+
+  // 顶栏「全部折叠 / 全部展开」：一键作用于当前树里的所有文件夹（分组时含项目分组行）。
+  const collapsibleIds = useMemo(() => [
+    ...groupKeys.map((key) => `project:${key ?? 'self'}`),
+    ...folders.map((folder) => folder.id),
+  ], [groupKeys, folders]);
+  const allCollapsed = collapsibleIds.length > 0 && collapsibleIds.every((id) => collapsedFolderIds.has(id));
+  const toggleAllFolders = useCallback(() => {
+    setCollapsedFolderIds(allCollapsed ? new Set() : new Set(collapsibleIds));
+  }, [allCollapsed, collapsibleIds]);
 
   const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -834,7 +974,6 @@ function ReportList({
         <span className="shrink-0 text-[11px] text-muted-foreground">{count}</span>
         <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
           <FolderRowActions
-            folder={folder}
             onRename={() => onRenameFolderRequest(folder)}
             onDelete={() => onDeleteFolder(folder)}
           />
@@ -848,25 +987,67 @@ function ReportList({
     return rows;
   };
 
-  const treeRows = [
-    ...(foldersByParent.get(null) ?? []).flatMap((folder) => renderFolder(folder, 0)),
-    ...reportsByFolder.root.map((report) => renderReportRow(report, 0)),
-  ];
+  // 项目分组行：一级分组 = 项目（「全部项目」视图专用），下挂该项目的文件夹树 + 未归类报告。
+  const renderProjectGroup = (groupId: string | null): JSX.Element[] => {
+    const key = `project:${groupId ?? 'self'}`;
+    const label = groupId === null ? 'CDS 自身' : projectName.get(groupId) ?? groupId;
+    const groupFolderRoots = (foldersByParent.get(null) ?? []).filter((folder) => (folder.projectId || null) === groupId);
+    const groupRootReports = reportsByFolder.root.filter((report) => (report.projectId || null) === groupId);
+    const count = reports.filter((report) => (report.projectId || null) === groupId).length;
+    if (count === 0 && (!showEmptyFolders || groupFolderRoots.length === 0)) return [];
+    const collapsed = collapsedFolderIds.has(key);
+    const rows: JSX.Element[] = [
+      <div key={key}
+        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+        title={`${label}\n${count} 份报告`}
+        onClick={() => toggleFolder(key)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleFolder(key);
+        }}>
+        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+        <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{count}</span>
+      </div>,
+    ];
+    if (!collapsed) {
+      for (const folder of groupFolderRoots) rows.push(...renderFolder(folder, 1));
+      for (const report of groupRootReports) rows.push(renderReportRow(report, 1));
+    }
+    return rows;
+  };
+
+  // 搜索时平铺命中项；「全部项目」时按项目分组；其余走文件夹树。
+  const treeRows = searching
+    ? reports.map((report) => renderReportRow(report, 0))
+    : grouping
+      ? groupKeys.flatMap((groupId) => renderProjectGroup(groupId))
+      : [
+        ...(foldersByParent.get(null) ?? []).flatMap((folder) => renderFolder(folder, 0)),
+        ...reportsByFolder.root.map((report) => renderReportRow(report, 0)),
+      ];
 
   return (
     <div className={`relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:flex-none lg:shrink-0 lg:w-[var(--report-nav-width)] ${className ?? ''}`}
       style={{ '--report-nav-width': `${navWidth}px` } as CSSProperties}>
-      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] py-1.5 pl-3 pr-1 text-xs font-medium text-muted-foreground">
-        <span>共 {reports.length} 份报告</span>
+      {/* 顶栏三件套（2026-07-10 用户定）：最左项目筛选，右侧筛选，最右全部折叠/展开；不再显示报告计数。 */}
+      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1 py-1.5">
         <div className="flex min-w-0 items-center gap-1">
           {showProjectFilter ? (
             <ProjectFilterMenu
+              align="start"
               projects={projects}
               counts={projectCounts}
               active={activeProjectFilter}
               onSelect={onProjectFilterSelect}
             />
           ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <ReportFilterMenu
             folders={folders}
             counts={counts}
@@ -874,11 +1055,48 @@ function ReportList({
             onSelect={onFilterSelect}
             onRequestCreate={onCreateFolder}
           />
+          {collapsibleIds.length > 0 && !searching ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              aria-label={allCollapsed ? '全部展开' : '全部折叠'}
+              title={allCollapsed ? '全部展开' : '全部折叠'}
+              onClick={toggleAllFolders}
+            >
+              {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-2 py-1.5">
+        <div className="flex h-7 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 transition-colors focus-within:border-primary/60">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <input
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="搜索报告标题"
+            aria-label="搜索报告标题"
+            className="h-full w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+              aria-label="清空搜索"
+              title="清空搜索"
+              onClick={() => onSearchChange('')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5 pb-24 sm:pb-1.5" style={{ overscrollBehavior: 'contain' }}>
         {treeRows.length > 0 ? treeRows : (
-          <div className="px-2 py-8 text-center text-sm text-muted-foreground">当前筛选下没有报告</div>
+          <div className="px-2 py-8 text-center text-sm text-muted-foreground">
+            {searching ? '没有匹配的报告标题' : '当前筛选下没有报告'}
+          </div>
         )}
       </div>
       {resizable ? (
@@ -904,9 +1122,8 @@ function ReportRowActions({
   onMove: (folderId: string | null) => void;
   onCopy: () => void;
 }): JSX.Element {
-  const confirmDelete = (): void => {
-    if (window.confirm(`删除报告「${report.title}」？`)) onDelete();
-  };
+  // 移动目标只列与报告同项目作用域的文件夹：跨项目移动会被服务端 400 拒绝，不该出现在菜单里。
+  const moveTargets = folders.filter((folder) => (folder.projectId || null) === (report.projectId || null));
 
   return (
     <DropdownMenu
@@ -939,12 +1156,12 @@ function ReportRowActions({
         <span className="min-w-0 flex-1 truncate">未归类</span>
         {!report.folderId ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
       </DropdownItem>
-      {folders.length === 0 ? (
+      {moveTargets.length === 0 ? (
         <DropdownItem disabled>
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">暂无文件夹</span>
         </DropdownItem>
-      ) : folders.map((folder) => (
+      ) : moveTargets.map((folder) => (
         <DropdownItem key={folder.id} onSelect={() => onMove(folder.id)} disabled={report.folderId === folder.id}>
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate" title={folder.name}>{folder.name}</span>
@@ -952,7 +1169,7 @@ function ReportRowActions({
         </DropdownItem>
       ))}
       <DropdownDivider />
-      <DropdownItem destructive onSelect={confirmDelete}>
+      <DropdownItem destructive onSelect={onDelete}>
         <Trash2 className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">删除报告</span>
       </DropdownItem>
@@ -961,16 +1178,11 @@ function ReportRowActions({
 }
 
 function FolderRowActions({
-  folder, onRename, onDelete,
+  onRename, onDelete,
 }: {
-  folder: ReportFolder;
   onRename: () => void;
   onDelete: () => void;
 }): JSX.Element {
-  const confirmDelete = (): void => {
-    if (window.confirm(`删除文件夹「${folder.name}」？其中的报告会移到未归类，子文件夹会上移一层。`)) onDelete();
-  };
-
   return (
     <DropdownMenu
       align="end"
@@ -991,7 +1203,7 @@ function FolderRowActions({
         <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">重命名文件夹</span>
       </DropdownItem>
-      <DropdownItem destructive onSelect={confirmDelete}>
+      <DropdownItem destructive onSelect={onDelete}>
         <Trash2 className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">删除文件夹</span>
       </DropdownItem>
