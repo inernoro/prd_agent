@@ -64,6 +64,7 @@ export function LogsView() {
   const [filterSourceSystem, setFilterSourceSystem] = useState('');
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
+  const [filterReleaseCommit, setFilterReleaseCommit] = useState(() => initialQueryValue('releaseCommit'));
   const [filterRunId, setFilterRunId] = useState(() => initialQueryValue('runId'));
   const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
   const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
@@ -125,11 +126,12 @@ export function LogsView() {
       sourceSystem: filterSourceSystem || undefined,
       ingressProtocol: filterIngressProtocol || undefined,
       modelPolicy: filterModelPolicy || undefined,
+      releaseCommit: filterReleaseCommit.trim() || undefined,
       runId: filterRunId.trim() || undefined,
       requestId: filterRequestId.trim() || undefined,
       sessionId: filterSessionId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterRunId, filterRequestId, filterSessionId],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId],
   );
 
   useEffect(() => {
@@ -555,6 +557,7 @@ export function LogsView() {
     filterSourceSystem,
     filterIngressProtocol,
     filterModelPolicy,
+    filterReleaseCommit.trim(),
     filterRunId.trim(),
     filterRequestId.trim(),
     filterSessionId.trim(),
@@ -569,6 +572,7 @@ export function LogsView() {
     setFilterSourceSystem('');
     setFilterIngressProtocol('');
     setFilterModelPolicy('');
+    setFilterReleaseCommit('');
     setFilterRunId('');
     setFilterRequestId('');
     setFilterSessionId('');
@@ -733,6 +737,13 @@ export function LogsView() {
               </option>
             ))}
           </select>
+          <input
+            value={filterReleaseCommit}
+            onChange={(e) => setFilterReleaseCommit(e.target.value)}
+            placeholder="Release commit"
+            spellCheck={false}
+            style={inputStyle}
+          />
           <input
             value={filterRunId}
             onChange={(e) => setFilterRunId(e.target.value)}
