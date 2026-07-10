@@ -325,6 +325,7 @@ concurrency_rows="$(run_pair concurrency)"
 concurrency_calls="$(wc -l <"$counter" | tr -d ' ')"
 active_leases="$(docker exec "$mongo_container" mongosh --quiet llm_gateway --eval '
   print(db.llmgw_provider_concurrency_slots.countDocuments({
+    ResourceKey: /llmgw-acceptance/,
     LeaseId: { $nin: ["", null] }, ExpiresAt: { $gt: new Date() }
   }))
 ')"

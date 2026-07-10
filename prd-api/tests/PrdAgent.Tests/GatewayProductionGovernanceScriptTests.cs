@@ -27,6 +27,7 @@ public sealed class GatewayProductionGovernanceScriptTests
 
         Assert.Contains("budget_atomic_reservation=pass", script);
         Assert.Contains("provider_concurrency=pass", script);
+        Assert.True(script.Split("ResourceKey: /llmgw-acceptance/").Length - 1 >= 2);
         Assert.Contains("lifecycle_dry_run=pass", script);
         Assert.Contains("serving_failover=pass", script);
         Assert.Contains("scoped_service_key=pass", script);
