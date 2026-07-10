@@ -354,7 +354,9 @@ export function DefectSubmitPanel() {
   return createPortal((
     <div
       className={cn(
-        'surface-backdrop fixed inset-0 z-50 flex justify-center',
+        // z-[200] 与 GlobalDefectSubmitDialog 一致：必须盖过移动端底部 TabBar(z-100)，
+        // 否则手机全屏面板的底部操作行会被导航栏遮挡（E2E 实测踩中）
+        'surface-backdrop fixed inset-0 z-[200] flex justify-center',
         isMobile ? 'items-stretch p-0' : 'items-center p-4'
       )}
       onClick={() => setShowSubmitPanel(false)}

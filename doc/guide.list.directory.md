@@ -801,6 +801,8 @@
   > 分支墓碑区分合并/放弃；后续可补 commit 直链、放弃页推荐可用分支、git push --delete 也写墓碑
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [缺陷管理 手机截图分享提交 · 债务台账](debt.defect-agent.mobile-share) `debt.defect-agent.mobile-share`
+  > 首版已落地（share_target + VLM 追加填充 + 移动全屏面板）；边界：iOS 无 share_target、需先装 PWA、冷启重登录、全局弹窗未接填充
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
 - [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
 - [CDS 自更新极速版（预构建产物）· 债务台账](debt.cds.selfupdate-prebuilt) `debt.cds.selfupdate-prebuilt`
