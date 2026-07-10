@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback, useMemo, useRef, createContext, useCo
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
+import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
-  Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
+  Search, ChevronRight, ChevronDown, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
-  Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
+  Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
   ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines,
 } from 'lucide-react';
@@ -1714,7 +1715,6 @@ export function DocBrowser({
   }, []);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
-  const [showAddMenu, setShowAddMenu] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1836,7 +1836,6 @@ export function DocBrowser({
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
-  const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
   // 解析"当前选中条目"的数据：优先主 entries，回退搜索结果（后端搜索命中的条目可能
@@ -2407,16 +2406,6 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
-  // 添加菜单 click outside
-  useEffect(() => {
-    if (!showAddMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showAddMenu]);
-
   // 显示设置菜单 click outside
   useEffect(() => {
     if (!showSettingsMenu) return;
@@ -2906,97 +2895,7 @@ export function DocBrowser({
                 </span>
               )}
             </div>
-            {/* 「+」新建：仅在有写操作时显示（只读调用方不传写回调 → 不渲染，避免只剩占位项） */}
-            {(onCreateDocument || onUploadFile || onImportFromHosting || onCreateFolder) && (
-            <div ref={addMenuRef} className="relative">
-              <button
-                onClick={() => setShowAddMenu(v => !v)}
-                className="surface-action flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] transition-colors"
-                title="新建"
-              >
-                <Plus size={12} />
-              </button>
-              {showAddMenu && (
-                <div className="surface-popover absolute right-0 top-[30px] z-50 min-w-[180px] rounded-[10px] py-1">
-                  {/* 可用操作 */}
-                  {onCreateDocument && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onCreateDocument(); setShowAddMenu(false); }}>
-                      <FilePlus size={12} className="text-token-accent" />
-                      文档
-                    </button>
-                  )}
-                  {onUploadFile && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onUploadFile(); setShowAddMenu(false); }}>
-                      <Upload size={12} className="text-token-accent" />
-                      上传文件
-                    </button>
-                  )}
-                  {onUploadAudio && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onUploadAudio(); setShowAddMenu(false); }}
-                      title="上传录音，自动转录并生成 AI 摘要">
-                      <AudioLines size={12} className="text-token-accent" />
-                      上传录音转笔记
-                    </button>
-                  )}
-                  {onImportFromHosting && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onImportFromHosting(); setShowAddMenu(false); }}>
-                      <Globe size={12} className="text-token-accent" />
-                      从网页托管导入
-                    </button>
-                  )}
-                  {onOpenVideoParser && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onOpenVideoParser(); setShowAddMenu(false); }}
-                      title="把抖音/TikTok 等链接解析为原始素材、字幕文稿和时间轴片段">
-                      <Video size={12} className="text-token-accent" />
-                      解析短视频
-                    </button>
-                  )}
-                  {onCreateFolder && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { setCreatingFolder(true); setShowAddMenu(false); }}>
-                      <FolderPlus size={12} className="text-token-warning" />
-                      新建文件夹
-                    </button>
-                  )}
-                  {/* 分隔线 */}
-                  <div className="my-1 border-t border-token-subtle" />
-                  {/* 尚未实现：置灰 */}
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <LayoutTemplate size={12} />
-                    从模板新建
-                  </button>
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <Bot size={12} />
-                    AI 帮你写
-                  </button>
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <Link size={12} />
-                    添加链接
-                  </button>
-                </div>
-              )}
-            </div>
-            )}
+            {/* 旧「+」下拉菜单已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口，见 CreatePaletteFab） */}
           </div>
           {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
@@ -3959,6 +3858,20 @@ export function DocBrowser({
         )}
       </div>
       </ReaderColumnFrame>
+
+      {/* 库内唯一「新增」入口：右下角调色盘 FAB（有任一写回调才渲染；只读调用方自动无 FAB） */}
+      {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
+        <CreatePaletteFab
+          actions={[
+            ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
+            ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
+            ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: Upload, onClick: onUploadFile }] : []),
+            ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
+            ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+            ...(onCreateFolder ? [{ key: 'folder', label: '新建文件夹', icon: FolderPlus, onClick: () => setCreatingFolder(true), hue: 'rgba(234,179,8,0.92)' }] : []),
+          ]}
+        />
+      )}
 
       {/* 右键菜单 */}
       {contextMenu && (

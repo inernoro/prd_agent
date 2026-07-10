@@ -1461,16 +1461,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
-            <Button
-              variant="primary"
-              size="xs"
-              data-tour-id="document-upload"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
-              {uploading ? (isMobile ? '上传中' : '上传中…') : (isMobile ? '上传' : '上传文档')}
-            </Button>
+            {/* 顶栏「上传文档」按钮已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口）。
+                上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
+            {uploading && (
+              <span className="flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+                style={{ color: 'rgba(147,197,253,0.95)', background: 'rgba(59,130,246,0.12)' }}>
+                <MapSpinner size={12} /> 上传中
+              </span>
+            )}
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
                 保留原始 orbit icon 语义，叠加胶囊背景光扫与 icon 轻动效。 */}
             {!isMobile && <button
@@ -1869,9 +1867,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
-      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
+      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
+          bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}
       {storeRuns.length > 0 && (
-        <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
+        <div className="fixed right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px', bottom: '96px' }}>
           {storeRuns.map((r) => {
             const isRunning = r.status === 'streaming';
             const accent = r.status === 'done'
