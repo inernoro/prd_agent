@@ -1738,7 +1738,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("stream[chat]", script);
         Assert.Contains("\"/client-stream\"", script);
         Assert.Contains("client-stream[chat]", script);
-        Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": \"ping, client stream reply OK\"}]", script);
+        Assert.Contains("GW_SMOKE_PROMPT", script);
+        Assert.Contains("GW_SMOKE_MAX_TOKENS", script);
+        Assert.Contains("GW_SMOKE_REQUEST_TIMEOUT_SECONDS", script);
+        Assert.Contains("\"Messages\": [{\"Role\": \"user\", \"Content\": SMOKE_PROMPT}]", script);
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("\"verdict\": \"pass\" if passed == len(rows) else \"fail\"", script);
