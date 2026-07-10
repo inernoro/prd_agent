@@ -138,6 +138,10 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   const listRef = useRef<HTMLDivElement | null>(null);
   const assetsRef = useRef<ImageAsset[]>([]);
   assetsRef.current = assets;
+  // 看门狗轮询需要在 async 循环里同步读卡片状态；React 18 的 setState updater 不同步执行，
+  // 不能用 setCards(prev => ...) 的副作用当读取手段，必须走 ref。
+  const cardsRef = useRef<GenCard[]>([]);
+  cardsRef.current = cards;
   const abortersRef = useRef<AbortController[]>([]);
   const pendingInitRef = useRef<{ text: string; size: string | null; assetId?: string | null } | null>(null);
   const initFiredRef = useRef(false);
@@ -340,14 +344,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           );
           scrollToBottom();
         };
-        const isCardRunning = () => {
-          let running = false;
-          setCards((prev) => {
-            running = prev.some((c) => c.key === key && c.status === 'running');
-            return prev;
-          });
-          return running;
-        };
+        const isCardRunning = () => cardsRef.current.some((c) => c.key === key && c.status === 'running');
 
         // 看门狗轮询：与 SSE 并行跑（弱网下 SSE 可能长时间连不上，串行等重试耗尽会白等两分钟）。
         // 谁先拿到终态谁回填；卡片一旦离开 running 双方都自然停。
