@@ -562,6 +562,11 @@ export type RuntimeGateItem = {
   evidence: string;
   nextAction: string;
   facts?: Record<string, string>;
+  links?: RuntimeGateLink[];
+};
+export type RuntimeGateLink = {
+  label: string;
+  to: string;
 };
 export type RuntimeGatesData = {
   status: string;

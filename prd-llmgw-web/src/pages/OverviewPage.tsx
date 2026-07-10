@@ -302,7 +302,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
         {gates.items.map((item) => {
-          const actions = runtimeGateActionLinks(item, gates);
+          const actions = item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks(item, gates);
           return (
             <div key={item.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>

@@ -993,8 +993,85 @@ app.MapGet("/gw/runtime-gates", async () =>
         && activeBoundPoolWithoutUsableMember == 0;
 
     var items = new List<RuntimeGateItem>();
+    static RuntimeGateLink Link(string label, string to) => new() { Label = label, To = to };
+    static string Query(string key, string? value)
+        => string.IsNullOrWhiteSpace(value) ? string.Empty : $"?{key}={Uri.EscapeDataString(value.Trim())}";
+    static List<RuntimeGateLink> RuntimeGateLinks(string id, Dictionary<string, string> facts, string? releaseCommit)
+    {
+        var commit = facts.TryGetValue("releaseCommit", out var factCommit) && !string.IsNullOrWhiteSpace(factCommit)
+            ? factCommit
+            : releaseCommit;
+        var releaseQuery = Query("releaseCommit", commit);
+        var missingCode = facts.TryGetValue("missingAppCallerCodes", out var missingCodes)
+            ? missingCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault()
+            : null;
+        return id switch
+        {
+            "config_authority_objects" => new()
+            {
+                Link("模型池", "/pools"),
+                Link("平台", "/platforms"),
+                Link("模型", "/models"),
+                Link("Exchange", "/exchanges"),
+            },
+            "config_authority_rollout_ledger" => new()
+            {
+                Link("审计", "/audits?targetType=llmgw_config_authority"),
+                Link("概览", "/"),
+            },
+            "active_appcaller_pool_binding" => new()
+            {
+                Link("active 调用方", "/app-callers?status=active"),
+                Link("discovered 调用方", "/app-callers?status=discovered"),
+                Link("模型池", "/pools"),
+            },
+            "appcaller_policy_drift" => new() { Link("漂移调用方", "/app-callers?drift=any") },
+            "gateway_pool_member_readiness" => new() { Link("检查模型池", "/pools") },
+            "active_appcaller_map_fallback_exit" => new()
+            {
+                Link("active 调用方", "/app-callers?status=active"),
+                Link("模型池", "/pools"),
+                Link("平台密钥", "/platforms"),
+            },
+            "gateway_key_integrity" => new()
+            {
+                Link("平台密钥", "/platforms"),
+                Link("模型密钥", "/models"),
+                Link("Exchange 密钥", "/exchanges"),
+            },
+            "current_commit_http_transport" => new() { Link("当前 commit 日志", $"/logs{releaseQuery}") },
+            "dropped_parameter_runtime_evidence" => new() { Link("参数证据日志", $"/logs{releaseQuery}") },
+            "appcaller_runtime_coverage" => new()
+            {
+                Link("active 调用方", string.IsNullOrWhiteSpace(missingCode)
+                    ? "/app-callers?status=active"
+                    : $"/app-callers?status=active&search={Uri.EscapeDataString(missingCode)}"),
+                Link("当前 commit 日志", $"/logs{releaseQuery}"),
+                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
+            },
+            "shadow_runtime_evidence" => new()
+            {
+                Link("shadow 样本", $"/shadow{releaseQuery}{(releaseQuery.Length > 0 ? "&" : "?")}{ShadowQuickQuery(facts)}"),
+            },
+            "full_http_rollout_ledger" => new()
+            {
+                Link("当前 commit 日志", $"/logs{releaseQuery}"),
+                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
+            },
+            _ => new(),
+        };
+    }
+    static string ShadowQuickQuery(Dictionary<string, string> facts)
+    {
+        var critical = facts.TryGetValue("critical", out var c) && int.TryParse(c, out var criticalCount) ? criticalCount : 0;
+        var httpFail = facts.TryGetValue("httpFail", out var h) && int.TryParse(h, out var httpFailCount) ? httpFailCount : 0;
+        if (critical > 0) return "quick=critical";
+        if (httpFail > 0) return "quick=httpFail";
+        return "quick=all";
+    }
     void AddGate(string id, string label, string status, bool blocking, string detail, string evidence, string nextAction, Dictionary<string, string>? facts = null)
     {
+        var gateFacts = facts ?? new Dictionary<string, string>();
         items.Add(new RuntimeGateItem
         {
             Id = id,
@@ -1004,7 +1081,8 @@ app.MapGet("/gw/runtime-gates", async () =>
             Detail = detail,
             Evidence = evidence,
             NextAction = nextAction,
-            Facts = facts ?? new Dictionary<string, string>(),
+            Facts = gateFacts,
+            Links = RuntimeGateLinks(id, gateFacts, runtimeCommit),
         });
     }
 

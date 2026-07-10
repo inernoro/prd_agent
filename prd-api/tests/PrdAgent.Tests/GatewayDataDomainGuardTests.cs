@@ -491,9 +491,20 @@ public class GatewayDataDomainGuardTests
         var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
         var shadowPage = ReadRepoFile("prd-llmgw-web/src/pages/ShadowPage.tsx");
         var auditsPage = ReadRepoFile("prd-llmgw-web/src/pages/AuditsPage.tsx");
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
         var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
 
+        Assert.Contains("public List<RuntimeGateLink> Links { get; set; } = new();", consoleDtos);
+        Assert.Contains("public sealed class RuntimeGateLink", consoleDtos);
+        Assert.Contains("static RuntimeGateLink Link", consoleProgram);
+        Assert.Contains("static List<RuntimeGateLink> RuntimeGateLinks", consoleProgram);
+        Assert.Contains("Links = RuntimeGateLinks(id, gateFacts, runtimeCommit)", consoleProgram);
+        Assert.Contains("/audits?targetType=llmgw_config_authority", consoleProgram);
+
         Assert.Contains("function runtimeGateActionLinks", overview);
+        Assert.Contains("item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks", overview);
         Assert.Contains("const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();", overview);
         Assert.Contains("const releaseQuery = releaseCommit ? `?releaseCommit=${encodeURIComponent(releaseCommit)}` : '';", overview);
         Assert.Contains("case 'current_commit_http_transport':", overview);
@@ -526,7 +537,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("searchParams.get('targetType')", auditsPage);
         Assert.Contains("targetType: targetType || undefined", auditsPage);
 
+        Assert.Contains("links?: RuntimeGateLink[]", consoleTypes);
+        Assert.Contains("export type RuntimeGateLink", consoleTypes);
+
         Assert.Contains("runtimeGateActionLinks", protocolAudit);
+        Assert.Contains("Links = RuntimeGateLinks", protocolAudit);
         Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
         Assert.Contains("/audits?targetType=llmgw_config_authority", protocolAudit);
         Assert.Contains("\"runtimeEvidenceComplete\": False", protocolAudit);

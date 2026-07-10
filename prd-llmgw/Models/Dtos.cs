@@ -698,6 +698,13 @@ public sealed class RuntimeGateItem
     public string Evidence { get; set; } = string.Empty;
     public string NextAction { get; set; } = string.Empty;
     public Dictionary<string, string> Facts { get; set; } = new();
+    public List<RuntimeGateLink> Links { get; set; } = new();
+}
+
+public sealed class RuntimeGateLink
+{
+    public string Label { get; set; } = string.Empty;
+    public string To { get; set; } = string.Empty;
 }
 
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers，只读）──

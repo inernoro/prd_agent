@@ -35,3 +35,4 @@
 | polish | prd-llmgw-web | LLM Gateway 发布 Gate 卡片增加日志、影子比对、appCaller、模型池和审计深链，阻塞项可直接跳转定位 |
 | test | prd-api | LLM Gateway 静态守卫覆盖发布 Gate 深链筛选能力，防止 releaseCommit 日志、shadow 和审计证据入口回退 |
 | ops | scripts | LLM Gateway 协议路由静态审计不再把静态证据 100% 表示为迁移完成度 100%，rollout ledger 拒绝误导性完成度证据 |
+| feat | prd-llmgw | LLM Gateway runtime gate 响应新增结构化证据链接，控制台优先使用后端 links 定位日志、shadow、appCaller、模型池和审计页面 |

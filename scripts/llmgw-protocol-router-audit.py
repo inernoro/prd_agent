@@ -297,6 +297,10 @@ def build_report() -> dict[str, Any]:
         [
             "app.MapGet(\"/gw/config-authority/report\"",
             "app.MapGet(\"/gw/runtime-gates\"",
+            "RuntimeGateLinks",
+            "static RuntimeGateLink Link",
+            "Links = RuntimeGateLinks",
+            "/audits?targetType=llmgw_config_authority",
             "app.MapPost(\"/gw/config-authority/bulk-claim\"",
             "app.MapPost(\"/gw/config-authority/bind-active-app-callers\"",
             "app.MapGet(\"/gw/app-callers\"",
@@ -418,6 +422,7 @@ def build_report() -> dict[str, Any]:
             "searchParams.get('releaseCommit')",
             "getShadowComparisons({",
             "runtimeGateActionLinks",
+            "item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks",
             "/logs${releaseQuery}",
             "/shadow${releaseQuery}",
             "/app-callers?status=active",
