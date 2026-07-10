@@ -33,11 +33,13 @@ ROUTE_PINNED_MODEL_ID = os.environ.get("GW_SMOKE_ROUTE_PINNED_MODEL_ID", "").str
 SELF_TEST = os.environ.get("GW_SMOKE_SELF_TEST", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
+# 默认只跑低成本 chat provider canary；intent/vision 需要通过 GW_SMOKE_MODEL_TYPES 显式打开。
 DEFAULT_SAMPLE_CODES = [
     ("report-agent.generate::chat", "chat"),
     ("prd-agent-desktop.chat.suggested-questions::intent", "intent"),
     ("visual-agent.image::vision", "vision"),
 ]
+DEFAULT_LOW_COST_MODEL_TYPES = {"chat"}
 
 
 def _parse_csv_env(name):
@@ -48,6 +50,14 @@ def _parse_csv_env(name):
 def _selected_sample_codes():
     model_types = _parse_csv_env("GW_SMOKE_MODEL_TYPES")
     app_callers = _parse_csv_env("GW_SMOKE_APP_CALLERS")
+    include_default_non_chat = os.environ.get("GW_SMOKE_INCLUDE_DEFAULT_NON_CHAT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not model_types and not app_callers and not include_default_non_chat:
+        model_types = DEFAULT_LOW_COST_MODEL_TYPES
     selected = []
     for app_caller, model_type in DEFAULT_SAMPLE_CODES:
         if model_types and model_type.lower() not in model_types:

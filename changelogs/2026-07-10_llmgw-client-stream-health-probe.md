@@ -22,3 +22,5 @@
 | ops | scripts | LLM Gateway rollout ledger 拒绝缺少 `gateway_route_self_test` 的 canary/http preflight 证据 |
 | ops | scripts | LLM Gateway serving-probe 部署后强制记录并校验 `routeSelfTest`，防止发布后协议入口漂移 |
 | ops | scripts | LLM Gateway rollout ledger 强制校验 gw-smoke 的 invoke/send/stream/client-stream 低成本真实 provider canary 行 |
+| ops | scripts | LLM Gateway gw-smoke 默认真实 provider 调用收窄为 chat-only，intent/vision 改为显式环境变量打开以避免过量测试 |
+| security | scripts | LLM Gateway serving-probe 取消读取短名 `GW_KEY`，仅通过长名环境变量或显式参数取网关密钥 |

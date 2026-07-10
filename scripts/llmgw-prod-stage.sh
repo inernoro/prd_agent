@@ -1362,7 +1362,7 @@ export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
 case "$stage" in
   canary-intent-text|canary-chat|canary-streaming)
-    export GW_SMOKE_MODEL_TYPES="${GW_SMOKE_MODEL_TYPES:-chat,intent}"
+    export GW_SMOKE_MODEL_TYPES="${GW_SMOKE_MODEL_TYPES:-chat}"
     ;;
 esac
 if [ "$stage" = "shadow-start" ]; then

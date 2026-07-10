@@ -290,7 +290,7 @@ def main() -> int:
     args = parser.parse_args()
 
     base = (args.base or "").strip().rstrip("/")
-    key_name, key = _env_first([args.key_env, "LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"])
+    key_name, key = _env_first([args.key_env, "LLMGW_GATE_KEY", "LLMGW_SERVE_KEY"])
     key = (args.key or key).strip()
     if args.key:
         key_name = "cli"
