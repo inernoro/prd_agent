@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """LLM Gateway serving availability and auth probe.
 
-This read-only probe is meant for S5/S6 rollout evidence. It checks deep
-/gw/v1/readyz dependencies, repeatedly checks /gw/v1/healthz without a key,
+This read-only probe is meant for S5/S6 rollout evidence. It checks protected
+/gw/v1/readyz dependencies with a key, repeatedly checks /gw/v1/healthz without a key,
 verifies the reported commit is stable, and checks that protected endpoints
 reject unauthenticated access.
 """
@@ -346,7 +346,7 @@ def main() -> int:
     if protected_parse_failure:
         report["failures"].append(protected_parse_failure)
     if not report["failures"]:
-        ready_code, ready_raw, ready_latency = _request(base, "/readyz")
+        ready_code, ready_raw, ready_latency = _request(base, "/readyz", key=key)
         readiness = {
             "httpStatus": ready_code,
             "status": "",

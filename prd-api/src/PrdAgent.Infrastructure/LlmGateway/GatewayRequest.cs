@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -389,7 +391,14 @@ public sealed class GatewayAppCallerRecord
     public string? LastObservedSessionId { get; set; }
     public string? LastObservedRunId { get; set; }
     public string? Owner { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)]
     public decimal? MonthlyBudgetUsd { get; set; }
+    /// <summary>
+    /// 单次请求的保守预算预占额。配置月预算时必须同时配置本字段；未配置则 fail-closed，
+    /// 避免价格证据缺失时把并发请求全部放行。
+    /// </summary>
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
     public long TotalSeen { get; set; }

@@ -1,7 +1,7 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "5b4ae42897b367dde73e2325859ffbb938eaa550+worktree",
-  "generatedAt": "2026-07-07T09:21:11.625632+00:00",
+  "sourceCommit": "eb23d9267410c8748decd3496776dd60d2475884+worktree",
+  "generatedAt": "2026-07-10T14:55:32.530406+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
@@ -19,7 +19,7 @@
       "sourceId": "acceptance.guide.daily-sop",
       "sourcePath": "doc/guide.acceptance.daily-sop.md",
       "snapshotPath": "references/rules/guide.acceptance.daily-sop.md",
-      "contentHash": "sha256:3811027f2c859a518f3077487c9da5276674c1fd0f38b1e2a99e8e29f4eb4656"
+      "contentHash": "sha256:46bd771233153a67dd6f05aacc9845e84ca8be47f0e5c354149f54fb5c75446e"
     },
     {
       "sourceId": "acceptance.guide.report-evidence",

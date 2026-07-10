@@ -88,7 +88,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GatewayTransport = GatewayTransports.Http", servingEndpoints);
         Assert.Contains("AppCallerTitle = profileTitle", servingEndpoints);
         Assert.Contains("PinnedModelId = profileRequest.Model", servingEndpoints);
-        Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, CancellationToken.None)", servingEndpoints);
+        Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, cancellation?.Token ?? CancellationToken.None)", servingEndpoints);
         Assert.Contains("public GatewayRequestContext? Context { get; init; }", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
         Assert.Contains("SourceSystem = sourceContext?.SourceSystem", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
         Assert.Contains("IngressProtocol = sourceContext?.IngressProtocol", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
@@ -693,6 +693,26 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"progressPercent\": None", protocolAudit);
         Assert.Contains("staticEvidencePercent covers code/doc evidence only", protocolAudit);
         Assert.DoesNotContain("\"progressPercent\": static_percent", protocolAudit);
+    }
+
+    [Fact]
+    public void ConsoleRuntimeGate_MaintenanceReleaseRetainsOnlyQualifiedPriorShadowEvidence()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
+        Assert.Contains("ReadSuccessfulHttpFullRolloutCommits", consoleProgram);
+        Assert.Contains("successfulHttpFullCommits", consoleProgram);
+        Assert.Contains("retainedShadowCandidates.FirstOrDefault", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"releaseGateRequired\")", consoleProgram);
+        Assert.Contains("!ReadJsonBool(root, \"protocolCanaryRequired\")", consoleProgram);
+        Assert.Contains("configAuthorityLedgerEvidence.Ready", consoleProgram);
+        Assert.Contains("httpTransportLogs == releaseLogTotal", consoleProgram);
+        Assert.Contains("missingIngressProtocols.Count == 0", consoleProgram);
+        Assert.Contains("protocolFailedLogs == 0", consoleProgram);
+        Assert.Contains("missingRuntimeCoverageAppCallers.Count == 0", consoleProgram);
+        Assert.Contains("canRetainPreviousShadowEvidence ? \"retained\" : \"waiting\"", consoleProgram);
+        Assert.Contains("首次切流必须跑当前 commit 的真实 appCaller shadow 样本", consoleProgram);
     }
 
     [Fact]
@@ -1375,6 +1395,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway serving probe", script);
         Assert.Contains("/healthz", script);
         Assert.Contains("/readyz", script);
+        Assert.Contains("_request(base, \"/readyz\", key=key)", script);
         Assert.Contains("readyz not ready", script);
         Assert.Contains("components", script);
         Assert.Contains("--expect-commit", script);
@@ -1394,7 +1415,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("protected endpoint {method} {path} should reject missing key with 401", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
-        Assert.DoesNotContain("GW_KEY", script);
     }
 
     [Fact]
@@ -1425,9 +1445,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("[ \"$health\" != \"healthy\" ]", deploy);
         Assert.Contains("llmgw-serve-b:", compose);
         Assert.Contains("condition: service_healthy", compose);
-        Assert.Contains("/gw/v1/readyz", compose);
+        Assert.Contains("/gw/v1/healthz", compose);
         Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
@@ -2014,6 +2034,106 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
         Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
         Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
+    }
+
+    [Fact]
+    public void GatewayProductionHardening_HasExecutableLifecycleBudgetKeyCancelAndIdempotencyGuards()
+    {
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var runtime = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayRuntimeGovernance.cs");
+        var concurrency = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayProviderConcurrencyCoordinator.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var httpClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
+        var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+
+        Assert.Contains("idx_llmgw_logs_time_caller_type_transport", initializer);
+        Assert.Contains("ttl_llmgw_logs_started", initializer);
+        Assert.Contains("uniq_llmgw_budget_month", initializer);
+        Assert.Contains("uniq_llmgw_execution_request", initializer);
+        Assert.Contains("uniq_llmgw_service_key_hash", initializer);
+        Assert.Contains("uniq_llmgw_multipart_ref", initializer);
+        Assert.Contains("uniq_llmgw_provider_concurrency_slot", initializer);
+        Assert.Contains("ttl_llmgw_provider_concurrency_slot", initializer);
+        Assert.Contains("LlmGateway:Retention:EnableTtlIndexes", initializer);
+        Assert.Contains("EnsureBudgetConfigurationIntegrityAsync", initializer);
+        Assert.Contains("APP_CALLER_BUDGET_MIGRATION_REQUIRED", initializer);
+
+        Assert.Contains("class GatewayBudgetCoordinator", runtime);
+        Assert.Contains("FindOneAndUpdateAsync", runtime);
+        Assert.Contains("class GatewayRequestExecutionStore", runtime);
+        Assert.Contains("GatewayExecutionBeginState.Unknown", runtime);
+        Assert.Contains("class GatewayScopedKeyAuthorizer", runtime);
+        Assert.Contains("GATEWAY_KEY_SCOPE_DENIED", runtime);
+        Assert.Contains("class GatewayCancellationRegistry", runtime);
+        Assert.Contains("class GatewayDataLifecycleWorker", runtime);
+        Assert.True(
+            runtime.IndexOf("await _budgets.ReleaseExpiredAsync(ct);", StringComparison.Ordinal)
+            < runtime.IndexOf("if (apply)", runtime.IndexOf("var multipart", StringComparison.Ordinal), StringComparison.Ordinal),
+            "预算过期结算必须独立于 retention apply 开关");
+
+        Assert.Contains("class GatewayProviderConcurrencyCoordinator", concurrency);
+        Assert.Contains("PROVIDER_CONCURRENCY_EXHAUSTED", concurrency);
+        Assert.Contains("FindOneAndUpdateAsync", concurrency);
+        Assert.Contains("MongoCommandException ex) when (ex.Code is 11000 or 11001)", concurrency);
+        Assert.Contains("AcquireProviderConcurrencyAsync", gateway);
+        Assert.Contains("GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null", gateway);
+
+        Assert.Contains("/gw/v1/requests/{requestId}/cancel", endpoints);
+        Assert.Contains("RunWithRequestCancellationAsync", endpoints);
+        Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
+        Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        var nativeStreamStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/stream\"", StringComparison.Ordinal);
+        var nativeStreamEnd = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", nativeStreamStart, StringComparison.Ordinal);
+        Assert.Contains(
+            "HttpContextOutcomeUnknownKey",
+            endpoints[nativeStreamStart..nativeStreamEnd]);
+        var clientStreamStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/client-stream\"", StringComparison.Ordinal);
+        var clientStreamEnd = endpoints.IndexOf("app.MapGet(\"/gw/v1/shadow-comparisons\"", clientStreamStart, StringComparison.Ordinal);
+        Assert.Contains(
+            "HttpContextOutcomeUnknownKey",
+            endpoints[clientStreamStart..clientStreamEnd]);
+        var imageHelperStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
+        var imageHelperEnd = endpoints.IndexOf("private static async Task SendOpenAiCompatibleAsync", imageHelperStart, StringComparison.Ordinal);
+        var imageHelper = endpoints[imageHelperStart..imageHelperEnd];
+        Assert.True(
+            imageHelper.IndexOf("store.BeginAsync", StringComparison.Ordinal)
+            < imageHelper.IndexOf("RecordAndCheckAppCallerGovernanceAsync", StringComparison.Ordinal),
+            "图片兼容入口的幂等 replay 必须在预算预占与限流前返回");
+        var rawEndpointStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
+        var rawEndpointEnd = endpoints.IndexOf("app.MapPost(\"/gw/v1/profile-test\"", rawEndpointStart, StringComparison.Ordinal);
+        var rawEndpoint = endpoints[rawEndpointStart..rawEndpointEnd];
+        Assert.True(
+            rawEndpoint.IndexOf("executionStore.BeginAsync", StringComparison.Ordinal)
+            < rawEndpoint.IndexOf("RecordAndCheckAppCallerGovernanceAsync", StringComparison.Ordinal),
+            "raw 幂等 replay 必须在预算预占与限流前返回");
+        Assert.Contains("path.Equals(\"/gw/v1/profile-test\"", endpoints);
+        Assert.Contains("return \"profile:test\"", endpoints);
+        Assert.Contains("NormalizeGatewayStatusCode(value.Success, value.StatusCode)", endpoints);
+        Assert.Contains("ResolveScopedAuthorizationInputsAsync", endpoints);
+        Assert.Contains("ShouldInspectAuthorizationBody", endpoints);
+        Assert.Contains("GATEWAY_APP_CALLER_MISMATCH", endpoints);
+        Assert.Contains("ReadJsonBool(root, \"stream\")", endpoints);
+        Assert.Contains("path.Equals(\"/gw/v1/client-stream\"", endpoints);
+        Assert.Contains("path.Contains(\":streamGenerateContent\"", endpoints);
+        Assert.DoesNotContain("Request.ContentType?.Contains(\"json\"", endpoints);
+        Assert.Contains("CleanupMultipartRefsAsync", endpoints);
+        Assert.Contains("protectedGatewayPath", endpoints);
+        Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
+        Assert.Contains("llmgw_multipart_objects", httpClient);
+        Assert.Contains("X-Gateway-App-Caller", httpClient);
+        Assert.Contains("TryDeserializeRawResponse", httpClient);
+        Assert.Contains("TryDeserializeGatewayResponse", httpClient);
+        Assert.Contains("ResolveCompatibleDefaultAppCaller", endpoints);
+
+        Assert.Contains("ensure_serving_probe_evidence", stage);
+        Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", stage);
+
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        Assert.Contains("ValidateBudgetConfiguration", console);
+        Assert.Contains("配置月预算时必须同时配置大于 0 的单次预算预占", console);
+        Assert.Contains("单次预算预占不能超过月预算", console);
     }
 
     private static string ReadRepoFile(string relativePath)

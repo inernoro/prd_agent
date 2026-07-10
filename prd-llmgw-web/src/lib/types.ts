@@ -632,6 +632,7 @@ export type GatewayAppCaller = {
   lastObservedRunId?: string | null;
   owner?: string | null;
   monthlyBudgetUsd?: number | null;
+  budgetReservationUsd?: number | null;
   rateLimitPerMinute?: number | null;
   notes?: string | null;
   totalSeen: number;
@@ -648,6 +649,7 @@ export type UpdateGatewayAppCallerRequest = {
   parameterPolicy?: string;
   owner?: string;
   monthlyBudgetUsd?: number;
+  budgetReservationUsd?: number;
   rateLimitPerMinute?: number;
   notes?: string;
 };
@@ -664,6 +666,7 @@ export type BulkUpdateGatewayAppCallersRequest = {
   parameterPolicy?: string;
   owner?: string;
   monthlyBudgetUsd?: number;
+  budgetReservationUsd?: number;
   rateLimitPerMinute?: number;
 };
 
@@ -708,6 +711,34 @@ export type GatewayAppCallersData = {
   sourceSystems: string[];
   ingressProtocols: string[];
   requestTypes: string[];
+};
+
+export type ServiceKeyItem = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  sourceSystem: string;
+  appCallerCodes: string[];
+  ingressProtocols: string[];
+  scopes: string[];
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  createdAt?: string | null;
+};
+
+export type CreateServiceKeyRequest = {
+  name: string;
+  sourceSystem: string;
+  appCallerCodes: string[];
+  ingressProtocols: string[];
+  scopes: string[];
+  expiresAt?: string;
+};
+
+export type CreatedServiceKey = CreateServiceKeyRequest & {
+  id: string;
+  key: string;
+  warning: string;
 };
 
 // ── 影子比对（只读）──

@@ -118,6 +118,40 @@ public class HttpLlmGatewayClientFailureTests
         ShouldContainText(llmStream[0].ErrorMessage, "401");
     }
 
+    [Fact]
+    public async Task StructuredRawFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":422,\"ErrorCode\":\"UPSTREAM_REJECTED\",\"ErrorMessage\":\"invalid image input\",\"LogId\":\"log-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.UnprocessableEntity, body));
+
+        var raw = await client.SendRawWithResolutionAsync(
+            RawRequest(),
+            new GatewayModelResolution { Success = true, ActualModel = "m1" });
+        var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+
+        raw.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        raw.ErrorMessage.ShouldBe("invalid image input");
+        raw.StatusCode.ShouldBe(422);
+        raw.LogId.ShouldBe("log-123");
+        profile.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        profile.StatusCode.ShouldBe(422);
+    }
+
+    [Fact]
+    public async Task StructuredSendFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":503,\"ErrorCode\":\"MODEL_POOL_UNAVAILABLE\",\"ErrorMessage\":\"no healthy model\",\"LogId\":\"log-send-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.ServiceUnavailable, body));
+
+        var response = await client.SendAsync(Request());
+
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("MODEL_POOL_UNAVAILABLE");
+        response.ErrorMessage.ShouldBe("no healthy model");
+        response.StatusCode.ShouldBe(503);
+        response.LogId.ShouldBe("log-send-123");
+    }
+
     private static HttpLlmGatewayClient BuildClient(
         IHttpClientFactory factory,
         string baseUrl = "http://llmgw-serve.test")

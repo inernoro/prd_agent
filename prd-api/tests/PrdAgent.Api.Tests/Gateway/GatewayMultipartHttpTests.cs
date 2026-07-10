@@ -190,7 +190,7 @@ public class GatewayMultipartHttpTests
             var raw = JsonSerializer.Deserialize<GatewayRawResponse>(
                 await response.Content.ReadAsStringAsync(), PascalJson);
 
-            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
             raw.ShouldNotBeNull();
             raw!.Success.ShouldBeFalse();
             raw.ErrorCode.ShouldBe("MULTIPART_REF_HASH_MISMATCH");

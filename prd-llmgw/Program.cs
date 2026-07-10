@@ -9,6 +9,7 @@
 
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -152,6 +153,7 @@ var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
+var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var managedParameterCapabilities = new (string Name, string Label, string Category)[]
 {
     ("temperature", "Temperature", "sampling"),
@@ -1054,6 +1056,40 @@ app.MapGet("/gw/runtime-gates", async () =>
     var shadowTotal = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(shadowFilter);
     var shadowCritical = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HasCritical", true)));
     var shadowHttpFail = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HttpOk", false)));
+    var retainedShadowCandidates = new List<BsonDocument>();
+    if (runtimeCommit is not null && shadowTotal == 0)
+    {
+        retainedShadowCandidates = await shadows.Aggregate()
+            .Match(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", runtimeCommit),
+                Builders<BsonDocument>.Filter.Exists("ReleaseCommit", true),
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", BsonNull.Value),
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", string.Empty)))
+            .Group(new BsonDocument
+            {
+                { "_id", "$ReleaseCommit" },
+                { "Total", new BsonDocument("$sum", 1) },
+                { "Critical", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$HasCritical", true }),
+                        1,
+                        0,
+                    })) },
+                { "HttpFail", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$HttpOk", false }),
+                        1,
+                        0,
+                    })) },
+                { "LastComparedAt", new BsonDocument("$max", "$ComparedAt") },
+            })
+            .Match(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Gt("Total", 0),
+                Builders<BsonDocument>.Filter.Eq("Critical", 0),
+                Builders<BsonDocument>.Filter.Eq("HttpFail", 0)))
+            .Sort(new BsonDocument("LastComparedAt", -1))
+            .ToListAsync();
+    }
     var logReleaseFilter = runtimeCommit is null
         ? FilterDefinition<BsonDocument>.Empty
         : Builders<BsonDocument>.Filter.And(
@@ -1132,6 +1168,24 @@ app.MapGet("/gw/runtime-gates", async () =>
         ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
     var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
     var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var successfulHttpFullCommits = ReadSuccessfulHttpFullRolloutCommits(ledgerPath);
+    var retainedShadowEvidence = successfulHttpFullCommits
+        .Select(commit => retainedShadowCandidates.FirstOrDefault(candidate =>
+            string.Equals(candidate.AsNullableString("_id"), commit, StringComparison.OrdinalIgnoreCase)))
+        .FirstOrDefault(candidate => candidate is not null);
+    var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
+    var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
+    var retainedShadowMatchesPreviousFullHttp = retainedShadowCommit.Length > 0
+        && successfulHttpFullCommits.Contains(retainedShadowCommit, StringComparer.OrdinalIgnoreCase);
+    var canRetainPreviousShadowEvidence = shadowTotal == 0
+        && retainedShadowMatchesPreviousFullHttp
+        && configAuthorityLedgerEvidence.Ready
+        && releaseLogTotal > 0
+        && httpTransportLogs == releaseLogTotal
+        && droppedParameterLogs == 0
+        && missingIngressProtocols.Count == 0
+        && protocolFailedLogs == 0
+        && missingRuntimeCoverageAppCallers.Count == 0;
     var activeAppCallerMapFallbackCutoverPrerequisitesReady =
         mapFallbackObjectsRemaining == 0
         && activeMissingGatewayPool == 0
@@ -1514,21 +1568,34 @@ app.MapGet("/gw/runtime-gates", async () =>
     AddGate(
         "shadow_runtime_evidence",
         "shadow/http 运行证据",
-        shadowTotal == 0 ? "waiting" : shadowCritical == 0 && shadowHttpFail == 0 ? "pass" : "blocked",
-        shadowTotal == 0 || shadowCritical > 0 || shadowHttpFail > 0,
+        shadowTotal > 0
+            ? shadowCritical == 0 && shadowHttpFail == 0 ? "pass" : "blocked"
+            : canRetainPreviousShadowEvidence ? "retained" : "waiting",
+        shadowTotal > 0
+            ? shadowCritical > 0 || shadowHttpFail > 0
+            : !canRetainPreviousShadowEvidence,
         runtimeCommit is null
             ? "当前进程缺少 GIT_COMMIT，不能证明 shadow 样本属于本次发布版本。"
-            : shadowTotal == 0
-            ? "尚未看到 shadow comparison 样本，不能证明 http 路径等价。"
-            : $"当前 commit 的 shadow 样本 {shadowTotal} 条，critical={shadowCritical}，httpFail={shadowHttpFail}。",
-        $"/gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; total={shadowTotal}; critical={shadowCritical}; httpFail={shadowHttpFail}",
-        shadowTotal == 0 ? "先跑当前 commit 的真实 appCaller shadow 样本；resolve-only route matrix 只能证明解析链路，不替代 shadow comparison。" : shadowCritical == 0 && shadowHttpFail == 0 ? "保留同 commit 证据并进入灰度 gate。" : "先归因当前 commit 的 critical/httpFail，再补测试。",
+            : shadowTotal > 0
+            ? $"当前 commit 的 shadow 样本 {shadowTotal} 条，critical={shadowCritical}，httpFail={shadowHttpFail}。"
+            : canRetainPreviousShadowEvidence
+            ? $"当前 commit 已完成 HTTP-only transport、四协议、active appCaller 和配置权威证据；保留最近 full-http 提交 {retainedShadowCommit} 的 {retainedShadowTotal} 条零 critical/零 httpFail shadow 迁移证据。"
+            : "尚未看到当前 commit 的 shadow comparison，且不满足 full-http 维护发布的历史证据保留条件。",
+        $"/gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; total={shadowTotal}; critical={shadowCritical}; httpFail={shadowHttpFail}; retainedCommit={retainedShadowCommit}; retainedTotal={retainedShadowTotal}; retainedEligible={canRetainPreviousShadowEvidence}",
+        shadowTotal > 0
+            ? shadowCritical == 0 && shadowHttpFail == 0 ? "保留同 commit 证据并进入灰度 gate。" : "先归因当前 commit 的 critical/httpFail，再补测试。"
+            : canRetainPreviousShadowEvidence
+            ? "保留历史迁移证据；当前提交继续依赖 HTTP-only transport、四协议和 active appCaller 运行证据。"
+            : "首次切流必须跑当前 commit 的真实 appCaller shadow 样本；维护发布则先补齐当前 commit 的 HTTP-only transport、四协议、active appCaller 和配置权威证据。",
         new Dictionary<string, string>
         {
             ["releaseCommit"] = runtimeCommit ?? "",
             ["total"] = shadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["critical"] = shadowCritical.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["httpFail"] = shadowHttpFail.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["retainedCommit"] = retainedShadowCommit,
+            ["retainedTotal"] = retainedShadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["retainedEligible"] = canRetainPreviousShadowEvidence ? "true" : "false",
         });
 
     var ledgerEvidence = httpFullLedgerEvidence;
@@ -1893,6 +1960,18 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
     var doc = await gwAppCallers.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
 
+    var effectiveMonthlyBudget = body.MonthlyBudgetUsd is null
+        ? doc.AsNullableDecimal("MonthlyBudgetUsd")
+        : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+    var effectiveBudgetReservation = body.BudgetReservationUsd is null
+        ? body.MonthlyBudgetUsd == 0 ? null : doc.AsNullableDecimal("BudgetReservationUsd")
+        : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+    var budgetConfigurationError = ValidateBudgetConfiguration(effectiveMonthlyBudget, effectiveBudgetReservation);
+    if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+        budgetConfigurationError = "预算金额不能小于 0";
+    if (budgetConfigurationError is not null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", budgetConfigurationError), jsonOptions, 400);
+
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
     var effectiveStatus = doc.AsNullableString("Status") ?? "discovered";
@@ -2021,11 +2100,32 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddChange("monthlyBudgetUsd", doc.AsNullableDecimal("MonthlyBudgetUsd"), null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), null);
+            }
         }
         else
         {
-            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", body.MonthlyBudgetUsd.Value));
+            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", new BsonDecimal128(body.MonthlyBudgetUsd.Value)));
             AddChange("monthlyBudgetUsd", doc.AsNullableDecimal("MonthlyBudgetUsd"), body.MonthlyBudgetUsd.Value);
+        }
+    }
+
+    if (body.BudgetReservationUsd is not null)
+    {
+        if (body.BudgetReservationUsd.Value < 0)
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "budgetReservationUsd 不能小于 0"), jsonOptions, 400);
+        if (body.BudgetReservationUsd.Value == 0)
+        {
+            updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+            AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), null);
+        }
+        else
+        {
+            updates.Add(Builders<BsonDocument>.Update.Set("BudgetReservationUsd", new BsonDecimal128(body.BudgetReservationUsd.Value)));
+            AddChange("budgetReservationUsd", doc.AsNullableDecimal("BudgetReservationUsd"), body.BudgetReservationUsd.Value);
         }
     }
 
@@ -2230,11 +2330,32 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         {
             updates.Add(Builders<BsonDocument>.Update.Unset("MonthlyBudgetUsd"));
             AddSetSummary("monthlyBudgetUsd", null);
+            if (body.BudgetReservationUsd is null)
+            {
+                updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+                AddSetSummary("budgetReservationUsd", null);
+            }
         }
         else
         {
-            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", body.MonthlyBudgetUsd.Value));
+            updates.Add(Builders<BsonDocument>.Update.Set("MonthlyBudgetUsd", new BsonDecimal128(body.MonthlyBudgetUsd.Value)));
             AddSetSummary("monthlyBudgetUsd", body.MonthlyBudgetUsd.Value);
+        }
+    }
+
+    if (body.BudgetReservationUsd is not null)
+    {
+        if (body.BudgetReservationUsd.Value < 0)
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "budgetReservationUsd 不能小于 0"), jsonOptions, 400);
+        if (body.BudgetReservationUsd.Value == 0)
+        {
+            updates.Add(Builders<BsonDocument>.Update.Unset("BudgetReservationUsd"));
+            AddSetSummary("budgetReservationUsd", null);
+        }
+        else
+        {
+            updates.Add(Builders<BsonDocument>.Update.Set("BudgetReservationUsd", new BsonDecimal128(body.BudgetReservationUsd.Value)));
+            AddSetSummary("budgetReservationUsd", body.BudgetReservationUsd.Value);
         }
     }
 
@@ -2262,6 +2383,32 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
     }
 
     var filter = fb.And(filters);
+    if (body.MonthlyBudgetUsd is not null || body.BudgetReservationUsd is not null)
+    {
+        if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0)
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", "预算金额不能小于 0"), jsonOptions, 400);
+
+        var budgetDocuments = await gwAppCallers.Find(filter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("AppCallerCode")
+                .Include("RequestType")
+                .Include("MonthlyBudgetUsd")
+                .Include("BudgetReservationUsd"))
+            .ToListAsync();
+        foreach (var budgetDocument in budgetDocuments)
+        {
+            var monthlyBudget = body.MonthlyBudgetUsd is null
+                ? budgetDocument.AsNullableDecimal("MonthlyBudgetUsd")
+                : NormalizePositiveBudget(body.MonthlyBudgetUsd.Value);
+            var reservation = body.BudgetReservationUsd is null
+                ? body.MonthlyBudgetUsd == 0 ? null : budgetDocument.AsNullableDecimal("BudgetReservationUsd")
+                : NormalizePositiveBudget(body.BudgetReservationUsd.Value);
+            var error = ValidateBudgetConfiguration(monthlyBudget, reservation);
+            if (error is null) continue;
+            var identity = $"{budgetDocument.GetStringOrEmpty("AppCallerCode")}::{budgetDocument.GetStringOrEmpty("RequestType")}";
+            return Json(ApiEnvelope<BulkUpdateGatewayAppCallersResult>.Fail("INVALID_INPUT", $"{identity}: {error}"), jsonOptions, 400);
+        }
+    }
     var bulkActiveConfigError = await ValidateBulkActiveGatewayAppCallerConfigAsync(
         gwAppCallers,
         gwModelPools,
@@ -2368,6 +2515,125 @@ app.MapGet("/gw/audits", async (
     };
     return Json(ApiEnvelope<OperationAuditsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// M2M scoped key：明文只在创建响应返回一次，数据库只保存 SHA-256。
+app.MapGet("/gw/service-keys", async () =>
+{
+    var docs = await serviceKeys.Find(Builders<BsonDocument>.Filter.Empty)
+        .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+        .Limit(500)
+        .ToListAsync();
+    var items = docs.Select(d => new ServiceKeyItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Name = d.GetStringOrEmpty("Name"),
+        Enabled = d.AsNullableBool("Enabled") ?? false,
+        SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
+        AppCallerCodes = d.AsStringList("AppCallerCodes"),
+        IngressProtocols = d.AsStringList("IngressProtocols"),
+        Scopes = d.AsStringList("Scopes"),
+        ExpiresAt = d.AsNullableUtcDateTime("ExpiresAt").ToIso(),
+        LastUsedAt = d.AsNullableUtcDateTime("LastUsedAt").ToIso(),
+        CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+    }).ToList();
+    return Json(ApiEnvelope<List<ServiceKeyItem>>.Ok(items), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest body) =>
+{
+    var name = (body.Name ?? string.Empty).Trim();
+    var sourceSystem = (body.SourceSystem ?? "external").Trim();
+    var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
+    var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
+    var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
+    if (name.Length == 0 || sourceSystem.Length == 0 || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+    }
+    var allowedProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "*", "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
+    };
+    var allowedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "*", "invoke", "stream:invoke", "raw:invoke", "profile:test", "route:read", "readiness:read", "request:cancel", "request:read",
+    };
+    if (protocols.Any(x => !allowedProtocols.Contains(x)) || scopes.Any(x => !allowedScopes.Contains(x)))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_SERVICE_KEY_SCOPE",
+            "ingressProtocols 或 scopes 包含未支持值"), jsonOptions, 400);
+    }
+
+    var secretBytes = RandomNumberGenerator.GetBytes(32);
+    var plainKey = "gwk_" + Convert.ToBase64String(secretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
+    var id = Guid.NewGuid().ToString("N");
+    var now = DateTime.UtcNow;
+    var expiresAt = body.ExpiresAt?.ToUniversalTime();
+    await serviceKeys.InsertOneAsync(new BsonDocument
+    {
+        { "_id", id },
+        { "Name", name },
+        { "KeyHash", keyHash },
+        { "Enabled", true },
+        { "SourceSystem", sourceSystem },
+        { "AppCallerCodes", new BsonArray(appCallerCodes) },
+        { "IngressProtocols", new BsonArray(protocols) },
+        { "Scopes", new BsonArray(scopes) },
+        { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
+        { "CreatedAt", now },
+        { "UpdatedAt", now },
+    });
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.create",
+        "llmgw_service_key",
+        id,
+        name,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "sourceSystem", sourceSystem },
+            { "appCallerCount", appCallerCodes.Count },
+            { "protocolCount", protocols.Count },
+            { "scopeCount", scopes.Count },
+        });
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        name,
+        key = plainKey,
+        warning = "该 key 只显示一次；数据库未保存明文",
+        sourceSystem,
+        appCallerCodes,
+        ingressProtocols = protocols,
+        scopes,
+        expiresAt,
+    }), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
+{
+    var existing = await serviceKeys.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    await serviceKeys.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", id),
+        Builders<BsonDocument>.Update.Set("Enabled", false).Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.revoke",
+        "llmgw_service_key",
+        id,
+        existing.AsNullableString("Name"),
+        true,
+        null);
+    return Json(ApiEnvelope<object>.Ok(new { id, revoked = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 // 影子比对：汇总 + 最近 N 条
 app.MapGet("/gw/shadow-comparisons", async (int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
@@ -4991,6 +5257,7 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     LastObservedRunId = d.AsNullableString("LastObservedRunId"),
     Owner = d.AsNullableString("Owner"),
     MonthlyBudgetUsd = d.AsNullableDecimal("MonthlyBudgetUsd"),
+    BudgetReservationUsd = d.AsNullableDecimal("BudgetReservationUsd"),
     RateLimitPerMinute = d.AsNullableInt("RateLimitPerMinute"),
     Notes = d.AsNullableString("Notes"),
     TotalSeen = d.AsNullableLong("TotalSeen") ?? 0,
@@ -5408,6 +5675,47 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     return (ready, detail, evidence, facts);
 }
 
+static List<string> ReadSuccessfulHttpFullRolloutCommits(string path)
+{
+    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
+    if (!File.Exists(normalizedPath)) return new List<string>();
+
+    var commits = new List<string>();
+    foreach (var line in File.ReadLines(normalizedPath))
+    {
+        var raw = line.Trim();
+        if (raw.Length == 0) continue;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (!string.Equals(ReadJsonString(root, "stage"), "http-full", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(ReadJsonString(root, "status"), "success", StringComparison.OrdinalIgnoreCase)
+                || !ReadJsonBool(root, "releaseGateRequired")
+                || !ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"))
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"))
+                || !ReadJsonBool(root, "protocolCanaryRequired")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson")))
+            {
+                continue;
+            }
+
+            var commit = NormalizeCommitFilter(ReadJsonString(root, "commit"));
+            if (commit is null) continue;
+            commits.RemoveAll(existing => string.Equals(existing, commit, StringComparison.OrdinalIgnoreCase));
+            commits.Add(commit);
+        }
+        catch (JsonException)
+        {
+            // A malformed historical line cannot become release evidence.
+        }
+    }
+
+    commits.Reverse();
+    return commits;
+}
+
 static (bool Ready, string Detail, string Evidence, Dictionary<string, string> Facts) ReadLatestConfigAuthorityRolloutLedgerEvidence(string path, string currentCommit)
 {
     var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
@@ -5517,6 +5825,19 @@ static bool IsTruthy(string? value)
            || string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "y", StringComparison.OrdinalIgnoreCase)
            || string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase);
+}
+
+static decimal? NormalizePositiveBudget(decimal value) => value > 0 ? value : null;
+
+static string? ValidateBudgetConfiguration(decimal? monthlyBudgetUsd, decimal? budgetReservationUsd)
+{
+    if (monthlyBudgetUsd is null or <= 0)
+        return budgetReservationUsd is > 0 ? "配置单次预算预占前必须先配置月预算" : null;
+    if (budgetReservationUsd is null or <= 0)
+        return "配置月预算时必须同时配置大于 0 的单次预算预占";
+    if (budgetReservationUsd > monthlyBudgetUsd)
+        return "单次预算预占不能超过月预算";
+    return null;
 }
 
 // 统一 JSON 输出（带信封 + 指定状态码）。
