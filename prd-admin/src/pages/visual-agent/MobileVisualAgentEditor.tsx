@@ -249,6 +249,48 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         setCards((prev) => prev.map((c) => (c.key === key ? { ...c, status: 'error', errorMessage: msg } : c)));
       };
 
+      // run 创建失败时移除已预写进画布的占位元素——没有 run 后端无从对账，
+      // 留着会让桌面画布出现永久 running 占位（Codex review P2）。
+      let placeholderSaved = false;
+      const removeCanvasPlaceholder = async () => {
+        if (!placeholderSaved) return;
+        try {
+          const canvasRes = await getVisualAgentWorkspaceCanvas({ id: workspaceId });
+          if (!canvasRes.success) return;
+          const payload = canvasRes.data?.canvas?.payloadJson ?? '';
+          if (!payload) return;
+          const state = JSON.parse(payload) as PersistedState;
+          if (!state || !Array.isArray(state.elements)) return;
+          const next = state.elements.filter((el) => el.id !== key);
+          if (next.length === state.elements.length) return;
+          state.elements = next;
+          await saveVisualAgentWorkspaceCanvas({
+            id: workspaceId,
+            schemaVersion: PERSIST_SCHEMA_VERSION,
+            payloadJson: JSON.stringify(state),
+            idempotencyKey: `mGenFail_${key}`,
+          });
+        } catch {
+          // 清理失败不影响主流程：桌面端仍可通过画布对账修复
+        }
+      };
+
+      // 看门狗回填只有 URL 时，回捞 workspace 资产补 assetId/sha256——
+      // 否则该卡的「以图改图」在刷新前不可用（Codex review P2）。
+      const hydrateCardAsset = async (url: string) => {
+        try {
+          const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 1, assetLimit: 200 });
+          if (!detail.success || !detail.data) return;
+          const match = (detail.data.assets ?? []).find((a) => a.url === url);
+          if (!match) return;
+          setCards((prev) =>
+            prev.map((c) => (c.key === key ? { ...c, assetId: c.assetId || match.id, sha256: c.sha256 || match.sha256 } : c))
+          );
+        } catch {
+          // 回捞失败不阻塞：用户刷新后资产列表仍可用
+        }
+      };
+
       try {
         // 1) 把占位元素写进画布（后端按 targetKey 回填；手机生成的图在 PC 画布可见）。
         //    canvas 读不到/解析失败时跳过画布写入，绝不用空画布覆盖既有内容。
@@ -291,6 +333,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                 payloadJson: JSON.stringify(state),
                 idempotencyKey: `mPreGen_${key}`,
               });
+              placeholderSaved = true;
             }
           }
         } catch {
@@ -321,6 +364,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         });
         if (!runRes.success || !runRes.data?.runId) {
           failCard(runRes.success ? '未返回 runId' : runRes.error?.message || '生成失败');
+          void removeCanvasPlaceholder();
           return;
         }
         const runId = runRes.data.runId;
@@ -343,6 +387,8 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             )
           );
           scrollToBottom();
+          // SSE 断流场景只有 URL 没有资产元数据：异步回捞补 assetId/sha256，保住「以图改图」可用
+          if (!asset?.sha256) void hydrateCardAsset(url);
         };
         const isCardRunning = () => cardsRef.current.some((c) => c.key === key && c.status === 'running');
 
@@ -405,6 +451,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         // SSE 结束 ≠ 生成失败（服务器权威：后端继续跑），终态回填由上面的并行看门狗负责。
       } catch (e) {
         failCard(e instanceof Error ? e.message : '生成失败');
+        void removeCanvasPlaceholder();
       }
     },
     [pickedPool, refImage, size, scrollToBottom, workspaceId]
