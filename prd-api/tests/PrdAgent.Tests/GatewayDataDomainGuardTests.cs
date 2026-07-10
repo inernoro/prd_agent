@@ -438,6 +438,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("python3 scripts/llmgw-serving-probe.py $probe_args", script);
         Assert.Contains("LLM Gateway post-deploy serving probe: required", script);
         Assert.Contains("LLM Gateway post-deploy D-layer smoke: required", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", script);
+        Assert.Contains("LLM Gateway post-deploy protocol canary: required before runtime gates", script);
+        Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
+        Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
+        Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);
         Assert.Contains("LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only", script);
         Assert.Contains("--allow-pending-http-full-ledger", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
@@ -446,6 +454,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required", script);
         Assert.Contains("Use scripts/llmgw-rollback-inproc.sh for emergency rollback", script);
         Assert.DoesNotContain("已跳过发布证据门", script);
+        var protocolCanaryIdx = script.IndexOf("python3 scripts/llmgw-protocol-canary.py", StringComparison.Ordinal);
+        var runtimeGatesIdx = script.IndexOf("--require-runtime-gates", StringComparison.Ordinal);
+        Assert.True(protocolCanaryIdx >= 0 && runtimeGatesIdx >= 0 && protocolCanaryIdx < runtimeGatesIdx);
     }
 
     [Fact]

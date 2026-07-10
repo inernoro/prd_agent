@@ -49,3 +49,4 @@
 | ops | scripts | LLM Gateway canary 与 http-full 生产阶段默认采集四协议 canary 证据，避免维护窗口遗漏协议入口验证 |
 | security | prd-llmgw | LLM Gateway full-http runtime gate 要求同 commit 台账包含 protocol canary required 与 JSON 证据，避免跳过四协议样本仍显示 ready |
 | polish | prd-llmgw-web | LLM Gateway 概览页 full-http 台账事实展示 protocol canary 状态，便于发布复核 |
+| ops | scripts | LLM Gateway exec_dep 在 post-deploy runtime gates 前生成 protocol canary 证据，避免 full-http 阶段先判 gate 后产证据 |

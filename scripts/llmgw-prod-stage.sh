@@ -818,19 +818,6 @@ else:
             + " --report-md "
             + os.environ.get("LLMGW_DRY_RUN_PROD_HEALTH_PREFLIGHT_MD", "")
         )
-    if os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_REQUIRED", "0") == "1":
-        commands.append(
-            "GW_KEY=${LLMGW_GATE_KEY} "
-            "python3 scripts/llmgw-protocol-canary.py --base ${LLMGW_GATE_BASE} "
-            "--expect-commit "
-            + commit
-            + " --execute --max-runtime-calls "
-            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", "4")
-            + " --json-out "
-            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_JSON", "")
-            + " --report-md "
-            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MD", "")
-        )
     if os.environ.get("LLMGW_DRY_RUN_ROLLOUT_STATUS_ENABLED", "0") == "1":
         commands.append(
             "GW_KEY=${LLMGW_GATE_KEY} "
@@ -857,6 +844,19 @@ else:
     if os.environ.get("LLMGW_DRY_RUN_REUSE_STATIC_DIST", "0") in ("1", "true", "yes"):
         exec_dep = "PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 " + exec_dep
     commands.append(exec_dep)
+    if os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_REQUIRED", "0") == "1":
+        commands.append(
+            "exec_dep.sh post-deploy before runtime-gates: GW_KEY=${LLMGW_GATE_KEY} "
+            "python3 scripts/llmgw-protocol-canary.py --base ${LLMGW_GATE_BASE} "
+            "--expect-commit "
+            + commit
+            + " --execute --max-runtime-calls "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", "4")
+            + " --json-out "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_JSON", "")
+            + " --report-md "
+            + os.environ.get("LLMGW_DRY_RUN_PROTOCOL_CANARY_MD", "")
+        )
     if os.environ.get("LLMGW_DRY_RUN_ASR_HTTP_CANARY_ENABLED", "0") == "1":
         commands.append(
             "PRD_AGENT_BASE=${PRD_AGENT_BASE:-${LLMGW_STAGE_MAP_BASE:-}} "
@@ -1486,6 +1486,10 @@ export GW_SMOKE_ROUTE_MODEL_TYPE="${GW_SMOKE_ROUTE_MODEL_TYPE:-$smoke_route_mode
 export GW_SMOKE_ROUTE_POOL_ID="${GW_SMOKE_ROUTE_POOL_ID:-$smoke_route_pool_id}"
 export GW_SMOKE_ROUTE_PINNED_PLATFORM_ID="${GW_SMOKE_ROUTE_PINNED_PLATFORM_ID:-$smoke_route_pinned_platform_id}"
 export GW_SMOKE_ROUTE_PINNED_MODEL_ID="${GW_SMOKE_ROUTE_PINNED_MODEL_ID:-$smoke_route_pinned_model_id}"
+export LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY="${LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY:-$run_protocol_canary}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-$protocol_canary_json}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-$protocol_canary_md}"
+export LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-$protocol_canary_max_runtime_calls}"
 export LLMGW_GATE_SHADOW_SINCE_HOURS="${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
 export LLMGW_GATE_HEALTH_SAMPLES="${LLMGW_GATE_HEALTH_SAMPLES:-3}"
 export LLMGW_GATE_HEALTH_INTERVAL_SECONDS="${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
