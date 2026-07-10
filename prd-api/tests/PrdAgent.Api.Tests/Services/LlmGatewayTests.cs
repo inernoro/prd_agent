@@ -727,6 +727,36 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public void OpenAIAdapter_ParseExtensions_PreservesChoiceLogprobs()
+    {
+        var adapter = new OpenAIGatewayAdapter();
+        var responseBody = """
+        {
+          "choices": [
+            {
+              "message": { "role": "assistant", "content": "hi" },
+              "logprobs": {
+                "content": [
+                  { "token": "hi", "logprob": -0.1, "top_logprobs": [ { "token": "hi", "logprob": -0.1 } ] }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+        var extensions = adapter.ParseExtensions(responseBody);
+
+        Assert.NotNull(extensions);
+        Assert.True(extensions!.ContainsKey("logprobs"));
+        var logprobs = Assert.IsType<JsonObject>(extensions["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("hi", (string?)first["token"]);
+        Assert.Equal(-0.1, (double?)first["logprob"]);
+    }
+
+    [Fact]
     public async Task SendAsync_WhenVisionModelExplicitlyUnsupported_ShouldFailBeforeHttp()
     {
         var gateway = CreateCapabilityGateGateway(
@@ -1217,6 +1247,79 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendAsync_PreservesOpenAiLogprobsInExtensions()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a",
+                Name = "Pool A",
+                Code = "pool-a",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var http = new SequenceHttpClientFactory((200, """
+        {
+          "choices": [
+            {
+              "message": { "content": "ok" },
+              "finish_reason": "stop",
+              "logprobs": {
+                "content": [
+                  { "token": "ok", "logprob": -0.2 }
+                ]
+              }
+            }
+          ],
+          "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        }
+        """));
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["logprobs"] = true,
+                ["top_logprobs"] = 1
+            }
+        });
+
+        Assert.True(response.Success);
+        Assert.NotNull(response.Extensions);
+        var logprobs = Assert.IsType<JsonObject>(response.Extensions!["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("ok", (string?)first["token"]);
+    }
+
+    [Fact]
     public async Task StreamAsync_WhenAutoProviderReturnsRetryableStatusBeforeOutput_ShouldUseNextCandidate()
     {
         var resolver = new InMemoryModelResolver()
@@ -1425,6 +1528,49 @@ public class LlmGatewayTests
         Assert.DoesNotContain("image%5B1%5D", body);
         Assert.DoesNotContain("name=\"image[0]\"", body);
         Assert.DoesNotContain("name=\"image[1]\"", body);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "claude-opus-via-compatible-platform",
+            ActualPlatformId = "mixed-platform",
+            ActualPlatformName = "Mixed Platform",
+            PlatformType = "openai",
+            Protocol = "claude",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-claude",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = "hi"
+                    }
+                },
+                ["max_tokens"] = 8,
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var uri = Assert.Single(http.RequestUris);
+        Assert.Equal("https://provider.example.com/v1/messages", uri);
+        var body = Assert.Single(http.RequestBodies);
+        Assert.Contains("\"model\":\"claude-opus-via-compatible-platform\"", body);
     }
 
     [Fact]
@@ -1948,23 +2094,26 @@ internal sealed class SequenceHttpClientFactory : IHttpClientFactory
 {
     private readonly Queue<(int StatusCode, string Body)> _responses;
     public List<string> RequestBodies { get; } = new();
+    public List<string> RequestUris { get; } = new();
 
     public SequenceHttpClientFactory(params (int StatusCode, string Body)[] responses)
     {
         _responses = new Queue<(int StatusCode, string Body)>(responses);
     }
 
-    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies));
+    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris));
 }
 
 internal sealed class SequenceHttpMessageHandler(
     Queue<(int StatusCode, string Body)> responses,
-    List<string> requestBodies) : HttpMessageHandler
+    List<string> requestBodies,
+    List<string> requestUris) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult() ?? "";
         requestBodies.Add(body);
+        requestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
         var next = responses.Count > 0
             ? responses.Dequeue()
             : (200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}");

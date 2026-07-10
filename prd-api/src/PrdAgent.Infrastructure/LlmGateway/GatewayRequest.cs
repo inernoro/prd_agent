@@ -170,6 +170,11 @@ public class GatewayRequestContext
     public string? SessionId { get; init; }
 
     /// <summary>
+    /// MAP 业务运行 ID。用于从 GW 请求日志反查到业务 run。
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
     /// 用户组 ID
     /// </summary>
     public string? GroupId { get; init; }
@@ -272,6 +277,7 @@ public class GatewayRequestContext
         {
             RequestId = source?.RequestId,
             SessionId = source?.SessionId,
+            RunId = source?.RunId,
             GroupId = source?.GroupId,
             UserId = source?.UserId,
             ViewRole = source?.ViewRole,
@@ -335,6 +341,7 @@ public sealed class GatewayIngressRequest
             {
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
+                RunId = Context?.RunId,
                 GroupId = Context?.GroupId,
                 UserId = Context?.UserId,
                 ViewRole = Context?.ViewRole,
@@ -344,7 +351,7 @@ public sealed class GatewayIngressRequest
                 SystemPromptChars = Context?.SystemPromptChars,
                 SystemPromptText = Context?.SystemPromptText,
                 ImageReferences = Context?.ImageReferences,
-                GatewayTransport = Context?.GatewayTransport,
+                GatewayTransport = GatewayTransports.Http,
                 SourceSystem = SourceSystem,
                 IngressProtocol = IngressProtocol,
                 AppCallerTitle = AppCallerTitle,
@@ -369,6 +376,7 @@ public sealed class GatewayAppCallerRecord
     public string RequestType { get; set; } = string.Empty;
     public string SourceSystem { get; set; } = "external";
     public string IngressProtocol { get; set; } = string.Empty;
+    public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }
     public string Status { get; set; } = "discovered";
     public string? ModelPoolId { get; set; }
@@ -377,6 +385,9 @@ public sealed class GatewayAppCallerRecord
     public string? LastObservedModelPoolId { get; set; }
     public string? LastObservedModelPolicy { get; set; }
     public string? LastObservedParameterPolicy { get; set; }
+    public string? LastObservedRequestId { get; set; }
+    public string? LastObservedSessionId { get; set; }
+    public string? LastObservedRunId { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
@@ -503,6 +514,7 @@ public sealed class GatewayUpstreamProfileTestRequest
     public string? ProfileName { get; init; }
     public string? UserId { get; init; }
     public string? RequestId { get; init; }
+    public GatewayRequestContext? Context { get; init; }
     public int TimeoutSeconds { get; init; } = 30;
 }
 

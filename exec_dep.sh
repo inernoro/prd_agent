@@ -1107,6 +1107,57 @@ run_llmgw_post_deploy_verification_if_needed() {
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
   fi
 
+  protocol_canary_arg=""
+  run_protocol_canary="$(printf '%s' "${LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY:-0}" | xargs || true)"
+  case "$run_protocol_canary" in
+    1|true|TRUE|yes|YES|on|ON)
+      if [ ! -f "scripts/llmgw-protocol-canary.py" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requested but scripts/llmgw-protocol-canary.py is missing." >&2
+        exit 1
+      fi
+      if [ -z "$expect_commit" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requires immutable --commit/sha tag so --expect-commit can be enforced." >&2
+        exit 1
+      fi
+      protocol_canary_json="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}"
+      protocol_canary_md="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-}"
+      protocol_canary_max_runtime_calls="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-${LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}}"
+      if [ -z "$(printf '%s' "$protocol_canary_json" | xargs || true)" ]; then
+        echo "ERROR: LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=1 requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT." >&2
+        exit 1
+      fi
+      protocol_canary_json_dir="$(dirname -- "$protocol_canary_json")"
+      if [ -n "$protocol_canary_json_dir" ] && [ "$protocol_canary_json_dir" != "." ]; then
+        mkdir -p "$protocol_canary_json_dir"
+      fi
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_md_dir="$(dirname -- "$protocol_canary_md")"
+        if [ -n "$protocol_canary_md_dir" ] && [ "$protocol_canary_md_dir" != "." ]; then
+          mkdir -p "$protocol_canary_md_dir"
+        fi
+      fi
+      protocol_canary_report_args=""
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_report_args="--report-md $protocol_canary_md"
+      fi
+      echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
+      # shellcheck disable=SC2086
+      GW_KEY="$gate_key" python3 scripts/llmgw-protocol-canary.py \
+        --base "$gate_base" \
+        --expect-commit "$expect_commit" \
+        --execute \
+        --max-runtime-calls "$protocol_canary_max_runtime_calls" \
+        --json-out "$protocol_canary_json" \
+        $protocol_canary_report_args
+      protocol_canary_arg="--protocol-canary-json $protocol_canary_json"
+      ;;
+    *)
+      if [ -n "$(printf '%s' "${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}" | xargs || true)" ]; then
+        echo "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates"
+      fi
+      ;;
+  esac
+
   require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
   if [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
     echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
@@ -1119,7 +1170,7 @@ run_llmgw_post_deploy_verification_if_needed() {
       runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
     fi
     # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg --require-runtime-gates
+    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates
   else
     echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
   fi

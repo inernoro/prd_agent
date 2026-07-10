@@ -21,6 +21,7 @@ import type {
   LogsListParams,
   LogsMeta,
   LogsSummaryData,
+  ProtocolCoverageData,
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
@@ -205,6 +206,12 @@ export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {
 
 export function getLogsSummary(params: LogsListParams): Promise<ApiResponse<LogsSummaryData>> {
   return apiRequest<LogsSummaryData>('/logs/summary', { query: { ...params } });
+}
+
+export function getProtocolCoverage(params?: { releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ProtocolCoverageData>> {
+  return apiRequest<ProtocolCoverageData>('/protocol-coverage', {
+    query: { releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours },
+  });
 }
 
 export function getLogsTimeseries(params: LogsListParams): Promise<ApiResponse<TimeseriesData>> {

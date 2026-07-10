@@ -107,6 +107,8 @@ def _static_checks() -> list[dict]:
     rollout_ledger = rollout_ledger_path.read_text(encoding="utf-8") if rollout_ledger_path.exists() else ""
     prod_preflight_path = ROOT / "scripts/llmgw-prod-preflight.py"
     prod_preflight = prod_preflight_path.read_text(encoding="utf-8") if prod_preflight_path.exists() else ""
+    prod_health_preflight_path = ROOT / "scripts/llmgw-prod-health-preflight.py"
+    prod_health_preflight = prod_health_preflight_path.read_text(encoding="utf-8") if prod_health_preflight_path.exists() else ""
     upstream_readiness_path = ROOT / "scripts/llmgw-upstream-readiness.py"
     upstream_readiness = upstream_readiness_path.read_text(encoding="utf-8") if upstream_readiness_path.exists() else ""
     disk_guard_path = ROOT / "scripts/llmgw-disk-space-guard.sh"
@@ -306,6 +308,23 @@ def _static_checks() -> list[dict]:
     ))
 
     ok, detail = _contains_all(
+        prod_health_preflight,
+        [
+            "Read-only LLM Gateway production health preflight",
+            "/gw/v1/healthz",
+            "--expect-current-head",
+            "--check-auth-boundary",
+            "/gw/v1/route-self-test",
+            "/gw/runtime-gates",
+            "healthz commit mismatch",
+            "auth boundary expected 401",
+            "LLMGW_PROD_HEALTH_PREFLIGHT_JSON_OUT",
+            "never calls model providers",
+        ],
+    )
+    checks.append(_check("prod_health_preflight_is_readonly_commit_gate", ok, detail))
+
+    ok, detail = _contains_all(
         prod_stage_workflow,
         [
             "LLM Gateway Production Stage",
@@ -365,6 +384,9 @@ def _static_checks() -> list[dict]:
             "--main-ref \"$main_ref\"",
             "--evidence-dir \".llmgw-release-evidence\"",
             "--allow-out-of-order-reason \"$allow_out_of_order_reason\"",
+            "allow_missing_map_logs",
+            "INPUT_ALLOW_MISSING_MAP_LOGS",
+            "LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1",
             "scripts/llmgw-rollout-ledger.py audit",
             "--require-target-success",
             "stage-audit.json",
@@ -874,6 +896,7 @@ def _static_checks() -> list[dict]:
             "cds-compose.yml",
             "execdep.sh",
             "scripts/llmgw-protocol-router-audit.py",
+            "scripts/llmgw-protocol-canary.py",
             "scripts/llmgw-map-shadow-seed.py",
             "scripts/llmgw-report-agent-shadow-seed.py",
             "scripts/llmgw-config-authority-backup.sh",
@@ -914,6 +937,10 @@ def _static_checks() -> list[dict]:
             "protocol-router-audit.json",
             "protocolRouterAuditJson",
             "protocolRouterAuditMd",
+            "protocol-canary.json",
+            "protocolCanaryJson",
+            "protocolCanaryRequired",
+            "protocolCanaryMaxRuntimeCalls",
             "disableMapConfigFallbackForActiveAppCallers",
             "disable_map_fallback_default=true",
             "LLMGW_STAGE_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
@@ -923,6 +950,16 @@ def _static_checks() -> list[dict]:
             "run_protocol_router_audit_evidence",
             "scripts/llmgw-protocol-router-audit.py --json-out",
             "--protocol-router-audit-json \"$protocol_router_audit_json\"",
+            "LLMGW_STAGE_RUN_PROTOCOL_CANARY",
+            "LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS",
+            "protocol_canary_default=1",
+            "canary-*|http-full",
+            "run_protocol_canary_evidence",
+            "scripts/llmgw-protocol-canary.py",
+            "--expect-commit \"$commit\"",
+            "--max-runtime-calls \"$protocol_canary_max_runtime_calls\"",
+            "--protocol-canary-json \"$protocol_canary_json\"",
+            "--protocol-canary-required \"$run_protocol_canary\"",
             "video-canary.json",
             "asr-http-canary.json",
             "config-authority-backup.json",
@@ -954,6 +991,12 @@ def _static_checks() -> list[dict]:
             "scripts/llmgw-restore-shadow-safe.sh",
             "run_prod_preflight",
             "scripts/llmgw-prod-preflight.py --mode start",
+            "run_prod_health_preflight",
+            "scripts/llmgw-prod-health-preflight.py",
+            "prod-health-preflight.json",
+            "prodHealthPreflightRequired",
+            "--prod-health-preflight-json \"$prod_health_preflight_json\"",
+            "--prod-health-preflight-required \"$prod_health_preflight_required\"",
             "--prod-preflight-json \"$prod_preflight_json\"",
             "run_rollout_status_ready_gate",
             "scripts/llmgw-rollout-status.py",
@@ -1041,6 +1084,12 @@ def _static_checks() -> list[dict]:
             "append_parser.add_argument(\"--disable-map-config-fallback-for-active-app-callers\", default=\"0\")",
             "report_parser.add_argument(\"--disable-map-config-fallback-for-active-app-callers\", default=\"0\")",
             "\"prodPreflightJson\": args.prod_preflight_json",
+            "\"prodHealthPreflightJson\": args.prod_health_preflight_json",
+            "\"prodHealthPreflightRequired\": _bool_flag(args.prod_health_preflight_required)",
+            "_require_prod_health_preflight_for_commit",
+            "production health preflight evidence",
+            "append_parser.add_argument(\"--prod-health-preflight-json\", default=\"\")",
+            "report_parser.add_argument(\"--prod-health-preflight-json\", default=\"\")",
             "\"upstreamReadinessJson\": args.upstream_readiness_json",
             "\"upstreamReadinessRequired\": _bool_flag(args.upstream_readiness_required)",
             "_require_upstream_readiness",
@@ -1286,7 +1335,20 @@ def _static_checks() -> list[dict]:
             "python3 scripts/llmgw-serving-probe.py $probe_args",
             "LLM Gateway post-deploy serving probe",
             "LLM Gateway post-deploy D-layer smoke",
+            "LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY",
+            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT",
+            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD",
+            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS",
+            "protocol_canary_json_dir=\"$(dirname -- \"$protocol_canary_json\")\"",
+            "protocol_canary_md_dir=\"$(dirname -- \"$protocol_canary_md\")\"",
+            "mkdir -p \"$protocol_canary_json_dir\"",
+            "mkdir -p \"$protocol_canary_md_dir\"",
+            "LLM Gateway post-deploy protocol canary: required before runtime gates",
+            "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates",
+            "python3 scripts/llmgw-protocol-canary.py",
+            "protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"",
             "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only",
+            "$protocol_canary_arg --require-runtime-gates",
             "--allow-pending-http-full-ledger",
             "LLMGW_SKIP_RELEASE_GATE=1",
             "LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required",
@@ -1675,13 +1737,17 @@ def _protocol_router_target_audit() -> dict:
                 and payload.get("verdict") == "pass"
                 and payload.get("scope") == "static-code-and-document-evidence"
                 and payload.get("targetComplete") is False
+                and payload.get("runtimeEvidenceComplete") is False
+                and payload.get("progressPercent") is None
                 and bool(remaining_names)
             )
             detail = json.dumps({
                 "verdict": payload.get("verdict"),
                 "scope": payload.get("scope"),
                 "targetComplete": payload.get("targetComplete"),
+                "runtimeEvidenceComplete": payload.get("runtimeEvidenceComplete"),
                 "staticEvidencePercent": payload.get("staticEvidencePercent"),
+                "progressPercent": payload.get("progressPercent"),
                 "remainingRuntimeGates": remaining_names,
             }, ensure_ascii=False, sort_keys=True)
         except Exception as exc:
