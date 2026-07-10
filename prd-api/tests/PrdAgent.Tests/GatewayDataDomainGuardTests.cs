@@ -2063,6 +2063,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RunWithRequestCancellationAsync", endpoints);
         Assert.Contains("ExecuteRawWithIdempotencyAsync", endpoints);
         Assert.Contains("GATEWAY_OUTCOME_UNKNOWN", endpoints);
+        var rawEndpointStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
+        var rawEndpointEnd = endpoints.IndexOf("app.MapPost(\"/gw/v1/profile-test\"", rawEndpointStart, StringComparison.Ordinal);
+        var rawEndpoint = endpoints[rawEndpointStart..rawEndpointEnd];
+        Assert.True(
+            rawEndpoint.IndexOf("executionStore.BeginAsync", StringComparison.Ordinal)
+            < rawEndpoint.IndexOf("RecordAndCheckAppCallerGovernanceAsync", StringComparison.Ordinal),
+            "raw 幂等 replay 必须在预算预占与限流前返回");
         Assert.Contains("path.Equals(\"/gw/v1/profile-test\"", endpoints);
         Assert.Contains("return \"profile:test\"", endpoints);
         Assert.Contains("NormalizeGatewayStatusCode(value.Success, value.StatusCode)", endpoints);
@@ -2076,6 +2083,7 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
         Assert.Contains("llmgw_multipart_objects", httpClient);
         Assert.Contains("X-Gateway-App-Caller", httpClient);
+        Assert.Contains("TryDeserializeRawResponse", httpClient);
 
         Assert.Contains("ensure_serving_probe_evidence", stage);
         Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);

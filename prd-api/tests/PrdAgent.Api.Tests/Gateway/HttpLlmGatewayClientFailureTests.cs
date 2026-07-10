@@ -118,6 +118,25 @@ public class HttpLlmGatewayClientFailureTests
         ShouldContainText(llmStream[0].ErrorMessage, "401");
     }
 
+    [Fact]
+    public async Task StructuredRawFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":422,\"ErrorCode\":\"UPSTREAM_REJECTED\",\"ErrorMessage\":\"invalid image input\",\"LogId\":\"log-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.UnprocessableEntity, body));
+
+        var raw = await client.SendRawWithResolutionAsync(
+            RawRequest(),
+            new GatewayModelResolution { Success = true, ActualModel = "m1" });
+        var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+
+        raw.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        raw.ErrorMessage.ShouldBe("invalid image input");
+        raw.StatusCode.ShouldBe(422);
+        raw.LogId.ShouldBe("log-123");
+        profile.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        profile.StatusCode.ShouldBe(422);
+    }
+
     private static HttpLlmGatewayClient BuildClient(
         IHttpClientFactory factory,
         string baseUrl = "http://llmgw-serve.test")

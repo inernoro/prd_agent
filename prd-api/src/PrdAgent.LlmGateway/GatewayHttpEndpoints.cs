@@ -852,9 +852,6 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
-            var governanceResult = GovernanceResult(http, governance, jsonOpts);
-            if (governanceResult is not null) return governanceResult;
             var executionStore = services.GetService<GatewayRequestExecutionStore>();
             GatewayExecutionBeginResult? execution = null;
             if (executionStore is not null)
@@ -881,6 +878,15 @@ public static class GatewayHttpEndpoints
                             : "GATEWAY_REQUEST_IN_PROGRESS";
                     return Results.Json(GatewayRawResponse.Fail(code, "相同 requestId 的 raw 请求不能重复提交", 409), jsonOpts, statusCode: 409);
                 }
+            }
+
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governanceResult = GovernanceResult(http, governance, jsonOpts);
+            if (governanceResult is not null)
+            {
+                if (executionStore is not null && execution is not null)
+                    await executionStore.FailAsync(execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
+                return governanceResult;
             }
 
             GatewayCancellationLease? cancellation = null;
@@ -1955,6 +1961,14 @@ public static class GatewayHttpEndpoints
         if (decision.Budget.Rejected) return BudgetResult(decision.Budget, jsonOpts);
         if (decision.RateLimit.Rejected) return RateLimitResult(http, decision.RateLimit, jsonOpts);
         return null;
+    }
+
+    private static string GovernanceErrorCode(AppCallerGovernanceDecision decision)
+    {
+        if (decision.Status.Rejected) return "APP_CALLER_DISABLED";
+        if (decision.Budget.Rejected) return decision.Budget.ErrorCode;
+        if (decision.RateLimit.Rejected) return "APP_CALLER_RATE_LIMITED";
+        return "APP_CALLER_GOVERNANCE_REJECTED";
     }
 
     private static IResult StatusResult(AppCallerStatusDecision decision, JsonSerializerOptions jsonOpts)

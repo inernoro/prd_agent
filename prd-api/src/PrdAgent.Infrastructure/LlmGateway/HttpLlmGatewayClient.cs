@@ -281,13 +281,15 @@ public sealed class HttpLlmGatewayClient
             ApplyRoutingHeaders(req, outboundRequest.AppCallerCode, outboundRequest.Context);
             using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
+            var structured = TryDeserializeRawResponse(body);
+            if (structured is not null)
+                return structured;
             if (!resp.IsSuccessStatusCode)
             {
                 return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
                     $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
             }
-            var result = JsonSerializer.Deserialize<GatewayRawResponse>(body, JsonOpts);
-            return result ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
         }
         catch (Exception ex)
         {
@@ -307,14 +309,16 @@ public sealed class HttpLlmGatewayClient
             ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
             using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
+            var structured = TryDeserializeRawResponse(body);
+            if (structured is not null)
+                return structured;
             if (!resp.IsSuccessStatusCode)
             {
                 return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
                     $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
             }
 
-            var result = JsonSerializer.Deserialize<GatewayRawResponse>(body, JsonOpts);
-            return result ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
         }
         catch (Exception ex)
         {
@@ -399,6 +403,23 @@ public sealed class HttpLlmGatewayClient
         {
             message.Headers.Remove("X-Request-Id");
             message.Headers.TryAddWithoutValidation("X-Request-Id", context.RequestId);
+        }
+    }
+
+    private static GatewayRawResponse? TryDeserializeRawResponse(string body)
+    {
+        try
+        {
+            var result = JsonSerializer.Deserialize<GatewayRawResponse>(body, JsonOpts);
+            return result is not null
+                   && (result.StatusCode is >= 100 and <= 599
+                       || !string.IsNullOrWhiteSpace(result.ErrorCode))
+                ? result
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
