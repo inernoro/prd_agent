@@ -1475,9 +1475,11 @@ def _static_checks() -> list[dict]:
     ok, detail = _contains_all(
         compose + "\n" + cds_compose,
         [
-            "LlmGateway__Mode=${LLMGW_MODE:-inproc}",
+            "LlmGateway__Mode=${LLMGW_MODE}",
             "LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}",
             "LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}",
+            "LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}",
+            "LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}\"",
             "LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}",
             "LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}\"",
             "LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}",

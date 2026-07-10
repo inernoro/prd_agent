@@ -1,0 +1,11 @@
+[Unit]
+Description=Run LLM Gateway disk usage monitor every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=llmgw-disk-monitor.service
+
+[Install]
+WantedBy=timers.target

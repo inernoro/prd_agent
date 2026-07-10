@@ -478,9 +478,6 @@ config_value() {
 
 llmgw_mode_value() {
   value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  if [ -z "$value" ]; then
-    value="inproc"
-  fi
   printf '%s' "$value"
 }
 
@@ -503,6 +500,17 @@ llmgw_shadow_sample_allowlist_value() {
 guard_llmgw_prod_stage_context_if_needed() {
   mode_raw="$(llmgw_mode_value)"
   mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  if [ -z "$mode" ]; then
+    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
+    exit 1
+  fi
+  case "$mode" in
+    http|shadow|inproc) ;;
+    *)
+      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
+      exit 1
+      ;;
+  esac
   allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
@@ -802,7 +810,7 @@ run_llmgw_release_gate_if_needed() {
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 
@@ -1057,7 +1065,7 @@ run_llmgw_release_gate_if_needed() {
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
