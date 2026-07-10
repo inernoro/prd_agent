@@ -45,3 +45,4 @@
 | ops | scripts | 新增 LLM Gateway 正式环境只读 health preflight，发布前可确认线上 commit 与鉴权边界，不触发模型请求 |
 | ops | scripts | LLM Gateway rollout ledger 支持记录并校验正式环境 health preflight JSON，canary/http 阶段可绑定同 commit 线上健康证据 |
 | ops | scripts | LLM Gateway 生产 stage runner 自动生成 health preflight 证据，并在 ledger 中记录同 commit 健康检查结果 |
+| ops | scripts | LLM Gateway 生产 stage runner 支持显式开启四协议 canary 证据，绑定 release commit 并限制 runtime 调用次数 |

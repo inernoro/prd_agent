@@ -896,6 +896,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--prod-health-preflight-json \\\"$prod_health_preflight_json\\\"", readiness);
         Assert.Contains("--prod-health-preflight-required \\\"$prod_health_preflight_required\\\"", readiness);
         Assert.Contains("prodHealthPreflightRequired", readiness);
+        Assert.Contains("protocol-canary.json", readiness);
+        Assert.Contains("LLMGW_STAGE_RUN_PROTOCOL_CANARY", readiness);
+        Assert.Contains("LLMGW_STAGE_PROTOCOL_CANARY_MAX_RUNTIME_CALLS", readiness);
+        Assert.Contains("run_protocol_canary_evidence", readiness);
+        Assert.Contains("scripts/llmgw-protocol-canary.py", readiness);
+        Assert.Contains("--expect-commit \\\"$commit\\\"", readiness);
+        Assert.Contains("--max-runtime-calls \\\"$protocol_canary_max_runtime_calls\\\"", readiness);
+        Assert.Contains("--protocol-canary-json \\\"$protocol_canary_json\\\"", readiness);
+        Assert.Contains("--protocol-canary-required \\\"$run_protocol_canary\\\"", readiness);
+        Assert.Contains("protocolCanaryJson", readiness);
+        Assert.Contains("protocolCanaryRequired", readiness);
         Assert.Contains("serving-probe.json", readiness);
         Assert.Contains("rollout-status.json", readiness);
         Assert.Contains("rolloutStatusRequired", readiness);
