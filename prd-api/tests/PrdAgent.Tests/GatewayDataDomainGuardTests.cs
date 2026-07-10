@@ -1767,6 +1767,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--skip-text-seeds", script);
         Assert.Contains("skipTextSeeds", script);
         Assert.Contains("--skip-text-seeds cannot be combined", script);
+        Assert.Contains("--skip-text-seeds requires at least one image, vision, video, or ASR include flag", script);
+        Assert.Contains("focused_non_text_seed_requested", script);
         Assert.Contains("llmgw-report-agent-shadow-seed.py", script);
         Assert.Contains("\"LLMGW_SHADOW_SAMPLE_KEY\": FORCE_SHADOW_SAMPLE_KEY", script);
         Assert.Contains("/api/v1/chat-runs/", script);

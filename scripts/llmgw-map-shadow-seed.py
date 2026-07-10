@@ -1682,6 +1682,23 @@ def main() -> int:
         raise SystemExit("--iterations must be >= 1")
     if args.skip_text_seeds and (args.include_desktop_chat_run or args.include_open_platform):
         raise SystemExit("--skip-text-seeds cannot be combined with --include-desktop-chat-run or --include-open-platform because those paths require a seeded document/session")
+    focused_non_text_seed_requested = any(
+        (
+            args.include_open_api_image,
+            args.include_image_raw,
+            args.include_image_worker_text2img,
+            args.include_image_worker_img2img,
+            args.include_image_worker_vision,
+            args.include_video_direct,
+            args.include_visual_video_direct,
+            args.include_transcript_asr,
+            args.include_document_store_subtitle_asr,
+            args.include_video_to_doc_asr,
+            args.include_video_to_text_asr_workflow,
+        )
+    )
+    if args.skip_text_seeds and not focused_non_text_seed_requested:
+        raise SystemExit("--skip-text-seeds requires at least one image, vision, video, or ASR include flag")
     if args.max_video_submits < 1:
         raise SystemExit("--max-video-submits must be >= 1")
 
