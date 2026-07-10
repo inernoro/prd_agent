@@ -15,6 +15,7 @@ import { createGithubOAuthRouter } from '../../src/routes/github-oauth.js';
 import { StateService } from '../../src/services/state.js';
 import { GitHubOAuthClient, type FetchLike } from '../../src/services/github-oauth-client.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeFakeFetch(scripts: Array<{ match: RegExp; response: any; status?: number }>): FetchLike {
   return async function (url, init) {
     for (const script of scripts) {
@@ -97,10 +98,11 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('not configured', () => {

@@ -238,6 +238,26 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
     public JsonArray? ParseToolCalls(string responseBody)
         => ExtractToolCallArray(responseBody, "message");
 
+    public Dictionary<string, JsonNode?>? ParseExtensions(string responseBody)
+    {
+        try
+        {
+            if (JsonNode.Parse(responseBody) is not JsonObject root) return null;
+            if (root["choices"] is not JsonArray choices || choices.Count == 0) return null;
+            if (choices[0] is not JsonObject first) return null;
+            if (first["logprobs"] is null) return null;
+
+            return new Dictionary<string, JsonNode?>
+            {
+                ["logprobs"] = first["logprobs"]?.DeepClone()
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// 从 OpenAI 响应/增量里取 tool_calls 数组并 DeepClone（脱钩 parent）。
     /// container = "message"（非流式 choices[0].message.tool_calls）或 "delta"（流式 choices[0].delta.tool_calls）。

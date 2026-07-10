@@ -111,9 +111,12 @@ function ErrorToastPortal({
         bottom: 16,
         zIndex: 99999,
         maxWidth: 360,
-        background: 'var(--card, #1E1F20)',
-        color: 'var(--card-foreground, #e8e8ec)',
-        border: '1px solid rgba(220, 38, 38, 0.45)',
+        // --card 是 HSL 三元组（如 '240 4% 12%'），必须 hsl() 包裹才是合法颜色；
+        // 旧写法 var(--card, #1E1F20) 解析出非法值导致属性整体失效（fallback 不触发），
+        // Toast 双主题下都没有背景。不写 fallback——缺定义时 bug 立刻可见。
+        background: 'hsl(var(--card))',
+        color: 'hsl(var(--card-foreground))',
+        border: '1px solid hsl(var(--destructive) / 0.45)',
         borderRadius: 8,
         padding: '12px 14px',
         boxShadow: '0 8px 24px rgba(0,0,0,0.18)',

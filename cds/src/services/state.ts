@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -22,11 +22,36 @@ import {
 } from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+/** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
+ *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
+const MAX_ARCHIVES_PER_BRANCH = 10;
+const MAX_ARCHIVE_BYTES_PER_BRANCH = 2 * 1024 * 1024;
+/** 分支删除后黑匣子的保留窗口：archiver 的产品语义是「容器删了日志还在」（事后取证），
+ *  所以 removeBranch 不清归档；超过窗口的孤儿归档在启动时统一裁剪。 */
+const ORPHAN_ARCHIVE_RETENTION_MS = 14 * 24 * 3600 * 1000;
 const PORT_ALLOC_SCAN_SPAN = 40_000;
 const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
+
+/** 按「最新优先」裁剪一条分支的黑匣子列表：条数 ≤ MAX_ARCHIVES_PER_BRANCH 且累计字节 ≤ MAX_ARCHIVE_BYTES_PER_BRANCH。 */
+function trimArchiveList(list: ContainerLogArchiveEntry[]): ContainerLogArchiveEntry[] {
+  if (!Array.isArray(list) || list.length === 0) return list;
+  const kept: ContainerLogArchiveEntry[] = [];
+  let bytes = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const entry = list[i];
+    const size = typeof entry?.byteLength === 'number' ? entry.byteLength : Buffer.byteLength(entry?.logs || '', 'utf8');
+    if (kept.length >= MAX_ARCHIVES_PER_BRANCH) break;
+    if (kept.length > 0 && bytes + size > MAX_ARCHIVE_BYTES_PER_BRANCH) break;
+    kept.push(entry);
+    bytes += size;
+  }
+  kept.reverse();
+  return kept.length === list.length ? list : kept;
+}
+
 function readGitOriginUrl(repoRoot?: string): string {
   if (!repoRoot) return '';
   try {
@@ -328,6 +353,15 @@ export class StateService {
       // 如果 activity log 已经能证明触发源是 webhook / AI / 系统，则修正
       // lastStopSource，避免卡片统计继续把系统清理误报成用户操作。
       this.migrateLegacyStopAttribution();
+      // 2026-07-09: 黑匣子归档历史上无任何上限（对比 logs 有 MAX_LOGS_PER_BRANCH），
+      // 且分支删除后永久留在 state 里。启动时统一裁剪：存量按 per-branch 上限收敛，
+      // 已删分支的孤儿归档超过保留窗口后移除。
+      this.trimContainerLogArchivesOnLoad();
+      // 2026-07-09: buildQueue 是构建并发闸的瞬态排队快照（内存队列），CDS 重启后
+      // 必然过期——清残留，否则分支卡会永远显示「排队中」。
+      for (const branch of Object.values(this.state.branches)) {
+        if (branch.buildQueue) branch.buildQueue = undefined;
+      }
     } else {
       this.state = emptyState();
       // Fresh installs start with zero projects. The project-list empty
@@ -450,6 +484,42 @@ export class StateService {
         continue;
       }
       changed = true;
+    }
+    if (changed) this.save();
+  }
+
+  /**
+   * 2026-07-09 存量裁剪：黑匣子归档 per-branch 上限 + 孤儿归档保留窗口。
+   * removeBranch 有意不清 containerLogArchives（archiver 的语义是「容器删了
+   * 日志还在」，供事后取证）——无界增长由这里兜底：分支已不存在且最新一条
+   * 归档超过 ORPHAN_ARCHIVE_RETENTION_MS 的，整个 key 移除；其余按
+   * trimArchiveList 收敛。孤儿 logs key（appendLog 已有 10 条上限）随
+   * 归档同窗口清理，避免几百个已删分支的键无限挂在 state 上。
+   */
+  private trimContainerLogArchivesOnLoad(): void {
+    const archives = this.state.containerLogArchives;
+    if (!archives) return;
+    const now = Date.now();
+    let changed = false;
+    for (const [branchId, list] of Object.entries(archives)) {
+      const branchExists = Boolean(this.state.branches[branchId]);
+      if (!branchExists) {
+        const newestAt = (list || []).reduce((max, e) => {
+          const t = Date.parse(e?.capturedAt || '');
+          return Number.isFinite(t) && t > max ? t : max;
+        }, 0);
+        if (newestAt === 0 || now - newestAt > ORPHAN_ARCHIVE_RETENTION_MS) {
+          delete archives[branchId];
+          if (this.state.logs[branchId]) delete this.state.logs[branchId];
+          changed = true;
+          continue;
+        }
+      }
+      const trimmed = trimArchiveList(list || []);
+      if (trimmed !== list) {
+        archives[branchId] = trimmed;
+        changed = true;
+      }
     }
     if (changed) this.save();
   }
@@ -1157,6 +1227,7 @@ export class StateService {
       logs,
     };
     this.state.containerLogArchives[branchId].push(archived);
+    this.state.containerLogArchives[branchId] = trimArchiveList(this.state.containerLogArchives[branchId]);
     return archived;
   }
 
@@ -2119,12 +2190,28 @@ export class StateService {
   }
 
   /**
+   * Resolve a GlobalAgentKey's effective access scope. Legacy entries (signed
+   * before the 2026-07-09 unified-authorization model) have no `access` field
+   * and are treated as full admin — bootstrap-equivalent, no regression for
+   * existing deployments. See types.ts AgentKeyAccess.
+   */
+  static resolveGlobalAgentKeyAccess(entry: Pick<GlobalAgentKey, 'access'>): AgentKeyAccess {
+    const a = entry.access;
+    if (!a) return { canCreateProjects: true, projects: 'all' };
+    return {
+      canCreateProjects: a.canCreateProjects === true,
+      projects: a.projects === 'all' ? 'all' : Array.isArray(a.projects) ? a.projects : [],
+    };
+  }
+
+  /**
    * Parse an incoming plaintext `cdsg_<suffix>` and find the matching
    * non-revoked GlobalAgentKey. Parallels findAgentKeyForAuth but
    * without the project lookup step — all global keys live in one
-   * array. Returns null on any failure.
+   * array. Returns the keyId plus the resolved access scope so the auth
+   * layer can enforce it. Returns null on any failure.
    */
-  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string } | null {
+  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
@@ -2134,7 +2221,7 @@ export class StateService {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
         if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
-          return { keyId: entry.id };
+          return { keyId: entry.id, access: StateService.resolveGlobalAgentKeyAccess(entry) };
         }
       } catch {
         /* malformed hash in state, skip */
@@ -3824,9 +3911,30 @@ export class StateService {
     fs.writeFileSync(file, data);
   }
 
-  /** Read a stored report asset (data + content-type), or undefined when the
-   *  name is illegal / file missing. Only `<hex>.<ext>` names are accepted. */
-  readReportAsset(name: string): { data: Buffer; contentType: string } | undefined {
+  /**
+   * Async variant of writeReportAsset — HTTP 请求路径必须用这个
+   * （routes/reports.ts），同步版仅供测试/非请求路径使用。
+   * 截图资产是整图 Buffer，同步写会阻塞单进程服务器。
+   */
+  async writeReportAssetAsync(name: string, data: Buffer): Promise<void> {
+    const safe = path.basename(name);
+    const dir = this.getReportAssetsBase();
+    const file = path.join(dir, safe);
+    try {
+      await fs.promises.access(file);
+      return; // content-addressed：同名即同内容，已存在就跳过
+    } catch { /* not exists — write below */ }
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(file, data);
+  }
+
+  /**
+   * 校验资产名并返回磁盘路径 + content-type，不读文件内容。
+   * 供路由用 fs.createReadStream 流式响应（避免整图 readFileSync 进内存
+   * 再一次性写 res）。名字非法时返回 undefined；文件是否存在由调用方
+   * 通过流的 error 事件处理。
+   */
+  resolveReportAssetFile(name: string): { filePath: string; contentType: string } | undefined {
     const safe = path.basename(name);
     if (safe !== name || !/^[a-f0-9]{16,64}\.[a-z0-9]+$/i.test(safe)) return undefined;
     const ext = safe.slice(safe.lastIndexOf('.') + 1).toLowerCase();
@@ -3837,9 +3945,19 @@ export class StateService {
       : ext === 'webp' ? 'image/webp'
       : ext === 'svg' ? 'image/svg+xml'
       : 'application/octet-stream';
+    return { filePath: path.join(this.getReportAssetsBase(), safe), contentType };
+  }
+
+  /** Read a stored report asset (data + content-type), or undefined when the
+   *  name is illegal / file missing. Only `<hex>.<ext>` names are accepted.
+   *  HTTP 路由不要用这个（整图 readFileSync 阻塞事件循环）——用
+   *  resolveReportAssetFile + createReadStream 流式响应。 */
+  readReportAsset(name: string): { data: Buffer; contentType: string } | undefined {
+    const resolved = this.resolveReportAssetFile(name);
+    if (!resolved) return undefined;
     try {
-      const data = fs.readFileSync(path.join(this.getReportAssetsBase(), safe));
-      return { data, contentType };
+      const data = fs.readFileSync(resolved.filePath);
+      return { data, contentType: resolved.contentType };
     } catch {
       return undefined;
     }
@@ -3870,6 +3988,33 @@ export class StateService {
     publishedAt?: string | null;
     createdBy?: string;
   }): AcceptanceReportMeta {
+    const meta = this.buildAcceptanceReportMeta(input);
+    fs.mkdirSync(this.getReportsBase(), { recursive: true });
+    fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
+    this.state.acceptanceReports!.push(meta);
+    this.save();
+    return meta;
+  }
+
+  /**
+   * Async variant of createAcceptanceReport — HTTP 请求路径必须用这个
+   * （报告 HTML 可达 MB 级，同步写会阻塞单进程服务器）。
+   */
+  async createAcceptanceReportAsync(
+    input: Parameters<StateService['createAcceptanceReport']>[0],
+  ): Promise<AcceptanceReportMeta> {
+    const meta = this.buildAcceptanceReportMeta(input);
+    await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+    await fs.promises.writeFile(this.reportFilePath(meta), input.content, 'utf-8');
+    this.state.acceptanceReports!.push(meta);
+    this.save();
+    return meta;
+  }
+
+  /** create 的元数据构建（sync/async 变体共享，无 IO）。 */
+  private buildAcceptanceReportMeta(
+    input: Parameters<StateService['createAcceptanceReport']>[0],
+  ): AcceptanceReportMeta {
     if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
     const now = new Date().toISOString();
     // 文件夹必须与报告同属一个项目作用域，否则忽略（防跨项目挂文件夹）。
@@ -3877,7 +4022,7 @@ export class StateService {
       ? (this.state.reportFolders || []).find((f) => f.id === input.folderId)
       : undefined;
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
-    const meta: AcceptanceReportMeta = {
+    return {
       id: crypto.randomUUID().replace(/-/g, ''),
       title: input.title,
       format: input.format,
@@ -3900,11 +4045,6 @@ export class StateService {
       createdAt: now,
       updatedAt: now,
     };
-    fs.mkdirSync(this.getReportsBase(), { recursive: true });
-    fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
-    this.state.acceptanceReports.push(meta);
-    this.save();
-    return meta;
   }
 
   /**
@@ -3955,6 +4095,59 @@ export class StateService {
         fs.renameSync(previousPath, nextPath);
       }
     }
+    this.applyAcceptanceReportFieldUpdates(meta, updates);
+    this.save();
+    return meta;
+  }
+
+  /**
+   * Async variant of updateAcceptanceReport — HTTP 请求路径必须用这个
+   * （PUT /reports/:id 重写 MB 级报告正文，同步写会阻塞单进程服务器）。
+   */
+  async updateAcceptanceReportAsync(
+    id: string,
+    updates: Parameters<StateService['updateAcceptanceReport']>[1],
+  ): Promise<AcceptanceReportMeta | null> {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    const previousPath = this.reportFilePath(meta);
+    if (typeof updates.title === 'string') meta.title = updates.title;
+    let formatChanged = false;
+    if (updates.format !== undefined && updates.format !== meta.format) {
+      meta.format = updates.format;
+      formatChanged = true;
+    }
+    if (typeof updates.content === 'string') {
+      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+      await fs.promises.writeFile(this.reportFilePath(meta), updates.content, 'utf-8');
+      meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath) {
+        try { await fs.promises.unlink(previousPath); } catch { /* best-effort cleanup of old extension */ }
+      }
+    } else if (formatChanged) {
+      const nextPath = this.reportFilePath(meta);
+      if (previousPath !== nextPath) {
+        // 对齐同步版守卫：仅当源存在且目标不存在才 rename
+        //（fs.promises.rename 在 POSIX 上会静默覆盖已存在目标，不能裸调）。
+        const prevExists = await fs.promises.access(previousPath).then(() => true, () => false);
+        const nextExists = await fs.promises.access(nextPath).then(() => true, () => false);
+        if (prevExists && !nextExists) {
+          await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+          await fs.promises.rename(previousPath, nextPath);
+        }
+      }
+    }
+    this.applyAcceptanceReportFieldUpdates(meta, updates);
+    this.save();
+    return meta;
+  }
+
+  /** update 的非 IO 字段应用（sync/async 变体共享）。 */
+  private applyAcceptanceReportFieldUpdates(
+    meta: AcceptanceReportMeta,
+    updates: Parameters<StateService['updateAcceptanceReport']>[1],
+  ): void {
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
@@ -3967,8 +4160,6 @@ export class StateService {
     if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
     if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;
     meta.updatedAt = new Date().toISOString();
-    this.save();
-    return meta;
   }
 
   /**

@@ -126,7 +126,7 @@ describe('Phase 6 prep — cdscli scan 输出 ↔ CDS parseCdsCompose 契约', (
       // prod mode label 也应该有(命令为空走默认)
       expect(backend!.deployModes!.prod).toBeDefined();
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -162,7 +162,7 @@ services:
       // 不输出 deploy-modes
       expect(app!.deployModes).toBeUndefined();
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

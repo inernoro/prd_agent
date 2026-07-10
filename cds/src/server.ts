@@ -56,7 +56,7 @@ import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { JanitorService } from './services/janitor.js';
-import type { CdsConfig, IShellExecutor } from './types.js';
+import type { CdsConfig, IShellExecutor, AgentKeyAccess } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
@@ -86,6 +86,32 @@ function getRemoteAddr(req: express.Request): string | undefined {
     || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
     || req.ip
     || req.socket?.remoteAddress;
+}
+
+/**
+ * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
+ *
+ * 一把 `projects: ['a']`（恰好一个项目）的 cdsg_ key，对项目级操作而言语义等同一把
+ * project a 的 cdsp_ key。CDS 有 11+ router、大量端点用「无 cdsProjectKey 即管理员」
+ * 的自定义守卫（reports/releases/scheduled-jobs/remote-hosts…），它们不认识 cdsAccess。
+ * 与其逐个 router 补 cdsAccess（打地鼠、易漏），不如让单项目 cdsg_ key 直接 stamp
+ * cdsProjectKey —— 于是它**透明继承**所有既有 cdsp_ 逐路由防护，一处收口、全局生效。
+ *
+ * 只对「恰好一个项目」stamp：'all' 是管理员（不 stamp），[] 是 create-only（走系统级
+ * 兜底），≥2 的多项目作用域目前在签发端被禁止（见 routes/projects.ts POST /global-agent-keys），
+ * 故不会到达这里。cdsAccess 仍并存，供 POST /projects 读 canCreateProjects 放行建项目。
+ */
+function stampSingleProjectScope(
+  req: express.Request,
+  match: { keyId: string; access: AgentKeyAccess },
+): void {
+  const projects = match.access.projects;
+  if (Array.isArray(projects) && projects.length === 1) {
+    const r = req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } };
+    if (!r.cdsProjectKey) {
+      r.cdsProjectKey = { projectId: projects[0], keyId: match.keyId };
+    }
+  }
 }
 
 function extractApiMutationContext(req: express.Request, deps: ServerDeps): {
@@ -1222,15 +1248,19 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
         };
       }
     }
-    // Global (bootstrap-equivalent) Agent Key (cdsg_<suffix>). Behaves
-    // like the static AI_ACCESS_KEY: no project scoping, free to hit
-    // POST /api/projects and cross-project routes. The UI must warn
-    // the user before issuing one (see agent-key-modal.js bootstrap
-    // confirmation). NOT stamping cdsProjectKey on purpose.
+    // Global (cdsg_<suffix>) Agent Key. Carries an explicit access scope
+    // (create-projects and/or a set/'all' of existing projects). We stamp
+    // req.cdsAccess so the enforcement hook (assertProjectAccess /
+    // POST /api/projects in routes/projects.ts) can honor it. Legacy keys
+    // resolve to full admin (see state.ts resolveGlobalAgentKeyAccess), so
+    // no regression.
     if (stateService && headerKey.startsWith('cdsg_')) {
       const match = stateService.findGlobalAgentKeyForAuth(headerKey);
       if (match) {
         stateService.touchGlobalAgentKeyLastUsed(match.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: match.keyId, access: match.access };
+        stampSingleProjectScope(req, match);
         return {
           id: `globalkey:${match.keyId}`,
           agentName: `AI (global key ${match.keyId})`,
@@ -2441,6 +2471,50 @@ export function createServer(deps: ServerDeps): express.Express {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
+      }
+    }
+    // Parallel fallback for cdsg_ global keys — stamp req.cdsAccess so scope
+    // enforcement works even when cookie auth is disabled (mirrors the cdsp_
+    // fallback above). Cheap no-op when header absent / key malformed.
+    if (h && h.startsWith('cdsg_') && !(req as unknown as { cdsAccess?: unknown }).cdsAccess) {
+      const gmatch = deps.stateService.findGlobalAgentKeyForAuth(h);
+      if (gmatch) {
+        deps.stateService.touchGlobalAgentKeyLastUsed(gmatch.keyId);
+        (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
+          .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
+        stampSingleProjectScope(req, gmatch);
+      }
+    }
+
+    // ── create-only 全局 Key 的系统级默认拒绝门卫（Codex P1 深层修复，2026-07-09）──
+    //
+    // 签发全局 Key 的默认作用域是「只能创建新项目」(canCreateProjects:true,
+    // projects:[])。这把 key 的**唯一**合法用途就是 POST /api/projects 建项目;建成
+    // 后立刻改用返回的项目级 cdsp_ key 操作新项目。它对任何现有资源都无授权。
+    //
+    // 但 CDS 有 11+ 个 router、大量端点历史上把「无 cdsProjectKey」当成管理员放行,
+    // 逐个补 assertProjectAccess/assertUnscopedAdmin 是打地鼠。这里在**所有 /api
+    // router 之前**加一道系统级兜底:create-only key 只允许「建项目 + 只读」,其余
+    // 一律 403。既堵死当前已知/未知的写路由绕过,又不影响带作用域的 cdsg_(projects
+    // 列表/all,走各自 assertProjectAccess)与 cdsp_/cookie/bootstrap。
+    const acc = (req as unknown as { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (
+      acc &&
+      acc.canCreateProjects === true &&
+      Array.isArray(acc.projects) &&
+      acc.projects.length === 0 &&
+      req.path.startsWith('/api/')
+    ) {
+      const method = req.method.toUpperCase();
+      const isRead = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+      const isCreateProject = method === 'POST' && req.path === '/api/projects';
+      if (!isRead && !isCreateProject) {
+        _res.status(403).json({
+          error: 'create_only_key_forbidden',
+          message:
+            '这把「只能创建新项目」的全局 Key 仅可调用创建项目（POST /api/projects）与只读接口。建项目后请改用返回的项目级 Key 操作该项目。',
+        });
+        return;
       }
     }
     next();

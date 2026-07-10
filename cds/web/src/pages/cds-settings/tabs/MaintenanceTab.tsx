@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { useNowTick } from '@/hooks/useNowTick';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 
 interface BranchMeta {
@@ -432,17 +433,14 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [runLog, setRunLog] = useState<string[]>([]);
   // 2026-05-04 v7(用户:'添加前端计时器,我倒要看看重启了多长时间')
   // runStartedAt:点更新时记 ms 时间戳;runEndedAt:done/error/reload 时记停。
-  // tickClock 强制每 250ms 重渲染让 elapsed 实时跳秒。
+  // 2026-07-09 性能：原 250ms tick 让 2100 行页签每秒整树重渲染 4 次
+  //（自更新持续数分钟）。mm:ss 显示 1s 粒度足够，降为 useNowTick 1s；
+  // 同一个 now 也驱动下方 lastTickAt 心跳失联检测（30s 阈值,1s 粒度无损）。
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runEndedAt, setRunEndedAt] = useState<number | null>(null);
-  const [, setTickClock] = useState(0);
-  useEffect(() => {
-    if (runState !== 'running') return;
-    const t = window.setInterval(() => setTickClock(Date.now()), 250);
-    return () => window.clearInterval(t);
-  }, [runState]);
+  const now = useNowTick(runState === 'running');
   const elapsedRunMs = runStartedAt
-    ? (runEndedAt ?? Date.now()) - runStartedAt
+    ? (runEndedAt ?? now) - runStartedAt
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
@@ -463,20 +461,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const liveStartedAtMs = (() => {
     const serverMs = activeSelfUpdate?.startedAt ? Date.parse(activeSelfUpdate.startedAt) : NaN;
     if (Number.isFinite(serverMs)) return serverMs;
-    return runStartedAt ?? Date.now();
+    return runStartedAt ?? now;
   })();
-  const liveElapsedMs = Math.max(0, (runEndedAt ?? Date.now()) - liveStartedAtMs);
+  const liveElapsedMs = Math.max(0, (runEndedAt ?? now) - liveStartedAtMs);
 
   // 自更新历史:统一数据源,进度条 + 历史列表共用一份(不各自 fetch)。
   const { historyState: selfHistoryState, manualRefresh: refreshSelfHistory } = useSelfUpdateHistory();
   const selfHistoryRecords = selfHistoryState.status === 'ok' ? selfHistoryState.records : [];
 
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
-  // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
+  // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 useNowTick 的 now 触发
   // 重渲染,实时检测距上次心跳超过 30s → 显示"失联 N 秒"红色态。
   // interrupted=true(启动时扫到 sidecar pid 已死)直接显示"已中断"。
   const lastTickStaleMs = activeSelfUpdate?.lastTickAt
-    ? Date.now() - Date.parse(activeSelfUpdate.lastTickAt)
+    ? now - Date.parse(activeSelfUpdate.lastTickAt)
     : 0;
   const isStale = activeSelfUpdate && lastTickStaleMs > 30_000;
   const isInterrupted = !!activeSelfUpdate?.interrupted;

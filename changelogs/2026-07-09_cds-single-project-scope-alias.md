@@ -1,0 +1,1 @@
+| fix | cds | 彻底堵住带作用域全局 Key 的跨 router 越界（Codex P1，reports/releases/scheduled-jobs 等）：单项目 cdsg_ Key 现同时 stamp cdsProjectKey，透明继承所有既有 cdsp_ 逐路由防护，一处收口全局生效；多项目(≥2)作用域签发暂禁（防无法用单一别名表达的越界），仅放行 create-only / 单项目 / 所有项目三档 |

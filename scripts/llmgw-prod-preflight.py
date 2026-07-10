@@ -298,7 +298,100 @@ def _gateway_checks(args: argparse.Namespace) -> list[dict]:
         checks.append({"name": "gateway_key_configured", "ok": False, "detail": f"missing {_join_unique(key_env_names)}"})
     else:
         checks.append({"name": "gateway_key_configured", "ok": True, "detail": f"keyEnv={key_name}"})
+        route_self_test = _http_json(
+            f"{base}/route-self-test",
+            headers={"X-Gateway-Key": key, "Accept": "application/json"},
+            timeout=args.timeout,
+        )
+        checks.append(_gateway_route_self_test_result(route_self_test, key_name))
     return checks
+
+
+def _gateway_route_self_test_result(result: dict, key_name: str) -> dict:
+    payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+    cases = payload.get("cases") if "cases" in payload else payload.get("Cases")
+    if not isinstance(cases, list):
+        cases = []
+    protocols = sorted({
+        str((item.get("ingressProtocol") if isinstance(item, dict) else "") or (item.get("IngressProtocol") if isinstance(item, dict) else "")).strip()
+        for item in cases
+        if isinstance(item, dict)
+    })
+    total = payload.get("total") if "total" in payload else payload.get("Total")
+    passed = payload.get("passed") if "passed" in payload else payload.get("Passed")
+    status = str(payload.get("status") if "status" in payload else payload.get("Status") or "").strip().lower()
+    mode = str(payload.get("mode") if "mode" in payload else payload.get("Mode") or "").strip().lower()
+    upstream_called = payload.get("upstreamCalled") if "upstreamCalled" in payload else payload.get("UpstreamCalled")
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    ok = (
+        result.get("ok") is True
+        and status == "ok"
+        and mode == "dry-run"
+        and upstream_called is False
+        and isinstance(total, int)
+        and isinstance(passed, int)
+        and total == passed
+        and total >= len(required_protocols)
+        and not missing_protocols
+    )
+    return {
+        "name": "gateway_route_self_test",
+        "ok": ok,
+        "detail": json.dumps({
+            "status": result.get("status"),
+            "keyEnv": key_name,
+            "selfTestStatus": status,
+            "mode": mode,
+            "upstreamCalled": upstream_called,
+            "total": total,
+            "passed": passed,
+            "protocols": protocols,
+            "missingProtocols": missing_protocols,
+        }, ensure_ascii=False),
+    }
+
+
+def _self_test() -> int:
+    ready = _gateway_route_self_test_result({
+        "ok": True,
+        "status": 200,
+        "payload": {
+            "Status": "ok",
+            "Mode": "dry-run",
+            "UpstreamCalled": False,
+            "Total": 4,
+            "Passed": 4,
+            "Cases": [
+                {"IngressProtocol": "gw-native"},
+                {"IngressProtocol": "openai-compatible"},
+                {"IngressProtocol": "claude-compatible"},
+                {"IngressProtocol": "gemini-compatible"},
+            ],
+        },
+    }, "TEST_KEY")
+    blocked = _gateway_route_self_test_result({
+        "ok": True,
+        "status": 200,
+        "payload": {
+            "Status": "ok",
+            "Mode": "dry-run",
+            "UpstreamCalled": False,
+            "Total": 3,
+            "Passed": 3,
+            "Cases": [
+                {"IngressProtocol": "gw-native"},
+                {"IngressProtocol": "openai-compatible"},
+                {"IngressProtocol": "claude-compatible"},
+            ],
+        },
+    }, "TEST_KEY")
+    if ready.get("ok") is not True or blocked.get("ok") is not False:
+        print("LLM Gateway prod preflight self-test: FAIL", file=sys.stderr)
+        print(json.dumps({"ready": ready, "blocked": blocked}, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 1
+    print("LLM Gateway prod preflight self-test: PASS")
+    return 0
 
 
 def _rollout_check(args: argparse.Namespace) -> dict:
@@ -356,7 +449,11 @@ def main() -> int:
     parser.add_argument("--direct-transport-max-pages", type=int, default=int(os.environ.get("LLMGW_PROD_PREFLIGHT_DIRECT_TRANSPORT_MAX_PAGES", "10")))
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_PROD_PREFLIGHT_JSON_OUT", ""))
+    parser.add_argument("--self-test", action="store_true", help="离线验证 route-self-test gate 解析逻辑，不访问网络")
     args = parser.parse_args()
+
+    if args.self_test:
+        return _self_test()
 
     checks = []
     checks.extend(_map_checks(args))

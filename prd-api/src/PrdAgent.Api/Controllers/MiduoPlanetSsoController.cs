@@ -19,6 +19,7 @@ public class MiduoPlanetSsoController : ControllerBase
     private readonly IUserService _userService;
     private readonly IJwtService _jwtService;
     private readonly IAuthSessionService _authSessionService;
+    private readonly IIdGenerator _idGenerator;
     private readonly MongoDbContext _db;
     private readonly IConfiguration _cfg;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -28,6 +29,7 @@ public class MiduoPlanetSsoController : ControllerBase
         IUserService userService,
         IJwtService jwtService,
         IAuthSessionService authSessionService,
+        IIdGenerator idGenerator,
         MongoDbContext db,
         IConfiguration cfg,
         IHttpClientFactory httpClientFactory,
@@ -36,6 +38,7 @@ public class MiduoPlanetSsoController : ControllerBase
         _userService = userService;
         _jwtService = jwtService;
         _authSessionService = authSessionService;
+        _idGenerator = idGenerator;
         _db = db;
         _cfg = cfg;
         _httpClientFactory = httpClientFactory;
@@ -106,7 +109,21 @@ public class MiduoPlanetSsoController : ControllerBase
 
         if (users.Count == 0)
         {
-            return Unauthorized(ApiResponse<object>.Fail("SSO_USER_NOT_BOUND", "米多星球账号未绑定 MAP 用户"));
+            var created = await CreateSsoUserAsync(options, profile, subjectHash);
+            users = await _db.Users
+                .Find(u => u.MiduoSsoSubjectType == options.SubjectType && u.MiduoSsoSubjectHash == subjectHash)
+                .Limit(2)
+                .ToListAsync(ct);
+            if (users.Count == 0 && created != null)
+            {
+                users = new List<User> { created };
+            }
+        }
+        if (users.Count == 0)
+        {
+            _logger.LogError("Miduo Planet SSO auto-create failed after re-read. subjectType={SubjectType}", options.SubjectType);
+            return StatusCode(StatusCodes.Status409Conflict,
+                ApiResponse<object>.Fail("SSO_AUTO_CREATE_FAILED", "米多星球账号自动创建失败，请稍后重试"));
         }
         if (users.Count > 1)
         {
@@ -157,6 +174,47 @@ public class MiduoPlanetSsoController : ControllerBase
                 AvatarUrl = avatarUrl
             }
         }));
+    }
+
+    private async Task<User?> CreateSsoUserAsync(
+        MiduoPlanetSsoOptions options,
+        MiduoPlanetProfile profile,
+        string subjectHash)
+    {
+        var normalizedSubject = NormalizeSubjectValue(options.SubjectType, profile.SubjectValue);
+        var username = BuildAutoUsername(options.AppCode, options.SubjectType, normalizedSubject);
+        var displayName = NormalizeDisplayName(profile.DisplayName, options.SubjectType, normalizedSubject, username);
+        var now = DateTime.UtcNow;
+        var user = new User
+        {
+            UserId = await _idGenerator.GenerateIdAsync("user"),
+            Username = username,
+            DisplayName = displayName,
+            Role = UserRole.DEV,
+            Status = UserStatus.Active,
+            UserType = UserType.Human,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))),
+            CreatedAt = now,
+            MustResetPassword = false,
+            MiduoSsoSubjectType = options.SubjectType,
+            MiduoSsoSubjectHash = subjectHash,
+            MiduoSsoSubjectMasked = MaskSubjectValue(options.SubjectType, normalizedSubject),
+            MiduoSsoDisplayNameSnapshot = displayName,
+            MiduoSsoBoundAt = now
+        };
+
+        try
+        {
+            await _db.Users.InsertOneAsync(user, cancellationToken: CancellationToken.None);
+            _logger.LogWarning("Auto-created MAP user from Miduo Planet SSO: username={Username}, subjectType={SubjectType}",
+                user.Username, options.SubjectType);
+            return user;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            _logger.LogWarning("Miduo Planet SSO auto-create hit duplicate key, will re-read binding. username={Username}", username);
+            return null;
+        }
     }
 
     private async Task<MiduoPlanetSsoOptions> ReadOptionsAsync(CancellationToken ct)
@@ -273,6 +331,32 @@ public class MiduoPlanetSsoController : ControllerBase
         var material = $"miduo-planet\n{appCode.Trim().ToUpperInvariant()}\n{subjectType}\n{normalized}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(material));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    internal static string BuildAutoUsername(string appCode, string subjectType, string subjectValue)
+    {
+        var normalized = NormalizeSubjectValue(subjectType, subjectValue);
+        var material = $"miduo-planet-auto-user\n{appCode.Trim().ToUpperInvariant()}\n{subjectType}\n{normalized}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(material));
+        return $"miduo_{Convert.ToHexString(hash).ToLowerInvariant()[..16]}";
+    }
+
+    internal static string NormalizeDisplayName(string? displayName, string subjectType, string subjectValue, string username)
+    {
+        var trimmed = (displayName ?? string.Empty).Trim();
+        if (trimmed.Length > 50) return trimmed[..50];
+        if (!string.IsNullOrWhiteSpace(trimmed)) return trimmed;
+
+        var masked = MaskSubjectValue(subjectType, subjectValue);
+        return string.IsNullOrWhiteSpace(masked) ? username : $"米多用户 {masked}";
+    }
+
+    internal static string MaskSubjectValue(string subjectType, string value)
+    {
+        var normalized = NormalizeSubjectValue(subjectType, value);
+        if (subjectType != "mobile") return normalized.Length <= 4 ? normalized : $"{normalized[..2]}***{normalized[^2..]}";
+        if (normalized.Length < 7) return normalized;
+        return $"{normalized[..3]}****{normalized[^4..]}";
     }
 
     private static string NormalizeSubjectType(string? subjectType)

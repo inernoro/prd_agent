@@ -537,12 +537,63 @@ public static class OpenApi
         public const string Chat = "open-api.proxy::chat";
 
         [AppCallerMetadata(
+            "开放接口-视觉网关",
+            "对外开放接口（OpenAI 兼容）视觉请求网关，按 Key 绑定固定模型，未绑定走默认 vision 池",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Proxy"
+        )]
+        public const string Vision = "open-api.proxy::vision";
+
+        [AppCallerMetadata(
             "开放接口-生图网关",
             "对外开放接口（OpenAI 兼容）images/generations 网关，按 Key 绑定固定模型，未绑定走默认 image 池",
             ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Proxy"
         )]
         public const string Generation = "open-api.proxy::generation";
+    }
+}
+
+/// <summary>
+/// LLM Gateway 内部自检调用者。
+/// </summary>
+public static class LlmGatewaySelfTest
+{
+    public const string AppName = "LLM Gateway Self Test";
+
+    public static class Route
+    {
+        [AppCallerMetadata(
+            "网关路由自检-GW Native",
+            "验证 GW Native 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string NativeChat = "self-test.native.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-OpenAI",
+            "验证 OpenAI-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string OpenAiChat = "self-test.openai.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-Claude",
+            "验证 Claude-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string ClaudeChat = "self-test.claude.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-Gemini",
+            "验证 Gemini-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string GeminiChat = "self-test.gemini.chat::chat";
     }
 }
 

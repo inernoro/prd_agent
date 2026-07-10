@@ -420,7 +420,7 @@ describe('WorktreeService', () => {
     });
 
     afterEach(() => {
-      try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* best effort */ }
+      try { fs.rmSync(tmpBase, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* best effort */ }
     });
 
     it('is a no-op when state.worktreeLayoutVersion is already current', () => {

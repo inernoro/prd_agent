@@ -727,6 +727,1155 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public void OpenAIAdapter_ParseExtensions_PreservesChoiceLogprobs()
+    {
+        var adapter = new OpenAIGatewayAdapter();
+        var responseBody = """
+        {
+          "choices": [
+            {
+              "message": { "role": "assistant", "content": "hi" },
+              "logprobs": {
+                "content": [
+                  { "token": "hi", "logprob": -0.1, "top_logprobs": [ { "token": "hi", "logprob": -0.1 } ] }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+        var extensions = adapter.ParseExtensions(responseBody);
+
+        Assert.NotNull(extensions);
+        Assert.True(extensions!.ContainsKey("logprobs"));
+        var logprobs = Assert.IsType<JsonObject>(extensions["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("hi", (string?)first["token"]);
+        Assert.Equal(-0.1, (double?)first["logprob"]);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenVisionModelExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "vision",
+            new LLMModelCapability { Type = "vision", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::vision",
+            ModelType = "vision",
+            RequestBody = new JsonObject()
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("VISION_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenImageGenerationExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "generation",
+            new LLMModelCapability { Type = "image_generation", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            RequestBody = new JsonObject { ["prompt"] = "test image" }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("IMAGE_GENERATION_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenThinkingExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "thinking", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            IncludeThinking = true,
+            RequestBody = new JsonObject()
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("THINKING_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStructuredOutputExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "json_schema", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["response_format"] = new JsonObject
+                {
+                    ["type"] = "json_schema",
+                    ["json_schema"] = new JsonObject
+                    {
+                        ["name"] = "answer",
+                        ["schema"] = new JsonObject { ["type"] = "object" }
+                    }
+                }
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("STRUCTURED_OUTPUT_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenLogprobsExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "logprobs", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["logprobs"] = true,
+                ["top_logprobs"] = 3
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGPROBS_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenParallelToolCallsExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "parallel_tool_calls", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["parallel_tool_calls"] = true
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("PARALLEL_TOOL_CALLS_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireToolsAndCapabilityUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "get_weather" }
+                    }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("FUNCTION_CALLING_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireStructuredOutputUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["response_format"] = new JsonObject
+                {
+                    ["type"] = "json_object"
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("STRUCTURED_OUTPUT_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireLogprobsUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["logprobs"] = true
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGPROBS_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireParallelToolCallsUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["parallel_tool_calls"] = true
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("PARALLEL_TOOL_CALLS_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenParameterExplicitlyUnsupported_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "parameter:seed", Source = "user", Value = false });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["seed"] = 1234
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("PARAMETER_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireParameterUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["seed"] = 1234
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("PARAMETER_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireParameterConfirmed_ShouldPassParameterGate()
+    {
+        var gateway = CreateCapabilityGateGateway(
+            "chat",
+            new LLMModelCapability { Type = "parameter:seed", Source = "user", Value = true });
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["seed"] = 1234
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        });
+
+        Assert.NotEqual("PARAMETER_UNVERIFIED", response.ErrorCode);
+        Assert.NotEqual("PARAMETER_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-b",
+                Name = "Provider B",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-b.example.com",
+                Enabled = true
+            }, "sk-b")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "auto-pool",
+                Name = "Auto Pool",
+                Code = "auto-pool",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    },
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-b",
+                        ModelId = "model-b",
+                        Priority = 1,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (200, "{\"choices\":[{\"message\":{\"content\":\"ok from b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ModelPolicy = "auto"
+            }
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("ok from b", response.Content);
+        Assert.Equal("model-b", response.Resolution?.ActualModel);
+        Assert.Equal(2, http.RequestBodies.Count);
+        Assert.Contains("\"model\":\"model-a\"", http.RequestBodies[0]);
+        Assert.Contains("\"model\":\"model-b\"", http.RequestBodies[1]);
+        Assert.NotNull(logWriter.Done);
+        var attempts = logWriter.Done!.ProviderAttempts!;
+        Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
+        Assert.Equal("failed", attempts[0].Status);
+        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal("succeeded", attempts[1].Status);
+        Assert.Equal(200, attempts[1].StatusCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_ShouldWriteIngressAndRoutePolicyContextToLogStart()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a",
+                Name = "Pool A",
+                Code = "pool-a",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
+
+        _ = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = "req-route-context",
+                SourceSystem = "external",
+                IngressProtocol = "openai-compatible",
+                AppCallerTitle = "External Console Demo",
+                ModelPolicy = "auto",
+                ModelPoolId = "pool-a",
+                ParameterPolicy = "default-drop",
+                DroppedParameters = new List<string> { "store" }
+            }
+        });
+
+        Assert.NotNull(logWriter.Start);
+        Assert.Equal("external", logWriter.Start!.SourceSystem);
+        Assert.Equal("openai-compatible", logWriter.Start.IngressProtocol);
+        Assert.Equal("External Console Demo", logWriter.Start.AppCallerTitle);
+        Assert.Equal("auto", logWriter.Start.ModelPolicy);
+        Assert.Equal("pool-a", logWriter.Start.ModelPoolId);
+        Assert.Equal("default-drop", logWriter.Start.ParameterPolicy);
+        Assert.NotNull(logWriter.Start.DroppedParameters);
+        Assert.Single(logWriter.Start.DroppedParameters!, "store");
+    }
+
+    [Fact]
+    public async Task SendAsync_PreservesOpenAiLogprobsInExtensions()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a",
+                Name = "Pool A",
+                Code = "pool-a",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var http = new SequenceHttpClientFactory((200, """
+        {
+          "choices": [
+            {
+              "message": { "content": "ok" },
+              "finish_reason": "stop",
+              "logprobs": {
+                "content": [
+                  { "token": "ok", "logprob": -0.2 }
+                ]
+              }
+            }
+          ],
+          "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        }
+        """));
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["logprobs"] = true,
+                ["top_logprobs"] = 1
+            }
+        });
+
+        Assert.True(response.Success);
+        Assert.NotNull(response.Extensions);
+        var logprobs = Assert.IsType<JsonObject>(response.Extensions!["logprobs"]);
+        var content = Assert.IsType<JsonArray>(logprobs["content"]);
+        var first = Assert.IsType<JsonObject>(content[0]);
+        Assert.Equal("ok", (string?)first["token"]);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WhenAutoProviderReturnsRetryableStatusBeforeOutput_ShouldUseNextCandidate()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-b",
+                Name = "Provider B",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-b.example.com",
+                Enabled = true
+            }, "sk-b")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "auto-pool",
+                Name = "Auto Pool",
+                Code = "auto-pool",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    },
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-b",
+                        ModelId = "model-b",
+                        Priority = 1,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var streamBody = """
+            data: {"choices":[{"delta":{"content":"ok stream b"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
+
+            data: [DONE]
+
+            """;
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (200, streamBody));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "auto",
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ModelPolicy = "auto"
+            }
+        }))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.Contains(chunks, c => c.Type == GatewayChunkType.Start && c.Resolution?.ActualModel == "model-b");
+        Assert.Contains(chunks, c => c.Type == GatewayChunkType.Text && c.Content == "ok stream b");
+        Assert.Contains(chunks, c => c.Type == GatewayChunkType.Done);
+        Assert.Equal(2, http.RequestBodies.Count);
+        Assert.Contains("\"model\":\"model-a\"", http.RequestBodies[0]);
+        Assert.Contains("\"model\":\"model-b\"", http.RequestBodies[1]);
+        Assert.NotNull(logWriter.Done);
+        Assert.Equal("Provider B", logWriter.Done!.Provider);
+        Assert.Equal("model-b", logWriter.Done.Model);
+        var attempts = logWriter.Done.ProviderAttempts!;
+        Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
+        Assert.Equal("failed", attempts[0].Status);
+        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal("succeeded", attempts[1].Status);
+        Assert.Equal(200, attempts[1].StatusCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DefaultPool",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a",
+            RetryCandidates =
+            [
+                new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "DefaultPool",
+                    ActualModel = "image-model-b",
+                    ActualPlatformId = "platform-b",
+                    ActualPlatformName = "Provider B",
+                    PlatformType = "openai",
+                    Protocol = "openai",
+                    ApiUrl = "https://provider-b.example.com",
+                    ApiKey = "sk-b"
+                }
+            ]
+        };
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}]}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/images/generations",
+            RequestBody = new JsonObject
+            {
+                ["prompt"] = "draw a clean icon"
+            }
+        }, resolution);
+
+        Assert.True(response.Success);
+        Assert.Equal("image-model-b", response.Resolution?.ActualModel);
+        Assert.Contains("image-from-b", response.Content);
+        Assert.Equal(2, http.RequestBodies.Count);
+        Assert.Contains("\"model\":\"image-model-a\"", http.RequestBodies[0]);
+        Assert.Contains("\"model\":\"image-model-b\"", http.RequestBodies[1]);
+        Assert.NotNull(logWriter.Done);
+        Assert.Equal("Provider B", logWriter.Done!.Provider);
+        Assert.Equal("image-model-b", logWriter.Done.Model);
+        var attempts = logWriter.Done.ProviderAttempts!;
+        Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
+        Assert.Equal("failed", attempts[0].Status);
+        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal("succeeded", attempts[1].Status);
+        Assert.Equal(200, attempts[1].StatusCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenMultipartImageArrayKeys_ShouldSendImageArrayFields()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "image-edit-model",
+            ActualPlatformId = "platform-image",
+            ActualPlatformName = "Image Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-image",
+            SupportsImageGeneration = true,
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/edit.png\"}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/v1/images/edits",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object>
+            {
+                ["prompt"] = "combine references",
+            },
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["image[0]"] = ("first.png", new byte[] { 1, 1, 1 }, "image/png"),
+                ["image[1]"] = ("second.jpg", new byte[] { 2, 2, 2 }, "image/jpeg"),
+            },
+        }, resolution);
+
+        Assert.True(response.Success);
+        var body = Assert.Single(http.RequestBodies);
+        var imageArrayCount = CountOccurrences(body, "name=image%5B%5D")
+                              + CountOccurrences(body, "name=\"image[]\"")
+                              + CountOccurrences(body, "name=image[]");
+        Assert.True(imageArrayCount >= 2, body);
+        Assert.DoesNotContain("image%5B0%5D", body);
+        Assert.DoesNotContain("image%5B1%5D", body);
+        Assert.DoesNotContain("name=\"image[0]\"", body);
+        Assert.DoesNotContain("name=\"image[1]\"", body);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "claude-opus-via-compatible-platform",
+            ActualPlatformId = "mixed-platform",
+            ActualPlatformName = "Mixed Platform",
+            PlatformType = "openai",
+            Protocol = "claude",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-claude",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = "hi"
+                    }
+                },
+                ["max_tokens"] = 8,
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var uri = Assert.Single(http.RequestUris);
+        Assert.Equal("https://provider.example.com/v1/messages", uri);
+        var body = Assert.Single(http.RequestBodies);
+        Assert.Contains("\"model\":\"claude-opus-via-compatible-platform\"", body);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WhenStrictRequireToolsAndCapabilityUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "get_weather" }
+                    }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }))
+        {
+            Assert.Equal(GatewayChunkType.Error, chunk.Type);
+            Assert.Contains("strict-require", chunk.Error);
+            return;
+        }
+
+        Assert.Fail("strict-require tools unknown 应在发 HTTP 前返回错误 chunk");
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireImageGenerationUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("generation");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/v1/images/generations",
+            RequestBody = new JsonObject { ["prompt"] = "test image" },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("IMAGE_GENERATION_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireStructuredOutputUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/v1/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["response_format"] = new JsonObject
+                {
+                    ["type"] = "json_schema",
+                    ["json_schema"] = new JsonObject
+                    {
+                        ["name"] = "answer",
+                        ["schema"] = new JsonObject { ["type"] = "object" }
+                    }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("STRUCTURED_OUTPUT_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireTopLogprobsUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/v1/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["top_logprobs"] = 2
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGPROBS_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireParallelToolCallsUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/v1/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["parallel_tool_calls"] = true
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("PARALLEL_TOOL_CALLS_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireParameterUnknown_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/v1/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["seed"] = 1234
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("PARAMETER_UNVERIFIED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenStrictRequireHasDroppedParameters_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require",
+                DroppedParameters = new List<string> { "parallel_tool_calls" }
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("DROPPED_PARAMETERS_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenStrictRequireHasDroppedParameters_ShouldFailBeforeHttp()
+    {
+        var gateway = CreateCapabilityGateGateway("chat");
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ActualModel = "capability-model",
+            ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.example.com",
+            ApiKey = "sk-test-key",
+            ResolutionType = "DirectModel"
+        };
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/v1/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            },
+            Context = new GatewayRequestContext
+            {
+                ParameterPolicy = "strict-require",
+                DroppedParameters = new List<string> { "parallel_tool_calls" }
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("DROPPED_PARAMETERS_UNSUPPORTED", response.ErrorCode);
+    }
+
+    [Fact]
     public void OpenAIAdapter_ParseStreamChunk_ToolCallsDelta_EmitsToolCallChunk()
     {
         var adapter = new OpenAIGatewayAdapter();
@@ -850,6 +1999,41 @@ public class LlmGatewayTests
 
     #region Helper Methods
 
+    private static LlmGateway CreateCapabilityGateGateway(string modelType, params LLMModelCapability[] capabilities)
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "capability-platform",
+                Name = "Capability Platform",
+                PlatformType = "openai",
+                ApiUrl = "https://api.example.com",
+                Enabled = true
+            }, "sk-test-key")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "capability-pool",
+                Name = "Capability Pool",
+                Code = "capability-pool",
+                ModelType = modelType,
+                IsDefaultForType = true,
+                Priority = 0,
+                Models = new List<ModelGroupItem>
+                {
+                    new()
+                    {
+                        PlatformId = "capability-platform",
+                        ModelId = "capability-model",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy,
+                        Capabilities = capabilities.ToList()
+                    }
+                }
+            });
+
+        return new LlmGateway(resolver, new TestHttpClientFactory(), new TestLogger<LlmGateway>());
+    }
+
     private static LlmGateway CreateTestGateway()
     {
         // 创建一个用于测试的 Gateway 实例
@@ -890,6 +2074,13 @@ public class LlmGatewayTests
     }
 
     #endregion
+
+    private static int CountOccurrences(string text, string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return 0;
+        return text.Split(value, StringSplitOptions.None).Length - 1;
+    }
 }
 
 #region Test Helpers
@@ -897,6 +2088,69 @@ public class LlmGatewayTests
 internal class TestHttpClientFactory : IHttpClientFactory
 {
     public HttpClient CreateClient(string name) => new();
+}
+
+internal sealed class SequenceHttpClientFactory : IHttpClientFactory
+{
+    private readonly Queue<(int StatusCode, string Body)> _responses;
+    public List<string> RequestBodies { get; } = new();
+    public List<string> RequestUris { get; } = new();
+
+    public SequenceHttpClientFactory(params (int StatusCode, string Body)[] responses)
+    {
+        _responses = new Queue<(int StatusCode, string Body)>(responses);
+    }
+
+    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris));
+}
+
+internal sealed class SequenceHttpMessageHandler(
+    Queue<(int StatusCode, string Body)> responses,
+    List<string> requestBodies,
+    List<string> requestUris) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult() ?? "";
+        requestBodies.Add(body);
+        requestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
+        var next = responses.Count > 0
+            ? responses.Dequeue()
+            : (200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}");
+        var content = new StringContent(next.Item2, System.Text.Encoding.UTF8);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        return Task.FromResult(new HttpResponseMessage((System.Net.HttpStatusCode)next.Item1)
+        {
+            Content = content
+        });
+    }
+}
+
+internal sealed class CapturingLogWriter : ILlmRequestLogWriter
+{
+    public LlmLogStart? Start { get; private set; }
+    public LlmLogDone? Done { get; private set; }
+    public string? Error { get; private set; }
+
+    public Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
+    {
+        Start = start;
+        return Task.FromResult<string?>("test-log-id");
+    }
+
+    public void MarkFirstByte(string logId, DateTime at)
+    {
+    }
+
+    public void MarkDone(string logId, LlmLogDone done)
+    {
+        Done = done;
+    }
+
+    public void MarkError(string logId, string error, int? statusCode = null)
+    {
+        Error = error;
+    }
 }
 
 internal class TestLogger<T> : Microsoft.Extensions.Logging.ILogger<T>

@@ -10,6 +10,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { StateService } from '../../src/services/state.js';
 import type { Project, ScheduledJob, ScheduledJobRun } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   router: Router,
   method: string,
@@ -85,8 +86,9 @@ describe('scheduled job routes project-scope isolation', () => {
     });
   });
 
-  afterEach(() => {
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('narrows unscoped scheduled job lists to the project key scope', async () => {

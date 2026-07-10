@@ -40,6 +40,7 @@ import {
   type ReportFormat,
 } from '@/lib/api';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { useTheme } from '@/lib/theme';
 
 interface ProjectLite {
   id: string;
@@ -424,8 +425,11 @@ export function ReportsPage(): JSX.Element {
                   </>
                 )}
               </div>
+              {/* 抽屉 z-[90]：全屏面板带（60-100），必须低于 dropdown/dialog portal（300），
+                  否则抽屉内的文件夹菜单与重命名弹窗会被抽屉整体盖住（2026-07-09 修复，
+                  刻度表见根 .claude/rules/cds-theme-tokens.md §4 新栈段） */}
               {selected && navDrawerOpen ? (
-                <div className="fixed inset-0 z-[11000] lg:hidden">
+                <div className="fixed inset-0 z-[90] lg:hidden">
                   <button
                     type="button"
                     className="absolute inset-0 bg-black/30"
@@ -1125,6 +1129,11 @@ function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport 
   const [mdError, setMdError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const reqRef = useRef(0);
+  // iframe 是 no-same-origin sandbox，感知不到应用的 data-theme——
+  // 旧写法 color-scheme: light dark 只跟 OS 配色，用户在 CDS 里切主题时
+  // 报告区不跟随（暗 UI 嵌白报告或反之），链接色 #2563eb 在深底上也难读。
+  // 改为构建 srcDoc 时按当前应用主题写死单侧 color-scheme + 对应链接色。
+  const { theme } = useTheme();
 
   useEffect(() => {
     setMdHtml(null);
@@ -1135,15 +1144,16 @@ function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport 
       .then((raw) => {
         if (reqRef.current !== token) return;
         const parsed = marked.parse(raw, { async: false }) as string;
+        const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
         const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-          :root { color-scheme: light dark; }
+          :root { color-scheme: ${theme}; }
           body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 28px clamp(28px, 6vw, 96px); max-width: 1100px; margin: 0 auto; }
           pre { background: rgba(127,127,127,0.12); padding: 12px; border-radius: 8px; overflow: auto; }
           code { background: rgba(127,127,127,0.12); padding: 1px 4px; border-radius: 4px; }
           pre code { background: transparent; padding: 0; }
           table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 6px 10px; }
           img { max-width: 100%; height: auto; }
-          a { color: #2563eb; }
+          a { color: ${linkColor}; }
         </style></head><body>${parsed}</body></html>`;
         setMdHtml(doc);
       })
@@ -1151,7 +1161,7 @@ function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport 
         if (reqRef.current !== token) return;
         setMdError(err instanceof ApiError ? err.message : String(err));
       });
-  }, [report]);
+  }, [report, theme]);
 
   useEffect(() => {
     if (!expanded) return undefined;
@@ -1171,7 +1181,7 @@ function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport 
   }
 
   return (
-    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-[hsl(var(--background))] ${expanded ? 'fixed inset-0 z-[12000] rounded-none' : 'rounded-md'}`}>
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-[hsl(var(--background))] ${expanded ? 'fixed inset-0 z-[100] rounded-none' : 'rounded-md'}`}>
       <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {onBack ? (

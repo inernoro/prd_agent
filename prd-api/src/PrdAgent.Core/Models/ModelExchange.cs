@@ -1,4 +1,5 @@
 using PrdAgent.Core.Attributes;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
@@ -10,6 +11,7 @@ namespace PrdAgent.Core.Models;
 /// 一个 Exchange = 一个「虚拟平台」。Name 字段就是用户定义的平台展示名（如 "我的 Gemini"）。
 /// </summary>
 [AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
+[BsonIgnoreExtraElements]
 public class ModelExchange
 {
     /// <summary>Exchange ID（也用作虚拟平台 ID）</summary>

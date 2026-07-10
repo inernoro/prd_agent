@@ -67,4 +67,12 @@ public interface IGatewayAdapter
     /// <param name="responseBody">响应体 JSON</param>
     /// <returns>OpenAI 形状的 tool_calls 数组，无则 null</returns>
     JsonArray? ParseToolCalls(string responseBody) => null;
+
+    /// <summary>
+    /// 从非流式响应体中提取协议专有字段（如 OpenAI choices[0].logprobs）。
+    /// 通用 Gateway 信封不认识但兼容入口需要回吐的字段放入 Extensions。
+    /// </summary>
+    /// <param name="responseBody">响应体 JSON</param>
+    /// <returns>扩展字段字典，无则 null</returns>
+    Dictionary<string, JsonNode?>? ParseExtensions(string responseBody) => null;
 }

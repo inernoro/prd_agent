@@ -237,6 +237,15 @@
     gap: 1rem;
   }
 
+  /* 2026-07-09 性能：离屏卡片跳过 layout/paint（大列表不引虚拟化库的轻量替代，
+     auto-fill 变高网格 + 两段式 enter/leave 动画与虚拟化不兼容）。
+     注意 content-visibility 附带 paint containment 会裁剪卡片 overflow 的浮层——
+     卡片开着 tag 编辑器 / AI 面板 / commit 菜单或 error 态时由 JSX 侧不加本类。 */
+  .cds-cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 240px;
+  }
+
   /*
    * BranchCard 搜索命中选中态。旧实现依赖 9s pulse animation + setTimeout,
    * 在 SSE 刷新和列表重排时容易被重新渲染打断。现在改为稳定选中态:

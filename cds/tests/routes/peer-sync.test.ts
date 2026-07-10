@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from '../../src/routes/peer-sync.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function request(
   server: http.Server,
   method: string,
@@ -92,10 +93,11 @@ describe('peer-sync MAP-KBTP endpoints', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_CACHE_BASE;
     await new Promise<void>((r) => server.close(() => r()));
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   async function pairAndGetSecret(): Promise<{ secret: string; selfNodeId: string }> {
@@ -196,6 +198,43 @@ describe('peer-sync MAP-KBTP endpoints', () => {
     const sigRes = await request(server, 'POST', '/api/peer-sync/resources/document-store/signature', sBody, hdr(initiatorNodeId, s.ts, s.sig));
     expect(sigRes.status).toBe(200);
     expect(sigRes.body.data.signature).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // export 分页（2026-07-09，debt.acceptance-center-cds「export bundle 无分页」）
+  it('export 分页：limit/cursor 逐页拼回全集，无参调用逐字节兼容（无 page 字段）', async () => {
+    // 再补两份报告（共 3 份），createdAt 由创建顺序保证递增
+    service.createAcceptanceReport({ title: '报告二', format: 'md', content: 'B', projectId: 'proj-1', verdict: 'pass' });
+    service.createAcceptanceReport({ title: '报告三', format: 'md', content: 'C', projectId: 'proj-1', verdict: 'fail' });
+    const { secret } = await pairAndGetSecret();
+    const post = async (payload: Record<string, unknown>) => {
+      const body = JSON.stringify(payload);
+      const e = sign(secret, 'POST', '/api/peer-sync/resources/document-store/export', body);
+      return request(server, 'POST', '/api/peer-sync/resources/document-store/export', body, hdr(initiatorNodeId, e.ts, e.sig));
+    };
+
+    // 无参：全量、无 page 字段（旧对端零感知）
+    const full = await post({ itemId: 'proj-1' });
+    expect(full.status).toBe(200);
+    expect(full.body.data.records).toHaveLength(3);
+    expect(full.body.data.page).toBeUndefined();
+
+    // 分页：limit=2 → 第一页 2 条 hasMore，第二页 1 条终止；拼回全集
+    const page1 = await post({ itemId: 'proj-1', limit: 2 });
+    expect(page1.status).toBe(200);
+    expect(page1.body.data.records).toHaveLength(2);
+    expect(page1.body.data.page).toMatchObject({ hasMore: true, total: 3 });
+    const page2 = await post({ itemId: 'proj-1', limit: 2, cursor: page1.body.data.page.nextCursor });
+    expect(page2.status).toBe(200);
+    expect(page2.body.data.records).toHaveLength(1);
+    expect(page2.body.data.page).toMatchObject({ hasMore: false, nextCursor: null, total: 3 });
+    const titles = [...page1.body.data.records, ...page2.body.data.records].map((r: { title: string }) => r.title).sort();
+    expect(titles).toEqual(['报告三', '报告二', '登录页验收'].sort());
+
+    // 坏 cursor → 400；cursor 不带 limit → 400；limit 越界 → 400
+    expect((await post({ itemId: 'proj-1', limit: 2, cursor: 'no-such-id' })).status).toBe(400);
+    expect((await post({ itemId: 'proj-1', cursor: 'x' })).status).toBe(400);
+    expect((await post({ itemId: 'proj-1', limit: 0 })).status).toBe(400);
+    expect((await post({ itemId: 'proj-1', limit: 501 })).status).toBe(400);
   });
 
   it('unknown item -> 404; admin pairing-code endpoint mints a code', async () => {

@@ -44,10 +44,29 @@ public class ImageGenPlatformAdapterTests
     [Theory]
     [InlineData("volces", "volces")]
     [InlineData("openai", "openai")]
+    [InlineData("openai-compatible", "openai")]
+    [InlineData("openrouter", "openai")]
+    [InlineData("google", "google")]
+    [InlineData("gemini", "google")]
+    [InlineData("gemini-compatible", "google")]
     [InlineData("unknown", "openai")] // fallback to openai
     public void GetAdapter_ByExplicitPlatformType_ReturnsCorrectAdapter(string platformType, string expectedPlatformType)
     {
         var adapter = ImageGenPlatformAdapterFactory.GetAdapter("https://api.example.com", null, platformType);
+        Assert.Equal(expectedPlatformType, adapter.PlatformType);
+    }
+
+    [Theory]
+    [InlineData("https://ark.cn-beijing.volces.com", "doubao-seedream-4-0", "openai-compatible", "openai")]
+    [InlineData("https://custom-gateway.example.com", "unknown-model", "gemini-compatible", "google")]
+    [InlineData("https://custom-gateway.example.com", "dall-e-3", "volces", "volces")]
+    public void GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection(
+        string apiUrl,
+        string modelName,
+        string protocol,
+        string expectedPlatformType)
+    {
+        var adapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, modelName, protocol);
         Assert.Equal(expectedPlatformType, adapter.PlatformType);
     }
 

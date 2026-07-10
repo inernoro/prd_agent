@@ -30,6 +30,7 @@
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
+import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
@@ -119,12 +120,15 @@ const MIME_EXT: Record<string, string> = {
  * reports never store base64 again — CDS's disk-backed asset store is its own
  * object storage, no external bucket required.
  */
-function normalizeInlineImages(
+async function normalizeInlineImages(
   content: string,
   base: string,
   stateService: StateService,
-): { content: string; extracted: number } {
+): Promise<{ content: string; extracted: number }> {
   let extracted = 0;
+  // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
+  //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
+  const pendingWrites = new Map<string, Buffer>();
   const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
     const clean = b64.replace(/\s+/g, '');
     if (!clean) return whole;
@@ -138,11 +142,14 @@ function normalizeInlineImages(
     const ext = MIME_EXT[mime.toLowerCase()] || 'png';
     const hash = createHash('sha256').update(buf).digest('hex');
     const name = `${hash}.${ext}`;
-    stateService.writeReportAsset(name, buf);
+    pendingWrites.set(name, buf); // 内容寻址，同名去重
     extracted += 1;
     const rel = `/api/reports/assets/${name}`;
     return base ? `${base}${rel}` : rel;
   });
+  await Promise.all(
+    [...pendingWrites.entries()].map(([name, buf]) => stateService.writeReportAssetAsync(name, buf)),
+  );
   return { content: out, extracted };
 }
 
@@ -379,7 +386,10 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   const rawParser = expressRaw({ limit: '12mb', type: 'multipart/form-data' });
 
   // POST /api/reports — create a report (paste JSON OR multipart upload).
-  router.post('/reports', rawParser, jsonParser, textParser, (req: Request, res: Response) => {
+  // 2026-07-09：报告正文/资产 IO 全部异步化（Express 4 不接管 async handler
+  // 的 rejection，末尾 catch 统一兜 500，保持原有错误语义）。
+  router.post('/reports', rawParser, jsonParser, textParser, async (req: Request, res: Response) => {
+    try {
     const contentType = String(req.headers['content-type'] || '');
     let title: string | undefined;
     let formatHint: string | undefined;
@@ -520,9 +530,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     }
     // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
     // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
-    const { content: normalizedContent } = normalizeInlineImages(content, publicBaseFromReq(req), stateService);
+    const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
 
-    const meta = stateService.createAcceptanceReport({
+    const meta = await stateService.createAcceptanceReportAsync({
       title: cleanTitle,
       format,
       content: normalizedContent,
@@ -539,6 +549,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       createdBy: resolveActorFromRequest(req),
     });
     return res.status(201).json({ report: meta });
+    } catch (err) {
+      return res.status(500).json({ error: 'internal', message: (err as Error).message });
+    }
   });
 
   // GET /api/reports?projectId= — list metadata (newest first).
@@ -575,12 +588,25 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   // （如 MAP 知识库）渲染报告时也能直接取到图片。内容寻址永不变，长缓存。
   // 注册在 `/reports/:id` 之前，避免被单段参数路由误吞。
   router.get('/reports/assets/:name', (req: Request, res: Response) => {
-    const asset = stateService.readReportAsset(req.params.name);
-    if (!asset) return res.status(404).json({ error: 'not_found', message: '资源不存在' });
-    res.setHeader('Content-Type', asset.contentType);
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    return res.end(asset.data);
+    // 2026-07-09：改 createReadStream 流式响应——整图 readFileSync 进内存
+    // 会阻塞事件循环（报告中心一页并发拉多张截图时尤甚）。
+    const resolved = stateService.resolveReportAssetFile(req.params.name);
+    if (!resolved) return res.status(404).json({ error: 'not_found', message: '资源不存在' });
+    const stream = fs.createReadStream(resolved.filePath);
+    stream.on('error', () => {
+      // 文件缺失（ENOENT）等错误：headers 未发出时回 404，已发出只能断流
+      if (!res.headersSent) {
+        res.status(404).json({ error: 'not_found', message: '资源不存在' });
+      } else {
+        res.destroy();
+      }
+    });
+    stream.once('open', () => {
+      res.setHeader('Content-Type', resolved.contentType);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    });
+    stream.pipe(res);
   });
 
   // GET /api/reports/:id — single report metadata.
@@ -594,16 +620,20 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
 
   // GET /api/reports/:id/raw — raw content, hardened against MIME-sniffing /
   // same-origin execution. See the security note at the top of this file.
-  router.get('/reports/:id/raw', (req: Request, res: Response) => {
-    const meta = stateService.getAcceptanceReport(req.params.id);
-    if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
-    const mismatch = reportAccessDenied(req, meta.projectId);
-    if (mismatch) return res.status(mismatch.status).json(mismatch.body);
-    const content = stateService.readAcceptanceReportContent(meta.id);
-    if (content === undefined) {
-      return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+  router.get('/reports/:id/raw', async (req: Request, res: Response) => {
+    try {
+      const meta = stateService.getAcceptanceReport(req.params.id);
+      if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+      const mismatch = reportAccessDenied(req, meta.projectId);
+      if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+      const content = await stateService.readAcceptanceReportContentAsync(meta.id);
+      if (content === undefined) {
+        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+      }
+      return sendReportContent(res, meta.format, content);
+    } catch (err) {
+      return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
-    return sendReportContent(res, meta.format, content);
   });
 
   // ── E6 匿名分享：为登录用户提供「生成/撤销只读公开链接」──
@@ -717,7 +747,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   });
 
   // PATCH /api/reports/:id — rename and/or replace content.
-  router.patch('/reports/:id', jsonParser, textParser, (req: Request, res: Response) => {
+  router.patch('/reports/:id', jsonParser, textParser, async (req: Request, res: Response) => {
+    try {
     const existing = stateService.getAcceptanceReport(req.params.id);
     if (!existing) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     const mismatch = reportAccessDenied(req, existing.projectId);
@@ -772,7 +803,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const effectiveFormat = format ?? existing.format;
     const effectiveContentRaw = content !== undefined
       ? content
-      : stateService.readAcceptanceReportContent(existing.id);
+      : await stateService.readAcceptanceReportContentAsync(existing.id);
     const templateGate = validateAcceptanceHtmlTemplate({
       title: title ?? existing.title,
       format: effectiveFormat,
@@ -787,16 +818,16 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       });
     }
     const effectiveContent = content !== undefined
-      ? normalizeInlineImages(content, publicBaseFromReq(req), stateService).content
+      ? (await normalizeInlineImages(content, publicBaseFromReq(req), stateService)).content
       : effectiveContentRaw;
     let updated = existing;
     if (title !== undefined || content !== undefined || hasFormat || hasMeta) {
-      updated = stateService.updateAcceptanceReport(req.params.id, {
+      updated = (await stateService.updateAcceptanceReportAsync(req.params.id, {
         title,
         content: content !== undefined ? effectiveContent : undefined,
         format,
         ...metaUpdates,
-      }) ?? existing;
+      })) ?? existing;
     }
     if (hasFolder) {
       const moved = stateService.setReportFolder(req.params.id, nextFolder ?? null);
@@ -804,6 +835,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       updated = moved;
     }
     return res.json({ report: updated });
+    } catch (err) {
+      return res.status(500).json({ error: 'internal', message: (err as Error).message });
+    }
   });
 
   // DELETE /api/reports/:id — remove metadata + content file.
@@ -888,17 +922,21 @@ export function createPublicReportShareRouter(deps: ReportsRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
 
-  router.get('/:token', (req: Request, res: Response) => {
-    const meta = stateService.getReportByShareToken(req.params.token);
-    if (!meta || !meta.shareToken) {
-      // 不区分「token 错」与「已撤销」，统一 404，避免 token 探测。
-      return res.status(404).type('text/plain; charset=utf-8').send('链接不存在或已失效');
+  router.get('/:token', async (req: Request, res: Response) => {
+    try {
+      const meta = stateService.getReportByShareToken(req.params.token);
+      if (!meta || !meta.shareToken) {
+        // 不区分「token 错」与「已撤销」，统一 404，避免 token 探测。
+        return res.status(404).type('text/plain; charset=utf-8').send('链接不存在或已失效');
+      }
+      const content = await stateService.readAcceptanceReportContentAsync(meta.id);
+      if (content === undefined) {
+        return res.status(404).type('text/plain; charset=utf-8').send('报告内容文件已丢失');
+      }
+      return sendReportContent(res, meta.format, content);
+    } catch {
+      return res.status(500).type('text/plain; charset=utf-8').send('服务内部错误');
     }
-    const content = stateService.readAcceptanceReportContent(meta.id);
-    if (content === undefined) {
-      return res.status(404).type('text/plain; charset=utf-8').send('报告内容文件已丢失');
-    }
-    return sendReportContent(res, meta.format, content);
   });
 
   return router;

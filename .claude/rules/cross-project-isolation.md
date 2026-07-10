@@ -24,6 +24,7 @@
 | 4 | 共享 Mongo/Redis 基础设施 | 同项目所有分支预览 + 可能的生产实例 | 同一连接串/同一 database | 分支间共享数据是有意设计，但意味着：**A 分支写坏的数据 B 分支立刻可见**；llmrequestlogs 里会混入其他部署的记录（排障时先按时间窗 + 行为特征区分来源，勿误判） |
 | 5 | 生产 CDS 单实例多 Agent 共用 | 所有 Agent 的分支预览 + self-update | 任一 Agent self-update 即重启 CDS | 重启清空内存态（agent sessions）；self-update 切分支会替换 CDS 行为。self-update 前跑 dry-run，并意识到会影响所有人 |
 | 6 | `cds-compose.yml` 的 `x-cds-env` 占位值 | CDS 项目 env 导入 | re-import/sync 可能用占位值（`TODO: 请填写实际值`）覆盖真实值 | 重新导入 compose 前 diff 现有项目 env，含 `TODO` 的 key 一律不覆盖 |
+| 7 | CDS 平台注入的 `BULLMQ_PREFIX`（2026-07-09） | 同项目所有分支容器的 BullMQ 队列前缀 | 同项目多分支共用 Redis 时 BullMQ 默认前缀相同 → 兄弟分支互抢 job；平台按分支注入 `BULLMQ_PREFIX=<branch-db-slug>` 隔离 | **只兜底不覆盖**：customEnv/分支 env/profile.env 显式定义一律优先（`cds/src/services/env-provenance.ts` 步骤 4.5 在 profile 层之后判空注入，slug 与 per-branch DB 后缀同 SSOT）；系统级逃生阀 `CDS_BULLMQ_PREFIX_INJECTION=0`。项目若刻意要跨分支共享队列，显式钉住同一个 BULLMQ_PREFIX 即可 |
 
 ## 强制动作
 

@@ -25,6 +25,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -46,8 +47,9 @@ describe('active-update-store + StateService 集成', () => {
     service.load();
   });
 
-  afterEach(() => {
-    if (fs.existsSync(repoRoot)) fs.rmSync(repoRoot, { recursive: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    if (fs.existsSync(repoRoot)) fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('落盘 SSOT 路径', () => {

@@ -6,6 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { JanitorService, type JanitorConfig, type JanitorClock, type DiskUsageFn, isBranchProtected } from '../../src/services/janitor.js';
 import type { BranchEntry } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for JanitorService — Phase 2 worktree TTL + disk watermark.
  */
@@ -73,10 +74,11 @@ describe('JanitorService', () => {
 
   beforeEach(() => setup());
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     janitor.stop();
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── isBranchProtected ──
@@ -238,6 +240,31 @@ describe('JanitorService', () => {
     });
   });
 
+  // ── 孤儿 infra 对账（2026-07-09，只报不删）──
+
+  describe('sweep — orphan infra scan', () => {
+    it('未注入扫描函数时字段为 null（旧行为不变）', async () => {
+      const report = await janitor.sweep();
+      expect(report.orphanInfraContainers).toBeNull();
+    });
+
+    it('注入后每次 sweep 上报孤儿容器名', async () => {
+      janitor.setOrphanInfraScan(async () => ['cds-infra-ghost-mongo', 'cds-infra-ghost-redis']);
+      const report = await janitor.sweep();
+      expect(report.orphanInfraContainers).toEqual(['cds-infra-ghost-mongo', 'cds-infra-ghost-redis']);
+      expect(report.errors).toEqual([]);
+    });
+
+    it('扫描失败进 errors，不阻断 sweep 其余步骤', async () => {
+      janitor.setOrphanInfraScan(async () => { throw new Error('docker down'); });
+      stateService.addBranch(makeBranch('stale-x', 8));
+      const report = await janitor.sweep();
+      expect(report.errors.some((e) => e.includes('orphan infra scan'))).toBe(true);
+      // TTL 删除照常执行
+      expect(report.removedBranches).toContain('stale-x');
+    });
+  });
+
   // ── dryRun ──
 
   describe('dryRun', () => {
@@ -290,9 +317,11 @@ describe('JanitorService', () => {
       expect(stateService.getJanitorEnabledOverride()).toBeUndefined();
     });
 
-    it('worktree TTL override survives a save + reload cycle', () => {
+    it('worktree TTL override survives a save + reload cycle', async () => {
       stateService.setJanitorWorktreeTTLOverride(7);
       stateService.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (stateService.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
       const reloaded = new StateService(stateFile);
       reloaded.load();
       expect(reloaded.getJanitorWorktreeTTLOverride()).toBe(7);

@@ -125,7 +125,12 @@ function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
   // 2026-05-04:默认从 'overview' 改 'maintenance' — 用户进设置页 90%
   // 是为了 self-update,不让他多点一次。仍尊重 #hash 直链。
-  return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'maintenance';
+  if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
+  // 2026-07-09 兼容 ?tab= 深链:曾有引导链接写成 ?tab=remote-hosts,本页只认
+  // #hash 导致新用户落到默认 tab、引导断头。规范写法仍是 #hash,query 作 fallback。
+  const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
+  if (tabs.some((tab) => tab.value === queryTab)) return queryTab as TabValue;
+  return 'maintenance';
 }
 
 function SettingsTabFallback(): JSX.Element {

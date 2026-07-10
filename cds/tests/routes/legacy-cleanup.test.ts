@@ -24,6 +24,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createLegacyCleanupRouter } from '../../src/routes/legacy-cleanup.js';
 import type { Project } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,
 ): Promise<{ status: number; body: unknown }> {
@@ -94,8 +95,9 @@ describe('Legacy-Cleanup Routes', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('GET /api/legacy-cleanup/status', () => {

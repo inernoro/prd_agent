@@ -348,6 +348,12 @@
     ]
   },
   {
+    "code": "open-api.proxy::vision",
+    "modelTypes": [
+      "vision"
+    ]
+  },
+  {
     "code": "open-platform-agent.proxy::chat",
     "modelTypes": [
       "chat"
@@ -625,6 +631,30 @@
   },
   {
     "code": "review-agent.review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.claude.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.gemini.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.native.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.openai.chat::chat",
     "modelTypes": [
       "chat"
     ]
