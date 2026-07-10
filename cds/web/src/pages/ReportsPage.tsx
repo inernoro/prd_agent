@@ -288,6 +288,26 @@ export function ReportsPage(): JSX.Element {
     setNavDrawerOpen(false);
   }, []);
 
+  // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
+  // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度
+  // 不回头抬高抽屉（见 .claude/rules/cds-theme-tokens.md §4 已知取舍），桌面路径无感。
+  const requestDeleteReport = useCallback((report: AcceptanceReport) => {
+    setNavDrawerOpen(false);
+    setPendingDeleteReport(report);
+  }, []);
+  const requestDeleteFolder = useCallback((folder: ReportFolder) => {
+    setNavDrawerOpen(false);
+    setPendingDeleteFolder(folder);
+  }, []);
+  const requestRenameFolder = useCallback((folder: ReportFolder) => {
+    setNavDrawerOpen(false);
+    setRenamingFolder(folder);
+  }, []);
+  const requestCreateFolder = useCallback(() => {
+    setNavDrawerOpen(false);
+    setFolderCreateOpen(true);
+  }, []);
+
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
@@ -429,7 +449,7 @@ export function ReportsPage(): JSX.Element {
                           counts={folderCounts}
                           active={activeFolder}
                           onSelect={setActiveFolder}
-                          onRequestCreate={() => setFolderCreateOpen(true)}
+                          onRequestCreate={requestCreateFolder}
                         />
                       </div>
                     )}
@@ -450,14 +470,14 @@ export function ReportsPage(): JSX.Element {
                       onSearchChange={setSearchQuery}
                       groupByProject={!projectId && activeProjectFilter === 'all'}
                       onSelect={handleSelectReport}
-                      onDelete={setPendingDeleteReport}
+                      onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
-                      onCreateFolder={() => setFolderCreateOpen(true)}
-                      onRenameFolderRequest={setRenamingFolder}
-                      onDeleteFolder={setPendingDeleteFolder}
+                      onCreateFolder={requestCreateFolder}
+                      onRenameFolderRequest={requestRenameFolder}
+                      onDeleteFolder={requestDeleteFolder}
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
@@ -495,14 +515,14 @@ export function ReportsPage(): JSX.Element {
                       onSearchChange={setSearchQuery}
                       groupByProject={!projectId && activeProjectFilter === 'all'}
                       onSelect={handleSelectReport}
-                      onDelete={setPendingDeleteReport}
+                      onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
-                      onCreateFolder={() => setFolderCreateOpen(true)}
-                      onRenameFolderRequest={setRenamingFolder}
-                      onDeleteFolder={setPendingDeleteFolder}
+                      onCreateFolder={requestCreateFolder}
+                      onRenameFolderRequest={requestRenameFolder}
+                      onDeleteFolder={requestDeleteFolder}
                       showProjectFilter={!projectId}
                       resizable={false}
                       className="min-h-0 flex-1 rounded-none border-0"
