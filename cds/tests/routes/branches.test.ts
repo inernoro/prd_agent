@@ -18,6 +18,7 @@ import type { ServerEventLogSink } from '../../src/services/server-event-log-sto
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -252,11 +253,12 @@ describe('Branch Routes', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── Remote branches ──

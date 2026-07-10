@@ -891,7 +891,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     nav: {
       label: '基础设施服务',
       shortLabel: '基设',
-      description: 'shared 基础设施服务（如 claude-sdk sidecar）的实例分布、路由策略与业务监控',
+      description: 'shared 基础设施服务（如 Claude sidecar runtime，自研 sidecar / Anthropic 协议，runtime 标识 claude-sdk）的实例分布、路由策略与业务监控',
       icon: 'Server',
       section: 'infra',
       tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],

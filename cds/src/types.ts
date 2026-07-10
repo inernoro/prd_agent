@@ -788,6 +788,31 @@ export interface BranchEntry {
    */
   lastDeployStartedAt?: string;
   /**
+   * 2026-07-09：构建并发闸（build-gate）排队可视化。本轮部署中仍在排队等
+   * 构建槽位的服务快照——分支卡据此显示「排队中 · 前面还有 N 个」，并把
+   * 排队时间从「耗时 vs 预计」对比中剔除（排队 ≠ 构建慢，不该误报超时）。
+   * 瞬态字段：deploy 起点重置、全部服务拿到槽位后清空、部署 finalize/error
+   * 兜底清空、CDS 重启后 load-normalize 清残留（build-gate 是内存队列，
+   * 重启后旧快照必然过期）。由 deploy-queue-tracker.ts 维护。
+   */
+  buildQueue?: {
+    /** 本分支最早仍在排队的服务的入队时刻（ISO）。 */
+    queuedAt: string;
+    /** 排队位置（本分支各排队服务取最小值）。 */
+    ahead: number;
+    /** 正在构建的数量 / 并发上限（buildGateStatus 快照）。 */
+    active: number;
+    max: number;
+    /** 仍在排队的 profileId 列表。 */
+    serviceIds: string[];
+  };
+  /**
+   * 2026-07-09：本轮部署累计的排队等待毫秒数（wall-clock，取「首个服务入队 →
+   * 排队集合清空」的区间并集）。recordDeployDurationSample 与前端耗时对比
+   * 都要减去它——ETA 中位数不被排队污染。
+   */
+  lastDeployQueueWaitMs?: number;
+  /**
    * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
    * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
    * 调度器（项目级 autoPublishAfterMinutes）

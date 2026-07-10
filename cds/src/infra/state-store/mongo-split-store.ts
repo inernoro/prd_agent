@@ -40,6 +40,7 @@ import type {
   CdsState,
   BranchEntry,
   ContainerLogArchiveEntry,
+  GithubWebhookDelivery,
   OperationLog,
   OperationLogContainerSnapshot,
   OperationLogEvent,
@@ -74,6 +75,10 @@ export interface ISplitMongoHandle {
   projectsCollection(): ISplitMongoCollection<{ _id: string; doc: Project; updatedAt: string }>;
   branchesCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>;
   selfUpdateHistoryCollection(): ISplitMongoCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>;
+  // 2026-07-09（debt.cds.state-json #1/#2）：webhook 投递与项目活动流从 global
+  // 单文档拆独立 collection——消灭「每追加一条日志就重写整个 global doc」的写放大。
+  webhookDeliveriesCollection(): ISplitMongoCollection<{ _id: string; receivedAt: string; doc: GithubWebhookDelivery; updatedAt: string }>;
+  activityLogsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; at: string; doc: ProjectActivityLog; updatedAt: string }>;
   close(): Promise<void>;
   ping(): Promise<boolean>;
 }
@@ -219,12 +224,6 @@ function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
     restOfState.containerLogArchives = takeLastRecordEntries(restOfState.containerLogArchives, maxEntries);
     restOfState.serviceDeployments = takeLastRecordEntries(restOfState.serviceDeployments, maxEntries);
     restOfState.releaseRuns = compactReleaseRuns(restOfState.releaseRuns, maxEntries, Math.min(20, Math.max(0, maxEntries)));
-    restOfState.activityLogs = Object.fromEntries(
-      Object.entries(restOfState.activityLogs || {}).map(([projectId, logs]) => [
-        projectId,
-        (logs || []).slice(-Math.min(50, Math.max(0, maxEntries))) as ProjectActivityLog[],
-      ]),
-    );
     if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
   }
 
@@ -247,13 +246,11 @@ function globalRestOf(state: CdsState): GlobalRest {
       (archives || []).slice(-MAX_CONTAINER_ARCHIVES_PER_BRANCH).map(sanitizeContainerArchive),
     ]),
   );
-  restOfState.activityLogs = Object.fromEntries(
-    Object.entries(state.activityLogs || {}).map(([projectId, logs]) => [
-      projectId,
-      (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT) as ProjectActivityLog[],
-    ]),
-  );
-  restOfState.githubWebhookDeliveries = pruneWebhookDeliveries(state.githubWebhookDeliveries || []);
+  // 2026-07-09（debt.cds.state-json #1/#2）：这两类日志字段已拆独立 collection
+  // （cds_activity_logs / cds_webhook_deliveries），global doc 不再携带——追加一条
+  // 日志不再重写整份 global 文档。
+  delete (restOfState as Partial<CdsState>).activityLogs;
+  delete (restOfState as Partial<CdsState>).githubWebhookDeliveries;
   delete (restOfState as Partial<CdsState>).selfUpdateHistory;
   restOfState.serviceDeployments = Object.fromEntries(
     Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
@@ -278,6 +275,30 @@ function globalRestOf(state: CdsState): GlobalRest {
     ) as CdsState['executors'];
   }
   return compactGlobalRestToFit(restOfState);
+}
+
+/** cds_webhook_deliveries 的 _id — delivery.id 全局唯一（github delivery guid）。 */
+function webhookDeliveryDocId(delivery: GithubWebhookDelivery): string {
+  return String(delivery.id || '').replace(/[^a-zA-Z0-9._:-]+/g, '-').slice(0, 120) || 'unknown';
+}
+
+/**
+ * cds_activity_logs 的复合 _id — log.id（`<projectId>:<seq>`）的 seq 是每项目
+ * 递增但**非持久**（重启后可能从头计数），单用 log.id 会在重启后撞 _id。
+ * 复合上 at 时间戳后实践上唯一。
+ */
+function activityLogDocId(projectId: string, log: ProjectActivityLog): string {
+  const parts = [projectId, log.at || '', log.id || ''].map((part) =>
+    String(part).replace(/[^a-zA-Z0-9._:-]+/g, '-').slice(0, 80),
+  );
+  return parts.join('__');
+}
+
+/** 重建 activityLogs 内存序：按时间升序，同一时刻按 log.id 里的 seq 升序。 */
+function activityLogSortKey(log: ProjectActivityLog): [number, number] {
+  const ts = Date.parse(log.at || '');
+  const seq = Number.parseInt(String(log.id || '').split(':').pop() || '', 10);
+  return [Number.isNaN(ts) ? 0 : ts, Number.isNaN(seq) ? 0 : seq];
 }
 
 function selfUpdateRecordId(record: SelfUpdateRecord, index: number): string {
@@ -317,6 +338,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private dirtyState: CdsState | null = null;
   private dirtyGeneration = 0;
   private snapshotScheduled = false;
+  // init() 从 global doc 的 legacy 内嵌字段（selfUpdateHistory / 两类日志）回退读过
+  // 数据时置位：下一次 persistSnapshot 必须强制重写 global doc 一次，把 legacy
+  // 字段从 DB 里剥掉——否则 diff 看不到差异（两侧投影都已 delete 这些字段），
+  // 陈旧的大日志会永远赖在 global 单文档里。
+  private forceGlobalRewrite = false;
 
   constructor(private readonly handle: ISplitMongoHandle) {}
 
@@ -329,18 +355,32 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     try {
       await this.handle.branchesCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
       await this.handle.selfUpdateHistoryCollection().createIndex?.({ ts: -1 }, { name: 'ts_-1' });
+      // 2026-07-09 拆分出的两个日志 collection：按项目/时间的读路径索引。
+      // 沿用本文件既有惯例（split store 自建自己的索引，idempotent），CDS 运维
+      // 不依赖 DBA 手动执行；guide.platform.mongodb-indexes.md CDS 段仅作记录备查。
+      await this.handle.activityLogsCollection().createIndex?.({ projectId: 1, at: -1 }, { name: 'projectId_1_at_-1' });
+      await this.handle.webhookDeliveriesCollection().createIndex?.({ receivedAt: -1 }, { name: 'receivedAt_-1' });
     } catch {
       // 如果 driver 不支持 createIndex 或权限不足，跳过 — 索引非功能必需。
     }
 
-    const [globalDoc, projectDocs, branchDocs, selfUpdateDocs] = await Promise.all([
+    const [globalDoc, projectDocs, branchDocs, selfUpdateDocs, deliveryDocs, activityDocs] = await Promise.all([
       this.handle.globalCollection().findOne({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().find().toArray(),
       this.handle.branchesCollection().find().toArray(),
       this.handle.selfUpdateHistoryCollection().find().toArray(),
+      this.handle.webhookDeliveriesCollection().find().toArray(),
+      this.handle.activityLogsCollection().find().toArray(),
     ]);
 
-    if (!globalDoc && projectDocs.length === 0 && branchDocs.length === 0 && selfUpdateDocs.length === 0) {
+    if (
+      !globalDoc &&
+      projectDocs.length === 0 &&
+      branchDocs.length === 0 &&
+      selfUpdateDocs.length === 0 &&
+      deliveryDocs.length === 0 &&
+      activityDocs.length === 0
+    ) {
       // 全空 — fresh mongo, 让 StateService 走 emptyState + 跑 migration。
       this.cache = null;
     } else {
@@ -357,14 +397,66 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         .filter(Boolean);
       const legacySelfUpdateHistory = restOfState.selfUpdateHistory || [];
 
+      // webhook 投递 / 活动流：优先读独立 collection；空则回退 global doc 里的
+      // legacy 字段（升级首启零迁移——首次落盘即写入新 collection 并从 global 剥离）。
+      const splitDeliveries = deliveryDocs
+        .map((doc) => doc.doc)
+        .filter(Boolean)
+        .sort((a, b) => {
+          const diff = Date.parse(a.receivedAt || '') - Date.parse(b.receivedAt || '');
+          return diff !== 0 ? diff : String(a.id).localeCompare(String(b.id));
+        });
+      const legacyDeliveries = restOfState.githubWebhookDeliveries || [];
+
+      const splitActivityLogs: Record<string, ProjectActivityLog[]> = {};
+      for (const doc of activityDocs) {
+        if (!doc.doc) continue;
+        (splitActivityLogs[doc.projectId] ||= []).push(doc.doc);
+      }
+      for (const logs of Object.values(splitActivityLogs)) {
+        logs.sort((a, b) => {
+          const [ta, sa] = activityLogSortKey(a);
+          const [tb, sb] = activityLogSortKey(b);
+          return ta !== tb ? ta - tb : sa - sb;
+        });
+      }
+      const legacyActivityLogs = restOfState.activityLogs || {};
+
+      if (
+        restOfState.selfUpdateHistory !== undefined ||
+        restOfState.githubWebhookDeliveries !== undefined ||
+        restOfState.activityLogs !== undefined
+      ) {
+        this.forceGlobalRewrite = true;
+      }
+
       this.cache = {
         ...restOfState,
         selfUpdateHistory: (splitSelfUpdateHistory.length > 0 ? splitSelfUpdateHistory : legacySelfUpdateHistory)
           .slice(-MAX_SELF_UPDATE_HISTORY)
           .map(sanitizeSelfUpdateRecord),
+        githubWebhookDeliveries: pruneWebhookDeliveries(
+          splitDeliveries.length > 0 ? splitDeliveries : legacyDeliveries,
+        ),
+        activityLogs: Object.fromEntries(
+          Object.entries(activityDocs.length > 0 ? splitActivityLogs : legacyActivityLogs).map(
+            ([projectId, logs]) => [projectId, (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT)],
+          ),
+        ),
         projects: projectDocs.map((pd) => pd.doc),
         branches,
       } as CdsState;
+
+      this.persistedCache = structuredClone(this.cache);
+      // persistedCache 必须表示「split collection 里现在真的有什么」。legacy 回退
+      // 读进内存的数据尚未写入 split collection——把对应字段重置为 split 的真实
+      // 内容（空），首次 persistSnapshot 的 diff 才会把 legacy 数据 upsert 搬家，
+      // 而不是「diff 无变化 + global 被剥离」造成迁移丢数据。
+      if (splitSelfUpdateHistory.length === 0) this.persistedCache.selfUpdateHistory = [];
+      if (splitDeliveries.length === 0) this.persistedCache.githubWebhookDeliveries = [];
+      if (activityDocs.length === 0) this.persistedCache.activityLogs = {};
+      this.initialized = true;
+      return;
     }
     this.persistedCache = this.cache ? structuredClone(this.cache) : null;
 
@@ -408,17 +500,6 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   private async persistSnapshot(snapshot: CdsState, previous: CdsState | null): Promise<void> {
     const now = new Date().toISOString();
-
-    // ── 1) Global rest（单文档，replaceOne 即可）──
-    const restOfState = globalRestOf(snapshot);
-    const previousRest = previous ? globalRestOf(previous) : null;
-    if (!previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
-      await this.handle.globalCollection().replaceOne(
-        { _id: GLOBAL_DOC_ID },
-        { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
-        { upsert: true },
-      );
-    }
 
     // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
     const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
@@ -507,6 +588,91 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (historyOps.length > 0) {
       await this.handle.selfUpdateHistoryCollection().bulkWrite(historyOps);
     }
+
+    // ── 5) Webhook deliveries collection（日志类，diff-based，_id = delivery.id）──
+    const deliveryOps = this.diffWebhookDeliveryOps(snapshot, previous, now);
+    if (deliveryOps.length > 0) {
+      await this.handle.webhookDeliveriesCollection().bulkWrite(deliveryOps);
+    }
+
+    // ── 6) Activity logs collection（日志类，diff-based，复合 _id）──
+    const activityOps = this.diffActivityLogOps(snapshot, previous, now);
+    if (activityOps.length > 0) {
+      await this.handle.activityLogsCollection().bulkWrite(activityOps);
+    }
+
+    // ── 1) Global rest（单文档，replaceOne）——刻意放最后：legacy 迁移首启时先把
+    // 日志类数据 upsert 进 split collection，再从 global doc 剥离，中途崩溃也不丢。──
+    const restOfState = globalRestOf(snapshot);
+    const previousRest = previous ? globalRestOf(previous) : null;
+    if (this.forceGlobalRewrite || !previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
+      await this.handle.globalCollection().replaceOne(
+        { _id: GLOBAL_DOC_ID },
+        { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
+        { upsert: true },
+      );
+      this.forceGlobalRewrite = false;
+    }
+  }
+
+  /** snapshot vs previous 的 webhook 投递差异 → bulkWrite ops（内存 ring 淘汰经此产生 deleteOne，天然上限）。 */
+  private diffWebhookDeliveryOps(snapshot: CdsState, previous: CdsState | null, now: string): unknown[] {
+    const nextDeliveries = pruneWebhookDeliveries(snapshot.githubWebhookDeliveries || []);
+    const previousDeliveries = previous ? pruneWebhookDeliveries(previous.githubWebhookDeliveries || []) : [];
+    const nextIds = new Set(nextDeliveries.map((d) => webhookDeliveryDocId(d)));
+    const previousById = new Map(previousDeliveries.map((d) => [webhookDeliveryDocId(d), d]));
+    const ops: unknown[] = [];
+    for (const delivery of nextDeliveries) {
+      const id = webhookDeliveryDocId(delivery);
+      const previousDelivery = previousById.get(id);
+      if (!previousDelivery || stableJson(delivery) !== stableJson(previousDelivery)) {
+        ops.push({
+          replaceOne: {
+            filter: { _id: id },
+            replacement: { _id: id, receivedAt: delivery.receivedAt || '', doc: delivery, updatedAt: now },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of previousById.keys()) {
+      if (nextIds.has(id)) continue;
+      ops.push({ deleteOne: { filter: { _id: id } } });
+    }
+    return ops;
+  }
+
+  /** snapshot vs previous 的项目活动流差异 → bulkWrite ops（每项目 ring buffer 淘汰产生 deleteOne）。 */
+  private diffActivityLogOps(snapshot: CdsState, previous: CdsState | null, now: string): unknown[] {
+    const flatten = (state: CdsState | null): Map<string, { projectId: string; log: ProjectActivityLog }> => {
+      const map = new Map<string, { projectId: string; log: ProjectActivityLog }>();
+      for (const [projectId, logs] of Object.entries(state?.activityLogs || {})) {
+        for (const log of (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT)) {
+          map.set(activityLogDocId(projectId, log), { projectId, log });
+        }
+      }
+      return map;
+    };
+    const nextById = flatten(snapshot);
+    const previousById = flatten(previous);
+    const ops: unknown[] = [];
+    for (const [id, { projectId, log }] of nextById) {
+      const previousEntry = previousById.get(id);
+      if (!previousEntry || stableJson(log) !== stableJson(previousEntry.log)) {
+        ops.push({
+          replaceOne: {
+            filter: { _id: id },
+            replacement: { _id: id, projectId, at: log.at || '', doc: log, updatedAt: now },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of previousById.keys()) {
+      if (nextById.has(id)) continue;
+      ops.push({ deleteOne: { filter: { _id: id } } });
+    }
+    return ops;
   }
 
   private drainWrites(): void {
@@ -619,6 +785,49 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       if (!newHistoryIds.has(id)) historyOps.push({ deleteOne: { filter: { _id: id } } });
     }
     if (historyOps.length > 0) await this.handle.selfUpdateHistoryCollection().bulkWrite(historyOps);
+
+    // Webhook deliveries：全量 upsert + 清掉 collection 里已不在快照中的文档。
+    const deliveries = pruneWebhookDeliveries(snapshot.githubWebhookDeliveries || []);
+    const newDeliveryIds = new Set(deliveries.map((d) => webhookDeliveryDocId(d)));
+    const existingDeliveries = await this.handle.webhookDeliveriesCollection().find().toArray();
+    const deliveryOps: unknown[] = deliveries.map((delivery) => {
+      const id = webhookDeliveryDocId(delivery);
+      return {
+        replaceOne: {
+          filter: { _id: id },
+          replacement: { _id: id, receivedAt: delivery.receivedAt || '', doc: delivery, updatedAt: now },
+          upsert: true,
+        },
+      };
+    });
+    for (const id of existingDeliveries.map((d) => d._id)) {
+      if (!newDeliveryIds.has(id)) deliveryOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (deliveryOps.length > 0) await this.handle.webhookDeliveriesCollection().bulkWrite(deliveryOps);
+
+    // Activity logs：同上，逐项目 ring buffer 截断后全量对齐。
+    const newActivityIds = new Set<string>();
+    const activityOps: unknown[] = [];
+    for (const [projectId, logs] of Object.entries(snapshot.activityLogs || {})) {
+      for (const log of (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT)) {
+        const id = activityLogDocId(projectId, log);
+        newActivityIds.add(id);
+        activityOps.push({
+          replaceOne: {
+            filter: { _id: id },
+            replacement: { _id: id, projectId, at: log.at || '', doc: log, updatedAt: now },
+            upsert: true,
+          },
+        });
+      }
+    }
+    const existingActivity = await this.handle.activityLogsCollection().find().toArray();
+    for (const id of existingActivity.map((d) => d._id)) {
+      if (!newActivityIds.has(id)) activityOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (activityOps.length > 0) await this.handle.activityLogsCollection().bulkWrite(activityOps);
+
+    this.forceGlobalRewrite = false; // 全量写已重写 global doc，legacy 剥离完成。
     this.persistedCache = structuredClone(snapshot);
     this.persistedGeneration = this.writeGeneration;
   }
@@ -657,16 +866,25 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   /**
    * Seed utility: 把 JsonBackingStore 拿到的 state 一次性写入 split mongo。
-   * 仅在 3 个集合都为空时执行，避免覆盖已迁数据。
+   * 仅在所有 split 集合都为空时执行，避免覆盖已迁数据。
    */
   async seedIfEmpty(state: CdsState): Promise<boolean> {
-    const [globalCount, projectsCount, branchesCount, historyCount] = await Promise.all([
+    const [globalCount, projectsCount, branchesCount, historyCount, deliveriesCount, activityCount] = await Promise.all([
       this.handle.globalCollection().countDocuments({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().countDocuments(),
       this.handle.branchesCollection().countDocuments(),
       this.handle.selfUpdateHistoryCollection().countDocuments(),
+      this.handle.webhookDeliveriesCollection().countDocuments(),
+      this.handle.activityLogsCollection().countDocuments(),
     ]);
-    if (globalCount > 0 || projectsCount > 0 || branchesCount > 0 || historyCount > 0) return false;
+    if (
+      globalCount > 0 ||
+      projectsCount > 0 ||
+      branchesCount > 0 ||
+      historyCount > 0 ||
+      deliveriesCount > 0 ||
+      activityCount > 0
+    ) return false;
 
     await this.forceFullSave(state);
     return true;

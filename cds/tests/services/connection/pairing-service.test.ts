@@ -46,7 +46,7 @@ function makeService(): {
   return {
     state,
     pairing,
-    cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
+    cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
   };
 }
 

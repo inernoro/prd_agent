@@ -6,6 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { SchedulerService, type Clock } from '../../src/services/scheduler.js';
 import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for the warm-pool scheduler.
  *
@@ -68,10 +69,11 @@ describe('SchedulerService', () => {
 
   beforeEach(() => setup());
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     scheduler.stop();
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── touch ──
@@ -418,10 +420,12 @@ describe('SchedulerService', () => {
       expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
     });
 
-    it('overrides survive a save + reload cycle', () => {
+    it('overrides survive a save + reload cycle', async () => {
       stateService.setSchedulerIdleTTLOverride(120);
       stateService.setSchedulerMaxHotOverride(5);
       stateService.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (stateService.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
       const reloaded = new StateService(stateFile);
       reloaded.load();
       expect(reloaded.getSchedulerIdleTTLOverride()).toBe(120);

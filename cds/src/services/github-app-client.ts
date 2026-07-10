@@ -374,6 +374,42 @@ export class GitHubAppClient {
   }
 
   /**
+   * 查询仓库指定 ref 下某文件是否存在（GET /contents，200=exists / 404=missing /
+   * 其他或网络异常=unknown）。极速版入口校验用：push 进 waiting 前确认
+   * `.github/workflows/branch-image.yml` 真的存在，缺文件的仓库 CI 完成事件
+   * 永远不会来，不该让分支苦等 15 分钟看门狗（debt.cds.removed-branch-pages #7）。
+   * unknown 一律由调用方 fail-open（照旧 waiting，看门狗兜底），本方法不抛错。
+   */
+  async workflowFileExists(
+    installationId: number,
+    owner: string,
+    repo: string,
+    ref: string,
+    filePath = '.github/workflows/branch-image.yml',
+  ): Promise<'exists' | 'missing' | 'unknown'> {
+    try {
+      const token = await this.getInstallationToken(installationId);
+      const res = await this.fetchImpl(
+        `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'CDS-GitHubApp/1.0',
+          },
+        },
+      );
+      if (res.ok) return 'exists';
+      if (res.status === 404) return 'missing';
+      return 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
    * List every installation of this App. Used by the Settings UI so the
    * operator can associate a project with one of the App's install
    * targets (their user or org).

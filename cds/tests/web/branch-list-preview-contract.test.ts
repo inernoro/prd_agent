@@ -10,9 +10,11 @@ const source = fs.readFileSync(
 describe('BranchListPage preview contract', () => {
   it('does not let the branch-card preview button silently deploy stopped branches', () => {
     expect(source).toContain('const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false)');
-    expect(source).toContain('onPreview={() => void openPreview(branch, false)}');
+    // 2026-07-09 性能重构：卡片回调改走稳定 handlers 对象（latest-ref 模式），
+    // 契约不变——预览按钮必须以 deployWhenNeeded=false 调 openPreview。
+    expect(source).toContain('onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false)');
     expect(source).toContain('预览不会自动部署，请手动点击部署');
-    expect(source).not.toContain('onPreview={() => void openPreview(branch, true)}');
+    expect(source).not.toContain('openPreview(branch, true)');
   });
 
   it('exposes an optional config-source (派生) selector wired into the create-branch POST body', () => {

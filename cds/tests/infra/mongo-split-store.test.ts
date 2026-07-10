@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import type { BranchEntry, CdsState, Project, SelfUpdateRecord } from '../../src/types.js';
+import type { BranchEntry, CdsState, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord } from '../../src/types.js';
 
 function emptyState(): CdsState {
   return {
@@ -74,14 +74,34 @@ class FakeSplitHandle implements ISplitMongoHandle {
   projects = new FakeSplitCollection<{ _id: string; doc: Project; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>();
+  webhookDeliveries = new FakeSplitCollection<{ _id: string; receivedAt: string; doc: GithubWebhookDelivery; updatedAt: string }>();
+  activityLogs = new FakeSplitCollection<{ _id: string; projectId: string; at: string; doc: ProjectActivityLog; updatedAt: string }>();
 
   async connect(): Promise<void> {}
   globalCollection() { return this.global; }
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
+  webhookDeliveriesCollection() { return this.webhookDeliveries; }
+  activityLogsCollection() { return this.activityLogs; }
   async close(): Promise<void> {}
   async ping(): Promise<boolean> { return true; }
+}
+
+function makeDelivery(id: string, receivedAt: string): GithubWebhookDelivery {
+  return {
+    id,
+    receivedAt,
+    durationMs: 12,
+    event: 'push',
+    signatureValid: true,
+    dispatchAction: 'deploy',
+    branchId: 'branch-a',
+  };
+}
+
+function makeActivityLog(projectId: string, seq: number, at: string): ProjectActivityLog {
+  return { id: `${projectId}:${seq}`, at, type: 'deploy' } as ProjectActivityLog;
 }
 
 describe('MongoSplitStateBackingStore', () => {
@@ -226,7 +246,7 @@ describe('MongoSplitStateBackingStore', () => {
     // 克隆一次、落盘一次。
     for (let i = 0; i < 50; i++) {
       const next = structuredClone(state);
-      (next as { activityLogs?: Record<string, unknown> }).activityLogs = { ['prd-agent']: [{ n: i }] };
+      next.customEnv = { _global: { BURST_SEQ: String(i) } };
       store.save(next);
     }
     await store.flush();
@@ -368,5 +388,130 @@ describe('MongoSplitStateBackingStore', () => {
     expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThanOrEqual(12 * 1024 * 1024);
     expect(Object.keys(global.logs || {}).length).toBeLessThan(260);
     expect(Object.keys(global.containerLogArchives || {}).length).toBeLessThan(260);
+  });
+
+  it('moves webhook deliveries and activity logs into split collections and round-trips them on init', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.githubWebhookDeliveries = [
+      makeDelivery('d1', '2026-07-09T01:00:00.000Z'),
+      makeDelivery('d2', '2026-07-09T02:00:00.000Z'),
+    ];
+    state.activityLogs = {
+      'prd-agent': [
+        makeActivityLog('prd-agent', 1, '2026-07-09T01:00:00.000Z'),
+        makeActivityLog('prd-agent', 2, '2026-07-09T02:00:00.000Z'),
+      ],
+      other: [makeActivityLog('other', 1, '2026-07-09T03:00:00.000Z')],
+    };
+    store.save(state);
+    await store.flush();
+
+    // global doc 不再携带两类日志字段——追加日志不再重写整份 global 文档。
+    const global = handle.global.docs.get('global')!.state;
+    expect(global.githubWebhookDeliveries).toBeUndefined();
+    expect(global.activityLogs).toBeUndefined();
+    expect(handle.webhookDeliveries.docs.size).toBe(2);
+    expect(handle.activityLogs.docs.size).toBe(3);
+
+    // 新实例 init() 从 split collection 重建，顺序与写入时一致。
+    const reopened = new MongoSplitStateBackingStore(handle);
+    await reopened.init();
+    const reloaded = reopened.load()!;
+    expect((reloaded.githubWebhookDeliveries || []).map((d) => d.id)).toEqual(['d1', 'd2']);
+    expect((reloaded.activityLogs?.['prd-agent'] || []).map((l) => l.id)).toEqual(['prd-agent:1', 'prd-agent:2']);
+    expect((reloaded.activityLogs?.other || []).map((l) => l.id)).toEqual(['other:1']);
+  });
+
+  it('falls back to legacy embedded fields when the split collections are empty', async () => {
+    // 升级首启：旧 global doc 里还嵌着两类日志，新 collection 为空——零迁移脚本，
+    // init() 直接回退读 legacy 字段，首次落盘即完成剥离。
+    const handle = new FakeSplitHandle();
+    const legacyRest = {
+      ...emptyState(),
+      githubWebhookDeliveries: [makeDelivery('legacy-1', '2026-07-08T01:00:00.000Z')],
+      activityLogs: { 'prd-agent': [makeActivityLog('prd-agent', 9, '2026-07-08T01:00:00.000Z')] },
+    } as Omit<CdsState, 'projects' | 'branches'>;
+    delete (legacyRest as Partial<CdsState>).projects;
+    delete (legacyRest as Partial<CdsState>).branches;
+    handle.global.docs.set('global', { _id: 'global', state: legacyRest, updatedAt: 't' });
+
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const loaded = store.load()!;
+    expect((loaded.githubWebhookDeliveries || []).map((d) => d.id)).toEqual(['legacy-1']);
+    expect((loaded.activityLogs?.['prd-agent'] || []).map((l) => l.id)).toEqual(['prd-agent:9']);
+
+    // 首次 save 后：legacy 字段从 global doc 剥离，数据落到 split collection。
+    store.save(structuredClone(loaded));
+    await store.flush();
+    const global = handle.global.docs.get('global')!.state;
+    expect(global.githubWebhookDeliveries).toBeUndefined();
+    expect(global.activityLogs).toBeUndefined();
+    expect(handle.webhookDeliveries.docs.size).toBe(1);
+    expect(handle.activityLogs.docs.size).toBe(1);
+  });
+
+  it('appends one activity log without rewriting the global doc and evicts overflow with deleteOne', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.activityLogs = {
+      'prd-agent': [
+        makeActivityLog('prd-agent', 1, '2026-07-09T01:00:00.000Z'),
+        makeActivityLog('prd-agent', 2, '2026-07-09T02:00:00.000Z'),
+      ],
+    };
+    store.save(state);
+    await store.flush();
+
+    handle.global.replaceWrites = [];
+    handle.activityLogs.bulkWrites = [];
+
+    // 内存 ring buffer 淘汰最旧一条 + 追加一条（StateService 侧行为的最小重现）。
+    const next = structuredClone(state);
+    next.activityLogs = {
+      'prd-agent': [
+        makeActivityLog('prd-agent', 2, '2026-07-09T02:00:00.000Z'),
+        makeActivityLog('prd-agent', 3, '2026-07-09T03:00:00.000Z'),
+      ],
+    };
+    store.save(next);
+    await store.flush();
+
+    // 全局文档零写入；活动流 collection 一次 bulkWrite：新增 1 条 + 淘汰 deleteOne 1 条。
+    expect(handle.global.replaceWrites).toHaveLength(0);
+    expect(handle.activityLogs.bulkWrites).toHaveLength(1);
+    const ops = handle.activityLogs.bulkWrites[0] as Array<{ replaceOne?: unknown; deleteOne?: { filter: { _id: string } } }>;
+    expect(ops.filter((op) => op.replaceOne)).toHaveLength(1);
+    const deletes = ops.filter((op) => op.deleteOne);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].deleteOne!.filter._id).toContain('prd-agent:1');
+    expect(handle.activityLogs.docs.size).toBe(2);
+  });
+
+  it('seedIfEmpty writes the split log collections and refuses to seed when any of them has data', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.githubWebhookDeliveries = [makeDelivery('d1', '2026-07-09T01:00:00.000Z')];
+    state.activityLogs = { 'prd-agent': [makeActivityLog('prd-agent', 1, '2026-07-09T01:00:00.000Z')] };
+    await expect(store.seedIfEmpty(state)).resolves.toBe(true);
+    expect(handle.webhookDeliveries.docs.size).toBe(1);
+    expect(handle.activityLogs.docs.size).toBe(1);
+
+    // 任一 split collection 非空即拒绝二次 seed（不覆盖已迁数据）。
+    const handle2 = new FakeSplitHandle();
+    handle2.activityLogs.docs.set('x', { _id: 'x', projectId: 'p', at: 't', doc: makeActivityLog('p', 1, 't'), updatedAt: 't' });
+    const store2 = new MongoSplitStateBackingStore(handle2);
+    await store2.init();
+    await expect(store2.seedIfEmpty(emptyState())).resolves.toBe(false);
   });
 });

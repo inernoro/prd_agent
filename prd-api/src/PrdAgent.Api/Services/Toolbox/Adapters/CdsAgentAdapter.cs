@@ -116,8 +116,11 @@ public class CdsAgentAdapter : IAgentAdapter
 
         if (runtimeProfile == null)
         {
-            yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
-            yield break;
+            // D4（debt.cds.agent.md，2026-07-09）：没有 runtime profile 不再硬报错——
+            // 合成占位 choice 让会话服务自行决策：CDS 侧 Lite（只读降级）可用时对
+            // null profile 放行直跑；Lite 不可用时会话层仍会显式失败（不劣于旧行为）。
+            yield return AgentStreamChunk.Text("未找到系统级模型配置，尝试以 CDS Lite 模式直跑（只读降级；如需完整能力请在系统设置配置 baseUrl、model 和 API key）...\n");
+            runtimeProfile = new RuntimeProfileChoice(null, "claude-sdk", string.Empty, false, DateTime.UtcNow);
         }
 
         var title = context.Action switch
@@ -414,8 +417,9 @@ public class CdsAgentAdapter : IAgentAdapter
         return userMessage;
     }
 
+    // Id 可空：D4 合成占位（无 profile 走 Lite 直跑）时为 null，会话服务据此走 lite 决策。
     private sealed record RuntimeProfileChoice(
-        string Id,
+        string? Id,
         string Runtime,
         string Model,
         bool IsDefault,

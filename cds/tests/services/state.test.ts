@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('StateService', () => {
   let stateFile: string;
   let service: StateService;
@@ -15,9 +16,10 @@ describe('StateService', () => {
     service = new StateService(stateFile);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('initialization', () => {
@@ -394,8 +396,73 @@ describe('StateService', () => {
     });
   });
 
+  describe('container log archives（黑匣子 per-branch 上限 + 孤儿裁剪，2026-07-09）', () => {
+    beforeEach(() => {
+      service.load();
+      service.addBranch({
+        id: 'arch-test', branch: 'arch/test', worktreePath: '/tmp/at',
+        services: {}, status: 'idle', createdAt: '2026-02-12T00:00:00Z',
+      });
+    });
+
+    function appendArchive(branchId: string, opts: { capturedAt?: string; logs?: string } = {}) {
+      return service.appendContainerLogArchive(branchId, {
+        projectId: 'default',
+        profileId: 'api',
+        containerName: 'c1',
+        source: 'deploy-error',
+        masked: true,
+        capturedAt: opts.capturedAt,
+        logs: opts.logs ?? 'line1\nline2',
+      } as any);
+    }
+
+    it('caps entries per branch at 10, keeping the newest', () => {
+      for (let i = 0; i < 14; i++) {
+        appendArchive('arch-test', { capturedAt: `2026-07-09T00:${String(i).padStart(2, '0')}:00Z` });
+      }
+      const archives = service.getContainerLogArchives('arch-test');
+      expect(archives).toHaveLength(10);
+      expect(archives[0].capturedAt).toBe('2026-07-09T00:04:00Z');
+      expect(archives[archives.length - 1].capturedAt).toBe('2026-07-09T00:13:00Z');
+    });
+
+    it('caps total bytes per branch at 2MB while always keeping the newest entry', () => {
+      const bigLog = 'x'.repeat(900 * 1024); // 900KB × 4 = 3.6MB > 2MB
+      for (let i = 0; i < 4; i++) {
+        appendArchive('arch-test', { capturedAt: `2026-07-09T01:0${i}:00Z`, logs: bigLog });
+      }
+      const archives = service.getContainerLogArchives('arch-test');
+      const totalBytes = archives.reduce((sum, e) => sum + e.byteLength, 0);
+      expect(archives.length).toBeGreaterThanOrEqual(1);
+      expect(archives.length).toBeLessThan(4);
+      expect(totalBytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+      expect(archives[archives.length - 1].capturedAt).toBe('2026-07-09T01:03:00Z');
+    });
+
+    it('load() removes orphan archives older than the retention window but keeps recent ones', async () => {
+      // 孤儿 1：14 天前（应删）；孤儿 2：刚刚（保留期内，应留）
+      const oldAt = new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString();
+      const recentAt = new Date(Date.now() - 60 * 1000).toISOString();
+      appendArchive('gone-branch-old', { capturedAt: oldAt });
+      service.appendLog('gone-branch-old', { type: 'build', startedAt: oldAt, status: 'completed', events: [] });
+      appendArchive('gone-branch-recent', { capturedAt: recentAt });
+      service.save();
+      await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
+
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getContainerLogArchives('gone-branch-old')).toEqual([]);
+      expect(reloaded.getLogs('gone-branch-old')).toEqual([]);
+      expect(reloaded.getContainerLogArchives('gone-branch-recent')).toHaveLength(1);
+      // 仍存在的分支不受影响
+      appendArchive('arch-test');
+      expect(service.getContainerLogArchives('arch-test')).toHaveLength(1);
+    });
+  });
+
   describe('persistence', () => {
-    it('should save and reload state correctly', () => {
+    it('should save and reload state correctly', async () => {
       service.load();
       service.addBranch({
         id: 'persist-test', branch: 'persist/test', worktreePath: '/tmp/pt',
@@ -403,6 +470,8 @@ describe('StateService', () => {
       });
       service.setDefaultBranch('persist-test');
       service.save();
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
 
       const service2 = new StateService(stateFile);
       service2.load();
@@ -527,9 +596,11 @@ describe('StateService', () => {
       expect(service.getRemovedBranch('nope')).toBeUndefined();
     });
 
-    it('persists tombstones across reload', () => {
+    it('persists tombstones across reload', async () => {
       service.load();
       service.recordRemovedBranch(makeTombstone('a-feat-demo', '2026-06-24T00:00:00.000Z'));
+      // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+      await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
       const reloaded = new StateService(stateFile);
       reloaded.load();
       expect(reloaded.getRemovedBranch('a-feat-demo')?.reason).toBe('merged');

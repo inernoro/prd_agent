@@ -21,6 +21,7 @@ import {
 } from '../../src/services/comment-template.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function buildApp(stateService: StateService, config: CdsConfig) {
   const app = express();
   app.use(express.json());
@@ -107,8 +108,9 @@ describe('comment-template router', () => {
     app = buildApp(stateService, config);
   });
 
-  afterEach(() => {
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('GET /api/comment-template', () => {

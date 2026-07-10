@@ -9,6 +9,7 @@ import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { createSchedulerRouter } from '../../src/scheduler/routes.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * Tests for the cluster bootstrap register flow in `scheduler/routes.ts`.
  *
@@ -130,12 +131,13 @@ describe('Scheduler bootstrap routes', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     if (server) {
       await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = null;
     }
     registry.stopHealthChecks();
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── POST /register — bootstrap token happy path ──

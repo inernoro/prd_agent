@@ -42,17 +42,16 @@
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 1 | 3% |
+| `open` | 0 | 0% |
 | `deferred` | 8 | 22% |
 | `in-progress` | 0 | 0% |
-| `done` | 28 | 76% |
+| `done` | 29 | 78% |
 
 > 2026-04-15 终局:**26 条清完**。UF-01..10 + GAP-01..09 + L10N-01..03 + FU-01 + FU-05 + TEST-01/02 全部 done。
 > 2026-04-16:**FU-03** 补完(nixpacks 风格框架推断),目前 27 条 done。
 > 2026-04-16:**FU-04** 补完(worktreeBase 按 projectId 分子目录 + 符号链接迁移),目前 28 条 done。
->
-> 剩 1 条 `open`——需独立 session 设计:
-> - **FU-02** MapAuthStore mongo 后端(touches 认证架构)
+> **FU-02** 亦已 done(MapAuthStore mongo 后端,铁证 `cds/src/infra/auth-store/mongo-store.ts` 存在且被 index.ts/server.ts 使用;明细行 §6 早已标 done,本摘要曾漏记)——29 条 done。
+> 2026-07-09 对账:摘要与明细账不平修正,**open 归零**。
 >
 > `deferred` 的 8 条:LIM-01..07(设计权衡)+ GAP-10(跨项目画布组件统一 epic)。
 

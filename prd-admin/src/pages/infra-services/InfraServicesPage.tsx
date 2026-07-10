@@ -993,7 +993,7 @@ export default function InfraServicesPage() {
               </div>
             ))}
           </div>
-          <div className="mt-2 text-xs text-white/45">这些工具由 claude-sdk sidecar 通过 MAP 回调执行，仓库工具默认工作目录是 CDS sandbox 内的 prd_agent 仓库，Bridge 工具通过 active CDS 长期连接操作预览页。</div>
+          <div className="mt-2 text-xs text-white/45">这些工具由 Claude sidecar runtime（自研 sidecar，Anthropic 协议；runtime 标识 claude-sdk）通过 MAP 回调执行，仓库工具默认工作目录是 CDS sandbox 内的 prd_agent 仓库，Bridge 工具通过 active CDS 长期连接操作预览页。</div>
         </div>
       </div>
     );
@@ -1008,7 +1008,7 @@ export default function InfraServicesPage() {
         <div>
           <h1 className="text-xl font-semibold text-white">基础设施服务</h1>
           <p className="text-sm text-white/60 mt-1.5 max-w-2xl">
-            shared 基础设施服务（如 claude-sdk sidecar）的连接管理、实例分布、路由策略与业务监控。
+            shared 基础设施服务（如 Claude sidecar runtime，自研 sidecar / Anthropic 协议）的连接管理、实例分布、路由策略与业务监控。
             部署 / 编排能力由 CDS 提供，本页通过 CDS 地址授权建立信任连接，配对密钥作为兜底路径保留。
           </p>
         </div>
@@ -1532,7 +1532,7 @@ export default function InfraServicesPage() {
               design.cds.agent.sdk-executor.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">claude-sdk 执行器架构</span>
+            <span className="text-white/45 ml-2">Claude sidecar runtime（claude-sdk 执行器）架构</span>
           </li>
           <li>
             <a
