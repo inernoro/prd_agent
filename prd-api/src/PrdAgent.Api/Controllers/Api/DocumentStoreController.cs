@@ -2967,7 +2967,9 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("entries/{entryId}/generate-subtitle")]
     public async Task<IActionResult> GenerateSubtitle(string entryId)
     {
-        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        // team writable：与 UploadFile 的 CanWriteStoreAsync 对称——能上传音视频的协作者
+        // 也能发起字幕/转录（产物是新 entry，本质是写操作），否则非 Owner 上传完即 404（Codex P2）
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, GetUserId());
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持生成字幕"));
@@ -2986,7 +2988,9 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("entries/{entryId}/transcribe")]
     public async Task<IActionResult> TranscribeEntry(string entryId)
     {
-        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        // team writable：能上传录音的协作者必须能转录，否则 FAB「录音转笔记」流程
+        // 在共享库里上传成功后立刻 404（Codex P2）
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, GetUserId());
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持转录"));

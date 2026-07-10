@@ -4,3 +4,4 @@
 | chore | prd-admin | /document-store 登记为移动端 full 兼容等级 |
 | feat | prd-admin | 知识库库内「新增」收敛为右下角调色盘 FAB 唯一入口（点击扇形展开：写文章/录音转笔记/上传文件/解析短视频/新建文件夹），下线侧栏小「+」菜单与顶栏「上传文档」按钮，消除重复与被遮挡入口 |
 | test | prd-api | AppCaller golden 快照补入 document-store.transcribe-summary::chat（修 CI Server Build & Test 红灯） |
+| fix | prd-api | 字幕生成/录音转录端点鉴权改为团队可写路径（与上传权限对称），修共享库协作者上传后无法转录的 404（Codex P2） |
