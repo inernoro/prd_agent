@@ -1056,6 +1056,40 @@ app.MapGet("/gw/runtime-gates", async () =>
     var shadowTotal = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(shadowFilter);
     var shadowCritical = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HasCritical", true)));
     var shadowHttpFail = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HttpOk", false)));
+    var retainedShadowCandidates = new List<BsonDocument>();
+    if (runtimeCommit is not null && shadowTotal == 0)
+    {
+        retainedShadowCandidates = await shadows.Aggregate()
+            .Match(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", runtimeCommit),
+                Builders<BsonDocument>.Filter.Exists("ReleaseCommit", true),
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", BsonNull.Value),
+                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", string.Empty)))
+            .Group(new BsonDocument
+            {
+                { "_id", "$ReleaseCommit" },
+                { "Total", new BsonDocument("$sum", 1) },
+                { "Critical", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$HasCritical", true }),
+                        1,
+                        0,
+                    })) },
+                { "HttpFail", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$HttpOk", false }),
+                        1,
+                        0,
+                    })) },
+                { "LastComparedAt", new BsonDocument("$max", "$ComparedAt") },
+            })
+            .Match(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Gt("Total", 0),
+                Builders<BsonDocument>.Filter.Eq("Critical", 0),
+                Builders<BsonDocument>.Filter.Eq("HttpFail", 0)))
+            .Sort(new BsonDocument("LastComparedAt", -1))
+            .ToListAsync();
+    }
     var logReleaseFilter = runtimeCommit is null
         ? FilterDefinition<BsonDocument>.Empty
         : Builders<BsonDocument>.Filter.And(
@@ -1134,6 +1168,24 @@ app.MapGet("/gw/runtime-gates", async () =>
         ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
     var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
     var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
+    var successfulHttpFullCommits = ReadSuccessfulHttpFullRolloutCommits(ledgerPath);
+    var retainedShadowEvidence = successfulHttpFullCommits
+        .Select(commit => retainedShadowCandidates.FirstOrDefault(candidate =>
+            string.Equals(candidate.AsNullableString("_id"), commit, StringComparison.OrdinalIgnoreCase)))
+        .FirstOrDefault(candidate => candidate is not null);
+    var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
+    var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
+    var retainedShadowMatchesPreviousFullHttp = retainedShadowCommit.Length > 0
+        && successfulHttpFullCommits.Contains(retainedShadowCommit, StringComparer.OrdinalIgnoreCase);
+    var canRetainPreviousShadowEvidence = shadowTotal == 0
+        && retainedShadowMatchesPreviousFullHttp
+        && configAuthorityLedgerEvidence.Ready
+        && releaseLogTotal > 0
+        && httpTransportLogs == releaseLogTotal
+        && droppedParameterLogs == 0
+        && missingIngressProtocols.Count == 0
+        && protocolFailedLogs == 0
+        && missingRuntimeCoverageAppCallers.Count == 0;
     var activeAppCallerMapFallbackCutoverPrerequisitesReady =
         mapFallbackObjectsRemaining == 0
         && activeMissingGatewayPool == 0
@@ -1516,21 +1568,34 @@ app.MapGet("/gw/runtime-gates", async () =>
     AddGate(
         "shadow_runtime_evidence",
         "shadow/http 运行证据",
-        shadowTotal == 0 ? "waiting" : shadowCritical == 0 && shadowHttpFail == 0 ? "pass" : "blocked",
-        shadowTotal == 0 || shadowCritical > 0 || shadowHttpFail > 0,
+        shadowTotal > 0
+            ? shadowCritical == 0 && shadowHttpFail == 0 ? "pass" : "blocked"
+            : canRetainPreviousShadowEvidence ? "retained" : "waiting",
+        shadowTotal > 0
+            ? shadowCritical > 0 || shadowHttpFail > 0
+            : !canRetainPreviousShadowEvidence,
         runtimeCommit is null
             ? "当前进程缺少 GIT_COMMIT，不能证明 shadow 样本属于本次发布版本。"
-            : shadowTotal == 0
-            ? "尚未看到 shadow comparison 样本，不能证明 http 路径等价。"
-            : $"当前 commit 的 shadow 样本 {shadowTotal} 条，critical={shadowCritical}，httpFail={shadowHttpFail}。",
-        $"/gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; total={shadowTotal}; critical={shadowCritical}; httpFail={shadowHttpFail}",
-        shadowTotal == 0 ? "先跑当前 commit 的真实 appCaller shadow 样本；resolve-only route matrix 只能证明解析链路，不替代 shadow comparison。" : shadowCritical == 0 && shadowHttpFail == 0 ? "保留同 commit 证据并进入灰度 gate。" : "先归因当前 commit 的 critical/httpFail，再补测试。",
+            : shadowTotal > 0
+            ? $"当前 commit 的 shadow 样本 {shadowTotal} 条，critical={shadowCritical}，httpFail={shadowHttpFail}。"
+            : canRetainPreviousShadowEvidence
+            ? $"当前 commit 已完成 HTTP-only transport、四协议、active appCaller 和配置权威证据；保留最近 full-http 提交 {retainedShadowCommit} 的 {retainedShadowTotal} 条零 critical/零 httpFail shadow 迁移证据。"
+            : "尚未看到当前 commit 的 shadow comparison，且不满足 full-http 维护发布的历史证据保留条件。",
+        $"/gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; total={shadowTotal}; critical={shadowCritical}; httpFail={shadowHttpFail}; retainedCommit={retainedShadowCommit}; retainedTotal={retainedShadowTotal}; retainedEligible={canRetainPreviousShadowEvidence}",
+        shadowTotal > 0
+            ? shadowCritical == 0 && shadowHttpFail == 0 ? "保留同 commit 证据并进入灰度 gate。" : "先归因当前 commit 的 critical/httpFail，再补测试。"
+            : canRetainPreviousShadowEvidence
+            ? "保留历史迁移证据；当前提交继续依赖 HTTP-only transport、四协议和 active appCaller 运行证据。"
+            : "首次切流必须跑当前 commit 的真实 appCaller shadow 样本；维护发布则先补齐当前 commit 的 HTTP-only transport、四协议、active appCaller 和配置权威证据。",
         new Dictionary<string, string>
         {
             ["releaseCommit"] = runtimeCommit ?? "",
             ["total"] = shadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["critical"] = shadowCritical.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["httpFail"] = shadowHttpFail.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["retainedCommit"] = retainedShadowCommit,
+            ["retainedTotal"] = retainedShadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["retainedEligible"] = canRetainPreviousShadowEvidence ? "true" : "false",
         });
 
     var ledgerEvidence = httpFullLedgerEvidence;
@@ -5608,6 +5673,47 @@ static (bool Ready, string Detail, string Evidence, Dictionary<string, string> F
     facts["protocolCanaryJson"] = latestHasProtocolCanaryJson ? "true" : "false";
     facts["missing"] = string.Join(",", missing);
     return (ready, detail, evidence, facts);
+}
+
+static List<string> ReadSuccessfulHttpFullRolloutCommits(string path)
+{
+    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
+    if (!File.Exists(normalizedPath)) return new List<string>();
+
+    var commits = new List<string>();
+    foreach (var line in File.ReadLines(normalizedPath))
+    {
+        var raw = line.Trim();
+        if (raw.Length == 0) continue;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (!string.Equals(ReadJsonString(root, "stage"), "http-full", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(ReadJsonString(root, "status"), "success", StringComparison.OrdinalIgnoreCase)
+                || !ReadJsonBool(root, "releaseGateRequired")
+                || !ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"))
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"))
+                || !ReadJsonBool(root, "protocolCanaryRequired")
+                || string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson")))
+            {
+                continue;
+            }
+
+            var commit = NormalizeCommitFilter(ReadJsonString(root, "commit"));
+            if (commit is null) continue;
+            commits.RemoveAll(existing => string.Equals(existing, commit, StringComparison.OrdinalIgnoreCase));
+            commits.Add(commit);
+        }
+        catch (JsonException)
+        {
+            // A malformed historical line cannot become release evidence.
+        }
+    }
+
+    commits.Reverse();
+    return commits;
 }
 
 static (bool Ready, string Detail, string Evidence, Dictionary<string, string> Facts) ReadLatestConfigAuthorityRolloutLedgerEvidence(string path, string currentCommit)

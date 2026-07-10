@@ -1,15 +1,15 @@
 # LLM Gateway 全量迁移与生产发布复盘 · 设计
 
-> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：已落地
+> **版本**：v1.2 | **日期**：2026-07-11 | **状态**：已落地
 >
 > **复盘范围**：从 GW 控制台账号与物理剥离交接，到协议路由、配置权威、生产 `full-http` 发布完成
-> **生产环境**：`https://map.ebcone.net` | **最终发布提交**：`09a21f19611f9f4517ee4f8a73cd69c37fd3e6e1`
+> **生产环境**：`https://map.ebcone.net` | **当前发布提交**：`d37c31f504d071896c3f260873d8b6c47a0b2ae4`
 
 ## 一、管理摘要
 
 这次迁移已经完成了最重要的生产执行目标：MAP 的 AI 执行路径默认通过独立 `llmgw-serve`，生产运行在 `LLMGW_MODE=http`；GW 内部目录之外的直接上游客户端基线为空；active appCaller 使用 GW 自有模型池、平台、模型和 Exchange，MAP 配置 fallback 已关闭；GW 控制面、数据面、控制台和 MAP API 使用同一提交镜像发布。
 
-本次成功不等于“全部配置权威已经迁移”或“所有网关旧代码都已删除”。`2026-07-10` 后续审计显示，生产 appCaller 为 `active=3`、`configured=15`、`disabled=1`；退场门只对 active caller 生效，configured/discovered caller 仍可能读取 MAP 路由配置。`inproc` 与 shadow 实现仍保留为回滚能力，最终 hotfix 没有再次执行高成本视频和 ASR canary。准确结论是：**生产 full-http 执行路径和 active appCaller 配置权威切换成功，可运行、可观测、可回滚；全部 caller 的配置权威、长期稳定性和若干协议治理债务尚未收口。**
+本次成功不等于“所有网关旧代码都已删除”。`2026-07-11` 后续审计显示，生产 appCaller 为 `active=3`、`configured=15`、`disabled=1`；配置权威报告 ready、MAP fallback 对象为 0，全部可运行存量 caller 已由 GW-owned 池解析。`inproc` 与 shadow 实现仍保留为回滚能力，当前提交没有再次执行高成本视频和 ASR canary。最新发现是动态 caller 虽会写入 GW registry，执行层仍要求命中 MAP 静态注册表；这不影响现有 19 个 caller，但会阻断新外部系统。准确结论是：**生产 full-http 和存量配置权威迁移成功，可运行、可观测、可回滚；动态 caller 权威和多模态同提交证据仍在收口。**
 
 最终 full-http 发布是在用户明确维护窗口下完成的快速切换。最终 release gate 将 `minCoverageHours`、`minPerApp`、`minTotal` 设为 `0`，全局 shadow 只有 5 条、覆盖约 `0.038h`。因此 gate 证明的是当次切换可运行和可回滚，不是原计划“长期窗口 + 每类样本”的稳定性证明。后续整改以 `plan.platform.llm-gateway-production-hardening.md` 为 SSOT。
 
@@ -23,13 +23,13 @@
 
 | 证据 | 最终状态 |
 |---|---|
-| PR | [#1060](https://github.com/inernoro/prd_agent/pull/1060) 已合并 |
-| `origin/main` 合并提交 | `09a21f19611f9f4517ee4f8a73cd69c37fd3e6e1` |
+| PR | #1060 完成 full-http；#1066-#1068 完成 Phase 4 治理、维护发布 shadow 保留与成功台账历史修正，均已合并 |
+| `origin/main` 合并提交 | `d37c31f504d071896c3f260873d8b6c47a0b2ae4` |
 | 生产 health | `/gw/v1/healthz` 返回同一 commit，HTTP 200 |
-| 生产镜像 | `api`、`llmgw`、`llmgw-serve`、`llmgw-web` 均为 `sha-09a21f196...` |
+| 生产镜像 | `api`、`llmgw`、`llmgw-serve`、`llmgw-web` 均为 `sha-d37c31f50...` |
 | 生产模式 | `LLMGW_MODE=http` |
 | 配置退场门 | `LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=true` |
-| rollout ledger | `stage=http-full`、`status=success`，记录时间 `2026-07-10T08:37:36Z` |
+| rollout ledger | `stage=http-full`、`status=success`；runtime gate `passed=13 retained=2 blocked=0 waiting=0` |
 | 回滚 | `rollback-rehearsal` 同 commit 成功；数据库无需回滚 |
 | 数据备份 | `/root/backups/llmgw-prod-before-09a21f1-*` |
 
@@ -64,7 +64,7 @@
 |---|---|---|
 | AI 调用入口 | MAP 各服务可能直接构造上游 client | MAP 业务调用统一通过 `ILlmGateway`，直连 ratchet baseline 为空 |
 | 网关执行 | 网关可作为 API 进程内 facade | 独立 `llmgw-serve` 接受跨进程 HTTP 请求 |
-| 模型选择 | MAP 的 appCaller 与模型池配置参与长期权威 | active appCaller 由 `llm_gateway` 权威数据驱动；configured/discovered caller 仍可能读取 MAP 配置，尚待收口 |
+| 模型选择 | MAP 的 appCaller 与模型池配置参与长期权威 | 现有可运行 appCaller 均由 `llm_gateway` 权威数据驱动，MAP fallback 对象为 0；动态 caller 的静态准入硬门待当前批次移除 |
 | 协议入口 | 以 MAP 内部调用形态为主 | GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 统一转 Request IR |
 | 多模态文件 | raw multipart 依赖同进程内联文件 | `MultipartFileRefs` 跨进程引用，serving rehydrate 并校验 size/hash |
 | 实验语义 | ModelLab/Arena 可能直接调用指定上游 | 使用 pinned `platformId + modelId` 经过 GW，保留精确模型语义 |

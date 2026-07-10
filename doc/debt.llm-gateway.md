@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.7 | **日期**：2026-07-10 | **状态**：开发中
+> **版本**：v1.8 | **日期**：2026-07-11 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 19 / in-progress: 8 / paid: 6 / 总计: 33
+当前 open: 20 / in-progress: 9 / paid: 6 / 总计: 35
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -19,10 +19,12 @@
 | 2026-07-10-appcaller-unique-index | high | 2026-07-10 | `llmgw_app_callers` 缺少 `(AppCallerCode, RequestType)` 复合唯一索引；生产已出现 `literary-agent.illustration.text2img::generation` 重复 configured 记录，并发首次登记可能继续制造重复 | appCaller 被动注册、状态变更或模型池绑定时 | paid | 历史重复已归档并写操作审计，生产重复为 0，大小写不敏感复合唯一索引已建立并通过幂等迁移验证 |
 | 2026-07-10-gw-pool-health-wrong-database | high | 2026-07-10 | active 路由读取 `llm_gateway.llmgw_model_pools`，但成功/失败健康更新仍可能写 MAP `model_groups`，导致 GW-owned 成员的健康状态陈旧 | provider 失败、fallback 或健康熔断时 | paid | 合同测试断言 GW 数据域写回；生产快照显示 GW 池健康时间更新而 MAP 池停留在部署前 |
 | 2026-07-10-production-mode-fail-open | critical | 2026-07-10 | Program、compose 和发布脚本在 mode 缺失时默认 `inproc`，生产漏配环境变量会静默退回旧执行架构 | 新主机部署、环境变量丢失或脚本重构时 | paid | 生产缺 Mode 已改为拒绝启动；同一生产镜像隔离运行验证 fail-closed，回滚仍要求显式破玻璃动作 |
+| 2026-07-11-appcaller-static-runtime-authority | high | 2026-07-11 | serving 会把首次请求写入 `llm_gateway.llmgw_app_callers`，但 `LlmGateway.TryValidateAppCaller` 仍要求命中 MAP `AppCallerRegistry` 静态常量；生产无费用验收中的动态 caller 因此返回 `APP_CALLER_INVALID` | 外部系统或新 MAP 功能只按目标协议携带 appCallerCode、未先修改 MAP 代码常量时 | in-progress | 本分支改为运行时只校验 canonical 格式和 modelType 后缀；GW registry 负责状态、池、预算和 scope；静态表只保留 MAP 编译期守卫与展示元数据。待合并、生产动态 caller 和治理批次验收后关闭 |
+| 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 15 条日志中有 2 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 13 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | open | 给发布探针统一注入 `release-probe / gw-native / http` 元数据并在控制台单列；当前两条不能解释成 MAP 业务直连 |
 | 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | in-progress | 查询索引、敏感正文清理和分层 TTL 已实现；删除默认关闭，待生产 dry-run 统计后启用 |
 | 2026-07-10-multipart-object-lifecycle | high | 2026-07-10 | multipart HTTP 会上传临时文件引用，serving rehydrate 后未发现成功、失败、超时统一清理和兜底生命周期 | 图生图、ASR、字幕等跨进程文件调用时 | in-progress | 已记录 ref manifest，并在请求 finally 与后台生命周期任务清理；待生产 dry-run 和单次 ASR/图片验收 |
 | 2026-07-10-budget-cancel-idempotency | critical | 2026-07-10 | 月预算按日志估算且无原子预占，成本证据缺失时放行；客户端断开不取消上游；非幂等图片/视频提交超时重试可能重复计费 | 并发请求、用户取消、provider 超时或响应丢失时 | in-progress | Decimal128 原子预算、显式 cancel、raw requestId 状态机和 unknown outcome 已实现；本地 Mongo 并发测试通过，待生产部署验证 |
-| 2026-07-10-serving-readiness-ha | critical | 2026-07-10 | `/gw/v1/healthz` 只证明进程与 commit 存活，未覆盖 Mongo、对象存储、key integrity 和路由；生产 serving 为单实例 | 依赖故障、容器重启或节点故障时 | paid | 生产 `92fac961...` 已运行主备，带 key deep readiness 为 ready；停主由备用接管、恢复后双实例健康，full-http gate 14/14 |
+| 2026-07-10-serving-readiness-ha | critical | 2026-07-10 | `/gw/v1/healthz` 只证明进程与 commit 存活，未覆盖 Mongo、对象存储、key integrity 和路由；生产 serving 为单实例 | 依赖故障、容器重启或节点故障时 | paid | 生产 `d37c31f50...` 已运行主备，带 scoped key 的受保护 route 在停主期间仍为 200；恢复后双实例健康，runtime gate `passed=13 retained=2 blocked=0 waiting=0` |
 | 2026-07-10-scoped-service-keys | high | 2026-07-10 | serving 使用共享 Gateway Key，兼容入口允许请求声明 appCallerCode；同一 key 的持有者可能冒用其他 caller 的模型池、预算和权限 | 允许 MAP 之外的系统接入 GW 前 | in-progress | scoped key、控制台页面、source/appCaller/protocol/scope 绑定、403 与操作审计已实现；待生产部署和接入方换发，MAP 共享 key 暂作迁移兼容 |
 | 2026-07-10-serving-map-config-dependency | high | 2026-07-10 | serving 的请求数据已进入 `llm_gateway`，但资产存储和 AppSettings 仍依赖 MAP 配置域，readiness 仍检查 MAP Mongo | MAP Mongo 或 MAP 配置域故障、或宣称 GW 已完全物理隔离时 | open | 把 serving 所需资产与运行配置迁入 GW-owned 配置域，移除 MAP Mongo 必要依赖后再宣称物理隔离 |
 | 2026-07-10-distributed-provider-concurrency | high | 2026-07-10 | 平台 `MaxConcurrency` 尚未形成跨 serving 实例的分布式令牌；月预算也未原子预占 | serving 从主备改为双活，或同一平台并发流量增长时 | in-progress | platform/model 双层 Mongo 槽位租约已实现；8 路竞争只放行 1 路且释放后可复用，待生产部署验证后才允许评估双活 |

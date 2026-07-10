@@ -171,6 +171,7 @@ def _request_stream_safe(method: str, path: str, body: Any = None,
         "partial": bool,               # body 是否因 IncompleteRead 截断
         "error": str | None,           # 任何被吃掉的异常的人话描述
         "errorType": str | None,       # 异常类名（用于 --debug 输出）
+        "headers": dict[str, str],     # 已握手响应头（含 DeploymentRun id）
       }
 
     若 CDSCLI_DEBUG=1 已设置，调用方可决定是否把 traceback 打到 stderr ——
@@ -197,6 +198,7 @@ def _request_stream_safe(method: str, path: str, body: Any = None,
         "partial": False,
         "error": None,
         "errorType": None,
+        "headers": {},
     }
 
     debug_on = bool(os.environ.get("CDSCLI_DEBUG", "").strip())
@@ -205,6 +207,7 @@ def _request_stream_safe(method: str, path: str, body: Any = None,
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             result["triggered"] = True
             result["status"] = resp.status
+            result["headers"] = dict(resp.headers)
             try:
                 raw_bytes = resp.read()
                 raw = raw_bytes.decode("utf-8", errors="replace")
@@ -228,6 +231,7 @@ def _request_stream_safe(method: str, path: str, body: Any = None,
         # HTTP 错误码（4xx/5xx）—— 服务端有响应，已触发但有问题
         result["triggered"] = True
         result["status"] = e.code
+        result["headers"] = dict(e.headers or {})
         try:
             raw = e.read().decode("utf-8", errors="replace")
             _try_parse_into_result(result, raw)
@@ -634,7 +638,67 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
                 },
             })
 
-    # Step 2: 轮询分支状态收敛
+    # 新版 CDS 在任何部署副作用前创建 DeploymentRun，并通过响应头返回 runId。
+    # 一旦拿到 runId，CLI 只跟踪该账本，不再用 BranchEntry.status 猜测“本次”部署。
+    trigger_headers = trigger.get("headers") or {}
+    run_id = (trigger_headers.get("X-Cds-Deployment-Run-Id")
+              or trigger_headers.get("X-CDS-Deployment-Run-Id")
+              or trigger_headers.get("x-cds-deployment-run-id"))
+    if run_id:
+        started_at = time.time()
+        deadline = started_at + args.timeout
+        last_run: dict[str, Any] | None = None
+        while time.time() < deadline:
+            snapshot = _call(
+                "GET",
+                f"/api/deployment-runs/{urllib.parse.quote(str(run_id))}",
+                timeout=30,
+                quiet=True,
+            )
+            if isinstance(snapshot, dict) and snapshot.get("__error__"):
+                time.sleep(2)
+                continue
+            run = snapshot.get("run") if isinstance(snapshot, dict) else None
+            if not isinstance(run, dict):
+                time.sleep(2)
+                continue
+            last_run = run
+            status = run.get("status")
+            if status in ("running", "failed", "cancelled"):
+                payload = {
+                    "stage": "deployed" if status == "running" else "deploy_failed",
+                    "deploymentRunId": run_id,
+                    "deploymentRunStatus": status,
+                    "branchId": branch_id,
+                    "phase": run.get("phase"),
+                    "commitSha": run.get("commitSha"),
+                    "failure": run.get("failure"),
+                    "eventCount": len(run.get("events") or []),
+                    "elapsed": int(time.time() - started_at),
+                    "triggerPartial": trigger.get("partial", False),
+                }
+                if status == "running":
+                    ok(payload, note=f"部署完成 (runId={run_id})")
+                failure = run.get("failure") or {}
+                reason = failure.get("summary") if isinstance(failure, dict) else None
+                die(f"部署{('已取消' if status == 'cancelled' else '失败')}: {reason or run.get('phase') or 'unknown'}",
+                    code=2, extra={"data": payload})
+            time.sleep(2)
+
+        die(f"部署超时（{args.timeout}s），runId={run_id}，最近状态: {(last_run or {}).get('status')}",
+            code=2,
+            extra={
+                "data": {
+                    "stage": "building_timeout",
+                    "deploymentRunId": run_id,
+                    "deploymentRunStatus": (last_run or {}).get("status"),
+                    "branchId": branch_id,
+                    "elapsed": int(time.time() - started_at),
+                    "lastRun": last_run,
+                },
+            })
+
+    # 兼容旧版 CDS：响应头没有 runId 时才退回分支汇总状态轮询。
     started_at = time.time()
     time.sleep(3)  # 状态更新延迟，按 skill 实战经验
     deadline = started_at + args.timeout
@@ -909,6 +973,144 @@ def cmd_branch_history(args: argparse.Namespace) -> None:
     # Only emit last operation by default to avoid swamping context
     recent = body[-args.limit:] if isinstance(body, list) and args.limit > 0 else body
     ok(recent)
+
+
+def cmd_deployment_run_list(args: argparse.Namespace) -> None:
+    query: dict[str, str] = {}
+    project = args.project or os.environ.get("CDS_PROJECT_ID", "")
+    if project:
+        query["project"] = project
+    if args.branch:
+        query["branch"] = args.branch
+    if args.status:
+        query["status"] = args.status
+    query["limit"] = str(args.limit)
+    path = "/api/deployment-runs?" + urllib.parse.urlencode(query)
+    body = _call("GET", path, timeout=30)
+    runs = body.get("runs", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        for run in runs:
+            latest = run.get("failure", {}).get("summary") or run.get("latestEvent", {}).get("message") or ""
+            print(f"{run.get('id', '?'):28s} {run.get('status', '?'):10s} "
+                  f"{run.get('phase', '?'):16s} {run.get('branchId', '?')} {latest}")
+        return
+    ok({"runs": runs, "total": body.get("total", len(runs)) if isinstance(body, dict) else len(runs)})
+
+
+def cmd_deployment_run_show(args: argparse.Namespace) -> None:
+    body = _call("GET", f"/api/deployment-runs/{urllib.parse.quote(args.id)}", timeout=30)
+    ok(body)
+
+
+def cmd_deployment_run_wait(args: argparse.Namespace) -> None:
+    deadline = time.time() + args.timeout
+    last_run: dict[str, Any] | None = None
+    while time.time() < deadline:
+        body = _call(
+            "GET",
+            f"/api/deployment-runs/{urllib.parse.quote(args.id)}",
+            timeout=30,
+            quiet=True,
+        )
+        if isinstance(body, dict) and not body.get("__error__") and isinstance(body.get("run"), dict):
+            last_run = body["run"]
+            if last_run.get("status") in ("running", "failed", "cancelled"):
+                if last_run.get("status") == "running":
+                    ok({"run": last_run}, note=f"部署完成 (runId={args.id})")
+                failure = last_run.get("failure") or {}
+                reason = failure.get("summary") if isinstance(failure, dict) else None
+                die(f"部署{('已取消' if last_run.get('status') == 'cancelled' else '失败')}: "
+                    f"{reason or last_run.get('phase') or 'unknown'}",
+                    code=2, extra={"data": {"run": last_run}})
+        time.sleep(2)
+    die(f"等待 DeploymentRun 超时（{args.timeout}s）: {args.id}", code=2,
+        extra={"data": {"run": last_run}})
+
+
+def cmd_deployment_run_diagnose(args: argparse.Namespace) -> None:
+    run_id = urllib.parse.quote(args.id)
+    if not args.ai:
+        body = _call("GET", f"/api/deployment-runs/{run_id}/diagnosis", timeout=30)
+        ok(body)
+    status, body, _headers = _request(
+        "GET",
+        f"/api/deployment-runs/{run_id}/diagnosis/stream?ai=1",
+        timeout=args.timeout,
+    )
+    if status < 200 or status >= 300:
+        die(f"部署诊断失败: HTTP {status}", code=2 if status < 500 else 3,
+            extra={"status": status, "body": body})
+    raw = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+    completed = None
+    for block in re.split(r"\r?\n\r?\n", raw):
+        event_match = re.search(r"^event:\s*(.+)$", block, re.MULTILINE)
+        if not event_match or event_match.group(1).strip() != "complete":
+            continue
+        data_lines = [line[5:].strip() for line in block.splitlines() if line.startswith("data:")]
+        if data_lines:
+            try:
+                completed = json.loads("\n".join(data_lines))
+            except json.JSONDecodeError:
+                completed = None
+    if completed is None:
+        die("部署诊断流未返回 complete 事件", code=3, extra={"body": raw[-2000:]})
+    ok({"diagnosis": completed})
+
+
+def cmd_deployment_version_list(args: argparse.Namespace) -> None:
+    query: dict[str, str] = {}
+    project = args.project or os.environ.get("CDS_PROJECT_ID", "")
+    if project:
+        query["project"] = project
+    if args.branch:
+        query["branch"] = args.branch
+    if args.commit:
+        query["commit"] = args.commit
+    path = "/api/deployment-versions"
+    if query:
+        path += "?" + urllib.parse.urlencode(query)
+    body = _call("GET", path, timeout=30)
+    versions = body.get("versions", []) if isinstance(body, dict) else []
+    if _HUMAN:
+        for version in versions:
+            profiles = version.get("profiles") or []
+            reusable = bool(profiles) and all(profile.get("reusable") for profile in profiles)
+            print(f"{version.get('id', '?'):28s} {version.get('commitSha', '?')[:10]:10s} "
+                  f"{('reusable' if reusable else 'record-only'):11s} {version.get('branchId', '?')}")
+        return
+    ok({"versions": versions, "total": body.get("total", len(versions)) if isinstance(body, dict) else len(versions)})
+
+
+def cmd_deployment_version_show(args: argparse.Namespace) -> None:
+    body = _call("GET", f"/api/deployment-versions/{urllib.parse.quote(args.id)}", timeout=30)
+    ok(body)
+
+
+def cmd_deployment_version_deploy(args: argparse.Namespace) -> None:
+    body = _call(
+        "POST",
+        f"/api/deployment-versions/{urllib.parse.quote(args.id)}/deploy",
+        body={"branchId": args.branch} if args.branch else {},
+        timeout=30,
+    )
+    run_id = body.get("runId") if isinstance(body, dict) else None
+    if args.wait and run_id:
+        cmd_deployment_run_wait(argparse.Namespace(id=run_id, timeout=args.timeout))
+    ok(body, note=f"版本部署已受理{f' (runId={run_id})' if run_id else ''}")
+
+
+def cmd_branch_rollback(args: argparse.Namespace) -> None:
+    payload = {"versionId": args.version} if args.version else {}
+    body = _call(
+        "POST",
+        f"/api/branches/{urllib.parse.quote(args.id)}/rollback",
+        body=payload,
+        timeout=30,
+    )
+    run_id = body.get("runId") if isinstance(body, dict) else None
+    if args.wait and run_id:
+        cmd_deployment_run_wait(argparse.Namespace(id=run_id, timeout=args.timeout))
+    ok(body, note=f"版本回滚已受理{f' (runId={run_id})' if run_id else ''}")
 
 
 def cmd_branch_preview_url(args: argparse.Namespace) -> None:
@@ -7264,6 +7466,12 @@ def _build_parser() -> argparse.ArgumentParser:
     bd = br.add_parser("deploy"); bd.add_argument("id"); bd.add_argument("--timeout", type=int, default=300)
     bd.add_argument("--commit", help="显式按指定 commit 触发部署(40 位 SHA)")
     bd.set_defaults(func=cmd_branch_deploy)
+    brb = br.add_parser("rollback", help="回滚到指定版本，未指定时选择最近一个可复用历史版本")
+    brb.add_argument("id", help="CDS canonical branch id")
+    brb.add_argument("--version", help="目标 DeploymentVersion id")
+    brb.add_argument("--wait", action="store_true", help="等待回滚 DeploymentRun 进入终态")
+    brb.add_argument("--timeout", type=int, default=300)
+    brb.set_defaults(func=cmd_branch_rollback)
     bcp = br.add_parser(
         "claim-prebuilt",
         help="手动认领已成功的 CI 预构建镜像,修复 webhook 漏投导致的 ciTargetSha 落后",
@@ -7337,6 +7545,51 @@ def _build_parser() -> argparse.ArgumentParser:
     bxr.add_argument("service_id", help="要移除的额外服务 id")
     bxr.add_argument("--redeploy", action="store_true", help="移除后立即重部署下掉容器")
     bxr.set_defaults(func=cmd_branch_extra_remove)
+
+    dr = sub.add_parser(
+        "deployment-run",
+        help="部署运行事实账本:列出、查看、等待终态",
+    ).add_subparsers(dest="sub", required=True)
+    drl = dr.add_parser("list", help="列出 DeploymentRun")
+    drl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    drl.add_argument("--branch", help="CDS canonical branch id")
+    drl.add_argument("--status", choices=[
+        "pending", "queued", "preparing", "building", "starting",
+        "verifying", "running", "failed", "cancelled",
+    ])
+    drl.add_argument("--limit", type=int, default=20)
+    drl.set_defaults(func=cmd_deployment_run_list)
+    drs = dr.add_parser("show", help="查看完整 DeploymentRun 快照和事件")
+    drs.add_argument("id", help="runId")
+    drs.set_defaults(func=cmd_deployment_run_show)
+    drw = dr.add_parser("wait", help="等待 DeploymentRun 进入终态")
+    drw.add_argument("id", help="runId")
+    drw.add_argument("--timeout", type=int, default=300)
+    drw.set_defaults(func=cmd_deployment_run_wait)
+    drd = dr.add_parser("diagnose", help="读取结构化根因；--ai 经 AI Gateway 流式解释")
+    drd.add_argument("id", help="runId")
+    drd.add_argument("--ai", action="store_true", help="请求 AI Gateway 解释结构化事实")
+    drd.add_argument("--timeout", type=int, default=60)
+    drd.set_defaults(func=cmd_deployment_run_diagnose)
+
+    dv = sub.add_parser(
+        "deployment-version",
+        help="不可变部署版本:列出、查看、重新部署",
+    ).add_subparsers(dest="sub", required=True)
+    dvl = dv.add_parser("list", help="列出 DeploymentVersion")
+    dvl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    dvl.add_argument("--branch", help="CDS canonical branch id")
+    dvl.add_argument("--commit", help="commit SHA")
+    dvl.set_defaults(func=cmd_deployment_version_list)
+    dvs = dv.add_parser("show", help="查看完整 DeploymentVersion")
+    dvs.add_argument("id", help="versionId")
+    dvs.set_defaults(func=cmd_deployment_version_show)
+    dvd = dv.add_parser("deploy", help="重新部署一个可复用 DeploymentVersion")
+    dvd.add_argument("id", help="versionId")
+    dvd.add_argument("--branch", help="兼容参数；版本已绑定原分支")
+    dvd.add_argument("--wait", action="store_true", help="等待 DeploymentRun 进入终态")
+    dvd.add_argument("--timeout", type=int, default=300)
+    dvd.set_defaults(func=cmd_deployment_version_deploy)
 
     sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
     sp = sch.add_parser("parse", help="解析口令,不请求 CDS")
