@@ -447,6 +447,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("mkdir -p \"$protocol_canary_json_dir\"", script);
         Assert.Contains("mkdir -p \"$protocol_canary_md_dir\"", script);
         Assert.Contains("LLM Gateway post-deploy protocol canary: required before runtime gates", script);
+        Assert.Contains("LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates", script);
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
         Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);

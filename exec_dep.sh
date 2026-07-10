@@ -1153,7 +1153,7 @@ run_llmgw_post_deploy_verification_if_needed() {
       ;;
     *)
       if [ -n "$(printf '%s' "${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}" | xargs || true)" ]; then
-        protocol_canary_arg="--protocol-canary-json $LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT"
+        echo "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates"
       fi
       ;;
   esac

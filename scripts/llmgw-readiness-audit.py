@@ -1341,6 +1341,7 @@ def _static_checks() -> list[dict]:
             "mkdir -p \"$protocol_canary_json_dir\"",
             "mkdir -p \"$protocol_canary_md_dir\"",
             "LLM Gateway post-deploy protocol canary: required before runtime gates",
+            "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates",
             "python3 scripts/llmgw-protocol-canary.py",
             "protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"",
             "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only",
