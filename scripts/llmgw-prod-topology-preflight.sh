@@ -2,7 +2,7 @@
 set -eu
 
 dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
-expected_base_url="${LLMGW_EXPECTED_SERVE_BASE_URL:-http://gateway/gw/v1}"
+expected_base_url="${LLMGW_EXPECTED_SERVE_BASE_URL:-http://gateway}"
 
 read_dotenv_value() {
   key="$1"

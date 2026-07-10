@@ -1428,7 +1428,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/gw/v1/readyz", compose);
         Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
         Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
-        Assert.Contains("http://gateway/gw/v1", compose);
+        Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
+        Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
         Assert.Contains("map-mongo", readiness);
         Assert.Contains("gateway-mongo", readiness);
@@ -1436,6 +1437,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("key-integrity", readiness);
         Assert.Contains("router", readiness);
         Assert.Contains("routableCallers", readiness);
+        Assert.Contains("pool.ModelType == caller.RequestType", readiness);
         Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
         Assert.Contains("exceptionType={ExceptionType}", readiness);
         Assert.DoesNotContain("ex.Message", readiness);

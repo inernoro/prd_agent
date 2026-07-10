@@ -113,7 +113,7 @@ services:
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
-      - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway/gw/v1}
+      - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true

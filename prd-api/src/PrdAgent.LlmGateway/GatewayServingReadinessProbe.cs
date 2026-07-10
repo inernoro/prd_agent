@@ -191,11 +191,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 : await pools.Find(Builders<ModelGroup>.Filter.In(x => x.Id, poolIds))
                     .ToListAsync(cancellationToken);
             var poolById = boundPools.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
-            var routableCallers = governed.Count(x =>
-                !string.IsNullOrWhiteSpace(x.ModelPoolId) &&
-                poolById.TryGetValue(x.ModelPoolId, out var pool) &&
-                pool.Models.Count > 0 &&
-                pool.Models.Any(m => m.HealthStatus != ModelHealthStatus.Unavailable));
+            var routableCallers = governed.Count(x => IsCallerRoutable(x, poolById));
             var invalidCallers = governed.Count - routableCallers;
             if (governed.Count > 0 && routableCallers == 0)
             {
@@ -205,6 +201,17 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
 
             return $"{routableCallers}/{governed.Count} governed appCallers routable, invalid={invalidCallers}";
         });
+    }
+
+    public static bool IsCallerRoutable(
+        GatewayAppCallerRecord caller,
+        IReadOnlyDictionary<string, ModelGroup> poolById)
+    {
+        return !string.IsNullOrWhiteSpace(caller.ModelPoolId) &&
+               poolById.TryGetValue(caller.ModelPoolId, out var pool) &&
+               pool.ModelType == caller.RequestType &&
+               pool.Models.Count > 0 &&
+               pool.Models.Any(m => m.HealthStatus != ModelHealthStatus.Unavailable);
     }
 
     private async Task<GatewayServingReadinessComponent> MeasureAsync(
