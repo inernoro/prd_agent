@@ -38,3 +38,4 @@
 | feat | prd-llmgw | LLM Gateway runtime gate 响应新增结构化证据链接，控制台优先使用后端 links 定位日志、shadow、appCaller、模型池和审计页面 |
 | feat | prd-llmgw | LLM Gateway 控制台新增协议入口覆盖矩阵，按 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 展示 appCaller 注册和运行日志证据 |
 | feat | prd-llmgw | LLM Gateway 发布 gate 纳入四类入口协议当前 commit 覆盖检查，缺少运行日志时保持等待并提供协议覆盖深链 |
+| ops | scripts | 新增 LLM Gateway 四协议 canary 脚本，默认 dry-run，显式 --execute 时才限量触发 GW Native、OpenAI、Claude、Gemini 入口运行日志 |

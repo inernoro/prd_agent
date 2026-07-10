@@ -138,6 +138,7 @@ public class GatewayDataDomainGuardTests
         var webTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
         var overviewPage = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
         var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
+        var protocolCanary = ReadRepoFile("scripts/llmgw-protocol-canary.py");
 
         Assert.Contains("public sealed class ProtocolCoverageData", consoleDtos);
         Assert.Contains("public sealed class ProtocolCoverageItem", consoleDtos);
@@ -164,6 +165,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
         Assert.Contains("protocol_runtime_coverage", protocolAudit);
+        Assert.Contains("LLM Gateway four-protocol runtime canary", protocolCanary);
+        Assert.Contains("TARGET_PROTOCOLS = (\"gw-native\", \"openai-compatible\", \"claude-compatible\", \"gemini-compatible\")", protocolCanary);
+        Assert.Contains("parser.add_argument(\"--execute\", action=\"store_true\"", protocolCanary);
+        Assert.Contains("dry-run only; add --execute to create runtime logs", protocolCanary);
+        Assert.DoesNotContain("IsHealthProbe", protocolCanary);
+        Assert.Contains("X-Gateway-Model-Policy", protocolCanary);
+        Assert.Contains("LLMGW_PROTOCOL_CANARY_JSON_OUT", protocolCanary);
     }
 
     [Fact]
