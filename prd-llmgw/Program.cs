@@ -495,7 +495,7 @@ app.MapGet("/gw/protocol-coverage", async (string? releaseCommit, int? sinceHour
     var items = TargetIngressProtocols().Select(protocol =>
     {
         var registryDocs = appCallerDocs
-            .Where(d => string.Equals(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")), protocol.Key, StringComparison.Ordinal))
+            .Where(d => GetObservedIngressProtocols(d).Contains(protocol.Key, StringComparer.Ordinal))
             .ToList();
         var activeDocs = registryDocs
             .Where(d => IsRuntimeGovernedAppCallerStatus(d.AsNullableString("Status")))
@@ -1768,7 +1768,16 @@ app.MapGet("/gw/app-callers", async (
     var filters = new List<FilterDefinition<BsonDocument>>();
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status.Trim()));
     if (!string.IsNullOrWhiteSpace(sourceSystem)) filters.Add(fb.Eq("SourceSystem", sourceSystem.Trim()));
-    if (!string.IsNullOrWhiteSpace(ingressProtocol)) filters.Add(fb.Eq("IngressProtocol", ingressProtocol.Trim()));
+    if (!string.IsNullOrWhiteSpace(ingressProtocol))
+    {
+        var protocolRaw = ingressProtocol.Trim();
+        var protocolNormalized = NormalizeIngressProtocol(protocolRaw);
+        filters.Add(fb.Or(
+            fb.Eq("IngressProtocol", protocolRaw),
+            fb.Eq("IngressProtocol", protocolNormalized),
+            fb.AnyEq("ObservedIngressProtocols", protocolRaw),
+            fb.AnyEq("ObservedIngressProtocols", protocolNormalized)));
+    }
     if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType.Trim()));
     var driftFilter = BuildAppCallerDriftFilter(drift);
     if (driftFilter is not null) filters.Add(driftFilter);
@@ -1793,7 +1802,10 @@ app.MapGet("/gw/app-callers", async (
     var recent = Builders<BsonDocument>.Filter.Empty;
     var statuses = NormalizeDistinct(await gwAppCallers.Distinct<string>("Status", recent).ToListAsync(), 80);
     var sourceSystems = NormalizeDistinct(await gwAppCallers.Distinct<string>("SourceSystem", recent).ToListAsync(), 80);
-    var ingressProtocols = NormalizeDistinct(await gwAppCallers.Distinct<string>("IngressProtocol", recent).ToListAsync(), 80);
+    var protocolDocs = await gwAppCallers.Find(recent)
+        .Project(Builders<BsonDocument>.Projection.Include("IngressProtocol").Include("ObservedIngressProtocols"))
+        .ToListAsync();
+    var ingressProtocols = NormalizeDistinct(protocolDocs.SelectMany(GetObservedIngressProtocols), 80);
     var requestTypes = NormalizeDistinct(await gwAppCallers.Distinct<string>("RequestType", recent).ToListAsync(), 80);
     var data = new GatewayAppCallersData
     {
@@ -4250,6 +4262,25 @@ static string NormalizeIngressProtocol(string? value)
     };
 }
 
+static List<string> GetObservedIngressProtocols(BsonDocument doc)
+{
+    var values = new List<string>();
+    if (doc.TryGetValue("ObservedIngressProtocols", out var observed) && observed.IsBsonArray)
+    {
+        values.AddRange(observed.AsBsonArray
+            .Where(x => x.IsString)
+            .Select(x => NormalizeIngressProtocol(x.AsString)));
+    }
+
+    var legacy = NormalizeIngressProtocol(doc.AsNullableString("IngressProtocol"));
+    if (legacy != "unknown") values.Add(legacy);
+    return values
+        .Where(x => !string.IsNullOrWhiteSpace(x) && x != "unknown")
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
+}
+
 static bool IsRuntimeGovernedAppCallerStatus(string? value)
 {
     var normalized = string.IsNullOrWhiteSpace(value) ? "discovered" : value.Trim().ToLowerInvariant();
@@ -4883,6 +4914,7 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     RequestType = d.GetStringOrEmpty("RequestType"),
     SourceSystem = d.GetStringOrEmpty("SourceSystem"),
     IngressProtocol = d.GetStringOrEmpty("IngressProtocol"),
+    ObservedIngressProtocols = GetObservedIngressProtocols(d),
     Title = d.AsNullableString("Title"),
     Status = d.AsNullableString("Status") ?? "discovered",
     ModelPoolId = d.AsNullableString("ModelPoolId"),

@@ -376,6 +376,7 @@ public sealed class GatewayAppCallerRecord
     public string RequestType { get; set; } = string.Empty;
     public string SourceSystem { get; set; } = "external";
     public string IngressProtocol { get; set; } = string.Empty;
+    public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }
     public string Status { get; set; } = "discovered";
     public string? ModelPoolId { get; set; }
