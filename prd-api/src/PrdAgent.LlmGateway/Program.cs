@@ -221,6 +221,8 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     }
 });
 
+builder.Services.AddSingleton<IGatewayServingReadinessProbe, GatewayServingReadinessProbe>();
+
 // 模型池故障通知与自动探活（ModelResolver 解析结果发往健康管理）
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 

@@ -130,6 +130,81 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task Readyz_IsPublic_AndReturns503WhenDependencyProbeFails()
+    {
+        var snapshot = new GatewayServingReadinessSnapshot(
+            false,
+            DateTime.UtcNow,
+            new[]
+            {
+                new GatewayServingReadinessComponent("gateway-mongo", false, 3, "probe failed"),
+            });
+        await using var app = BuildHostWithGateway(new EchoingGateway(), new StubReadinessProbe(snapshot));
+        await app.StartAsync();
+        try
+        {
+            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var body = await response.Content.ReadAsStringAsync();
+
+            response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            body.ShouldContain("not-ready");
+            body.ShouldContain("gateway-mongo");
+            body.ShouldNotContain(GatewayKey);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Readyz_FailsClosed_WhenProbeIsNotRegistered()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var body = await response.Content.ReadAsStringAsync();
+
+            response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            body.ShouldContain("readiness-probe-not-registered");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Readyz_Returns200WhenAllDependencyProbesPass()
+    {
+        var snapshot = new GatewayServingReadinessSnapshot(
+            true,
+            DateTime.UtcNow,
+            new[]
+            {
+                new GatewayServingReadinessComponent("gateway-mongo", true, 2, "ping ok"),
+                new GatewayServingReadinessComponent("router", true, 4, "2 pools ready"),
+            });
+        await using var app = BuildHostWithGateway(new EchoingGateway(), new StubReadinessProbe(snapshot));
+        await app.StartAsync();
+        try
+        {
+            var response = await app.GetTestClient().GetAsync("/gw/v1/readyz");
+            var body = await response.Content.ReadAsStringAsync();
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            body.ShouldContain("ready");
+            body.ShouldContain("router");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleEndpoint_AcceptsBearerGatewayKey()
     {
         await using var app = BuildHostWithGateway(new EchoingGateway());
@@ -1724,7 +1799,9 @@ public class GatewayKeyGateContractTests
         public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null) => throw Boom();
     }
 
-    private static WebApplication BuildHostWithGateway(PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway)
+    private static WebApplication BuildHostWithGateway(
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        IGatewayServingReadinessProbe? readinessProbe = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -1732,6 +1809,8 @@ public class GatewayKeyGateContractTests
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        if (readinessProbe != null)
+            builder.Services.AddSingleton(readinessProbe);
 
         var app = builder.Build();
         var pascalJson = new JsonSerializerOptions
@@ -1741,6 +1820,16 @@ public class GatewayKeyGateContractTests
         };
         app.MapGatewayServingEndpoints(pascalJson, GatewayKey, "keygate-contract-test");
         return app;
+    }
+
+    private sealed class StubReadinessProbe : IGatewayServingReadinessProbe
+    {
+        private readonly GatewayServingReadinessSnapshot _snapshot;
+
+        public StubReadinessProbe(GatewayServingReadinessSnapshot snapshot) => _snapshot = snapshot;
+
+        public Task<GatewayServingReadinessSnapshot> CheckAsync(CancellationToken cancellationToken)
+            => Task.FromResult(_snapshot);
     }
 
     private static void AssertRoutingContext(
