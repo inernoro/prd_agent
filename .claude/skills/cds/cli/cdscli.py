@@ -1017,6 +1017,36 @@ def cmd_deployment_run_wait(args: argparse.Namespace) -> None:
         extra={"data": {"run": last_run}})
 
 
+def cmd_deployment_run_diagnose(args: argparse.Namespace) -> None:
+    run_id = urllib.parse.quote(args.id)
+    if not args.ai:
+        body = _call("GET", f"/api/deployment-runs/{run_id}/diagnosis", timeout=30)
+        ok(body)
+    status, body, _headers = _request(
+        "GET",
+        f"/api/deployment-runs/{run_id}/diagnosis/stream?ai=1",
+        timeout=args.timeout,
+    )
+    if status < 200 or status >= 300:
+        die(f"部署诊断失败: HTTP {status}", code=2 if status < 500 else 3,
+            extra={"status": status, "body": body})
+    raw = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+    completed = None
+    for block in re.split(r"\r?\n\r?\n", raw):
+        event_match = re.search(r"^event:\s*(.+)$", block, re.MULTILINE)
+        if not event_match or event_match.group(1).strip() != "complete":
+            continue
+        data_lines = [line[5:].strip() for line in block.splitlines() if line.startswith("data:")]
+        if data_lines:
+            try:
+                completed = json.loads("\n".join(data_lines))
+            except json.JSONDecodeError:
+                completed = None
+    if completed is None:
+        die("部署诊断流未返回 complete 事件", code=3, extra={"body": raw[-2000:]})
+    ok({"diagnosis": completed})
+
+
 def cmd_deployment_version_list(args: argparse.Namespace) -> None:
     query: dict[str, str] = {}
     project = args.project or os.environ.get("CDS_PROJECT_ID", "")
@@ -7526,6 +7556,11 @@ def _build_parser() -> argparse.ArgumentParser:
     drw.add_argument("id", help="runId")
     drw.add_argument("--timeout", type=int, default=300)
     drw.set_defaults(func=cmd_deployment_run_wait)
+    drd = dr.add_parser("diagnose", help="读取结构化根因；--ai 经 AI Gateway 流式解释")
+    drd.add_argument("id", help="runId")
+    drd.add_argument("--ai", action="store_true", help="请求 AI Gateway 解释结构化事实")
+    drd.add_argument("--timeout", type=int, default=60)
+    drd.set_defaults(func=cmd_deployment_run_diagnose)
 
     dv = sub.add_parser(
         "deployment-version",

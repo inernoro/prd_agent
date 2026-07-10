@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
@@ -188,6 +188,21 @@ interface DeploymentRunSummary {
     retryable: boolean;
     summary: string;
     suggestedAction?: string;
+    evidenceRefs?: string[];
+  };
+}
+
+interface DeploymentDiagnosisResponse {
+  runId: string;
+  status: DeploymentRunStatus;
+  headline: string;
+  failure?: DeploymentRunSummary['failure'] & { serviceId?: string; phase?: string };
+  actions: string[];
+  evidenceRefs: string[];
+  ai: {
+    status: 'disabled' | 'ready' | 'failed';
+    explanation?: { summary: string; actions: string[]; cautions?: string[] };
+    error?: string;
   };
 }
 
@@ -2690,12 +2705,106 @@ function DeploymentRunLedger({
                   建议: {run.failure.suggestedAction}
                 </p>
               ) : null}
+              {run.status === 'failed' ? <DeploymentRunDiagnosis runId={run.id} /> : null}
             </div>
           );
         })}
       </div>
     </section>
   );
+}
+
+function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
+  const [diagnosis, setDiagnosis] = useState<DeploymentDiagnosisResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [aiState, setAiState] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; message?: string }>({ status: 'idle' });
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiRequest<{ diagnosis: DeploymentDiagnosisResponse }>(`/api/deployment-runs/${encodeURIComponent(runId)}/diagnosis`)
+      .then((response) => { if (!cancelled) setDiagnosis(response.diagnosis); })
+      .catch(() => { /* 旧服务端无结构化诊断时保留 run.failure 展示 */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  const explainWithAi = useCallback(async () => {
+    setAiState({ status: 'loading', message: '正在准备结构化事实' });
+    try {
+      const response = await fetch(apiUrl(`/api/deployment-runs/${encodeURIComponent(runId)}/diagnosis/stream?ai=1`), {
+        credentials: 'include',
+        headers: { Accept: 'text/event-stream' },
+      });
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const consume = (block: string): void => {
+        const eventName = block.match(/^event:\s*(.+)$/m)?.[1]?.trim() || 'message';
+        const dataText = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+        if (!dataText) return;
+        const data = JSON.parse(dataText) as any;
+        if (eventName === 'facts-ready') setAiState({ status: 'loading', message: '结构化事实已就绪' });
+        if (eventName === 'ai-stage') setAiState({ status: 'loading', message: data.message || 'AI Gateway 正在解释' });
+        if (eventName === 'complete') {
+          setDiagnosis(data as DeploymentDiagnosisResponse);
+          const ai = (data as DeploymentDiagnosisResponse).ai;
+          if (ai.status === 'ready' && ai.explanation) setAiState({ status: 'ready' });
+          else if (ai.status === 'disabled') setAiState({ status: 'error', message: '当前 CDS 未配置 AI Gateway，确定性诊断仍可使用' });
+          else if (ai.status === 'failed') setAiState({ status: 'error', message: ai.error || 'AI 解释失败' });
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || '';
+        for (const block of blocks) consume(block);
+        if (done) break;
+      }
+      if (buffer.trim()) consume(buffer);
+    } catch (err) {
+      setAiState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, [runId]);
+
+  if (loading) return <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在读取结构化诊断</div>;
+  if (!diagnosis) return <></>;
+  const failure = diagnosis.failure;
+  return (
+    <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[11px] text-destructive">{failure.code}</span> : null}
+        {failure?.owner ? <span className="text-xs text-muted-foreground">责任侧: {deploymentFailureOwnerLabel(failure.owner)}</span> : null}
+        {failure ? <span className="text-xs text-muted-foreground">{failure.retryable ? '修复前置条件后可重试' : '需先修复根因'}</span> : null}
+      </div>
+      <p className="mt-2 text-xs leading-5 text-foreground/85">{diagnosis.headline}</p>
+      {diagnosis.actions.length > 0 ? (
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
+          {diagnosis.actions.map((action) => <li key={action}>{action}</li>)}
+        </ul>
+      ) : null}
+      {diagnosis.ai.explanation ? (
+        <div className="mt-3 border-t border-[hsl(var(--hairline))] pt-3 text-xs leading-5">
+          <div className="font-semibold">AI 解释</div>
+          <p className="mt-1 text-muted-foreground">{diagnosis.ai.explanation.summary}</p>
+          {diagnosis.ai.explanation.actions.map((action) => <div key={action} className="mt-1 text-muted-foreground">{action}</div>)}
+        </div>
+      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => void explainWithAi()} disabled={aiState.status === 'loading'}>
+          {aiState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Braces />}
+          {aiState.status === 'loading' ? aiState.message || 'AI 正在解释' : 'AI 解释'}
+        </Button>
+        {aiState.status === 'error' ? <span className="text-xs text-amber-700 dark:text-amber-300">{aiState.message}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function deploymentFailureOwnerLabel(owner: NonNullable<DeploymentRunSummary['failure']>['owner']): string {
+  return ({ code: '代码', config: '配置', cds: 'CDS', external: '外部依赖', unknown: '未归类' })[owner];
 }
 
 function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {

@@ -131,3 +131,33 @@ def test_deployment_run_list_builds_scoped_query(monkeypatch):
     assert captured["method"] == "GET"
     assert captured["path"] == "/api/deployment-runs?project=p1&branch=b1&status=failed&limit=5"
     assert payload["data"]["total"] == 1
+
+
+def test_deployment_run_diagnose_reads_structured_facts(monkeypatch):
+    captured = {}
+
+    def fake_call(method, path, body=None, timeout=15, quiet=False):
+        captured.update(method=method, path=path)
+        return {"diagnosis": {"runId": "dr_1", "failure": {"code": "build.compile.typescript"}}}
+
+    monkeypatch.setattr(cdscli, "_call", fake_call)
+    code, payload = call_main(["deployment-run", "diagnose", "dr_1"])
+
+    assert code == 0
+    assert captured == {"method": "GET", "path": "/api/deployment-runs/dr_1/diagnosis"}
+    assert payload["data"]["diagnosis"]["failure"]["code"] == "build.compile.typescript"
+
+
+def test_deployment_run_diagnose_ai_consumes_complete_sse_event(monkeypatch):
+    monkeypatch.setattr(cdscli, "_request", lambda *args, **kwargs: (
+        200,
+        "event: facts-ready\ndata: {\"runId\":\"dr_1\"}\n\n"
+        "event: ai-stage\ndata: {\"stage\":\"explaining\"}\n\n"
+        "event: complete\ndata: {\"runId\":\"dr_1\",\"ai\":{\"status\":\"ready\",\"explanation\":{\"summary\":\"类型错误\",\"actions\":[]}}}\n\n",
+        {},
+    ))
+
+    code, payload = call_main(["deployment-run", "diagnose", "dr_1", "--ai"])
+
+    assert code == 0
+    assert payload["data"]["diagnosis"]["ai"]["explanation"]["summary"] == "类型错误"
