@@ -74,6 +74,11 @@ on:
         required: true
         default: false
         type: boolean
+      allow_missing_map_logs:
+        description: "Operator waiver: allow canary/http-full preflight to skip MAP LLM logs scan when logs:read key is unavailable."
+        required: true
+        default: false
+        type: boolean
       rollout_evidence_run_id:
         description: "Previous llmgw-prod-stage run id to restore .llmgw-release-evidence before continuing."
         required: false
@@ -164,6 +169,7 @@ jobs:
       INPUT_ALLOW_OUT_OF_ORDER: ${{ github.event.inputs.allow_out_of_order || 'false' }}
       INPUT_ALLOW_OUT_OF_ORDER_REASON: ${{ github.event.inputs.allow_out_of_order_reason || '' }}
       INPUT_ALLOW_RELEASE_TREE_MISMATCH: ${{ github.event.inputs.allow_release_tree_mismatch || 'false' }}
+      INPUT_ALLOW_MISSING_MAP_LOGS: ${{ github.event.inputs.allow_missing_map_logs || 'false' }}
       INPUT_ROLLOUT_EVIDENCE_RUN_ID: ${{ github.event.inputs.rollout_evidence_run_id || '' }}
       INPUT_ROLLOUT_EVIDENCE_ARTIFACT: ${{ github.event.inputs.rollout_evidence_artifact || '' }}
       INPUT_ROUTE_MATRIX: ${{ github.event.inputs.route_matrix || 'false' }}
@@ -215,6 +221,7 @@ jobs:
           allow_out_of_order="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER" | xargs)"
           allow_out_of_order_reason="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER_REASON" | xargs)"
           allow_release_tree_mismatch="$(printf '%s' "$INPUT_ALLOW_RELEASE_TREE_MISMATCH" | xargs)"
+          allow_missing_map_logs="$(printf '%s' "$INPUT_ALLOW_MISSING_MAP_LOGS" | xargs)"
           rollout_evidence_run_id="$(printf '%s' "$INPUT_ROLLOUT_EVIDENCE_RUN_ID" | xargs)"
           route_matrix="$(printf '%s' "$INPUT_ROUTE_MATRIX" | xargs)"
           route_app_caller="$(printf '%s' "$INPUT_ROUTE_APP_CALLER" | xargs)"
@@ -239,7 +246,7 @@ jobs:
             echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow input gw_base." >&2
             exit 1
           fi
-          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+          if [ "$stage" != "rollback-inproc" ] && [ "$stage" != "rollback-rehearsal" ] && [ "$stage" != "config-authority" ] && [ "$allow_missing_map_logs" != "true" ] && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
             echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
             exit 1
           fi
@@ -278,6 +285,9 @@ jobs:
           export LLMGW_GATE_SMOKE_ROUTE_PINNED_MODEL_ID="$route_pinned_model_id"
           if [ "$allow_release_tree_mismatch" = "true" ]; then
             export LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1
+          fi
+          if [ "$allow_missing_map_logs" = "true" ]; then
+            export LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1
           fi
           release_tree_mismatch_bypass="${LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH:-${LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH:-0}}"
 

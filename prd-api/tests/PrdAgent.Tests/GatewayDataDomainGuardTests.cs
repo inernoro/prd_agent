@@ -774,7 +774,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("map_base=\"$(printf '%s' \"${LLMGW_STAGE_MAP_BASE:-${PRD_AGENT_BASE:-}}\" | xargs || true)\"", script);
         Assert.Contains("preflight_args=\"$preflight_args --map-base $map_base\"", script);
         Assert.Contains("allow_missing_map_logs_waiver_for_stage()", script);
-        Assert.Contains("canary-*)", script);
+        Assert.Contains("canary-*|http-full)", script);
         Assert.Contains("elif [ \"${LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS:-0}\" = \"1\" ] && allow_missing_map_logs_waiver_for_stage; then", script);
         Assert.Contains("preflight_args=\"$preflight_args --allow-missing-map-logs\"", script);
         Assert.Contains("suffix=\"$suffix --allow-missing-map-logs\"", script);
@@ -1027,6 +1027,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("allow_release_tree_mismatch", workflow);
         Assert.Contains("INPUT_ALLOW_RELEASE_TREE_MISMATCH", workflow);
         Assert.Contains("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH=1", workflow);
+        Assert.Contains("allow_missing_map_logs", workflow);
+        Assert.Contains("INPUT_ALLOW_MISSING_MAP_LOGS", workflow);
+        Assert.Contains("LLMGW_STAGE_ALLOW_MISSING_MAP_LOGS=1", workflow);
         Assert.Contains("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH", workflow);
         Assert.Contains("release_tree_mismatch_bypass", workflow);
         Assert.Contains("environment: production", workflow);
@@ -1044,7 +1047,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
-        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
+        Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ \"$allow_missing_map_logs\" != \"true\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
         Assert.Contains("scripts/llmgw-prod-stage.sh", workflow);
         Assert.Contains("--stage \"$stage\"", workflow);
