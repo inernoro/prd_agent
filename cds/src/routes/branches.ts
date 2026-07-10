@@ -72,6 +72,7 @@ import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromReque
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
+import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
@@ -1781,6 +1782,8 @@ export interface RouterDeps {
   deploymentRunService?: DeploymentRunService;
   /** Immutable deployment versions and reusable artifact projection. */
   deploymentVersionService?: DeploymentVersionService;
+  /** Generates the constrained managed delivery plan; compose projects bypass it. */
+  managedProjectService?: ManagedProjectService;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -1988,6 +1991,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     branchOperationCoordinator,
     deploymentRunService,
     deploymentVersionService,
+    managedProjectService,
   } = deps;
 
   const router = Router();
@@ -2860,6 +2864,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       deploymentRunId?: string;
       deploymentVersionId?: string;
       deploymentConfigHash?: string;
+      deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
       profiles?: BuildProfile[];
     } = {},
   ): Promise<'completed' | 'failed'> {
@@ -3286,6 +3291,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 profiles,
                 branch: entry,
                 createdByRunId: context.deploymentRunId,
+                capabilities: context.deploymentCapabilities,
               });
           if (version) {
             entry.currentVersionId = version.id;
@@ -11032,8 +11038,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
-    const currentProfiles = stateService.getEffectiveProfilesForBranch(entry);
     const requestedVersionId = typeof req.body?.versionId === 'string' ? req.body.versionId.trim() : '';
+    const requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+      ? req.body.commitSha
+      : undefined;
+    let managedPlan: ManagedProjectPlan | null = null;
+    if (!requestedVersionId && managedProjectService) {
+      try {
+        managedPlan = managedProjectService.planForBranch(entry, requestedCommitForPlan);
+      } catch (err) {
+        res.status(422).json({
+          error: 'managed_plan_invalid',
+          message: (err as Error).message,
+          deliveryMode: 'managed',
+        });
+        return;
+      }
+    }
+    const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -11277,6 +11299,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       message: '分支部署请求已受理',
     });
     if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
+    if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
 
     // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
     // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
@@ -11365,7 +11388,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           deploymentRunId: deploymentRun?.id,
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
-          profiles: selectedDeploymentVersion ? profiles : undefined,
+          deploymentCapabilities: managedPlan?.capabilities,
+          profiles: selectedDeploymentVersion || managedPlan ? profiles : undefined,
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -12297,6 +12321,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             profiles: versionProfiles,
             branch: entry,
             createdByRunId: deploymentRun.id,
+            capabilities: managedPlan?.capabilities,
           });
           logEvent({
             step: 'version-create',

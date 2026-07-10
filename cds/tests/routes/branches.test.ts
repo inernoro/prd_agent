@@ -15,6 +15,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
+import { ManagedProjectService } from '../../src/services/managed-project.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -146,6 +147,7 @@ describe('Branch Routes', () => {
   let branchOperationCoordinator: BranchOperationCoordinator;
   let deploymentRunService: DeploymentRunService;
   let deploymentVersionService: DeploymentVersionService;
+  let managedProjectService: ManagedProjectService;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -239,6 +241,7 @@ describe('Branch Routes', () => {
     branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
     deploymentRunService = new DeploymentRunService(stateService);
     deploymentVersionService = new DeploymentVersionService(stateService);
+    managedProjectService = new ManagedProjectService(stateService);
 
     const app = express();
     app.use(express.json());
@@ -252,6 +255,7 @@ describe('Branch Routes', () => {
       stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
       deploymentRunService,
       deploymentVersionService,
+      managedProjectService,
     }));
 
     await new Promise<void>((resolve) => {
@@ -2015,6 +2019,67 @@ describe('Branch Routes', () => {
         phase: 'complete',
       });
       expect(stateService.getDeploymentVersions({ branchId: 'version-reuse' })).toHaveLength(1);
+    });
+
+    it('deploys a managed project without a hand-authored BuildProfile and reuses its local artifact', async () => {
+      const commitSha = 'abcdef1234567890abcdef1234567890abcdef12';
+      const worktreePath = path.join(tmpDir, 'worktrees', 'managed-auto');
+      fs.mkdirSync(worktreePath, { recursive: true });
+      fs.writeFileSync(path.join(worktreePath, 'package.json'), JSON.stringify({
+        scripts: { build: 'vite build', start: 'vite --host 0.0.0.0' },
+        dependencies: { vite: '^6.0.0', react: '^18.0.0' },
+      }));
+      const project = stateService.getProject('default')!;
+      project.deliveryMode = 'managed';
+      project.managedSpec = {
+        apps: [{ id: 'web', appPath: '.', workload: 'web', health: { type: 'http', path: '/' } }],
+        capabilities: [],
+      };
+      stateService.addBranch({
+        id: 'managed-auto',
+        projectId: 'default',
+        branch: 'feature/managed-auto',
+        worktreePath,
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+        services: {},
+      });
+      stateService.save();
+      let artifactInspectCount = 0;
+      mock.addResponsePattern(/docker image inspect .*cds-managed/, () => ({
+        stdout: artifactInspectCount++ === 0 ? '' : 'artifact',
+        stderr: artifactInspectCount === 1 ? 'missing' : '',
+        exitCode: artifactInspectCount === 1 ? 1 : 0,
+      }));
+      mock.addResponsePattern(/docker create .*managed-build/, () => ({ stdout: 'builder', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker exec .*managed-build/, () => ({ stdout: 'built', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start .*managed-build/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      expect(stateService.getBuildProfilesForProject('default')).toEqual([]);
+      const first = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
+      expect(first.status).toBe(200);
+      expect(String(first.body)).toContain('managed 产物已固化');
+      expect(stateService.getBuildProfilesForProject('default')[0]).toMatchObject({
+        id: 'web',
+        managedBuild: { artifactImage: expect.stringMatching(/^cds-managed\//) },
+      });
+      const versionId = stateService.getBranch('managed-auto')?.currentVersionId;
+      expect(deploymentVersionService.get(versionId!)?.profiles[0]).toMatchObject({
+        artifactKind: 'managed-image',
+        reusable: true,
+      });
+      const buildExecCount = mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build')).length;
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+
+      const second = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
+      expect(second.status).toBe(200);
+      expect(String(second.body)).toContain('已锁定版本');
+      expect(String(second.body)).not.toContain('npm install && npm run build');
+      expect(mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build'))).toHaveLength(buildExecCount);
+      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      expect(stateService.getDeploymentVersions({ branchId: 'managed-auto' })).toHaveLength(1);
     });
   });
 

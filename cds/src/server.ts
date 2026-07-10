@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
+import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
@@ -82,6 +83,7 @@ import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
+import { ManagedProjectService } from './services/managed-project.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -679,6 +681,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
     'GET /deployment-versions': '列出部署版本',
+    'GET /projects/:id/delivery': '查看项目交付模式',
+    'PUT /projects/:id/delivery': '更新项目交付模式',
+    'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -882,6 +887,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
+    [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
+    [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
+    [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
@@ -1251,6 +1259,7 @@ export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const deploymentRunService = new DeploymentRunService(deps.stateService);
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
+  const managedProjectService = new ManagedProjectService(deps.stateService);
   deploymentRunService.reconcileInterrupted();
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -3534,6 +3543,12 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   }));
 
+  app.use('/api', createManagedProjectsRouter({
+    stateService: deps.stateService,
+    managedProjectService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -3549,6 +3564,7 @@ export function createServer(deps: ServerDeps): express.Express {
     branchOperationCoordinator: deps.branchOperationCoordinator,
     deploymentRunService,
     deploymentVersionService,
+    managedProjectService,
   }));
 
   // 2026-05-28: 单一 SSE 通道 + 任务化刷新。
