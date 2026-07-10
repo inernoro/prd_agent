@@ -138,6 +138,42 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task CancelledUnknownOutcome_KeepsBudgetReservationAsUnknown()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+        var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
+        {
+            AppCallerCode = "cancelled-unknown-test",
+            RequestType = "image-gen",
+            MonthlyBudgetUsd = 1m,
+            BudgetReservationUsd = 0.6m,
+        }, "cancelled-unknown-request", CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        admission.Lease.ShouldNotBeNull();
+        await coordinator.FinalizeAsync(
+            admission.Lease!,
+            409,
+            pipelineThrew: false,
+            outcomeUnknown: true);
+
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(_ => true)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(0.6m);
+        month.SpentUsd.ShouldBe(0m);
+        var reservation = await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations")
+            .Find(_ => true)
+            .SingleAsync();
+        reservation.Status.ShouldBe("unknown");
+        reservation.Detail.ShouldBe("upstream-outcome-unknown");
+    }
+
+    [Fact]
     public async Task DuplicateRawRequestId_HasSingleExecutionOwner()
     {
         var testDatabase = await TryCreateDatabaseAsync();

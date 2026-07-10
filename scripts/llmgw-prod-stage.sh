@@ -1063,7 +1063,7 @@ ensure_serving_probe_evidence() {
     exit 1
   fi
   echo "LLM Gateway stage: collecting missing serving probe evidence without upstream model calls"
-  GW_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py \
+  LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py \
     --base "$gate_base" \
     --expect-commit "$commit" \
     --samples "${LLMGW_GATE_HEALTH_SAMPLES:-3}" \

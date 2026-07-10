@@ -2098,6 +2098,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("ensure_serving_probe_evidence", stage);
         Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", stage);
 
         var console = ReadRepoFile("prd-llmgw/Program.cs");
         Assert.Contains("ValidateBudgetConfiguration", console);

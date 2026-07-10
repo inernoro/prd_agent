@@ -487,6 +487,40 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    public static IEnumerable<object[]> RequestControlScopeRequests() => new[]
+    {
+        new object[] { HttpMethod.Post, "/gw/v1/requests/resolve/cancel", "request:cancel" },
+        new object[] { HttpMethod.Get, "/gw/v1/requests/pools/status?operation=raw-submit", "request:read" },
+    };
+
+    [Theory]
+    [MemberData(nameof(RequestControlScopeRequests))]
+    public async Task ScopedRequestControlRoute_IgnoresScopeWordsInsideRequestId(
+        HttpMethod method,
+        string path,
+        string expectedScope)
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => false);
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            authorizer.RequiredScope.ShouldBe(expectedScope);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     public static IEnumerable<object[]> CompatibleDefaultCallerRequests() => new[]
     {
         new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[]}", "application/json", AppCallerRegistry.PageAgent.Generate },

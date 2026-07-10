@@ -12,6 +12,8 @@
 | security | prd-api | 兼容协议鉴权按端点实际解析 JSON，不再允许伪造或省略 Content-Type 绕过 stream scope |
 | fix | prd-api | HTTP client 保留 send 结构化失败信封，兼容协议无 header 时按实际 Chat/Vision/Generation 默认 caller 鉴权 |
 | fix | prd-api | 修复月初预算创建竞态与图片幂等顺序，multipart 指纹纳入文件 hash，并让超大重放快照不再反转上游成功 |
+| fix | prd-api | 修正请求控制 scope 优先级，并让显式取消后的未知上游结果保留预算预占 |
+| fix | scripts | 生产 stage 的 serving probe 改用探针实际读取的 LLMGW_GATE_KEY 环境变量 |
 | feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
 | feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
 | feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |

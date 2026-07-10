@@ -128,7 +128,15 @@ public static class GatewayHttpEndpoints
                 if (context.Items.TryGetValue(GatewayBudgetCoordinator.HttpContextLeaseKey, out var leaseValue)
                     && leaseValue is GatewayBudgetLease lease)
                 {
-                    await budgetCoordinator.FinalizeAsync(lease, context.Response.StatusCode, pipelineThrew);
+                    var outcomeUnknown = context.Items.TryGetValue(
+                                             GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey,
+                                             out var outcomeValue)
+                                         && outcomeValue is true;
+                    await budgetCoordinator.FinalizeAsync(
+                        lease,
+                        context.Response.StatusCode,
+                        pipelineThrew,
+                        outcomeUnknown);
                 }
             }
         });
@@ -919,6 +927,7 @@ public static class GatewayHttpEndpoints
             {
                 if (executionStore is not null && execution is not null)
                     await executionStore.UnknownAsync(execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
+                http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
                 return Results.Json(GatewayRawResponse.Fail("GATEWAY_REQUEST_CANCELLED", "请求已取消；上游结果状态未知，禁止自动重试", 409), jsonOpts, statusCode: 409);
             }
             catch
@@ -1210,6 +1219,10 @@ public static class GatewayHttpEndpoints
     {
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return "readiness:read";
         if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
+        // requestId 是用户输入，可能恰好叫 resolve/raw/pools。请求控制路由必须先按
+        // 固定形状匹配，不能让 path 子串把 cancel/status 错分到其它 scope。
+        if (IsGatewayRequestControlPath(path, "cancel")) return "request:cancel";
+        if (IsGatewayRequestControlPath(path, "status")) return "request:read";
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
@@ -1219,10 +1232,18 @@ public static class GatewayHttpEndpoints
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
             || path.Contains("route-self-test", StringComparison.OrdinalIgnoreCase)
             || path.Contains("shadow-comparisons", StringComparison.OrdinalIgnoreCase)) return "route:read";
-        if (path.Contains("/cancel", StringComparison.OrdinalIgnoreCase)) return "request:cancel";
-        if (path.Contains("/requests/", StringComparison.OrdinalIgnoreCase)
-            && path.EndsWith("/status", StringComparison.OrdinalIgnoreCase)) return "request:read";
         return "invoke";
+    }
+
+    private static bool IsGatewayRequestControlPath(string path, string action)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 5
+               && segments[0].Equals("gw", StringComparison.OrdinalIgnoreCase)
+               && segments[1].Equals("v1", StringComparison.OrdinalIgnoreCase)
+               && segments[2].Equals("requests", StringComparison.OrdinalIgnoreCase)
+               && !string.IsNullOrWhiteSpace(segments[3])
+               && segments[4].Equals(action, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<GatewayAuthorizationInputs> ResolveScopedAuthorizationInputsAsync(
@@ -2737,6 +2758,7 @@ public static class GatewayHttpEndpoints
         }
         catch (OperationCanceledException)
         {
+            http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
             if (!http.Response.HasStarted)
             {
                 await WriteCompatErrorAsync(

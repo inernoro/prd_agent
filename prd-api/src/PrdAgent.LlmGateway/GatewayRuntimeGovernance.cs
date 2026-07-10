@@ -136,6 +136,7 @@ public sealed record GatewayBudgetAdmission(
 public sealed class GatewayBudgetCoordinator
 {
     public const string HttpContextLeaseKey = "llmgw.budget.lease";
+    public const string HttpContextOutcomeUnknownKey = "llmgw.budget.outcome-unknown";
     private readonly LlmGatewayDataContext _data;
     private readonly ILogger<GatewayBudgetCoordinator> _logger;
 
@@ -266,11 +267,15 @@ public sealed class GatewayBudgetCoordinator
         return GatewayBudgetAdmission.Allow(budget, updated.ReservedUsd + updated.SpentUsd, new GatewayBudgetLease(reservation.Id, amount));
     }
 
-    public async Task FinalizeAsync(GatewayBudgetLease lease, int responseStatusCode, bool pipelineThrew)
+    public async Task FinalizeAsync(
+        GatewayBudgetLease lease,
+        int responseStatusCode,
+        bool pipelineThrew,
+        bool outcomeUnknown = false)
     {
         try
         {
-            if (pipelineThrew || responseStatusCode >= 500)
+            if (outcomeUnknown || pipelineThrew || responseStatusCode >= 500)
             {
                 await SetReservationStatusAsync(lease.ReservationId, "unknown", "upstream-outcome-unknown", adjustMonth: false, settle: false, CancellationToken.None);
                 return;
