@@ -1,6 +1,6 @@
 # CDS 托管交付契约 · 设计
 
-> **版本**：v1.0 | **日期**：2026-07-10 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：已落地
 
 ## 一、管理摘要
 
@@ -278,9 +278,29 @@ DeploymentVersion   DeploymentRunEvent
 2. 现有正则诊断降级为 legacy fallback。
 3. AI Gateway 只消费终态 run、version diff 和证据摘要。
 
+## 十、落地结果与操作入口
+
+截至 2026-07-10，四个实施波次均已落地：
+
+| 能力 | 落地结果 | 主要入口 |
+|------|----------|----------|
+| DeploymentRun | 本地、单服务、远端与清理入口统一先建账本；事件可按 seq 续传，重启后可恢复 | `GET /api/deployment-runs`、`GET /api/deployment-runs/:id/stream`、`cdscli deployment-run` |
+| DeploymentVersion | commit + configHash 内容寻址；预构建镜像与 managed 本地产物可直接重部署、回滚 | `GET /api/deployment-versions`、`POST /api/deployment-versions/:id/deploy`、`POST /api/branches/:id/rollback` |
+| managed / compose | 旧项目缺省 compose；managed 自动检测技术栈、生成 build/start 分离配置并解析逻辑能力绑定 | 项目设置 → 交付模式；`GET/PUT /api/projects/:id/delivery` |
+| 结构化诊断 | 失败写稳定 code、owner、retryable、serviceId 与 evidenceRefs；旧容器正则只作 fallback | `GET /api/deployment-runs/:id/diagnosis`、`cdscli deployment-run diagnose` |
+| AI 解释 | 只接收脱敏后的 run/version 事实；SSE 显示 facts-ready、ai-stage、explanation、complete | `GET /api/deployment-runs/:id/diagnosis/stream?ai=1` |
+
+AI Gateway 为可选增强。未配置时确定性诊断完全可用；启用时设置：
+
+- `CDS_AI_EXPLANATION_GATEWAY_URL`：OpenAI-compatible chat completions 完整地址；
+- `CDS_AI_EXPLANATION_MODEL`：解释模型；
+- `CDS_AI_EXPLANATION_GATEWAY_KEY`：可选 Gateway token。
+
+managed 源码构建通过临时容器复制源码、执行 install/build，再 `docker commit` 为 `sha-*` 本地不可变镜像。重复部署与同节点回滚只执行 start。跨执行器搬运本地产物尚未实现，已记入 `debt.cds.ci-prebuilt`；缺失时系统明确要求重新源码构建，不伪装成可拉取的 Registry 镜像。
+
 机器验收：已覆盖的失败类型不依赖原始日志正则即可确定责任侧；无结构化证据时不得生成确定性结论。
 
-## 十、影响范围与风险
+## 十一、影响范围与风险
 
 | 模块 | 主要变更 |
 |------|----------|
@@ -302,7 +322,7 @@ DeploymentVersion   DeploymentRunEvent
 | OperationLog 与 run 双写不一致 | 中 | 中 | 只允许 run 投影 OperationLog，禁止两个方向写 |
 | managed 模式隐藏必要配置 | 中 | 中 | 生效配置可查看、compose 逃生口、样例矩阵验收 |
 
-## 十一、北极星验收矩阵
+## 十二、北极星验收矩阵
 
 | 判据 | 自动验证 | 真实环境验证 |
 |------|----------|--------------|
@@ -311,4 +331,3 @@ DeploymentVersion   DeploymentRunEvent
 | managed 降低配置负担 | Node、.NET、Worker 样例测试 | 新项目只声明能力即可得到预览 URL |
 | 失败可解释 | 错误码与证据契约测试 | 制造编译、配置、平台三类失败并核对责任侧 |
 | 高级能力不退化 | compose、远端执行器、profile override 回归 | 现有 prd-agent 多服务分支完整部署 |
-
