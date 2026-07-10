@@ -412,8 +412,6 @@ async function postSse(
 }
 
 export function MaintenanceTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [branchState, setBranchState] = useState<BranchState>({ status: 'loading' });
   // 2026-05-04 重构(用户反馈):删掉 branchQuery + selectedBranch 双 state,
   // 改为单一 selectedBranch state。combobox input value === selectedBranch,
@@ -444,7 +442,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
-  const [networkHealth, setNetworkHealth] = useState<DockerNetworkHealthState>({ status: 'loading' });
   // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
@@ -466,7 +463,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const liveElapsedMs = Math.max(0, (runEndedAt ?? now) - liveStartedAtMs);
 
   // 自更新历史:统一数据源,进度条 + 历史列表共用一份(不各自 fetch)。
-  const { historyState: selfHistoryState, manualRefresh: refreshSelfHistory } = useSelfUpdateHistory();
+  const { historyState: selfHistoryState } = useSelfUpdateHistory();
   const selfHistoryRecords = selfHistoryState.status === 'ok' ? selfHistoryState.records : [];
 
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
@@ -606,20 +603,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, []);
 
-  const loadNetworkHealth = useCallback(async () => {
-    setNetworkHealth({ status: 'loading' });
-    try {
-      const data = await apiRequest<DockerNetworkHealthResponse>('/api/cds-system/docker-networks');
-      if (!data.ok) {
-        setNetworkHealth({ status: 'error', message: data.error || 'Docker 网络健康检查失败' });
-        return;
-      }
-      setNetworkHealth({ status: 'ok', data });
-    } catch (err) {
-      setNetworkHealth({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }, []);
-
   // 2026-05-28 重构:不再独立轮询 /api/self-status?probe=remote。改为订阅
   // useCdsEvents store 的 self.status 事件。任何 tab/webhook 触发的自更新都会
   // 经由 cds-events bus 实时推过来,远比 30s 轮询新鲜。窗口事件
@@ -630,10 +613,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   useEffect(() => {
     void loadBranches();
   }, [loadBranches]);
-
-  useEffect(() => {
-    void loadNetworkHealth();
-  }, [loadNetworkHealth]);
 
   // snapshot → selfStatus 同步;degraded 时保留旧值显示
   useEffect(() => {
@@ -812,24 +791,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }
 
-  async function factoryReset(): Promise<void> {
-    setSubmitting(true);
-    try {
-      await apiRequest('/api/factory-reset', { method: 'POST' });
-      onToast('已恢复出厂设置，正在跳转');
-      setOpen(false);
-      window.setTimeout(() => {
-        window.location.href = '/project-list';
-      }, 1500);
-    } catch (err) {
-      onToast(`失败：${err instanceof ApiError ? err.message : String(err)}`);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
-    <div className="space-y-8">
+    <div>
       <Section title="CDS 更新" description="拉取最新代码后按影响范围选择极速版、零停机、热路径或源码构建。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
@@ -1053,44 +1016,105 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         </div>
       </Section>
 
-      {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
-          用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。
-          2026-06-30 改:历史紧跟更新控制,避免在当前状态和历史记录之间被危险操作隔开。 */}
-      <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-        <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
-      </Section>
-
-      <Section title="Docker 网络容量" description="分支隔离网络占用、可清理候选与 address pool 风险。">
-        <DockerNetworkHealthPanel state={networkHealth} onRefresh={loadNetworkHealth} />
-      </Section>
-
-      <DisclosurePanel title="危险操作" subtitle="影响所有项目的不可逆操作" tone="danger">
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button type="button" variant="destructive">
-              <AlertTriangle className="mr-2 h-4 w-4" />
-              恢复出厂设置
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>确认恢复出厂设置</DialogTitle>
-              <DialogDescription>
-                这会清空所有项目的分支、构建配置、环境变量、基础设施和路由规则。Docker 数据卷会保留。
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                取消
-              </Button>
-              <Button type="button" variant="destructive" onClick={() => void factoryReset()} disabled={submitting}>
-                确认清空
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </DisclosurePanel>
     </div>
+  );
+}
+
+export function SelfUpdateHistoryTab(): JSX.Element {
+  const { historyState, manualRefresh } = useSelfUpdateHistory();
+
+  return (
+    <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
+      <SelfUpdateHistoryList historyState={historyState} onManualRefresh={manualRefresh} />
+    </Section>
+  );
+}
+
+export function DockerNetworkTab(): JSX.Element {
+  const [networkHealth, setNetworkHealth] = useState<DockerNetworkHealthState>({ status: 'loading' });
+
+  const loadNetworkHealth = useCallback(async () => {
+    setNetworkHealth({ status: 'loading' });
+    try {
+      const data = await apiRequest<DockerNetworkHealthResponse>('/api/cds-system/docker-networks');
+      if (!data.ok) {
+        setNetworkHealth({ status: 'error', message: data.error || 'Docker 网络健康检查失败' });
+        return;
+      }
+      setNetworkHealth({ status: 'ok', data });
+    } catch (err) {
+      setNetworkHealth({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadNetworkHealth();
+  }, [loadNetworkHealth]);
+
+  return (
+    <Section title="Docker 网络容量" description="分支隔离网络占用、可清理候选与 address pool 风险。">
+      <DockerNetworkHealthPanel state={networkHealth} onRefresh={loadNetworkHealth} />
+    </Section>
+  );
+}
+
+export function DangerOperationsTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function factoryReset(): Promise<void> {
+    setSubmitting(true);
+    try {
+      await apiRequest('/api/factory-reset', { method: 'POST' });
+      onToast('已恢复出厂设置，正在跳转');
+      setOpen(false);
+      window.setTimeout(() => {
+        window.location.href = '/project-list';
+      }, 1500);
+    } catch (err) {
+      onToast(`失败：${err instanceof ApiError ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Section title="危险操作" description="影响所有项目的不可逆操作。" tone="danger">
+      <div className="rounded-md border border-destructive/30 bg-destructive/[0.04] p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="font-semibold text-destructive">恢复出厂设置</div>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+              清空所有项目的分支、构建配置、环境变量、基础设施和路由规则。Docker 数据卷会保留。
+            </p>
+          </div>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button type="button" variant="destructive" className="shrink-0">
+                <AlertTriangle className="mr-2 h-4 w-4" />
+                恢复出厂设置
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>确认恢复出厂设置</DialogTitle>
+                <DialogDescription>
+                  这会清空所有项目的分支、构建配置、环境变量、基础设施和路由规则。Docker 数据卷会保留。
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                  取消
+                </Button>
+                <Button type="button" variant="destructive" onClick={() => void factoryReset()} disabled={submitting}>
+                  确认清空
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+    </Section>
   );
 }
 
