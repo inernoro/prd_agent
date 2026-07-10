@@ -340,6 +340,45 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           );
           scrollToBottom();
         };
+        const isCardRunning = () => {
+          let running = false;
+          setCards((prev) => {
+            running = prev.some((c) => c.key === key && c.status === 'running');
+            return prev;
+          });
+          return running;
+        };
+
+        // 看门狗轮询：与 SSE 并行跑（弱网下 SSE 可能长时间连不上，串行等重试耗尽会白等两分钟）。
+        // 谁先拿到终态谁回填；卡片一旦离开 running 双方都自然停。
+        void (async () => {
+          for (let attempt = 0; attempt < 60; attempt++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            if (ac.signal.aborted || !isCardRunning()) return;
+            try {
+              const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+              if (res.success && res.data?.run) {
+                const run = res.data.run;
+                if (run.status === 'Completed') {
+                  const it = res.data.items?.find((i) => i.url);
+                  if (it?.url) applyDone(it.url);
+                  else failCard('生成完成但无图片数据，请重试');
+                  return;
+                }
+                if (run.status === 'Failed' || run.status === 'Cancelled') {
+                  const errItem = res.data.items?.find((i) => i.errorMessage);
+                  failCard(run.status === 'Cancelled' ? '已取消' : errItem?.errorMessage || '生成失败');
+                  return;
+                }
+                // Queued / Running：继续轮询
+              }
+            } catch {
+              // 单次查询失败不终止轮询
+            }
+          }
+          if (isCardRunning()) failCard('生成超时或连接中断，请重试');
+        })();
+
         void streamImageGenRunWithRetry({
           runId,
           maxAttempts: 20,
@@ -365,44 +404,8 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
               failCard(String(o.errorMessage || '生成失败'));
             }
           },
-        }).then(async () => {
-          // SSE 结束 ≠ 生成失败（服务器权威：后端继续跑）。移动网络下 SSE 极易断流，
-          // 这里转入 run 状态轮询兜底：每 5s 查一次，直到终态或约 5 分钟超时。
-          const isCardRunning = () => {
-            let running = false;
-            setCards((prev) => {
-              running = prev.some((c) => c.key === key && c.status === 'running');
-              return prev;
-            });
-            return running;
-          };
-          if (!isCardRunning()) return;
-          for (let attempt = 0; attempt < 60; attempt++) {
-            if (ac.signal.aborted || !isCardRunning()) return;
-            try {
-              const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
-              if (res.success && res.data?.run) {
-                const run = res.data.run;
-                if (run.status === 'Completed') {
-                  const it = res.data.items?.find((i) => i.url);
-                  if (it?.url) applyDone(it.url);
-                  else failCard('生成完成但无图片数据，请重试');
-                  return;
-                }
-                if (run.status === 'Failed' || run.status === 'Cancelled') {
-                  const errItem = res.data.items?.find((i) => i.errorMessage);
-                  failCard(run.status === 'Cancelled' ? '已取消' : errItem?.errorMessage || '生成失败');
-                  return;
-                }
-                // Queued / Running：继续轮询
-              }
-            } catch {
-              // 单次查询失败不终止轮询
-            }
-            await new Promise((r) => setTimeout(r, 5000));
-          }
-          if (isCardRunning()) failCard('生成超时或连接中断，请重试');
         });
+        // SSE 结束 ≠ 生成失败（服务器权威：后端继续跑），终态回填由上面的并行看门狗负责。
       } catch (e) {
         failCard(e instanceof Error ? e.message : '生成失败');
       }
