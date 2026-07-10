@@ -1574,6 +1574,10 @@ export class StateService {
         | 'aliasName'
         | 'aliasSlug'
         | 'description'
+        | 'deliveryMode'
+        | 'managedSpec'
+        | 'managedProfiles'
+        | 'managedPlanUpdatedAt'
         | 'gitRepoUrl'
         | 'gitDefaultBranch'
         | 'repoPath'
@@ -2443,6 +2447,8 @@ export class StateService {
   }
 
   getBuildProfilesForProject(projectId: string): BuildProfile[] {
+    const project = this.getProject(projectId);
+    if (project?.deliveryMode === 'managed') return project.managedProfiles || [];
     return (this.state.buildProfiles || []).filter(
       (p) => (p.projectId || 'default') === projectId,
     );

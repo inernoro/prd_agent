@@ -51,6 +51,18 @@ export interface BuildProfile {
    * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
    */
   command?: string;
+  /**
+   * CDS managed 车道的 build/start 分离契约。compose 车道不写此字段，继续使用
+   * command 的兼容语义。managed 构建先把源码复制进临时容器，执行 install/build，
+   * 再提交为本地不可变镜像；运行阶段只执行 startCommand。
+   */
+  managedBuild?: {
+    stack: string;
+    installCommand?: string;
+    buildCommand?: string;
+    startCommand: string;
+    artifactImage: string;
+  };
   /** Port the service listens on inside the container */
   containerPort: number;
   /** Extra environment variables for this profile (may contain ${CDS_*} template references) */
@@ -172,6 +184,8 @@ export interface BuildProfile {
    *   - 应用所有文件来自 image,workDir/cds-marker 仅给 CDS app 识别用,不影响运行
    */
   prebuiltImage?: boolean;
+  /** 运行期提示：镜像由当前 CDS 节点的 managed builder 生成，不尝试 registry pull。 */
+  localArtifact?: boolean;
   /**
    * 2026-06-23 极速版「逐组件回退」新增 —— 预构建镜像缺失时的**有序回退链**（解析后）。
    * 由 DeployModeOverride.fallbackImage 经 resolveEffectiveProfile 解析模板得到。
@@ -940,7 +954,7 @@ export interface DeploymentVersionProfile {
   profileId: string;
   name: string;
   artifactImage: string;
-  artifactKind: 'prebuilt-image' | 'legacy-runtime';
+  artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;
   runtimeCommand?: string;
@@ -2354,6 +2368,37 @@ export interface GitHubDeviceAuth {
  * actually use them. Adding them prematurely would create dead fields
  * in state.json that mislead future readers.
  */
+export type ProjectDeliveryMode = 'managed' | 'compose';
+
+export interface ManagedCapabilityBinding {
+  id: string;
+  kind: 'database' | 'cache' | 'assets' | 'identity' | 'secrets';
+  /** InfraService.id，或 assets/identity 的逻辑资源 id。 */
+  bindingId: string;
+  /** secrets 能力声明需要注入的项目环境变量 key，不存值。 */
+  envKeys?: string[];
+}
+
+export interface ManagedAppSpec {
+  id: string;
+  name?: string;
+  appPath: string;
+  workload: 'web' | 'api' | 'worker';
+  /** 未填写时由 StackDetector 生成。 */
+  dockerImage?: string;
+  installCommand?: string;
+  buildCommand?: string;
+  startCommand?: string;
+  containerPort?: number;
+  health?: { type: 'http'; path: string } | { type: 'tcp' };
+  capabilityIds?: string[];
+}
+
+export interface ManagedProjectSpec {
+  apps: ManagedAppSpec[];
+  capabilities?: ManagedCapabilityBinding[];
+}
+
 export interface Project {
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
@@ -2387,6 +2432,13 @@ export interface Project {
   aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
+  /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */
+  deliveryMode?: ProjectDeliveryMode;
+  /** managed 车道的最小声明；不保存资源密钥。 */
+  managedSpec?: ManagedProjectSpec;
+  /** StackDetector 生成的只读生效配置，供部署和 Dashboard 查看。 */
+  managedProfiles?: BuildProfile[];
+  managedPlanUpdatedAt?: string;
   /**
    * Infrastructure 隔离模式（mongo / redis 等基础设施容器与分支的关系）。
    *

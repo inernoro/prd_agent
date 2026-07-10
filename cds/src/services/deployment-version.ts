@@ -44,6 +44,7 @@ export class DeploymentVersionService {
       prebuiltImage: profile.prebuiltImage === true,
       entrypoint: profile.entrypoint,
       resources: profile.resources || null,
+      managedBuild: profile.managedBuild || null,
     })).sort((left, right) => left.id.localeCompare(right.id));
     return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
   }
@@ -136,6 +137,8 @@ export class DeploymentVersionService {
         startupSignal: snapshot.startupSignal,
         activeDeployMode: snapshot.deployedMode,
         prebuiltImage: true,
+        localArtifact: snapshot.artifactKind === 'managed-image',
+        managedBuild: undefined,
         fallbackImage: undefined,
         sourceFallbackProfile: undefined,
       };
@@ -146,19 +149,20 @@ export class DeploymentVersionService {
     const service = branch.services[profile.id];
     const artifactImage = service?.deployedImage || profile.dockerImage;
     const actualMode = service?.deployedMode ?? profile.activeDeployMode ?? '';
-    const reusable = profile.prebuiltImage === true && isImmutableImageReference(artifactImage);
+    const managedArtifact = !!profile.managedBuild;
+    const reusable = (profile.prebuiltImage === true || managedArtifact) && isImmutableImageReference(artifactImage);
     return {
       profileId: profile.id,
       name: profile.name,
       artifactImage,
-      artifactKind: reusable ? 'prebuilt-image' : 'legacy-runtime',
+      artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable
         ? undefined
-        : profile.prebuiltImage === true
+        : profile.prebuiltImage === true || managedArtifact
           ? '实际镜像不是 digest 或 sha-* 不可变引用'
           : 'legacy compose/source 将构建与启动写在同一 command，需 managed build/start 契约后才能复用',
-      runtimeCommand: profile.command,
+      runtimeCommand: profile.managedBuild?.startCommand || profile.command,
       containerPort: profile.containerPort,
       containerWorkDir: profile.containerWorkDir,
       pathPrefixes: profile.pathPrefixes,
