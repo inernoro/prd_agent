@@ -221,14 +221,39 @@ public class GatewayKeyGateContractTests
         try
         {
             var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
-            using var lease = registry.Register("cancel-me");
+            using var lease = registry.Register("demo.app::chat", "cancel-me");
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-me/cancel");
             request.Headers.Add("X-Gateway-Key", GatewayKey);
+            request.Headers.Add("X-Gateway-App-Caller", "demo.app::chat");
 
             var response = await app.GetTestClient().SendAsync(request);
 
             response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
             lease.Token.IsCancellationRequested.ShouldBeTrue();
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CancelEndpoint_CannotCancelAnotherAppCallerRequest()
+    {
+        await using var app = BuildHostWithGateway(new EchoingGateway());
+        await app.StartAsync();
+        try
+        {
+            var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
+            using var lease = registry.Register("caller-b::chat", "shared-request-id");
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/shared-request-id/cancel");
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+            request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+            lease.Token.IsCancellationRequested.ShouldBeFalse();
         }
         finally
         {
@@ -255,11 +280,13 @@ public class GatewayKeyGateContractTests
             };
             send.Headers.Add("X-Gateway-Key", GatewayKey);
             send.Headers.Add("X-Request-Id", "cancel-openai-compatible");
+            send.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
             var pending = client.SendAsync(send);
             await gateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             var cancel = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-openai-compatible/cancel");
             cancel.Headers.Add("X-Gateway-Key", GatewayKey);
+            cancel.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
             var cancelResponse = await client.SendAsync(cancel);
             var sendResponse = await pending;
 

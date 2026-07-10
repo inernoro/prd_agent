@@ -1,5 +1,6 @@
 | ops | cds | 移除 llmgw 与 llmgw-serve 的 CDS 独立公网预览，仅保留 llmgw-web 控制台入口 |
 | feat | prd-api | 为网关新增 scoped key、Decimal128 原子预算、显式取消、raw 幂等和数据生命周期治理 |
+| security | prd-api | 将显式取消注册表按 appCallerCode 与 requestId 联合隔离，阻止跨调用方取消运行中请求 |
 | feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
 | feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
 | feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |

@@ -244,7 +244,7 @@ public static class GatewayHttpEndpoints
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, token => stream
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamOpenAiResponsesCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
                 : SendOpenAiResponsesCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
         });
@@ -309,7 +309,7 @@ public static class GatewayHttpEndpoints
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var rawRequest = ToOpenAiImageRawRequest(ingress);
             using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, async token =>
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async token =>
             {
                 var raw = await ExecuteRawWithIdempotencyAsync(
                     services,
@@ -385,7 +385,7 @@ public static class GatewayHttpEndpoints
                 multipartFields,
                 parsed.MultipartFiles);
             using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, async token =>
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async token =>
             {
                 var raw = await ExecuteRawWithIdempotencyAsync(
                     services,
@@ -471,7 +471,7 @@ public static class GatewayHttpEndpoints
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, token => stream
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
                 : SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
         });
@@ -543,7 +543,7 @@ public static class GatewayHttpEndpoints
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, token => stream
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamClaudeCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
                 : SendClaudeCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
         });
@@ -644,7 +644,7 @@ public static class GatewayHttpEndpoints
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, requestId, token => stream
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamGeminiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
                 : SendGeminiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
         }
@@ -699,7 +699,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
                 var response = await gateway.SendAsync(routedRequest, cancellation?.Token ?? CancellationToken.None);
                 return Results.Json(response, jsonOpts);
             }
@@ -718,9 +718,18 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/send", HandleNativeInvokeAsync);
         app.MapPost("/gw/v1/requests/{requestId}/cancel", (
             string requestId,
+            HttpContext http,
             [Microsoft.AspNetCore.Mvc.FromServices] GatewayCancellationRegistry cancellations) =>
         {
-            var cancelled = cancellations.Cancel(requestId);
+            var appCallerCode = ResolveHeader(http, "X-Gateway-App-Caller")?.Trim();
+            if (string.IsNullOrWhiteSpace(appCallerCode))
+            {
+                return Results.Json(new
+                {
+                    error = new { code = "GATEWAY_REQUEST_CANCEL_INVALID", message = "X-Gateway-App-Caller 为必填" },
+                }, jsonOpts, statusCode: 400);
+            }
+            var cancelled = cancellations.Cancel(appCallerCode, requestId);
             return Results.Json(new
             {
                 requestId,
@@ -790,7 +799,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
                 await foreach (var chunk in gateway.StreamAsync(routedRequest, cancellation?.Token ?? CancellationToken.None))
                 {
                     var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
@@ -860,7 +869,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
                 var token = cancellation?.Token ?? CancellationToken.None;
                 var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), token);
                 if (!rehydrated.Success)
@@ -968,7 +977,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(requestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(profileRequest.AppCallerCode, requestId);
                 var raw = await gateway.TestUpstreamProfileAsync(profileRequest, cancellation?.Token ?? CancellationToken.None);
                 return JsonContentResult(raw, jsonOpts);
             }
@@ -1048,7 +1057,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
                 await foreach (var chunk in client.StreamGenerateAsync(
                                    body.SystemPrompt,
                                    body.Messages,
@@ -2531,13 +2540,14 @@ public static class GatewayHttpEndpoints
     private static async Task RunWithRequestCancellationAsync(
         HttpContext http,
         IServiceProvider services,
+        string appCallerCode,
         string requestId,
         Func<CancellationToken, Task> action)
     {
         GatewayCancellationLease? lease = null;
         try
         {
-            lease = services.GetService<GatewayCancellationRegistry>()?.Register(requestId);
+            lease = services.GetService<GatewayCancellationRegistry>()?.Register(appCallerCode, requestId);
             await action(lease?.Token ?? CancellationToken.None);
         }
         catch (InvalidOperationException) when (lease is null)

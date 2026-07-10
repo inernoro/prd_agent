@@ -437,21 +437,25 @@ public sealed class GatewayRequestExecutionStore
 
 public sealed class GatewayCancellationRegistry
 {
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<GatewayCancellationKey, CancellationTokenSource> _requests = new();
 
-    public GatewayCancellationLease Register(string requestId)
+    public GatewayCancellationLease Register(string appCallerCode, string requestId)
     {
+        var key = GatewayCancellationKey.Create(appCallerCode, requestId);
         var cts = new CancellationTokenSource();
-        if (!_requests.TryAdd(requestId, cts))
+        if (!_requests.TryAdd(key, cts))
         {
             cts.Dispose();
-            throw new InvalidOperationException($"requestId {requestId} is already running");
+            throw new InvalidOperationException($"requestId {requestId} is already running for appCaller {appCallerCode}");
         }
-        return new GatewayCancellationLease(this, requestId, cts);
+        return new GatewayCancellationLease(this, key, cts);
     }
 
-    public bool Cancel(string requestId)
-        => _requests.TryGetValue(requestId, out var cts) && Cancel(cts);
+    public bool Cancel(string appCallerCode, string requestId)
+    {
+        var key = GatewayCancellationKey.Create(appCallerCode, requestId);
+        return _requests.TryGetValue(key, out var cts) && Cancel(cts);
+    }
 
     private static bool Cancel(CancellationTokenSource cts)
     {
@@ -460,29 +464,41 @@ public sealed class GatewayCancellationRegistry
         return true;
     }
 
-    internal void Remove(string requestId, CancellationTokenSource cts)
+    internal void Remove(GatewayCancellationKey key, CancellationTokenSource cts)
     {
-        _requests.TryRemove(new KeyValuePair<string, CancellationTokenSource>(requestId, cts));
+        _requests.TryRemove(new KeyValuePair<GatewayCancellationKey, CancellationTokenSource>(key, cts));
         cts.Dispose();
+    }
+}
+
+public readonly record struct GatewayCancellationKey(string AppCallerCode, string RequestId)
+{
+    public static GatewayCancellationKey Create(string appCallerCode, string requestId)
+    {
+        if (string.IsNullOrWhiteSpace(appCallerCode))
+            throw new ArgumentException("appCallerCode is required", nameof(appCallerCode));
+        if (string.IsNullOrWhiteSpace(requestId))
+            throw new ArgumentException("requestId is required", nameof(requestId));
+        return new(appCallerCode.Trim().ToLowerInvariant(), requestId.Trim());
     }
 }
 
 public sealed class GatewayCancellationLease : IDisposable
 {
     private readonly GatewayCancellationRegistry _owner;
-    private readonly string _requestId;
+    private readonly GatewayCancellationKey _key;
     private readonly CancellationTokenSource _cts;
 
-    internal GatewayCancellationLease(GatewayCancellationRegistry owner, string requestId, CancellationTokenSource cts)
+    internal GatewayCancellationLease(GatewayCancellationRegistry owner, GatewayCancellationKey key, CancellationTokenSource cts)
     {
         _owner = owner;
-        _requestId = requestId;
+        _key = key;
         _cts = cts;
     }
 
     public CancellationToken Token => _cts.Token;
 
-    public void Dispose() => _owner.Remove(_requestId, _cts);
+    public void Dispose() => _owner.Remove(_key, _cts);
 }
 
 public sealed class GatewayDataLifecycleWorker : BackgroundService
