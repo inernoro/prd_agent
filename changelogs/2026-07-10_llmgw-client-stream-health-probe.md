@@ -26,3 +26,4 @@
 | security | scripts | LLM Gateway serving-probe 取消读取短名 `GW_KEY`，仅通过长名环境变量或显式参数取网关密钥 |
 | security | prd-api | LLM Gateway `/gw/v1/profile-test` 接入 appCaller 被动注册与状态、预算、限流治理，避免 runtime profile 测试绕过 GW 治理 |
 | fix | prd-api | LLM Gateway `/gw/v1/profile-test` 复用同一个 requestId 写 appCaller 观测与 raw 请求日志，保证控制台可按 requestId 串联排查 |
+| fix | prd-api | LLM Gateway runtime profile 测试 raw 日志补齐 sourceSystem、ingressProtocol、modelPolicy、transport 上下文，保证控制台筛选统计不漏该类请求 |

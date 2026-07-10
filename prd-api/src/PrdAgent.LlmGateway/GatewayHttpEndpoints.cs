@@ -702,6 +702,18 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim();
+            var profileTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? "Runtime profile test" : request.ProfileName.Trim();
+            var profileContext = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                UserId = request.UserId,
+                SourceSystem = "map",
+                IngressProtocol = "gw-native",
+                AppCallerTitle = profileTitle,
+                ModelPolicy = "pinned",
+                ParameterPolicy = "default-drop",
+                GatewayTransport = GatewayTransports.Http,
+            };
             var profileRequest = new GatewayUpstreamProfileTestRequest
             {
                 AppCallerCode = request.AppCallerCode,
@@ -713,6 +725,7 @@ public static class GatewayHttpEndpoints
                 ProfileName = request.ProfileName,
                 UserId = request.UserId,
                 RequestId = requestId,
+                Context = profileContext,
                 TimeoutSeconds = request.TimeoutSeconds,
             };
             var ingress = new GatewayIngressRequest
@@ -721,20 +734,13 @@ public static class GatewayHttpEndpoints
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
                 AppCallerCode = profileRequest.AppCallerCode,
-                AppCallerTitle = string.IsNullOrWhiteSpace(profileRequest.ProfileName) ? "Runtime profile test" : profileRequest.ProfileName.Trim(),
+                AppCallerTitle = profileTitle,
                 RequestType = ModelTypes.Chat,
                 ModelPolicy = "pinned",
                 ExpectedModel = profileRequest.Model,
                 PinnedModelId = profileRequest.Model,
-                Context = new GatewayRequestContext
-                {
-                    RequestId = requestId,
-                    UserId = profileRequest.UserId,
-                    SourceSystem = "map",
-                    IngressProtocol = "gw-native",
-                    ModelPolicy = "pinned",
-                    GatewayTransport = GatewayTransports.Http,
-                },
+                ParameterPolicy = "default-drop",
+                Context = profileContext,
             };
             var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);

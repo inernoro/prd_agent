@@ -513,6 +513,7 @@ public sealed class GatewayUpstreamProfileTestRequest
     public string? ProfileName { get; init; }
     public string? UserId { get; init; }
     public string? RequestId { get; init; }
+    public GatewayRequestContext? Context { get; init; }
     public int TimeoutSeconds { get; init; } = 30;
 }
 

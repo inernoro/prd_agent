@@ -965,6 +965,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var profileName = string.IsNullOrWhiteSpace(request.ProfileName)
             ? "Runtime profile test"
             : request.ProfileName.Trim();
+        var sourceContext = request.Context;
 
         var resolution = new GatewayModelResolution
         {
@@ -1010,8 +1011,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
-                UserId = request.UserId,
-                QuestionText = "[Runtime Profile Test] Reply with ok."
+                SessionId = sourceContext?.SessionId,
+                RunId = sourceContext?.RunId,
+                GroupId = sourceContext?.GroupId,
+                UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
+                ViewRole = sourceContext?.ViewRole,
+                DocumentChars = sourceContext?.DocumentChars,
+                DocumentHash = sourceContext?.DocumentHash,
+                QuestionText = "[Runtime Profile Test] Reply with ok.",
+                SystemPromptChars = sourceContext?.SystemPromptChars,
+                SystemPromptText = sourceContext?.SystemPromptText,
+                ImageReferences = sourceContext?.ImageReferences,
+                GatewayTransport = sourceContext?.GatewayTransport,
+                SourceSystem = sourceContext?.SourceSystem,
+                IngressProtocol = sourceContext?.IngressProtocol,
+                AppCallerTitle = sourceContext?.AppCallerTitle,
+                ModelPolicy = sourceContext?.ModelPolicy,
+                ModelPoolId = sourceContext?.ModelPoolId,
+                ParameterPolicy = sourceContext?.ParameterPolicy,
+                DroppedParameters = sourceContext?.DroppedParameters,
+                IsHealthProbe = sourceContext?.IsHealthProbe,
             }
         };
 
