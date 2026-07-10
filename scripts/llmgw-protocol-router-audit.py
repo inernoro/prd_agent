@@ -106,6 +106,7 @@ def build_report() -> dict[str, Any]:
     html = _read("assets/prototypes/llmgw-architecture-map.html")
     request = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs")
     endpoints = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    gateway_core = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs")
     resolver = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs")
     console = _read("prd-llmgw/Program.cs")
     console_app = _read("prd-llmgw-web/src/App.tsx")
@@ -240,7 +241,7 @@ def build_report() -> dict[str, Any]:
 
     governance_count = endpoints.count("RecordAndCheckAppCallerGovernanceAsync")
     ok, detail = _contains_all(
-        endpoints,
+        endpoints + "\n" + gateway_core,
         [
             "private static async Task RecordDiscoveredAppCallerAsync",
             "GetCollection<GatewayAppCallerRecord>(\"llmgw_app_callers\")",
@@ -257,14 +258,20 @@ def build_report() -> dict[str, Any]:
             "APP_CALLER_RATE_LIMITED",
             "APP_CALLER_MONTHLY_BUDGET_EXCEEDED",
             "TryRejectStrictDroppedParametersAsync",
+            "appCallerCode 必须使用 {app-key}.{feature}::{model-type} 格式",
+            "separatorIndex != code.LastIndexOf",
         ],
     )
+    no_static_runtime_gate = "appCallerCode 未注册" not in gateway_core
     checks.append(_check(
         "appcaller-registry",
         "ingress_records_discovered_appcallers_and_applies_governance",
-        ok and governance_count >= 9,
-        f"{detail}; governanceCallCount={governance_count}",
-        ["prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs"],
+        ok and governance_count >= 9 and no_static_runtime_gate,
+        f"{detail}; governanceCallCount={governance_count}; noStaticRuntimeGate={no_static_runtime_gate}",
+        [
+            "prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs",
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs",
+        ],
     ))
 
     ok, detail = _contains_all(
