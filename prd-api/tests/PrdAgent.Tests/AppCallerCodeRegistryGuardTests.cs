@@ -9,9 +9,9 @@ namespace PrdAgent.Tests;
 /// <summary>
 /// 防守性测试:全仓扫描所有 AppCallerCode 字面量,确保它们都在 AppCallerRegistry 中注册过。
 ///
-/// 背景:一个常踩的坑是——开发者在 service / controller 里硬编码
-/// "my-agent.feature::chat" 字符串,忘了去 AppCallerRegistry 注册 [AppCallerMetadata]。
-/// 运行时第一次调 LLM Gateway 才会炸「appCallerCode 未注册」,部署才发现。
+/// 背景:MAP 自有 service / controller 里的 AppCallerCode 仍需要静态定义提供编译期拼写守卫、
+/// 展示元数据和存量初始化。外部系统和 GW 被动发现的 caller 以 llm_gateway registry 为权威，
+/// 不要求写入 MAP 静态注册表。
 ///
 /// 本测试在 CI 阶段就把这种遗漏揪出来,让开发者在 push 前就知道要加注册项。
 /// </summary>

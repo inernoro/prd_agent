@@ -40,6 +40,9 @@ import type {
   CdsState,
   BranchEntry,
   ContainerLogArchiveEntry,
+  DeploymentRun,
+  DeploymentRunEvent,
+  DeploymentVersion,
   GithubWebhookDelivery,
   OperationLog,
   OperationLogContainerSnapshot,
@@ -74,6 +77,8 @@ export interface ISplitMongoHandle {
   globalCollection(): ISplitMongoCollection<{ _id: string; state: GlobalRest; updatedAt: string }>;
   projectsCollection(): ISplitMongoCollection<{ _id: string; doc: Project; updatedAt: string }>;
   branchesCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>;
+  deploymentRunsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>;
+  deploymentVersionsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>;
   selfUpdateHistoryCollection(): ISplitMongoCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>;
   // 2026-07-09（debt.cds.state-json #1/#2）：webhook 投递与项目活动流从 global
   // 单文档拆独立 collection——消灭「每追加一条日志就重写整个 global doc」的写放大。
@@ -89,7 +94,7 @@ export const GLOBAL_DOC_ID = 'global';
  * "rest of CdsState" — 不含 projects 与 branches 的所有 root-level 字段。
  * 拆出来作为类型，方便 mongo 文档 schema 推导。
  */
-export type GlobalRest = Omit<CdsState, 'projects' | 'branches'>;
+export type GlobalRest = Omit<CdsState, 'projects' | 'branches' | 'deploymentRuns' | 'deploymentVersions'>;
 
 const MAX_LOGS_PER_BRANCH = 5;
 const MAX_EVENTS_PER_OPERATION_LOG = 5;
@@ -101,10 +106,12 @@ const MAX_ACTIVITY_LOGS_PER_PROJECT = 200;
 const MAX_SELF_UPDATE_HISTORY = 20;
 const MAX_SELF_UPDATE_STEPS = 25;
 const MAX_SERVICE_DEPLOYMENT_LOGS = 100;
+const MAX_DEPLOYMENT_RUN_EVENTS = 500;
 const MAX_EVENT_TEXT_BYTES = 4 * 1024;
 const MAX_CONTAINER_SNAPSHOT_LOG_BYTES = 8 * 1024;
 const MAX_CONTAINER_ARCHIVE_LOG_BYTES = 16 * 1024;
 const MAX_SERVICE_DEPLOYMENT_LOG_BYTES = 4 * 1024;
+const MAX_DEPLOYMENT_RUN_EVENT_BYTES = 8 * 1024;
 const MAX_SELF_UPDATE_ERROR_BYTES = 8 * 1024;
 const MAX_SELF_UPDATE_STEP_TEXT_BYTES = 2 * 1024;
 const MAX_GLOBAL_REST_BYTES = 12 * 1024 * 1024;
@@ -172,6 +179,23 @@ function sanitizeServiceDeployment(deployment: ServiceDeployment): ServiceDeploy
   };
 }
 
+function sanitizeDeploymentRunEvent(event: DeploymentRunEvent): DeploymentRunEvent {
+  return {
+    ...event,
+    message: truncateTail(event.message, MAX_DEPLOYMENT_RUN_EVENT_BYTES) || '',
+    evidenceRefs: event.evidenceRefs?.slice(0, 20),
+  };
+}
+
+function sanitizeDeploymentRun(run: DeploymentRun): DeploymentRun {
+  const events = (run.events || []).slice(-MAX_DEPLOYMENT_RUN_EVENTS).map(sanitizeDeploymentRunEvent);
+  return {
+    ...run,
+    events,
+    firstEventSeq: events[0]?.seq || run.seq,
+  };
+}
+
 function sanitizeSelfUpdateRecord(record: SelfUpdateRecord): SelfUpdateRecord {
   return {
     ...record,
@@ -234,6 +258,8 @@ function globalRestOf(state: CdsState): GlobalRest {
   const restOfState: GlobalRest = { ...state } as CdsState;
   delete (restOfState as Partial<CdsState>).projects;
   delete (restOfState as Partial<CdsState>).branches;
+  delete (restOfState as Partial<CdsState>).deploymentRuns;
+  delete (restOfState as Partial<CdsState>).deploymentVersions;
   restOfState.logs = Object.fromEntries(
     Object.entries(state.logs || {}).map(([branchId, logs]) => [
       branchId,
@@ -354,6 +380,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     // createIndex 是 idempotent 安全 op，重复创建不会出错。
     try {
       await this.handle.branchesCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
+      await this.handle.deploymentRunsCollection().createIndex?.({ projectId: 1, branchId: 1 }, { name: 'projectId_1_branchId_1' });
+      await this.handle.deploymentVersionsCollection().createIndex?.({ projectId: 1 }, { name: 'projectId_1' });
       await this.handle.selfUpdateHistoryCollection().createIndex?.({ ts: -1 }, { name: 'ts_-1' });
       // 2026-07-09 拆分出的两个日志 collection：按项目/时间的读路径索引。
       // 沿用本文件既有惯例（split store 自建自己的索引，idempotent），CDS 运维
@@ -364,10 +392,21 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       // 如果 driver 不支持 createIndex 或权限不足，跳过 — 索引非功能必需。
     }
 
-    const [globalDoc, projectDocs, branchDocs, selfUpdateDocs, deliveryDocs, activityDocs] = await Promise.all([
+    const [
+      globalDoc,
+      projectDocs,
+      branchDocs,
+      deploymentRunDocs,
+      deploymentVersionDocs,
+      selfUpdateDocs,
+      deliveryDocs,
+      activityDocs,
+    ] = await Promise.all([
       this.handle.globalCollection().findOne({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().find().toArray(),
       this.handle.branchesCollection().find().toArray(),
+      this.handle.deploymentRunsCollection().find().toArray(),
+      this.handle.deploymentVersionsCollection().find().toArray(),
       this.handle.selfUpdateHistoryCollection().find().toArray(),
       this.handle.webhookDeliveriesCollection().find().toArray(),
       this.handle.activityLogsCollection().find().toArray(),
@@ -377,6 +416,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       !globalDoc &&
       projectDocs.length === 0 &&
       branchDocs.length === 0 &&
+      deploymentRunDocs.length === 0 &&
+      deploymentVersionDocs.length === 0 &&
       selfUpdateDocs.length === 0 &&
       deliveryDocs.length === 0 &&
       activityDocs.length === 0
@@ -445,6 +486,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         ),
         projects: projectDocs.map((pd) => pd.doc),
         branches,
+        deploymentRuns: Object.fromEntries(deploymentRunDocs.map((record) => [record.doc.id, sanitizeDeploymentRun(record.doc)])),
+        deploymentVersions: Object.fromEntries(deploymentVersionDocs.map((record) => [record.doc.id, record.doc])),
       } as CdsState;
 
       this.persistedCache = structuredClone(this.cache);
@@ -557,7 +600,65 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       await this.handle.branchesCollection().bulkWrite(branchOps);
     }
 
-    // ── 4) Self-update history collection（日志类字段独立落库）──
+    // ── 4) Deployment runs collection（元数据 + 有界事件独立于 global）──
+    const currentRuns = snapshot.deploymentRuns || {};
+    const previousRuns = previous?.deploymentRuns || {};
+    const runOps: unknown[] = [];
+    for (const run of Object.values(currentRuns)) {
+      const sanitized = sanitizeDeploymentRun(run);
+      const previousRun = previousRuns[run.id];
+      if (!previousRun || stableJson(sanitized) !== stableJson(sanitizeDeploymentRun(previousRun))) {
+        runOps.push({
+          replaceOne: {
+            filter: { _id: run.id },
+            replacement: {
+              _id: run.id,
+              projectId: run.projectId,
+              branchId: run.branchId,
+              doc: sanitized,
+              updatedAt: now,
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of Object.keys(previousRuns)) {
+      if (!currentRuns[id]) runOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (runOps.length > 0) {
+      await this.handle.deploymentRunsCollection().bulkWrite(runOps);
+    }
+
+    // ── 5) Deployment versions collection（不可变交付物元数据独立于 global）──
+    const currentVersions = snapshot.deploymentVersions || {};
+    const previousVersions = previous?.deploymentVersions || {};
+    const versionOps: unknown[] = [];
+    for (const version of Object.values(currentVersions)) {
+      const previousVersion = previousVersions[version.id];
+      if (!previousVersion || stableJson(version) !== stableJson(previousVersion)) {
+        versionOps.push({
+          replaceOne: {
+            filter: { _id: version.id },
+            replacement: {
+              _id: version.id,
+              projectId: version.projectId,
+              doc: version,
+              updatedAt: now,
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of Object.keys(previousVersions)) {
+      if (!currentVersions[id]) versionOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (versionOps.length > 0) {
+      await this.handle.deploymentVersionsCollection().bulkWrite(versionOps);
+    }
+
+    // ── 6) Self-update history collection（日志类字段独立落库）──
     const selfUpdateHistory = (snapshot.selfUpdateHistory || [])
       .slice(-MAX_SELF_UPDATE_HISTORY)
       .map(sanitizeSelfUpdateRecord);
@@ -766,6 +867,47 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     }
     if (branchOps.length > 0) await this.handle.branchesCollection().bulkWrite(branchOps);
 
+    const runs = Object.values(snapshot.deploymentRuns || {}).map(sanitizeDeploymentRun);
+    const newRunIds = new Set(runs.map((run) => run.id));
+    const existingRuns = await this.handle.deploymentRunsCollection().find().toArray();
+    const runOps: unknown[] = runs.map((run) => ({
+      replaceOne: {
+        filter: { _id: run.id },
+        replacement: {
+          _id: run.id,
+          projectId: run.projectId,
+          branchId: run.branchId,
+          doc: run,
+          updatedAt: now,
+        },
+        upsert: true,
+      },
+    }));
+    for (const id of existingRuns.map((record) => record._id)) {
+      if (!newRunIds.has(id)) runOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (runOps.length > 0) await this.handle.deploymentRunsCollection().bulkWrite(runOps);
+
+    const versions = Object.values(snapshot.deploymentVersions || {});
+    const newVersionIds = new Set(versions.map((version) => version.id));
+    const existingVersions = await this.handle.deploymentVersionsCollection().find().toArray();
+    const versionOps: unknown[] = versions.map((version) => ({
+      replaceOne: {
+        filter: { _id: version.id },
+        replacement: {
+          _id: version.id,
+          projectId: version.projectId,
+          doc: version,
+          updatedAt: now,
+        },
+        upsert: true,
+      },
+    }));
+    for (const id of existingVersions.map((record) => record._id)) {
+      if (!newVersionIds.has(id)) versionOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (versionOps.length > 0) await this.handle.deploymentVersionsCollection().bulkWrite(versionOps);
+
     const history = (snapshot.selfUpdateHistory || [])
       .slice(-MAX_SELF_UPDATE_HISTORY)
       .map(sanitizeSelfUpdateRecord);
@@ -869,10 +1011,21 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
    * 仅在所有 split 集合都为空时执行，避免覆盖已迁数据。
    */
   async seedIfEmpty(state: CdsState): Promise<boolean> {
-    const [globalCount, projectsCount, branchesCount, historyCount, deliveriesCount, activityCount] = await Promise.all([
+    const [
+      globalCount,
+      projectsCount,
+      branchesCount,
+      deploymentRunsCount,
+      deploymentVersionsCount,
+      historyCount,
+      deliveriesCount,
+      activityCount,
+    ] = await Promise.all([
       this.handle.globalCollection().countDocuments({ _id: GLOBAL_DOC_ID }),
       this.handle.projectsCollection().countDocuments(),
       this.handle.branchesCollection().countDocuments(),
+      this.handle.deploymentRunsCollection().countDocuments(),
+      this.handle.deploymentVersionsCollection().countDocuments(),
       this.handle.selfUpdateHistoryCollection().countDocuments(),
       this.handle.webhookDeliveriesCollection().countDocuments(),
       this.handle.activityLogsCollection().countDocuments(),
@@ -881,6 +1034,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       globalCount > 0 ||
       projectsCount > 0 ||
       branchesCount > 0 ||
+      deploymentRunsCount > 0 ||
+      deploymentVersionsCount > 0 ||
       historyCount > 0 ||
       deliveriesCount > 0 ||
       activityCount > 0

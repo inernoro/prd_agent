@@ -1,17 +1,17 @@
 # LLM Gateway 全量迁移与生产发布复盘 · 设计
 
-> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：已落地
+> **版本**：v1.3 | **日期**：2026-07-11 | **状态**：已落地
 >
 > **复盘范围**：从 GW 控制台账号与物理剥离交接，到协议路由、配置权威、生产 `full-http` 发布完成
-> **生产环境**：`https://map.ebcone.net` | **最终发布提交**：`09a21f19611f9f4517ee4f8a73cd69c37fd3e6e1`
+> **生产环境**：`https://map.ebcone.net` | **当前发布提交**：`bad1b3b296b29a314c1ff94f177b2e8f37bcb82e`
 
 ## 一、管理摘要
 
 这次迁移已经完成了最重要的生产执行目标：MAP 的 AI 执行路径默认通过独立 `llmgw-serve`，生产运行在 `LLMGW_MODE=http`；GW 内部目录之外的直接上游客户端基线为空；active appCaller 使用 GW 自有模型池、平台、模型和 Exchange，MAP 配置 fallback 已关闭；GW 控制面、数据面、控制台和 MAP API 使用同一提交镜像发布。
 
-本次成功不等于“全部配置权威已经迁移”或“所有网关旧代码都已删除”。`2026-07-10` 后续审计显示，生产 appCaller 为 `active=3`、`configured=15`、`disabled=1`；退场门只对 active caller 生效，configured/discovered caller 仍可能读取 MAP 路由配置。`inproc` 与 shadow 实现仍保留为回滚能力，最终 hotfix 没有再次执行高成本视频和 ASR canary。准确结论是：**生产 full-http 执行路径和 active appCaller 配置权威切换成功，可运行、可观测、可回滚；全部 caller 的配置权威、长期稳定性和若干协议治理债务尚未收口。**
+本次成功不等于“所有网关旧代码都已删除”。`inproc` 与 shadow 实现仍保留为回滚能力，视频按用户要求未在最终维护批次重测，serving 仍依赖 MAP 资产配置域。动态 caller 的 MAP 静态注册门已由 PR #1070 删除，生产无费用治理验收和图片、Vision、ASR 单次验收均通过。准确结论是：**生产 full-http、配置权威和动态 registry 迁移成功，可运行、可观测、可回滚；剩余工作是保留策略、物理解耦、探针元数据和视频独立债务。**
 
-最终 full-http 发布是在用户明确维护窗口下完成的快速切换。最终 release gate 将 `minCoverageHours`、`minPerApp`、`minTotal` 设为 `0`，全局 shadow 只有 5 条、覆盖约 `0.038h`。因此 gate 证明的是当次切换可运行和可回滚，不是原计划“长期窗口 + 每类样本”的稳定性证明。后续整改以 `plan.platform.llm-gateway-production-hardening.md` 为 SSOT。
+首次 full-http 发布是在用户明确维护窗口下完成的快速切换。当时 release gate 将 `minCoverageHours`、`minPerApp`、`minTotal` 设为 `0`，全局 shadow 只有 5 条、覆盖约 `0.038h`。最终维护版本改为继承已成功 shadow，并补当前 commit 的 HTTP transport、四协议、active caller、配置权威、多模态和回滚证据；这仍不是 7 天稳定性证明。后续整改以 `plan.platform.llm-gateway-production-hardening.md` 为 SSOT。
 
 任务持续时间过长是事实。对话中先后出现约 44 小时和 24 小时 8 分钟的连续目标运行记录，合计约 68 小时；用户将其概括为 60 小时。该数字混合了编码、CI、镜像构建、远程发布、上游等待、证据采样和反复修门禁，并不是 68 小时纯编码。更重要的是，本次没有从一开始维护逐事项计时台账，无法把每一分钟准确归属到子任务，这是执行管理缺陷。
 
@@ -23,15 +23,15 @@
 
 | 证据 | 最终状态 |
 |---|---|
-| PR | [#1060](https://github.com/inernoro/prd_agent/pull/1060) 已合并 |
-| `origin/main` 合并提交 | `09a21f19611f9f4517ee4f8a73cd69c37fd3e6e1` |
+| PR | #1060 完成 full-http；#1066-#1068 完成 Phase 4 治理；#1070 完成动态 registry 运行时权威和生产批次验收工具，均已合并 |
+| `origin/main` 合并提交 | `bad1b3b296b29a314c1ff94f177b2e8f37bcb82e` |
 | 生产 health | `/gw/v1/healthz` 返回同一 commit，HTTP 200 |
-| 生产镜像 | `api`、`llmgw`、`llmgw-serve`、`llmgw-web` 均为 `sha-09a21f196...` |
+| 生产镜像 | `api`、`llmgw`、`llmgw-serve`、`llmgw-serve-b`、`llmgw-web` 均为 `sha-bad1b3b29...` |
 | 生产模式 | `LLMGW_MODE=http` |
 | 配置退场门 | `LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=true` |
-| rollout ledger | `stage=http-full`、`status=success`，记录时间 `2026-07-10T08:37:36Z` |
+| rollout ledger | `stage=http-full`、`status=success`；runtime gate `passed=13 retained=2 blocked=0 waiting=0` |
 | 回滚 | `rollback-rehearsal` 同 commit 成功；数据库无需回滚 |
-| 数据备份 | `/root/backups/llmgw-prod-before-09a21f1-*` |
+| 数据备份 | `/root/backups/llmgw-prod-before-config-authority-20260711T055239+0800` |
 
 生产服务器的普通源码目录后来可能指向别的提交，不能用该目录的 `git rev-parse` 判断线上版本。线上版本的权威证据是运行容器 image tag、health commit 和 rollout ledger，三者当前一致。
 
@@ -64,7 +64,7 @@
 |---|---|---|
 | AI 调用入口 | MAP 各服务可能直接构造上游 client | MAP 业务调用统一通过 `ILlmGateway`，直连 ratchet baseline 为空 |
 | 网关执行 | 网关可作为 API 进程内 facade | 独立 `llmgw-serve` 接受跨进程 HTTP 请求 |
-| 模型选择 | MAP 的 appCaller 与模型池配置参与长期权威 | active appCaller 由 `llm_gateway` 权威数据驱动；configured/discovered caller 仍可能读取 MAP 配置，尚待收口 |
+| 模型选择 | MAP 的 appCaller 与模型池配置参与长期权威 | 现有可运行 appCaller 均由 `llm_gateway` 权威数据驱动，MAP fallback 对象为 0；动态 caller 不再依赖 MAP 静态准入 |
 | 协议入口 | 以 MAP 内部调用形态为主 | GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 统一转 Request IR |
 | 多模态文件 | raw multipart 依赖同进程内联文件 | `MultipartFileRefs` 跨进程引用，serving rehydrate 并校验 size/hash |
 | 实验语义 | ModelLab/Arena 可能直接调用指定上游 | 使用 pinned `platformId + modelId` 经过 GW，保留精确模型语义 |
@@ -82,9 +82,22 @@
 | V1 统一 Gateway facade | MAP -> `ILlmGateway` -> 上游 | 先统一代码入口，但执行仍可在 API 进程内 |
 | V2 物理剥离与 shadow | MAP -> HTTP/Shadow -> `llmgw-serve` | 控制面 `llmgw`、数据面 `llmgw-serve`、前端 `llmgw-web` 独立；可对比 inproc/http |
 | V3 全量 HTTP 执行 | MAP -> `llmgw-serve` -> 上游 | 直连清零、pinned、multipart、所有主要业务类别进入跨进程网关 |
-| V4 协议路由与部分配置权威 | 多系统 -> ingress adapters -> IR -> appCaller/router/GW pools -> provider adapters | 四协议统一入口；appCaller 被动注册；GW-owned 配置能力已具备；MAP fallback 对 active caller 关闭，其他状态尚待收口 |
+| V4 协议路由与 GW 配置权威 | 多系统 -> ingress adapters -> IR -> appCaller/router/GW pools -> provider adapters | 四协议统一入口；appCaller 被动注册；GW-owned 配置已生效；MAP fallback 对可运行 caller 退场；动态 caller 按 GW 治理 |
 
-这四次变化中，V1 到 V2、V3 到 V4 是最容易造成认知混乱的两次：前者把“统一代码入口”升级成“独立服务”，后者开始把“请求经过 GW”升级成“路由配置也归 GW”。用户后来明确提出模型池、appCaller 和四种协议必须由 GW 拥有，推动了 V4；V4 已改变 active caller 的数据权威和运行时路由，但还不是全部 caller 的最终目标态。
+这四次变化中，V1 到 V2、V3 到 V4 是最容易造成认知混乱的两次：前者把“统一代码入口”升级成“独立服务”，后者把“请求经过 GW”升级成“路由配置也归 GW”。用户后来明确提出模型池、appCaller 和四种协议必须由 GW 拥有，推动了 V4；PR #1070 和生产验收关闭了动态 caller 仍受 MAP 静态表控制的最后一处运行时倒置。
+
+### 2.5 最终生产验收记录
+
+| 验收项 | `2026-07-11` 最终结果 |
+|---|---|
+| 版本一致性 | 五个生产容器、health 和 rollout ledger 均为 `bad1b3b296b29a314c1ff94f177b2e8f37bcb82e` |
+| runtime gates | `status=ready`、`readyForHttpFull=true`、`passed=13`、`retained=2`、`waiting=0`、`blocked=0` |
+| 当前提交日志 | 19 条全部 succeeded；18 条业务 `transport=http`，1 条内部发布探针标为 `inproc` |
+| 协议与 caller | GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 全部通过；3 个 active appCaller 均有当前提交日志 |
+| 多模态 | 图片、Vision、ASR 在一个 `--skip-text-seeds` 批次中各执行一次并成功；视频未执行 |
+| 治理 | 原子预算、provider 并发、生命周期 dry-run、主备 failover、scoped key、临时数据清理全部 PASS |
+| 安全边界 | `/gw/v1/healthz` 200；受保护接口无 key 401；控制台登录页和日志页 200 |
+| 备份 | 外置关键数据备份有 6 个校验归档；生产 config-authority 备份位于 `/root/backups/llmgw-prod-before-config-authority-20260711T055239+0800` |
 
 ## 三、时间线与交付物
 
@@ -203,15 +216,15 @@
 
 这组数据证明 active appCaller 不再依赖 MAP 模型池配置兜底。MAP 仍携带业务上下文和生命周期，但不再是 active AI 路由配置的权威。
 
-后续只读审计补充：生产 appCaller 状态为 `active=3`、`configured=15`、`disabled=1`。上述 readiness 指标只覆盖 active caller，不能外推为所有 configured/discovered caller 已经退出 MAP。切换后 `report-agent.generate::chat` 至少有 35 条 HTTP succeeded，但它当时仍为 configured；这证明执行 transport 已经切换，不能单独证明模型池权威已经迁移。
+最终只读审计补充：生产 config-authority 为 ready、MAP fallback 对象为 0；当前允许真实流量的 caller 由 GW-owned 配置解析。新 caller 首次仍以 discovered 注册，不会自动获得完整治理配置；必须配置状态、池/精确模型策略、预算和 scope 后再作为长期入口。
 
 ### 5.3 生产运行态
 
 | 验收项 | 结果 |
 |---|---|
-| health commit | `09a21f196...`，连续 3 次稳定 200 |
+| health commit | `bad1b3b296...`，连续 3 次稳定 200 |
 | 生产 mode | `http` |
-| 四个应用镜像 | 同一 `sha-09a21f196...` |
+| 五个生产容器 | 同一 `sha-bad1b3b296...` |
 | GW smoke | 7/7 通过 |
 | release gate | `verdict=pass`、`failures=[]` |
 | protocol canary | `verdict=pass`，最多 4 次真实调用，实际四协议各一次 |
@@ -293,12 +306,12 @@ MAP 前端 / MAP Agent / 外部系统
 
 | 边界 | 当前事实 | 风险 | 后续动作 |
 |---|---|---|---|
-| 配置权威只覆盖 active caller | 审计快照为 `active=3`、`configured=15`、`disabled=1` | HTTP 日志可能掩盖 MAP 模型池仍参与路由 | 按 `plan.platform.llm-gateway-production-hardening.md` 完成全 caller GW-owned 绑池和 MAP 读取退场 |
-| 长期证据门被维护窗口豁免 | 最终 gate 的覆盖时长和样本阈值均为 0 | 发布成功可能被误读成长期稳定性已证明 | 保留发布结论，但另建稳定性观测，不重复高成本全量 canary |
-| 模式缺失默认 inproc | 启动配置和 compose 仍有 inproc 默认值 | 后续发布漏配时静默回退旧架构 | 生产缺少显式 http 时 fail-closed，回滚使用独立破玻璃动作 |
-| GW 数据与 serving 运维能力不足 | 关键集合索引少、日志无限保留、health 浅、serving 单实例 | 数据增长、依赖故障和单点故障可能晚发现 | 按生产加固计划补索引、保留期、readiness 和冗余 |
+| 新 caller 需要治理 | 首次被动注册状态为 discovered；不会自动获得长期池、预算和 scope | 未治理 caller 可能被 runtime gate 阻断，或维持一次性 pinned 行为 | 在 appCaller 控制台配置状态、池、策略、预算和 scoped key |
+| 维护发布证据门 | 已 full-http 的新 commit 无法在上线前自然积累 24 小时同提交 shadow，本次显式使用 0 阈值并以当前提交 HTTP/协议/caller/多模态证据补齐 | 发布成功可能被误读成长期稳定性已证明，或导致同镜像反复重建 | 拆分首次切流 gate 与维护发布 gate，维护发布继承最近成功 shadow 并强制同提交运行证据 |
+| 混合路由策略观测 | 单值 `LastObservedModelPolicy` 无法表达同一 caller 合法混用 auto 与 pinned | preflight 或验收会让 drift gate 来回变化 | 改为 route mode 集合/计数，或仅对禁止策略判漂移 |
+| GW 物理依赖未完全剥离 | serving 仍依赖 MAP 资产配置域 | MAP 配置或 Mongo 故障仍可能影响 GW | 把资产存储配置迁入 GW-owned 配置域并移除 readiness 的 MAP 必要依赖 |
 | `inproc`/shadow 源码仍存在 | 作为生产回滚通道保留 | 未来开发可能误用 | 稳定至少 7 天后另开清理任务；删除前保留版本级回滚 |
-| 最终 hotfix 未重跑视频/ASR canary | 为避免重复费用，`09a21f1` 阶段显式跳过 | 不能声称视频/ASR 在最终 commit 做了同提交重新取证 | 没有相关代码变化时不重复烧钱；下次改适配器时每 provider 最多一次受控复验 |
+| 最终维护批次未重跑视频 | 为避免重复费用，`bad1b3b29...` 阶段显式跳过视频；ASR 已单次通过 | 不能声称视频在最终 commit 做了同提交重新取证 | 没有相关代码变化时不重复烧钱；下次改视频适配器时每 provider 最多一次受控复验 |
 | 视频/ASR 早期证据 | 2026-07-07 曾完成 Seedance submit/status/download 和四条 ASR raw 200 | 上游开通和余额会随时间变化 | 生产监控发现真实失败时再定向复验 |
 | 高级协议保真 | OpenAI Responses、Claude/Gemini 更完整原生事件仍有边界 | 外部系统使用高级字段时可能降级 | 继续跟踪 `debt.llm-gateway-protocol-fidelity.md` |
 | 探针 `inproc` 日志 | client-stream 兼容探针可产生非业务 `inproc` 行 | 容易被误读为 MAP 业务回退 | 控制台默认按 probe 标记排除，保留诊断筛选 |
@@ -307,14 +320,14 @@ MAP 前端 / MAP Agent / 外部系统
 因此不得使用以下夸大表述：
 
 - “所有 inproc 代码已经删除”；
-- “所有 appCaller 的模型池配置都已经归 GW”；
+- “所有 discovered appCaller 已自动获得完整治理配置”；
 - “最终 release gate 已经证明 24 小时或 7 天稳定性”；
 - “最终提交重新测试了所有视频和 ASR provider”；
 - “所有 OpenAI/Claude/Gemini 高级字段都与原生 API 完全等价”。
 
 可以使用的准确表述是：
 
-> LLM Gateway 已完成生产 full-http 执行路径和 active appCaller 配置权威切换；MAP 业务调用无已知直连，四协议基础入口与核心发布闭环通过，系统具备备份、观测和回滚能力。全部 caller 配置权威与长期稳定性仍按生产加固计划收口。
+> LLM Gateway 已完成生产 full-http 执行路径、GW 配置权威和动态 appCaller 注册切换；MAP 业务调用无已知直连，四协议、图片、Vision、ASR 与治理发布闭环通过，系统具备备份、观测和回滚能力。视频、长期保留和物理依赖解耦仍按债务台账推进。
 
 ## 八、经验与以后必须改变的做法
 
@@ -354,10 +367,10 @@ MAP 前端 / MAP Agent / 外部系统
 
 生产机发布证据：
 
-- release worktree：`/root/inernoro/prd_agent_release_09a21f1`
-- 最终证据目录：`.llmgw-release-evidence/20260710T083403Z_http-full_09a21f19611f.*`
+- release worktree：`/root/inernoro/prd_agent_release_bad1b3b29`
+- 最终证据目录：`.llmgw-release-evidence/20260710T220713Z_http-full_bad1b3b296b2.*`
 - rollout ledger：`.llmgw-release-evidence/rollout-ledger.jsonl`
-- 发布前备份：`/root/backups/llmgw-prod-before-09a21f1-*`
+- 发布前备份：`/root/backups/llmgw-prod-before-config-authority-20260711T055239+0800`
 
 ## 十、行业实践对照
 
@@ -366,18 +379,18 @@ MAP 前端 / MAP Agent / 外部系统
 | 控制面与数据面 | 配置治理和热请求执行隔离 | `llmgw` 与 `llmgw-serve` 独立 | 已达到核心要求 |
 | 不可变发布 | commit、镜像、health、ledger 可相互追溯 | 四项同 commit，另有 release worktree | 已达到核心要求 |
 | 统一协议入口 | 多协议适配为内部 IR，再由 router/provider adapter 处理 | 四入口和统一 IR 已落地 | 高级原生事件仍需补齐 |
-| 配置权威 | 网关拥有 caller、pool、provider、key 和审计 | active caller 已退出 MAP fallback | configured/discovered caller 仍可能读取 MAP，尚未达到全量目标态 |
+| 配置权威 | 网关拥有 caller、pool、provider、key 和审计 | 可运行 caller 已退出 MAP fallback；动态 caller 由 GW 注册和治理 | discovered caller 仍需管理员配置后才能长期承载 |
 | 渐进发布 | shadow、allowlist、按风险逐批切换 | 工具齐全，但本次因维护窗口改为全量切后验证 | 流程执行与原计划存在偏离 |
 | 成本治理 | canary 有调用上限、预算、去重和停止条件 | 最终协议 canary 限制为 4 次；早期视频测试控制不足 | 需要把预算护栏前置为默认规则 |
 | 进度治理 | 每个工作项有 owner、耗时、状态和阻塞 | 后期有状态板，早期缺逐项计时 | 需要固定任务台账和熔断机制 |
 
 优先补齐项以 `plan.platform.llm-gateway-production-hardening.md` 为执行 SSOT：
 
-1. **P0 - 运维止血**：先处理磁盘与备份保留，再扩大任何生产变更。
-2. **P0 - 路由权威收口**：清理重复 appCaller，所有正式 caller 只读 GW-owned 路由。
-3. **P1 - 正确性与可用性**：修复健康写库、生产 mode fail-open、readiness、索引和对象生命周期。
-4. **P1 - 成本与安全**：补原子预算、取消、非幂等保护和接入方独立 key。
-5. **P2 - 协议保真**：按真实需求受控验证高级能力，不用重复付费请求追求表面覆盖。
+1. **P1 - 维护发布 gate**：区分首次切流和 full-http 维护版本，避免同 commit shadow 的循环依赖。
+2. **P1 - 物理解耦与保留**：迁移资产配置，审批并启用日志、审计和 multipart 生命周期策略。
+3. **P2 - 观测修正**：修复探针 transport 元数据和混合 auto/pinned 策略漂移模型。
+4. **P2 - 协议保真**：按真实需求受控验证高级能力，不用重复付费请求追求表面覆盖。
+5. **独立预算 - 视频**：只有视频代码或供应链发生变化时再做单次定向复验。
 
 ## 十一、关联文档
 

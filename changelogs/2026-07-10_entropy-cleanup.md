@@ -1,0 +1,1 @@
+| chore | doc | 每日熵清理巡检：D1/D2/D3/D4 双向扫描零真实欠账（历史命中均为误报，已逐条核实文件仍存在/属正文引用非索引条目）；D6 核实 5 条 changelog 内容已被更近更新的活文档（rule.acceptance.map-enterprise.md / debt.cds.ci-prebuilt.md / plan.llm-gateway.full-cutover.md）覆盖，登记入 manifest |
