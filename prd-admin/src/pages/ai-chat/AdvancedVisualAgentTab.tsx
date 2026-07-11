@@ -1806,6 +1806,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     keys: string[];
     base: Record<string, { x: number; y: number }>;
   }>({ active: false, confirmed: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
+  // 双指捏合进行中标志：捏合期间 React 侧 pointerdown 处理器（框选/元素拖拽/resize）必须让位，
+  // 否则第二根手指的同一事件会在原生监听清理后又被委托处理器重新武装（Codex review P2）
+  const pinchActiveRef = useRef(false);
 
   type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
   const [resizing, setResizing] = useState(false);
@@ -2144,6 +2147,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
+      // 捏合进行中不启动 resize（第二根手指可能正好落在控制点上）
+      if (e.pointerType === 'touch' && pinchActiveRef.current) return;
       if (effectiveTool === 'hand' && !isMobile) return;
       // 仅在单选时允许 resize（避免多选整体 resize 的复杂交互）
       if (selectedKeysRef.current.length !== 1 || selectedKeysRef.current[0] !== it.key) return;
@@ -3578,9 +3583,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (e.pointerType !== 'touch') return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pointers.size !== 2) return;
-      // 第二根手指落下即进入捏合：清掉单指已启动的平移/拖拽/框选，手势归捏合接管
+      // 第二根手指落下即进入捏合：清掉单指已启动的平移/拖拽/框选，手势归捏合接管；
+      // 同时置起 pinchActiveRef，让 React 侧 pointerdown 处理器（在本原生监听之后触达）不再武装新交互
+      pinchActiveRef.current = true;
       panRef.current.active = false;
       dragItemsRef.current.active = false;
+      resizeRef.current.active = false;
+      setResizing(false);
       setPanning(false);
       setMarquee((prev) => (prev.active ? { ...prev, active: false, w: 0, h: 0 } : prev));
       const rect = el.getBoundingClientRect();
@@ -3612,7 +3621,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const onUp = (e: PointerEvent) => {
       if (e.pointerType !== 'touch') return;
       pointers.delete(e.pointerId);
-      if (pointers.size < 2) pinch = null;
+      if (pointers.size < 2) {
+        pinch = null;
+        pinchActiveRef.current = false;
+      }
     };
 
     el.addEventListener('pointerdown', onDown);
@@ -3620,6 +3632,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onUp);
     return () => {
+      pinchActiveRef.current = false;
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
@@ -5657,6 +5670,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               stageHoverRef.current = true;
             }}
             onPointerDownCapture={(e) => {
+              // 捏合进行中：触摸事件全部让位给捏合手势，不再武装平移/框选/拖拽
+              if (e.pointerType === 'touch' && pinchActiveRef.current) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
               // placing 优先
               if (placing) {
                 const placed = placeAtPointer(e);
@@ -5698,6 +5717,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               dragItemsRef.current.active = false;
             }}
             onPointerDown={(e) => {
+              // 捏合进行中：第二根手指的事件到达这里时原生监听已置起标志，禁止启动框选/平移
+              if (e.pointerType === 'touch' && pinchActiveRef.current) {
+                e.preventDefault();
+                return;
+              }
               stageRef.current?.focus();
 
               // Hand tool / Space + 拖拽：平移（Hand 模式允许在任意元素上拖动）
@@ -6048,6 +6072,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       if (effectiveTool !== 'hand' || isMobile) e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
+                      // 捏合进行中：不启动元素选择/拖拽（第二根手指落在图片上时让位给捏合）
+                      if (e.pointerType === 'touch' && pinchActiveRef.current) {
+                        e.stopPropagation();
+                        return;
+                      }
                       // 桌面端手型工具不处理元素交互；移动端允许（手型 = 空白平移 + 图上选择）
                       if (effectiveTool === 'hand' && !isMobile) return;
                       // 右键点击不启动拖拽，让 contextmenu 事件正常触发

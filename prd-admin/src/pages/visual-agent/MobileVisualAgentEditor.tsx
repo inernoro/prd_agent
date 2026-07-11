@@ -394,9 +394,11 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
 
         // 看门狗轮询：与 SSE 并行跑（弱网下 SSE 可能长时间连不上，串行等重试耗尽会白等两分钟）。
         // 谁先拿到终态谁回填；卡片一旦离开 running 双方都自然停。
+        // 服务器权威：后端 run 仍在 Queued/Running 时绝不本地判失败（否则用户重试会创建重复 run），
+        // 前 5 分钟 5s 一查，之后降频到 15s 持续查询，直到终态或组件卸载。
         void (async () => {
-          for (let attempt = 0; attempt < 60; attempt++) {
-            await new Promise((r) => setTimeout(r, 5000));
+          for (let attempt = 1; !ac.signal.aborted && isCardRunning(); attempt++) {
+            await new Promise((r) => setTimeout(r, attempt <= 60 ? 5000 : 15000));
             if (ac.signal.aborted || !isCardRunning()) return;
             try {
               const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
@@ -419,7 +421,6 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
               // 单次查询失败不终止轮询
             }
           }
-          if (isCardRunning()) failCard('生成超时或连接中断，请重试');
         })();
 
         void streamImageGenRunWithRetry({
