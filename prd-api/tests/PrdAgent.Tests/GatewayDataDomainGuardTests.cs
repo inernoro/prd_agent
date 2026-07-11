@@ -1611,6 +1611,10 @@ public class GatewayDataDomainGuardTests
         var cdsServingEnd = cdsCompose.IndexOf("\n  llmgw-web:\n", cdsServingStart, StringComparison.Ordinal);
         Assert.True(cdsServingStart >= 0 && cdsServingEnd > cdsServingStart, "CDS llmgw-serve service block missing");
         var cdsServing = cdsCompose[cdsServingStart..cdsServingEnd];
+        var cdsConsoleStart = cdsCompose.LastIndexOf("\n  llmgw:\n", StringComparison.Ordinal);
+        Assert.True(cdsConsoleStart >= 0 && cdsServingStart > cdsConsoleStart, "CDS llmgw service block missing");
+        var cdsConsole = cdsCompose[cdsConsoleStart..cdsServingStart];
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
 
         Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", deploy);
         Assert.Contains("COMPOSE_PROJECT_NAME", deploy);
@@ -1625,6 +1629,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("condition: service_healthy", compose);
         Assert.Contains("/gw/v1/healthz", compose);
         Assert.Contains("LlmGateway__Readiness__RequireAssetProbe: \"false\"", cdsServing);
+        Assert.Contains("LlmGateway__MongoConnectionString", cdsServing);
+        Assert.Contains("LlmGateway__MongoConnectionString", cdsConsole);
+        Assert.True(
+            compose.Split("LlmGateway__MongoConnectionString", StringSplitOptions.None).Length - 1 >= 3,
+            "正式 compose 的控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
+        Assert.Contains("config[\"LlmGateway:MongoConnectionString\"]", consoleProgram);
+        Assert.Contains("gatewayMongoClient.GetDatabase(gatewayDbName)", consoleProgram);
         Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);

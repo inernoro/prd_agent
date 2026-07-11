@@ -189,7 +189,6 @@ services:
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
-      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
       # 避免依赖代码缺省值。需要验证 HTTP 时由对应 CDS profile 明确改成 http/shadow。
@@ -270,6 +269,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
       LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台写 GW-owned 平台/模型/Exchange key 时使用；必须与 api/llmgw-serve 同一把。
@@ -311,6 +311,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
