@@ -259,7 +259,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"admin.force_reset_bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
-        Assert.Contains("action: \"admin.deactivate_legacy_users\"", consoleProgram);
+        Assert.Contains("\"team.create\"", consoleProgram);
+        Assert.Contains("\"membership.create\"", consoleProgram);
+        Assert.Contains("\"membership.update\"", consoleProgram);
+        Assert.DoesNotContain("action: \"admin.deactivate_legacy_users\"", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] operation audit write failed:", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] system operation audit write failed:", consoleProgram);
         Assert.DoesNotContain("mapDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\")", consoleProgram);
@@ -2256,7 +2259,7 @@ public class GatewayDataDomainGuardTests
         var httpClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
         var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
 
-        Assert.Contains("idx_llmgw_logs_time_caller_type_transport", initializer);
+        Assert.Contains("idx_llmgw_logs_tenant_time_caller_type_transport", initializer);
         Assert.Contains("ttl_llmgw_logs_started", initializer);
         Assert.Contains("uniq_llmgw_budget_month", initializer);
         Assert.Contains("uniq_llmgw_execution_request", initializer);
