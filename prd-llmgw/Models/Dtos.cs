@@ -772,6 +772,9 @@ public sealed class GatewayAppCallerItem
     public string? LastObservedModelPoolId { get; set; }
     public string? LastObservedModelPolicy { get; set; }
     public string? LastObservedParameterPolicy { get; set; }
+    public List<string> ObservedModelPoolIds { get; set; } = new();
+    public List<string> ObservedModelPolicies { get; set; } = new();
+    public List<string> ObservedParameterPolicies { get; set; } = new();
     public string? LastObservedRequestId { get; set; }
     public string? LastObservedSessionId { get; set; }
     public string? LastObservedRunId { get; set; }

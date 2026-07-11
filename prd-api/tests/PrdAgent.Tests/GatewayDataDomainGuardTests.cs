@@ -452,8 +452,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标", script);
         Assert.Contains("args=\"$args --require-app-kind $app_kind_req_trimmed\"", script);
         Assert.Contains("for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do", script);
-        Assert.Contains("LLM Gateway release gate: required before deploy (same-commit shadow evidence only; commit probe runs after compose up)", script);
-        Assert.Contains("args=\"$args --shadow-release-commit $expect_commit\"", script);
+        Assert.Contains("LLM Gateway release gate: required before deploy (selected shadow evidence commit; new commit probes run after compose up)", script);
+        Assert.Contains("shadow_release_commit=\"$(printf '%s' \"${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}\" | xargs || true)\"", script);
+        Assert.Contains("args=\"$args --shadow-release-commit $shadow_release_commit\"", script);
         Assert.Contains("LLMGW_GATE_JSON_OUT", script);
         Assert.Contains("args=\"$args --json-out $LLMGW_GATE_JSON_OUT\"", script);
         Assert.Contains("LLMGW_GATE_REPORT_MD", script);
@@ -567,6 +568,171 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("fast.sh repo:", execDep);
         Assert.Contains("exec_dep repo:", execDep);
         Assert.Contains("Release intent: matched fast.sh warmup", execDep);
+    }
+
+    [Fact]
+    public void MaintenanceRelease_InheritsOnlyAuditedShadowEvidence_AndRechecksNewCommit()
+    {
+        var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
+
+        Assert.Contains("--maintenance-from-commit", stage);
+        Assert.Contains("--target-stage http-full", stage);
+        Assert.Contains("--require-target-success", stage);
+        Assert.Contains("--min-observation-hours 0", stage);
+        Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
+        Assert.Contains("--shadow-evidence-commit \"${maintenance_from_commit:-$commit}\"", stage);
+        Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$maintenance_from_commit\"", stage);
+        Assert.Contains("LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit", deploy);
+        Assert.Contains("LLMGW_POST_DEPLOY_EXPECT_COMMIT=\"$expect_commit\"", deploy);
+        Assert.Contains("shadowEvidenceCommit", ledger);
+        Assert.Contains("args.shadow_evidence_commit or args.commit", ledger);
+        Assert.Contains("deployment_receipt=", stage);
+        Assert.Contains("LLM Gateway deploy-once: receipt exists", stage);
+        Assert.Contains("LLMGW_VERIFY_ONLY=1", stage);
+        Assert.Contains("LLMGW_STAGE_FORCE_REDEPLOY_REASON", stage);
+        Assert.Contains("LLMGW_DEPLOY_RECEIPT_FILE", deploy);
+        Assert.Contains("LLM Gateway verify-only: preserving current containers", deploy);
+    }
+
+    [Fact]
+    public void RolloutLedger_StageReport_AllowsAuditedShadowCommitDifferentFromReleaseCommit()
+    {
+        var root = LocateRepoRoot();
+        var tempDir = Path.Combine(Path.GetTempPath(), "llmgw-maintenance-report-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            const string releaseCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            const string shadowCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            var route = new
+            {
+                ok = true,
+                selfTestStatus = "ok",
+                mode = "dry-run",
+                upstreamCalled = false,
+                total = 4,
+                passed = 4,
+                protocols = new[] { "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible" },
+            };
+            var protocolRouter = WriteJson("protocol-router.json", new
+            {
+                verdict = "pass",
+                scope = "static-code-and-document-evidence",
+                targetComplete = false,
+                runtimeEvidenceComplete = false,
+                progressPercent = 90,
+                remainingRuntimeGates = new[] { "current_commit_http_transport" },
+            });
+            var preflight = WriteJson("preflight.json", new
+            {
+                verdict = "pass",
+                expectCommit = releaseCommit,
+                mode = "start",
+                checks = new[] { new { name = "gateway_route_self_test", ok = true, detail = System.Text.Json.JsonSerializer.Serialize(route) } },
+            });
+            var serving = WriteJson("serving.json", new
+            {
+                verdict = "pass",
+                expectedCommit = releaseCommit,
+                healthSamples = new[] { new { commit = releaseCommit } },
+                routeSelfTest = route,
+            });
+            var releaseGate = WriteJson("release-gate.json", new
+            {
+                verdict = "pass",
+                shadowReleaseCommit = shadowCommit,
+                shadowChecks = new[] { new { label = "maintenance", releaseCommit = shadowCommit } },
+                configAuthority = new
+                {
+                    required = true,
+                    ok = true,
+                    status = "ready",
+                    mapFallbackObjectsRemaining = 0,
+                    activeAppCallerMapFallbackReady = true,
+                    activeBoundPoolWithoutUsableMember = 0,
+                },
+                runtimeGates = new
+                {
+                    required = true,
+                    ok = true,
+                    readyForHttpFull = true,
+                    remainingRuntimeGates = Array.Empty<string>(),
+                    allowedPendingRuntimeGates = Array.Empty<string>(),
+                },
+            });
+            var report = Path.Combine(tempDir, "stage.json");
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-rollout-ledger.py", "stage-report",
+                    "--json-out", report,
+                    "--stage", "http-full",
+                    "--status", "success",
+                    "--commit", releaseCommit,
+                    "--shadow-evidence-commit", shadowCommit,
+                    "--disable-map-config-fallback-for-active-app-callers", "true",
+                    "--protocol-router-audit-json", protocolRouter,
+                    "--prod-preflight-json", preflight,
+                    "--serving-probe-json", serving,
+                    "--release-gate-json", releaseGate,
+                    "--release-gate-required", "1",
+                    "--smoke-required", "0",
+                }
+            })!;
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, stderr + stdout);
+            var reportJson = File.ReadAllText(report);
+            Assert.Contains($"\"shadowEvidenceCommit\": \"{shadowCommit}\"", reportJson);
+
+            string WriteJson(string name, object value)
+            {
+                var path = Path.Combine(tempDir, name);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(value));
+                return path;
+            }
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AppCallerRouteObservations_DoNotUseOnlyTheLastRequest()
+    {
+        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var request = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("ObservedModelPolicies", request);
+        Assert.Contains("ObservedModelPoolIds", request);
+        Assert.Contains("ObservedParameterPolicies", request);
+        Assert.Contains("AddToSet(x => x.ObservedModelPolicies, modelPolicy)", endpoint);
+        Assert.Contains("AddToSet(x => x.ObservedModelPoolIds, modelPoolId)", endpoint);
+        Assert.Contains("observedValues.Contains(configured)", console);
+        Assert.Contains("BuildFieldDriftExpr(\"ModelPolicy\", \"LastObservedModelPolicy\", \"ObservedModelPolicies\")", console);
+    }
+
+    [Fact]
+    public void GatewaySmoke_LabelsReleaseProbeAsHttpTransport()
+    {
+        var smoke = ReadRepoFile("scripts/gw-smoke.py");
+
+        Assert.Contains("\"GatewayTransport\": \"http\"", smoke);
+        Assert.Contains("\"SourceSystem\": \"release-probe\"", smoke);
+        Assert.Contains("\"IngressProtocol\": \"gw-native\"", smoke);
+        Assert.DoesNotContain("\"Context\": {\"UserId\": \"smoke-test\", \"IsHealthProbe\": True}", smoke);
     }
 
     [Fact]

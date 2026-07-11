@@ -834,7 +834,12 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
         try:
-            _require_release_gate_for_commit(str(entry.get("releaseGateJson") or ""), f"{stage} release gate evidence", commit)
+            shadow_evidence_commit = _normalize_commit(entry.get("shadowEvidenceCommit")) or commit
+            _require_release_gate_for_commit(
+                str(entry.get("releaseGateJson") or ""),
+                f"{stage} release gate evidence",
+                shadow_evidence_commit,
+            )
         except SystemExit as exc:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("upstreamReadinessRequired") or "0")):
@@ -1056,7 +1061,7 @@ def append(args: argparse.Namespace) -> int:
                 _require_release_gate_for_commit(
                     args.release_gate_json,
                     "release gate evidence",
-                    args.commit,
+                    args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                 )
             if _bool_flag(args.protocol_canary_required):
@@ -1092,6 +1097,7 @@ def append(args: argparse.Namespace) -> int:
         "evidenceJson": args.evidence_json,
         "evidenceMarkdown": args.evidence_md,
         "releaseGateJson": args.release_gate_json,
+        "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "prodPreflightJson": args.prod_preflight_json,
         "prodHealthPreflightJson": args.prod_health_preflight_json,
@@ -1278,7 +1284,7 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_release_gate_for_commit(
                     path,
                     label,
-                    args.commit,
+                    args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                 )
             elif label == "prodPreflightJson":
@@ -1321,6 +1327,7 @@ def stage_report(args: argparse.Namespace) -> int:
         "disableMapConfigFallbackForActiveAppCallers": _bool_flag(args.disable_map_config_fallback_for_active_app_callers),
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -1529,6 +1536,7 @@ def main() -> int:
     append_parser.add_argument("--evidence-json", default="")
     append_parser.add_argument("--evidence-md", default="")
     append_parser.add_argument("--release-gate-json", default="")
+    append_parser.add_argument("--shadow-evidence-commit", default="")
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--prod-preflight-json", default="")
     append_parser.add_argument("--prod-health-preflight-json", default="")
@@ -1571,6 +1579,7 @@ def main() -> int:
     report_parser.add_argument("--disable-map-config-fallback-for-active-app-callers", default="0")
     report_parser.add_argument("--gate-base", default="")
     report_parser.add_argument("--release-gate-json", default="")
+    report_parser.add_argument("--shadow-evidence-commit", default="")
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--prod-preflight-json", default="")
     report_parser.add_argument("--prod-health-preflight-json", default="")
