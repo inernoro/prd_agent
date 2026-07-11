@@ -18,6 +18,9 @@ import { DefectSeverity } from '@/services/contracts/defectAgent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+import { claimSharedDefectPayload } from '@/lib/sharedDefectFiles';
+import { mergeAiScreenshotDescription } from '@/lib/defectAiFill';
 import {
   X,
   Send,
@@ -91,6 +94,7 @@ export function DefectSubmitPanel() {
   const [showExample, setShowExample] = useState(false);
   // 「提交给」字段闪烁提示的触发计数：每次自增都会重挂载覆盖层，重启 CSS 动画。
   const [assigneeFlashTick, setAssigneeFlashTick] = useState(0);
+  const isMobile = useIsMobile();
 
   // 当用户/模板选择变化时保存到 sessionStorage
   useEffect(() => {
@@ -144,13 +148,19 @@ export function DefectSubmitPanel() {
           });
 
           if (res.success && res.data?.description) {
+            const description = res.data.description;
+            // 竞态守卫：用户可能在分析期间已删除该截图，此时不得再追加其识别结果污染正文
+            if (!attachmentsRef.current.some((a) => a.file === item.file)) return;
             setAttachments((prev) =>
               prev.map((a) =>
                 a.file === item.file
-                  ? { ...a, status: 'done', description: res.data!.description }
+                  ? { ...a, status: 'done', description }
                   : a
               )
             );
+            // 非阻塞自动填充：识别结果追加到描述末尾（带【AI 截图识别】标签），
+            // 用户已输入 / 正在输入的内容逐字保留，光标不受影响
+            setContent((prev) => mergeAiScreenshotDescription(prev, description));
           } else {
             const errCode = res.error?.code || '';
             const errMsg = res.error?.message || '图片分析失败';
@@ -184,6 +194,23 @@ export function DefectSubmitPanel() {
       })();
     }
   }, []);
+
+  // 手机截图分享（share_target）注入：面板打开时领取暂存的截图/文字。
+  // claim 领取即清空，StrictMode 二次执行安全返回 null。
+  useEffect(() => {
+    const payload = claimSharedDefectPayload();
+    if (!payload) return;
+    if (payload.text) {
+      const sharedText = payload.text;
+      setContent((prev) =>
+        prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n${sharedText}` : sharedText
+      );
+    }
+    if (payload.files.length > 0) {
+      addFiles(payload.files);
+      toast.success(`已接收 ${payload.files.length} 张分享截图，AI 正在识别内容...`);
+    }
+  }, [addFiles]);
 
   // Handle paste for images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -328,21 +355,33 @@ export function DefectSubmitPanel() {
 
   return createPortal((
     <div
-      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
+      className={cn(
+        // z-[200] 与 GlobalDefectSubmitDialog 一致：必须盖过移动端底部 TabBar(z-100)，
+        // 否则手机全屏面板的底部操作行会被导航栏遮挡（E2E 实测踩中）
+        'surface-backdrop fixed inset-0 z-[200] flex justify-center',
+        isMobile ? 'items-stretch p-0' : 'items-center p-4'
+      )}
       onClick={() => setShowSubmitPanel(false)}
     >
       <GlassCard
         glow
         animated
         variant="default"
-        className="w-full max-w-[760px] flex flex-col"
-        style={{ maxHeight: '90vh' }}
+        className={cn(
+          'w-full flex flex-col',
+          isMobile ? 'h-full max-w-none rounded-none' : 'max-w-[760px]'
+        )}
+        style={
+          isMobile
+            ? { maxHeight: '100%', paddingBottom: 'env(safe-area-inset-bottom)' }
+            : { maxHeight: '90vh' }
+        }
         overflow="hidden"
         padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle">
+        <div className={cn('flex items-center justify-between border-b border-token-subtle', isMobile ? 'px-3 py-3' : 'px-5 py-4')}>
           <div className="flex items-center gap-3">
             <div className="surface-inset w-8 h-8 rounded-lg flex items-center justify-center">
               <Send size={16} className="text-token-accent" />
@@ -359,9 +398,9 @@ export function DefectSubmitPanel() {
           </button>
         </div>
 
-        {/* Selectors - 一排显示 */}
-        <div className="px-5 py-4 space-y-3">
-          <div className="flex items-center gap-4">
+        {/* Selectors - 桌面一排显示，手机端纵向堆叠 */}
+        <div className={cn('space-y-3', isMobile ? 'px-3 py-3' : 'px-5 py-4')}>
+          <div className={cn('flex', isMobile ? 'flex-col items-stretch gap-2.5' : 'items-center gap-4')}>
             {/* Assignee —— 统一使用 UserSearchSelect（与「发起数据分享」一致），
                 用户列表后端已按「已解决缺陷数」倒序返回。 */}
             <div className="flex items-center gap-2 flex-1">
@@ -468,7 +507,7 @@ export function DefectSubmitPanel() {
 
         {/* Content Area */}
         <div
-          className="flex-1 min-h-0 px-5 pb-4 flex flex-col"
+          className={cn('flex-1 min-h-0 flex flex-col', isMobile ? 'px-3 pb-3' : 'px-5 pb-4')}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
@@ -477,7 +516,11 @@ export function DefectSubmitPanel() {
               'surface-inset flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200',
               focused && 'border-[var(--accent-primary)]/50 ring-2 ring-[var(--accent-primary)]/15'
             )}
-            style={{ minHeight: attachments.length > 0 ? '500px' : '380px' }}
+            style={{
+              minHeight: isMobile
+                ? undefined
+                : attachments.length > 0 ? '500px' : '380px',
+            }}
           >
             {/* Textarea - 无内部边框，第一行即为标题 */}
             <textarea
@@ -489,8 +532,11 @@ export function DefectSubmitPanel() {
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行建议写清问题标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
-              className="text-token-primary flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring bg-transparent"
-              style={{ minHeight: '200px' }}
+              className={cn(
+                'text-token-primary flex-1 text-[13px] resize-none outline-none no-focus-ring bg-transparent',
+                isMobile ? 'p-3' : 'p-4'
+              )}
+              style={{ minHeight: isMobile ? '120px' : '200px' }}
             />
 
             {/* Attachments Preview */}
