@@ -83,6 +83,34 @@ public sealed class GatewayMultipartObjectRecord
 }
 
 [BsonIgnoreExtraElements]
+public sealed class GatewayLifecycleRunRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Mode { get; set; } = "dry-run";
+    public string Status { get; set; } = "running";
+    public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? DryRunCompletedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public long ExpiredRequestLogs { get; set; }
+    public long SensitiveLogs { get; set; }
+    public long ExpiredShadowComparisons { get; set; }
+    public long ExpiredOperationAudits { get; set; }
+    public long ExpiredLoginAudits { get; set; }
+    public long ExpiredMultipartObjects { get; set; }
+    public long RedactedSensitiveLogs { get; set; }
+    public long DeletedMultipartObjects { get; set; }
+    public DateTime? OldestExpiredRequestLogAt { get; set; }
+    public DateTime? OldestSensitiveLogAt { get; set; }
+    public DateTime? OldestExpiredShadowAt { get; set; }
+    public DateTime? OldestExpiredOperationAuditAt { get; set; }
+    public DateTime? OldestExpiredLoginAuditAt { get; set; }
+    public DateTime? OldestExpiredMultipartAt { get; set; }
+    public bool RetentionIndexesReady { get; set; }
+    public string[] MissingRetentionIndexes { get; set; } = [];
+    public string? Detail { get; set; }
+}
+
+[BsonIgnoreExtraElements]
 public sealed class GatewayProviderConcurrencySlotRecord
 {
     public string Id { get; set; } = string.Empty;

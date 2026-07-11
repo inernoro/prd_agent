@@ -1685,6 +1685,7 @@ def main() -> int:
     focused_non_text_seed_requested = any(
         (
             args.include_open_api_image,
+            args.include_report_agent_generate,
             args.include_image_raw,
             args.include_image_worker_text2img,
             args.include_image_worker_img2img,
