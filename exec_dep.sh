@@ -520,6 +520,34 @@ guard_llmgw_prod_stage_context_if_needed() {
   shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
   shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
   shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
+  maintenance_baseline_commit="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_COMMIT:-}" | tr 'A-F' 'a-f' | xargs || true)"
+  maintenance_baseline_json="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_JSON:-}" | xargs || true)"
+  maintenance_release=0
+  if [ -n "$maintenance_baseline_commit" ] || [ -n "$maintenance_baseline_json" ]; then
+    if ! printf '%s' "$maintenance_baseline_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+      echo "ERROR: LLMGW_MAINTENANCE_BASELINE_COMMIT must be a complete 40-character commit." >&2
+      exit 1
+    fi
+    if [ -z "$maintenance_baseline_json" ] || [ ! -f "$maintenance_baseline_json" ]; then
+      echo "ERROR: maintenance release requires an existing LLMGW_MAINTENANCE_BASELINE_JSON." >&2
+      exit 1
+    fi
+    python3 - "$maintenance_baseline_json" "$maintenance_baseline_commit" <<'PY'
+import json
+import sys
+
+path, expected = sys.argv[1:3]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+failures = report.get("failures") or []
+if report.get("verdict") != "pass" or str(report.get("commit") or "").lower() != expected or failures:
+    raise SystemExit("ERROR: maintenance baseline JSON is not a matching pass result")
+if str(report.get("stage") or "").lower() != "http-full" or not report.get("releaseGateJson"):
+    raise SystemExit("ERROR: maintenance baseline JSON is missing audited http-full evidence")
+PY
+    maintenance_release=1
+    echo "LLM Gateway maintenance release: audited baseline accepted commit=$maintenance_baseline_commit"
+  fi
   shadow_sample_enabled=0
   if [ "$mode" = "shadow" ]; then
     case "$shadow_sample_compact" in
@@ -968,7 +996,11 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_GATE_KEY="$gate_key"
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
-  args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
+  if [ "$maintenance_release" = "1" ]; then
+    args="--base $gate_base --min-total 0 --min-per-app 0"
+  else
+    args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
+  fi
   args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
   gate_min_coverage_hours="${LLMGW_GATE_MIN_COVERAGE_HOURS:-}"
   if [ "$release_gate_required" = "1" ] && [ -z "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
@@ -999,7 +1031,7 @@ run_llmgw_release_gate_if_needed() {
   IFS=',;'
   gate_app_callers_raw="${LLMGW_GATE_APP_CALLERS:-}"
   gate_app_callers_compact="$(printf '%s' "$gate_app_callers_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ -z "$gate_app_callers_compact" ]; then
+  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$gate_app_callers_compact" ]; then
     gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,prd-agent-desktop.preview-ask.section::chat,open-platform-agent.proxy::chat,open-api.proxy::chat,open-api.proxy::generation,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,tutorial-email.generate::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标"
   fi
@@ -1021,7 +1053,7 @@ run_llmgw_release_gate_if_needed() {
   IFS=',;'
   required_kinds_raw="${LLMGW_GATE_REQUIRED_KINDS:-}"
   required_kinds_compact="$(printf '%s' "$required_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ -z "$required_kinds_compact" ]; then
+  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_kinds_compact" ]; then
     full_http_kind_min="${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
     required_kinds_raw="send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
@@ -1048,7 +1080,7 @@ run_llmgw_release_gate_if_needed() {
   done
   required_app_kinds_raw="${LLMGW_GATE_REQUIRED_APP_KINDS:-}"
   required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ -z "$required_app_kinds_compact" ]; then
+  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_app_kinds_compact" ]; then
     full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
     required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-report-agent.generate::chat:send:${full_http_app_kind_min},prd-agent-desktop.chat.sendmessage::chat:stream:${full_http_app_kind_min},prd-agent-desktop.preview-ask.section::chat:stream:${full_http_app_kind_min},open-platform-agent.proxy::chat:stream:${full_http_app_kind_min},open-api.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::generation:raw:${full_http_app_kind_min},prd-agent-web.model-lab.run::chat:stream:${full_http_app_kind_min},prd-agent.arena.battle::chat:stream:${full_http_app_kind_min},tutorial-email.generate::chat:send:${full_http_app_kind_min},visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
     echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本"

@@ -40,6 +40,8 @@
 
 三批实现 PR 合并后的首次生产发布发现：PR-A 的 `--maintenance-from-commit` 仍调用通用全迁移 audit，导致历史 `http-full success` 被今天新增的证据字段反向判定失败，维护发布事实上不可执行。允许增加一个仅含发布脚本和合同测试的纠错 PR，不得包含运行代码、模型调用、数据库或 UI 变更。纠错后的维护基线审计只验证：历史 `http-full success`、stage/release-gate 文件存在且 commit/mode/fallback 一致、shadow `critical/httpFail=0`、同 commit 无后续 rollback/failed；新 commit 的 health、协议、配置权威和 runtime gate 仍由维护发布重新验证。
 
+首次使用纠错后的维护基线时，正式机又在 `exec_dep.sh` 的重复 shadow 数量门被拦截：stage 已验证历史基线，但未把该通过结果交给部署层。第二个纠错 PR 只允许补齐证据交接：`exec_dep.sh` 必须校验 stage 生成的 baseline JSON 与基线 commit 完全一致；校验通过后只把重复 shadow 数量阈值降为 0，不得关闭配置权威、同 commit 镜像、health、serving probe、D 层 smoke、四协议 canary 或 runtime gates。stage evidence 继续记录继承的 `shadowEvidenceCommit`，使后续维护发布可以追溯完整证据链。
+
 ## 4. PR-A 设计
 
 ### 4.1 两类发布
