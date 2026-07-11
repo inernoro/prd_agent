@@ -8,8 +8,9 @@ namespace PrdAgent.LlmGw.Models;
 [BsonIgnoreExtraElements]
 public class LlmGwLoginAudit
 {
-    [BsonId]
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string TenantId { get; set; } = string.Empty;
 
     public string Username { get; set; } = string.Empty;
 

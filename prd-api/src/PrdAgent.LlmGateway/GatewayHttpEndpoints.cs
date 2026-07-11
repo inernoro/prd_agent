@@ -84,7 +84,9 @@ public static class GatewayHttpEndpoints
                         HasGatewayKey(context, gatewayApiKey),
                         StatusCodes.Status401Unauthorized,
                         "GATEWAY_KEY_INVALID",
-                        "gateway key rejected")
+                        "gateway key rejected",
+                        TenantId: GatewayTenantDefaults.InternalTenantId,
+                        LegacySharedKey: true)
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,
                         gatewayApiKey,
@@ -265,7 +267,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
@@ -482,7 +484,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
@@ -554,7 +556,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
@@ -655,7 +657,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var gatewayRequest = ingress.ToGatewayRequest(stream);
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
@@ -706,7 +708,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
             var ingress = ToIngress(request, "gw-native", "map");
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
             var routedRequest = ApplyIngressRouting(request, ingress, stream: false);
@@ -714,7 +716,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
                 var response = await gateway.SendAsync(routedRequest, cancellation?.Token ?? CancellationToken.None);
                 return GatewayResponseResult(response, jsonOpts);
             }
@@ -744,7 +746,7 @@ public static class GatewayHttpEndpoints
                     error = new { code = "GATEWAY_REQUEST_CANCEL_INVALID", message = "X-Gateway-App-Caller 为必填" },
                 }, jsonOpts, statusCode: 400);
             }
-            var cancelled = cancellations.Cancel(appCallerCode, requestId);
+            var cancelled = cancellations.Cancel(GetVerifiedTenantId(http), appCallerCode, requestId);
             return Results.Json(new
             {
                 requestId,
@@ -767,7 +769,7 @@ public static class GatewayHttpEndpoints
                 }, jsonOpts, statusCode: 400);
             }
 
-            var execution = await executions.GetAsync(appCallerCode, requestId, operation.Trim(), CancellationToken.None);
+            var execution = await executions.GetAsync(GetVerifiedTenantId(http), appCallerCode, requestId, operation.Trim(), CancellationToken.None);
             if (execution is null)
             {
                 return Results.Json(new
@@ -802,7 +804,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
             http.Response.Headers.ContentType = "text/event-stream";
@@ -814,7 +816,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
                 await foreach (var chunk in gateway.StreamAsync(routedRequest, cancellation?.Token ?? CancellationToken.None))
                 {
                     var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
@@ -856,6 +858,7 @@ public static class GatewayHttpEndpoints
             if (executionStore is not null)
             {
                 execution = await executionStore.BeginAsync(
+                    GetVerifiedTenantId(http),
                     ingress.AppCallerCode,
                     ingress.RequestId,
                     "raw-submit",
@@ -880,12 +883,12 @@ public static class GatewayHttpEndpoints
                 }
             }
 
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null)
             {
                 if (executionStore is not null && execution is not null)
-                    await executionStore.FailAsync(execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
+                    await executionStore.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
                 return governanceResult;
             }
 
@@ -893,13 +896,13 @@ public static class GatewayHttpEndpoints
             var multipartRequestSucceeded = false;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
                 var token = cancellation?.Token ?? CancellationToken.None;
                 var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), token);
                 if (!rehydrated.Success)
                 {
                     if (executionStore is not null && execution is not null)
-                        await executionStore.FailAsync(execution.ExecutionId, rehydrated.Error?.ErrorCode ?? "MULTIPART_REHYDRATE_FAILED", CancellationToken.None);
+                        await executionStore.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, rehydrated.Error?.ErrorCode ?? "MULTIPART_REHYDRATE_FAILED", CancellationToken.None);
                     return JsonContentResult(rehydrated.Error!, jsonOpts);
                 }
 
@@ -918,25 +921,25 @@ public static class GatewayHttpEndpoints
                 if (executionStore is not null && execution is not null)
                 {
                     if (raw.Success)
-                        await executionStore.CompleteAsync(execution.ExecutionId, JsonSerializer.Serialize(raw, jsonOpts), CancellationToken.None);
+                        await executionStore.CompleteAsync(GetVerifiedTenantId(http), execution.ExecutionId, JsonSerializer.Serialize(raw, jsonOpts), CancellationToken.None);
                     else if (raw.StatusCode >= 500)
-                        await executionStore.UnknownAsync(execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                        await executionStore.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                     else
-                        await executionStore.FailAsync(execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
+                        await executionStore.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
                 }
                 return JsonContentResult(raw, jsonOpts);
             }
             catch (OperationCanceledException)
             {
                 if (executionStore is not null && execution is not null)
-                    await executionStore.UnknownAsync(execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
+                    await executionStore.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
                 http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
                 return Results.Json(GatewayRawResponse.Fail("GATEWAY_REQUEST_CANCELLED", "请求已取消；上游结果状态未知，禁止自动重试", 409), jsonOpts, statusCode: 409);
             }
             catch
             {
                 if (executionStore is not null && execution is not null)
-                    await executionStore.UnknownAsync(execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                    await executionStore.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                 throw;
             }
             finally
@@ -1001,14 +1004,14 @@ public static class GatewayHttpEndpoints
                 ParameterPolicy = "default-drop",
                 Context = profileContext,
             };
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
 
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(profileRequest.AppCallerCode, requestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), profileRequest.AppCallerCode, requestId);
                 var raw = await gateway.TestUpstreamProfileAsync(profileRequest, cancellation?.Token ?? CancellationToken.None);
                 return JsonContentResult(raw, jsonOpts);
             }
@@ -1064,7 +1067,7 @@ public static class GatewayHttpEndpoints
                 PinnedModelId = body.PinnedModelId,
                 Context = body.Context,
             };
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
             http.Response.Headers.ContentType = "text/event-stream";
@@ -1088,7 +1091,7 @@ public static class GatewayHttpEndpoints
             GatewayCancellationLease? cancellation = null;
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
                 await foreach (var chunk in client.StreamGenerateAsync(
                                    body.SystemPrompt,
                                    body.Messages,
@@ -1128,6 +1131,7 @@ public static class GatewayHttpEndpoints
             // InvalidOperationException（"Body was inferred but the method does not allow inferred body
             // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
+            HttpContext http,
             int? limit,
             int? failureLimit,
             string? appCallerCode,
@@ -1139,7 +1143,10 @@ public static class GatewayHttpEndpoints
             var db = services.GetService<LlmGatewayDataContext>()?.Context
                 ?? services.GetRequiredService<MongoDbContext>();
             var col = db.LlmShadowComparisons;
-            var filters = new List<FilterDefinition<LlmShadowComparison>>();
+            var filters = new List<FilterDefinition<LlmShadowComparison>>
+            {
+                Builders<LlmShadowComparison>.Filter.Eq(x => x.TenantId, GetVerifiedTenantId(http)),
+            };
             if (!string.IsNullOrWhiteSpace(appCallerCode))
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
             if (!string.IsNullOrWhiteSpace(kind))
@@ -1150,9 +1157,7 @@ public static class GatewayHttpEndpoints
             var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
             if (since is not null)
                 filters.Add(Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value));
-            var filter = filters.Count == 0
-                ? FilterDefinition<LlmShadowComparison>.Empty
-                : Builders<LlmShadowComparison>.Filter.And(filters);
+            var filter = Builders<LlmShadowComparison>.Filter.And(filters);
 
             var total = await col.CountDocumentsAsync(filter);
             var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));
@@ -1211,6 +1216,11 @@ public static class GatewayHttpEndpoints
             ? auth["Bearer ".Length..].Trim()
             : null;
     }
+
+    private static string GetVerifiedTenantId(HttpContext context)
+        => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization { TenantId.Length: > 0 } authorization
+            ? authorization.TenantId
+            : throw new UnauthorizedAccessException("verified tenant context is unavailable");
 
     private static string ResolveIngressProtocol(string path)
     {
@@ -1847,16 +1857,24 @@ public static class GatewayHttpEndpoints
     ];
 
     private static async Task<AppCallerGovernanceDecision> RecordAndCheckAppCallerGovernanceAsync(
+        HttpContext http,
         IServiceProvider services,
         GatewayIngressRequest ingress,
         CancellationToken ct)
     {
+        var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
+        if (authorization is null || string.IsNullOrWhiteSpace(authorization.TenantId))
+            return AppCallerGovernanceDecision.RejectTenantUnavailable(ingress.AppCallerCode, ingress.RequestType);
+        ingress.Context ??= new GatewayRequestContext { RequestId = ingress.RequestId };
+        ingress.Context.TenantId = authorization.TenantId;
+        ingress.Context.TeamId = authorization.TeamId;
         await RecordDiscoveredAppCallerAsync(services, ingress, ct);
-        return await CheckAppCallerGovernanceAsync(services, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
+        return await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
     }
 
     private static async Task<AppCallerGovernanceDecision> CheckAppCallerGovernanceAsync(
         IServiceProvider services,
+        string tenantId,
         string appCallerCode,
         string requestType,
         string requestId,
@@ -1876,6 +1894,7 @@ public static class GatewayHttpEndpoints
             var normalizedAppCallerCode = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
             var normalizedRequestType = GatewayAppCallerIdentity.NormalizePart(requestType);
             caller = await callers.Find(Builders<GatewayAppCallerRecord>.Filter.And(
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
                     Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, normalizedAppCallerCode),
                     Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, normalizedRequestType)),
                     new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
@@ -1902,12 +1921,14 @@ public static class GatewayHttpEndpoints
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
             var windows = gatewayData.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows");
             var windowFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
                 Builders<BsonDocument>.Filter.Eq("AppCallerCode", normalizedAppCallerCode),
                 Builders<BsonDocument>.Filter.Eq("RequestType", normalizedRequestType),
                 Builders<BsonDocument>.Filter.Eq("WindowStart", windowStart));
             var updated = await windows.FindOneAndUpdateAsync(
                 windowFilter,
                 Builders<BsonDocument>.Update
+                    .SetOnInsert("TenantId", tenantId)
                     .SetOnInsert("AppCallerCode", normalizedAppCallerCode)
                     .SetOnInsert("RequestType", normalizedRequestType)
                     .SetOnInsert("WindowStart", windowStart)
@@ -2750,7 +2771,7 @@ public static class GatewayHttpEndpoints
         GatewayCancellationLease? lease = null;
         try
         {
-            lease = services.GetService<GatewayCancellationRegistry>()?.Register(appCallerCode, requestId);
+            lease = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), appCallerCode, requestId);
             await action(lease?.Token ?? CancellationToken.None);
         }
         catch (InvalidOperationException) when (lease is null)
@@ -2798,6 +2819,7 @@ public static class GatewayHttpEndpoints
         if (store is not null)
         {
             execution = await store.BeginAsync(
+                GetVerifiedTenantId(http),
                 request.AppCallerCode,
                 requestId,
                 operation,
@@ -2825,11 +2847,11 @@ public static class GatewayHttpEndpoints
             }
         }
 
-        var governance = await RecordAndCheckAppCallerGovernanceAsync(services, ingress, CancellationToken.None);
+        var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
         if (await TryWriteGovernanceErrorAsync(http, governance))
         {
             if (store is not null && execution is not null)
-                await store.FailAsync(execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
+                await store.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, GovernanceErrorCode(governance), CancellationToken.None);
             return;
         }
 
@@ -2848,24 +2870,24 @@ public static class GatewayHttpEndpoints
                 if (store is not null && execution is not null)
                 {
                     if (raw.Success)
-                        await store.CompleteAsync(execution.ExecutionId, JsonSerializer.Serialize(raw), CancellationToken.None);
+                        await store.CompleteAsync(GetVerifiedTenantId(http), execution.ExecutionId, JsonSerializer.Serialize(raw), CancellationToken.None);
                     else if (raw.StatusCode >= 500)
-                        await store.UnknownAsync(execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                        await store.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                     else
-                        await store.FailAsync(execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
+                        await store.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
                 }
                 await WriteOpenAiRawCompatAsync(http, raw);
             }
             catch (OperationCanceledException)
             {
                 if (store is not null && execution is not null)
-                    await store.UnknownAsync(execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
+                    await store.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, "GATEWAY_REQUEST_CANCELLED_OUTCOME_UNKNOWN", CancellationToken.None);
                 throw;
             }
             catch
             {
                 if (store is not null && execution is not null)
-                    await store.UnknownAsync(execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+                    await store.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                 throw;
             }
         });
@@ -3988,7 +4010,9 @@ public static class GatewayHttpEndpoints
             // S2：MAP 侧 http 模式已把传输标记随 body.Context 过线，透传进作用域，
             // 供 serving 端直连客户端（若有）读取；网关日志由 LlmGateway 直接读 request.Context 标注。
             GatewayTransport: ctx?.GatewayTransport,
-            IsHealthProbe: ctx?.IsHealthProbe));
+            IsHealthProbe: ctx?.IsHealthProbe,
+            TenantId: ctx?.TenantId,
+            TeamId: ctx?.TeamId));
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
@@ -4162,13 +4186,18 @@ public static class GatewayHttpEndpoints
         var requestId = NormalizeOptionalTraceId(ingress.Context?.RequestId) ?? NormalizeOptionalTraceId(ingress.RequestId);
         var sessionId = NormalizeOptionalTraceId(ingress.Context?.SessionId);
         var runId = NormalizeOptionalTraceId(ingress.Context?.RunId);
+        var tenantId = ingress.Context?.TenantId;
+        if (string.IsNullOrWhiteSpace(tenantId)) return;
         var filter = Builders<GatewayAppCallerRecord>.Filter.And(
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType));
         var updates = new List<UpdateDefinition<GatewayAppCallerRecord>>
         {
             Builders<GatewayAppCallerRecord>.Update
             .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.TenantId, tenantId)
+            .SetOnInsert(x => x.TeamId, ingress.Context?.TeamId)
             .SetOnInsert(x => x.AppCallerCode, appCallerCode)
             .SetOnInsert(x => x.RequestType, requestType)
             .SetOnInsert(x => x.Status, "discovered")
@@ -4325,6 +4354,8 @@ public static class GatewayHttpEndpoints
     {
         if (storage == null || request.MultipartFileRefs is not { Count: > 0 }) return;
         var manifests = data?.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
+        var tenantId = request.Context?.TenantId;
+        if (string.IsNullOrWhiteSpace(tenantId)) return;
         foreach (var fileRef in request.MultipartFileRefs.Values)
         {
             if (string.IsNullOrWhiteSpace(fileRef.RefKey)) continue;
@@ -4334,7 +4365,7 @@ public static class GatewayHttpEndpoints
                 if (manifests is not null)
                 {
                     await manifests.UpdateOneAsync(
-                        x => x.RefKey == fileRef.RefKey,
+                        x => x.TenantId == tenantId && x.RefKey == fileRef.RefKey,
                         Builders<GatewayMultipartObjectRecord>.Update
                             .Set(x => x.Status, "deleted")
                             .Set(x => x.DeletedAt, DateTime.UtcNow)
@@ -4350,7 +4381,7 @@ public static class GatewayHttpEndpoints
                         ? Math.Max(1, configuration?.GetValue("LlmGateway:Retention:SuccessfulMultipartHours", 24) ?? 24)
                         : Math.Max(1, configuration?.GetValue("LlmGateway:Retention:FailedMultipartHours", 72) ?? 72);
                     await manifests.UpdateOneAsync(
-                        x => x.RefKey == fileRef.RefKey,
+                        x => x.TenantId == tenantId && x.RefKey == fileRef.RefKey,
                         Builders<GatewayMultipartObjectRecord>.Update
                             .Set(x => x.Status, "cleanup-pending")
                             .Set(x => x.Detail, ex.GetType().Name)
@@ -4470,6 +4501,12 @@ public static class GatewayHttpEndpoints
                 AppCallerStatusDecision.Allow(appCallerCode, requestType, "unknown"),
                 AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                 AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "APP_CALLER_BUDGET_GOVERNANCE_UNAVAILABLE"));
+
+        public static AppCallerGovernanceDecision RejectTenantUnavailable(string appCallerCode, string requestType)
+            => new(
+                AppCallerStatusDecision.Allow(appCallerCode, requestType, "unknown"),
+                AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "TENANT_CONTEXT_UNAVAILABLE"));
     }
 }
 

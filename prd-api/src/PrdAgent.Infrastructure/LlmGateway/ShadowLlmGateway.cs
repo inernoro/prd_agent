@@ -201,6 +201,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
+        var tenantId = _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
         SafeRun(async () =>
         {
             var sw = Stopwatch.StartNew();
@@ -209,7 +210,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             try { httpResolution = await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
-            var cmp = BuildResolveComparison(kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
+            var cmp = BuildResolveComparison(tenantId, kind, requestId, appCallerCode, modelType, inprocResolution, httpResolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             await _writer!.RecordAsync(cmp, CancellationToken.None);
         });
     }
@@ -218,6 +219,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
+        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
         // 构造**私有副本**用于 http 全量比对，绝不改调用方仍持有的 request.RequestBody：
         //   - inproc 已把 body["model"] 改写为其选中模型；这里在副本上把 model 恢复成原始有效期望模型
         //     （有则写回、无则移除），让 http 独立解析（与 resolve 探针同根，评审 P2）。
@@ -251,7 +253,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             try { http = await _http.SendAsync(shadowReq, CancellationToken.None); }
             catch (Exception ex) { httpErr = ex.Message; }
             sw.Stop();
-            var cmp = BuildResolveComparison("send", requestId, request.AppCallerCode, request.ModelType,
+            var cmp = BuildResolveComparison(tenantId, "send", requestId, request.AppCallerCode, request.ModelType,
                 inproc.Resolution, http?.Resolution, httpErr, sw.ElapsedMilliseconds, _releaseCommit);
             if (http != null)
             {
@@ -283,6 +285,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
+        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
         var shadowReq = CloneRawRequest(request);
         SafeRun(async () =>
         {
@@ -299,6 +302,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             sw.Stop();
 
             var cmp = BuildResolveComparison(
+                tenantId,
                 "raw",
                 requestId,
                 request.AppCallerCode,
@@ -366,6 +370,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
+        var tenantId = _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
         SafeRun(async () =>
         {
             var sw = Stopwatch.StartNew();
@@ -376,6 +381,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             sw.Stop();
             var cmp = new LlmShadowComparison
             {
+                TenantId = tenantId,
                 Kind = "pools", RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
                 ReleaseCommit = _releaseCommit,
                 ShadowDurationMs = sw.ElapsedMilliseconds, HttpOk = httpErr == null && http != null, HttpError = httpErr,
@@ -407,12 +413,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     };
 
     private static LlmShadowComparison BuildResolveComparison(
-        string kind, string? requestId, string appCallerCode, string modelType,
+        string tenantId, string kind, string? requestId, string appCallerCode, string modelType,
         GatewayModelResolution? inproc, GatewayModelResolution? http, string? httpErr, long ms,
         string? releaseCommit)
     {
         var cmp = new LlmShadowComparison
         {
+            TenantId = tenantId,
             Kind = kind, RequestId = requestId, AppCallerCode = appCallerCode, ModelType = modelType,
             ReleaseCommit = releaseCommit,
             ShadowDurationMs = ms, HttpOk = httpErr == null && http != null, HttpError = httpErr,

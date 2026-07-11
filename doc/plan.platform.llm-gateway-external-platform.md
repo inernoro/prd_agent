@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.0 | **日期**：2026-07-12 | **状态**：规划中
+> **版本**：v1.1 | **日期**：2026-07-12 | **状态**：开发中
 
 ## 1. 目标
 
@@ -13,6 +13,29 @@
 3. 网页版快速接入教程和四协议示例。
 4. appCaller 级提示词前缀/后缀与版本化治理。
 5. 面向普通使用者的控制台信息架构、图表和金额可信度。
+
+## 1.1 执行目标与推进合同
+
+本文件是本任务唯一计划和进度 SSOT，不再创建第二份并行计划。执行目标是按 PR-1 至 PR-5 依次完成外部平台化；每个 PR 必须独立评审、验证、发布和验收，前一个 PR 未完成时不得提前混入后一个 PR 的功能。
+
+| PR | 当前状态 | 分支 | 独立完成门 |
+|---|---|---|---|
+| PR-1 | 本地验收完成，等待 CI/Bugbot/CDS | `codex/llmgw-tenant-rbac` | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
+| PR-2 | 待开始 | 待 PR-1 完成后创建 | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
+| PR-3 | 待开始 | 待 PR-2 完成后创建 | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
+| PR-4 | 待开始 | 待 PR-3 完成后创建 | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
+| PR-5 | 待开始 | 待 PR-4 完成后创建 | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
+
+每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Bugbot、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。
+
+PR-1 本地证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关 101 项测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。PR-1 尚未完成的门仅为远端 CI、Bugbot、CDS 和预览环境验收。
+
+执行期间保持以下边界：
+
+- 不重做 full-http、模型迁移、模型池、配置权威或发布 gate。
+- 不在相邻 PR 之间夹带实现；为后续 PR 预留的 DTO、路由或页面必须等对应 PR 再增加。
+- 不批量调用付费模型；每类真实协议最多一次，其余使用假上游和固定数据。
+- 所有进度以本节状态表、GitHub PR 证据和 CDS 验收结果为准，不用聊天文字替代落盘状态。
 
 ## 2. 当前事实
 
@@ -158,6 +181,17 @@ Tenant
 - 对标的是信息层级、首次接入路径、错误解释和治理能力，不做像素级抄袭，不复制品牌、文案和受版权保护的视觉资产。
 - 先用浏览器记录当前 GW 在桌面和移动端的真实问题，再改布局；不得仅凭源码想象页面。
 - 模型池核心调度本轮不改，除非发现阻断租户隔离的安全问题。
+
+### 8.1 OpenRouter 登录态页面借鉴结论
+
+2026-07-12 已在用户授权的登录态浏览器中只读核对 OpenRouter 的 Workspace、Logs、Activity 和 Models 页面。后续实现只借鉴信息结构与交互原则：
+
+- 顶部只承载品牌、全局搜索、产品级入口、组织/个人上下文和用户菜单；Workspace 与 Account 的管理入口进入左侧分组。
+- Workspace 范围集中放 API Keys、Routing、Guardrails、Observability 和 Settings；Account 范围集中放 Activity、Logs、Credits、Management Keys、Privacy 和 Preferences。
+- Logs 先给日期、复合筛选、请求趋势和请求表，再把 model、provider、appCaller、输入、输出、cost、usage type、speed、finish reason、client user id、API key 作为可配置列；GW 不复制字段命名，但保留同等可定位性。
+- Activity 分 Overview、Trends、Explore、Guardrails；首页指标优先为 spend、requests、token volume、cache hit rate，并提供 Top API Keys、Top Apps、Usage by model、Usage type、Request volume、Token breakdown 和 Prompt caching 的下钻。
+- 无数据必须明确显示“无数据/未知”，缓存命中率等不可计算指标显示占位状态；不得用 0 伪装未知值。金额仍遵守本计划的 actual/estimated/unknown、币种和价格覆盖率规则。
+- Models 的模态、上下文、价格、支持参数、provider、作者、数据保留和区域筛选可作为 PR-4 信息密度参考；本轮不复制其视觉资产，也不重做现有 GW 模型池和 provider router。
 
 ## 9. 验收
 

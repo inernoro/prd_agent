@@ -221,7 +221,7 @@ public class GatewayKeyGateContractTests
         try
         {
             var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
-            using var lease = registry.Register("demo.app::chat", "cancel-me");
+            using var lease = registry.Register(GatewayTenantDefaults.InternalTenantId, "demo.app::chat", "cancel-me");
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-me/cancel");
             request.Headers.Add("X-Gateway-Key", GatewayKey);
             request.Headers.Add("X-Gateway-App-Caller", "demo.app::chat");
@@ -245,7 +245,7 @@ public class GatewayKeyGateContractTests
         try
         {
             var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
-            using var lease = registry.Register("caller-b::chat", "shared-request-id");
+            using var lease = registry.Register(GatewayTenantDefaults.InternalTenantId, "caller-b::chat", "shared-request-id");
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/shared-request-id/cancel");
             request.Headers.Add("X-Gateway-Key", GatewayKey);
             request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
@@ -2193,7 +2193,8 @@ public class GatewayKeyGateContractTests
                 allowed ? 200 : 403,
                 allowed ? string.Empty : "GATEWAY_KEY_SCOPE_DENIED",
                 allowed ? "allowed" : "scope denied",
-                "capturing-key"));
+                "capturing-key",
+                "tenant-test"));
         }
     }
 

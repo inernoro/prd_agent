@@ -26,7 +26,10 @@ public sealed class GwJwt
     public SymmetricSecurityKey SigningKey => new(_key);
 
     /// <summary>签发 token，返回 (token, 过期时间 UTC)。</summary>
-    public (string Token, DateTime ExpiresAt) Issue(LlmGwUser user)
+    public (string Token, DateTime ExpiresAt) Issue(
+        LlmGwUser user,
+        LlmGwTenant? tenant = null,
+        LlmGwMembership? membership = null)
     {
         var now = DateTime.UtcNow;
         var expires = now.Add(Lifetime);
@@ -43,6 +46,14 @@ public sealed class GwJwt
         if (user.MustChangePassword)
         {
             claims.Add(new Claim("mcp", "1"));
+        }
+
+        if (tenant is not null && membership is not null)
+        {
+            claims.Add(new Claim(TenantAccess.TenantClaim, tenant.Id));
+            claims.Add(new Claim(TenantAccess.RoleClaim, membership.Role));
+            claims.Add(new Claim(TenantAccess.MembershipClaim, membership.Id));
+            claims.Add(new Claim(TenantAccess.MembershipVersionClaim, membership.Version.ToString()));
         }
 
         var creds = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256);

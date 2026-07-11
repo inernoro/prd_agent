@@ -51,6 +51,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var log = new LlmRequestLog
             {
                 Id = Guid.NewGuid().ToString(),
+                TenantId = start.TenantId ?? string.Empty,
+                TeamId = start.TeamId,
                 RequestId = start.RequestId,
                 ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
@@ -150,6 +152,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 var fallbackLog = new LlmRequestLog
                 {
                     Id = Guid.NewGuid().ToString(),
+                    TenantId = start.TenantId ?? string.Empty,
+                    TeamId = start.TeamId,
                     RequestId = start.RequestId,
                     ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,

@@ -17,6 +17,9 @@ public class LlmShadowComparison
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
+    public string TenantId { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
+
     /// <summary>比对种类：resolve（仅解析，免费）/ send（完整非流式）/ stream（流式解析）/ raw（图片/ASR/视频原始代理）/ pools（模型池列表）</summary>
     public string Kind { get; set; } = "resolve";
 

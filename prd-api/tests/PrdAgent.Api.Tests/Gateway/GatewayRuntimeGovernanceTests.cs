@@ -21,6 +21,7 @@ public sealed class GatewayRuntimeGovernanceTests
 
         var caller = new GatewayAppCallerRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "budget-test",
             RequestType = "chat",
             MonthlyBudgetUsd = 1m,
@@ -58,6 +59,7 @@ public sealed class GatewayRuntimeGovernanceTests
 
         var caller = new GatewayAppCallerRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "budget-month-create-race",
             RequestType = "chat",
             MonthlyBudgetUsd = 1m,
@@ -89,6 +91,7 @@ public sealed class GatewayRuntimeGovernanceTests
         var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
         var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "client-failure-test",
             RequestType = "chat",
             MonthlyBudgetUsd = 1m,
@@ -116,6 +119,7 @@ public sealed class GatewayRuntimeGovernanceTests
         var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
         var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "server-failure-test",
             RequestType = "image-gen",
             MonthlyBudgetUsd = 1m,
@@ -147,6 +151,7 @@ public sealed class GatewayRuntimeGovernanceTests
         var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
         var admission = await coordinator.ReserveAsync(new GatewayAppCallerRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "cancelled-unknown-test",
             RequestType = "image-gen",
             MonthlyBudgetUsd = 1m,
@@ -185,6 +190,7 @@ public sealed class GatewayRuntimeGovernanceTests
             .Select(_ => new GatewayRequestExecutionStore(scope.Context))
             .ToArray();
         var begins = await Task.WhenAll(stores.Select(store => store.BeginAsync(
+            "tenant-a",
             "idempotency-test",
             "same-request-id",
             "raw:/v1/images/generations",
@@ -194,8 +200,9 @@ public sealed class GatewayRuntimeGovernanceTests
         begins.Count(x => x.State == GatewayExecutionBeginState.Started).ShouldBe(1);
         begins.Count(x => x.State == GatewayExecutionBeginState.Running).ShouldBe(7);
         var owner = begins.Single(x => x.State == GatewayExecutionBeginState.Started);
-        await stores[0].UnknownAsync(owner.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
+        await stores[0].UnknownAsync("tenant-a", owner.ExecutionId, "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
         var status = await stores[1].GetAsync(
+            "tenant-a",
             "idempotency-test",
             "same-request-id",
             "raw:/v1/images/generations",
@@ -235,6 +242,7 @@ public sealed class GatewayRuntimeGovernanceTests
         await scope.CreateGovernanceIndexesAsync();
         var store = new GatewayRequestExecutionStore(scope.Context);
         var begin = await store.BeginAsync(
+            "tenant-a",
             "large-replay-test",
             "large-response-request",
             "openai-images-generation",
@@ -243,9 +251,10 @@ public sealed class GatewayRuntimeGovernanceTests
         begin.State.ShouldBe(GatewayExecutionBeginState.Started);
 
         var oversized = new string('x', GatewayRequestExecutionStore.MaxReplayResponseBytes + 1);
-        await store.CompleteAsync(begin.ExecutionId, oversized, CancellationToken.None);
+        await store.CompleteAsync("tenant-a", begin.ExecutionId, oversized, CancellationToken.None);
 
         var replay = await store.BeginAsync(
+            "tenant-a",
             "large-replay-test",
             "large-response-request",
             "openai-images-generation",
@@ -253,6 +262,7 @@ public sealed class GatewayRuntimeGovernanceTests
             CancellationToken.None);
         replay.State.ShouldBe(GatewayExecutionBeginState.ReplayUnavailable);
         var stored = await store.GetAsync(
+            "tenant-a",
             "large-replay-test",
             "large-response-request",
             "openai-images-generation",
@@ -274,6 +284,7 @@ public sealed class GatewayRuntimeGovernanceTests
         var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months").InsertOneAsync(new GatewayBudgetMonthRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "pending-test",
             RequestType = "chat",
             MonthStart = monthStart,
@@ -283,6 +294,7 @@ public sealed class GatewayRuntimeGovernanceTests
         });
         await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations").InsertOneAsync(new GatewayBudgetReservationRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "pending-test",
             RequestType = "chat",
             RequestId = "pending-request",
@@ -312,6 +324,7 @@ public sealed class GatewayRuntimeGovernanceTests
         var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months").InsertOneAsync(new GatewayBudgetMonthRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "unknown-test",
             RequestType = "image-gen",
             MonthStart = monthStart,
@@ -321,6 +334,7 @@ public sealed class GatewayRuntimeGovernanceTests
         });
         var reservation = new GatewayBudgetReservationRecord
         {
+            TenantId = "tenant-a",
             AppCallerCode = "unknown-test",
             RequestType = "image-gen",
             RequestId = "unknown-request",
@@ -357,6 +371,7 @@ public sealed class GatewayRuntimeGovernanceTests
         const string key = "llmgw_test_scoped_key";
         var keyRecord = new GatewayServiceKeyRecord
         {
+            TenantId = "tenant-a",
             Name = "test-key",
             KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
             SourceSystem = "external-system",
@@ -364,8 +379,7 @@ public sealed class GatewayRuntimeGovernanceTests
             IngressProtocols = ["openai-compatible"],
             Scopes = ["chat"],
         };
-        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
-            .InsertOneAsync(keyRecord);
+        await InsertServiceKeyAsync(scope.Context, keyRecord);
         var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
 
         var allowed = await authorizer.AuthorizeAsync(
@@ -386,6 +400,7 @@ public sealed class GatewayRuntimeGovernanceTests
             CancellationToken.None);
 
         allowed.Allowed.ShouldBeTrue();
+        allowed.TenantId.ShouldBe("tenant-a");
         denied.Allowed.ShouldBeFalse();
         denied.Authenticated.ShouldBeTrue();
         denied.StatusCode.ShouldBe(403);
@@ -393,6 +408,37 @@ public sealed class GatewayRuntimeGovernanceTests
             .GetCollection<BsonDocument>("llmgw_operation_audits")
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "service_key.scope_denied"));
         auditCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RequestExecution_SameIdentityIsIsolatedByTenant()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var store = new GatewayRequestExecutionStore(scope.Context);
+
+        var tenantA = await store.BeginAsync("tenant-a", "shared-caller", "shared-request", "raw-submit", "fingerprint-a", CancellationToken.None);
+        var tenantB = await store.BeginAsync("tenant-b", "shared-caller", "shared-request", "raw-submit", "fingerprint-b", CancellationToken.None);
+
+        tenantA.State.ShouldBe(GatewayExecutionBeginState.Started);
+        tenantB.State.ShouldBe(GatewayExecutionBeginState.Started);
+        (await store.GetAsync("tenant-a", "shared-caller", "shared-request", "raw-submit", CancellationToken.None))!.Fingerprint.ShouldBe("fingerprint-a");
+        (await store.GetAsync("tenant-b", "shared-caller", "shared-request", "raw-submit", CancellationToken.None))!.Fingerprint.ShouldBe("fingerprint-b");
+        (await store.GetAsync("tenant-c", "shared-caller", "shared-request", "raw-submit", CancellationToken.None)).ShouldBeNull();
+    }
+
+    [Fact]
+    public void CancellationRegistry_SameRequestIdentityIsIsolatedByTenant()
+    {
+        var registry = new GatewayCancellationRegistry();
+        using var tenantA = registry.Register("tenant-a", "shared-caller", "shared-request");
+        using var tenantB = registry.Register("tenant-b", "shared-caller", "shared-request");
+
+        registry.Cancel("tenant-a", "shared-caller", "shared-request").ShouldBeTrue();
+        tenantA.Token.IsCancellationRequested.ShouldBeTrue();
+        tenantB.Token.IsCancellationRequested.ShouldBeFalse();
+        registry.Cancel("tenant-c", "shared-caller", "shared-request").ShouldBeFalse();
     }
 
     [Fact]
@@ -405,6 +451,7 @@ public sealed class GatewayRuntimeGovernanceTests
         const string key = "llmgw_test_empty_binding_key";
         var keyRecord = new GatewayServiceKeyRecord
         {
+            TenantId = "tenant-a",
             Name = "empty-binding-key",
             KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
             SourceSystem = "*",
@@ -412,8 +459,7 @@ public sealed class GatewayRuntimeGovernanceTests
             IngressProtocols = [],
             Scopes = [],
         };
-        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
-            .InsertOneAsync(keyRecord);
+        await InsertServiceKeyAsync(scope.Context, keyRecord);
         var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
 
         var denied = await authorizer.AuthorizeAsync(
@@ -438,9 +484,9 @@ public sealed class GatewayRuntimeGovernanceTests
         await using var scope = testDatabase;
 
         const string key = "llmgw_test_invoke_only_key";
-        await scope.Context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys")
-            .InsertOneAsync(new GatewayServiceKeyRecord
+        await InsertServiceKeyAsync(scope.Context, new GatewayServiceKeyRecord
             {
+                TenantId = "tenant-a",
                 Name = "invoke-only",
                 KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
                 SourceSystem = "external",
@@ -484,6 +530,18 @@ public sealed class GatewayRuntimeGovernanceTests
         {
             return null;
         }
+    }
+
+    private static async Task InsertServiceKeyAsync(LlmGatewayDataContext context, GatewayServiceKeyRecord record)
+    {
+        await context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+        await context.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+            .InsertOneAsync(new GatewayServiceKeyDirectoryRecord
+            {
+                KeyHash = record.KeyHash,
+                TenantId = record.TenantId,
+                ServiceKeyId = record.Id,
+            });
     }
 
     private sealed class TestDatabase : IAsyncDisposable

@@ -7,6 +7,8 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 public sealed class GatewayServiceKeyRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string KeyHash { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
@@ -21,9 +23,20 @@ public sealed class GatewayServiceKeyRecord
 }
 
 [BsonIgnoreExtraElements]
+public sealed class GatewayServiceKeyDirectoryRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string KeyHash { get; set; } = string.Empty;
+    public string TenantId { get; set; } = string.Empty;
+    public string ServiceKeyId { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
 public sealed class GatewayBudgetMonthRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public DateTime MonthStart { get; set; }
@@ -37,6 +50,7 @@ public sealed class GatewayBudgetMonthRecord
 public sealed class GatewayBudgetReservationRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
@@ -54,6 +68,7 @@ public sealed class GatewayBudgetReservationRecord
 public sealed class GatewayRequestExecutionRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
     public string Operation { get; set; } = string.Empty;
@@ -70,6 +85,7 @@ public sealed class GatewayRequestExecutionRecord
 public sealed class GatewayMultipartObjectRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
     public string RefKey { get; set; } = string.Empty;
     public string Sha256 { get; set; } = string.Empty;
@@ -86,6 +102,7 @@ public sealed class GatewayMultipartObjectRecord
 public sealed class GatewayLifecycleRunRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
     public string Mode { get; set; } = "dry-run";
     public string Status { get; set; } = "running";
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
@@ -114,6 +131,7 @@ public sealed class GatewayLifecycleRunRecord
 public sealed class GatewayProviderConcurrencySlotRecord
 {
     public string Id { get; set; } = string.Empty;
+    public string TenantId { get; set; } = string.Empty;
     public string ResourceKey { get; set; } = string.Empty;
     public int Slot { get; set; }
     public string LeaseId { get; set; } = string.Empty;

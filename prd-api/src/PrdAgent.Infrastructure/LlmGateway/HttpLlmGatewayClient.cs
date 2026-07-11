@@ -37,6 +37,7 @@ public sealed class HttpLlmGatewayClient
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
     private readonly int _failedMultipartHours;
+    private readonly string _internalTenantId;
 
     /// <summary>
     /// 与 serving 端一致的序列化口径：PascalCase + 不写 null 字段。
@@ -67,6 +68,9 @@ public sealed class HttpLlmGatewayClient
         // 直接 401 响亮失败，而非用可预测的共享密钥静默通过、削弱本 PR 新增的密钥门（Cursor Bugbot）。
         _gatewayKey = config["LlmGwServe:ApiKey"] ?? string.Empty;
         _failedMultipartHours = Math.Max(1, config.GetValue("LlmGateway:Retention:FailedMultipartHours", 72));
+        _internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
     }
 
     private HttpClient CreateHttp(bool infiniteTimeout)
@@ -244,6 +248,7 @@ public sealed class HttpLlmGatewayClient
                     request.MultipartFiles!,
                     _assetStorage,
                     _gatewayData,
+                    string.IsNullOrWhiteSpace(request.Context?.TenantId) ? _internalTenantId : request.Context.TenantId,
                     request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
                     _failedMultipartHours,
                     ct);
@@ -336,6 +341,7 @@ public sealed class HttpLlmGatewayClient
         Dictionary<string, (string FileName, byte[] Content, string MimeType)> files,
         IAssetStorage storage,
         LlmGatewayDataContext? gatewayData,
+        string tenantId,
         string requestId,
         int failedMultipartHours,
         CancellationToken ct)
@@ -368,9 +374,10 @@ public sealed class HttpLlmGatewayClient
                 {
                     await gatewayData.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
                         .ReplaceOneAsync(
-                            x => x.RefKey == key,
+                            x => x.TenantId == tenantId && x.RefKey == key,
                             new GatewayMultipartObjectRecord
                             {
+                                TenantId = tenantId,
                                 RequestId = requestId,
                                 RefKey = key,
                                 Sha256 = sha256,
