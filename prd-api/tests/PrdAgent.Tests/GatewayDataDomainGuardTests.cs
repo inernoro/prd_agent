@@ -1629,6 +1629,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", deploy);
         Assert.Contains("COMPOSE_PROJECT_NAME", deploy);
         Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", stage);
+        Assert.Contains("AI_ACCESS_KEY=${AI_ACCESS_KEY:-}", compose);
         Assert.Contains("wait_for_llmgw_serving_readiness", deploy);
         Assert.Contains("llmgw-prod-topology-preflight.sh", deploy);
         Assert.Contains("LLMGW_SERVE_BASE_URL must be", topologyPreflight);
