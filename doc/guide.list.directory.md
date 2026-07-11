@@ -664,6 +664,9 @@
 - [LLM Gateway 生产事实、隐性风险与架构修正 · 计划](plan.platform.llm-gateway-production-hardening) `plan.platform.llm-gateway-production-hardening`
   > 固化代码合并与生产切换的真实状态，区分已关闭和未关闭风险，明确 MAP/GW 架构边界、整改顺序、完成 Gate 和量化进度规则
 
+- [LLM Gateway 已知可用性收口计划](plan.platform.llm-gateway-known-availability-closeout) `plan.platform.llm-gateway-known-availability-closeout`
+  > 三个有限 PR 收口维护发布、MAP 配置依赖和数据生命周期；最终只做一次生产部署与一次性能力矩阵验收
+
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
 
@@ -1068,6 +1071,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
 | 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |
 | 2026-07-10 | 更新 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产事实、隐性风险与架构修正 · 计划 |
 | 2026-07-10 | 新增 | `design.platform.llm-gateway.migration-retrospective` | LLM Gateway 全量迁移与生产发布复盘 |

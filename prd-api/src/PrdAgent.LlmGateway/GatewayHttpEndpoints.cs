@@ -4182,10 +4182,13 @@ public static class GatewayHttpEndpoints
             .Set(x => x.LastSeenAt, now)
             .Set(x => x.UpdatedAt, now)
             .Inc(x => x.TotalSeen, 1)
+            .AddToSet(x => x.ObservedModelPolicies, modelPolicy)
+            .AddToSet(x => x.ObservedParameterPolicies, parameterPolicy)
         };
         if (modelPoolId is not null)
         {
             updates.Add(Builders<GatewayAppCallerRecord>.Update.SetOnInsert(x => x.ModelPoolId, modelPoolId));
+            updates.Add(Builders<GatewayAppCallerRecord>.Update.AddToSet(x => x.ObservedModelPoolIds, modelPoolId));
         }
         var update = Builders<GatewayAppCallerRecord>.Update.Combine(updates);
 
