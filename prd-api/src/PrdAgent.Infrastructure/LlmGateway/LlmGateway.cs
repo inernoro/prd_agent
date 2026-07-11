@@ -1071,6 +1071,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             },
             Context = new GatewayRequestContext
             {
+                TenantId = sourceContext?.TenantId,
+                TeamId = sourceContext?.TeamId,
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),

@@ -112,6 +112,8 @@ public class GatewayLLMClient : ILLMClient
             TimeoutSeconds = 120,
             Context = new GatewayRequestContext
             {
+                TenantId = scopeCtx?.TenantId,
+                TeamId = scopeCtx?.TeamId,
                 RequestId = scopeCtx?.RequestId,
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,

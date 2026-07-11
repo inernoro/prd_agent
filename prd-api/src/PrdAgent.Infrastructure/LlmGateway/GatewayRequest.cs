@@ -350,6 +350,8 @@ public sealed class GatewayIngressRequest
             TimeoutSeconds = timeoutSeconds,
             Context = new GatewayRequestContext
             {
+                TenantId = Context?.TenantId,
+                TeamId = Context?.TeamId,
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,

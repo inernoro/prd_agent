@@ -89,6 +89,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         var current = _ctxAccessor?.Current;
         var context = new GatewayRequestContext
         {
+            TenantId = current?.TenantId,
+            TeamId = current?.TeamId,
             RequestId = current?.RequestId ?? Guid.NewGuid().ToString("N"),
             GroupId = current?.GroupId,
             RunId = current?.RunId,
