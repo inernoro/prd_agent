@@ -84,6 +84,16 @@ CDS 全局默认(_global 变量层)
 - `GET /api/branches/:id/effective-config`:envLayers 分层摘要 + 每 profile 的 envProvenance(maskSecrets 脱敏,缺模板值不 fail 而是 `envError` 显性化)+ `plan`(将起的容器/网络/需拉起的共享 infra,记录态不打 docker)+ `derivedFrom` 溯源。
 - 前端 `EffectiveConfigPanel`:分支抽屉「配置」tab + 分支详情页「生效配置」区。继承链树、来源徽标、shadowed 覆盖链、部署计划、派生行(含「重新拉取来源配置」按钮)。
 
+### 四.1 密钥脱敏加固(2026-07-07)
+
+`effective-config` 溯源端点与容器 exec/日志输出共享同一套值形态检测 SSOT(`looksLikeSecretBearingValue`),此前存在三处遗漏,已修复:
+
+- **camelCase / .NET 风格 key 未命中**:`isSensitiveKey` 原判定只覆盖蛇形/全大写 key,`Changelog__GitHubToken`/`GitHubOAuth__ClientSecret`/`ApiKeyCrypto__LegacySecrets` 这类 .NET 双下划线层级 key 未脱敏 —— 补 camelCase 边界归一后统一命中。
+- **连接串内联口令**:`SQLSERVER_URL=Server=x;...;Password=...` 类连接串,`;` 分隔的深处 `Password=`/`pwd=` 段此前不被 KEY=VALUE 截断逻辑覆盖,新增连接串口令值检测(SSOT `maskEnvRecord`)+ `scheme://user:pass@` 形态识别。
+- **中性 key + 敏感值的行级泄漏**:`maskLine`(容器日志/资源日志/日志快照的脱敏入口)此前只按 key 名判定,`echo $SQLSERVER_URL` / `echo $NEUTRAL`(值为 `ghp_...`)这类"中性 key 名但值本身是令牌"的输出未被脱敏;现接入与 `maskEnvRecord` 同口径的值形态检测。
+
+三处修复统一收敛到 `looksLikeSecretBearingValue`,不再存在"溯源端点脱敏了、容器 exec 输出没脱敏"的双路径漂移(源自 Codex PR #1008 review)。
+
 ---
 
 ## 五、快照与回滚(W3d)

@@ -12,7 +12,7 @@
 
 - Linear.app 的骨架：极窄字距、静态背景、滚动 fade-up、单一长景、大量留白
 - Retro-Futurism 的点缀：HUD 终端 chip、CRT 扫描线、Synthwave 地平线、Tron 透视地板、霓虹呼吸灯
-- 去紫化：主色从"AI 紫"迁移到冷白 (slate-300) + 青 (#00f0ff) + 玫瑰 (#f43f5e)，紫 (#7c3aed) 只作为三色渐变的中段
+- 品牌主色（2026-07-07 起）：靛蓝-紫罗兰同族色（`#5B8DEF` → `#7C6CF0` → `#A78BFA`），对齐应用内 `--accent-primary #818CF8` 与登录后工作台的观感，取代早期青 (#00f0ff) → 紫 (#7c3aed) → 玫红 (#f43f5e) 三色霓虹。邻近色相"彩而不乱"，不再走"去紫"策略——紫罗兰现在是主色而非需要克制的点缀色
 
 ---
 
@@ -24,10 +24,10 @@
 
 ```ts
 // 出处：prd-admin/src/pages/home/sections/HeroSection.tsx
-export const HERO_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
+export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
 ```
 
-用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字。
+用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字、登录页 RetroHorizon 装饰与主 CTA 投影（2026-07-07 起登录页同步收敛到同一渐变，不再自造独立配色）。
 
 ### R2 · 背景只能用 `StaticBackdrop`
 
@@ -104,19 +104,19 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #
 - `prefers-reduced-motion` 时必须禁用
 - 其他 section 的 h2 只允许**静态** `text-shadow: 0 0 32px ${accent}2e`
 
-### R8 · "去紫"原则
+### R8 · 靛蓝-紫罗兰同族色原则（2026-07-07 起替代旧"去紫"原则）
 
-紫色 `#7c3aed` 只允许出现在 `HERO_GRADIENT` 的中段。单独使用的强调色优先顺序：
+品牌强调色统一收敛到 `HERO_GRADIENT` 的靛蓝-紫罗兰同族色系，不再刻意压制紫色。单独使用的强调色优先顺序：
 
 ```
 slate-300 (#cbd5e1)  ← 冷白，主基调
-cyan      (#00f0ff)  ← 主 accent
-teal      (#0e7490)  ← 次 accent
-rose      (#f43f5e)  ← 强调 / 告警 / 热度
-emerald   (#34d399)  ← 状态 / 存活 / 成功
+indigo    (#5B8DEF)  ← 主 accent（HERO_GRADIENT 起点）
+violet    (#7C6CF0)  ← 次 accent（HERO_GRADIENT 中段，对齐 --accent-primary #818CF8）
+violet-2  (#A78BFA)  ← HERO_GRADIENT 终点，浅紫罗兰
+emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 ```
 
-禁止：任何单独的全紫按钮、全紫卡片、全紫 hover。紫色只能作为渐变的一段或极小面积的发光。
+禁止：脱离 `HERO_GRADIENT` 同族色系另造强调色（如恢复旧青色 `#00f0ff` 或玫红 `#f43f5e` 作单独高亮）。允许：紫罗兰作为独立强调色使用（不再要求"只能小面积点缀"），但仍需引用 `HERO_GRADIENT` 或其色阶，不得自造新的紫色值。
 
 ### R9 · 卡片玻璃化
 
@@ -149,9 +149,12 @@ border-radius: 22px;                   /* clamp 18-24 */
 | 边框默认 | `rgba(255,255,255,0.18)` | input、outline button |
 | 边框 hover | `rgba(203,213,225,0.5)` | 冷白高亮 |
 | 冷白光晕 | `rgba(203,213,225,0.28)` | 顶部背景光晕 |
-| 青光 | `rgba(0,240,255,0.5)` | HUD / accent |
-| 玫瑰 | `rgba(244,63,94,0.5)` | synthwave 地平线 |
+| 靛蓝 | `#5B8DEF` | HERO_GRADIENT 起点 / 主 accent |
+| 紫罗兰 | `#7C6CF0` | HERO_GRADIENT 中段（对齐 `--accent-primary #818CF8`） |
+| 浅紫罗兰 | `#A78BFA` | HERO_GRADIENT 终点 |
 | 存活绿 | `#34d399` | live dot |
+
+> 2026-07-07 起 synthwave 地平线/太阳/Tron 地板等装饰同步收敛到靛蓝-紫罗兰同族色，不再使用青 (`#00f0ff`) / 玫瑰 (`#f43f5e`) 独立配色。
 
 ---
 
@@ -183,7 +186,7 @@ border-radius: 22px;                   /* clamp 18-24 */
 | 在 section 里硬写 `<h2 className="text-5xl ...">` | 用 `<SectionHeader>` |
 | 用 framer-motion 做入场动画 | 用 `<Reveal>` |
 | 按钮宽度自适应文字 | 主次 CTA 对称，`h-12 px-8 rounded-full` |
-| 用紫色做单独的高亮块 | 用冷白 / 青，紫色只做渐变中段 |
+| 脱离 `HERO_GRADIENT` 同族色系另造强调色（恢复旧青/玫红） | 强调色统一走靛蓝-紫罗兰色阶 |
 | 中文硬编码 | 走 `useLanguage()` 字典 |
 | 在 fixed 层画"地平线亮带" | 局部化到 Hero 内部，absolute 绝不 fixed |
 | 标题持续闪烁 | 只有 hero h1 允许 5s 极慢呼吸 |
@@ -199,7 +202,7 @@ border-radius: 22px;                   /* clamp 18-24 */
 - [ ] 所有"小标签"是 HUD chip 规格（mono + UPPERCASE + accent 发光边）
 - [ ] 所有进场元素包了 `<Reveal>`，且尊重 reduced-motion
 - [ ] 主次 CTA 对称双胞胎（`h-12 px-8 rounded-full`）
-- [ ] 没有裸紫色高亮块，紫色只在 HERO_GRADIENT 中段
+- [ ] 没有脱离 `HERO_GRADIENT` 同族色系的独立强调色（旧青 `#00f0ff` / 旧玫红 `#f43f5e`）
 - [ ] 文案走 i18n 字典，或明确标注为"伪数据保持中文"
 - [ ] 卡片符合 R9 玻璃化规格
 
