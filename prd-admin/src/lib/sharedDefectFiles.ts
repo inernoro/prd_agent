@@ -6,7 +6,9 @@
  *
  * 消费分两步以规避 React StrictMode 双执行：
  *   1. consumeSharedDefectPayload()（异步）：读 Cache → 删缓存条目 → 存入模块级 stash
- *   2. claimSharedDefectPayload()（同步）：面板挂载时领取 stash 并清空
+ *   2. claimSharedDefectPayload()（同步）：DefectAgentPage 领取 stash 并清空，
+ *      随后写入 defectStore.pendingSharePayload，由提交面板订阅领取
+ *      （面板已打开时再次分享也能注入，见 store 的 consumePendingSharePayload）
  * 重复调用均安全返回 null。
  */
 

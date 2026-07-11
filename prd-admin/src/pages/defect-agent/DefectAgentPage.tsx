@@ -27,7 +27,7 @@ import {
   getDefectDeepLinkId,
   hasDefectSubmitAction,
 } from './defectDeepLink';
-import { consumeSharedDefectPayload } from '@/lib/sharedDefectFiles';
+import { claimSharedDefectPayload, consumeSharedDefectPayload } from '@/lib/sharedDefectFiles';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -70,11 +70,16 @@ export default function DefectAgentPage() {
   const querySubmitAction = hasDefectSubmitAction(searchParams);
 
   // ?action=submit 深链（手机截图分享 share_target 由 sw.js 重定向到这里）：
-  // 先把分享暂存的截图读进内存 stash，再拉起提交面板（面板挂载时同步领取注入）
+  // 读出分享暂存的截图放进 store 的 pendingSharePayload，再拉起提交面板。
+  // 面板订阅该字段——无论面板是刚挂载还是已经开着（用户边写边再分享一张），都能领取注入
   useEffect(() => {
     if (!querySubmitAction) return;
     setSearchParams(clearDefectSubmitActionParams(searchParams), { replace: true });
     void consumeSharedDefectPayload().finally(() => {
+      const payload = claimSharedDefectPayload();
+      if (payload) {
+        useDefectStore.getState().setPendingSharePayload(payload);
+      }
       setShowSubmitPanel(true);
     });
   }, [querySubmitAction, searchParams, setSearchParams, setShowSubmitPanel]);

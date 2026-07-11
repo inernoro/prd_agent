@@ -19,7 +19,6 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { claimSharedDefectPayload } from '@/lib/sharedDefectFiles';
 import { mergeAiScreenshotDescription } from '@/lib/defectAiFill';
 import {
   X,
@@ -74,6 +73,7 @@ export function DefectSubmitPanel() {
     setShowSubmitPanel,
     addDefectToList,
     loadStats,
+    pendingSharePayload,
   } = useDefectStore();
 
   // 从 sessionStorage 读取上次选择
@@ -195,10 +195,12 @@ export function DefectSubmitPanel() {
     }
   }, []);
 
-  // 手机截图分享（share_target）注入：面板打开时领取暂存的截图/文字。
-  // claim 领取即清空，StrictMode 二次执行安全返回 null。
+  // 手机截图分享（share_target）注入：订阅 store 的 pendingSharePayload——
+  // 面板刚挂载时已有的、以及面板开着期间用户再次分享到达的内容都能随时领取。
+  // consume 领取即清空，StrictMode / 重复触发安全返回 null。
   useEffect(() => {
-    const payload = claimSharedDefectPayload();
+    if (!pendingSharePayload) return;
+    const payload = useDefectStore.getState().consumePendingSharePayload();
     if (!payload) return;
     if (payload.text) {
       const sharedText = payload.text;
@@ -210,7 +212,7 @@ export function DefectSubmitPanel() {
       addFiles(payload.files);
       toast.success(`已接收 ${payload.files.length} 张分享截图，AI 正在识别内容...`);
     }
-  }, [addFiles]);
+  }, [pendingSharePayload, addFiles]);
 
   // Handle paste for images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {

@@ -68,6 +68,9 @@ interface DefectState {
   showTemplateDialog: boolean;
   viewMode: ViewMode;
   readIds: Set<string>;
+  // 手机截图分享（share_target）待注入内容：页面消费 Cache 后放这里，
+  // 提交面板订阅该字段随时领取——面板已打开时再次分享也能注入
+  pendingSharePayload: { files: File[]; text?: string } | null;
 
   // Actions
   loadDefects: () => Promise<void>;
@@ -86,6 +89,8 @@ interface DefectState {
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
   setShowTemplateDialog: (show: boolean) => void;
+  setPendingSharePayload: (payload: { files: File[]; text?: string }) => void;
+  consumePendingSharePayload: () => { files: File[]; text?: string } | null;
   setViewMode: (mode: ViewMode) => void;
   markAsRead: (id: string) => void;
   isRead: (id: string) => boolean;
@@ -125,6 +130,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   selectedDefectId: null,
   showSubmitPanel: false,
   showTemplateDialog: false,
+  pendingSharePayload: null,
   viewMode: loadViewMode(),
   readIds: loadReadIds(),
 
@@ -258,6 +264,12 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   },
   setShowSubmitPanel: (show) => set({ showSubmitPanel: show }),
   setShowTemplateDialog: (show) => set({ showTemplateDialog: show }),
+  setPendingSharePayload: (payload) => set({ pendingSharePayload: payload }),
+  consumePendingSharePayload: () => {
+    const payload = get().pendingSharePayload;
+    if (payload) set({ pendingSharePayload: null });
+    return payload;
+  },
   setViewMode: (mode) => {
     set({ viewMode: mode });
     try { sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode); } catch { /* ignore */ }
@@ -327,6 +339,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
       selectedDefectId: null,
       showSubmitPanel: false,
       showTemplateDialog: false,
+      pendingSharePayload: null,
       viewMode: loadViewMode(),
       readIds: loadReadIds(),
     });
