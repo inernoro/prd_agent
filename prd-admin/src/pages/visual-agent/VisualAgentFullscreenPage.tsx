@@ -9,14 +9,20 @@ import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDial
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from './VisualAgentWorkspaceEditorPage';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 export default function VisualAgentFullscreenPage() {
   const navigate = useNavigate();
   const params = useParams();
   const workspaceId = params.workspaceId;
+  const isMobile = useIsMobile();
 
   // 判断是列表页还是编辑页
   const isEditor = !!workspaceId;
+  // 移动端编辑器（MobileVisualAgentEditor）自带顶部返回与操作条：
+  // 本页的浮动返回钮/教程 pill 会叠压其 header（2026-07-10 用户反馈"顶部看不清"），一律隐藏。
+  // 教程入口按 onboarding-tips 规范手机端走「我的 → 学习中心」承载。
+  const hideFloatingChrome = isMobile && isEditor;
 
   // 返回目标：编辑页返回列表页，列表页返回首页
   const onBack = () => {
@@ -40,6 +46,7 @@ export default function VisualAgentFullscreenPage() {
       <GlobalDefectSubmitDialog />
 
       {/* 返回按钮 - 固定在左上角 */}
+      {!hideFloatingChrome && (
       <button
         type="button"
         onClick={onBack}
@@ -61,10 +68,11 @@ export default function VisualAgentFullscreenPage() {
       >
         <ArrowLeft size={18} />
       </button>
+      )}
 
       {/* 编辑器(全屏画布,无页头行)的本页教程入口:放右上角,与左上角返回按钮对称,属该页固定 chrome。
           列表页(VisualAgentWorkspaceListPage)自己已在 HeroSection 内嵌入口,故此处仅编辑器渲染避免重复。 */}
-      {isEditor && (
+      {isEditor && !hideFloatingChrome && (
         <div className="fixed top-5 right-5 z-50">
           <TipsEntryButton compact />
         </div>

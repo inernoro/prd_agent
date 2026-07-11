@@ -87,6 +87,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   global = new FakeSplitCollection<{ _id: string; state: Omit<any, 'projects' | 'branches'>; updatedAt: string }>();
   projects = new FakeSplitCollection<{ _id: string; doc: any; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
+  deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: any; updatedAt: string }>();
+  deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: any; updatedAt: string }>();
   webhookDeliveries = new FakeSplitCollection<{ _id: string; receivedAt: string; doc: any; updatedAt: string }>();
   activityLogs = new FakeSplitCollection<{ _id: string; projectId: string; at: string; doc: any; updatedAt: string }>();
@@ -95,6 +97,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   globalCollection() { return this.global; }
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
+  deploymentRunsCollection() { return this.deploymentRuns; }
+  deploymentVersionsCollection() { return this.deploymentVersions; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
   webhookDeliveriesCollection() { return this.webhookDeliveries; }
   activityLogsCollection() { return this.activityLogs; }

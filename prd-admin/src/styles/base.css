@@ -232,6 +232,15 @@ select optgroup {
   display: none; /* Chrome/Safari/Opera */
 }
 
+/* 通用：隐藏滚动条但保留滚动（横滚 chips 行等移动端场景） */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+
 /* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
 .nav-item-hover:hover {
   background: rgba(255, 255, 255, 0.04) !important;

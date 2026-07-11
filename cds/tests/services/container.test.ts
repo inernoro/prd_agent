@@ -119,6 +119,53 @@ describe('ContainerService', () => {
       writeSpy.mockRestore();
     });
 
+    it('builds a managed source artifact once and starts the immutable image without a source mount', async () => {
+      const tmp = fs.mkdtempSync('/tmp/cds-managed-container-');
+      fs.writeFileSync(`${tmp}/package.json`, '{}');
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker image inspect/, () => ({ stdout: '', stderr: 'missing', exitCode: 1 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker create/, () => ({ stdout: 'builder-id', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: 'build complete', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
+      const runtime = makeService();
+
+      try {
+        await service.runService({
+          ...makeEntry(),
+          projectId: 'p1',
+          worktreePath: tmp,
+          githubCommitSha: '1234567890abcdef',
+        }, makeProfile({
+          projectId: 'p1',
+          workDir: '.',
+          command: 'pnpm install && pnpm build && pnpm start',
+          managedBuild: {
+            stack: 'node',
+            installCommand: 'pnpm install',
+            buildCommand: 'pnpm build',
+            startCommand: 'pnpm start',
+            artifactImage: 'cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678',
+          },
+        }), runtime);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+
+      expect(mock.commands.some((command) => command.includes('docker cp') && command.includes(':/app'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker exec') && command.includes('pnpm install && pnpm build'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker commit') && command.includes('cds-managed/p1-api:sha-'))).toBe(true);
+      expect(mock.commands.some((command) => command.startsWith('docker pull'))).toBe(false);
+      const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
+      expect(runCommand).toContain("'cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678'");
+      expect(runCommand).toContain("sh -c 'pnpm start'");
+      expect(runCommand).not.toContain(`-v '${tmp}':'/app'`);
+      expect(runtime.deployedImage).toBe('cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678');
+    });
+
     it('uses platform commit metadata instead of project env overrides', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

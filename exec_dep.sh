@@ -72,6 +72,7 @@ set -eu
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
+LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
@@ -989,8 +990,9 @@ run_llmgw_release_gate_if_needed() {
   if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
     args="$args --report-md $LLMGW_GATE_REPORT_MD"
   fi
-  if [ -n "$expect_commit" ]; then
-    args="$args --shadow-release-commit $expect_commit"
+  shadow_release_commit="$(printf '%s' "${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}" | xargs || true)"
+  if [ -n "$shadow_release_commit" ]; then
+    args="$args --shadow-release-commit $shadow_release_commit"
   fi
 
   old_ifs="$IFS"
@@ -1079,7 +1081,7 @@ run_llmgw_release_gate_if_needed() {
   IFS="$old_ifs"
 
   if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required before deploy (same-commit shadow evidence only; commit probe runs after compose up)"
+    echo "LLM Gateway release gate: required before deploy (selected shadow evidence commit; new commit probes run after compose up)"
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
@@ -1202,7 +1204,9 @@ run_llmgw_post_deploy_verification_if_needed() {
   fi
 }
 
-if [ -n "${SKIP_API_PULL:-}" ]; then
+if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
+  echo "LLM Gateway verify-only: skipping image pull"
+elif [ -n "${SKIP_API_PULL:-}" ]; then
   echo "Skipping release image pull (SKIP_API_PULL=1)"
 else
   echo "Pulling release images:"
@@ -1305,14 +1309,31 @@ wait_for_llmgw_serving_readiness() {
   done
 }
 
-echo "Ensuring Docker network exists..."
-docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
+if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
+  echo "LLM Gateway verify-only: preserving current containers"
+else
+  echo "Ensuring Docker network exists..."
+  docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
-echo "Starting compose (force recreate to ensure new image is used)..."
-$COMPOSE up -d --force-recreate
+  echo "Starting compose (force recreate to ensure new image is used)..."
+  $COMPOSE up -d --force-recreate
 
-wait_for_llmgw_serving_readiness
+  wait_for_llmgw_serving_readiness
 
-refresh_gateway_after_compose
+  refresh_gateway_after_compose
+
+  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
+  if [ -n "$deploy_receipt_file" ]; then
+    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
+    mkdir -p "$deploy_receipt_dir"
+    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
+    {
+      printf 'RELEASE_REF=%s\n' "$TAG"
+      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$deploy_receipt_tmp"
+    mv "$deploy_receipt_tmp" "$deploy_receipt_file"
+    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
+  fi
+fi
 
 run_llmgw_post_deploy_verification_if_needed

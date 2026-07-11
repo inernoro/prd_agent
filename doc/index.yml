@@ -104,6 +104,7 @@ docs:
   design.frontend.toast: Toast 通知系统实现
   design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds.managed-delivery: CDS 托管交付契约（DeploymentRun 唯一事实源 + 不可变 DeploymentVersion + managed/compose 双模式 + 结构化诊断）
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
@@ -160,6 +161,7 @@ docs:
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
+  guide.cds.managed-delivery: CDS 托管交付使用指南
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程
@@ -277,6 +279,7 @@ docs:
   plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
   plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
   plan.platform.llm-gateway-production-hardening: LLM Gateway 生产事实、隐性风险与架构修正 · 计划
+  plan.platform.llm-gateway-known-availability-closeout: LLM Gateway 已知可用性收口计划（三个有限 PR、一次生产部署、一次性验收）
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一

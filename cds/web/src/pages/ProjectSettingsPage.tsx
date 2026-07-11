@@ -279,6 +279,7 @@ type TabValue =
   | 'comment-template'
   | 'env'
   | 'runtime-defaults'
+  | 'delivery'
   | 'compose'
   | 'infra'
   | 'storage'
@@ -313,6 +314,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
+      { value: 'delivery', label: '交付模式', icon: Server },
       { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
@@ -540,6 +542,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="runtime-defaults">
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="delivery">
+                  <ProjectDeliveryTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="compose">
                   <ProjectComposeTab projectId={project.id} onToast={setToast} />
@@ -2736,6 +2741,176 @@ const activityTypeLabels: Record<string, string> = {
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
 };
+
+interface ProjectDeliveryResponse {
+  projectId: string;
+  mode: 'managed' | 'compose';
+  managedSpec: {
+    apps: Array<Record<string, unknown>>;
+    capabilities: Array<Record<string, unknown>>;
+  };
+  effectiveProfiles: Array<{
+    id: string;
+    name: string;
+    workDir: string;
+    containerPort: number;
+    dependsOn?: string[];
+    readinessProbe?: { path?: string; noHttp?: boolean };
+    managedBuild?: {
+      stack: string;
+      installCommand?: string;
+      buildCommand?: string;
+      startCommand: string;
+      artifactImage: string;
+    };
+  }>;
+  planUpdatedAt?: string;
+}
+
+function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast: (message: string) => void }): JSX.Element {
+  const [state, setState] = useState<{ status: 'loading' | 'ok' | 'error'; data?: ProjectDeliveryResponse; message?: string }>({ status: 'loading' });
+  const [specText, setSpecText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      const data = await apiRequest<ProjectDeliveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/delivery`);
+      setState({ status: 'ok', data });
+      setSpecText(JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2));
+    } catch (err) {
+      setState({ status: 'error', message: messageFromError(err) });
+    }
+  }, [projectId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const saveMode = useCallback(async (mode: 'managed' | 'compose') => {
+    setSaving(true);
+    try {
+      let managedSpec: unknown;
+      if (mode === 'managed') {
+        try {
+          managedSpec = specText.trim() ? JSON.parse(specText) : { apps: [], capabilities: [] };
+        } catch {
+          throw new Error('高级声明不是合法 JSON');
+        }
+      }
+      await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/delivery`, {
+        method: 'PUT',
+        body: { mode, managedSpec },
+      });
+      if (mode === 'managed') {
+        try {
+          await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/managed-plan`, { method: 'POST', body: {} });
+          onToast('已启用托管模式并生成生效配置');
+        } catch (err) {
+          onToast(`托管模式已保存，计划尚未生成:${messageFromError(err)}`);
+        }
+      } else {
+        onToast('已切换到 compose 模式，现有项目配置继续生效');
+      }
+      await load();
+    } catch (err) {
+      onToast(`交付模式保存失败:${messageFromError(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [load, onToast, projectId, specText]);
+
+  if (state.status === 'loading') return <LoadingBlock label="加载交付模式" />;
+  if (state.status === 'error' || !state.data) return <ErrorBlock message={state.message || '交付模式加载失败'} />;
+  const data = state.data;
+
+  return (
+    <div className="space-y-6">
+      <Section
+        title="交付模式"
+        description="托管模式由 CDS 自动检测技术栈、拆分构建与启动并绑定资源；compose 模式保留完整高级控制。"
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'managed' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
+            onClick={() => void saveMode('managed')}
+            disabled={saving}
+          >
+            <div className="font-semibold">托管模式</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">常规 Web、API、Worker 推荐。无需手写 BuildProfile，重复部署直接复用不可变产物。</p>
+          </button>
+          <button
+            type="button"
+            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'compose' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
+            onClick={() => void saveMode('compose')}
+            disabled={saving}
+          >
+            <div className="font-semibold">Compose 模式</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">适合特殊网络、多服务和自定义镜像。原有 cds-compose 与 BuildProfile 行为保持不变。</p>
+          </button>
+        </div>
+      </Section>
+
+      {data.mode === 'managed' ? (
+        <>
+          <Section
+            title="最小声明"
+            description="apps 留空时自动扫描仓库；capabilities 只写逻辑资源引用和环境变量名，不写密钥值。"
+          >
+            <textarea
+              className={`${textareaClass} min-h-56 font-mono text-xs leading-5`}
+              value={specText}
+              onChange={(event) => setSpecText(event.target.value)}
+              spellCheck={false}
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button onClick={() => void saveMode('managed')} disabled={saving}>
+                {saving ? <Loader2 className="animate-spin" /> : <Save />}
+                保存并重新生成
+              </Button>
+              <Button variant="outline" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>
+                恢复自动识别
+              </Button>
+            </div>
+          </Section>
+
+          <Section
+            title="最终生效配置"
+            description={data.planUpdatedAt ? `最近生成于 ${new Date(data.planUpdatedAt).toLocaleString()}` : '尚未生成；保存后 CDS 会使用项目第一条分支进行检测。'}
+          >
+            {data.effectiveProfiles.length === 0 ? (
+              <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
+                暂无生效配置。项目至少需要一条已克隆分支，或在 apps 中显式声明应用目录。
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {data.effectiveProfiles.map((profile) => (
+                  <div key={profile.id} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{profile.name}</span>
+                      <CodePill>{profile.managedBuild?.stack || 'managed'}</CodePill>
+                      <CodePill>{profile.workDir}</CodePill>
+                      <span className="text-xs text-muted-foreground">端口 {profile.containerPort}</span>
+                    </div>
+                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">构建</dt>
+                      <dd className="break-all font-mono">{[profile.managedBuild?.installCommand, profile.managedBuild?.buildCommand].filter(Boolean).join(' && ') || '无需构建'}</dd>
+                      <dt className="text-muted-foreground">启动</dt>
+                      <dd className="break-all font-mono">{profile.managedBuild?.startCommand || '未生成'}</dd>
+                      <dt className="text-muted-foreground">产物</dt>
+                      <dd className="break-all font-mono">{profile.managedBuild?.artifactImage || '未生成'}</dd>
+                      <dt className="text-muted-foreground">能力依赖</dt>
+                      <dd>{profile.dependsOn?.join('、') || '无'}</dd>
+                    </dl>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────
 // 项目基础设施 Tab(2026-05-28 新增)
