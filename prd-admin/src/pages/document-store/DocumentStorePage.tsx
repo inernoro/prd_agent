@@ -104,6 +104,7 @@ import {
   setStoreTeams,
   getStoresAnalyticsSummary,
   getUserPreferences,
+  getAgentRun,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -877,6 +878,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
   const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
+  // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
+  // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
+  const transcribeRunRef = useRef<string | null>(null);
+  const [bgTranscribeRunId, setBgTranscribeRunId] = useState<string | null>(null);
   /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
   const [reprocessTarget, setReprocessTarget] = useState<{
     id?: string;
@@ -1007,6 +1012,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     if (mode === 'new') setSelectedEntryId(targetEntryId);
     setTimeout(() => { void loadEntries(); }, 1500);
   }, [loadEntries]);
+
+  // 「后台运行」看护：轮询在途转录 run 到终态 → 刷新列表 + toast 告知结果
+  useEffect(() => {
+    if (!bgTranscribeRunId) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      const res = await getAgentRun(bgTranscribeRunId);
+      if (cancelled || !res.success) return;
+      const st = res.data.status;
+      if (st !== 'done' && st !== 'failed' && st !== 'cancelled') return;
+      window.clearInterval(timer);
+      if (cancelled) return;
+      setBgTranscribeRunId(null);
+      transcribeRunRef.current = null;
+      void loadEntries();
+      if (st === 'done') {
+        toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
+      } else if (st === 'failed') {
+        toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+      }
+    }, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgTranscribeRunId]);
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
@@ -1856,13 +1885,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             file={transcribeFlow.file}
             entryId={transcribeFlow.entryId}
             entryTitle={transcribeFlow.title}
-            onClose={() => setTranscribeFlow(null)}
+            onClose={() => {
+              setTranscribeFlow(null);
+              // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
+              if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
+            }}
             onEntryCreated={(entry) => setEntries(prev => [entry, ...prev])}
             onDone={() => {
               void loadEntries();
               setTimeout(() => { void loadEntries(); }, 1500);
             }}
             onOpenEntry={(id) => setSelectedEntryId(id)}
+            onRunTracking={(rid) => { transcribeRunRef.current = rid; }}
           />
         )}
       </AnimatePresence>

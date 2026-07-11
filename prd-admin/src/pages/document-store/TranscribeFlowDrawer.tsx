@@ -37,6 +37,12 @@ export type TranscribeFlowDrawerProps = {
   onDone?: (outputEntryId: string) => void;
   /** 「查看转录笔记」跳转 */
   onOpenEntry?: (entryId: string) => void;
+  /**
+   * run 跟踪回调：runId 就绪时上报、run 到达终态（done/failed）时报 null。
+   * 父页面据此在「后台运行」关闭抽屉后继续看护该 run（轮询到终态刷新列表），
+   * 否则后台完成的转录笔记要手动刷新才出现（Codex P2）。
+   */
+  onRunTracking?: (runId: string | null) => void;
 };
 
 type StepState = TranscribeStepState;
@@ -50,6 +56,7 @@ export function TranscribeFlowDrawer({
   onEntryCreated,
   onDone,
   onOpenEntry,
+  onRunTracking,
 }: TranscribeFlowDrawerProps) {
   const isMobile = useIsMobile();
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
@@ -170,6 +177,13 @@ export function TranscribeFlowDrawer({
     return () => abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
+
+  // 向父页面上报 run 跟踪状态：进行中报 runId、终态报 null（幂等，重复调用无副作用）
+  useEffect(() => {
+    if (!onRunTracking) return;
+    const terminal = status === 'done' || status === 'failed';
+    onRunTracking(terminal ? null : runId);
+  }, [runId, status, onRunTracking]);
 
   // ESC 关闭
   useEffect(() => {
