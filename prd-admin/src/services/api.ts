@@ -1315,6 +1315,7 @@ export const api = {
       syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
       subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
       generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
+      transcribe: (entryId: string) => `/api/document-store/entries/${entryId}/transcribe`,
       reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
       reprocessChat: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/chat`,
       reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,

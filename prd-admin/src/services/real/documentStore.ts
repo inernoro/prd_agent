@@ -524,6 +524,14 @@ export async function generateSubtitle(entryId: string) {
   );
 }
 
+/** 发起录音转录全链路任务（ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档） */
+export async function transcribeEntry(entryId: string) {
+  return await apiRequest<{ runId: string; status: string; reused: boolean }>(
+    api.documentStore.entries.transcribe(entryId),
+    { method: 'POST' },
+  );
+}
+
 /** 获取再加工可用模板列表 */
 export async function listReprocessTemplates() {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').ReprocessTemplate[] }>(
@@ -658,7 +666,7 @@ export async function startAutoLink(storeId: string) {
 }
 
 /** 查询某 entry 最近一次 Agent Run（按 kind 过滤） */
-export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess') {
+export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess' | 'transcribe') {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
     `${api.documentStore.entries.latestAgentRun(entryId)}?kind=${kind}`,
     { method: 'GET' },

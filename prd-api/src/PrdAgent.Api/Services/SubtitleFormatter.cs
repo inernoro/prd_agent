@@ -26,6 +26,43 @@ public static class SubtitleFormatter
           .AppendLine();
         sb.AppendLine();
 
+        sb.Append(FormatSegmentsBody(segments));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 录音转录笔记：AI 摘要在上、转录全文在下（移动端 Notion 式录音流程的最终产物）。
+    /// </summary>
+    public static string FormatTranscriptNote(string sourceTitle, string summary, IReadOnlyList<SubtitleSegment> segments)
+    {
+        var sb = new StringBuilder();
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(sourceTitle);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = sourceTitle;
+
+        sb.Append("# ").Append(baseName).Append(" · 转录笔记").AppendLine();
+        sb.Append("> 来源：").Append(sourceTitle)
+          .Append(" · 生成时间：").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm"))
+          .AppendLine();
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            sb.AppendLine("## 摘要");
+            sb.AppendLine();
+            sb.AppendLine(summary.Trim());
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## 转录全文");
+        sb.AppendLine();
+        sb.Append(FormatSegmentsBody(segments));
+        return sb.ToString();
+    }
+
+    /// <summary>ASR 分段正文：有时间戳时逐段带 **[mm:ss - mm:ss]**，全 0 时按纯段落输出。</summary>
+    private static string FormatSegmentsBody(IReadOnlyList<SubtitleSegment> segments)
+    {
+        var sb = new StringBuilder();
         if (segments.Count == 0)
         {
             sb.AppendLine("_（无可识别内容）_");

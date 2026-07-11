@@ -104,6 +104,7 @@ import {
   setStoreTeams,
   getStoresAnalyticsSummary,
   getUserPreferences,
+  getAgentRun,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -129,6 +130,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
+import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -874,6 +876,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
+  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
+  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
+  // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
+  // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
+  const transcribeRunRef = useRef<string | null>(null);
+  // 抽屉是否处于打开态（ref 而非 state：上传期关闭后 runId 迟到时，
+  // 回调闭包里读 state 是陈旧值，读 ref 才能判断「已关闭 → 立即接手看护」）
+  const transcribeFlowOpenRef = useRef(false);
+  const [bgTranscribeRunId, setBgTranscribeRunId] = useState<string | null>(null);
   /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
   const [reprocessTarget, setReprocessTarget] = useState<{
     id?: string;
@@ -905,6 +916,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 替换文件：记录待替换的 entryId + 独立 file input
   const replaceTargetRef = useRef<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  // 上传录音转笔记：独立 audio input（选中即进入转录全链路卡）
+  const audioInputRef = useRef<HTMLInputElement>(null);
   // tag 颜色保存的 single-flight 队列：
   // 不只是防 rollback race，还要保证"老请求成功后到达"不会覆盖新意图。
   // 实现：当前在飞 = inFlight=true；新意图来了写 pending；当前结束后若 pending 非空则继续发，
@@ -1002,6 +1015,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     if (mode === 'new') setSelectedEntryId(targetEntryId);
     setTimeout(() => { void loadEntries(); }, 1500);
   }, [loadEntries]);
+
+  // 「后台运行」看护：轮询在途转录 run 到终态 → 刷新列表 + toast 告知结果
+  useEffect(() => {
+    if (!bgTranscribeRunId) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      const res = await getAgentRun(bgTranscribeRunId);
+      if (cancelled || !res.success) return;
+      const st = res.data.status;
+      if (st !== 'done' && st !== 'failed' && st !== 'cancelled') return;
+      window.clearInterval(timer);
+      if (cancelled) return;
+      setBgTranscribeRunId(null);
+      transcribeRunRef.current = null;
+      void loadEntries();
+      if (st === 'done') {
+        toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
+      } else if (st === 'failed') {
+        toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+      }
+    }, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgTranscribeRunId]);
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
@@ -1410,6 +1447,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
       <input ref={replaceInputRef} type="file" className="hidden" accept={ACCEPT_TYPES}
         onChange={e => { const f = e.target.files?.[0]; if (f) doReplaceFile(f); e.target.value = ''; }} />
+      <input ref={audioInputRef} type="file" className="hidden" accept="audio/*"
+        onChange={e => {
+          const f = e.target.files?.[0];
+          if (f) {
+            setTranscribeFlow({ file: f, title: f.name });
+            transcribeFlowOpenRef.current = true;
+          }
+          e.target.value = '';
+        }} />
 
       <TabBar
         title={
@@ -1450,16 +1496,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
-            <Button
-              variant="primary"
-              size="xs"
-              data-tour-id="document-upload"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
-              {uploading ? (isMobile ? '上传中' : '上传中…') : (isMobile ? '上传' : '上传文档')}
-            </Button>
+            {/* 顶栏「上传文档」按钮已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口）。
+                上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
+            {uploading && (
+              <span className="flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
+                style={{ color: 'rgba(147,197,253,0.95)', background: 'rgba(59,130,246,0.12)' }}>
+                <MapSpinner size={12} /> 上传中
+              </span>
+            )}
             {/* 知识星球：3D 文档星系直达入口（此前藏在「宇宙图」里，新用户找不到）。
                 保留原始 orbit icon 语义，叠加胶囊背景光扫与 icon 轻动效。 */}
             {!isMobile && <button
@@ -1718,6 +1762,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
+          onTranscribe={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) {
+              setTranscribeFlow({ entryId: id, title: entry.title });
+              transcribeFlowOpenRef.current = true;
+            }
+          }}
+          onUploadAudio={() => audioInputRef.current?.click()}
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
@@ -1834,9 +1886,39 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
-      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
+      {/* 录音转录全链路（Notion 式）：上传音频 → 转录 → AI 摘要 → 转录笔记 */}
+      <AnimatePresence>
+        {transcribeFlow && (
+          <TranscribeFlowDrawer
+            storeId={storeId}
+            file={transcribeFlow.file}
+            entryId={transcribeFlow.entryId}
+            entryTitle={transcribeFlow.title}
+            onClose={() => {
+              setTranscribeFlow(null);
+              transcribeFlowOpenRef.current = false;
+              // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
+              if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
+            }}
+            onEntryCreated={(entry) => setEntries(prev => [entry, ...prev])}
+            onDone={() => {
+              void loadEntries();
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+            onOpenEntry={(id) => setSelectedEntryId(id)}
+            onRunTracking={(rid) => {
+              transcribeRunRef.current = rid;
+              // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
+              if (rid && !transcribeFlowOpenRef.current) setBgTranscribeRunId(rid);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
+          bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}
       {storeRuns.length > 0 && (
-        <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
+        <div className="fixed right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px', bottom: '96px' }}>
           {storeRuns.map((r) => {
             const isRunning = r.status === 'streaming';
             const accent = r.status === 'done'

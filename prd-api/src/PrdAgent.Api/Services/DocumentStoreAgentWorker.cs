@@ -168,6 +168,12 @@ public class DocumentStoreAgentWorker : BackgroundService
                 var processor = scope.ServiceProvider.GetRequiredService<AutoLinkProcessor>();
                 await processor.ProcessAsync(run, db, runStore);
             }
+            else if (run.Kind == DocumentStoreAgentRunKind.Transcribe)
+            {
+                // 录音转录全链路与字幕生成共用同一处理器（ASR 分发一致，产物不同）
+                var processor = scope.ServiceProvider.GetRequiredService<SubtitleGenerationProcessor>();
+                await processor.ProcessTranscribeAsync(run, db, runStore);
+            }
             else
             {
                 throw new InvalidOperationException($"未知 Run kind: {run.Kind}");
@@ -239,6 +245,7 @@ public class DocumentStoreAgentWorker : BackgroundService
     {
         DocumentStoreAgentRunKind.Subtitle => DocumentStoreRunKinds.Subtitle,
         DocumentStoreAgentRunKind.AutoLink => DocumentStoreRunKinds.AutoLink,
+        DocumentStoreAgentRunKind.Transcribe => DocumentStoreRunKinds.Transcribe,
         _ => DocumentStoreRunKinds.Reprocess,
     };
 

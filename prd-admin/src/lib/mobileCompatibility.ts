@@ -26,7 +26,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/profile':                 { level: 'full' },
   '/notifications':           { level: 'full' },
   '/my-assets':               { level: 'full' },
-  '/document-store':          { level: 'full', note: '阅读/管理正常，长文编辑建议 PC' },
+  '/document-store':          { level: 'full', note: '阅读/管理/上传录音转笔记正常，长文编辑建议 PC' },
   '/ai-toolbox':              { level: 'full' },
   // 注：/prd-agent Web 端已下线，不参与移动兼容性矩阵
   '/defect-agent':            { level: 'full' },

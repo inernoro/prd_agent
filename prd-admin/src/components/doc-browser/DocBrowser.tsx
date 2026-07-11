@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef, createContext, useCo
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
+import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
-  Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
+  Search, ChevronRight, ChevronDown, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
-  Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
+  Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -434,6 +435,10 @@ export type DocBrowserProps = {
   onOpenSubscription?: (entryId: string) => void;
   /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
   onGenerateSubtitle?: (entryId: string) => void;
+  /** 点击"转录"时触发（仅 audio/video entries 显示）：ASR 转录 + AI 摘要全链路 */
+  onTranscribe?: (entryId: string) => void;
+  /** 「添加」菜单项：上传录音并自动转录（Notion 式录音流程入口）。 */
+  onUploadAudio?: () => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
   /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
@@ -632,6 +637,69 @@ function canGenerateSubtitle(entry: DocBrowserEntry): boolean {
   return ct.startsWith('audio/') || ct.startsWith('video/') || ct.startsWith('image/');
 }
 
+function canTranscribe(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const ct = (entry.contentType ?? '').toLowerCase();
+  return ct.startsWith('audio/') || ct.startsWith('video/');
+}
+
+/**
+ * 录音转录入口卡（Notion 式）：音/视频条目正文顶部常驻。
+ * 未转录 → 「开始转录」主按钮；已转录 → 「查看转录笔记」直达。
+ */
+function TranscribeHeroCard({
+  noteEntryId,
+  onStart,
+  onOpenNote,
+}: {
+  noteEntryId?: string;
+  onStart?: () => void;
+  onOpenNote: (noteEntryId: string) => void;
+}) {
+  return (
+    <div
+      className="surface-inset mb-4 flex items-center justify-between gap-3 rounded-[14px] px-4 py-3.5"
+      data-tour-id="doc-transcribe-hero">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
+          <AudioLines size={16} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-token-primary">
+            {noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
+          </p>
+          <p className="truncate text-[11px] text-token-muted">
+            {noteEntryId ? '摘要与转录全文已保存为新文档' : 'AI 将转录这段音频并生成结构化摘要'}
+          </p>
+        </div>
+      </div>
+      {noteEntryId ? (
+        <button
+          onClick={() => onOpenNote(noteEntryId)}
+          className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-[9px] px-3 py-1.5 text-[12px] font-semibold transition-colors"
+          style={{
+            background: 'rgba(34,197,94,0.1)',
+            border: '1px solid rgba(34,197,94,0.22)',
+            color: 'rgba(74,222,128,0.95)',
+          }}>
+          查看笔记
+          <ChevronRight size={13} />
+        </button>
+      ) : onStart ? (
+        <button
+          onClick={onStart}
+          className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
+          style={{
+            background: 'rgba(59,130,246,0.9)',
+            color: '#fff',
+          }}>
+          开始转录
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function canReprocess(entry: DocBrowserEntry): boolean {
   if (entry.isFolder) return false;
   // Reference 类条目（如"转存自网页托管"）只在 metadata 里存了 sourceUrl，
@@ -661,7 +729,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
+  onGenerateSubtitle, onTranscribe, onReprocess, onShareEntry, onReplaceFile,
   categories, onSetCategory,
   onClose,
 }: {
@@ -676,6 +744,7 @@ function ContextMenu({
   onEditTags?: (entry: DocBrowserEntry) => void;
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
+  onTranscribe?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
   onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
@@ -694,6 +763,7 @@ function ContextMenu({
   }, [onClose]);
 
   const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
+  const showTranscribe = canTranscribe(entry) && !!onTranscribe;
   const showReprocess = canReprocess(entry) && !!onReprocess;
   const showShare = !entry.isFolder && !!onShareEntry;
 
@@ -735,8 +805,16 @@ function ContextMenu({
           复制条目链接
         </button>
       )}
-      {(showOpenInNewWindow || showCopyEntryLink) && (showSubtitle || showReprocess || showShare || onRename || onTogglePin || onEditTags || onSetPrimary || onReplaceFile || onDelete) && (
+      {(showOpenInNewWindow || showCopyEntryLink) && (showSubtitle || showTranscribe || showReprocess || showShare || onRename || onTogglePin || onEditTags || onSetPrimary || onReplaceFile || onDelete) && (
         <div className="my-1 border-t border-token-subtle" />
+      )}
+      {showTranscribe && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          onClick={() => { onTranscribe!(entry.id); onClose(); }}>
+          <AudioLines size={12} />
+          转录并生成摘要
+        </button>
       )}
       {showSubtitle && (
         <button
@@ -1562,6 +1640,8 @@ export function DocBrowser({
   onSearch,
   onOpenSubscription,
   onGenerateSubtitle,
+  onTranscribe,
+  onUploadAudio,
   onReprocess,
   onShareEntry,
   autoEditEntryId,
@@ -1635,7 +1715,6 @@ export function DocBrowser({
   }, []);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
-  const [showAddMenu, setShowAddMenu] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1757,7 +1836,6 @@ export function DocBrowser({
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
-  const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
   // 解析"当前选中条目"的数据：优先主 entries，回退搜索结果（后端搜索命中的条目可能
@@ -2328,16 +2406,6 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
-  // 添加菜单 click outside
-  useEffect(() => {
-    if (!showAddMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showAddMenu]);
-
   // 显示设置菜单 click outside
   useEffect(() => {
     if (!showSettingsMenu) return;
@@ -2827,88 +2895,7 @@ export function DocBrowser({
                 </span>
               )}
             </div>
-            {/* 「+」新建：仅在有写操作时显示（只读调用方不传写回调 → 不渲染，避免只剩占位项） */}
-            {(onCreateDocument || onUploadFile || onImportFromHosting || onCreateFolder) && (
-            <div ref={addMenuRef} className="relative">
-              <button
-                onClick={() => setShowAddMenu(v => !v)}
-                className="surface-action flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] transition-colors"
-                title="新建"
-              >
-                <Plus size={12} />
-              </button>
-              {showAddMenu && (
-                <div className="surface-popover absolute right-0 top-[30px] z-50 min-w-[180px] rounded-[10px] py-1">
-                  {/* 可用操作 */}
-                  {onCreateDocument && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onCreateDocument(); setShowAddMenu(false); }}>
-                      <FilePlus size={12} className="text-token-accent" />
-                      文档
-                    </button>
-                  )}
-                  {onUploadFile && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onUploadFile(); setShowAddMenu(false); }}>
-                      <Upload size={12} className="text-token-accent" />
-                      上传文件
-                    </button>
-                  )}
-                  {onImportFromHosting && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onImportFromHosting(); setShowAddMenu(false); }}>
-                      <Globe size={12} className="text-token-accent" />
-                      从网页托管导入
-                    </button>
-                  )}
-                  {onOpenVideoParser && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { onOpenVideoParser(); setShowAddMenu(false); }}
-                      title="把抖音/TikTok 等链接解析为原始素材、字幕文稿和时间轴片段">
-                      <Video size={12} className="text-token-accent" />
-                      解析短视频
-                    </button>
-                  )}
-                  {onCreateFolder && (
-                    <button
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
-                      onClick={() => { setCreatingFolder(true); setShowAddMenu(false); }}>
-                      <FolderPlus size={12} className="text-token-warning" />
-                      新建文件夹
-                    </button>
-                  )}
-                  {/* 分隔线 */}
-                  <div className="my-1 border-t border-token-subtle" />
-                  {/* 尚未实现：置灰 */}
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <LayoutTemplate size={12} />
-                    从模板新建
-                  </button>
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <Bot size={12} />
-                    AI 帮你写
-                  </button>
-                  <button
-                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
-                    disabled
-                    title="暂未实现">
-                    <Link size={12} />
-                    添加链接
-                  </button>
-                </div>
-              )}
-            </div>
-            )}
+            {/* 旧「+」下拉菜单已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口，见 CreatePaletteFab） */}
           </div>
           {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
@@ -3355,10 +3342,26 @@ export function DocBrowser({
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
                 const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+                const showTranscribe = canTranscribe(sel) && !!onTranscribe;
                 const showReprocess = canReprocess(sel) && !!onReprocess;
-                if (!showSubtitle && !showReprocess) return null;
+                if (!showSubtitle && !showReprocess && !showTranscribe) return null;
                 return (
                   <>
+                    {showTranscribe && (
+                      <button
+                        onClick={() => onTranscribe!(sel.id)}
+                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
+                        style={{
+                          background: 'rgba(34,197,94,0.08)',
+                          border: '1px solid rgba(34,197,94,0.2)',
+                          color: 'rgba(74,222,128,0.95)',
+                        }}
+                        title="转录并生成 AI 摘要"
+                      >
+                        <AudioLines size={isMobile ? 14 : 11} />
+                        {!isMobile && '转录'}
+                      </button>
+                    )}
                     {showSubtitle && (
                       <button
                         onClick={() => onGenerateSubtitle!(sel.id)}
@@ -3561,6 +3564,16 @@ export function DocBrowser({
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
+                {/* 录音转录入口卡（Notion 式）：音/视频条目正文顶部常驻——
+                    未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
+                {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
+                  && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
+                  <TranscribeHeroCard
+                    noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
+                    onStart={onTranscribe ? () => onTranscribe(selectedEntryData.id) : undefined}
+                    onOpenNote={(noteId) => handleSelectEntry(noteId)}
+                  />
+                )}
                 {contentLoading ? (
                   <MapSectionLoader text="加载文档内容…" />
                 ) : editMode ? (
@@ -3846,6 +3859,20 @@ export function DocBrowser({
       </div>
       </ReaderColumnFrame>
 
+      {/* 库内唯一「新增」入口：右下角调色盘 FAB（有任一写回调才渲染；只读调用方自动无 FAB） */}
+      {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
+        <CreatePaletteFab
+          actions={[
+            ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
+            ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
+            ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: Upload, onClick: onUploadFile }] : []),
+            ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
+            ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+            ...(onCreateFolder ? [{ key: 'folder', label: '新建文件夹', icon: FolderPlus, onClick: () => setCreatingFolder(true), hue: 'rgba(234,179,8,0.92)' }] : []),
+          ]}
+        />
+      )}
+
       {/* 右键菜单 */}
       {contextMenu && (
         <ContextMenu
@@ -3880,6 +3907,7 @@ export function DocBrowser({
           onEditTags={onUpdateEntryTags ? (entry) => setTagEditEntry(entry) : undefined}
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
+          onTranscribe={onTranscribe}
           onReprocess={onReprocess}
           onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}

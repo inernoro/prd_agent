@@ -67,3 +67,15 @@
 - `design.knowledge-base.multi-doc.md` —— 多文档知识库设计（含 Phase 3 RAG 未做的明确标记）
 - `.claude/rules/no-rootless-tree.md` —— 借用法则
 - `.claude/rules/codebase-snapshot.md` —— 现有快照里"RAG/embedding 未实现"的说法在此处固化
+
+---
+
+## 待办：手机端 Notion 化后续波次（2026-07-10，录音转录全链路第一波已落地）
+
+已落地（分支 `claude/kb-mobile-redesign-plan-de2clg`）：上传录音 → ASR 转录 → AI 流式摘要 → 「摘要 + 转录全文」转录笔记的全链路（后端 transcribe kind + 前端 TranscribeFlowDrawer 四阶段清单卡，移动端底部弹层），音/视频条目正文顶部常驻「开始转录 / 查看转录笔记」入口卡，`/document-store` 登记移动端 full 兼容。端到端自测通过（真实语音样本，摘要与全文均正确落库）。
+
+未做（原计划第 2-4 波，待排期）：
+1. 浏览器内录音采集（MediaRecorder 按住录音），当前仅支持上传音频文件——本波用户明确只要「上传录音解析」。
+2. 手机端文章页 Notion 化大标题头（返回/分享/更多三键 + 大标题块），当前沿用既有移动工具栏。
+3. 手机端详情页底部常驻「问 AI」输入条（复用 ReprocessChatDrawer 多轮对话后端）。
+4. 转录中细分阶段的时间预估（当前只有阶段名，无「预计还需 N 秒」，见 expectation-management 约束 1）。

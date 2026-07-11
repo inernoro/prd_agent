@@ -1053,6 +1053,17 @@ public static class DocumentStoreAgent
         )]
         public const string Rewrite = "document-store.selection-rewrite::chat";
     }
+
+    public static class Transcribe
+    {
+        [AppCallerMetadata(
+            "知识库录音转录-摘要",
+            "对录音转录稿生成结构化 AI 摘要（要点/结论/待办），与转录全文一起落为新文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Summary = "document-store.transcribe-summary::chat";
+    }
 }
 
 /// <summary>
