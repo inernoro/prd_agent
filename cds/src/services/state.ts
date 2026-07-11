@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -22,6 +22,8 @@ import {
 } from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
 const MAX_ARCHIVES_PER_BRANCH = 10;
@@ -156,6 +158,8 @@ function emptyState(): CdsState {
     branches: {},
     nextPortIndex: 0,
     logs: {},
+    deploymentRuns: {},
+    deploymentVersions: {},
     containerLogArchives: {},
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
@@ -297,6 +301,8 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
+      if (!this.state.deploymentVersions) this.state.deploymentVersions = {};
       if (!this.state.releaseTargets) this.state.releaseTargets = {};
       if (!this.state.releasePlans) this.state.releasePlans = {};
       if (!this.state.releaseRuns) this.state.releaseRuns = {};
@@ -1192,6 +1198,107 @@ export class StateService {
 
   // ── Operation logs ──
 
+  // ── Deployment runs（分支部署唯一事实源）──
+
+  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+    if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
+    if (this.state.deploymentRuns[run.id]) {
+      throw new Error(`DeploymentRun already exists: ${run.id}`);
+    }
+    const branch = this.state.branches[run.branchId];
+    if (!branch) throw new Error(`分支 "${run.branchId}" 不存在`);
+    if (branch.projectId !== run.projectId) {
+      throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
+    }
+    this.state.deploymentRuns[run.id] = run;
+    branch.lastDeploymentRunId = run.id;
+    this.pruneDeploymentRuns(run.projectId);
+    this.save();
+    return run;
+  }
+
+  getDeploymentRun(id: string): DeploymentRun | undefined {
+    return this.state.deploymentRuns?.[id];
+  }
+
+  getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
+    return Object.values(this.state.deploymentRuns || {})
+      .filter((run) => !filters.projectId || run.projectId === filters.projectId)
+      .filter((run) => !filters.branchId || run.branchId === filters.branchId)
+      .filter((run) => !filters.status || run.status === filters.status)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  updateDeploymentRun(id: string, mutate: (run: DeploymentRun) => void): DeploymentRun {
+    const run = this.state.deploymentRuns?.[id];
+    if (!run) throw new Error(`DeploymentRun not found: ${id}`);
+    mutate(run);
+    this.save();
+    return run;
+  }
+
+  private pruneDeploymentRuns(projectId: string): void {
+    const runs = Object.values(this.state.deploymentRuns || {})
+      .filter((run) => run.projectId === projectId)
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    let overflow = runs.length - MAX_DEPLOYMENT_RUNS_PER_PROJECT;
+    if (overflow <= 0) return;
+    for (const run of runs) {
+      if (overflow <= 0) break;
+      if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
+      delete this.state.deploymentRuns?.[run.id];
+      overflow -= 1;
+    }
+  }
+
+  // ── Deployment versions（不可变部署产物）──
+
+  addDeploymentVersion(version: DeploymentVersion): DeploymentVersion {
+    if (!this.state.deploymentVersions) this.state.deploymentVersions = {};
+    if (this.state.deploymentVersions[version.id]) {
+      throw new Error(`DeploymentVersion already exists: ${version.id}`);
+    }
+    const branch = this.state.branches[version.branchId];
+    if (!branch) throw new Error(`分支 "${version.branchId}" 不存在`);
+    if (branch.projectId !== version.projectId) {
+      throw new Error(`DeploymentVersion project mismatch: ${version.projectId} != ${branch.projectId}`);
+    }
+    this.state.deploymentVersions[version.id] = version;
+    this.pruneDeploymentVersions(version.projectId);
+    this.save();
+    return version;
+  }
+
+  getDeploymentVersion(id: string): DeploymentVersion | undefined {
+    return this.state.deploymentVersions?.[id];
+  }
+
+  getDeploymentVersions(filters: { projectId?: string; branchId?: string; commitSha?: string } = {}): DeploymentVersion[] {
+    return Object.values(this.state.deploymentVersions || {})
+      .filter((version) => !filters.projectId || version.projectId === filters.projectId)
+      .filter((version) => !filters.branchId || version.branchId === filters.branchId)
+      .filter((version) => !filters.commitSha || version.commitSha === filters.commitSha)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  private pruneDeploymentVersions(projectId: string): void {
+    const versions = Object.values(this.state.deploymentVersions || {})
+      .filter((version) => version.projectId === projectId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let overflow = versions.length - MAX_DEPLOYMENT_VERSIONS_PER_PROJECT;
+    if (overflow <= 0) return;
+    const protectedIds = new Set([
+      ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
+      ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
+    ]);
+    for (const version of versions) {
+      if (overflow <= 0) break;
+      if (protectedIds.has(version.id)) continue;
+      delete this.state.deploymentVersions?.[version.id];
+      overflow -= 1;
+    }
+  }
+
   appendLog(branchId: string, log: OperationLog): void {
     if (!this.state.logs[branchId]) {
       this.state.logs[branchId] = [];
@@ -1538,6 +1645,10 @@ export class StateService {
         | 'aliasName'
         | 'aliasSlug'
         | 'description'
+        | 'deliveryMode'
+        | 'managedSpec'
+        | 'managedProfiles'
+        | 'managedPlanUpdatedAt'
         | 'gitRepoUrl'
         | 'gitDefaultBranch'
         | 'repoPath'
@@ -2423,6 +2534,8 @@ export class StateService {
   }
 
   getBuildProfilesForProject(projectId: string): BuildProfile[] {
+    const project = this.getProject(projectId);
+    if (project?.deliveryMode === 'managed') return project.managedProfiles || [];
     return (this.state.buildProfiles || []).filter(
       (p) => (p.projectId || 'default') === projectId,
     );

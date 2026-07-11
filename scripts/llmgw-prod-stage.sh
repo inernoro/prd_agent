@@ -57,6 +57,9 @@ Options:
   --repo owner/repo           Pass repository through to fast.sh and exec_dep.sh
   --sample-percent N          Shadow full sample percent for shadow/canary stages, default 1
   --min-observation-hours N   Require previous stage success to be at least N hours old, default 24
+  --maintenance-from-commit SHA
+                              Full-http maintenance release only. Reuse an audited prior full-http rollout's
+                              shadow evidence while requiring all post-deploy checks against the new commit.
   --main-ref REF              Mainline ref that must be included by --commit, default origin/main
   --evidence-dir PATH         Evidence output directory, default .llmgw-release-evidence
   --ledger PATH               Append-only rollout ledger, default <evidence-dir>/rollout-ledger.jsonl
@@ -80,6 +83,7 @@ evidence_dir="${LLMGW_STAGE_EVIDENCE_DIR:-.llmgw-release-evidence}"
 ledger=""
 allow_out_of_order=0
 allow_out_of_order_reason="${LLMGW_ALLOW_OUT_OF_ORDER_REASON:-}"
+maintenance_from_commit="${LLMGW_MAINTENANCE_FROM_COMMIT:-}"
 
 # 固定生产 Compose identity，禁止 release worktree 目录名改变审计或部署目标。
 compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
@@ -130,6 +134,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --min-observation-hours=*)
       min_observation_hours="${1#--min-observation-hours=}"
+      ;;
+    --maintenance-from-commit)
+      shift
+      [ "$#" -gt 0 ] || { echo "ERROR: --maintenance-from-commit requires a 40-char commit" >&2; exit 1; }
+      maintenance_from_commit="$1"
+      ;;
+    --maintenance-from-commit=*)
+      maintenance_from_commit="${1#--maintenance-from-commit=}"
       ;;
     --main-ref)
       shift
@@ -214,10 +226,26 @@ if [ -z "$(printf '%s' "$main_ref" | xargs)" ]; then
   echo "ERROR: --main-ref must not be empty" >&2
   exit 1
 fi
+maintenance_from_commit="$(printf '%s' "$maintenance_from_commit" | tr 'A-F' 'a-f' | xargs || true)"
+if [ -n "$maintenance_from_commit" ]; then
+  if [ "$stage" != "http-full" ]; then
+    echo "ERROR: --maintenance-from-commit is only valid with --stage http-full" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$maintenance_from_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo "ERROR: --maintenance-from-commit requires a complete 40-char commit" >&2
+    exit 1
+  fi
+  if [ "$maintenance_from_commit" = "$(printf '%s' "$commit" | tr 'A-F' 'a-f')" ]; then
+    echo "ERROR: maintenance evidence commit must differ from the new release commit" >&2
+    exit 1
+  fi
+fi
 
 if [ -z "$ledger" ]; then
   ledger="$evidence_dir/rollout-ledger.jsonl"
 fi
+deployment_receipt="$evidence_dir/deployments/${stage}_${commit}.env"
 
 allow_out_of_order_reason="$(printf '%s' "$allow_out_of_order_reason" | xargs || true)"
 if [ "$allow_out_of_order" = "1" ] && [ -z "$allow_out_of_order_reason" ]; then
@@ -367,6 +395,9 @@ case "$stage" in
     upstream_readiness_default=0
     ;;
 esac
+if [ -n "$maintenance_from_commit" ]; then
+  upstream_readiness_default=0
+fi
 run_upstream_readiness="${LLMGW_STAGE_RUN_UPSTREAM_READINESS:-$upstream_readiness_default}"
 
 case "$stage" in
@@ -377,6 +408,9 @@ case "$stage" in
     provider_audit_default=0
     ;;
 esac
+if [ -n "$maintenance_from_commit" ]; then
+  provider_audit_default=0
+fi
 run_provider_audit="${LLMGW_STAGE_RUN_PROVIDER_AUDIT:-$provider_audit_default}"
 
 case "$stage" in
@@ -387,6 +421,9 @@ case "$stage" in
     video_canary_default=0
     ;;
 esac
+if [ -n "$maintenance_from_commit" ]; then
+  video_canary_default=0
+fi
 run_video_canary="${LLMGW_STAGE_RUN_VIDEO_CANARY:-$video_canary_default}"
 
 case "$stage" in
@@ -397,6 +434,9 @@ case "$stage" in
     asr_http_canary_default=0
     ;;
 esac
+if [ -n "$maintenance_from_commit" ]; then
+  asr_http_canary_default=0
+fi
 run_asr_http_canary="${LLMGW_STAGE_RUN_ASR_HTTP_CANARY:-$asr_http_canary_default}"
 case "$stage" in
   canary-*|http-full)
@@ -649,7 +689,15 @@ validate_ledger_order() {
     echo "ERROR: missing scripts/llmgw-rollout-ledger.py; refusing staged rollout without ledger validation." >&2
     exit 1
   fi
-  if [ "$allow_out_of_order" = "1" ]; then
+  if [ -n "$maintenance_from_commit" ]; then
+    python3 scripts/llmgw-rollout-ledger.py audit \
+      --ledger "$ledger" \
+      --commit "$maintenance_from_commit" \
+      --target-stage http-full \
+      --require-target-success \
+      --min-observation-hours 0
+    echo "LLM Gateway maintenance release: inherited audited full-http evidence from commit=$maintenance_from_commit"
+  elif [ "$allow_out_of_order" = "1" ]; then
     python3 scripts/llmgw-rollout-ledger.py validate \
       --ledger "$ledger" \
       --stage "$stage" \
@@ -686,6 +734,7 @@ append_ledger_entry() {
     --evidence-json "$stage_json" \
     --evidence-md "$stage_md" \
     --release-gate-json "$release_gate_json" \
+    --shadow-evidence-commit "${maintenance_from_commit:-$commit}" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \
@@ -1501,6 +1550,11 @@ export LLMGW_GATE_KEY="${LLMGW_GATE_KEY:-$gate_key}"
 export LLMGW_SERVE_KEY="${LLMGW_SERVE_KEY:-$gate_key}"
 export LLMGW_GATE_SHADOW_RELEASE_COMMIT="${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$commit}"
 export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="${LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT:-$commit}"
+if [ -n "$maintenance_from_commit" ]; then
+  export LLMGW_GATE_SHADOW_RELEASE_COMMIT="$maintenance_from_commit"
+  export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="$maintenance_from_commit"
+  export LLMGW_GATE_MIN_COVERAGE_HOURS="${LLMGW_GATE_MIN_COVERAGE_HOURS:-0}"
+fi
 export PRD_AGENT_REQUIRE_FAST_INTENT="${PRD_AGENT_REQUIRE_FAST_INTENT:-1}"
 export LLMGW_GATE_JSON_OUT="${LLMGW_GATE_JSON_OUT:-$release_gate_json}"
 export LLMGW_GATE_REPORT_MD="${LLMGW_GATE_REPORT_MD:-$release_gate_md}"
@@ -1550,12 +1604,31 @@ run_upstream_readiness_evidence
 
 run_provider_audit_evidence
 
-if [ -n "$repo" ]; then
-  run_or_print ./fast.sh --commit "$commit" --repo "$repo"
-  run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
+force_redeploy_reason="$(printf '%s' "${LLMGW_STAGE_FORCE_REDEPLOY_REASON:-}" | xargs || true)"
+verify_only=0
+if [ "$execute" = "1" ] && [ -f "$deployment_receipt" ] && [ -z "$force_redeploy_reason" ]; then
+  verify_only=1
+  echo "LLM Gateway deploy-once: receipt exists for stage=$stage commit=$commit; running verification without container recreation"
+elif [ "$execute" = "1" ] && [ -f "$deployment_receipt" ]; then
+  echo "WARN: forcing same-commit redeploy with recorded reason: $force_redeploy_reason" >&2
+fi
+
+if [ "$verify_only" = "0" ]; then
+  export LLMGW_DEPLOY_RECEIPT_FILE="$deployment_receipt"
+  if [ -n "$repo" ]; then
+    run_or_print ./fast.sh --commit "$commit" --repo "$repo"
+    run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
+  else
+    run_or_print ./fast.sh --commit "$commit"
+    run_or_print ./exec_dep.sh --commit "$commit"
+  fi
 else
-  run_or_print ./fast.sh --commit "$commit"
-  run_or_print ./exec_dep.sh --commit "$commit"
+  export LLMGW_VERIFY_ONLY=1
+  if [ -n "$repo" ]; then
+    run_or_print ./exec_dep.sh --commit "$commit" --repo "$repo"
+  else
+    run_or_print ./exec_dep.sh --commit "$commit"
+  fi
 fi
 
 run_prod_health_preflight
@@ -1584,6 +1657,7 @@ if [ "$execute" = "1" ]; then
     --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
+    --shadow-evidence-commit "${maintenance_from_commit:-$commit}" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \

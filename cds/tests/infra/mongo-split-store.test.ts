@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import type { BranchEntry, CdsState, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord } from '../../src/types.js';
+import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord } from '../../src/types.js';
 
 function emptyState(): CdsState {
   return {
@@ -73,6 +73,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   global = new FakeSplitCollection<{ _id: string; state: Omit<CdsState, 'projects' | 'branches'>; updatedAt: string }>();
   projects = new FakeSplitCollection<{ _id: string; doc: Project; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>();
+  deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>();
+  deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>();
   webhookDeliveries = new FakeSplitCollection<{ _id: string; receivedAt: string; doc: GithubWebhookDelivery; updatedAt: string }>();
   activityLogs = new FakeSplitCollection<{ _id: string; projectId: string; at: string; doc: ProjectActivityLog; updatedAt: string }>();
@@ -81,6 +83,8 @@ class FakeSplitHandle implements ISplitMongoHandle {
   globalCollection() { return this.global; }
   projectsCollection() { return this.projects; }
   branchesCollection() { return this.branches; }
+  deploymentRunsCollection() { return this.deploymentRuns; }
+  deploymentVersionsCollection() { return this.deploymentVersions; }
   selfUpdateHistoryCollection() { return this.selfUpdateHistory; }
   webhookDeliveriesCollection() { return this.webhookDeliveries; }
   activityLogsCollection() { return this.activityLogs; }
@@ -105,6 +109,76 @@ function makeActivityLog(projectId: string, seq: number, at: string): ProjectAct
 }
 
 describe('MongoSplitStateBackingStore', () => {
+  it('persists deployment runs outside the global document and reloads them', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.deploymentRuns = {
+      'dr-1': {
+        id: 'dr-1',
+        projectId: 'prd-agent',
+        branchId: 'main',
+        trigger: 'webhook',
+        status: 'building',
+        phase: 'build',
+        seq: 1,
+        firstEventSeq: 1,
+        startedAt: '2026-07-10T00:00:00.000Z',
+        updatedAt: '2026-07-10T00:00:01.000Z',
+        events: [{
+          seq: 1,
+          at: '2026-07-10T00:00:01.000Z',
+          phase: 'build',
+          level: 'info',
+          status: 'building',
+          message: 'building',
+        }],
+      },
+    };
+    store.save(state);
+    await store.flush();
+
+    expect((handle.global.docs.get('global')!.state as CdsState).deploymentRuns).toBeUndefined();
+    expect(handle.deploymentRuns.docs.get('dr-1')?.doc.events).toHaveLength(1);
+
+    const reloaded = new MongoSplitStateBackingStore(handle);
+    await reloaded.init();
+    expect(reloaded.load()?.deploymentRuns?.['dr-1'].events[0].message).toBe('building');
+  });
+
+  it('persists immutable deployment versions outside the global document and reloads them', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.deploymentVersions = {
+      'dv-1': {
+        id: 'dv-1',
+        projectId: 'prd-agent',
+        branchId: 'main',
+        commitSha: 'abcdef1234567',
+        configHash: 'config-hash',
+        profiles: [],
+        migrations: [],
+        capabilities: [],
+        createdByRunId: 'dr-1',
+        createdAt: '2026-07-10T00:00:00.000Z',
+      },
+    };
+    store.save(state);
+    await store.flush();
+
+    expect((handle.global.docs.get('global')!.state as CdsState).deploymentVersions).toBeUndefined();
+    expect(handle.deploymentVersions.docs.get('dv-1')?.doc.commitSha).toBe('abcdef1234567');
+
+    const reloaded = new MongoSplitStateBackingStore(handle);
+    await reloaded.init();
+    expect(reloaded.load()?.deploymentVersions?.['dv-1'].configHash).toBe('config-hash');
+  });
+
   it('persists branch deletion with a single branch delete operation instead of full collection rewrites', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

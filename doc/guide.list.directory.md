@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-22
+> 最后更新：2026-07-10
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc.naming.md`。
@@ -225,6 +225,9 @@
 - [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
   > 云开发套件的架构设计
 
+- [CDS 托管交付契约](design.cds.managed-delivery) `design.cds.managed-delivery`
+  > DeploymentRun 唯一事实源、不可变 DeploymentVersion、managed/compose 双模式、能力绑定与结构化诊断的分阶段设计
+
 - [CDS 构建耗时与发布版/热加载机制设计](design.cds.build-time) `design.cds.build-time`
   > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
@@ -394,6 +397,9 @@
 
 - [Claude Code 云开发教程](guide.cds.cloud-dev-tutorial) `guide.cds.cloud-dev-tutorial`
   > 使用 Claude Code 进行云端协作开发的操作指南
+
+- [CDS 托管交付使用指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
+  > 面向普通用户介绍新增功能、3 分钟 Quick Start、日常上线、失败处理和版本恢复
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
@@ -657,6 +663,9 @@
 
 - [LLM Gateway 生产事实、隐性风险与架构修正 · 计划](plan.platform.llm-gateway-production-hardening) `plan.platform.llm-gateway-production-hardening`
   > 固化代码合并与生产切换的真实状态，区分已关闭和未关闭风险，明确 MAP/GW 架构边界、整改顺序、完成 Gate 和量化进度规则
+
+- [LLM Gateway 已知可用性收口计划](plan.platform.llm-gateway-known-availability-closeout) `plan.platform.llm-gateway-known-availability-closeout`
+  > 三个有限 PR 收口维护发布、MAP 配置依赖和数据生命周期；最终只做一次生产部署与一次性能力矩阵验收
 
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
@@ -1064,6 +1073,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
+| 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |
 | 2026-07-10 | 更新 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产事实、隐性风险与架构修正 · 计划 |
 | 2026-07-10 | 新增 | `design.platform.llm-gateway.migration-retrospective` | LLM Gateway 全量迁移与生产发布复盘 |
 | 2026-07-10 | 新增 | `plan.platform.llm-gateway-protocol-router-pr-split` | LLM Gateway 协议路由 PR 拆分计划 |

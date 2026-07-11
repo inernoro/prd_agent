@@ -3807,7 +3807,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             pinnedModelId: pinnedModelId);
     }
 
-    private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
+    internal static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
     {
         var code = (appCallerCode ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(code))
@@ -3823,14 +3823,41 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
         }
 
-        var def = AppCallerRegistrationService.FindByAppCode(code);
-        if (def == null)
+        if (code.Length > 200)
         {
-            error = $"appCallerCode 未注册: {code}";
+            error = "appCallerCode 不能超过 200 个字符";
             return false;
         }
 
-        if (def.ModelTypes == null || !def.ModelTypes.Contains(type))
+        var separatorIndex = code.IndexOf("::", StringComparison.Ordinal);
+        if (separatorIndex <= 0
+            || separatorIndex != code.LastIndexOf("::", StringComparison.Ordinal)
+            || separatorIndex + 2 >= code.Length)
+        {
+            error = "appCallerCode 必须使用 {app-key}.{feature}::{model-type} 格式";
+            return false;
+        }
+
+        var path = code[..separatorIndex];
+        var declaredType = code[(separatorIndex + 2)..];
+        var segments = path.Split('.', StringSplitOptions.None);
+        if (segments.Length < 2
+            || segments.Any(segment => !IsKebabCaseSegment(segment))
+            || !IsKebabCaseSegment(declaredType))
+        {
+            error = "appCallerCode 各段必须使用小写字母、数字和连字符";
+            return false;
+        }
+
+        if (!string.Equals(declaredType, type, StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"appCallerCode 与 modelType 不匹配: {code} -> {type}";
+            return false;
+        }
+
+        var def = AppCallerRegistrationService.FindByAppCode(code);
+        if (def != null
+            && (def.ModelTypes == null || !def.ModelTypes.Contains(type, StringComparer.OrdinalIgnoreCase)))
         {
             error = $"appCallerCode 与 modelType 不匹配: {code} -> {type}";
             return false;
@@ -3838,6 +3865,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         error = string.Empty;
         return true;
+    }
+
+    private static bool IsKebabCaseSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value[0] is < 'a' or > 'z')
+            return false;
+
+        return value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
     }
 
     #endregion
