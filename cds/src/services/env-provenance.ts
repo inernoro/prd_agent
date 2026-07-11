@@ -18,7 +18,7 @@
 
 import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
-import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { applyPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
 
 /** 一层 env 来源。合并顺序 = 数组顺序,靠后覆盖靠前(last-writer-wins)。 */
 export interface EnvLayer {
@@ -104,13 +104,15 @@ function trackSet(
  * @param profileLayers   profile env 层(部署路径传单层 profile.env;检查器拆
  *                        baseline/extra-service → branch-override → deploy-mode)
  * @param opts.jwtIssuer  Jwt__Issuer 兜底值(config.jwt.issuer)
+ * @param opts.injectBullmqPrefix  BULLMQ_PREFIX 分支前缀兜底开关(默认开;
+ *                        CDS_BULLMQ_PREFIX_INJECTION=0 时调用方传 false 关闭)
  */
 export function resolveProfileRuntimeEnvWithProvenance(
   entry: EnvResolveBranchContext,
   profile: Pick<BuildProfile, 'dockerImage' | 'dbScope'>,
   customEnvLayers: EnvLayer[],
   profileLayers: EnvLayer[],
-  opts: { jwtIssuer: string },
+  opts: { jwtIssuer: string; injectBullmqPrefix?: boolean },
 ): EnvResolveResult {
   const tracked = new Map<string, TrackedEntry>();
 
@@ -157,6 +159,16 @@ export function resolveProfileRuntimeEnvWithProvenance(
     for (const [k, v] of Object.entries(layer.env)) {
       trackSet(tracked, k, v, layer.source, layer.detail);
     }
+  }
+
+  // 4.5 BullMQ 分支前缀兜底(debt.cds.branch-isolation「bullmq-cross-branch-steal」,
+  // 2026-07-09):同项目多分支共用一个 Redis 时,BullMQ 默认前缀相同 → 兄弟分支
+  // 互抢 job(旧分支容器把新分支的任务消费掉)。注入 BULLMQ_PREFIX=<branch-db-slug>
+  // 让每个分支的队列天然隔离,slug 与 per-branch DB 后缀同一 SSOT(slugifyBranchForDb)。
+  // 只兜底不覆盖(cross-project-isolation 通道 7):customEnv/分支 env/profile.env
+  // 任何显式定义优先;放在 profile 层之后正是为此。逃生阀见 opts.injectBullmqPrefix。
+  if (opts.injectBullmqPrefix !== false && entry.branch && !tracked.get('BULLMQ_PREFIX')?.value) {
+    trackSet(tracked, 'BULLMQ_PREFIX', slugifyBranchForDb(entry.branch), 'platform-injected', 'bullmq-branch-prefix');
   }
 
   // 5. 平台版本元数据(强制覆盖)

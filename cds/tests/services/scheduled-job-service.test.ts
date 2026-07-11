@@ -7,6 +7,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { ScheduledJobService } from '../../src/services/scheduled-job-service.js';
 import type { ExecOptions, ExecResult, IShellExecutor, Project, ScheduledJob } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('ScheduledJobService', () => {
   let tmpDir: string;
   let stateService: StateService;
@@ -34,10 +35,11 @@ describe('ScheduledJobService', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     vi.restoreAllMocks();
     delete process.env.CDS_TASK_SANDBOX_IMAGE;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('runs a command job and persists run history', async () => {

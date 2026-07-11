@@ -99,7 +99,7 @@ export function DropdownMenu({
         ? createPortal(
             <div
               ref={popoverRef}
-              className="cds-overlay-anim fixed z-[10100] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
+              className="cds-overlay-anim fixed z-[300] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
               style={{ width, top: coords.top, left: coords.left }}
               role="menu"
               onClick={(event) => {

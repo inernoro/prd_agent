@@ -2967,7 +2967,9 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("entries/{entryId}/generate-subtitle")]
     public async Task<IActionResult> GenerateSubtitle(string entryId)
     {
-        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        // team writable：与 UploadFile 的 CanWriteStoreAsync 对称——能上传音视频的协作者
+        // 也能发起字幕/转录（产物是新 entry，本质是写操作），否则非 Owner 上传完即 404（Codex P2）
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, GetUserId());
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持生成字幕"));
@@ -2976,9 +2978,42 @@ public class DocumentStoreController : ControllerBase
         if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
 
-        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回。
+        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Subtitle);
+    }
+
+    /// <summary>
+    /// 发起录音转录全链路任务（音视频 → ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档）。
+    /// 移动端 Notion 式录音流程的后端入口。
+    /// </summary>
+    [HttpPost("entries/{entryId}/transcribe")]
+    public async Task<IActionResult> TranscribeEntry(string entryId)
+    {
+        // team writable：能上传录音的协作者必须能转录，否则 FAB「录音转笔记」流程
+        // 在共享库里上传成功后立刻 404（Codex P2）
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, GetUserId());
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持转录"));
+
+        var ct = (entry.ContentType ?? "").ToLowerInvariant();
+        if (!ct.StartsWith("audio/") && !ct.StartsWith("video/"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频文件转录"));
+
+        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Transcribe);
+    }
+
+    /// <summary>
+    /// 字幕生成 / 录音转录共用的排队逻辑（去重 + 定向消费认领 + 新建）。
+    /// </summary>
+    private async Task<IActionResult> QueueMediaAgentRunAsync(DocumentEntry entry, DocumentStore store, string kind)
+    {
+        var entryId = entry.Id;
+        var userId = GetUserId();
+        // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
+        // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
+        // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
@@ -2988,7 +3023,8 @@ public class DocumentStoreController : ControllerBase
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
@@ -3005,7 +3041,8 @@ public class DocumentStoreController : ControllerBase
         var selfRun = await _db.DocumentStoreAgentRuns.Find(
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
@@ -3017,12 +3054,11 @@ public class DocumentStoreController : ControllerBase
         // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
         // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
-        var userId = GetUserId();
         var run = new DocumentStoreAgentRun
         {
-            Kind = DocumentStoreAgentRunKind.Subtitle,
+            Kind = kind,
             SourceEntryId = entryId,
-            StoreId = store!.Id,
+            StoreId = store.Id,
             UserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
@@ -3031,7 +3067,7 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
 
-        _logger.LogInformation("[doc-store-agent] Subtitle run queued: {RunId} entry={EntryId}", run.Id, entryId);
+        _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
 

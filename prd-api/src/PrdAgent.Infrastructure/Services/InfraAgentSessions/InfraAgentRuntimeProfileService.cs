@@ -345,7 +345,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         var now = DateTime.UtcNow;
-        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var protocol = ResolveRuntimeProtocol(model.Protocol, resolved.PlatformType, resolved.ApiUrl);
         var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
         var runtime = InferRuntime(protocol, model.ModelName);
         InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
@@ -436,7 +436,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         var now = DateTime.UtcNow;
-        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var protocol = ResolveRuntimeProtocol(model.Protocol, resolved.PlatformType, resolved.ApiUrl);
         var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
         var runtime = InferRuntime(protocol, model.ModelName);
         InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
@@ -557,6 +557,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var sw = Stopwatch.StartNew();
         try
         {
+            var requestId = Guid.NewGuid().ToString("N");
             var resp = await _gateway.TestUpstreamProfileAsync(new GatewayUpstreamProfileTestRequest
             {
                 AppCallerCode = AppCallerRegistry.InfraAgent.RuntimeProfileTest.Chat,
@@ -567,6 +568,17 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 ProfileId = secret.Id,
                 ProfileName = secret.Name,
                 UserId = userId,
+                RequestId = requestId,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    UserId = userId,
+                    SourceSystem = "map",
+                    IngressProtocol = "gw-native",
+                    AppCallerTitle = secret.Name,
+                    ModelPolicy = "pinned",
+                    ParameterPolicy = "default-drop",
+                },
                 TimeoutSeconds = 30
             }, ct);
             sw.Stop();
@@ -826,6 +838,17 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return (apiUrl, apiKey, platformType, apiKey == null && keyUnreadable);
     }
 
+    internal static string ResolveRuntimeProtocol(string? modelProtocol, string? platformType, string apiUrl)
+    {
+        var normalizedModelProtocol = NormalizeGatewayProtocolForRuntime(modelProtocol);
+        if (normalizedModelProtocol != null)
+        {
+            return normalizedModelProtocol;
+        }
+
+        return InferProtocol(platformType, apiUrl);
+    }
+
     private static string InferProtocol(string? platformType, string apiUrl)
     {
         return string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase)
@@ -833,6 +856,17 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || apiUrl.Contains("/anthropic", StringComparison.OrdinalIgnoreCase)
             ? InfraAgentRuntimeProtocols.Anthropic
             : InfraAgentRuntimeProtocols.OpenAiCompatible;
+    }
+
+    private static string? NormalizeGatewayProtocolForRuntime(string? protocol)
+    {
+        var normalized = NormalizeOptional(protocol)?.ToLowerInvariant();
+        return normalized switch
+        {
+            "anthropic" or "claude" or "claude-compatible" => InfraAgentRuntimeProtocols.Anthropic,
+            "openai" or "openai-compatible" or "openrouter" or "google" or "gemini" or "gemini-compatible" => InfraAgentRuntimeProtocols.OpenAiCompatible,
+            _ => null
+        };
     }
 
     private static string InferRuntime(string protocol, string? modelName)

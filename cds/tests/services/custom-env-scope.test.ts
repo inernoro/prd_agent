@@ -17,6 +17,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { GLOBAL_ENV_SCOPE } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 describe('StateService customEnv scoped store', () => {
   let tmpDir: string;
   let stateFile: string;
@@ -26,8 +27,9 @@ describe('StateService customEnv scoped store', () => {
     stateFile = path.join(tmpDir, 'state.json');
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('migrates legacy flat customEnv into { _global: <flat> } on load', () => {

@@ -42,6 +42,8 @@ set -eu
 #     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
+#   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
 #   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
 #   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 48
@@ -70,6 +72,7 @@ set -eu
 #   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
+LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
@@ -478,9 +481,6 @@ config_value() {
 
 llmgw_mode_value() {
   value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  if [ -z "$value" ]; then
-    value="inproc"
-  fi
   printf '%s' "$value"
 }
 
@@ -503,6 +503,17 @@ llmgw_shadow_sample_allowlist_value() {
 guard_llmgw_prod_stage_context_if_needed() {
   mode_raw="$(llmgw_mode_value)"
   mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
+  if [ -z "$mode" ]; then
+    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
+    exit 1
+  fi
+  case "$mode" in
+    http|shadow|inproc) ;;
+    *)
+      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
+      exit 1
+      ;;
+  esac
   allowlist_raw="$(llmgw_allowlist_value)"
   allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
   shadow_sample_raw="$(llmgw_shadow_sample_value)"
@@ -549,6 +560,22 @@ else
   echo "ERROR: 未找到 docker-compose 或 docker 命令" >&2
   exit 1
 fi
+
+# 生产 Compose identity 必须与 release worktree 目录名无关。否则从
+# prd_agent_release_<sha> 执行时会创建另一套 project，审计脚本也会找错 Mongo。
+compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
+if ! printf '%s' "$compose_project_name" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'; then
+  echo "ERROR: invalid Compose project name: $compose_project_name" >&2
+  exit 1
+fi
+export COMPOSE_PROJECT_NAME="$compose_project_name"
+echo "Compose project: $COMPOSE_PROJECT_NAME"
+
+if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
+  echo "ERROR: missing executable scripts/llmgw-prod-topology-preflight.sh" >&2
+  exit 1
+fi
+scripts/llmgw-prod-topology-preflight.sh
 
 persist_release_image_pins
 
@@ -802,7 +829,7 @@ run_llmgw_release_gate_if_needed() {
     release_gate_required=1
   fi
   if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=${mode:-inproc}, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
+    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
     return 0
   fi
 
@@ -963,8 +990,9 @@ run_llmgw_release_gate_if_needed() {
   if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
     args="$args --report-md $LLMGW_GATE_REPORT_MD"
   fi
-  if [ -n "$expect_commit" ]; then
-    args="$args --shadow-release-commit $expect_commit"
+  shadow_release_commit="$(printf '%s' "${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}" | xargs || true)"
+  if [ -n "$shadow_release_commit" ]; then
+    args="$args --shadow-release-commit $shadow_release_commit"
   fi
 
   old_ifs="$IFS"
@@ -1053,11 +1081,11 @@ run_llmgw_release_gate_if_needed() {
   IFS="$old_ifs"
 
   if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required before deploy (same-commit shadow evidence only; commit probe runs after compose up)"
+    echo "LLM Gateway release gate: required before deploy (selected shadow evidence commit; new commit probes run after compose up)"
     # shellcheck disable=SC2086
     GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
   else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=${mode:-inproc}, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
+    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
   fi
 }
 
@@ -1107,6 +1135,57 @@ run_llmgw_post_deploy_verification_if_needed() {
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
   fi
 
+  protocol_canary_arg=""
+  run_protocol_canary="$(printf '%s' "${LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY:-0}" | xargs || true)"
+  case "$run_protocol_canary" in
+    1|true|TRUE|yes|YES|on|ON)
+      if [ ! -f "scripts/llmgw-protocol-canary.py" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requested but scripts/llmgw-protocol-canary.py is missing." >&2
+        exit 1
+      fi
+      if [ -z "$expect_commit" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requires immutable --commit/sha tag so --expect-commit can be enforced." >&2
+        exit 1
+      fi
+      protocol_canary_json="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}"
+      protocol_canary_md="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-}"
+      protocol_canary_max_runtime_calls="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-${LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}}"
+      if [ -z "$(printf '%s' "$protocol_canary_json" | xargs || true)" ]; then
+        echo "ERROR: LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=1 requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT." >&2
+        exit 1
+      fi
+      protocol_canary_json_dir="$(dirname -- "$protocol_canary_json")"
+      if [ -n "$protocol_canary_json_dir" ] && [ "$protocol_canary_json_dir" != "." ]; then
+        mkdir -p "$protocol_canary_json_dir"
+      fi
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_md_dir="$(dirname -- "$protocol_canary_md")"
+        if [ -n "$protocol_canary_md_dir" ] && [ "$protocol_canary_md_dir" != "." ]; then
+          mkdir -p "$protocol_canary_md_dir"
+        fi
+      fi
+      protocol_canary_report_args=""
+      if [ -n "$(printf '%s' "$protocol_canary_md" | xargs || true)" ]; then
+        protocol_canary_report_args="--report-md $protocol_canary_md"
+      fi
+      echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
+      # shellcheck disable=SC2086
+      GW_KEY="$gate_key" python3 scripts/llmgw-protocol-canary.py \
+        --base "$gate_base" \
+        --expect-commit "$expect_commit" \
+        --execute \
+        --max-runtime-calls "$protocol_canary_max_runtime_calls" \
+        --json-out "$protocol_canary_json" \
+        $protocol_canary_report_args
+      protocol_canary_arg="--protocol-canary-json $protocol_canary_json"
+      ;;
+    *)
+      if [ -n "$(printf '%s' "${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}" | xargs || true)" ]; then
+        echo "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates"
+      fi
+      ;;
+  esac
+
   require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
   if [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
     echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
@@ -1114,14 +1193,20 @@ run_llmgw_post_deploy_verification_if_needed() {
     if [ -n "$expect_commit" ]; then
       runtime_gate_expect_arg="--expect-commit $expect_commit"
     fi
+    if [ "$mode" = "http" ] && [ "${LLMGW_PROD_STAGE:-}" = "http-full" ]; then
+      echo "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only"
+      runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
+    fi
     # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg --require-runtime-gates
+    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates
   else
     echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
   fi
 }
 
-if [ -n "${SKIP_API_PULL:-}" ]; then
+if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
+  echo "LLM Gateway verify-only: skipping image pull"
+elif [ -n "${SKIP_API_PULL:-}" ]; then
   echo "Skipping release image pull (SKIP_API_PULL=1)"
 else
   echo "Pulling release images:"
@@ -1131,7 +1216,7 @@ else
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
   pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-30}"
   if command -v timeout >/dev/null 2>&1; then
-    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api llmgw llmgw-serve llmgw-web; then
+    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
       if [ "$TAG" = "latest" ]; then
         echo "WARN: release image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local images" >&2
       else
@@ -1139,7 +1224,7 @@ else
         exit 1
       fi
     fi
-  elif ! $COMPOSE pull api llmgw llmgw-serve llmgw-web; then
+  elif ! $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
     if [ "$TAG" = "latest" ]; then
       echo "WARN: release image pull failed; continuing with existing local images" >&2
     else
@@ -1166,12 +1251,89 @@ refresh_gateway_after_compose() {
   fi
 }
 
-echo "Ensuring Docker network exists..."
-docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
+wait_for_llmgw_serving_readiness() {
+  timeout_seconds="${LLMGW_SERVING_READY_TIMEOUT_SECONDS:-180}"
+  if ! printf '%s' "$timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$timeout_seconds" -lt 1 ]; then
+    echo "ERROR: LLMGW_SERVING_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
 
-echo "Starting compose (force recreate to ensure new image is used)..."
-$COMPOSE up -d --force-recreate
+  services=""
+  for service in llmgw-serve llmgw-serve-b; do
+    if $COMPOSE config --services 2>/dev/null | grep -Fxq "$service"; then
+      services="$services $service"
+    fi
+  done
+  services="$(printf '%s' "$services" | xargs || true)"
+  if [ -z "$services" ]; then
+    echo "LLM Gateway serving readiness wait skipped: no serving services in compose"
+    return 0
+  fi
 
-refresh_gateway_after_compose
+  echo "Waiting for LLM Gateway serving readiness: services=$services timeout=${timeout_seconds}s"
+  deadline=$(( $(date +%s) + timeout_seconds ))
+  while :; do
+    all_ready=1
+    states=""
+    for service in $services; do
+      container_id="$($COMPOSE ps -q "$service" 2>/dev/null | head -n 1)"
+      if [ -z "$container_id" ]; then
+        state="missing"
+        all_ready=0
+      else
+        running="$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null || true)"
+        health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id" 2>/dev/null || true)"
+        state="running=$running,health=$health"
+        if [ "$running" != "true" ] || [ "$health" != "healthy" ]; then
+          all_ready=0
+        fi
+        if [ "$health" = "unhealthy" ] || [ "$running" = "false" ]; then
+          echo "ERROR: serving service $service cannot become ready ($state)" >&2
+          $COMPOSE ps >&2 || true
+          exit 1
+        fi
+      fi
+      states="$states $service[$state]"
+    done
+
+    if [ "$all_ready" = "1" ]; then
+      echo "LLM Gateway serving readiness: PASS$states"
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "ERROR: serving readiness timeout after ${timeout_seconds}s:$states" >&2
+      $COMPOSE ps >&2 || true
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
+if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
+  echo "LLM Gateway verify-only: preserving current containers"
+else
+  echo "Ensuring Docker network exists..."
+  docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
+
+  echo "Starting compose (force recreate to ensure new image is used)..."
+  $COMPOSE up -d --force-recreate
+
+  wait_for_llmgw_serving_readiness
+
+  refresh_gateway_after_compose
+
+  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
+  if [ -n "$deploy_receipt_file" ]; then
+    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
+    mkdir -p "$deploy_receipt_dir"
+    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
+    {
+      printf 'RELEASE_REF=%s\n' "$TAG"
+      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$deploy_receipt_tmp"
+    mv "$deploy_receipt_tmp" "$deploy_receipt_file"
+    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
+  fi
+fi
 
 run_llmgw_post_deploy_verification_if_needed

@@ -18,12 +18,24 @@ var builder = WebApplication.CreateBuilder(args);
 // 严格复刻 MAP（PrdAgent.Api/Program.cs）中承载 LlmGateway / ModelResolver 所需的注册，
 // 让本服务通过进程内 DI 直接 HOST 既有实现，再用 HTTP 端点暴露出去。不重写任何网关逻辑。
 
-// MongoDB：主库用于模型配置/模型池解析；GW 自有库用于 serving 请求日志与 shadow 证据。
+// MongoDB：MAP context 只用于显式开启的兼容 fallback；GW context 用于运行配置、模型池、日志与治理。
+// 两者可使用不同连接串，现有部署未配置时仍兼容同一 Mongo 实例的双数据库布局。
 var mongoConn = builder.Configuration["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
+var gatewayMongoConn = builder.Configuration["LlmGateway:MongoConnectionString"]
+    ?? builder.Configuration["LLMGW_MONGO_CONNECTION_STRING"];
+if (string.IsNullOrWhiteSpace(gatewayMongoConn)) gatewayMongoConn = mongoConn;
 var gatewayDb = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
-builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));
+builder.Services.AddSingleton(new LlmGatewayDataContext(gatewayMongoConn, gatewayDb));
+builder.Services.AddSingleton<LlmGatewayDatabaseInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabaseInitializer>());
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
+builder.Services.AddSingleton<GatewayBudgetCoordinator>();
+builder.Services.AddSingleton<GatewayRequestExecutionStore>();
+builder.Services.AddSingleton<GatewayCancellationRegistry>();
+builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
@@ -49,8 +61,16 @@ builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
         sp.GetRequiredService<ILogger<LlmShadowComparisonWriter>>()));
 
-// 应用设置服务（LlmRequestLogWriter 依赖 IAppSettingsService）
-builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
+// GW-owned 运行设置（LlmRequestLogWriter 依赖 IAppSettingsService）。首次只复制 MAP 非敏感日志字段，
+// MAP 不可达时使用默认值，不阻断 serving 启动。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService>(sp =>
+    new GatewayAppSettingsService(
+        sp.GetRequiredService<LlmGatewayDataContext>(),
+        sp.GetService<MongoDbContext>(),
+        sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<ILogger<GatewayAppSettingsService>>()));
+builder.Services.AddHostedService<GatewayRuntimeSettingsInitializer>();
 
 // 资产存储（LlmRequestLogWriter 依赖 IAssetStorage）——从 MAP/Program.cs 逐字搬运的工厂。
 // 读取 ASSETS_PROVIDER / TENCENT_COS_* / R2_* / 本地兜底。
@@ -213,15 +233,22 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     // ─── 装饰器：用 RegistryAssetStorage 包裹真实实现，自动登记每次存储操作 ───
     IAssetStorage WrapWithRegistry(IAssetStorage inner, string providerName)
     {
-        var db = sp.GetRequiredService<MongoDbContext>();
+        var db = sp.GetRequiredService<LlmGatewayDataContext>().Context;
         var regLogger = sp.GetRequiredService<ILogger<RegistryAssetStorage>>();
         log.LogInformation("AssetStorage wrapped with RegistryAssetStorage (provider={Provider})", providerName);
-        return new RegistryAssetStorage(inner, db, providerName, regLogger);
+        return new RegistryAssetStorage(inner, db, providerName, regLogger, "llmgw_asset_registry");
     }
 });
 
+builder.Services.AddSingleton<IGatewayServingReadinessProbe, GatewayServingReadinessProbe>();
+if (builder.Configuration.GetValue("LlmGateway:Retention:WorkerEnabled", true))
+    builder.Services.AddHostedService<GatewayDataLifecycleWorker>();
+
 // 模型池故障通知与自动探活（ModelResolver 解析结果发往健康管理）
-builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(sp =>
+    new PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier(
+        sp.GetRequiredService<LlmGatewayDataContext>().Context,
+        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>>()));
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
@@ -277,11 +304,11 @@ app.Run();
 // 与 api 侧 PlatformKeyIntegrityWorker 的区别：只读、仅告警、不做旧密文重加密（避免两进程双写）。
 sealed class ServingKeyIntegrityCheck : BackgroundService
 {
-    private readonly MongoDbContext _db;
+    private readonly LlmGatewayDataContext _db;
     private readonly IConfiguration _cfg;
     private readonly ILogger<ServingKeyIntegrityCheck> _log;
 
-    public ServingKeyIntegrityCheck(MongoDbContext db, IConfiguration cfg, ILogger<ServingKeyIntegrityCheck> log)
+    public ServingKeyIntegrityCheck(LlmGatewayDataContext db, IConfiguration cfg, ILogger<ServingKeyIntegrityCheck> log)
     {
         _db = db;
         _cfg = cfg;
@@ -322,16 +349,19 @@ sealed class ServingKeyIntegrityCheck : BackgroundService
             else real.Add(label);
         }
 
-        var platforms = await _db.LLMPlatforms.Find(p => p.Enabled).ToListAsync(ct);
+        var platforms = await _db.Database.GetCollection<PrdAgent.Core.Models.LLMPlatform>("llmgw_platforms")
+            .Find(p => p.Enabled).ToListAsync(ct);
         var withKey = platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)).ToList();
         foreach (var p in withKey)
             if (!ApiKeyCryptoKeyRing.Decrypt(p.ApiKeyEncrypted, _cfg).Success) Classify(p.Name, p.Name);
 
-        var models = await _db.LLMModels.Find(m => m.Enabled).ToListAsync(ct);
+        var models = await _db.Database.GetCollection<PrdAgent.Core.Models.LLMModel>("llmgw_models")
+            .Find(m => m.Enabled).ToListAsync(ct);
         foreach (var m in models.Where(m => !string.IsNullOrWhiteSpace(m.ApiKeyEncrypted)))
             if (!ApiKeyCryptoKeyRing.Decrypt(m.ApiKeyEncrypted, _cfg).Success) Classify($"模型:{m.Name}", m.Name);
 
-        var exchanges = await _db.ModelExchanges.Find(e => e.Enabled).ToListAsync(ct);
+        var exchanges = await _db.Database.GetCollection<PrdAgent.Core.Models.ModelExchange>("llmgw_model_exchanges")
+            .Find(e => e.Enabled).ToListAsync(ct);
         foreach (var e in exchanges.Where(e => !string.IsNullOrWhiteSpace(e.TargetApiKeyEncrypted)))
             if (!ApiKeyCryptoKeyRing.Decrypt(e.TargetApiKeyEncrypted, _cfg).Success) Classify($"中继:{e.Name}", e.Name);
 

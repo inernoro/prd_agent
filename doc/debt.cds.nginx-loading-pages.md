@@ -43,15 +43,19 @@ updated: 2026-06-23
 各自的 CSS token / 色值 / 双主题支持程度不一致，导致每次"更新样式"只能改到几个，
 其余继续用旧风格，被用户发现后再修再遗漏，循环往复。
 
-**已完成**：#2（`write_waiting_html`）已迁移到 `src/loading-pages/index.ts`，
-`exec_cds.sh` 调用 `node dist/cli/render-page.js nginx-waiting` 生成，SSOT 统一到 TypeScript。
+**已完成**：
+- #2（`write_waiting_html`）已迁移到 `src/loading-pages/index.ts`，
+  `exec_cds.sh` 调用 `node dist/cli/render-page.js nginx-waiting` 生成，SSOT 统一到 TypeScript。
+- #3（`buildForwarderWaitingPageHtml`）2026-07-09 迁入 `src/loading-pages/index.ts`，
+  原 `src/forwarder/waiting-page.ts` 只剩 re-export；vitest 快照锁字节级等价。
+  顺手修掉 loading-pages 里 `DUAL_THEME_TOKENS` 的伪 light 块（诚实单主题 dark，注释说明）。
+- #7（`buildTransitPageHtml`）2026-07-09 对账发现**零调用点**（dead code），
+  直接删除（index.ts 留 3 行墓碑注释），不再迁移——「样式基准」角色由 loading-pages 现有模板承担。
 
 **待做（按优先级）**：
-- [ ] #3 `buildForwarderWaitingPageHtml` 迁移到 `src/loading-pages/index.ts`
 - [ ] #4 `buildLegacyWaitingPreviewHtml` 迁移并统一双主题
 - [ ] #5 `buildLoadingPreviewBranchGoneHtml` 已有双主题，迁移到统一模块
 - [ ] #6 `buildBranchGonePageHtml` 升级样式 + 迁移
-- [ ] #7 `buildTransitPageHtml` 迁移（这个是最现代的，作为样式基准）
 - [ ] #8 `serveDeployErrorLightPillarPage` 迁移
 
 **完成标准**：所有 loading page HTML 都从 `src/loading-pages/index.ts` 导出，

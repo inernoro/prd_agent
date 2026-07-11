@@ -123,6 +123,7 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 10 }}>
         <TraceMini label="Source" value={trace?.sourceSystem || detail.sourceSystem} />
         <TraceMini label="Ingress" value={trace?.ingressProtocol || detail.ingressProtocol} />
+        <TraceMini label="Run" value={trace?.runId || detail.runId} mono />
         <TraceMini label="Policy" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
         <TraceMini label="Requested" value={trace?.requestedModel || detail.expectedModel} mono />
         <TraceMini label="Actual" value={trace?.actualModel || detail.model} mono />

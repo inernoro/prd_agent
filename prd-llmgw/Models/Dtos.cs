@@ -65,6 +65,7 @@ public sealed class LlmLogListItem
     public string? PlatformName { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
@@ -114,6 +115,7 @@ public sealed class LlmLogDetail
     public string? ReleaseCommit { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
@@ -184,6 +186,7 @@ public sealed class RouterTraceDto
     public string? Transport { get; set; }
     public string? SourceSystem { get; set; }
     public string? IngressProtocol { get; set; }
+    public string? RunId { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ModelPoolId { get; set; }
     public bool IsFallback { get; set; }
@@ -253,12 +256,49 @@ public sealed class LogsSummaryData
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
     public List<LogsBucketItem> StatusDistribution { get; set; } = new();
+    public List<LogsBucketItem> SourceSystemDistribution { get; set; } = new();
+    public List<LogsBucketItem> IngressProtocolDistribution { get; set; } = new();
+    public List<LogsBucketItem> ModelPolicyDistribution { get; set; } = new();
 }
 
 public sealed class LogsBucketItem
 {
     public string Key { get; set; } = "";
     public long Count { get; set; }
+}
+
+// ── 协议入口运行覆盖 ──
+public sealed class ProtocolCoverageData
+{
+    public string? ReleaseCommit { get; set; }
+    public int SinceHours { get; set; }
+    public string GeneratedAt { get; set; } = "";
+    public long TotalLogRequests { get; set; }
+    public int TotalRegisteredAppCallers { get; set; }
+    public int TotalActiveAppCallers { get; set; }
+    public int CoveredProtocols { get; set; }
+    public int MissingRuntimeProtocols { get; set; }
+    public List<ProtocolCoverageItem> Items { get; set; } = new();
+}
+
+public sealed class ProtocolCoverageItem
+{
+    public string IngressProtocol { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Status { get; set; } = "";
+    public int RegisteredAppCallers { get; set; }
+    public int ActiveAppCallers { get; set; }
+    public int CoveredActiveAppCallers { get; set; }
+    public int MissingActiveAppCallers { get; set; }
+    public long LogRequests { get; set; }
+    public long HttpRequests { get; set; }
+    public long FailedRequests { get; set; }
+    public long DroppedParameterRequests { get; set; }
+    public List<string> RequestTypes { get; set; } = new();
+    public List<string> MissingActiveAppCallerCodes { get; set; } = new();
+    public string? LastSeenAt { get; set; }
+    public string LogsLink { get; set; } = "";
+    public string AppCallersLink { get; set; } = "";
 }
 
 // ── 时间序列 ──
@@ -446,6 +486,7 @@ public sealed class UpdateGatewayAppCallerRequest
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
 }
@@ -463,6 +504,7 @@ public sealed class BulkUpdateGatewayAppCallersRequest
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
 }
 
@@ -647,7 +689,9 @@ public sealed class ConfigAuthoritySummary
     public long AppCallersTotal { get; set; }
     public int ActiveAppCallers { get; set; }
     public int ActiveWithGatewayPool { get; set; }
+    public int ActiveWithUsableGatewayPool { get; set; }
     public int ActiveMissingGatewayPool { get; set; }
+    public int ActiveBoundPoolWithoutUsableMember { get; set; }
     public int DiscoveredAppCallers { get; set; }
     public int ConfiguredAppCallers { get; set; }
     public int DisabledAppCallers { get; set; }
@@ -690,6 +734,13 @@ public sealed class RuntimeGateItem
     public string Evidence { get; set; } = string.Empty;
     public string NextAction { get; set; } = string.Empty;
     public Dictionary<string, string> Facts { get; set; } = new();
+    public List<RuntimeGateLink> Links { get; set; } = new();
+}
+
+public sealed class RuntimeGateLink
+{
+    public string Label { get; set; } = string.Empty;
+    public string To { get; set; } = string.Empty;
 }
 
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers，只读）──
@@ -712,6 +763,7 @@ public sealed class GatewayAppCallerItem
     public string RequestType { get; set; } = "";
     public string SourceSystem { get; set; } = "";
     public string IngressProtocol { get; set; } = "";
+    public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }
     public string Status { get; set; } = "";
     public string? ModelPoolId { get; set; }
@@ -720,8 +772,15 @@ public sealed class GatewayAppCallerItem
     public string? LastObservedModelPoolId { get; set; }
     public string? LastObservedModelPolicy { get; set; }
     public string? LastObservedParameterPolicy { get; set; }
+    public List<string> ObservedModelPoolIds { get; set; } = new();
+    public List<string> ObservedModelPolicies { get; set; } = new();
+    public List<string> ObservedParameterPolicies { get; set; } = new();
+    public string? LastObservedRequestId { get; set; }
+    public string? LastObservedSessionId { get; set; }
+    public string? LastObservedRunId { get; set; }
     public string? Owner { get; set; }
     public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
     public long TotalSeen { get; set; }
@@ -762,3 +821,27 @@ public sealed class ShadowSnapshotItem
     public string? PlatformType { get; set; } public string? ResolutionType { get; set; } public string? ModelGroupId { get; set; } public bool IsFallback { get; set; }
 }
 public sealed class ShadowMismatchItem { public string Field { get; set; } = ""; public string? Inproc { get; set; } public string? Http { get; set; } public string Severity { get; set; } = ""; }
+
+public sealed class ServiceKeyCreateRequest
+{
+    public string? Name { get; set; }
+    public string? SourceSystem { get; set; }
+    public List<string>? AppCallerCodes { get; set; }
+    public List<string>? IngressProtocols { get; set; }
+    public List<string>? Scopes { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
+public sealed class ServiceKeyItem
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; }
+    public string SourceSystem { get; set; } = "";
+    public List<string> AppCallerCodes { get; set; } = new();
+    public List<string> IngressProtocols { get; set; } = new();
+    public List<string> Scopes { get; set; } = new();
+    public string? ExpiresAt { get; set; }
+    public string? LastUsedAt { get; set; }
+    public string? CreatedAt { get; set; }
+}

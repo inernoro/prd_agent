@@ -140,6 +140,34 @@ describe('resolveProfileRuntimeEnvWithProvenance — 溯源语义', () => {
   });
 });
 
+describe('BULLMQ_PREFIX 分支前缀兜底(cross-project-isolation 通道 7,2026-07-09)', () => {
+  it('默认注入 BULLMQ_PREFIX=<branch-db-slug>,打 platform-injected/bullmq-branch-prefix', () => {
+    const r = envOf([]);
+    // slug 与 per-branch DB 后缀同 SSOT(slugifyBranchForDb):claude/feat-x → claude_feat_x
+    expect(r.env['BULLMQ_PREFIX']).toBe('claude_feat_x');
+    expect(prov(r, 'BULLMQ_PREFIX')).toMatchObject({ source: 'platform-injected', detail: 'bullmq-branch-prefix' });
+  });
+
+  it('customEnv 显式定义优先,不被平台值覆盖', () => {
+    const r = envOf([{ source: 'project', env: { BULLMQ_PREFIX: 'shared-queue' } }]);
+    expect(r.env['BULLMQ_PREFIX']).toBe('shared-queue');
+    expect(prov(r, 'BULLMQ_PREFIX')?.source).toBe('project');
+  });
+
+  it('profile.env 显式定义优先(注入点在 profile 层之后判空)', () => {
+    const r = envOf([], [{ source: 'profile', env: { BULLMQ_PREFIX: 'profile-queue' } }]);
+    expect(r.env['BULLMQ_PREFIX']).toBe('profile-queue');
+    expect(prov(r, 'BULLMQ_PREFIX')?.source).toBe('profile');
+  });
+
+  it('injectBullmqPrefix=false(逃生阀 CDS_BULLMQ_PREFIX_INJECTION=0)时不注入', () => {
+    const r = resolveProfileRuntimeEnvWithProvenance(
+      BRANCH, { dockerImage: 'img' }, [], [], { jwtIssuer: 'cds-issuer', injectBullmqPrefix: false },
+    );
+    expect(r.env['BULLMQ_PREFIX']).toBeUndefined();
+  });
+});
+
 describe('resolveProfileRuntimeEnvWithProvenance — 与旧部署路径行为等价(单层包装)', () => {
   it('复合场景:customEnv + profile.env + JWT + node + per-branch + 模板,env 输出与旧实现手算一致', () => {
     // 旧实现语义手算:
@@ -195,8 +223,9 @@ describe('resolveProfileRuntimeEnvWithProvenance — 与旧部署路径行为等
 
   it('空输入:无 customEnv 无 profile.env 时只有平台注入项', () => {
     const r = envOf([]);
+    // BULLMQ_PREFIX 为 2026-07-09 新增的平台注入项（分支队列隔离，通道 7）
     expect(Object.keys(r.env).sort()).toEqual([
-      'CDS_BUILD_TIME', 'COMMIT_SHA', 'GITHUB_SHA', 'GIT_COMMIT', 'Jwt__Issuer',
+      'BULLMQ_PREFIX', 'CDS_BUILD_TIME', 'COMMIT_SHA', 'GITHUB_SHA', 'GIT_COMMIT', 'Jwt__Issuer',
       'SOURCE_VERSION', 'VITE_BUILD_ID', 'VITE_GIT_BRANCH',
     ].sort().concat(['CDS_COMMIT_SHA']).sort());
   });
@@ -207,6 +236,9 @@ describe('missingEnvTemplates(从 container.ts 迁来的 SSOT)', () => {
     expect(missingEnvTemplates({ A: '${MISSING_XYZ_123}' })).toEqual(['MISSING_XYZ_123']);
     expect(missingEnvTemplates({ A: '${B}', B: 'x' })).toEqual([]);
     expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:-default}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:=default}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:+alternate}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:?required}' })).toEqual(['MISSING_XYZ_123']);
     expect(missingEnvTemplates({ A: 'no-template' })).toEqual([]);
   });
 });

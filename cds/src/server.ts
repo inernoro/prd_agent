@@ -7,6 +7,9 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
+import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
+import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
@@ -78,6 +81,13 @@ import type { BranchOperationCoordinator } from './services/branch-operation-coo
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
+import { DeploymentRunService } from './services/deployment-run.js';
+import { DeploymentVersionService } from './services/deployment-version.js';
+import { ManagedProjectService } from './services/managed-project.js';
+import {
+  DeploymentDiagnosisService,
+  GatewayDeploymentExplanationProvider,
+} from './services/deployment-diagnosis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -482,6 +492,23 @@ function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
 }
 
+function legacyAuthUser(username: string, authMode: 'disabled' | 'basic') {
+  return {
+    id: authMode === 'basic' ? `basic:${username}` : 'anonymous',
+    username,
+    githubLogin: '',
+    authProvider: 'local',
+    name: username,
+    email: null,
+    avatarUrl: null,
+    orgs: [],
+    isSystemOwner: authMode === 'basic',
+    status: 'active',
+    lastLoginAt: null,
+    createdAt: '',
+  };
+}
+
 function shortText(value: unknown, max = 1200): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
@@ -699,6 +726,11 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/runs/:id/rollback': '回滚发布记录',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
+    'GET /deployment-runs': '列出部署运行',
+    'GET /deployment-versions': '列出部署版本',
+    'GET /projects/:id/delivery': '查看项目交付模式',
+    'PUT /projects/:id/delivery': '更新项目交付模式',
+    'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -801,6 +833,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
+    'GET /auth/public-status': '获取公开认证能力',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
@@ -897,6 +930,16 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
+    [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
+    [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
+    [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
+    [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
+    [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
+    [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
+    [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
+    [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
+    [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
@@ -1268,6 +1311,23 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentVersionService = new DeploymentVersionService(deps.stateService);
+  const managedProjectService = new ManagedProjectService(deps.stateService);
+  const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();
+  const aiExplanationModel = String(process.env.CDS_AI_EXPLANATION_MODEL || '').trim();
+  const deploymentDiagnosisService = new DeploymentDiagnosisService(
+    deploymentRunService,
+    deploymentVersionService,
+    aiExplanationEndpoint && aiExplanationModel
+      ? new GatewayDeploymentExplanationProvider({
+          endpoint: aiExplanationEndpoint,
+          model: aiExplanationModel,
+          apiKey: String(process.env.CDS_AI_EXPLANATION_GATEWAY_KEY || '').trim() || undefined,
+        })
+      : undefined,
+  );
+  deploymentRunService.reconcileInterrupted();
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -1694,6 +1754,17 @@ export function createServer(deps: ServerDeps): express.Express {
     (cdsUser && cdsPass) ? 'basic' : 'disabled';
   const authEnabled = authMode === 'basic';
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+
+  app.get('/api/auth/public-status', (_req, res) => {
+    res.json({
+      mode: authMode,
+      enabled: authMode !== 'disabled',
+      loginMethods: {
+        github: authMode === 'github',
+        local: authMode === 'basic' || authMode === 'github',
+      },
+    });
+  });
 
   // ── AI pairing endpoints (before auth, some are public) ──
   // POST /api/ai/request-access — AI agent requests pairing (public)
@@ -2401,9 +2472,10 @@ export function createServer(deps: ServerDeps): express.Express {
   if (authMode !== 'github') {
     app.get('/api/me', (_req, res) => {
       const username = authMode === 'basic' ? cdsUser : 'anonymous';
+      const user = legacyAuthUser(username || 'anonymous', authMode);
       res.json({
         username,
-        user: username,
+        user,
         authMode,
         authEnabled: authMode !== 'disabled',
       });
@@ -3557,6 +3629,50 @@ export function createServer(deps: ServerDeps): express.Express {
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
 
+  app.use('/api', createDeploymentRunsRouter({
+    deploymentRunService,
+    deploymentDiagnosisService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+
+  app.use('/api', createDeploymentVersionsRouter({
+    deploymentVersionService,
+    assertProjectAccess: assertProjectAccess as any,
+    dispatchVersion: async (version, trigger) => {
+      try {
+        const upstream = await fetch(
+          `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CDS-Internal': '1',
+              'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
+              'X-CDS-Source-Project-Id': version.projectId,
+              'X-CDS-Source-Branch-Id': version.branchId,
+            },
+            body: JSON.stringify({ versionId: version.id }),
+          },
+        );
+        const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
+        if (upstream.ok) {
+          void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
+          return { accepted: true, status: upstream.status, runId };
+        }
+        const error = (await upstream.text().catch(() => '')).slice(0, 500);
+        return { accepted: false, status: upstream.status, error };
+      } catch (err) {
+        return { accepted: false, status: 503, error: (err as Error).message };
+      }
+    },
+  }));
+
+  app.use('/api', createManagedProjectsRouter({
+    stateService: deps.stateService,
+    managedProjectService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -3570,6 +3686,9 @@ export function createServer(deps: ServerDeps): express.Express {
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
     branchOperationCoordinator: deps.branchOperationCoordinator,
+    deploymentRunService,
+    deploymentVersionService,
+    managedProjectService,
   }));
 
   // 2026-05-28: 单一 SSE 通道 + 任务化刷新。

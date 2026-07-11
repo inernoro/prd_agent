@@ -35,7 +35,6 @@ function colorForCategory(cat?: string | null): string {
   for (let i = 0; i < cat.length; i++) hash = (hash * 31 + cat.charCodeAt(i)) >>> 0;
   return PALETTE[hash % PALETTE.length];
 }
-
 interface SimNode extends GraphNode {
   x: number;
   y: number;
@@ -1351,4 +1350,3 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     </div>
   );
 }
-

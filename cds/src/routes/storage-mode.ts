@@ -371,6 +371,9 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       const dir = path.dirname(stateFile);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       jsonStore.save(stateService.getState());
+      // json store 的 save 是去抖异步落盘（2026-07-09）。切换存储模式的
+      // 响应承诺「state.json 已写入」，必须等首笔真的落盘后再返回。
+      await jsonStore.flush();
     } catch (err) {
       res.status(500).json({
         ok: false,

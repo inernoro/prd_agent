@@ -216,6 +216,12 @@
     ]
   },
   {
+    "code": "document-store.transcribe-summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "email-agent.draft::chat",
     "modelTypes": [
       "chat"
@@ -631,6 +637,30 @@
   },
   {
     "code": "review-agent.review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.claude.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.gemini.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.native.chat::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "self-test.openai.chat::chat",
     "modelTypes": [
       "chat"
     ]

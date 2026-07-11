@@ -25,6 +25,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
+    private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -52,7 +53,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILlmRequestLogWriter? logWriter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
         ModelPool.IPoolFailoverNotifier? failoverNotifier = null,
-        IDoubaoStreamAsrExecutor? doubaoStreamAsr = null)
+        IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
+        GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -60,6 +62,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _logWriter = logWriter;
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
+        _concurrencyCoordinator = concurrencyCoordinator;
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
 
@@ -254,6 +257,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             IGatewayAdapter? activeAdapter = adapter;
             GatewayTokenUsage? tokenUsage = null;
             System.Text.Json.Nodes.JsonArray? toolCalls = null;
+            Dictionary<string, System.Text.Json.Nodes.JsonNode?>? extensions = null;
             string? finishReason = null;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
@@ -314,6 +318,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
+                var concurrency = await AcquireProviderConcurrencyAsync(activeResolution, request.TimeoutSeconds, ct);
+                if (!concurrency.Allowed)
+                {
+                    const string message = "上游平台或模型已达到最大并发";
+                    CompleteLastSendAttempt(providerAttempts, 429, 0, message);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate reached provider concurrency limit");
+                        continue;
+                    }
+                    return GatewayResponse.Fail(concurrency.ErrorCode, message, 429);
+                }
+                await using var providerLease = concurrency.Lease;
+
                 var endpoint = activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType);
                 var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
@@ -354,6 +373,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     tokenUsage = activeAdapter.ParseTokenUsage(responseBody);
                     // 协议保真：提取工具调用（函数调用），归一为 OpenAI 形状（无则 null，不影响纯文本响应）
                     toolCalls = activeAdapter.ParseToolCalls(responseBody);
+                    extensions = activeAdapter.ParseExtensions(responseBody);
                     finishReason = ExtractFinishReason(responseBody);
                 }
 
@@ -423,6 +443,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Content = messageContent ?? responseBody,
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
+                Extensions = extensions,
                 Resolution = activeResolution.ToGatewayResolution(),
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
@@ -462,6 +483,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult? resolution = null;
         GatewayModelResolution? gatewayResolution = null;
         GatewayTokenUsage? tokenUsage = null;
+        GatewayProviderConcurrencyLease? providerLease = null;
 
         try
         {
@@ -536,6 +558,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
+                var concurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+                if (!concurrency.Allowed)
+                {
+                    terminalError = "上游平台或模型已达到最大并发";
+                    terminalStatusCode = 429;
+                    CompleteLastSendAttempt(providerAttempts, 429, 0, terminalError);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            "previous candidate reached provider concurrency limit");
+                        continue;
+                    }
+                    break;
+                }
+                providerLease = concurrency.Lease;
+
                 var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
                 var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
@@ -584,6 +622,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         await _modelResolver.RecordFailureAsync(resolution, ct);
                     if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
                     {
+                        if (providerLease is not null)
+                        {
+                            await providerLease.DisposeAsync();
+                            providerLease = null;
+                        }
                         AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
                             $"previous candidate failed with transport status {sendCode}");
                         continue;
@@ -607,6 +650,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus((int)rawResponse.StatusCode))
                 {
+                    if (providerLease is not null)
+                    {
+                        await providerLease.DisposeAsync();
+                        providerLease = null;
+                    }
                     AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
                         $"previous candidate failed with HTTP {(int)rawResponse.StatusCode}");
                     rawResponse.Dispose();
@@ -871,12 +919,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         finally
         {
+            if (providerLease is not null)
+                await providerLease.DisposeAsync();
             // 注意：对于流式响应，正常情况下日志会在行 319 的 FinishStreamLogAsync 中更新
             // 这里不需要额外处理，因为：
             // 1. HTTP 失败时，已在行 232 调用 MarkError
             // 2. 异常情况会被调用方捕获，调用方负责处理日志
         }
     }
+
+    private Task<GatewayProviderConcurrencyAdmission> AcquireProviderConcurrencyAsync(
+        ModelResolutionResult resolution,
+        int timeoutSeconds,
+        CancellationToken ct)
+        => _concurrencyCoordinator is null
+            ? Task.FromResult(GatewayProviderConcurrencyAdmission.Allow())
+            : _concurrencyCoordinator.AcquireAsync(resolution, timeoutSeconds, ct);
 
     /// <inheritdoc />
     public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
@@ -902,6 +960,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ActualPlatformId = resolution.ActualPlatformId,
             ActualPlatformName = resolution.ActualPlatformName,
             PlatformType = resolution.PlatformType,
+            Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
             ModelGroupId = resolution.ModelGroupId,
@@ -909,6 +968,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupCode = resolution.ModelGroupCode,
             ModelPriority = resolution.ModelPriority,
             HealthStatus = resolution.HealthStatus,
+            PlatformMaxConcurrency = resolution.PlatformMaxConcurrency,
+            ModelMaxConcurrency = resolution.ModelMaxConcurrency,
             IsFallback = resolution.IsFallback,
             FallbackReason = resolution.FallbackReason,
             OriginalPoolId = resolution.OriginalPoolId,
@@ -962,6 +1023,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var profileName = string.IsNullOrWhiteSpace(request.ProfileName)
             ? "Runtime profile test"
             : request.ProfileName.Trim();
+        var sourceContext = request.Context;
 
         var resolution = new GatewayModelResolution
         {
@@ -1007,8 +1069,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
-                UserId = request.UserId,
-                QuestionText = "[Runtime Profile Test] Reply with ok."
+                SessionId = sourceContext?.SessionId,
+                RunId = sourceContext?.RunId,
+                GroupId = sourceContext?.GroupId,
+                UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
+                ViewRole = sourceContext?.ViewRole,
+                DocumentChars = sourceContext?.DocumentChars,
+                DocumentHash = sourceContext?.DocumentHash,
+                QuestionText = "[Runtime Profile Test] Reply with ok.",
+                SystemPromptChars = sourceContext?.SystemPromptChars,
+                SystemPromptText = sourceContext?.SystemPromptText,
+                ImageReferences = sourceContext?.ImageReferences,
+                GatewayTransport = sourceContext?.GatewayTransport,
+                SourceSystem = sourceContext?.SourceSystem,
+                IngressProtocol = sourceContext?.IngressProtocol,
+                AppCallerTitle = sourceContext?.AppCallerTitle,
+                ModelPolicy = sourceContext?.ModelPolicy,
+                ModelPoolId = sourceContext?.ModelPoolId,
+                ParameterPolicy = sourceContext?.ParameterPolicy,
+                DroppedParameters = sourceContext?.DroppedParameters,
+                IsHealthProbe = sourceContext?.IsHealthProbe,
             }
         };
 
@@ -1221,10 +1301,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct)
     {
         string? logId = null;
+        GatewayProviderConcurrencyLease? providerLease = null;
 
         try
         {
             var gatewayResolution = resolution.ToGatewayResolution();
+            var concurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+            if (!concurrency.Allowed)
+            {
+                return GatewayRawResponse.Fail(
+                    concurrency.ErrorCode,
+                    "上游平台或模型已达到最大并发",
+                    429);
+            }
+            providerLease = concurrency.Lease;
 
             if (resolution.IsExchange
                 && string.Equals(resolution.ExchangeTransformerType, "doubao-asr-stream", StringComparison.OrdinalIgnoreCase))
@@ -1547,6 +1637,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     };
                 }
 
+                if (providerLease is not null)
+                {
+                    await providerLease.DisposeAsync();
+                    providerLease = null;
+                }
+                var retryConcurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+                if (!retryConcurrency.Allowed)
+                {
+                    var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    const string message = "上游平台或模型已达到最大并发";
+                    CompleteLastSendAttempt(rawProviderAttempts, 429, 0, message);
+                    await FinishRawLogAsync(logId, 429, message, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    return GatewayRawResponse.Fail(retryConcurrency.ErrorCode, message, 429);
+                }
+                providerLease = retryConcurrency.Lease;
+
                 endpoint = nextBuild.Endpoint;
                 isExchange = nextBuild.IsExchange;
 
@@ -1626,7 +1732,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var pollAttempt = 0;
                     while (pollAttempt < asyncTransformer.MaxPollAttempts)
                     {
-                        await Task.Delay(asyncTransformer.PollIntervalMs, CancellationToken.None);
+                        await Task.Delay(asyncTransformer.PollIntervalMs, ct);
                         pollAttempt++;
 
                         var queryRequest = new HttpRequestMessage(HttpMethod.Post, queryUrl)
@@ -1659,13 +1765,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         var queryClient = _httpClientFactory.CreateClient();
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
-                        var queryResp = await queryClient.SendAsync(queryRequest, CancellationToken.None);
+                        var queryResp = await queryClient.SendAsync(queryRequest, ct);
 
                         var queryHeaders = new Dictionary<string, string>();
                         foreach (var h in queryResp.Headers)
                             queryHeaders[h.Key] = string.Join(", ", h.Value);
 
-                        responseBody = await queryResp.Content.ReadAsStringAsync(CancellationToken.None);
+                        responseBody = await queryResp.Content.ReadAsStringAsync(ct);
                         var queryDurationMs = (long)(DateTime.UtcNow - queryStartedAt).TotalMilliseconds;
                         response = queryResp;
 
@@ -1842,6 +1948,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 _logWriter?.MarkError(logId, msg, code);
             }
             return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+        }
+        finally
+        {
+            if (providerLease is not null)
+                await providerLease.DisposeAsync();
         }
     }
 
@@ -2894,14 +3005,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private IGatewayAdapter? GetAdapter(string? platformType)
     {
-        if (string.IsNullOrWhiteSpace(platformType))
+        var adapterKey = NormalizeAdapterKey(platformType);
+        if (string.IsNullOrWhiteSpace(adapterKey))
             return _adapters.GetValueOrDefault("openai"); // 默认 OpenAI
 
-        if (_adapters.TryGetValue(platformType, out var adapter))
+        if (_adapters.TryGetValue(adapterKey, out var adapter))
             return adapter;
 
         // OpenAI 兼容
         return _adapters.GetValueOrDefault("openai");
+    }
+
+    internal static string? NormalizeAdapterKey(string? platformType)
+    {
+        var normalized = platformType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            null or "" or "unknown" => null,
+            "anthropic" or "claude-compatible" => "claude",
+            "openai-compatible" or "openrouter" or "gemini-compatible" => "openai",
+            _ => normalized
+        };
     }
 
     private async Task<string?> StartLogAsync(
@@ -2977,6 +3101,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerTitle: request.Context?.AppCallerTitle,
                     ModelPolicy: request.Context?.ModelPolicy,
                     ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,
@@ -3344,6 +3469,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     AppCallerTitle: request.Context?.AppCallerTitle,
                     ModelPolicy: request.Context?.ModelPolicy,
                     ModelPoolId: request.Context?.ModelPoolId,
+                    RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,
@@ -3681,7 +3807,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             pinnedModelId: pinnedModelId);
     }
 
-    private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
+    internal static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
     {
         var code = (appCallerCode ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(code))
@@ -3697,14 +3823,41 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
         }
 
-        var def = AppCallerRegistrationService.FindByAppCode(code);
-        if (def == null)
+        if (code.Length > 200)
         {
-            error = $"appCallerCode 未注册: {code}";
+            error = "appCallerCode 不能超过 200 个字符";
             return false;
         }
 
-        if (def.ModelTypes == null || !def.ModelTypes.Contains(type))
+        var separatorIndex = code.IndexOf("::", StringComparison.Ordinal);
+        if (separatorIndex <= 0
+            || separatorIndex != code.LastIndexOf("::", StringComparison.Ordinal)
+            || separatorIndex + 2 >= code.Length)
+        {
+            error = "appCallerCode 必须使用 {app-key}.{feature}::{model-type} 格式";
+            return false;
+        }
+
+        var path = code[..separatorIndex];
+        var declaredType = code[(separatorIndex + 2)..];
+        var segments = path.Split('.', StringSplitOptions.None);
+        if (segments.Length < 2
+            || segments.Any(segment => !IsKebabCaseSegment(segment))
+            || !IsKebabCaseSegment(declaredType))
+        {
+            error = "appCallerCode 各段必须使用小写字母、数字和连字符";
+            return false;
+        }
+
+        if (!string.Equals(declaredType, type, StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"appCallerCode 与 modelType 不匹配: {code} -> {type}";
+            return false;
+        }
+
+        var def = AppCallerRegistrationService.FindByAppCode(code);
+        if (def != null
+            && (def.ModelTypes == null || !def.ModelTypes.Contains(type, StringComparer.OrdinalIgnoreCase)))
         {
             error = $"appCallerCode 与 modelType 不匹配: {code} -> {type}";
             return false;
@@ -3712,6 +3865,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         error = string.Empty;
         return true;
+    }
+
+    private static bool IsKebabCaseSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value[0] is < 'a' or > 'z')
+            return false;
+
+        return value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
     }
 
     #endregion

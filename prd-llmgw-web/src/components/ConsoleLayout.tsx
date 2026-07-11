@@ -1,6 +1,6 @@
 // 网关控制台共享外壳：顶部 header（标题 + 导航「日志/模型池/平台/影子」+ 当前用户 + 登出）+ Outlet。
 // SSOT 头部只此一处，4 个子页复用。
-import { Activity, LogOut, Boxes, Server, GitCompare, ScrollText, LayoutDashboard, Search, Tags, Cpu, Shuffle, History } from 'lucide-react';
+import { Activity, LogOut, Boxes, Server, GitCompare, ScrollText, LayoutDashboard, Search, Tags, Cpu, Shuffle, History, KeyRound } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/lib/auth';
@@ -14,6 +14,7 @@ const NAV: { to: string; label: string; icon: ReactNode }[] = [
   { to: '/platforms', label: '平台', icon: <Server size={14} /> },
   { to: '/models', label: '模型', icon: <Cpu size={14} /> },
   { to: '/exchanges', label: 'Exchange', icon: <Shuffle size={14} /> },
+  { to: '/service-keys', label: '接入密钥', icon: <KeyRound size={14} /> },
   { to: '/audits', label: '审计', icon: <History size={14} /> },
   { to: '/shadow', label: '影子比对', icon: <GitCompare size={14} /> },
 ];
@@ -25,6 +26,7 @@ export function ConsoleLayout() {
   return (
     <div className="lg-console-shell" style={{ height: '100vh', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <header
+        className="lg-console-header"
         style={{
           flexShrink: 0,
           display: 'flex',
@@ -38,8 +40,8 @@ export function ConsoleLayout() {
           backdropFilter: 'blur(18px)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <div className="lg-console-header-main" style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, flex: 1 }}>
+          <div className="lg-console-brand" style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <span
               style={{
                 display: 'inline-flex',
@@ -114,7 +116,7 @@ export function ConsoleLayout() {
             ))}
           </nav>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <div className="lg-console-session" style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{who}</span>
           <Button variant="ghost" size="sm" onClick={logout}>
             <LogOut size={14} />
@@ -123,7 +125,7 @@ export function ConsoleLayout() {
         </div>
       </header>
 
-      <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '16px 18px' }}>
+      <main className="lg-console-content" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '16px 18px' }}>
         <Outlet />
       </main>
     </div>

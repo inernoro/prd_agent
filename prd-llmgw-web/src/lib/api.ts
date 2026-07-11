@@ -21,6 +21,7 @@ import type {
   LogsListParams,
   LogsMeta,
   LogsSummaryData,
+  ProtocolCoverageData,
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
@@ -59,6 +60,9 @@ import type {
   BulkClaimConfigAuthorityResult,
   BindActiveAppCallerPoolsResult,
   RuntimeGatesData,
+  ServiceKeyItem,
+  CreateServiceKeyRequest,
+  CreatedServiceKey,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -207,6 +211,12 @@ export function getLogsSummary(params: LogsListParams): Promise<ApiResponse<Logs
   return apiRequest<LogsSummaryData>('/logs/summary', { query: { ...params } });
 }
 
+export function getProtocolCoverage(params?: { releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ProtocolCoverageData>> {
+  return apiRequest<ProtocolCoverageData>('/protocol-coverage', {
+    query: { releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours },
+  });
+}
+
 export function getLogsTimeseries(params: LogsListParams): Promise<ApiResponse<TimeseriesData>> {
   return apiRequest<TimeseriesData>('/logs/timeseries', { query: { ...params } });
 }
@@ -282,6 +292,15 @@ export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRe
 }
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
+}
+export function getServiceKeys(): Promise<ApiResponse<ServiceKeyItem[]>> {
+  return apiRequest<ServiceKeyItem[]>('/service-keys');
+}
+export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiResponse<CreatedServiceKey>> {
+  return apiRequest<CreatedServiceKey>('/service-keys', { method: 'POST', body: req });
+}
+export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
+  return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 export function getOperationAudits(params?: {
   page?: number;

@@ -1024,33 +1024,25 @@ def _cds_resolve_project(cfg):
     return pid or None
 
 
-def _cds_find_or_create_folder(project_id, folder_name):
-    """按名字 find-or-create 项目下的**根级**验收文件夹，返回 folderId 或 None。
-    只在根级（parentId 为空）匹配 —— 本函数只建根级文件夹，若按名字匹配到同名的嵌套子
-    文件夹会把报告误归到错误层级（Cursor Bugbot Medium）。需要嵌套路径走 --folder-path。"""
-    name = (folder_name or "").strip()
-    if not name:
-        return None
-    qs = f"?projectId={project_id}" if project_id else ""
-    listing = _cds_call("GET", "/api/report-folders" + qs)
-    folders = listing.get("folders", []) if isinstance(listing, dict) else []
-    for f in folders:
-        if f.get("name") == name and not f.get("parentId"):
-            return f.get("id")
-    created = _cds_call("POST", "/api/report-folders", {"name": name, "projectId": project_id})
-    folder = created.get("folder") if isinstance(created, dict) else None
-    return (folder or {}).get("id")
+def _resolve_folder_path(cfg, a):
+    """文件夹归类三级解析：--folder-path > config.report.cdsFolder > --module 自动归类。
+    报告必须归文件夹是默认行为（2026-07-10 用户反馈「54 份报告大半散在根上」）——
+    三者都空才落项目根。返回 '/' 分隔路径字符串，交给服务端 POST /api/reports 的
+    folderPath 在项目作用域内 find-or-create（原生支持嵌套，客户端不再解析 folderId）。"""
+    explicit = (getattr(a, "folder_path", "") or "").strip()
+    if explicit:
+        return explicit
+    configured = (cfg.get("report", {}).get("cdsFolder") or "").strip()
+    if configured:
+        return configured
+    return (a.module or "").strip()
 
 
 def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     """职责分离主路：把验收报告（自包含 markdown，截图内联 data-URI）入库到 CDS 验收中心。
     报告永远按项目归类；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。"""
     project_id = _cds_resolve_project(cfg)
-    folder_id = None
-    try:
-        folder_id = _cds_find_or_create_folder(project_id, cfg.get("report", {}).get("cdsFolder"))
-    except Exception as e:
-        print(f"  [告警] 文件夹归类失败（报告仍会入库到项目根）：{str(e)[:120]}")
+    folder_path = _resolve_folder_path(cfg, a)
 
     # 自包含报告：Markdown 写作源，归档前可转交互 HTML；截图内联 data-URI 后由 CDS 入库时抽资产。
     evid_parts, img_md = [], {}
@@ -1073,9 +1065,11 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
 
     payload = {
         "title": title, "format": fmt, "content": content,
-        "projectId": project_id, "folderId": folder_id,
+        "projectId": project_id,
         "verdict": a.verdict, "tier": a.tier,
     }
+    if folder_path:
+        payload["folderPath"] = folder_path
     if (a.branch or "").strip():
         payload["branch"] = a.branch.strip()
     if (a.commit or "").strip():
@@ -1094,7 +1088,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     # 列表端点 /api/reports?projectId=<slug> 命中空集，点开是空白(Codex review P2)。folderId
     # 同理用返回值兜准。
     link_project = rep.get("projectId") or project_id
-    link_folder = rep.get("folderId") or folder_id
+    link_folder = rep.get("folderId")
     qs = []
     if link_project:
         qs.append(f"project={link_project}")
@@ -1104,8 +1098,8 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     deeplink = f"{base}/reports?" + "&".join(qs)
     print(json.dumps({
         "mode": "cds", "title": title, "report_id": report_id, "cdsReportId": rid,
-        "projectId": project_id, "folderId": folder_id, "format": fmt,
-        "verdict": a.verdict, "deeplink": deeplink,
+        "projectId": project_id, "folderId": link_folder, "folderPath": folder_path or None,
+        "format": fmt, "verdict": a.verdict, "deeplink": deeplink,
     }, ensure_ascii=False))
     print("\n===== 验收归档完成 · CDS 验收中心 =====")
     print("直达深链（CDS 登录态可达，按项目+文件夹归类）：" + deeplink)
@@ -1808,6 +1802,7 @@ def main():
     ap.add_argument("--module", default="", help="模块（命名第2段，如 网页托管 / 知识库）")
     ap.add_argument("--feature", default="", help="功能（命名第3段，如 SaaS空间模型；缺省用 --target）")
     ap.add_argument("--type", default="", help="操作方式（命名第4段，如 新增功能 / 优化 / 修复）")
+    ap.add_argument("--folder-path", default="", help="归档文件夹路径（'/'分隔可嵌套，如 每日验收/2026-07）。缺省依次回退 config.report.cdsFolder、--module（按模块自动归类）；三者都空才落项目根")
     ap.add_argument("--verdict", default="pass")
     ap.add_argument("--tier", default="L1")
     ap.add_argument("--report-md", required=True, help="正文 md（速览卡+九段，{{EVIDENCE}} 占位）")

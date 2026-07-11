@@ -125,6 +125,7 @@ def _read_report(base: str, token: str) -> dict:
         "mapFallbackObjectsRemaining": None,
         "activeAppCallerMapFallbackReady": False,
         "activeMissingGatewayPool": None,
+        "activeBoundPoolWithoutUsableMember": None,
         "readinessPercent": None,
         "gapCount": None,
         "failures": [],
@@ -150,6 +151,7 @@ def _read_report(base: str, token: str) -> dict:
     result["mapFallbackObjectsRemaining"] = _int_value(_get_nested(summary, "mapFallbackObjectsRemaining"), -1)
     result["activeAppCallerMapFallbackReady"] = bool(_get_nested(summary, "activeAppCallerMapFallbackReady") or False)
     result["activeMissingGatewayPool"] = _int_value(_get_nested(summary, "activeMissingGatewayPool"), -1)
+    result["activeBoundPoolWithoutUsableMember"] = _int_value(_get_nested(summary, "activeBoundPoolWithoutUsableMember"), -1)
     result["readinessPercent"] = _int_value(_get_nested(summary, "readinessPercent"), 0)
     result["gapCount"] = len(gaps) if isinstance(gaps, list) else None
     result["failures"] = _readiness_failures(result)
@@ -163,6 +165,7 @@ def _readiness_failures(report: dict) -> list[str]:
     map_remaining = _int_value(report.get("mapFallbackObjectsRemaining"), -1)
     active_ready = bool(report.get("activeAppCallerMapFallbackReady") or False)
     active_missing = _int_value(report.get("activeMissingGatewayPool"), -1)
+    active_without_usable = _int_value(report.get("activeBoundPoolWithoutUsableMember"), -1)
     if status.lower() != "ready":
         failures.append(f"config authority status 不是 ready: {status}")
     if map_remaining != 0:
@@ -171,6 +174,8 @@ def _readiness_failures(report: dict) -> list[str]:
         failures.append("active appCaller 尚未全部绑定有效 GW 模型池")
     if active_missing != 0:
         failures.append(f"active appCaller 缺 GW 池: activeMissingGatewayPool={active_missing}")
+    if active_without_usable != 0:
+        failures.append(f"active appCaller 绑定的 GW 池不可用: activeBoundPoolWithoutUsableMember={active_without_usable}")
     return failures
 
 
@@ -228,13 +233,13 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- verdict: `{cell(report.get('verdict'))}`\n")
         fh.write(f"- execute: `{cell(report.get('execute'))}`\n")
         fh.write(f"- base: `{cell(report.get('base'))}`\n\n")
-        fh.write("| phase | status | mapFallbackObjectsRemaining | activeAppCallerMapFallbackReady | activeMissingGatewayPool | readinessPercent | gaps |\n")
-        fh.write("|---|---|---:|---|---:|---:|---:|\n")
+        fh.write("| phase | status | mapFallbackObjectsRemaining | activeAppCallerMapFallbackReady | activeMissingGatewayPool | activeBoundPoolWithoutUsableMember | readinessPercent | gaps |\n")
+        fh.write("|---|---|---:|---|---:|---:|---:|---:|\n")
         for label, item in (("before", before), ("after", after)):
             fh.write(
                 f"| {label} | {cell(item.get('status'))} | {cell(item.get('mapFallbackObjectsRemaining'))} | "
                 f"{cell(item.get('activeAppCallerMapFallbackReady'))} | {cell(item.get('activeMissingGatewayPool'))} | "
-                f"{cell(item.get('readinessPercent'))} | {cell(item.get('gapCount'))} |\n"
+                f"{cell(item.get('activeBoundPoolWithoutUsableMember'))} | {cell(item.get('readinessPercent'))} | {cell(item.get('gapCount'))} |\n"
             )
         fh.write("\n")
         fh.write("| action | httpStatus | ok | summary |\n")
@@ -278,6 +283,7 @@ def _self_test() -> int:
         "mapFallbackObjectsRemaining": 0,
         "activeAppCallerMapFallbackReady": True,
         "activeMissingGatewayPool": 0,
+        "activeBoundPoolWithoutUsableMember": 0,
     }
     if _readiness_failures(ready):
         failures.append("ready report should have no readiness failures")
@@ -287,6 +293,7 @@ def _self_test() -> int:
         "mapFallbackObjectsRemaining": 2,
         "activeAppCallerMapFallbackReady": False,
         "activeMissingGatewayPool": 1,
+        "activeBoundPoolWithoutUsableMember": 1,
     }
     not_ready_failures = "\n".join(_readiness_failures(not_ready))
     for expected in (
@@ -294,6 +301,7 @@ def _self_test() -> int:
         "MAP fallback 对象未清零",
         "active appCaller 尚未全部绑定有效 GW 模型池",
         "active appCaller 缺 GW 池",
+        "active appCaller 绑定的 GW 池不可用",
     ):
         if expected not in not_ready_failures:
             failures.append(f"not-ready report missing failure: {expected}")

@@ -2038,6 +2038,28 @@ const autoLifecycleService = new AutoLifecycleService(
   { tickIntervalSeconds: 30, enabled: true },
 );
 
+// 孤儿 infra 容器对账（2026-07-09）：把启动 reconcile 的一次性 orphan warn 周期化到
+// 每次 janitor sweep——不在 CDS 台账上的 infra 容器长期吃资源且无人知晓
+// （debt.cds.performance 根因 #2 降级实施：只报不删，删除决策留给运维）。
+janitorService.setOrphanInfraScan(async () => {
+  const discovered = await containerService.discoverInfraContainers();
+  const known = new Set(stateService.getInfraServices().map((svc) => svc.containerName).filter(Boolean));
+  const orphans = [...discovered.values()]
+    .filter((info) => !known.has(info.containerName))
+    .map((info) => info.containerName);
+  if (orphans.length > 0) {
+    activeServerEventLogStore?.record({
+      category: 'container',
+      severity: 'warn',
+      source: 'janitor',
+      action: 'infra.orphan.detected',
+      message: `janitor 对账发现 ${orphans.length} 个孤儿 infra 容器（不在 CDS 台账上，只报不删）: ${orphans.join(', ')}`,
+      details: { orphans },
+    });
+  }
+  return orphans;
+});
+
 janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
@@ -2082,6 +2104,10 @@ janitorService.setRemoveFn(async (slug: string) => {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
     await worktreeService.remove(repoRoot, branch.worktreePath);
   } catch { /* best effort */ }
+  // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
+  //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
+  // not-found/仍被占用，失败不阻断删除主流程。
+  await containerService.removeBranchNetwork(slug).catch(() => { /* best-effort */ });
   branchOperationLease?.assertCurrent('janitor remove before state delete');
   stateService.removeBranch(slug);
   stateService.save();
@@ -2167,6 +2193,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         try {
           stateService.removeLogs(branch.id);
         } catch { /* best-effort */ }
+        // 启动残留 prune 同样带走分支专属网络（BNI-cleanup，2026-07-09 接线）
+        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
         try {
           stateService.removeBranch(branch.id);
           appReconciled++;
@@ -2837,6 +2865,21 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
+  // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle
+  // 分支里 flush，这里只兜 json（duck-typing，不依赖具体类）。
+  try {
+    const store = stateService.getBackingStore();
+    if (store.kind === 'json' && 'flush' in store && typeof (store as { flush?: unknown }).flush === 'function') {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('json state flush timeout')), 3000),
+      );
+      await Promise.race([(store as unknown as { flush(): Promise<void> }).flush(), timeout]);
+      console.log('[shutdown] json state flushed');
+    }
+  } catch (err) {
+    console.warn(`[shutdown] json state flush failed: ${(err as Error).message}`);
+  }
   if (activeMongoHandle) {
     try {
       const timeout = new Promise((_, reject) =>
@@ -3155,296 +3198,9 @@ function buildBranchAbandonedPageHtml(opts: {
 </body></html>`;
 }
 
-// ── Auto-build transit page HTML ──
-//
-// 这是用户访问"未构建"分支子域名时看到的全屏过渡页 —— 没有引入 dashboard
-// 的 style.css，所以 CSS token 必须在页面里 inline 双写
-// (`:root` 暗黑默认 + `prefers-color-scheme: light` 翻成浅色)，与
-// `.claude/rules/cds-theme-tokens.md` 的双主题原则保持一致。
-//
-// 完成态采用「按钮 + 兜底提示」而不是倒计时自动刷新：
-// 后台 SSE complete 事件代表"我们认为容器跑起来了"，但 TCP 探活通过
-// 不等于上游 HTTP 真的在响应（自动 reload 撞上窗口期就是 Chrome
-// HTTP ERROR 400）。把决定权交回用户：默认显示「前往预览」按钮 + 小字
-// "如果显示 HTTP 400 / 503 请等几秒再点"——主流程一点就到，过渡窗口里
-// 也不会被强制刷新坑到。
-function buildTransitPageHtml(branchName: string): string {
-  // 分支名嵌进 HTML 前先转义，避免特殊字符破坏页面或脚本注入。
-  const safeBranch = branchName.replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      default: return '&#39;';
-    }
-  });
-  return `<!DOCTYPE html>
-<html lang="zh"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>正在准备预览 — ${safeBranch}</title>
-<style>
-:root{
-  --bg-page:#0d1117;
-  --bg-card:#161b22;
-  --bg-elevated:#21262d;
-  --bg-base:#0d1117;
-  --bg-terminal:#010409;
-  --border:#30363d;
-  --border-subtle:#21262d;
-  --text-primary:#f0f6fc;
-  --text-secondary:#c9d1d9;
-  --text-muted:#8b949e;
-  --text-subtle:#6e7681;
-  --accent:#58a6ff;
-  --accent-bg:rgba(88,166,255,.14);
-  --success:#3fb950;
-  --success-bg:rgba(63,185,80,.14);
-  --danger:#f85149;
-  --danger-bg:rgba(248,81,73,.12);
-  --shadow-card:0 12px 32px rgba(0,0,0,.45);
-}
-@media (prefers-color-scheme: light){
-  :root{
-    --bg-page:#f4efe9;
-    --bg-card:#ffffff;
-    --bg-elevated:#f1eae4;
-    --bg-base:#efe7df;
-    --bg-terminal:#efe7df;
-    --border:#d8cfc6;
-    --border-subtle:#e6ddd3;
-    --text-primary:#2a1f19;
-    --text-secondary:#3f3128;
-    --text-muted:#7a6a5e;
-    --text-subtle:#9c8e82;
-    --accent:#1f6feb;
-    --accent-bg:rgba(31,111,235,.10);
-    --success:#1a7f37;
-    --success-bg:rgba(26,127,55,.10);
-    --danger:#cf222e;
-    --danger-bg:rgba(207,34,46,.08);
-    --shadow-card:0 8px 24px rgba(43,33,28,.10);
-  }
-}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.44}
-.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 24% 18%,rgba(255,255,255,.08),transparent 60%),radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.2) 56%,rgba(0,0,0,.78) 100%)}
-.card{position:relative;z-index:1;background:linear-gradient(180deg,rgba(18,22,27,.94),rgba(13,16,20,.9))!important;border-color:rgba(232,237,242,.15)!important;border-radius:28px!important;box-shadow:0 34px 110px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.05)!important}
-.subtitle,.hint{color:rgba(232,237,242,.58)}
-.branch-chip,.step,.log-box,.error-msg{position:relative;z-index:1}
-body{--bg-card:#12161b;--bg-elevated:#1b2026;--bg-terminal:#07090b;--border:rgba(232,237,242,.15);--border-subtle:rgba(232,237,242,.1);--text-primary:#f5f7fa;--text-secondary:#dbe4ee;--text-muted:rgba(232,237,242,.58);--text-subtle:rgba(232,237,242,.42);--accent:#dfe6ec;--accent-bg:rgba(223,230,236,.12);background:linear-gradient(180deg,#050708 0%,#090d10 48%,#050606 100%);color:#dbe4ee;overflow:hidden}
-.card{max-width:560px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
-.spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
-@keyframes spin{to{transform:rotate(360deg)}}
-.done-icon{width:22px;height:22px;display:none;color:var(--success);flex-shrink:0}
-.error-icon{width:22px;height:22px;display:none;color:var(--danger);flex-shrink:0}
-h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
-.subtitle{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding-left:34px;line-height:1.55}
-.branch-chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:var(--accent);background:var(--accent-bg);padding:5px 10px;border-radius:99px;margin-bottom:18px;word-break:break-all;border:1px solid var(--border-subtle)}
-.branch-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);flex-shrink:0}
-/* 时间轴：左侧圆点 + 连接线，比"每步一张白卡"更紧凑 */
-.timeline{position:relative;padding-left:22px;margin-bottom:14px}
-.timeline::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--border-subtle)}
-.step{position:relative;padding:6px 0 6px 14px;font-size:13px;color:var(--text-secondary);min-height:26px;line-height:1.5}
-.step::before{content:"";position:absolute;left:-19px;top:9px;width:12px;height:12px;border-radius:50%;background:var(--bg-card);border:2px solid var(--border)}
-.step.running::before{border-color:var(--accent);background:var(--bg-card);animation:pulse 1.4s ease-in-out infinite}
-.step.done::before{border-color:var(--success);background:var(--success)}
-.step.error::before{border-color:var(--danger);background:var(--danger)}
-.step.done::after,.step.error::after{position:absolute;left:-15.5px;top:7px;font-size:9px;color:var(--bg-card);font-weight:700;line-height:1}
-.step.done::after{content:"✓"}
-.step.error::after{content:"✕"}
-.step-title{font-weight:500}
-.step.done .step-title,.step.error .step-title{color:var(--text-secondary)}
-.step.running .step-title{color:var(--text-primary)}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 4px var(--accent-bg)}50%{box-shadow:0 0 0 7px var(--accent-bg)}}
-/* 日志折叠：默认收起，避免一屏白噪声 */
-.log-toggle{display:none;font-size:11px;color:var(--text-muted);cursor:pointer;padding:4px 0;user-select:none}
-.log-toggle:hover{color:var(--text-secondary)}
-.log-toggle.visible{display:inline-block}
-.log-toggle::before{content:"▸ ";display:inline-block;transition:transform .15s}
-.log-toggle.open::before{transform:rotate(90deg)}
-.log-box{max-height:0;overflow:hidden;min-height:0;background:var(--bg-terminal);border:1px solid var(--border-subtle);border-radius:8px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.55;color:var(--text-muted);white-space:pre-wrap;word-break:break-all;transition:max-height .25s ease,padding .25s ease;padding:0 12px;margin-top:6px}
-.log-box.open{max-height:240px;overflow-y:auto;padding:10px 12px}
-.log-box::-webkit-scrollbar{width:4px}
-.log-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-/* 完成 / 失败状态 */
-.actions{display:none;margin-top:18px;flex-direction:column;gap:8px}
-.actions.visible{display:flex}
-.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;transition:filter .15s,transform .05s}
-.btn-primary:hover{filter:brightness(1.08)}
-.btn-primary:active{transform:scale(.98)}
-.hint{font-size:12px;color:var(--text-muted);text-align:center;line-height:1.55}
-.hint code{font-family:ui-monospace,monospace;background:var(--bg-elevated);color:var(--text-secondary);padding:1px 6px;border-radius:4px;font-size:11px}
-.error-msg{font-size:13px;color:var(--danger);background:var(--danger-bg);border:1px solid var(--danger);border-radius:8px;padding:10px 12px;margin-top:14px;display:none;font-family:ui-monospace,monospace;line-height:1.55;word-break:break-all}
-.error-msg.visible{display:block}
-</style>
-</head><body>
-<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
-<div class="shape-grid-vignette" aria-hidden="true"></div>
-<div class="card">
-  <div class="header">
-    <div class="spinner" id="hdrSpinner"></div>
-    <svg class="done-icon" id="hdrDone" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 4.97a.75.75 0 00-1.06 0L7 8.69 5.28 6.97a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg>
-    <svg class="error-icon" id="hdrErr" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.343 13.657A8 8 0 1113.657 2.343 8 8 0 012.343 13.657zM6.03 4.97a.75.75 0 00-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 101.06 1.06L8 9.06l1.97 1.97a.75.75 0 101.06-1.06L9.06 8l1.97-1.97a.75.75 0 10-1.06-1.06L8 6.94 6.03 4.97z"/></svg>
-    <h1 id="hdrTitle">正在准备预览环境</h1>
-  </div>
-  <div class="subtitle" id="hdrSub">CDS 正在拉起容器、跑构建、等待端口就绪</div>
-  <div class="branch-chip">${safeBranch}</div>
-  <div class="timeline" id="steps"></div>
-  <span class="log-toggle" id="logToggle">查看构建日志</span>
-  <div class="log-box" id="logBox"></div>
-  <div class="error-msg" id="errMsg"></div>
-  <div class="actions" id="actions">
-    <a class="btn-primary" id="goBtn" href="#">前往预览 →</a>
-    <div class="hint" id="hintTxt">如显示 <code>HTTP 400</code> 或 <code>503</code>，请等 <strong>3-5 秒</strong>再点 ——上游服务正在接管端口。</div>
-  </div>
-</div>
-<script>
-(function(){
-  var canvas=document.getElementById('shapeGridBg');
-  if(!canvas) return;
-  var ctx=canvas.getContext('2d');
-  if(!ctx) return;
-  var offset={x:0,y:0};
-  var size=42;
-  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function resize(){
-    var d=Math.min(window.devicePixelRatio||1,2);
-    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
-    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
-    canvas.style.width='100%';
-    canvas.style.height='100%';
-    ctx.setTransform(d,0,0,d,0,0);
-  }
-  function draw(){
-    var w=window.innerWidth;
-    var h=window.innerHeight;
-    ctx.clearRect(0,0,w,h);
-    if(!reduced){
-      offset.x=(offset.x-.14+size)%size;
-      offset.y=(offset.y-.14+size)%size;
-    }
-    var ox=((offset.x%size)+size)%size;
-    var oy=((offset.y%size)+size)%size;
-    ctx.strokeStyle='rgba(232,237,242,.085)';
-    ctx.lineWidth=1;
-    for(var x=-size+ox;x<w+size;x+=size){
-      for(var y=-size+oy;y<h+size;y+=size){
-        ctx.strokeRect(x,y,size,size);
-      }
-    }
-    var gradient=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.sqrt(w*w+h*h)/2);
-    gradient.addColorStop(0,'rgba(0,0,0,0)');
-    gradient.addColorStop(.75,'rgba(0,0,0,.16)');
-    gradient.addColorStop(1,'rgba(0,0,0,.58)');
-    ctx.fillStyle=gradient;
-    ctx.fillRect(0,0,w,h);
-    requestAnimationFrame(draw);
-  }
-  resize();
-  window.addEventListener('resize',resize);
-  requestAnimationFrame(draw);
-}());
-(function(){
-  var steps=document.getElementById('steps');
-  var logBox=document.getElementById('logBox');
-  var logToggle=document.getElementById('logToggle');
-  var hdrSpinner=document.getElementById('hdrSpinner');
-  var hdrDone=document.getElementById('hdrDone');
-  var hdrErr=document.getElementById('hdrErr');
-  var hdrTitle=document.getElementById('hdrTitle');
-  var hdrSub=document.getElementById('hdrSub');
-  var actions=document.getElementById('actions');
-  var goBtn=document.getElementById('goBtn');
-  var hintTxt=document.getElementById('hintTxt');
-  var errMsg=document.getElementById('errMsg');
-  var stepMap={};
-
-  // 把"前往预览"指向页面原本的 path（不带 ?sse=1，那只是 SSE 通道用的）
-  function goHref(){
-    var loc=location;
-    var q=loc.search.replace(/[?&]sse=1\\b/,'').replace(/^&/,'?');
-    return loc.pathname+q+loc.hash;
-  }
-
-  logToggle.addEventListener('click',function(){
-    var open=logBox.classList.toggle('open');
-    logToggle.classList.toggle('open',open);
-    logToggle.textContent=open?'收起构建日志':'查看构建日志';
-    if(open) logBox.scrollTop=logBox.scrollHeight;
-  });
-
-  function addOrUpdateStep(id,status,title){
-    var el=stepMap[id];
-    if(!el){
-      el=document.createElement('div');
-      el.className='step '+status;
-      el.innerHTML='<span class="step-title"></span>';
-      steps.appendChild(el);
-      stepMap[id]=el;
-    }
-    el.className='step '+status;
-    el.querySelector('.step-title').textContent=title;
-  }
-
-  function appendLog(text){
-    logToggle.classList.add('visible');
-    logBox.textContent+=text;
-    if(logBox.classList.contains('open')) logBox.scrollTop=logBox.scrollHeight;
-  }
-
-  function finish(ok,msg){
-    hdrSpinner.style.display='none';
-    if(ok){
-      hdrDone.style.display='block';
-      hdrTitle.textContent='预览环境已就绪';
-      hdrSub.textContent=msg||'容器都跑起来了，可以打开预览了';
-      goBtn.href=goHref();
-      actions.classList.add('visible');
-    }else{
-      hdrErr.style.display='block';
-      hdrTitle.textContent='构建失败';
-      hdrSub.textContent='查看下方日志或回到 CDS 控制台排查';
-      errMsg.textContent=msg||'构建过程中发生错误';
-      errMsg.classList.add('visible');
-      // 失败态把按钮改成"重试"，hint 切成失败用语
-      goBtn.textContent='重新尝试';
-      goBtn.href=goHref();
-      hintTxt.innerHTML='如错误反复出现，请回到 <code>CDS 控制台</code> 查看分支构建日志';
-      actions.classList.add('visible');
-    }
-  }
-
-  var url=location.href+(location.href.indexOf('?')>=0?'&':'?')+'sse=1';
-  var es=new EventSource(url);
-  es.addEventListener('step',function(e){
-    var d=JSON.parse(e.data);
-    addOrUpdateStep(d.step,d.status,d.title);
-  });
-  es.addEventListener('log',function(e){
-    var d=JSON.parse(e.data);
-    appendLog(d.chunk);
-  });
-  es.addEventListener('complete',function(e){
-    es.close();
-    var d={};
-    try{d=JSON.parse(e.data);}catch(ex){}
-    finish(true,d.message);
-  });
-  es.addEventListener('error',function(e){
-    if(e.data){
-      try{var d=JSON.parse(e.data);finish(false,d.message);}catch(ex){finish(false,'连接中断');}
-    }else{
-      finish(false,'连接中断，请稍后重试');
-    }
-    es.close();
-  });
-})();
-</script>
-</body></html>`;
-}
+// buildTransitPageHtml（未构建分支的全屏过渡页）已于 2026-07-09 删除：全仓零调用点的
+// 死代码（已被 React PreviewPreparingPage / preview-canary 流程取代）。历史实现见 git
+// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.nginx-loading-pages.md D2）。
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.

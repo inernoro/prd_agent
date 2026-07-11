@@ -155,6 +155,34 @@ def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> Non
         raise SystemExit(
             f"ERROR: {label} health sample commit mismatch: {path} actual={','.join(sample_commits)} expected={expected}"
         )
+    _require_serving_probe_route_self_test(payload, label, path)
+
+
+def _require_serving_probe_route_self_test(payload: dict, label: str, path: str) -> None:
+    route = payload.get("routeSelfTest") or payload.get("RouteSelfTest") or {}
+    if not isinstance(route, dict):
+        raise SystemExit(f"ERROR: {label} routeSelfTest is not an object: {path}")
+    if route.get("ok") is not True and route.get("Ok") is not True:
+        raise SystemExit(f"ERROR: {label} routeSelfTest is not ok: {path}")
+
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    protocols = {
+        str(item).strip()
+        for item in (route.get("protocols") or route.get("Protocols") or [])
+        if str(item).strip()
+    }
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    status = str(route.get("selfTestStatus") or route.get("SelfTestStatus") or "").strip().lower()
+    mode = str(route.get("mode") or route.get("Mode") or "").strip().lower()
+    upstream_called = route.get("upstreamCalled") if "upstreamCalled" in route else route.get("UpstreamCalled")
+    total = route.get("total") if "total" in route else route.get("Total")
+    passed = route.get("passed") if "passed" in route else route.get("Passed")
+    if status != "ok" or mode != "dry-run" or upstream_called is not False or not isinstance(total, int) or not isinstance(passed, int) or total != passed or missing_protocols:
+        raise SystemExit(
+            f"ERROR: {label} routeSelfTest invalid: {path} "
+            f"status={status or 'empty'} mode={mode or 'empty'} upstreamCalled={upstream_called} "
+            f"total={total} passed={passed} missingProtocols={','.join(missing_protocols) or 'none'}"
+        )
 
 
 def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
@@ -174,6 +202,69 @@ def _require_smoke_for_commit(path: str, label: str, commit: str) -> None:
         raise SystemExit(f"ERROR: {label} missing healthCommit for same-commit evidence: {path}")
     if health_commit != expected:
         raise SystemExit(f"ERROR: {label} D-layer smoke healthCommit mismatch: {path} actual={health_commit} expected={expected}")
+    _require_smoke_provider_canary_rows(payload, label, path)
+
+
+def _require_protocol_canary_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    mode = str(payload.get("mode") or payload.get("Mode") or "").strip().lower()
+    if mode != "execute":
+        raise SystemExit(f"ERROR: {label} mode is not execute: {path} mode={mode or 'empty'}")
+
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        raise SystemExit(f"ERROR: {label} missing health object: {path}")
+    health_commit = _normalize_commit(health.get("commit") or health.get("Commit"))
+    if health_commit and health_commit != expected:
+        raise SystemExit(f"ERROR: {label} health commit mismatch: {path} actual={health_commit} expected={expected}")
+
+    cases = payload.get("cases") or payload.get("Cases") or []
+    if not isinstance(cases, list):
+        raise SystemExit(f"ERROR: {label} cases are not a list: {path}")
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    passed_protocols = {
+        str(case.get("protocol") or case.get("Protocol") or "").strip()
+        for case in cases
+        if isinstance(case, dict) and (case.get("ok") is True or case.get("Ok") is True)
+    }
+    missing = sorted(required_protocols.difference(passed_protocols))
+    if missing:
+        raise SystemExit(f"ERROR: {label} missing protocol canary samples: {path} missing={','.join(missing)}")
+
+
+def _require_smoke_provider_canary_rows(payload: dict, label: str, path: str) -> None:
+    rows = payload.get("rows") or payload.get("Rows") or []
+    if not isinstance(rows, list):
+        raise SystemExit(f"ERROR: {label} rows are not a list: {path}")
+
+    required_prefixes = [
+        "invoke[chat]",
+        "send-compat[chat]",
+        "stream[chat]",
+        "client-stream[chat]",
+        "canary(",
+    ]
+    missing: list[str] = []
+    failed: list[str] = []
+    for prefix in required_prefixes:
+        matches = [
+            row for row in rows
+            if isinstance(row, dict) and str(row.get("case") or row.get("Case") or "").startswith(prefix)
+        ]
+        if not matches:
+            missing.append(prefix)
+            continue
+        if not any(str(row.get("status") or row.get("Status") or "").lower() == "pass" for row in matches):
+            failed.append(prefix)
+    if missing or failed:
+        raise SystemExit(
+            f"ERROR: {label} missing real provider canary rows: {path} "
+            f"missing={','.join(missing) or 'none'} failed={','.join(failed) or 'none'}"
+        )
 
 
 def _require_smoke_route_matrix(path: str, label: str) -> None:
@@ -241,6 +332,9 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
         active_ready = config.get("activeAppCallerMapFallbackReady")
         if active_ready is None:
             active_ready = config.get("ActiveAppCallerMapFallbackReady")
+        active_without_usable = config.get("activeBoundPoolWithoutUsableMember")
+        if active_without_usable is None:
+            active_without_usable = config.get("ActiveBoundPoolWithoutUsableMember")
         if not required or not ok:
             raise SystemExit(
                 f"ERROR: {label} configAuthority is not required+ok for http-full gate: "
@@ -255,6 +349,11 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             )
         if active_ready is not True:
             raise SystemExit(f"ERROR: {label} activeAppCallerMapFallbackReady is not true: {path}")
+        if int(active_without_usable or 0) != 0:
+            raise SystemExit(
+                f"ERROR: {label} activeBoundPoolWithoutUsableMember is not zero: "
+                f"{path} value={active_without_usable}"
+            )
 
         runtime = payload.get("runtimeGates") or payload.get("RuntimeGates") or {}
         if not isinstance(runtime, dict):
@@ -267,15 +366,31 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             remaining = runtime.get("RemainingRuntimeGates")
         if not isinstance(remaining, list):
             remaining = []
-        if not runtime_required or not runtime_ok or not runtime_ready:
+        allowed_pending = runtime.get("allowedPendingRuntimeGates")
+        if allowed_pending is None:
+            allowed_pending = runtime.get("AllowedPendingRuntimeGates")
+        if not isinstance(allowed_pending, list):
+            allowed_pending = []
+        self_finalizing = bool(
+            runtime.get("selfFinalizingHttpFullLedger")
+            if "selfFinalizingHttpFullLedger" in runtime
+            else runtime.get("SelfFinalizingHttpFullLedger")
+        )
+        pending_http_full_ledger_only = (
+            self_finalizing
+            and remaining == ["full_http_rollout_ledger"]
+            and allowed_pending == ["full_http_rollout_ledger"]
+        )
+        if not runtime_required or not runtime_ok or (not runtime_ready and not pending_http_full_ledger_only):
             raise SystemExit(
                 f"ERROR: {label} runtimeGates is not required+ok+ready for http-full gate: "
                 f"{path} required={runtime_required} ok={runtime_ok} readyForHttpFull={runtime_ready} "
-                f"remaining={','.join(str(x) for x in remaining) or 'none'}"
+                f"remaining={','.join(str(x) for x in remaining) or 'none'} "
+                f"allowedPending={','.join(str(x) for x in allowed_pending) or 'none'}"
             )
 
 
-def _require_prod_preflight_for_commit(path: str, label: str, commit: str) -> None:
+def _require_prod_preflight_for_commit(path: str, label: str, commit: str, stage: str = "") -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
     if not expected:
@@ -290,6 +405,85 @@ def _require_prod_preflight_for_commit(path: str, label: str, commit: str) -> No
     mode = str(payload.get("mode") or "").strip().lower()
     if mode != "start":
         raise SystemExit(f"ERROR: {label} mode mismatch: {path} actual={mode or 'empty'} expected=start")
+
+    if str(stage or "").strip() != "shadow-start":
+        _require_prod_preflight_route_self_test(payload, label, path)
+
+
+def _require_prod_health_preflight_for_commit(path: str, label: str, commit: str) -> None:
+    payload = _require_pass_json(path, label)
+    expected = _normalize_commit(commit)
+    if not expected:
+        raise SystemExit(f"ERROR: {label} cannot validate commit because ledger commit is empty: {path}")
+
+    health = payload.get("health") or payload.get("Health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    actual = _normalize_commit(payload.get("actualCommit") or payload.get("ActualCommit") or health.get("commit") or health.get("Commit"))
+    expected_from_payload = _normalize_commit(payload.get("expectedCommit") or payload.get("ExpectedCommit"))
+    if expected_from_payload and expected_from_payload != expected:
+        raise SystemExit(
+            f"ERROR: {label} expectedCommit mismatch: {path} actual={expected_from_payload} expected={expected}"
+        )
+    if actual != expected:
+        raise SystemExit(f"ERROR: {label} actualCommit mismatch: {path} actual={actual or 'empty'} expected={expected}")
+
+    auth_checks = payload.get("authBoundaryChecks") or payload.get("AuthBoundaryChecks") or []
+    if auth_checks and not isinstance(auth_checks, list):
+        raise SystemExit(f"ERROR: {label} authBoundaryChecks are not a list: {path}")
+    failed = [
+        str(item.get("path") or item.get("Path") or "unknown")
+        for item in auth_checks
+        if isinstance(item, dict) and item.get("ok") is not True and item.get("Ok") is not True
+    ]
+    if failed:
+        raise SystemExit(f"ERROR: {label} auth boundary failed: {path} failed={','.join(failed)}")
+
+
+def _require_prod_preflight_route_self_test(payload: dict, label: str, path: str) -> None:
+    checks = payload.get("checks") or payload.get("Checks") or []
+    if not isinstance(checks, list):
+        raise SystemExit(f"ERROR: {label} checks is not a list: {path}")
+
+    matches = [
+        item for item in checks
+        if isinstance(item, dict)
+        and str(item.get("name") or item.get("Name") or "").strip() == "gateway_route_self_test"
+    ]
+    if not matches:
+        raise SystemExit(f"ERROR: {label} missing gateway_route_self_test check: {path}")
+
+    check = matches[-1]
+    if check.get("ok") is not True and check.get("Ok") is not True:
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test is not ok: {path}")
+
+    detail_raw = str(check.get("detail") or check.get("Detail") or "{}")
+    try:
+        detail = json.loads(detail_raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test detail is not JSON: {path}: {exc}") from exc
+    if not isinstance(detail, dict):
+        raise SystemExit(f"ERROR: {label} gateway_route_self_test detail is not an object: {path}")
+
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    protocols = {
+        str(item).strip()
+        for item in (detail.get("protocols") or detail.get("Protocols") or [])
+        if str(item).strip()
+    }
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    status = str(detail.get("selfTestStatus") or detail.get("SelfTestStatus") or "").strip().lower()
+    mode = str(detail.get("mode") or detail.get("Mode") or "").strip().lower()
+    upstream_called = detail.get("upstreamCalled") if "upstreamCalled" in detail else detail.get("UpstreamCalled")
+    total = detail.get("total") if "total" in detail else detail.get("Total")
+    passed = detail.get("passed") if "passed" in detail else detail.get("Passed")
+
+    if status != "ok" or mode != "dry-run" or upstream_called is not False or not isinstance(total, int) or not isinstance(passed, int) or total != passed or missing_protocols:
+        raise SystemExit(
+            f"ERROR: {label} gateway_route_self_test invalid: {path} "
+            f"status={status or 'empty'} mode={mode or 'empty'} upstreamCalled={upstream_called} "
+            f"total={total} passed={passed} missingProtocols={','.join(missing_protocols) or 'none'}"
+        )
 
 
 def _require_upstream_readiness(path: str, label: str) -> None:
@@ -392,6 +586,9 @@ def _require_config_authority_apply(path: str, label: str) -> None:
     active_missing = after.get("activeMissingGatewayPool")
     if active_missing is None:
         active_missing = after.get("ActiveMissingGatewayPool")
+    active_without_usable = after.get("activeBoundPoolWithoutUsableMember")
+    if active_without_usable is None:
+        active_without_usable = after.get("ActiveBoundPoolWithoutUsableMember")
 
     if status != "ready":
         raise SystemExit(f"ERROR: {label} final status is not ready: {path} status={status or 'empty'}")
@@ -403,6 +600,11 @@ def _require_config_authority_apply(path: str, label: str) -> None:
         raise SystemExit(f"ERROR: {label} final activeAppCallerMapFallbackReady is not true: {path}")
     if int(active_missing or 0) != 0:
         raise SystemExit(f"ERROR: {label} final activeMissingGatewayPool is not zero: {path} value={active_missing}")
+    if int(active_without_usable or 0) != 0:
+        raise SystemExit(
+            f"ERROR: {label} final activeBoundPoolWithoutUsableMember is not zero: "
+            f"{path} value={active_without_usable}"
+        )
 
 
 def _require_external_backup(path: str, label: str) -> None:
@@ -428,6 +630,16 @@ def _require_protocol_router_audit(path: str, label: str) -> None:
         raise SystemExit(f"ERROR: {label} scope is not static-code-and-document-evidence: {path} scope={scope or 'empty'}")
     if payload.get("targetComplete") is not False and payload.get("TargetComplete") is not False:
         raise SystemExit(f"ERROR: {label} targetComplete must remain false until runtime gates pass: {path}")
+    if payload.get("runtimeEvidenceComplete") is not False and payload.get("RuntimeEvidenceComplete") is not False:
+        raise SystemExit(f"ERROR: {label} runtimeEvidenceComplete must remain false in static audit evidence: {path}")
+    progress_percent = payload.get("progressPercent")
+    if progress_percent is None:
+        progress_percent = payload.get("ProgressPercent")
+    if isinstance(progress_percent, (int, float)) and progress_percent >= 100:
+        raise SystemExit(
+            f"ERROR: {label} progressPercent must not report 100 while targetComplete=false: "
+            f"{path} progressPercent={progress_percent}"
+        )
     remaining = payload.get("remainingRuntimeGates")
     if remaining is None:
         remaining = payload.get("RemainingRuntimeGates")
@@ -588,13 +800,23 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         return failures
 
     try:
-        _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit)
+        _require_prod_preflight_for_commit(str(entry.get("prodPreflightJson") or ""), f"{stage} production preflight evidence", commit, stage)
     except SystemExit as exc:
         failures.append(str(exc))
+    if _bool_flag(str(entry.get("prodHealthPreflightRequired") or "0")):
+        try:
+            _require_prod_health_preflight_for_commit(
+                str(entry.get("prodHealthPreflightJson") or ""),
+                f"{stage} production health preflight evidence",
+                commit,
+            )
+        except SystemExit as exc:
+            failures.append(str(exc))
 
     evidence_checks = [
         ("servingProbeJson", "serving probe evidence", True),
         ("smokeJson", "D-layer smoke evidence", _bool_flag(str(entry.get("smokeRequired", True)))),
+        ("protocolCanaryJson", "protocol canary evidence", _bool_flag(str(entry.get("protocolCanaryRequired", False)))),
     ]
     for key, label, required in evidence_checks:
         if not required:
@@ -602,6 +824,8 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
         try:
             if key == "servingProbeJson":
                 _require_serving_probe_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
+            elif key == "protocolCanaryJson":
+                _require_protocol_canary_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
             else:
                 _require_smoke_for_commit(str(entry.get(key) or ""), f"{stage} {label}", commit)
                 if _bool_flag(str(entry.get("smokeRouteMatrixRequired", False))):
@@ -610,7 +834,12 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
         try:
-            _require_release_gate_for_commit(str(entry.get("releaseGateJson") or ""), f"{stage} release gate evidence", commit)
+            shadow_evidence_commit = _normalize_commit(entry.get("shadowEvidenceCommit")) or commit
+            _require_release_gate_for_commit(
+                str(entry.get("releaseGateJson") or ""),
+                f"{stage} release gate evidence",
+                shadow_evidence_commit,
+            )
         except SystemExit as exc:
             failures.append(str(exc))
     if _bool_flag(str(entry.get("upstreamReadinessRequired") or "0")):
@@ -820,7 +1049,9 @@ def append(args: argparse.Namespace) -> int:
             _require_external_backup(args.external_backup_json, "external backup evidence")
             _require_config_authority_apply(args.config_authority_json, "config authority evidence")
         elif args.stage != ROLLBACK_REHEARSAL_STAGE:
-            _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit)
+            _require_prod_preflight_for_commit(args.prod_preflight_json, "production preflight evidence", args.commit, args.stage)
+            if _bool_flag(args.prod_health_preflight_required):
+                _require_prod_health_preflight_for_commit(args.prod_health_preflight_json, "production health preflight evidence", args.commit)
             _require_serving_probe_for_commit(args.serving_probe_json, "serving probe evidence", args.commit)
             if _bool_flag(args.smoke_required):
                 _require_smoke_for_commit(args.smoke_json, "D-layer smoke evidence", args.commit)
@@ -830,9 +1061,11 @@ def append(args: argparse.Namespace) -> int:
                 _require_release_gate_for_commit(
                     args.release_gate_json,
                     "release gate evidence",
-                    args.commit,
+                    args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                 )
+            if _bool_flag(args.protocol_canary_required):
+                _require_protocol_canary_for_commit(args.protocol_canary_json, "protocol canary evidence", args.commit)
             if _bool_flag(args.upstream_readiness_required):
                 _require_upstream_readiness(args.upstream_readiness_json, "upstream readiness evidence")
             if _bool_flag(args.provider_audit_required):
@@ -864,8 +1097,11 @@ def append(args: argparse.Namespace) -> int:
         "evidenceJson": args.evidence_json,
         "evidenceMarkdown": args.evidence_md,
         "releaseGateJson": args.release_gate_json,
+        "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "prodPreflightJson": args.prod_preflight_json,
+        "prodHealthPreflightJson": args.prod_health_preflight_json,
+        "prodHealthPreflightRequired": _bool_flag(args.prod_health_preflight_required),
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
@@ -873,6 +1109,8 @@ def append(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
         "protocolRouterAuditJson": args.protocol_router_audit_json,
+        "protocolCanaryJson": args.protocol_canary_json,
+        "protocolCanaryRequired": _bool_flag(args.protocol_canary_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
@@ -938,6 +1176,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- minStageObservationHours: `{cell(report['minStageObservationHours'])}`\n")
         fh.write(f"- releaseGateJson: `{cell(report['releaseGateJson'])}`\n")
         fh.write(f"- prodPreflightJson: `{cell(report['prodPreflightJson'])}`\n")
+        fh.write(f"- prodHealthPreflightRequired: `{cell(report['prodHealthPreflightRequired'])}`\n")
+        fh.write(f"- prodHealthPreflightJson: `{cell(report['prodHealthPreflightJson'])}`\n")
         fh.write(f"- shadowSeedJson: `{cell(report['shadowSeedJson'])}`\n")
         fh.write(f"- upstreamReadinessRequired: `{cell(report['upstreamReadinessRequired'])}`\n")
         fh.write(f"- upstreamReadinessJson: `{cell(report['upstreamReadinessJson'])}`\n")
@@ -945,6 +1185,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- providerAuditJson: `{cell(report['providerAuditJson'])}`\n")
         fh.write(f"- providerAuditExternalBlockers: `{len(report.get('providerAuditExternalBlockers') or [])}`\n")
         fh.write(f"- protocolRouterAuditJson: `{cell(report['protocolRouterAuditJson'])}`\n")
+        fh.write(f"- protocolCanaryRequired: `{cell(report['protocolCanaryRequired'])}`\n")
+        fh.write(f"- protocolCanaryJson: `{cell(report['protocolCanaryJson'])}`\n")
         fh.write(f"- videoCanaryRequired: `{cell(report['videoCanaryRequired'])}`\n")
         fh.write(f"- videoCanaryJson: `{cell(report['videoCanaryJson'])}`\n")
         fh.write(f"- asrHttpCanaryRequired: `{cell(report['asrHttpCanaryRequired'])}`\n")
@@ -1011,9 +1253,11 @@ def stage_report(args: argparse.Namespace) -> int:
         checks = [
             ("protocolRouterAuditJson", args.protocol_router_audit_json, True),
             ("prodPreflightJson", args.prod_preflight_json, True),
+            ("prodHealthPreflightJson", args.prod_health_preflight_json, _bool_flag(args.prod_health_preflight_required)),
             ("servingProbeJson", args.serving_probe_json, True),
             ("smokeJson", args.smoke_json, _bool_flag(args.smoke_required)),
             ("releaseGateJson", args.release_gate_json, _bool_flag(args.release_gate_required)),
+            ("protocolCanaryJson", args.protocol_canary_json, _bool_flag(args.protocol_canary_required)),
             ("upstreamReadinessJson", args.upstream_readiness_json, _bool_flag(args.upstream_readiness_required)),
             ("providerAuditJson", args.provider_audit_json, _bool_flag(args.provider_audit_required)),
             ("videoCanaryJson", args.video_canary_json, _bool_flag(args.video_canary_required)),
@@ -1040,17 +1284,21 @@ def stage_report(args: argparse.Namespace) -> int:
                 _require_release_gate_for_commit(
                     path,
                     label,
-                    args.commit,
+                    args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                 )
             elif label == "prodPreflightJson":
-                _require_prod_preflight_for_commit(path, label, args.commit)
+                _require_prod_preflight_for_commit(path, label, args.commit, args.stage)
+            elif label == "prodHealthPreflightJson":
+                _require_prod_health_preflight_for_commit(path, label, args.commit)
             elif label == "upstreamReadinessJson":
                 _require_upstream_readiness(path, label)
             elif label == "providerAuditJson":
                 _require_provider_audit(path, label)
             elif label == "protocolRouterAuditJson":
                 _require_protocol_router_audit(path, label)
+            elif label == "protocolCanaryJson":
+                _require_protocol_canary_for_commit(path, label, args.commit)
             elif label == "videoCanaryJson":
                 _require_video_canary(path, label)
             elif label == "asrHttpCanaryJson":
@@ -1079,12 +1327,15 @@ def stage_report(args: argparse.Namespace) -> int:
         "disableMapConfigFallbackForActiveAppCallers": _bool_flag(args.disable_map_config_fallback_for_active_app_callers),
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
+        "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
         "minStageObservationHours": args.min_stage_observation_hours,
         "releaseGateJson": args.release_gate_json,
         "prodPreflightJson": args.prod_preflight_json,
+        "prodHealthPreflightJson": args.prod_health_preflight_json,
+        "prodHealthPreflightRequired": _bool_flag(args.prod_health_preflight_required),
         "shadowSeedJson": args.shadow_seed_json,
         "upstreamReadinessJson": args.upstream_readiness_json,
         "upstreamReadinessRequired": _bool_flag(args.upstream_readiness_required),
@@ -1092,6 +1343,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "providerAuditRequired": _bool_flag(args.provider_audit_required),
         "providerAuditExternalBlockers": provider_external_blockers,
         "protocolRouterAuditJson": args.protocol_router_audit_json,
+        "protocolCanaryJson": args.protocol_canary_json,
+        "protocolCanaryRequired": _bool_flag(args.protocol_canary_required),
         "videoCanaryJson": args.video_canary_json,
         "videoCanaryRequired": _bool_flag(args.video_canary_required),
         "videoCanaryExternalBlockers": video_canary_external_blockers,
@@ -1156,6 +1409,8 @@ def audit(args: argparse.Namespace) -> int:
                 "servingProbeJson": latest.get("servingProbeJson") or "",
                 "smokeJson": latest.get("smokeJson") or "",
                 "releaseGateJson": latest.get("releaseGateJson") or "",
+                "prodHealthPreflightJson": latest.get("prodHealthPreflightJson") or "",
+                "prodHealthPreflightRequired": _bool_flag(str(latest.get("prodHealthPreflightRequired") or "0")),
                 "shadowSeedJson": latest.get("shadowSeedJson") or "",
                 "upstreamReadinessJson": latest.get("upstreamReadinessJson") or "",
                 "upstreamReadinessRequired": _bool_flag(str(latest.get("upstreamReadinessRequired") or "0")),
@@ -1163,6 +1418,8 @@ def audit(args: argparse.Namespace) -> int:
                 "providerAuditRequired": _bool_flag(str(latest.get("providerAuditRequired") or "0")),
                 "providerAuditExternalBlockers": latest.get("providerAuditExternalBlockers") or _provider_external_blockers(str(latest.get("providerAuditJson") or "")),
                 "protocolRouterAuditJson": latest.get("protocolRouterAuditJson") or "",
+                "protocolCanaryJson": latest.get("protocolCanaryJson") or "",
+                "protocolCanaryRequired": _bool_flag(str(latest.get("protocolCanaryRequired") or "0")),
                 "videoCanaryJson": latest.get("videoCanaryJson") or "",
                 "videoCanaryRequired": _bool_flag(str(latest.get("videoCanaryRequired") or "0")),
                 "videoCanaryExternalBlockers": latest.get("videoCanaryExternalBlockers") or _canary_external_blockers(str(latest.get("videoCanaryJson") or "")),
@@ -1279,14 +1536,19 @@ def main() -> int:
     append_parser.add_argument("--evidence-json", default="")
     append_parser.add_argument("--evidence-md", default="")
     append_parser.add_argument("--release-gate-json", default="")
+    append_parser.add_argument("--shadow-evidence-commit", default="")
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--prod-preflight-json", default="")
+    append_parser.add_argument("--prod-health-preflight-json", default="")
+    append_parser.add_argument("--prod-health-preflight-required", default="0")
     append_parser.add_argument("--shadow-seed-json", default="")
     append_parser.add_argument("--upstream-readiness-json", default="")
     append_parser.add_argument("--upstream-readiness-required", default="0")
     append_parser.add_argument("--provider-audit-json", default="")
     append_parser.add_argument("--provider-audit-required", default="0")
     append_parser.add_argument("--protocol-router-audit-json", default="")
+    append_parser.add_argument("--protocol-canary-json", default="")
+    append_parser.add_argument("--protocol-canary-required", default="0")
     append_parser.add_argument("--video-canary-json", default="")
     append_parser.add_argument("--video-canary-required", default="0")
     append_parser.add_argument("--asr-http-canary-json", default="")
@@ -1317,14 +1579,19 @@ def main() -> int:
     report_parser.add_argument("--disable-map-config-fallback-for-active-app-callers", default="0")
     report_parser.add_argument("--gate-base", default="")
     report_parser.add_argument("--release-gate-json", default="")
+    report_parser.add_argument("--shadow-evidence-commit", default="")
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--prod-preflight-json", default="")
+    report_parser.add_argument("--prod-health-preflight-json", default="")
+    report_parser.add_argument("--prod-health-preflight-required", default="0")
     report_parser.add_argument("--shadow-seed-json", default="")
     report_parser.add_argument("--upstream-readiness-json", default="")
     report_parser.add_argument("--upstream-readiness-required", default="0")
     report_parser.add_argument("--provider-audit-json", default="")
     report_parser.add_argument("--provider-audit-required", default="0")
     report_parser.add_argument("--protocol-router-audit-json", default="")
+    report_parser.add_argument("--protocol-canary-json", default="")
+    report_parser.add_argument("--protocol-canary-required", default="0")
     report_parser.add_argument("--video-canary-json", default="")
     report_parser.add_argument("--video-canary-required", default="0")
     report_parser.add_argument("--asr-http-canary-json", default="")

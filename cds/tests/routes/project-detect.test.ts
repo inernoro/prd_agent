@@ -13,6 +13,7 @@ import { createProjectsRouter } from '../../src/routes/projects.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { StateService } from '../../src/services/state.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -58,10 +59,11 @@ describe('波5 detect-preview / detect-apply', () => {
     server = app.listen(0);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     server.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('detect-preview 只读扫 worktree,返回检测服务且不写状态', async () => {
@@ -106,7 +108,7 @@ describe('波5 detect-preview / detect-apply', () => {
   });
 
   it('detect-preview:仓库目录不存在 → 409 repo_not_ready', async () => {
-    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     const res = await request(server, 'GET', `/api/projects/${projectId}/detect-preview`);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('repo_not_ready');

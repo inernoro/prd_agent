@@ -25,6 +25,7 @@ import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { InfraService } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
   server: http.Server, method: string, urlPath: string,
   headers?: Record<string, string>, body?: unknown,
@@ -97,8 +98,9 @@ describe('infra data/backup project-scope isolation', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   describe('POST /api/infra/:id/query', () => {

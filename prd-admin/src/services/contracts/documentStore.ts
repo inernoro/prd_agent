@@ -150,10 +150,10 @@ export type DocumentEntry = {
   updatedAt: string;
 };
 
-/** 知识库 Agent Run（字幕生成 + 文档再加工 + 自动补链共用） */
+/** 知识库 Agent Run（字幕生成 + 文档再加工 + 自动补链 + 录音转录共用） */
 export type DocumentStoreAgentRun = {
   id: string;
-  kind: 'subtitle' | 'reprocess' | 'autolink';
+  kind: 'subtitle' | 'reprocess' | 'autolink' | 'transcribe';
   sourceEntryId: string;
   storeId: string;
   userId: string;

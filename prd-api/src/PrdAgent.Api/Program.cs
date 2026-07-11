@@ -208,7 +208,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
-// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。默认 inproc = 进程内 LlmGateway（行为不变）；
+// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。生产必须显式配置；
+// 非生产缺省 inproc，便于本地开发。生产回滚必须由 rollback 脚本显式设置 inproc，禁止漏配静默回退。
 // http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
 // HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
 // 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
@@ -217,7 +218,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
 
-var gatewayMode = builder.Configuration["LlmGateway:Mode"] ?? "inproc";
+var configuredGatewayMode = builder.Configuration["LlmGateway:Mode"]?.Trim();
+var gatewayMode = PrdAgent.Infrastructure.LlmGateway.LlmGatewayModePolicy.Resolve(
+    configuredGatewayMode,
+    builder.Environment.IsProduction());
 // 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
 var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -253,7 +257,8 @@ else if (isShadow || httpAllowlist.Count > 0)
                 sp.GetRequiredService<IConfiguration>(),
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<IAssetStorage>()),
+                sp.GetService<IAssetStorage>(),
+                sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,

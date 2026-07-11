@@ -117,6 +117,33 @@ public class GatewayServingEndpointContractTests
     }
 
     [Fact]
+    public async Task Invoke_RoundTrips_OverRealHttp()
+    {
+        await using var app = await StartServingHostAsync();
+        try
+        {
+            var client = new HttpClient { BaseAddress = new Uri(ResolveBaseUrl(app)) };
+            var req = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/invoke")
+            {
+                Content = new StringContent(
+                    """
+                    {"AppCallerCode":"demo.app::chat","ModelType":"chat","ExpectedModel":"invoke-echo-model"}
+                    """,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+            req.Headers.Add("X-Gateway-Key", TestKey);
+
+            var resp = await client.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            resp.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+            body.ShouldContain("sent:invoke-echo-model");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleChatCompletions_RoundTrips_OverRealHttp()
     {
         await using var app = await StartServingHostAsync();

@@ -1969,6 +1969,7 @@ export {
   clearReprocessConversation,
   getAgentRun,
   getLatestAgentRun,
+  transcribeEntry,
   // 批次 C：浏览事件埋点
   logEntryView,
   leaveEntryView,

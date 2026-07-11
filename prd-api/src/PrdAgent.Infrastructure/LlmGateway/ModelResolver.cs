@@ -45,42 +45,66 @@ public class ModelResolver : IModelResolver
             ExpectedModel = expectedModel
         };
 
-        // ========== 第一步：查找 AppCaller 配置（必须已注册） ==========
-        var appCaller = await _db.LLMAppCallers
-            .Find(a => a.AppCode == appCallerCode)
-            .FirstOrDefaultAsync(ct);
+        List<ModelGroup>? candidateGroups = null;
+        var hasDedicatedBinding = false;
+        string resolutionType = "NotFound";
 
-        var pinned = await TryResolvePinnedModelAsync(expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        var gatewayConfigRequired = DisableMapConfigFallbackForRegisteredAppCallers();
+        var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
+        if (gatewayRegistry.TrafficRejected)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] GW appCaller 状态拒绝真实流量: AppCallerCode={Code}, ModelType={Type}, Status={Status}, Reason={Reason}",
+                appCallerCode,
+                modelType,
+                gatewayRegistry.Status ?? "missing",
+                gatewayRegistry.BlockReason ?? "appcaller-traffic-rejected");
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
+        }
+
+        // MAP appCaller 只属于兼容 fallback。配置权威开启后不触碰 MAP 配置集合，
+        // 因此 MAP 配置域故障不会阻断 GW-owned 路由。
+        LLMAppCaller? appCaller = null;
+        if (!gatewayConfigRequired)
+        {
+            appCaller = await _db.LLMAppCallers
+                .Find(a => a.AppCode == appCallerCode)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        // pinned 是显式精确模型语义，先于 appCaller 默认池解析；但配置权威开启时仍只允许 GW-owned 平台/模型。
+        var pinned = await TryResolvePinnedModelAsync(
+            expectedModel,
+            pinnedPlatformId,
+            pinnedModelId,
+            ct,
+            allowMapFallback: !gatewayConfigRequired);
         if (pinned != null)
         {
             return pinned;
         }
 
-        List<ModelGroup>? candidateGroups = null;
-        var hasDedicatedBinding = false;
-        string resolutionType = "NotFound";
+        if (gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] GW appCaller 禁止 MAP fallback，但未命中有效 GW 模型池: AppCallerCode={Code}, ModelType={Type}, Status={Status}, ModelPoolId={PoolId}, Reason={Reason}",
+                appCallerCode, modelType, gatewayRegistry.Status ?? "missing",
+                gatewayRegistry.ModelPoolId ?? "(未绑定)", gatewayRegistry.BlockReason ?? "missing-gateway-pool");
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"GW appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
+        }
 
-        var gatewayRegistry = await TryGetActiveGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
-        var activeGatewayAppCallerRequiresGwConfig =
-            gatewayRegistry.ActiveAppCallerFound && DisableMapConfigFallbackForActiveAppCallers();
         if (gatewayRegistry.Groups.Count > 0)
         {
             candidateGroups = gatewayRegistry.Groups;
             resolutionType = "GatewayRegistryPool";
             hasDedicatedBinding = true;
             _logger.LogInformation(
-                "[ModelResolver] 使用 GW appCaller active 模型池: AppCallerCode={Code}, PoolCount={Count}, PoolNames={Names}",
-                appCallerCode, candidateGroups.Count,
+                "[ModelResolver] 使用 GW appCaller 模型池: AppCallerCode={Code}, Status={Status}, PoolCount={Count}, PoolNames={Names}",
+                appCallerCode, gatewayRegistry.Status ?? "unknown",
+                candidateGroups.Count,
                 string.Join(", ", candidateGroups.Select(g => g.Name)));
-        }
-
-        if ((candidateGroups == null || candidateGroups.Count == 0) && activeGatewayAppCallerRequiresGwConfig)
-        {
-            _logger.LogWarning(
-                "[ModelResolver] GW active appCaller 禁止 MAP fallback，但未命中有效 GW 模型池: AppCallerCode={Code}, ModelType={Type}, ModelPoolId={PoolId}, Reason={Reason}",
-                appCallerCode, modelType, gatewayRegistry.ModelPoolId ?? "(未绑定)", gatewayRegistry.BlockReason ?? "missing-gateway-pool");
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"GW active appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}");
         }
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller == null)
@@ -194,10 +218,10 @@ public class ModelResolver : IModelResolver
             else
             {
                 // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
-                if (activeGatewayAppCallerRequiresGwConfig)
+                if (gatewayConfigRequired)
                 {
                     _logger.LogInformation(
-                        "[ModelResolver] GW active appCaller 已禁止 MAP fallback，跳过 expectedModel 的 MAP 全量池搜索: AppCallerCode={Code}, Expected={Expected}",
+                            "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 MAP 全量池搜索: AppCallerCode={Code}, Expected={Expected}",
                         appCallerCode, expectedModel);
                 }
                 else
@@ -226,10 +250,10 @@ public class ModelResolver : IModelResolver
                 // 档 3：LLMModels 直连（按 ModelName 查）
                 if (preferredGroup == null)
                 {
-                    if (activeGatewayAppCallerRequiresGwConfig)
+                    if (gatewayConfigRequired)
                     {
                         _logger.LogInformation(
-                            "[ModelResolver] GW active appCaller 已禁止 MAP fallback，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
+                                "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
                             appCallerCode, expectedModel);
                     }
                     else if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
@@ -310,7 +334,7 @@ public class ModelResolver : IModelResolver
             {
                 ModelExchange? exchange = await FindExchangeForPoolItemAsync(
                     selectedModel,
-                    allowMapFallback: !activeGatewayAppCallerRequiresGwConfig,
+                    allowMapFallback: !gatewayConfigRequired,
                     ct);
 
                 if (exchange != null)
@@ -351,7 +375,7 @@ public class ModelResolver : IModelResolver
                     selectedModel.PlatformId,
                     enabledOnly: true,
                     ct,
-                    allowMapFallback: !activeGatewayAppCallerRequiresGwConfig);
+                    allowMapFallback: !gatewayConfigRequired);
 
                 if (platform == null)
                 {
@@ -360,7 +384,7 @@ public class ModelResolver : IModelResolver
                         selectedModel.PlatformId,
                         enabledOnly: false,
                         ct,
-                        allowMapFallback: !activeGatewayAppCallerRequiresGwConfig);
+                        allowMapFallback: !gatewayConfigRequired);
 
                     _logger.LogWarning(
                         "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 平台不可用: PlatformId={PlatformId}, Exists={Exists}, Enabled={Enabled}",
@@ -384,8 +408,15 @@ public class ModelResolver : IModelResolver
                     expectedModel ?? "(无)", selectedModel.ModelId,
                     platform.Name, selectedModel.HealthStatus);
 
+                // 并发治理需要真实模型级 MaxConcurrency；能力/协议字段仍沿用池快照优先级。
+                var modelConfig = await FindGatewayOwnedOrMapModelAsync(
+                    selectedModel.PlatformId,
+                    selectedModel.ModelId,
+                    ct,
+                    allowMapFallback: !gatewayConfigRequired);
+
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
-                    resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+                    resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
                     return resolvedPoolCandidates[0];
             }
@@ -415,13 +446,13 @@ public class ModelResolver : IModelResolver
             ConsecutiveFailures = m.ConsecutiveFailures
         }).ToList();
 
-        if (activeGatewayAppCallerRequiresGwConfig)
+        if (gatewayConfigRequired)
         {
             _logger.LogWarning(
-                "[ModelResolver] GW active appCaller 模型池全部不可用，拒绝降级 MAP legacy: AppCallerCode={Code}, ModelType={Type}, Pool={Pool}",
+                "[ModelResolver] GW appCaller 模型池全部不可用，拒绝降级 MAP legacy: AppCallerCode={Code}, ModelType={Type}, Pool={Pool}",
                 appCallerCode, modelType, originalPool?.Name);
             return ModelResolutionResult.NotFound(expectedModel,
-                $"GW active appCaller 模型池不可用，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}");
+                $"GW appCaller 模型池不可用，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}");
         }
 
         if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
@@ -458,6 +489,8 @@ public class ModelResolver : IModelResolver
                     ApiKey = fallbackApiKey,
                     HealthStatus = "Healthy",
                     MaxTokens = fallbackLegacyModel.MaxTokens,
+                    PlatformMaxConcurrency = fallbackPlatform.MaxConcurrency,
+                    ModelMaxConcurrency = fallbackLegacyModel.MaxConcurrency,
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,
@@ -490,14 +523,14 @@ public class ModelResolver : IModelResolver
     {
         var result = new List<AvailableModelPool>();
 
-        var gatewayRegistry = await TryGetActiveGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
+        var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
         foreach (var group in gatewayRegistry.Groups)
         {
             result.Add(await MapToAvailablePoolAsync(group, "GatewayRegistryPool", true, false, ct));
         }
         if (result.Count > 0)
             return result;
-        if (gatewayRegistry.ActiveAppCallerFound && DisableMapConfigFallbackForActiveAppCallers())
+        if (DisableMapConfigFallbackForRegisteredAppCallers())
             return result;
 
         // 1. 查找专属模型池
@@ -562,7 +595,7 @@ public class ModelResolver : IModelResolver
                 .Set("Models.$.HealthStatus", ModelHealthStatus.Healthy)
                 .Set("Models.$.LastSuccessAt", DateTime.UtcNow);
 
-            await _db.ModelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
+            await GetHealthModelGroups(resolution).UpdateOneAsync(filter, update, cancellationToken: ct);
 
             _logger.LogDebug(
                 "[ModelResolver] 记录成功: Model={Model}, Group={Group}",
@@ -585,7 +618,8 @@ public class ModelResolver : IModelResolver
         try
         {
             // 先获取当前失败次数
-            var group = await _db.ModelGroups
+            var modelGroups = GetHealthModelGroups(resolution);
+            var group = await modelGroups
                 .Find(g => g.Id == resolution.ModelGroupId)
                 .FirstOrDefaultAsync(ct);
 
@@ -610,7 +644,7 @@ public class ModelResolver : IModelResolver
                 .Set("Models.$.HealthStatus", newStatus)
                 .Set("Models.$.LastFailedAt", DateTime.UtcNow);
 
-            await _db.ModelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
+            await modelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
 
             _logger.LogWarning(
                 "[ModelResolver] 记录失败: Model={Model}, Failures={Count}, Status={Status}",
@@ -785,7 +819,8 @@ public class ModelResolver : IModelResolver
         string? expectedModel,
         string? pinnedPlatformId,
         string? pinnedModelId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowMapFallback = true)
     {
         var platformId = pinnedPlatformId?.Trim();
         var modelId = pinnedModelId?.Trim();
@@ -800,7 +835,7 @@ public class ModelResolver : IModelResolver
                 "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId");
         }
 
-        var platform = await FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct);
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback);
         if (platform == null)
         {
             return ModelResolutionResult.NotFound(
@@ -808,7 +843,7 @@ public class ModelResolver : IModelResolver
                 $"PinnedModel 平台不存在或未启用: {platformId}");
         }
 
-        var model = await FindGatewayOwnedOrMapModelAsync(platformId, modelId, ct);
+        var model = await FindGatewayOwnedOrMapModelAsync(platformId, modelId, ct, allowMapFallback);
         if (model == null)
         {
             return ModelResolutionResult.NotFound(
@@ -945,16 +980,14 @@ public class ModelResolver : IModelResolver
         => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase);
 
-    private async Task<GatewayRegistryLookup> TryGetActiveGatewayRegistryGroupsAsync(
+    private async Task<GatewayRegistryLookup> TryGetGatewayRegistryGroupsAsync(
         string appCallerCode,
         string modelType,
         CancellationToken ct)
     {
         if (_gatewayDb is null || string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
         {
-            return DisableMapConfigFallbackForActiveAppCallers()
-                ? GatewayRegistryLookup.Blocked(null, "gateway-registry-unavailable")
-                : GatewayRegistryLookup.Empty();
+            return GatewayRegistryLookup.Blocked(null, "gateway-registry-unavailable", null);
         }
 
         try
@@ -962,42 +995,72 @@ public class ModelResolver : IModelResolver
             var records = _gatewayDb.Context.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
             var record = await records
                 .Find(x => x.AppCallerCode == appCallerCode
-                           && x.RequestType == modelType
-                           && x.Status == "active")
+                           && x.RequestType == modelType,
+                    new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+                .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
-            if (record is null || string.IsNullOrWhiteSpace(record.ModelPoolId))
+            if (record is null)
             {
-                return record is null
-                    ? GatewayRegistryLookup.Empty()
-                    : GatewayRegistryLookup.Blocked(record.ModelPoolId, "active-appcaller-missing-model-pool");
-            }
-            if (string.Equals(record.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase))
-                return GatewayRegistryLookup.Blocked(record.ModelPoolId, "active-appcaller-auto-policy-without-gateway-pool");
-
-            var group = await FindGatewayOwnedOrMapModelPoolAsync(
-                record.ModelPoolId,
-                modelType,
-                ct,
-                allowMapFallback: !DisableMapConfigFallbackForActiveAppCallers());
-            if (group is null)
-            {
-                _logger.LogWarning(
-                    "[ModelResolver] GW active appCaller 绑定的模型池不存在或类型不匹配: AppCallerCode={Code}, ModelType={Type}, ModelPoolId={PoolId}",
-                    appCallerCode, modelType, record.ModelPoolId);
-                return GatewayRegistryLookup.Blocked(record.ModelPoolId, "active-appcaller-model-pool-not-found-in-gateway");
+                return GatewayRegistryLookup.Empty();
             }
 
-            return GatewayRegistryLookup.Found(record.ModelPoolId, [group]);
+            var status = GatewayAppCallerPolicy.NormalizeStatus(record.Status);
+            if (!GatewayAppCallerPolicy.AllowsTraffic(status))
+                return GatewayRegistryLookup.Rejected(record.ModelPoolId, $"appcaller-status-{status}", status);
+
+            if (!string.IsNullOrWhiteSpace(record.ModelPoolId))
+            {
+                var group = await FindGatewayOwnedOrMapModelPoolAsync(
+                    record.ModelPoolId,
+                    modelType,
+                    ct,
+                    allowMapFallback: false);
+                if (group is null)
+                {
+                    _logger.LogWarning(
+                        "[ModelResolver] GW appCaller 绑定的模型池不存在或类型不匹配: AppCallerCode={Code}, ModelType={Type}, Status={Status}, ModelPoolId={PoolId}",
+                        appCallerCode, modelType, status, record.ModelPoolId);
+                    return GatewayRegistryLookup.Blocked(
+                        record.ModelPoolId,
+                        "appcaller-model-pool-not-found-in-gateway",
+                        status);
+                }
+
+                return GatewayRegistryLookup.Found(record.ModelPoolId, [group], status);
+            }
+
+            var defaultGroups = await FindGatewayOwnedDefaultModelPoolsAsync(modelType, ct);
+            if (defaultGroups.Count == 0)
+            {
+                return GatewayRegistryLookup.Blocked(
+                    null,
+                    $"{status}-appcaller-missing-gateway-default-pool",
+                    status);
+            }
+
+            return GatewayRegistryLookup.Found(defaultGroups[0].Id, defaultGroups, status);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "[ModelResolver] 读取 GW appCaller registry 失败，回退 MAP 模型池配置: AppCallerCode={Code}, ModelType={Type}",
+                "[ModelResolver] 读取 GW appCaller registry 失败: AppCallerCode={Code}, ModelType={Type}",
                 appCallerCode, modelType);
-            return DisableMapConfigFallbackForActiveAppCallers()
-                ? GatewayRegistryLookup.Blocked(null, "gateway-registry-read-failed")
-                : GatewayRegistryLookup.Empty();
+            return GatewayRegistryLookup.Blocked(null, "gateway-registry-read-failed", null);
         }
+    }
+
+    private async Task<List<ModelGroup>> FindGatewayOwnedDefaultModelPoolsAsync(
+        string modelType,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null)
+            return [];
+
+        var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
+        return await gatewayPools
+            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+            .SortBy(g => g.Priority)
+            .ToListAsync(ct);
     }
 
     private async Task<ModelGroup?> FindGatewayOwnedOrMapModelPoolAsync(
@@ -1094,8 +1157,27 @@ public class ModelResolver : IModelResolver
             .FirstOrDefaultAsync(ct);
     }
 
-    private bool DisableMapConfigFallbackForActiveAppCallers()
-        => _config.GetValue<bool>("LlmGateway:DisableMapConfigFallbackForActiveAppCallers")
+    private IMongoCollection<ModelGroup> GetHealthModelGroups(ModelResolutionResult resolution)
+    {
+        if (IsGatewayOwnedResolution(resolution) && _gatewayDb is not null)
+        {
+            return _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
+        }
+
+        return _db.ModelGroups;
+    }
+
+    internal static bool IsGatewayOwnedResolution(ModelResolutionResult resolution)
+        => string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.Ordinal);
+
+    private bool DisableMapConfigFallbackForRegisteredAppCallers()
+        => _config.GetValue<bool>("LlmGateway:DisableMapConfigFallbackForRegisteredAppCallers")
+           || string.Equals(
+               Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS"),
+               "true",
+               StringComparison.OrdinalIgnoreCase)
+           // 兼容已发布的旧变量；后续迁移完成后可移除。
+           || _config.GetValue<bool>("LlmGateway:DisableMapConfigFallbackForActiveAppCallers")
            || string.Equals(
                Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS"),
                "true",
@@ -1103,13 +1185,18 @@ public class ModelResolver : IModelResolver
 
     private sealed record GatewayRegistryLookup(
         List<ModelGroup> Groups,
-        bool ActiveAppCallerFound,
         string? ModelPoolId,
-        string? BlockReason)
+        string? BlockReason,
+        string? Status,
+        bool TrafficRejected)
     {
-        public static GatewayRegistryLookup Empty() => new([], false, null, null);
-        public static GatewayRegistryLookup Found(string? modelPoolId, List<ModelGroup> groups) => new(groups, true, modelPoolId, null);
-        public static GatewayRegistryLookup Blocked(string? modelPoolId, string reason) => new([], true, modelPoolId, reason);
+        public static GatewayRegistryLookup Empty() => new([], null, null, null, false);
+        public static GatewayRegistryLookup Found(string? modelPoolId, List<ModelGroup> groups, string status)
+            => new(groups, modelPoolId, null, status, false);
+        public static GatewayRegistryLookup Blocked(string? modelPoolId, string reason, string? status)
+            => new([], modelPoolId, reason, status, false);
+        public static GatewayRegistryLookup Rejected(string? modelPoolId, string reason, string status)
+            => new([], modelPoolId, reason, status, true);
     }
 
     private async Task<ModelExchange?> FindGatewayOwnedExchangeAsync(
@@ -1177,6 +1264,11 @@ public class ModelResolver : IModelResolver
             _ => 50
         };
     }
+
+    internal static bool NeedsModelConfigFallback(ModelGroupItem model)
+        => string.IsNullOrWhiteSpace(model.Protocol)
+           || model.Capabilities is null
+           || model.Capabilities.Count == 0;
 
     #endregion
 }
@@ -1362,8 +1454,9 @@ public class InMemoryModelResolver : IModelResolver
                     continue;
 
                 _apiKeys.TryGetValue(platform.Id, out var apiKey);
+                var modelConfig = FindModelConfigForInMemory(selectedModel);
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
-                    resolutionType, expectedModel, selectedModel, group, platform, apiKey));
+                    resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
                     return Task.FromResult(resolvedPoolCandidates[0]);
             }
@@ -1405,6 +1498,8 @@ public class InMemoryModelResolver : IModelResolver
                     ApiUrl = fallbackLegacy.ApiUrl ?? fbPlatform.ApiUrl,
                     ApiKey = fbKey,
                     HealthStatus = "Healthy",
+                    PlatformMaxConcurrency = fbPlatform.MaxConcurrency,
+                    ModelMaxConcurrency = fallbackLegacy.MaxConcurrency,
                     IsFallback = true,
                     FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
                     OriginalPoolId = originalPool?.Id,
@@ -1463,6 +1558,12 @@ public class InMemoryModelResolver : IModelResolver
 
         return (null, null);
     }
+
+    private LLMModel? FindModelConfigForInMemory(ModelGroupItem model)
+        => _legacyModels.FirstOrDefault(m => m.Enabled
+            && string.Equals(m.PlatformId, model.PlatformId, StringComparison.Ordinal)
+            && (string.Equals(m.ModelName, model.ModelId, StringComparison.Ordinal)
+                || string.Equals(m.Id, model.ModelId, StringComparison.Ordinal)));
 
     public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,

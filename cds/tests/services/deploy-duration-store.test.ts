@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
  * 部署耗时样本台账（state.ts recordDeployDuration / getDeployEstimate）单测。
  * 覆盖：中位计算（奇偶）、ring buffer 上限、模式分桶隔离、非法值忽略、
@@ -20,9 +21,10 @@ describe('StateService deploy duration store', () => {
     service.load();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('returns null estimate when no samples recorded', () => {
@@ -106,8 +108,10 @@ describe('StateService deploy duration store', () => {
     expect(summary.sourceSamples).toBe(1);
   });
 
-  it('persists samples across reload', () => {
+  it('persists samples across reload', async () => {
     [2000, 6000, 4000].forEach((ms) => service.recordDeployDuration('proj', 'release', ms));
+    // json store 的 save 是去抖异步落盘（2026-07-09），跨实例 reload 前先 flush
+    await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush();
     const reloaded = new StateService(stateFile);
     reloaded.load();
     const est = reloaded.getDeployEstimate('proj', 'release');

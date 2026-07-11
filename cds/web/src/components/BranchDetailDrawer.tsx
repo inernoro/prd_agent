@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
@@ -78,6 +79,8 @@ interface BranchDetailData {
   pullCount?: number;
   stopCount?: number;
   errorMessage?: string;
+  lastDeploymentRunId?: string;
+  currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -153,6 +156,72 @@ interface OperationLog {
   deployMode?: string;
   commitSha?: string;
   shortCommit?: string;
+}
+
+type DeploymentRunStatus = 'pending' | 'queued' | 'preparing' | 'building' | 'starting' | 'verifying' | 'running' | 'failed' | 'cancelled';
+
+interface DeploymentRunSummary {
+  id: string;
+  projectId: string;
+  branchId: string;
+  trigger: 'webhook' | 'manual' | 'retry' | 'scheduler' | 'system';
+  status: DeploymentRunStatus;
+  phase: string;
+  seq: number;
+  eventCount: number;
+  commitSha?: string;
+  operationId?: string;
+  executorId?: string;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  latestEvent?: {
+    seq: number;
+    at: string;
+    phase: string;
+    level: 'info' | 'warn' | 'error';
+    status: string;
+    message: string;
+  };
+  failure?: {
+    code: string;
+    owner: 'code' | 'config' | 'cds' | 'external' | 'unknown';
+    retryable: boolean;
+    summary: string;
+    suggestedAction?: string;
+    evidenceRefs?: string[];
+  };
+}
+
+interface DeploymentDiagnosisResponse {
+  runId: string;
+  status: DeploymentRunStatus;
+  headline: string;
+  failure?: DeploymentRunSummary['failure'] & { serviceId?: string; phase?: string };
+  actions: string[];
+  evidenceRefs: string[];
+  ai: {
+    status: 'disabled' | 'ready' | 'failed';
+    explanation?: { summary: string; actions: string[]; cautions?: string[] };
+    error?: string;
+  };
+}
+
+interface DeploymentVersionSummary {
+  id: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  configHash: string;
+  profiles: Array<{
+    profileId: string;
+    name: string;
+    artifactImage: string;
+    reusable: boolean;
+    reuseBlockedReason?: string;
+  }>;
+  createdByRunId: string;
+  createdAt: string;
 }
 
 export interface DeploymentContainerLogSnapshot {
@@ -756,7 +825,6 @@ export function BranchDetailDrawer({
   onClose,
   deployments = [],
   activityEvents = [],
-  now = Date.now(),
   previewUrl = '',
   branchStatus,
   initialResourceId,
@@ -771,7 +839,6 @@ export function BranchDetailDrawer({
   onClose: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
-  now?: number;
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
   onToast?: (message: string) => void;
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
@@ -795,11 +862,17 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
+  // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
+  // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
+  const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
   // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
   const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
   const [logs, setLogs] = useState<OperationLog[]>([]);
+  const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
+  const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -849,6 +922,7 @@ export function BranchDetailDrawer({
   useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
   const [actionBusy, setActionBusy] = useState<{ branchId: string; action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' } | null>(null);
+  const [versionBusyId, setVersionBusyId] = useState<string | null>(null);
   const currentActionBusy = actionBusy?.branchId === branchId ? actionBusy.action : null;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [logsMode, setLogsMode] = useState<LogsMode>('system');
@@ -880,9 +954,13 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
+      const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
+        apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
+          .catch(() => ({ runs: [] })),
+        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
+          .catch(() => ({ versions: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {
             setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
@@ -903,6 +981,8 @@ export function BranchDetailDrawer({
         setBranch(found);
       }
       setLogs(logsRes.logs || []);
+      setDeploymentRuns(runsRes.runs || []);
+      setDeploymentVersions(versionsRes.versions || []);
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
@@ -1065,6 +1145,9 @@ export function BranchDetailDrawer({
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
+    setDeploymentRuns([]);
+    setDeploymentVersions([]);
+    setVersionBusyId(null);
     setEnvState({ status: 'idle' });
     setProfileState({ status: 'loading' });
     setInfraServices([]);
@@ -1084,6 +1167,22 @@ export function BranchDetailDrawer({
     lastMetricsByServiceRef.current = {};
     void load();
   }, [open, branchId, load]);
+
+  useEffect(() => {
+    if (!open || activeTab !== 'deployments' || !branchId || !projectId) return;
+    const refreshRuns = async (): Promise<void> => {
+      try {
+        const response = await apiRequest<{ runs: DeploymentRunSummary[] }>(
+          `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`,
+        );
+        if (branchIdRef.current === branchId) setDeploymentRuns(response.runs || []);
+      } catch {
+        // 保留最近一次成功快照，短暂控制面抖动不清空事实账本。
+      }
+    };
+    const timer = window.setInterval(() => void refreshRuns(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, branchId, open, projectId]);
 
   useEffect(() => {
     if (!open || !initialResourceId) return;
@@ -1300,6 +1399,30 @@ export function BranchDetailDrawer({
       ));
     }
   }, [branchId, onToast, onActionComplete, onClose, load]);
+
+  const deployVersion = useCallback(async (version: DeploymentVersionSummary, rollback: boolean): Promise<void> => {
+    if (!branchId) return;
+    setVersionBusyId(version.id);
+    try {
+      const response = await apiRequest<{ runId?: string }>(
+        rollback
+          ? `/api/branches/${encodeURIComponent(branchId)}/rollback`
+          : `/api/deployment-versions/${encodeURIComponent(version.id)}/deploy`,
+        {
+          method: 'POST',
+          body: rollback ? { versionId: version.id } : { branchId },
+        },
+      );
+      onToast?.(`${rollback ? '版本回滚' : '版本重新部署'}已提交${response.runId ? `，runId: ${response.runId}` : ''}`);
+      await load();
+      onActionComplete?.('deploy');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`${rollback ? '版本回滚' : '版本重新部署'}失败:${message}`);
+    } finally {
+      setVersionBusyId(null);
+    }
+  }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
     if (!branchId) return;
@@ -1999,16 +2122,14 @@ export function BranchDetailDrawer({
                               <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
                                 {diag.errorCategory.replace('-', ' ')}
                               </span>
-                              <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{
-                                background: diag.responsibilitySide === 'cds' ? 'rgba(245,158,11,0.15)'
-                                  : diag.responsibilitySide === 'code' ? 'rgba(239,68,68,0.15)'
-                                  : diag.responsibilitySide === 'config' ? 'rgba(59,130,246,0.15)'
-                                  : 'rgba(156,163,175,0.15)',
-                                color: diag.responsibilitySide === 'cds' ? '#f59e0b'
-                                  : diag.responsibilitySide === 'code' ? '#ef4444'
-                                  : diag.responsibilitySide === 'config' ? '#3b82f6'
-                                  : '#9ca3af',
-                              }}>
+                              {/* 主题感知的责任方徽章：白天用深色文字保证对比度（旧写法硬编码
+                                  亮系 #f59e0b/#9ca3af 落在 0.15 透明底上，白天对比度约 2:1 看不清） */}
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                diag.responsibilitySide === 'cds' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+                                  : diag.responsibilitySide === 'code' ? 'bg-red-500/15 text-red-700 dark:text-red-400'
+                                  : diag.responsibilitySide === 'config' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400'
+                                  : 'bg-gray-500/15 text-gray-600 dark:text-gray-400'
+                              }`}>
                                 {diag.responsibilitySide === 'cds' ? 'CDS 侧'
                                   : diag.responsibilitySide === 'code' ? '代码侧'
                                   : diag.responsibilitySide === 'config' ? '配置侧'
@@ -2063,6 +2184,13 @@ export function BranchDetailDrawer({
               <div className="p-5">
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
+                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
+                    <DeploymentVersionLedger
+                      versions={deploymentVersions}
+                      currentVersionId={branch.currentVersionId}
+                      busyVersionId={versionBusyId}
+                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
+                    />
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                         还没有构建记录。点击部署后，构建计划和日志会出现在这里。
@@ -2463,6 +2591,247 @@ export function BranchDetailDrawer({
       </div>
     </div>
   );
+}
+
+function DeploymentVersionLedger({
+  versions,
+  currentVersionId,
+  busyVersionId,
+  onDeploy,
+}: {
+  versions: DeploymentVersionSummary[];
+  currentVersionId?: string;
+  busyVersionId: string | null;
+  onDeploy: (version: DeploymentVersionSummary, rollback: boolean) => void;
+}): JSX.Element | null {
+  if (versions.length === 0) return null;
+  const visible = versions.slice(0, 5);
+
+  return (
+    <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+      <header className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <div>
+          <h4 className="text-sm font-semibold">不可变部署版本</h4>
+          <p className="mt-0.5 text-xs text-muted-foreground">可复用版本直接启动既有产物，不再重新拉取和编译源码。</p>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">最近 {visible.length} 个</span>
+      </header>
+      <div className="divide-y divide-[hsl(var(--hairline))]">
+        {visible.map((version) => {
+          const reusable = version.profiles.length > 0 && version.profiles.every((profile) => profile.reusable);
+          const isCurrent = version.id === currentVersionId;
+          const blockedReason = version.profiles.find((profile) => !profile.reusable)?.reuseBlockedReason;
+          const busy = busyVersionId === version.id;
+          return (
+            <div key={version.id} className="px-4 py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="font-mono text-xs text-foreground" title={version.id}>{version.id.slice(0, 15)}</span>
+                <span className="font-mono text-xs text-muted-foreground">{version.commitSha.slice(0, 7)}</span>
+                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">当前版本</span> : null}
+                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                  {reusable ? '产物可复用' : '仅记录'}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>{version.profiles.length} 个服务</span>
+                <span>{new Date(version.createdAt).toLocaleString()}</span>
+              </div>
+              {!reusable && blockedReason ? (
+                <p className="mt-2 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">{blockedReason}</p>
+              ) : null}
+              {reusable ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={busyVersionId !== null}
+                  onClick={() => onDeploy(version, !isCurrent)}
+                >
+                  {busy ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                  {isCurrent ? '重新部署此版本' : '回滚到此版本'}
+                </Button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function DeploymentRunLedger({
+  runs,
+  activeRunId,
+}: {
+  runs: DeploymentRunSummary[];
+  activeRunId?: string;
+}): JSX.Element | null {
+  if (runs.length === 0) return null;
+  const visible = runs.slice(0, 5);
+
+  return (
+    <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+      <header className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <div>
+          <h4 className="text-sm font-semibold">部署事实账本</h4>
+          <p className="mt-0.5 text-xs text-muted-foreground">页面刷新或连接中断后，仍从同一个 runId 继续读取阶段和根因。</p>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">最近 {visible.length} 次</span>
+      </header>
+      <div className="divide-y divide-[hsl(var(--hairline))]">
+        {visible.map((run) => {
+          const meta = deploymentRunStatusMeta(run.status);
+          const message = run.failure?.summary || run.latestEvent?.message || '等待部署事件';
+          return (
+            <div key={run.id} className="px-4 py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className={`rounded border px-2 py-0.5 text-xs ${meta.className}`}>{meta.label}</span>
+                <span className="font-mono text-xs text-muted-foreground" title={run.id}>{run.id.slice(0, 15)}</span>
+                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">分支当前运行</span> : null}
+                <span className="text-xs text-muted-foreground">{deploymentRunTriggerLabel(run.trigger)}</span>
+                {run.commitSha ? <span className="font-mono text-xs text-muted-foreground">{run.commitSha.slice(0, 7)}</span> : null}
+              </div>
+              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <span className="font-medium text-foreground">阶段: {run.phase}</span>
+                <span className="text-muted-foreground">事件 {run.eventCount}</span>
+                <span className="text-muted-foreground">{new Date(run.updatedAt).toLocaleString()}</span>
+                {run.executorId ? <span className="text-muted-foreground">执行器 {run.executorId}</span> : null}
+              </div>
+              <p className={`mt-2 break-words text-xs leading-5 ${run.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                {message}
+              </p>
+              {run.failure?.suggestedAction ? (
+                <p className="mt-1 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  建议: {run.failure.suggestedAction}
+                </p>
+              ) : null}
+              {run.status === 'failed' ? <DeploymentRunDiagnosis runId={run.id} /> : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
+  const [diagnosis, setDiagnosis] = useState<DeploymentDiagnosisResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [aiState, setAiState] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; message?: string }>({ status: 'idle' });
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiRequest<{ diagnosis: DeploymentDiagnosisResponse }>(`/api/deployment-runs/${encodeURIComponent(runId)}/diagnosis`)
+      .then((response) => { if (!cancelled) setDiagnosis(response.diagnosis); })
+      .catch(() => { /* 旧服务端无结构化诊断时保留 run.failure 展示 */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  const explainWithAi = useCallback(async () => {
+    setAiState({ status: 'loading', message: '正在准备结构化事实' });
+    try {
+      const response = await fetch(apiUrl(`/api/deployment-runs/${encodeURIComponent(runId)}/diagnosis/stream?ai=1`), {
+        credentials: 'include',
+        headers: { Accept: 'text/event-stream' },
+      });
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const consume = (block: string): void => {
+        const eventName = block.match(/^event:\s*(.+)$/m)?.[1]?.trim() || 'message';
+        const dataText = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+        if (!dataText) return;
+        const data = JSON.parse(dataText) as any;
+        if (eventName === 'facts-ready') setAiState({ status: 'loading', message: '结构化事实已就绪' });
+        if (eventName === 'ai-stage') setAiState({ status: 'loading', message: data.message || 'AI Gateway 正在解释' });
+        if (eventName === 'complete') {
+          setDiagnosis(data as DeploymentDiagnosisResponse);
+          const ai = (data as DeploymentDiagnosisResponse).ai;
+          if (ai.status === 'ready' && ai.explanation) setAiState({ status: 'ready' });
+          else if (ai.status === 'disabled') setAiState({ status: 'error', message: '当前 CDS 未配置 AI Gateway，确定性诊断仍可使用' });
+          else if (ai.status === 'failed') setAiState({ status: 'error', message: ai.error || 'AI 解释失败' });
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || '';
+        for (const block of blocks) consume(block);
+        if (done) break;
+      }
+      if (buffer.trim()) consume(buffer);
+    } catch (err) {
+      setAiState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, [runId]);
+
+  if (loading) return <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在读取结构化诊断</div>;
+  if (!diagnosis) return <></>;
+  const failure = diagnosis.failure;
+  return (
+    <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[11px] text-destructive">{failure.code}</span> : null}
+        {failure?.owner ? <span className="text-xs text-muted-foreground">责任侧: {deploymentFailureOwnerLabel(failure.owner)}</span> : null}
+        {failure ? <span className="text-xs text-muted-foreground">{failure.retryable ? '修复前置条件后可重试' : '需先修复根因'}</span> : null}
+      </div>
+      <p className="mt-2 text-xs leading-5 text-foreground/85">{diagnosis.headline}</p>
+      {diagnosis.actions.length > 0 ? (
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
+          {diagnosis.actions.map((action) => <li key={action}>{action}</li>)}
+        </ul>
+      ) : null}
+      {diagnosis.ai.explanation ? (
+        <div className="mt-3 border-t border-[hsl(var(--hairline))] pt-3 text-xs leading-5">
+          <div className="font-semibold">AI 解释</div>
+          <p className="mt-1 text-muted-foreground">{diagnosis.ai.explanation.summary}</p>
+          {diagnosis.ai.explanation.actions.map((action) => <div key={action} className="mt-1 text-muted-foreground">{action}</div>)}
+        </div>
+      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => void explainWithAi()} disabled={aiState.status === 'loading'}>
+          {aiState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Braces />}
+          {aiState.status === 'loading' ? aiState.message || 'AI 正在解释' : 'AI 解释'}
+        </Button>
+        {aiState.status === 'error' ? <span className="text-xs text-amber-700 dark:text-amber-300">{aiState.message}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function deploymentFailureOwnerLabel(owner: NonNullable<DeploymentRunSummary['failure']>['owner']): string {
+  return ({ code: '代码', config: '配置', cds: 'CDS', external: '外部依赖', unknown: '未归类' })[owner];
+}
+
+function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {
+  if (status === 'running') return { label: '部署成功', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  if (status === 'failed') return { label: '部署失败', className: 'border-destructive/30 bg-destructive/10 text-destructive' };
+  if (status === 'cancelled') return { label: '已取消', className: 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' };
+  const labels: Record<Exclude<DeploymentRunStatus, 'running' | 'failed' | 'cancelled'>, string> = {
+    pending: '已受理',
+    queued: '排队中',
+    preparing: '准备中',
+    building: '构建中',
+    starting: '启动中',
+    verifying: '验证中',
+  };
+  return { label: labels[status], className: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+}
+
+function deploymentRunTriggerLabel(trigger: DeploymentRunSummary['trigger']): string {
+  const labels: Record<DeploymentRunSummary['trigger'], string> = {
+    webhook: 'Webhook',
+    manual: '手动',
+    retry: '自动重试',
+    scheduler: '调度器',
+    system: '系统',
+  };
+  return labels[trigger];
 }
 
 // 保留旧版小卡片实现，供后续可能的页面引用（Week 4.7 抽屉部署 tab

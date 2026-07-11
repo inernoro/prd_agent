@@ -19,6 +19,7 @@ import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 interface Res { status: number; body: any; headers: http.IncomingHttpHeaders; }
 
 async function call(
@@ -94,11 +95,15 @@ describe('Acceptance report routes — project-scoped key access', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     server?.close();
     delete process.env.CDS_CACHE_BASE;
+    // json store 的 save 是去抖异步落盘（2026-07-09）：先 flush 等在途写完成，
+    // 否则 rmSync 遍历目录期间原子写又落新 tmp 文件 → ENOTEMPTY（CI 抽风）。
+    await (service.getBackingStore() as unknown as { flush(): Promise<void> }).flush().catch(() => {});
     const dir = path.dirname(stateFile);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('project-a key cannot read another project report (403)', async () => {

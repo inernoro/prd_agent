@@ -3,13 +3,21 @@
  * the `mongodb` driver. 配 mongo-split-store.ts 使用，单独成文件方便单测
  * mock。
  *
- * Database 与 RealMongoHandle 共享（默认 'cds_state_db'），但使用 3 个
- * 独立 collection: cds_global_state / cds_projects / cds_branches /
- * cds_self_update_history。
+ * Database 与 RealMongoHandle 共享（默认 'cds_state_db'），独立 collection:
+ * cds_global_state / cds_projects / cds_branches / cds_self_update_history /
+ * cds_webhook_deliveries / cds_activity_logs。
  */
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
-import type { BranchEntry, Project, SelfUpdateRecord } from '../../types.js';
+import type {
+  BranchEntry,
+  DeploymentRun,
+  DeploymentVersion,
+  GithubWebhookDelivery,
+  Project,
+  ProjectActivityLog,
+  SelfUpdateRecord,
+} from '../../types.js';
 import type {
   GlobalRest,
   ISplitMongoCollection,
@@ -23,6 +31,10 @@ export interface MongoSplitHandleOptions {
   projectsCollectionName?: string;
   branchesCollectionName?: string;
   selfUpdateHistoryCollectionName?: string;
+  deploymentRunsCollectionName?: string;
+  deploymentVersionsCollectionName?: string;
+  webhookDeliveriesCollectionName?: string;
+  activityLogsCollectionName?: string;
   connectTimeoutMs?: number;
 }
 
@@ -52,6 +64,36 @@ interface SelfUpdateHistoryDoc {
   updatedAt: string;
 }
 
+interface DeploymentRunDoc {
+  _id: string;
+  projectId: string;
+  branchId: string;
+  doc: DeploymentRun;
+  updatedAt: string;
+}
+
+interface DeploymentVersionDoc {
+  _id: string;
+  projectId: string;
+  doc: DeploymentVersion;
+  updatedAt: string;
+}
+
+interface WebhookDeliveryDoc {
+  _id: string;
+  receivedAt: string;
+  doc: GithubWebhookDelivery;
+  updatedAt: string;
+}
+
+interface ActivityLogDoc {
+  _id: string;
+  projectId: string;
+  at: string;
+  doc: ProjectActivityLog;
+  updatedAt: string;
+}
+
 export class RealMongoSplitHandle implements ISplitMongoHandle {
   private client: MongoClient | null = null;
   private db: Db | null = null;
@@ -59,6 +101,10 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   private projectsCol: Collection<ProjectDoc> | null = null;
   private branchesCol: Collection<BranchDoc> | null = null;
   private selfUpdateHistoryCol: Collection<SelfUpdateHistoryDoc> | null = null;
+  private deploymentRunsCol: Collection<DeploymentRunDoc> | null = null;
+  private deploymentVersionsCol: Collection<DeploymentVersionDoc> | null = null;
+  private webhookDeliveriesCol: Collection<WebhookDeliveryDoc> | null = null;
+  private activityLogsCol: Collection<ActivityLogDoc> | null = null;
 
   private readonly uri: string;
   private readonly databaseName: string;
@@ -66,6 +112,10 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   private readonly projectsName: string;
   private readonly branchesName: string;
   private readonly selfUpdateHistoryName: string;
+  private readonly deploymentRunsName: string;
+  private readonly deploymentVersionsName: string;
+  private readonly webhookDeliveriesName: string;
+  private readonly activityLogsName: string;
   private readonly connectTimeoutMs: number;
 
   constructor(opts: MongoSplitHandleOptions) {
@@ -75,6 +125,10 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     this.projectsName = opts.projectsCollectionName || 'cds_projects';
     this.branchesName = opts.branchesCollectionName || 'cds_branches';
     this.selfUpdateHistoryName = opts.selfUpdateHistoryCollectionName || 'cds_self_update_history';
+    this.deploymentRunsName = opts.deploymentRunsCollectionName || 'cds_deployment_runs';
+    this.deploymentVersionsName = opts.deploymentVersionsCollectionName || 'cds_deployment_versions';
+    this.webhookDeliveriesName = opts.webhookDeliveriesCollectionName || 'cds_webhook_deliveries';
+    this.activityLogsName = opts.activityLogsCollectionName || 'cds_activity_logs';
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
   }
 
@@ -90,6 +144,10 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     this.projectsCol = this.db.collection<ProjectDoc>(this.projectsName);
     this.branchesCol = this.db.collection<BranchDoc>(this.branchesName);
     this.selfUpdateHistoryCol = this.db.collection<SelfUpdateHistoryDoc>(this.selfUpdateHistoryName);
+    this.deploymentRunsCol = this.db.collection<DeploymentRunDoc>(this.deploymentRunsName);
+    this.deploymentVersionsCol = this.db.collection<DeploymentVersionDoc>(this.deploymentVersionsName);
+    this.webhookDeliveriesCol = this.db.collection<WebhookDeliveryDoc>(this.webhookDeliveriesName);
+    this.activityLogsCol = this.db.collection<ActivityLogDoc>(this.activityLogsName);
   }
 
   globalCollection(): ISplitMongoCollection<GlobalDoc> {
@@ -110,6 +168,26 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
   selfUpdateHistoryCollection(): ISplitMongoCollection<SelfUpdateHistoryDoc> {
     if (!this.selfUpdateHistoryCol) throw new Error('MongoSplitHandle not connected');
     return this.adaptCollection(this.selfUpdateHistoryCol);
+  }
+
+  deploymentRunsCollection(): ISplitMongoCollection<DeploymentRunDoc> {
+    if (!this.deploymentRunsCol) throw new Error('MongoSplitHandle not connected');
+    return this.adaptCollection(this.deploymentRunsCol);
+  }
+
+  deploymentVersionsCollection(): ISplitMongoCollection<DeploymentVersionDoc> {
+    if (!this.deploymentVersionsCol) throw new Error('MongoSplitHandle not connected');
+    return this.adaptCollection(this.deploymentVersionsCol);
+  }
+
+  webhookDeliveriesCollection(): ISplitMongoCollection<WebhookDeliveryDoc> {
+    if (!this.webhookDeliveriesCol) throw new Error('MongoSplitHandle not connected');
+    return this.adaptCollection(this.webhookDeliveriesCol);
+  }
+
+  activityLogsCollection(): ISplitMongoCollection<ActivityLogDoc> {
+    if (!this.activityLogsCol) throw new Error('MongoSplitHandle not connected');
+    return this.adaptCollection(this.activityLogsCol);
   }
 
   /** 把 mongo Collection 适配到我们的最小接口。 */
@@ -156,6 +234,10 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
       this.projectsCol = null;
       this.branchesCol = null;
       this.selfUpdateHistoryCol = null;
+      this.deploymentRunsCol = null;
+      this.deploymentVersionsCol = null;
+      this.webhookDeliveriesCol = null;
+      this.activityLogsCol = null;
     }
   }
 

@@ -65,7 +65,8 @@ docs:
   design.skill.unified-skill-system: 技能系统统一设计
   design.platform.llm-gateway: LLM Gateway 统一调用架构设计
   design.platform.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
-  design.llm-gateway-physical-isolation: LLM 网关物理独立设计（从 MAP 剥离 + 跨进程 serving + flag）
+  design.platform.llm-gateway.migration-retrospective: LLM Gateway 全量迁移与生产发布复盘（full-http 执行成功、active 配置权威边界与长期证据纠偏）
+  design.llm-gateway-physical-isolation: LLM 网关物理独立设计 · 设计
   design.llm-gateway-unification: LLM 网关与模型池统一（协议下沉 + 池减负 + 接口绑模型）
   design.platform.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
@@ -103,6 +104,7 @@ docs:
   design.frontend.toast: Toast 通知系统实现
   design.platform.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds.managed-delivery: CDS 托管交付契约（DeploymentRun 唯一事实源 + 不可变 DeploymentVersion + managed/compose 双模式 + 结构化诊断）
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
@@ -159,6 +161,7 @@ docs:
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
+  guide.cds.managed-delivery: CDS 托管交付使用指南
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程
@@ -276,6 +279,8 @@ docs:
   plan.llm-gateway.full-cutover: LLM 网关全面切换执行计划（撤销 MAP 直连 + 清理旧代码 + 全接口 MECE 复测 + CDS 多出口面板）
   plan.llm-gateway.gw-vision-handoff: LLM 网关 GW 用户四点愿景与交接（两 web 两域名 / 简单账号密码 admin/admin / OpenRouter 风格控制台 / 替换所有模型请求）
   plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
+  plan.platform.llm-gateway-production-hardening: LLM Gateway 生产事实、隐性风险与架构修正 · 计划
+  plan.platform.llm-gateway-known-availability-closeout: LLM Gateway 已知可用性收口计划（三个有限 PR、一次生产部署、一次性验收）
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
@@ -304,10 +309,9 @@ docs:
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc.naming.md「debt.* 专项约定」
   debt.cds.project-migration: 项目迁移(CDS 项目移植) · 债务台账
-  # 注：main 新增此条，文件名仍是旧式连字符（debt.cds-removed-branch-pages.md），
-  # 与本分支点分命名不一致，待 doc-naming 专项一并重命名（合并不夹带重命名）。
-  debt.cds-removed-branch-pages: CDS 过期分支预览页(合并/放弃分流) · 债务台账
+  debt.cds.removed-branch-pages: CDS 过期分支预览页(合并/放弃分流) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
+  debt.defect-agent.mobile-share: 缺陷管理 手机截图分享提交 · 债务台账（iOS 无 share_target / PWA 安装引导 / 双面板未合并）
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.cds.executor-watchdog: CDS executor 卡死看门狗 · 债务台账（cluster-only，#228/#233 评审冲突）
@@ -339,7 +343,7 @@ docs:
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.llm-gateway: LLM 网关与模型池 · 债务台账
   debt.llm-gateway-protocol-fidelity: LLM 网关协议保真（函数调用穿协议 + 能力软门）· 已知边界
-  debt.llm-gateway-isolation: AI 大模型网关从 MAP 剥离（观测/登录独立进程 + 部署 + serving 跨进程 + 数据驱动测试矩阵）· 债务台账
+  debt.llm-gateway-isolation: LLM 网关物理剥离 · 债务台账
   debt.knowledge-base.inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.knowledge-base.selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
@@ -394,6 +398,7 @@ docs:
   debt.platform.map-mcp-connector: MAP MCP 连接器债务台账
   debt.platform.home-launcher: 登录后首页(Agent 启动页) · 债务台账（继续上次数据源边界 + 色阶尺纪律）
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
+  debt.cds.reports: CDS 验收中心报告治理债务台账（存量未归类迁移/保留策略/批量操作）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
   debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账
   report.cds.agent.phase3-acceptance.2026-05-19: CDS Agent Phase 3 验收报告

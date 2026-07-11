@@ -555,6 +555,49 @@ public static class OpenApi
 }
 
 /// <summary>
+/// LLM Gateway 内部自检调用者。
+/// </summary>
+public static class LlmGatewaySelfTest
+{
+    public const string AppName = "LLM Gateway Self Test";
+
+    public static class Route
+    {
+        [AppCallerMetadata(
+            "网关路由自检-GW Native",
+            "验证 GW Native 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string NativeChat = "self-test.native.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-OpenAI",
+            "验证 OpenAI-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string OpenAiChat = "self-test.openai.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-Claude",
+            "验证 Claude-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string ClaudeChat = "self-test.claude.chat::chat";
+
+        [AppCallerMetadata(
+            "网关路由自检-Gemini",
+            "验证 Gemini-compatible 入口能落到统一 IR 与路由元数据，不访问上游",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "SelfTest"
+        )]
+        public const string GeminiChat = "self-test.gemini.chat::chat";
+    }
+}
+
+/// <summary>
 /// AI Toolbox 百宝箱
 /// </summary>
 public static class AiToolbox
@@ -1009,6 +1052,17 @@ public static class DocumentStoreAgent
             Category = "DocumentStore"
         )]
         public const string Rewrite = "document-store.selection-rewrite::chat";
+    }
+
+    public static class Transcribe
+    {
+        [AppCallerMetadata(
+            "知识库录音转录-摘要",
+            "对录音转录稿生成结构化 AI 摘要（要点/结论/待办），与转录全文一起落为新文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Summary = "document-store.transcribe-summary::chat";
     }
 }
 

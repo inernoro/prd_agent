@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -39,6 +39,16 @@ interface ReleaseTarget {
     rollbackCommand?: string;
     healthcheckUrl: string;
   };
+}
+
+interface ProjectLite {
+  id: string;
+  name: string;
+  slug?: string;
+}
+
+function isReleaseTerminal(status: string): boolean {
+  return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
 }
 
 interface ReleaseRun {
@@ -204,6 +214,7 @@ export function ReleaseCenterPage(): JSX.Element {
     typeof window === 'undefined' ? undefined : window.localStorage,
   );
   const [projectId, setProjectId] = useState(initialProject);
+  const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [draft, setDraft] = useState<SiteDraft>(() => emptyDraft(initialProject));
   const [wizardStep, setWizardStep] = useState<WizardStep>('server');
@@ -214,8 +225,9 @@ export function ReleaseCenterPage(): JSX.Element {
   const [rollbackState, setRollbackState] = useState<RollbackState | null>(null);
   const [retryingRunId, setRetryingRunId] = useState('');
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
+    if (!opts?.silent) setState({ status: 'loading' });
     try {
       const [center, targets] = await Promise.all([
         apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`),
@@ -223,7 +235,7 @@ export function ReleaseCenterPage(): JSX.Element {
       ]);
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
     } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [projectId]);
 
@@ -232,10 +244,45 @@ export function ReleaseCenterPage(): JSX.Element {
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
   }, [projectId]);
 
+  // 项目列表用于「项目」下拉（照抄 ReportsPage 模式，best-effort，失败退回手输）。
+  // 旧版是裸 font-mono 输入框，要求用户凭记忆敲 projectId——敲错只会看到
+  // 「还没有站点发布目标」空状态，违反 zero-friction-input「能选择不手输」。
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
+      .then((res) => { if (!cancelled) setProjects(res.projects ?? []); })
+      .catch(() => { if (!cancelled) setProjects([]); });
+    return () => { cancelled = true; };
+  }, []);
+
   const hosts = state.status === 'ok' ? state.hosts : [];
   const rows = state.status === 'ok' ? state.center.rows : [];
   const runs = state.status === 'ok' ? state.center.runs : [];
   const sites = useMemo(() => rows.map(toSiteView), [rows]);
+
+  // 2026-07-09 兜住「白等」：发布运行中即使关掉日志弹窗，页面也要自己跟进
+  // 到终态（旧版数据只在挂载/手动刷新时拉取，关弹窗后站点卡永远停在「发布中」，
+  // 失败也无提示）。存在非终态 run 时 12s 静默轮询，终态翻转时 toast 告知。
+  const hasActiveRun = state.status === 'ok'
+    && (sites.some((site) => site.latestRun && !isReleaseTerminal(site.latestRun.status))
+      || runs.some((run) => !isReleaseTerminal(run.status)));
+  useEffect(() => {
+    if (!hasActiveRun) return undefined;
+    const timer = window.setInterval(() => { void load({ silent: true }); }, 12_000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRun, load]);
+  const runStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (state.status !== 'ok') return;
+    const previous = runStatusRef.current;
+    for (const run of runs) {
+      const before = previous[run.releaseId];
+      if (before && !isReleaseTerminal(before) && isReleaseTerminal(run.status)) {
+        setToast(`发布 ${run.releaseId.slice(0, 12)} ${statusLabel(run.status)}`);
+      }
+    }
+    runStatusRef.current = Object.fromEntries(runs.map((run) => [run.releaseId, run.status]));
+  }, [state, runs]);
 
   const openCreateWizard = (): void => {
     setDraft(emptyDraft(projectId));
@@ -367,15 +414,39 @@ export function ReleaseCenterPage(): JSX.Element {
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">项目</span>
-                  <input
-                    value={projectId}
-                    onChange={(event) => {
-                      const next = event.target.value.trim() || 'default';
-                      setProjectId(next);
-                      setDraft((current) => ({ ...current, projectId: next }));
-                    }}
-                    className="h-9 w-48 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 font-mono text-sm outline-none focus:border-primary/60"
-                  />
+                  {projects.length > 0 ? (
+                    <select
+                      value={projectId}
+                      onChange={(event) => {
+                        const next = event.target.value.trim() || 'default';
+                        setProjectId(next);
+                        setDraft((current) => ({ ...current, projectId: next }));
+                      }}
+                      className="h-9 w-56 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
+                    >
+                      {/* 当前 id 不在项目列表里（历史记忆值/敲错的旧值）也保留成一项，
+                          并明示"未知"，不再让用户面对莫名其妙的空列表 */}
+                      {!projects.some((project) => project.id === projectId) ? (
+                        <option value={projectId}>{projectId}（未知项目）</option>
+                      ) : null}
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    // 项目列表拉取失败/为空时退回手输，不阻断使用
+                    <input
+                      value={projectId}
+                      onChange={(event) => {
+                        const next = event.target.value.trim() || 'default';
+                        setProjectId(next);
+                        setDraft((current) => ({ ...current, projectId: next }));
+                      }}
+                      className="h-9 w-48 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 font-mono text-sm outline-none focus:border-primary/60"
+                    />
+                  )}
                 </label>
                 <Button onClick={openCreateWizard}>
                   <Plus />
@@ -456,7 +527,7 @@ function EmptySitesState({ hostCount, onAdd }: { hostCount: number; onAdd: () =>
         </Button>
         {hostCount === 0 ? (
           <Button asChild variant="outline">
-            <Link to="/cds-settings?tab=remote-hosts">先添加服务器</Link>
+            <Link to="/cds-settings#remote-hosts">先添加服务器</Link>
           </Button>
         ) : null}
       </div>
@@ -617,7 +688,7 @@ function SiteWizardDialog({
               <WizardPanel title="选择服务器" description="站点会发布到这台服务器的站点目录。凭据仍复用 Settings / Remote Hosts。">
                 {hosts.length === 0 ? (
                   <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-                    还没有可用服务器。先到 <Link className="underline" to="/cds-settings?tab=remote-hosts">Settings / Remote Hosts</Link> 添加 SSH 凭据。
+                    还没有可用服务器。先到 <Link className="underline" to="/cds-settings#remote-hosts">Settings / Remote Hosts</Link> 添加 SSH 凭据。
                   </div>
                 ) : (
                   <div className="grid gap-2">

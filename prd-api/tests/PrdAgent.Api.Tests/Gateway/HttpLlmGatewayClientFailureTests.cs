@@ -15,6 +15,17 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class HttpLlmGatewayClientFailureTests
 {
     [Fact]
+    public async Task ProductionGatewayRoot_AppendsServingPathExactlyOnce()
+    {
+        var factory = new RecordingHttpClientFactory();
+        var client = BuildClient(factory, "http://gateway");
+
+        await client.SendAsync(Request());
+
+        factory.RequestUri.ShouldBe(new Uri("http://gateway/gw/v1/send"));
+    }
+
+    [Fact]
     public async Task ServingTransportFailure_FailsClosed_ForEveryHttpBoundary()
     {
         var client = BuildClient(new ThrowingHttpClientFactory(new HttpRequestException("serving down")));
@@ -107,11 +118,47 @@ public class HttpLlmGatewayClientFailureTests
         ShouldContainText(llmStream[0].ErrorMessage, "401");
     }
 
-    private static HttpLlmGatewayClient BuildClient(IHttpClientFactory factory)
+    [Fact]
+    public async Task StructuredRawFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":422,\"ErrorCode\":\"UPSTREAM_REJECTED\",\"ErrorMessage\":\"invalid image input\",\"LogId\":\"log-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.UnprocessableEntity, body));
+
+        var raw = await client.SendRawWithResolutionAsync(
+            RawRequest(),
+            new GatewayModelResolution { Success = true, ActualModel = "m1" });
+        var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+
+        raw.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        raw.ErrorMessage.ShouldBe("invalid image input");
+        raw.StatusCode.ShouldBe(422);
+        raw.LogId.ShouldBe("log-123");
+        profile.ErrorCode.ShouldBe("UPSTREAM_REJECTED");
+        profile.StatusCode.ShouldBe(422);
+    }
+
+    [Fact]
+    public async Task StructuredSendFailure_PreservesGatewayErrorEnvelope()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":503,\"ErrorCode\":\"MODEL_POOL_UNAVAILABLE\",\"ErrorMessage\":\"no healthy model\",\"LogId\":\"log-send-123\"}";
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.ServiceUnavailable, body));
+
+        var response = await client.SendAsync(Request());
+
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("MODEL_POOL_UNAVAILABLE");
+        response.ErrorMessage.ShouldBe("no healthy model");
+        response.StatusCode.ShouldBe(503);
+        response.LogId.ShouldBe("log-send-123");
+    }
+
+    private static HttpLlmGatewayClient BuildClient(
+        IHttpClientFactory factory,
+        string baseUrl = "http://llmgw-serve.test")
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve.test",
+            ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = "test-key",
         }).Build();
 
@@ -182,6 +229,31 @@ public class HttpLlmGatewayClientFailureTests
 
         public HttpClient CreateClient(string name)
             => new(new StaticResponseHandler(_statusCode, _body));
+    }
+
+    private sealed class RecordingHttpClientFactory : IHttpClientFactory
+    {
+        private readonly RecordingHandler _handler = new();
+
+        public Uri? RequestUri => _handler.RequestUri;
+
+        public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
+
+        private sealed class RecordingHandler : HttpMessageHandler
+        {
+            public Uri? RequestUri { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                RequestUri = request.RequestUri;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = new StringContent("{\"error\":\"test\"}"),
+                });
+            }
+        }
     }
 
     private sealed class ThrowingHandler : HttpMessageHandler

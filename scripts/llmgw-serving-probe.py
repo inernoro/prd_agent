@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """LLM Gateway serving availability and auth probe.
 
-This read-only probe is meant for S5/S6 rollout evidence. It repeatedly checks
-/gw/v1/healthz without a key, verifies the reported commit is stable, and checks
-that protected endpoints reject unauthenticated access.
+This read-only probe is meant for S5/S6 rollout evidence. It checks protected
+/gw/v1/readyz dependencies with a key, repeatedly checks /gw/v1/healthz without a key,
+verifies the reported commit is stable, and checks that protected endpoints
+reject unauthenticated access.
 """
 
 from __future__ import annotations
@@ -18,6 +19,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+
+
+def _env_first(names: list[str]) -> tuple[str, str]:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return name, value
+    return "", ""
 
 
 def _default_base() -> str:
@@ -91,6 +100,7 @@ def _default_protected_checks() -> list[dict]:
         "ApiKey": "probe-key",
     }
     return [
+        {"method": "GET", "path": "/route-self-test", "body": None},
         {"method": "GET", "path": "/pools?appCallerCode=report-agent.generate%3A%3Achat&modelType=chat", "body": None},
         {"method": "GET", "path": "/shadow-comparisons", "body": None},
         {"method": "POST", "path": "/resolve", "body": chat_body},
@@ -166,6 +176,12 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- sampleCount: `{cell(report['sampleCount'])}`\n")
         fh.write(f"- intervalSeconds: `{cell(report['intervalSeconds'])}`\n")
         fh.write(f"- p95LatencyMs: `{cell(report['latencyMs']['p95'])}`\n\n")
+        readiness = report.get("readiness") or {}
+        fh.write("## Deep Readiness\n\n")
+        fh.write(f"- status: `{cell(readiness.get('status') or '')}`\n")
+        fh.write(f"- httpStatus: `{cell(readiness.get('httpStatus'))}`\n")
+        fh.write(f"- commit: `{cell(readiness.get('commit') or '')}`\n")
+        fh.write(f"- components: `{cell(','.join(readiness.get('components') or []))}`\n\n")
         fh.write("| sample | status | commit | latencyMs |\n")
         fh.write("|---:|---:|---|---:|\n")
         for sample in report["healthSamples"]:
@@ -177,6 +193,13 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write("|---|---|---:|---|\n")
         for item in report["protectedChecks"]:
             fh.write(f"| {cell(item['method'])} | {cell(item['path'])} | {cell(item['httpStatus'])} | 401 |\n")
+        route = report.get("routeSelfTest") or {}
+        fh.write("\n## Route Self Test\n\n")
+        fh.write(f"- required: `{cell(route.get('required'))}`\n")
+        fh.write(f"- ok: `{cell(route.get('ok'))}`\n")
+        fh.write(f"- keyEnv: `{cell(route.get('keyEnv') or '')}`\n")
+        fh.write(f"- protocols: `{cell(','.join(route.get('protocols') or []))}`\n")
+        fh.write(f"- missingProtocols: `{cell(','.join(route.get('missingProtocols') or []))}`\n")
         fh.write("\n## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -184,6 +207,70 @@ def _write_markdown(path: str, report: dict) -> None:
                 fh.write(f"- {failure}\n")
         else:
             fh.write("- none\n")
+
+
+def _route_self_test_result(raw: str, status_code: int, latency_ms: float, required: bool, key_env: str) -> dict:
+    result = {
+        "required": required,
+        "ok": False,
+        "keyEnv": key_env,
+        "httpStatus": status_code,
+        "latencyMs": latency_ms,
+        "selfTestStatus": "",
+        "mode": "",
+        "upstreamCalled": None,
+        "total": None,
+        "passed": None,
+        "protocols": [],
+        "missingProtocols": [],
+        "raw": raw[:200],
+    }
+    if status_code == 0:
+        result["missingProtocols"] = ["request_failed"]
+        return result
+    try:
+        payload = _json(raw)
+    except Exception:
+        result["missingProtocols"] = ["invalid_json"]
+        return result
+
+    cases = payload.get("cases") if "cases" in payload else payload.get("Cases")
+    if not isinstance(cases, list):
+        cases = []
+    protocols = sorted({
+        str((item.get("ingressProtocol") if isinstance(item, dict) else "") or (item.get("IngressProtocol") if isinstance(item, dict) else "")).strip()
+        for item in cases
+        if isinstance(item, dict)
+    })
+    required_protocols = {"gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"}
+    missing_protocols = sorted(required_protocols.difference(protocols))
+    total = payload.get("total") if "total" in payload else payload.get("Total")
+    passed = payload.get("passed") if "passed" in payload else payload.get("Passed")
+    self_status = str(payload.get("status") if "status" in payload else payload.get("Status") or "").strip().lower()
+    mode = str(payload.get("mode") if "mode" in payload else payload.get("Mode") or "").strip().lower()
+    upstream_called = payload.get("upstreamCalled") if "upstreamCalled" in payload else payload.get("UpstreamCalled")
+
+    result.update({
+        "selfTestStatus": self_status,
+        "mode": mode,
+        "upstreamCalled": upstream_called,
+        "total": total,
+        "passed": passed,
+        "protocols": protocols,
+        "missingProtocols": missing_protocols,
+        "ok": (
+            status_code == 200
+            and self_status == "ok"
+            and mode == "dry-run"
+            and upstream_called is False
+            and isinstance(total, int)
+            and isinstance(passed, int)
+            and total == passed
+            and total >= len(required_protocols)
+            and not missing_protocols
+        ),
+    })
+    return result
 
 
 def main() -> int:
@@ -196,12 +283,24 @@ def main() -> int:
                         help="backward compatible protected GET path that must reject missing key; repeatable")
     parser.add_argument("--protected-endpoint", action="append", default=[],
                         help="protected endpoint that must reject missing key, format 'METHOD /path' or METHOD:/path; repeatable")
+    parser.add_argument("--key", default="", help="Gateway key for authenticated route-self-test; defaults to key envs.")
+    parser.add_argument("--key-env", default="LLMGW_GATE_KEY")
+    parser.add_argument(
+        "--require-route-self-test",
+        action="store_true",
+        default=os.environ.get("LLMGW_SERVING_PROBE_REQUIRE_ROUTE_SELF_TEST", "").strip().lower() in {"1", "true", "yes", "on"},
+        help="Require authenticated /route-self-test to pass and cover all ingress protocols.",
+    )
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_SERVING_PROBE_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SERVING_PROBE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
     args = parser.parse_args()
 
     base = (args.base or "").strip().rstrip("/")
+    key_name, key = _env_first([args.key_env, "LLMGW_GATE_KEY", "LLMGW_SERVE_KEY"])
+    key = (args.key or key).strip()
+    if args.key:
+        key_name = "cli"
     sample_count = max(1, args.samples)
     interval = max(0, args.interval)
     try:
@@ -222,8 +321,23 @@ def main() -> int:
         "sampleCount": sample_count,
         "intervalSeconds": interval,
         "latencyMs": {"p50": 0, "p95": 0, "max": 0},
+        "readiness": {
+            "httpStatus": None,
+            "status": "",
+            "commit": "",
+            "components": [],
+            "latencyMs": 0,
+        },
         "healthSamples": [],
         "protectedChecks": [],
+        "routeSelfTest": {
+            "required": bool(args.require_route_self_test),
+            "ok": not bool(args.require_route_self_test),
+            "keyEnv": key_name,
+            "httpStatus": None,
+            "protocols": [],
+            "missingProtocols": [],
+        },
         "failures": [],
     }
 
@@ -232,6 +346,37 @@ def main() -> int:
     if protected_parse_failure:
         report["failures"].append(protected_parse_failure)
     if not report["failures"]:
+        ready_code, ready_raw, ready_latency = _request(base, "/readyz", key=key)
+        readiness = {
+            "httpStatus": ready_code,
+            "status": "",
+            "commit": "",
+            "components": [],
+            "latencyMs": ready_latency,
+            "raw": ready_raw[:500],
+        }
+        try:
+            ready_payload = _json(ready_raw)
+            readiness["status"] = str(ready_payload.get("status") or ready_payload.get("Status") or "")
+            readiness["commit"] = str(ready_payload.get("commit") or ready_payload.get("Commit") or "")
+            components = ready_payload.get("components") or ready_payload.get("Components") or []
+            readiness["components"] = [
+                str(item.get("name") or item.get("Name") or "")
+                for item in components
+                if isinstance(item, dict)
+            ]
+        except Exception as exc:
+            report["failures"].append(f"readyz invalid JSON: {exc}")
+        report["readiness"] = readiness
+        if ready_code != 200 or readiness["status"].lower() not in {"ready", "ok"}:
+            report["failures"].append(
+                f"readyz not ready: HTTP {ready_code}, status={readiness['status'] or 'empty'}"
+            )
+        if args.expect_commit and readiness["commit"] and readiness["commit"] != args.expect_commit:
+            report["failures"].append(
+                f"readyz commit mismatch: actual={readiness['commit']}, expected={args.expect_commit}"
+            )
+
         commits: list[str] = []
         latencies: list[float] = []
         for index in range(sample_count):
@@ -282,6 +427,22 @@ def main() -> int:
                 report["failures"].append(f"protected endpoint {method} {path} should reject missing key with 401, actual={code}")
             report["protectedChecks"].append(item)
 
+        if args.require_route_self_test:
+            if not key:
+                report["failures"].append("route-self-test requires gateway key but none was configured")
+            else:
+                code, raw, latency = _request(base, "/route-self-test", key=key)
+                route_result = _route_self_test_result(raw, code, latency, required=True, key_env=key_name)
+                report["routeSelfTest"] = route_result
+                if not route_result["ok"]:
+                    report["failures"].append(
+                        "route-self-test failed: "
+                        f"status={route_result.get('httpStatus')} "
+                        f"selfTestStatus={route_result.get('selfTestStatus') or 'empty'} "
+                        f"mode={route_result.get('mode') or 'empty'} "
+                        f"missingProtocols={','.join(route_result.get('missingProtocols') or []) or 'none'}"
+                    )
+
     report["verdict"] = "fail" if report["failures"] else "pass"
     _write_json(args.json_out, report)
     _write_markdown(args.report_md, report)
@@ -290,7 +451,9 @@ def main() -> int:
 
     print(f"LLM Gateway serving probe: {report['verdict'].upper()}")
     print(f"- samples={len(report['healthSamples'])}")
+    print(f"- readiness={report['readiness'].get('status')}")
     print(f"- protected_checks={len(report['protectedChecks'])}")
+    print(f"- route_self_test={report['routeSelfTest'].get('ok')}")
     print(f"- failures={len(report['failures'])}")
     return 1 if report["failures"] else 0
 

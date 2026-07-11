@@ -13,11 +13,15 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { DeploymentVersionService } from '../../src/services/deployment-version.js';
+import { ManagedProjectService } from '../../src/services/managed-project.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -142,6 +146,9 @@ describe('Branch Routes', () => {
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
   let branchOperationCoordinator: BranchOperationCoordinator;
+  let deploymentRunService: DeploymentRunService;
+  let deploymentVersionService: DeploymentVersionService;
+  let managedProjectService: ManagedProjectService;
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -233,6 +240,9 @@ describe('Branch Routes', () => {
       },
     };
     branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
+    deploymentRunService = new DeploymentRunService(stateService);
+    deploymentVersionService = new DeploymentVersionService(stateService);
+    managedProjectService = new ManagedProjectService(stateService);
 
     const app = express();
     app.use(express.json());
@@ -244,6 +254,9 @@ describe('Branch Routes', () => {
     });
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
+      deploymentRunService,
+      deploymentVersionService,
+      managedProjectService,
     }));
 
     await new Promise<void>((resolve) => {
@@ -252,11 +265,12 @@ describe('Branch Routes', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   // ── Remote branches ──
@@ -1896,6 +1910,17 @@ describe('Branch Routes', () => {
       }
       const deploy = await deployPromise;
       expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('event: deployment-run');
+      const localRunId = String(deploy.headers['x-cds-deployment-run-id']);
+      const localRun = deploymentRunService.get(localRunId);
+      expect(localRun).toMatchObject({
+        branchId: 'cross-cleanup-busy',
+        status: 'running',
+        phase: 'complete',
+      });
+      expect(localRun?.events.map((event) => event.status)).toEqual(expect.arrayContaining([
+        'pending', 'preparing', 'building', 'starting', 'verifying', 'running',
+      ]));
     });
 
     it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
@@ -1942,6 +1967,159 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('orphan-prepull')?.services['api']).toBeTruthy();
       // The deploy itself ends in error because the pull failed.
       expect(stateService.getBranch('orphan-prepull')?.status).toBe('error');
+    });
+  });
+
+  describe('immutable deployment version reuse', () => {
+    it('creates a reusable version and redeploys the same commit without pulling source again', async () => {
+      const commitSha = '1234567890abcdef1234567890abcdef12345678';
+      const image = `ghcr.io/acme/api:sha-${commitSha}`;
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: image,
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+        prebuiltImage: true,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'version-reuse',
+        projectId: 'default',
+        branch: 'feature/version-reuse',
+        worktreePath: path.join(tmpDir, 'worktrees', 'version-reuse'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+      mock.addResponsePattern(/docker pull .*ghcr\.io\/acme\/api:sha-/, () => ({ stdout: 'pulled', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const first = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
+      expect(first.status).toBe(200);
+      expect(String(first.body)).toContain('version-create');
+      const branchAfterFirst = stateService.getBranch('version-reuse');
+      const versionId = branchAfterFirst?.currentVersionId;
+      expect(versionId).toMatch(/^dv_/);
+      expect(deploymentVersionService.get(versionId!)).toMatchObject({
+        commitSha,
+        profiles: [expect.objectContaining({ artifactImage: image, reusable: true })],
+      });
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+
+      const second = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
+      expect(second.status).toBe(200);
+      expect(String(second.body)).toContain('已锁定版本');
+      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      const secondRunId = String(second.headers['x-cds-deployment-run-id']);
+      expect(deploymentRunService.get(secondRunId)).toMatchObject({
+        versionId,
+        status: 'running',
+        phase: 'complete',
+      });
+      expect(stateService.getDeploymentVersions({ branchId: 'version-reuse' })).toHaveLength(1);
+    });
+
+    it('deploys a managed project without a hand-authored BuildProfile and reuses its local artifact', async () => {
+      const commitSha = 'abcdef1234567890abcdef1234567890abcdef12';
+      const worktreePath = path.join(tmpDir, 'worktrees', 'managed-auto');
+      fs.mkdirSync(worktreePath, { recursive: true });
+      fs.writeFileSync(path.join(worktreePath, 'package.json'), JSON.stringify({
+        scripts: { build: 'vite build', start: 'vite --host 0.0.0.0' },
+        dependencies: { vite: '^6.0.0', react: '^18.0.0' },
+      }));
+      const project = stateService.getProject('default')!;
+      project.deliveryMode = 'managed';
+      project.managedSpec = {
+        apps: [{ id: 'web', appPath: '.', workload: 'web', health: { type: 'http', path: '/' } }],
+        capabilities: [],
+      };
+      stateService.addBranch({
+        id: 'managed-auto',
+        projectId: 'default',
+        branch: 'feature/managed-auto',
+        worktreePath,
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+        services: {},
+      });
+      stateService.save();
+      let artifactInspectCount = 0;
+      mock.addResponsePattern(/docker image inspect .*cds-managed/, () => ({
+        stdout: artifactInspectCount++ === 0 ? '' : 'artifact',
+        stderr: artifactInspectCount === 1 ? 'missing' : '',
+        exitCode: artifactInspectCount === 1 ? 1 : 0,
+      }));
+      mock.addResponsePattern(/docker create .*managed-build/, () => ({ stdout: 'builder', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker exec .*managed-build/, () => ({ stdout: 'built', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start .*managed-build/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      expect(stateService.getBuildProfilesForProject('default')).toEqual([]);
+      const first = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
+      expect(first.status).toBe(200);
+      expect(String(first.body)).toContain('managed 产物已固化');
+      expect(stateService.getBuildProfilesForProject('default')[0]).toMatchObject({
+        id: 'web',
+        managedBuild: { artifactImage: expect.stringMatching(/^cds-managed\//) },
+      });
+      const versionId = stateService.getBranch('managed-auto')?.currentVersionId;
+      expect(deploymentVersionService.get(versionId!)?.profiles[0]).toMatchObject({
+        artifactKind: 'managed-image',
+        reusable: true,
+      });
+      const buildExecCount = mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build')).length;
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+
+      const second = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
+      expect(second.status).toBe(200);
+      expect(String(second.body)).toContain('已锁定版本');
+      expect(String(second.body)).not.toContain('npm install && npm run build');
+      expect(mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build'))).toHaveLength(buildExecCount);
+      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      expect(stateService.getDeploymentVersions({ branchId: 'managed-auto' })).toHaveLength(1);
+    });
+  });
+
+  describe('structured deployment diagnosis', () => {
+    it('classifies the first concrete build error and keeps evidence references on the run', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node:22', command: 'pnpm build && pnpm start', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'structured-failure', projectId: 'default', branch: 'feature/structured-failure',
+        worktreePath: path.join(tmpDir, 'worktrees', 'structured-failure'), status: 'idle',
+        createdAt: new Date().toISOString(), services: {},
+      });
+      stateService.save();
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('cds-structured-failure-api')) {
+          return { stdout: '', stderr: 'src/index.ts(4,2): error TS2322: Type string is not assignable', exitCode: 1 };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const response = await request(server, 'POST', '/api/branches/structured-failure/deploy');
+        const runId = String(response.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(runId)?.failure).toMatchObject({
+          code: 'build.compile.typescript',
+          owner: 'code',
+          retryable: false,
+          serviceId: 'api',
+        });
+        expect(deploymentRunService.get(runId)?.failure?.evidenceRefs).toEqual(expect.arrayContaining([
+          `deployment-run:${runId}`,
+          expect.stringMatching(new RegExp(`^deployment-run:${runId}:event:`)),
+          'service:structured-failure:api',
+        ]));
+      } finally {
+        mock.exec = originalExec;
+      }
     });
   });
 
@@ -2061,7 +2239,19 @@ describe('Branch Routes', () => {
         );
         expect(deploy.status).toBe(200);
         expect(String(deploy.body)).toContain('complete');
+        expect(String(deploy.body)).toContain('event: deployment-run');
         expect(stateService.getBranch('force-webhook')?.status).toBe('running');
+        const profileRunId = String(deploy.headers['x-cds-deployment-run-id']);
+        expect(profileRunId).toMatch(/^dr_/);
+        const profileRun = deploymentRunService.get(profileRunId);
+        expect(profileRun).toMatchObject({
+          branchId: 'force-webhook',
+          status: 'running',
+          phase: 'complete',
+          operationId: forceOperationId,
+          versionId: expect.stringMatching(/^dv_/),
+        });
+        expect(stateService.getBranch('force-webhook')?.currentVersionId).toBe(profileRun?.versionId);
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
         expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
@@ -2479,6 +2669,7 @@ describe('Branch Routes', () => {
         worktreePath: path.join(tmpDir, 'worktrees', 'empty-cleanup'),
         status: 'running',
         createdAt: now,
+        currentVersionId: 'dv_previous',
         // No build profiles configured for the project AND no extraProfiles → effective list empty,
         // but a leftover service is still tracked (the just-cleared extra).
         services: {
@@ -2493,10 +2684,21 @@ describe('Branch Routes', () => {
       expect(res.headers['content-type']).toContain('text/event-stream');
       const sse = String(res.body);
       expect(sse).toContain('event: complete');
+      expect(sse).toContain('event: deployment-run');
       expect(sse).toContain('demo-extra'); // cleared 列表在 complete data 里
       // The lingering service row is gone (container was torn down + entry removed).
       expect(stateService.getBranch('empty-cleanup')?.services['demo-extra']).toBeUndefined();
       expect(Object.keys(stateService.getBranch('empty-cleanup')?.services || {})).toHaveLength(0);
+      expect(stateService.getBranch('empty-cleanup')?.currentVersionId).toBeUndefined();
+      const runId = String(res.headers['x-cds-deployment-run-id']);
+      expect(runId).toMatch(/^dr_/);
+      expect(stateService.getBranch('empty-cleanup')?.lastDeploymentRunId).toBe(runId);
+      expect(deploymentRunService.get(runId)).toMatchObject({
+        branchId: 'empty-cleanup',
+        trigger: 'manual',
+        status: 'running',
+        phase: 'complete',
+      });
     });
 
     it('deploy with empty profiles refuses (503) when the owning executor is offline — no state mutation (Bugbot High)', async () => {
@@ -3229,6 +3431,14 @@ describe('Branch Routes', () => {
           { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-a' },
         );
         expect(first.status).toBe(200);
+        expect(String(first.body)).toContain('event: deployment-run');
+        const firstRunId = String(first.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(firstRunId)).toMatchObject({
+          branchId: 'remote-lease',
+          status: 'running',
+          executorId: 'exec-1',
+          trigger: 'webhook',
+        });
 
         const second = await request(
           server,
@@ -3240,6 +3450,10 @@ describe('Branch Routes', () => {
         expect(second.status).toBe(200);
         expect(String(second.body)).not.toContain('merged');
         expect(fetchCalls).toHaveLength(2);
+        const secondRunId = String(second.headers['x-cds-deployment-run-id']);
+        expect(secondRunId).not.toBe(firstRunId);
+        expect(fetchCalls[0].body.deploymentRunId).toBe(firstRunId);
+        expect(fetchCalls[1].body.deploymentRunId).toBe(secondRunId);
 
         const events = operationEvents.filter((event) => event.branchId === 'remote-lease');
         const started = events.filter((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy');

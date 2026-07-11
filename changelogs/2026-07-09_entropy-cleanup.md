@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录/自引用误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（cds 波5 事后栈检测已在 design.cds.config-tree.md + plan.cds.status.md 覆盖；llmgw ASR 直连收口/豆包流式迁移/pinned cutover 已在 plan.llm-gateway.full-cutover.md + plan.platform.llm-gateway-protocol-router.md + guide.speech-agent.doubao-asr-relay.md 覆盖，仅登记 manifest） |

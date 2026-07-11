@@ -44,6 +44,7 @@ export type LlmLogListItem = {
   platformName?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
+  runId?: string | null;
   userId?: string | null;
   username?: string | null;
   displayName?: string | null;
@@ -84,6 +85,7 @@ export type LlmLogDetail = {
   releaseCommit?: string | null;
   groupId?: string | null;
   sessionId?: string | null;
+  runId?: string | null;
   userId?: string | null;
   requestType?: string | null;
   appCallerCode?: string | null;
@@ -153,6 +155,7 @@ export type RouterTrace = {
   transport?: string | null;
   sourceSystem?: string | null;
   ingressProtocol?: string | null;
+  runId?: string | null;
   modelPolicy?: string | null;
   modelPoolId?: string | null;
   isFallback: boolean;
@@ -222,6 +225,40 @@ export type LogsSummaryData = {
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
   statusDistribution: LogsBucketItem[];
+  sourceSystemDistribution: LogsBucketItem[];
+  ingressProtocolDistribution: LogsBucketItem[];
+  modelPolicyDistribution: LogsBucketItem[];
+};
+
+export type ProtocolCoverageItem = {
+  ingressProtocol: string;
+  label: string;
+  status: string;
+  registeredAppCallers: number;
+  activeAppCallers: number;
+  coveredActiveAppCallers: number;
+  missingActiveAppCallers: number;
+  logRequests: number;
+  httpRequests: number;
+  failedRequests: number;
+  droppedParameterRequests: number;
+  requestTypes: string[];
+  missingActiveAppCallerCodes: string[];
+  lastSeenAt?: string | null;
+  logsLink: string;
+  appCallersLink: string;
+};
+
+export type ProtocolCoverageData = {
+  releaseCommit?: string | null;
+  sinceHours: number;
+  generatedAt: string;
+  totalLogRequests: number;
+  totalRegisteredAppCallers: number;
+  totalActiveAppCallers: number;
+  coveredProtocols: number;
+  missingRuntimeProtocols: number;
+  items: ProtocolCoverageItem[];
 };
 
 // ── 列表查询参数 ──
@@ -240,6 +277,9 @@ export type LogsListParams = {
   ingressProtocol?: string;
   modelPolicy?: string;
   releaseCommit?: string;
+  runId?: string;
+  requestId?: string;
+  sessionId?: string;
 };
 
 export type LogsListData = {
@@ -520,7 +560,9 @@ export type ConfigAuthoritySummary = {
   appCallersTotal: number;
   activeAppCallers: number;
   activeWithGatewayPool: number;
+  activeWithUsableGatewayPool: number;
   activeMissingGatewayPool: number;
+  activeBoundPoolWithoutUsableMember: number;
   discoveredAppCallers: number;
   configuredAppCallers: number;
   disabledAppCallers: number;
@@ -551,6 +593,11 @@ export type RuntimeGateItem = {
   evidence: string;
   nextAction: string;
   facts?: Record<string, string>;
+  links?: RuntimeGateLink[];
+};
+export type RuntimeGateLink = {
+  label: string;
+  to: string;
 };
 export type RuntimeGatesData = {
   status: string;
@@ -571,6 +618,7 @@ export type GatewayAppCaller = {
   requestType: string;
   sourceSystem: string;
   ingressProtocol: string;
+  observedIngressProtocols?: string[];
   title?: string | null;
   status: string;
   modelPoolId?: string | null;
@@ -579,8 +627,12 @@ export type GatewayAppCaller = {
   lastObservedModelPoolId?: string | null;
   lastObservedModelPolicy?: string | null;
   lastObservedParameterPolicy?: string | null;
+  lastObservedRequestId?: string | null;
+  lastObservedSessionId?: string | null;
+  lastObservedRunId?: string | null;
   owner?: string | null;
   monthlyBudgetUsd?: number | null;
+  budgetReservationUsd?: number | null;
   rateLimitPerMinute?: number | null;
   notes?: string | null;
   totalSeen: number;
@@ -597,6 +649,7 @@ export type UpdateGatewayAppCallerRequest = {
   parameterPolicy?: string;
   owner?: string;
   monthlyBudgetUsd?: number;
+  budgetReservationUsd?: number;
   rateLimitPerMinute?: number;
   notes?: string;
 };
@@ -613,6 +666,7 @@ export type BulkUpdateGatewayAppCallersRequest = {
   parameterPolicy?: string;
   owner?: string;
   monthlyBudgetUsd?: number;
+  budgetReservationUsd?: number;
   rateLimitPerMinute?: number;
 };
 
@@ -657,6 +711,34 @@ export type GatewayAppCallersData = {
   sourceSystems: string[];
   ingressProtocols: string[];
   requestTypes: string[];
+};
+
+export type ServiceKeyItem = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  sourceSystem: string;
+  appCallerCodes: string[];
+  ingressProtocols: string[];
+  scopes: string[];
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  createdAt?: string | null;
+};
+
+export type CreateServiceKeyRequest = {
+  name: string;
+  sourceSystem: string;
+  appCallerCodes: string[];
+  ingressProtocols: string[];
+  scopes: string[];
+  expiresAt?: string;
+};
+
+export type CreatedServiceKey = CreateServiceKeyRequest & {
+  id: string;
+  key: string;
+  warning: string;
 };
 
 // ── 影子比对（只读）──

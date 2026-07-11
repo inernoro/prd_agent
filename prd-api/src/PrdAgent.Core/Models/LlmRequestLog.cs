@@ -36,6 +36,7 @@ public class LlmRequestLog
     public string? ReleaseCommit { get; set; }
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
+    public string? RunId { get; set; }
     public string? UserId { get; set; }
     public string? ViewRole { get; set; }
 

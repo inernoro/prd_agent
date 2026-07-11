@@ -201,6 +201,12 @@ public class GatewayModelResolution
     /// </summary>
     public int? MaxTokens { get; init; }
 
+    /// <summary>平台级跨实例最大并发。</summary>
+    public int? PlatformMaxConcurrency { get; init; }
+
+    /// <summary>模型级跨实例最大并发。</summary>
+    public int? ModelMaxConcurrency { get; init; }
+
     /// <summary>是否支持函数调用。false 表示明确不支持，null 表示未知。</summary>
     public bool? SupportsFunctionCalling { get; init; }
 

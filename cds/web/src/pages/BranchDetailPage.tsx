@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -219,6 +219,13 @@ interface DiagnosticIssue {
   title: string;
   message: string;
   action?: 'command' | 'image' | 'port' | 'logs' | 'diagnose' | 'deploy';
+}
+
+/** 错误码 → 用户可读文案（guided-exploration：异常状态必须有人话 + 出路）。 */
+function branchDetailErrorText(message: string): string {
+  if (message === 'branch_not_found') return '该分支不存在或已被回收（可能在合并/删除后被清理）';
+  if (message === 'missing_branch_id') return '链接缺少分支参数，无法定位分支';
+  return message;
 }
 
 type LoadState =
@@ -1297,7 +1304,23 @@ export function BranchDetailPage(): JSX.Element {
     >
       <Workspace wide>
         {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
-        {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+        {state.status === 'error' ? (
+          // 2026-07-09：错误码翻译成人话 + 给出路（旧版把 branch_not_found 机器码
+          // 裸展示且无任何按钮——从旧链接/收藏进来的用户看不懂也走不出去）。
+          <div className="space-y-3">
+            <ErrorBlock message={branchDetailErrorText(state.message)} />
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link to={state.projectId ? `/branch-list?project=${encodeURIComponent(state.projectId)}` : '/project-list'}>
+                  返回分支列表
+                </Link>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void load(true)}>
+                重试
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {state.status === 'select' ? (
           <BranchSelect project={state.project} branches={state.branches} />
         ) : null}

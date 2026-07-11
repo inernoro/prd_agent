@@ -27,6 +27,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string, withPreview = true): CdsConfig {
   return {
     repoRoot: tmpDir,
@@ -153,13 +154,14 @@ describe('POST /api/branches/:id/smoke', () => {
   });
 
   afterEach(async () => {
+    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (prevEnv.CDS_SMOKE_SCRIPT_DIR === undefined) {
       delete process.env.CDS_SMOKE_SCRIPT_DIR;
     } else {
       process.env.CDS_SMOKE_SCRIPT_DIR = prevEnv.CDS_SMOKE_SCRIPT_DIR;
     }
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('returns 404 when the branch does not exist', async () => {
@@ -222,7 +224,7 @@ describe('POST /api/branches/:id/smoke', () => {
       expect(res.status).toBe(500);
       expect((res.body as any).error).toBe('smoke_script_missing');
     } finally {
-      fs.rmSync(emptyDir, { recursive: true });
+      fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
@@ -285,8 +287,9 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
     fs.chmodSync(entry, 0o755);
   });
 
-  afterEach(() => {
-    if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('propagates env vars, forwards lines, reports pass/fail counts + exit code', async () => {
@@ -330,7 +333,7 @@ describe('runSmokeForBranch (Phase 4 helper)', () => {
     } finally {
       if (prev === undefined) delete process.env.CDS_SMOKE_SCRIPT_DIR;
       else process.env.CDS_SMOKE_SCRIPT_DIR = prev;
-      fs.rmSync(emptyDir, { recursive: true });
+      fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });
