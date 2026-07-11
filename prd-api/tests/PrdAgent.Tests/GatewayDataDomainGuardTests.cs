@@ -1614,6 +1614,7 @@ public class GatewayDataDomainGuardTests
         var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
         var readiness = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayServingReadinessProbe.cs");
         var nginx = ReadRepoFile("deploy/nginx/conf.d/branches/_standalone.conf");
+        var imageNginx = ReadRepoFile("deploy/nginx/nginx.conf");
         var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
         var topologyPreflight = ReadRepoFile("scripts/llmgw-prod-topology-preflight.sh");
         var cdsServingStart = cdsCompose.LastIndexOf("\n  llmgw-serve:\n", StringComparison.Ordinal);
@@ -1633,6 +1634,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVE_BASE_URL must be", topologyPreflight);
         Assert.Contains("LLMGW_READINESS_ASSET_PROBE_KEY", topologyPreflight);
         Assert.Contains("LLMGW_READINESS_REQUIRE_ASSET_PROBE=true", topologyPreflight);
+        Assert.Contains("location = /health", nginx);
+        Assert.Contains("proxy_pass http://api:8080/health;", nginx);
+        Assert.Contains("location = /health", imageNginx);
+        Assert.Contains("proxy_pass http://api:8080/health;", imageNginx);
         Assert.Contains("[ \"$health\" != \"healthy\" ]", deploy);
         Assert.Contains("llmgw-serve-b:", compose);
         Assert.Contains("condition: service_healthy", compose);
