@@ -387,6 +387,7 @@ config_authority_md="${evidence_prefix}.config-authority.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
 maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
+shadow_evidence_commit="$commit"
 
 case "$stage" in
   canary-asr|canary-video-asr|http-full)
@@ -695,6 +696,19 @@ validate_ledger_order() {
       --ledger "$ledger" \
       --commit "$maintenance_from_commit" \
       --json-out "$maintenance_baseline_json"
+    shadow_evidence_commit="$(python3 - "$maintenance_baseline_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+print(report.get("shadowEvidenceCommit") or report.get("commit") or "")
+PY
+)"
+    if ! printf '%s' "$shadow_evidence_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+      echo "ERROR: maintenance baseline did not return a complete shadowEvidenceCommit." >&2
+      exit 1
+    fi
     echo "LLM Gateway maintenance release: inherited audited full-http evidence from commit=$maintenance_from_commit"
   elif [ "$allow_out_of_order" = "1" ]; then
     python3 scripts/llmgw-rollout-ledger.py validate \
@@ -733,7 +747,7 @@ append_ledger_entry() {
     --evidence-json "$stage_json" \
     --evidence-md "$stage_md" \
     --release-gate-json "$release_gate_json" \
-    --shadow-evidence-commit "${maintenance_from_commit:-$commit}" \
+    --shadow-evidence-commit "$shadow_evidence_commit" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \
@@ -1550,8 +1564,8 @@ export LLMGW_SERVE_KEY="${LLMGW_SERVE_KEY:-$gate_key}"
 export LLMGW_GATE_SHADOW_RELEASE_COMMIT="${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$commit}"
 export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="${LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT:-$commit}"
 if [ -n "$maintenance_from_commit" ]; then
-  export LLMGW_GATE_SHADOW_RELEASE_COMMIT="$maintenance_from_commit"
-  export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="$maintenance_from_commit"
+  export LLMGW_GATE_SHADOW_RELEASE_COMMIT="$shadow_evidence_commit"
+  export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="$shadow_evidence_commit"
   export LLMGW_GATE_MIN_COVERAGE_HOURS="${LLMGW_GATE_MIN_COVERAGE_HOURS:-0}"
   export LLMGW_MAINTENANCE_BASELINE_COMMIT="$maintenance_from_commit"
   export LLMGW_MAINTENANCE_BASELINE_JSON="$maintenance_baseline_json"
@@ -1658,7 +1672,7 @@ if [ "$execute" = "1" ]; then
     --disable-map-config-fallback-for-active-app-callers "$disable_map_fallback_for_active_app_callers" \
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
-    --shadow-evidence-commit "${maintenance_from_commit:-$commit}" \
+    --shadow-evidence-commit "$shadow_evidence_commit" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \

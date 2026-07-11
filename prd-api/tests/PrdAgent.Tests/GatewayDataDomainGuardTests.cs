@@ -593,8 +593,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw-rollout-ledger.py maintenance-baseline", stage);
         Assert.Contains("--json-out \"$maintenance_baseline_json\"", stage);
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
-        Assert.Contains("--shadow-evidence-commit \"${maintenance_from_commit:-$commit}\"", stage);
-        Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$maintenance_from_commit\"", stage);
+        Assert.Contains("shadow_evidence_commit=\"$(python3 - \"$maintenance_baseline_json\"", stage);
+        Assert.Contains("--shadow-evidence-commit \"$shadow_evidence_commit\"", stage);
+        Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$shadow_evidence_commit\"", stage);
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_COMMIT=\"$maintenance_from_commit\"", stage);
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_JSON=\"$maintenance_baseline_json\"", stage);
         Assert.Contains("LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit", deploy);
