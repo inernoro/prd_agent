@@ -26,7 +26,7 @@
 | 配置权威 | active appCaller 的 GW 配置权威 gate 已 ready，MAP fallback 对象为 0 |
 | 协议入口 | GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 已存在 |
 | 直连棘轮 | baseline 为 0，MAP 业务代码不允许新增上游 client |
-| 剩余问题 | 维护发布语义、MAP 配置域物理依赖、保留策略启用和一次性最终验收 |
+| 本计划剩余问题 | 无；超出本计划的 inproc/legacy 物理删除与外部平台化分别由 full-cutover 和 external-platform 计划继续跟踪 |
 
 ## 3. 有限执行清单
 
@@ -34,7 +34,7 @@
 |---|---|---|---|---|
 | PR-A | 发布可靠性 | 首次切流与维护发布分离；历史 full-http 证据可审计继承；新 commit 仍强制镜像一致、HTTP health、四协议、runtime gates；修正 auto/pinned 路由误报和探针 `inproc` 伪日志 | 后端 build、发布脚本合同测试、ledger 自测、CI 与审查全绿 | 已合并 PR #1076 |
 | PR-B | 解除 MAP 关键依赖 | 把 serving 必需的资产存储和运行配置迁入 GW-owned 配置域；readiness 不再把 MAP Mongo 当必要依赖 | MAP 配置库不可用时 GW health/readiness 与非 MAP 依赖请求仍可用 | 已合并 PR #1077 |
-| PR-C | 生命周期与最终验收 | 启用分层保留与清理；提供一次性验收命令和有限证据清单；只在三 PR 合并后部署最终 commit | 六类请求各最多一次、无自动重试；生产回滚命令和数据备份有效 | 开发中 |
+| PR-C | 生命周期与最终验收 | 启用分层保留与清理；提供一次性验收命令和有限证据清单；只在三 PR 合并后部署最终 commit | 六类请求各最多一次、无自动重试；生产回滚命令和数据备份有效 | 已合并 PR #1078；生产 lifecycle `applied`、索引 ready、六类验收完成 |
 
 不新增第四个实现 PR。计划文档、测试和 changelog 分别随对应 PR 合并。
 
@@ -128,8 +128,9 @@ PR-B 只迁移 serving 必需配置，不迁移 MAP 业务数据：
 
 ## 10. 最终交付物
 
-- 三个已合并 PR 及 CI/审查结论。
-- 最终生产 commit 与一次部署记录。
-- 六类能力的有限验收矩阵与对应 requestId。
-- 当前生产模式、镜像 commit、runtime gates、日志保留状态和回滚命令。
-- 未完成项只允许进入 `debt.llm-gateway.md`，不得继续扩展本计划。
+- 三个实现 PR #1076-#1078 已合并；维护基线、证据交接、根级 health 与 AI access key 四个发布纠错 PR #1079-#1082 已合并，CI/CDS/审查通过。
+- 最终生产 commit 为 `17490bfe2c2caf0f6c02163f2e48b768d8041b71`，API、GW 控制台、两份 serving 和 GW web 同 commit 运行。
+- 六类能力均有一次性验收 requestId 和 `transport=http` 日志；视频只 submit 一次，同一 job 晚完成并通过 MP4 下载探测。
+- 当前生产为 `Mode=http`，active MAP fallback 已关闭，runtime gate 为 `14 passed / 0 waiting / 0 blocked`，lifecycle 最近一次为 `applied` 且索引 ready。
+- 回滚演练台账为 success；回滚只需显式切回 `inproc` 并重启 API，数据库不回滚。
+- 本计划外的未完成项已写入 `debt.llm-gateway.md`、`plan.llm-gateway.full-cutover.md` 和 `plan.platform.llm-gateway-external-platform.md`。
