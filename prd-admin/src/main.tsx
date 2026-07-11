@@ -3,11 +3,13 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from '@/app/App';
 import { installGlobalErrorReporter } from '@/lib/clientErrorReporter';
+import { registerPwaServiceWorker } from '@/lib/pwa';
 import '@/styles/tailwind.css';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
 
 installGlobalErrorReporter();
+registerPwaServiceWorker();
 
 function shouldAutoPlayBackdropOnLoad(): boolean {
   // Dev HMR 会反复执行入口模块；避免热更新时误触发“自动播放”

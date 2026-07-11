@@ -21,7 +21,13 @@ import { SharesListPanel } from './components/SharesListPanel';
 import { DefectAutomationPanel } from './components/DefectAutomationPanel';
 import { cn } from '@/lib/cn';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { clearDefectDeepLinkParams, getDefectDeepLinkId } from './defectDeepLink';
+import {
+  clearDefectDeepLinkParams,
+  clearDefectSubmitActionParams,
+  getDefectDeepLinkId,
+  hasDefectSubmitAction,
+} from './defectDeepLink';
+import { consumeSharedDefectPayload } from '@/lib/sharedDefectFiles';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -61,6 +67,17 @@ export default function DefectAgentPage() {
   const notifiedRef = useRef(false);
   const directLoadRef = useRef<string | null>(null);
   const queryDefectId = getDefectDeepLinkId(searchParams);
+  const querySubmitAction = hasDefectSubmitAction(searchParams);
+
+  // ?action=submit 深链（手机截图分享 share_target 由 sw.js 重定向到这里）：
+  // 先把分享暂存的截图读进内存 stash，再拉起提交面板（面板挂载时同步领取注入）
+  useEffect(() => {
+    if (!querySubmitAction) return;
+    setSearchParams(clearDefectSubmitActionParams(searchParams), { replace: true });
+    void consumeSharedDefectPayload().finally(() => {
+      setShowSubmitPanel(true);
+    });
+  }, [querySubmitAction, searchParams, setSearchParams, setShowSubmitPanel]);
 
   const handleDetailClose = useCallback(() => {
     if (!queryDefectId) return;
