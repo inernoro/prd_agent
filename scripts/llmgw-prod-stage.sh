@@ -1553,6 +1553,8 @@ if [ -n "$maintenance_from_commit" ]; then
   export LLMGW_GATE_SHADOW_RELEASE_COMMIT="$maintenance_from_commit"
   export LLMGW_SHADOW_COVERAGE_RELEASE_COMMIT="$maintenance_from_commit"
   export LLMGW_GATE_MIN_COVERAGE_HOURS="${LLMGW_GATE_MIN_COVERAGE_HOURS:-0}"
+  export LLMGW_MAINTENANCE_BASELINE_COMMIT="$maintenance_from_commit"
+  export LLMGW_MAINTENANCE_BASELINE_JSON="$maintenance_baseline_json"
 fi
 export PRD_AGENT_REQUIRE_FAST_INTENT="${PRD_AGENT_REQUIRE_FAST_INTENT:-1}"
 export LLMGW_GATE_JSON_OUT="${LLMGW_GATE_JSON_OUT:-$release_gate_json}"

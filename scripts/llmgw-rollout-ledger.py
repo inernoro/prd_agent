@@ -1520,6 +1520,7 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
     failures: list[str] = []
     stage_evidence: dict = {}
     release_gate: dict = {}
+    shadow_evidence_commit = commit
     if not target:
         failures.append(f"missing http-full success baseline for commit={commit}")
     else:
@@ -1536,12 +1537,13 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                 "noFailures": not (stage_evidence.get("failures") or []),
             }
             failures.extend(f"maintenance baseline stage evidence invalid: {name}" for name, ok in checks.items() if not ok)
+            shadow_evidence_commit = _normalize_commit(stage_evidence.get("shadowEvidenceCommit")) or commit
         except SystemExit as exc:
             failures.append(str(exc))
 
         try:
             release_gate = _require_pass_json(release_gate_path, "maintenance baseline release gate")
-            if _normalize_commit(release_gate.get("shadowReleaseCommit") or release_gate.get("expectedCommit")) != commit:
+            if _normalize_commit(release_gate.get("shadowReleaseCommit") or release_gate.get("expectedCommit")) != shadow_evidence_commit:
                 failures.append("maintenance baseline release gate commit mismatch")
             shadow_checks = release_gate.get("shadowChecks") or []
             if not isinstance(shadow_checks, list) or not shadow_checks:
@@ -1551,7 +1553,7 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                     if not isinstance(item, dict):
                         failures.append("maintenance baseline release gate contains an invalid shadow check")
                         continue
-                    if _normalize_commit(item.get("releaseCommit")) != commit:
+                    if _normalize_commit(item.get("releaseCommit")) != shadow_evidence_commit:
                         failures.append("maintenance baseline shadow check commit mismatch")
                     if int(item.get("critical") or 0) != 0 or int(item.get("httpFail") or 0) != 0 or item.get("ok") is not True:
                         failures.append(f"maintenance baseline shadow check is unsafe: {item.get('label') or 'unknown'}")
@@ -1573,6 +1575,7 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
         "verdict": "fail" if failures else "pass",
         "ledger": args.ledger,
         "commit": commit,
+        "shadowEvidenceCommit": shadow_evidence_commit,
         "stage": "http-full",
         "recordedAt": str((target or {}).get("recordedAt") or ""),
         "evidenceJson": str((target or {}).get("evidenceJson") or ""),

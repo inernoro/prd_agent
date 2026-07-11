@@ -426,7 +426,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标", script);
         Assert.Contains("LLMGW_GATE_REQUIRED_KINDS", script);
         Assert.Contains("required_kinds_raw=\"${LLMGW_GATE_REQUIRED_KINDS:-}\"", script);
-        Assert.Contains("if [ \"$mode\" = \"http\" ] && [ -z \"$required_kinds_compact\" ]; then", script);
+        Assert.Contains("if [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ] && [ -z \"$required_kinds_compact\" ]; then", script);
         Assert.Contains("full_http_kind_min=\"${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}\"", script);
         Assert.Contains("required_kinds_raw=\"send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}\"", script);
         Assert.Contains("LLMGW_GATE_CANARY_KIND_MIN", script);
@@ -595,13 +595,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
         Assert.Contains("--shadow-evidence-commit \"${maintenance_from_commit:-$commit}\"", stage);
         Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$maintenance_from_commit\"", stage);
+        Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_COMMIT=\"$maintenance_from_commit\"", stage);
+        Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_JSON=\"$maintenance_baseline_json\"", stage);
         Assert.Contains("LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit", deploy);
+        Assert.Contains("LLM Gateway maintenance release: audited baseline accepted", deploy);
+        Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0\"", deploy);
+        Assert.Contains("[ \"$maintenance_release\" != \"1\" ]", deploy);
         Assert.Contains("LLMGW_POST_DEPLOY_EXPECT_COMMIT=\"$expect_commit\"", deploy);
         Assert.Contains("shadowEvidenceCommit", ledger);
         Assert.Contains("args.shadow_evidence_commit or args.commit", ledger);
         Assert.Contains("def maintenance_baseline(args: argparse.Namespace)", ledger);
         Assert.Contains("maintenance baseline is stale because a later negative event exists", ledger);
         Assert.Contains("maintenance baseline release gate has no shadow checks", ledger);
+        Assert.Contains("shadow_evidence_commit = _normalize_commit(stage_evidence.get(\"shadowEvidenceCommit\")) or commit", ledger);
         Assert.Contains("deployment_receipt=", stage);
         Assert.Contains("LLM Gateway deploy-once: receipt exists", stage);
         Assert.Contains("LLMGW_VERIFY_ONLY=1", stage);
