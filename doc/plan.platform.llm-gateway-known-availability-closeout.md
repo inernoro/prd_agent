@@ -1,6 +1,8 @@
 # LLM Gateway 已知可用性收口 · 计划
 
-> **版本**：v1.0 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-07-12 | **状态**：已落地
+
+> 2026-07-12 收口完成：PR #1076-#1082 已合并，生产五个组件统一部署 commit `17490bfe2c2caf0f6c02163f2e48b768d8041b71`，运行态为 `Mode=http` 且 active appCaller MAP fallback 已关闭。runtime gate 最终为 `14 passed / 0 waiting / 0 blocked`；文本、流式、图片、vision、ASR、视频六类一次性验收均有 `transport=http` 日志。视频只 submit 一次，初始轮询窗口超时后对同一 job 补一次状态查询并完成 MP4 下载验证，没有重复生成。
 
 ## 1. 目标
 

@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.9 | **日期**：2026-07-11 | **状态**：开发中
+> **版本**：v2.0 | **日期**：2026-07-12 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 22 / in-progress: 6 / paid: 9 / 总计: 37
+当前 open: 25 / in-progress: 8 / paid: 9 / 总计: 42
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -14,6 +14,11 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | open | 按 `plan.platform.llm-gateway-external-platform.md` PR-1/PR-2 实施；禁止相信请求自报 tenantId |
+| 2026-07-12-external-developer-onboarding | medium | 2026-07-12 | 控制台没有面向首次接入者的网页 Quickstart、四协议可复制示例、错误码排查和 requestId 定位教程 | 第一个外部开发者接入前 | open | 复用现有四协议与 scoped key，不另造第五套 API |
+| 2026-07-12-appcaller-prompt-policy | high | 2026-07-12 | appCaller registry 尚不能配置版本化提示词前缀/后缀；若直接在 adapter 拼字符串会破坏协议语义、审计和 raw/媒体请求 | 需要按 appCaller 注入品牌、合规或业务上下文时 | open | 首版只允许 chat/vision，固定合并顺序并记录 policy id/version/hash |
+| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | open | 顶部保留全局上下文，左侧分组承载工作区/路由/开发者/组织/治理/设置 |
+| 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | open | 区分 actual/estimated/unknown，展示价格覆盖率；CNY/USD 不无依据相加，并做图表像素与多视口验收 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |
 | 2026-07-09-gw-config-authority-not-migrated | high | 2026-07-09 | GW-owned appCaller、模型池、平台、模型、Exchange、key 和控制台治理能力已经落地，生产也已开启 active caller MAP fallback 退场门；但 `2026-07-10` 快照只有 `active=3`、`configured=15`、`disabled=1`，resolver 对 configured/discovered caller 仍可能读取 MAP 路由配置。执行经过 GW HTTP 不等于全部模型池权威已经迁移 | 宣称“GW 已成为全部 AI 请求的唯一配置权威”或准备让外部系统长期接入 GW 时 | paid | 生产 config-authority 为 ready，MAP fallback 0，configured/active caller 均由 GW-owned 池解析；静态和运行时守卫持续防漂移 |
 | 2026-07-10-appcaller-unique-index | high | 2026-07-10 | `llmgw_app_callers` 缺少 `(AppCallerCode, RequestType)` 复合唯一索引；生产已出现 `literary-agent.illustration.text2img::generation` 重复 configured 记录，并发首次登记可能继续制造重复 | appCaller 被动注册、状态变更或模型池绑定时 | paid | 历史重复已归档并写操作审计，生产重复为 0，大小写不敏感复合唯一索引已建立并通过幂等迁移验证 |
