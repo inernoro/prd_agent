@@ -107,6 +107,15 @@ CLI：`.claude/skills/create-visual-test-to-kb/scripts/kb_sync.py --store 验收
 - **scoped key**：新增 `document-store:read` / `document-store:write` AgentApiKey scope。`AdminPermissionMiddleware` 对 AgentApiKey 请求走「纯 scope」授权——scope `a:b` 精确满足 admin 权限 `a.b`（仅精确等值，不跨资源泄漏），且**绝不继承 owner 的 admin 权限/root**（否则 root 名下的 scoped key 等于全权，最小权限失效）。`ApiKeyAuthenticationHandler` 给 AgentApiKey 补 `sub` claim 使其以 owner 身份读写自己的数据。归档/同步脚本优先用 `MAP_DOC_STORE_KEY`（Bearer），替代 AI 超级密钥——最小权限、无 impersonate、可单独撤销。未设则回退超级密钥（向后兼容）。
 - **最新最前**：归档脚本 find-or-create 复用已存在的库时**补设 `templateKey`**（否则历史库 templateKey 为 null，前端排序退化字典序、最新不在最前）。报告**平铺在库根级、不自动分子文件夹**——用户最看重"最新报告一眼可见"，配合 owner 视角 `created-desc` 让新报告永远在最顶。（注：原始诉求 Q5 问的是"验收报告是否独立成库"即库级隔离，不是库内再分子文件夹；早期误实现的按模块自动子文件夹会把最新报告藏进文件夹、与最新最前打架，已撤销。）
 
+### 5.E CDS 侧验收报告浏览 UI（2026-07-07）
+
+上一节"平铺不自动分文件夹"约束的是**归档写入路径**（不变）；CDS 前端的验收报告库浏览面板另外新增了**用户手动可管理**的组织能力，二者不冲突：
+
+- 顶部原先的多个筛选项折叠为「项目 + 视图」两个下拉，让筛选区不占用报告内容空间（呼应 `content-fills-canvas.md`）；
+- 左侧改为可展开的文件夹报告树（用户手动建/挪文件夹，不是写入时自动分类），报告仍按 `created-desc` 平铺在其所属层级内，最新的仍在最前；
+- 移动端目录改为抽屉（呼应 `mobile-first-density.md`：内容优先，导航收进抽屉）；
+- 树面板支持拖拽调整宽度，报告预览支持全屏查看。
+
 ---
 
 ## 6. 数据设计
