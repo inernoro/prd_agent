@@ -1509,6 +1509,85 @@ def audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def maintenance_baseline(args: argparse.Namespace) -> int:
+    commit = _normalize_commit(args.commit)
+    if len(commit) != 40 or any(ch not in "0123456789abcdef" for ch in commit):
+        print("ERROR: maintenance baseline requires a full 40-character commit", file=sys.stderr)
+        return 2
+
+    entries = _load(args.ledger)
+    target = _latest_success(entries, commit, "http-full")
+    failures: list[str] = []
+    stage_evidence: dict = {}
+    release_gate: dict = {}
+    if not target:
+        failures.append(f"missing http-full success baseline for commit={commit}")
+    else:
+        evidence_path = str(target.get("evidenceJson") or "")
+        release_gate_path = str(target.get("releaseGateJson") or "")
+        try:
+            stage_evidence = _require_pass_json(evidence_path, "maintenance baseline stage evidence")
+            checks = {
+                "stage": str(stage_evidence.get("stage") or "").lower() == "http-full",
+                "status": str(stage_evidence.get("status") or "").lower() == "success",
+                "commit": _normalize_commit(stage_evidence.get("commit")) == commit,
+                "mode": str(stage_evidence.get("mode") or "").lower() == "http",
+                "mapFallbackDisabled": _bool_flag(str(stage_evidence.get("disableMapConfigFallbackForActiveAppCallers") or "0")),
+                "noFailures": not (stage_evidence.get("failures") or []),
+            }
+            failures.extend(f"maintenance baseline stage evidence invalid: {name}" for name, ok in checks.items() if not ok)
+        except SystemExit as exc:
+            failures.append(str(exc))
+
+        try:
+            release_gate = _require_pass_json(release_gate_path, "maintenance baseline release gate")
+            if _normalize_commit(release_gate.get("shadowReleaseCommit") or release_gate.get("expectedCommit")) != commit:
+                failures.append("maintenance baseline release gate commit mismatch")
+            shadow_checks = release_gate.get("shadowChecks") or []
+            if not isinstance(shadow_checks, list) or not shadow_checks:
+                failures.append("maintenance baseline release gate has no shadow checks")
+            else:
+                for item in shadow_checks:
+                    if not isinstance(item, dict):
+                        failures.append("maintenance baseline release gate contains an invalid shadow check")
+                        continue
+                    if _normalize_commit(item.get("releaseCommit")) != commit:
+                        failures.append("maintenance baseline shadow check commit mismatch")
+                    if int(item.get("critical") or 0) != 0 or int(item.get("httpFail") or 0) != 0 or item.get("ok") is not True:
+                        failures.append(f"maintenance baseline shadow check is unsafe: {item.get('label') or 'unknown'}")
+        except (SystemExit, TypeError, ValueError) as exc:
+            failures.append(str(exc))
+
+        target_time = _parse_recorded_at(target.get("recordedAt"))
+        if not target_time:
+            failures.append("maintenance baseline http-full success has no valid recordedAt")
+        else:
+            for item in _entries_after(entries, commit, target_time, {"failed", "rollback"}):
+                failures.append(
+                    "maintenance baseline is stale because a later negative event exists. "
+                    f"stage={item.get('stage') or ''} status={item.get('status') or ''} recordedAt={item.get('recordedAt') or ''}"
+                )
+
+    report = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "verdict": "fail" if failures else "pass",
+        "ledger": args.ledger,
+        "commit": commit,
+        "stage": "http-full",
+        "recordedAt": str((target or {}).get("recordedAt") or ""),
+        "evidenceJson": str((target or {}).get("evidenceJson") or ""),
+        "releaseGateJson": str((target or {}).get("releaseGateJson") or ""),
+        "failures": failures,
+    }
+    _write_json(args.json_out, report)
+    if failures:
+        for failure in failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 1
+    print(f"LLM Gateway maintenance baseline audit: PASS commit={commit}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway rollout ledger")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1618,6 +1697,12 @@ def main() -> int:
     audit_parser.add_argument("--json-out", default="")
     audit_parser.add_argument("--report-md", default="")
     audit_parser.set_defaults(func=audit)
+
+    maintenance_parser = sub.add_parser("maintenance-baseline", help="audit a historical full-http maintenance baseline")
+    maintenance_parser.add_argument("--ledger", required=True)
+    maintenance_parser.add_argument("--commit", required=True)
+    maintenance_parser.add_argument("--json-out", default="")
+    maintenance_parser.set_defaults(func=maintenance_baseline)
 
     args = parser.parse_args()
     return int(args.func(args))

@@ -386,6 +386,7 @@ config_authority_json="${evidence_prefix}.config-authority.json"
 config_authority_md="${evidence_prefix}.config-authority.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
+maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
 
 case "$stage" in
   canary-asr|canary-video-asr|http-full)
@@ -690,12 +691,10 @@ validate_ledger_order() {
     exit 1
   fi
   if [ -n "$maintenance_from_commit" ]; then
-    python3 scripts/llmgw-rollout-ledger.py audit \
+    python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
       --ledger "$ledger" \
       --commit "$maintenance_from_commit" \
-      --target-stage http-full \
-      --require-target-success \
-      --min-observation-hours 0
+      --json-out "$maintenance_baseline_json"
     echo "LLM Gateway maintenance release: inherited audited full-http evidence from commit=$maintenance_from_commit"
   elif [ "$allow_out_of_order" = "1" ]; then
     python3 scripts/llmgw-rollout-ledger.py validate \
