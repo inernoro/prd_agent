@@ -752,6 +752,8 @@ function ProjectCard(props: {
 }) {
   const { workspace: ws, onRename, onShare, onDelete, onClick } = props;
   const hasCover = ws.coverAssets && ws.coverAssets.length > 0;
+  // 触屏无 hover：移动端操作按钮常驻显示，桌面维持 hover 浮现
+  const { isMobile } = useBreakpoint();
 
   return (
     <div
@@ -794,7 +796,11 @@ function ProjectCard(props: {
         <div className="mt-1 text-[11px] flex items-center justify-between" style={{ color: 'rgba(255,255,255,0.45)' }}>
           <span>{formatDate(ws.updatedAt)}</span>
           <div
-            className="flex items-center gap-1 opacity-0 pointer-events-none transition-all duration-150 group-hover:opacity-100 group-hover:pointer-events-auto"
+            className={
+              isMobile
+                ? 'flex items-center gap-1'
+                : 'flex items-center gap-1 opacity-0 pointer-events-none transition-all duration-150 group-hover:opacity-100 group-hover:pointer-events-auto'
+            }
           >
             <Button
               size="xs"
