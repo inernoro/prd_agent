@@ -26,7 +26,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/profile':                 { level: 'full' },
   '/notifications':           { level: 'full' },
   '/my-assets':               { level: 'full' },
-  '/document-store':          { level: 'full', note: '阅读/管理正常，长文编辑建议 PC' },
+  '/document-store':          { level: 'full', note: '阅读/管理/上传录音转笔记正常，长文编辑建议 PC' },
   '/ai-toolbox':              { level: 'full' },
   // 注：/prd-agent Web 端已下线，不参与移动兼容性矩阵
   '/defect-agent':            { level: 'full' },
@@ -41,7 +41,6 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/literary-agent':          { level: 'full', note: '阅读/查看正常，深度编辑建议 PC' },
   '/marketplace':             { level: 'full' },
   '/library':                 { level: 'full' },
-  '/document-store':          { level: 'full', note: '阅读/上传录音转笔记正常，深度编辑建议 PC' },
   '/shortcuts-agent':         { level: 'full' },
 
   // ── 受限：可以用但体验降级 ──

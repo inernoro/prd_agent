@@ -3008,9 +3008,12 @@ public class DocumentStoreController : ControllerBase
     private async Task<IActionResult> QueueMediaAgentRunAsync(DocumentEntry entry, DocumentStore store, string kind)
     {
         var entryId = entry.Id;
+        var userId = GetUserId();
         // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
+        // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
+        // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
@@ -3021,6 +3024,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
@@ -3038,6 +3042,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
@@ -3049,7 +3054,6 @@ public class DocumentStoreController : ControllerBase
         // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
         // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
-        var userId = GetUserId();
         var run = new DocumentStoreAgentRun
         {
             Kind = kind,

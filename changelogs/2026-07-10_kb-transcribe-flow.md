@@ -5,3 +5,5 @@
 | feat | prd-admin | 知识库库内「新增」收敛为右下角调色盘 FAB 唯一入口（点击扇形展开：写文章/录音转笔记/上传文件/解析短视频/新建文件夹），下线侧栏小「+」菜单与顶栏「上传文档」按钮，消除重复与被遮挡入口 |
 | test | prd-api | AppCaller golden 快照补入 document-store.transcribe-summary::chat（修 CI Server Build & Test 红灯） |
 | fix | prd-api | 字幕生成/录音转录端点鉴权改为团队可写路径（与上传权限对称），修共享库协作者上传后无法转录的 404（Codex P2） |
+| fix | prd-admin | 修合并 main 引入的 mobileCompatibility 重复键（/document-store 两处登记合并为一条，修 CI Admin Dashboard Build 红灯） |
+| fix | prd-api | 字幕/转录排队复用与认领按 UserId 过滤，避免团队库协作者拿到他人 runId 后状态/SSE 404（Codex P2） |
