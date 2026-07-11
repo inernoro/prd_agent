@@ -32,7 +32,6 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     private const string PlatformCollection = "llmgw_platforms";
     private const string ExchangeCollection = "llmgw_model_exchanges";
 
-    private readonly MongoDbContext _mapDb;
     private readonly LlmGatewayDataContext _gatewayDb;
     private readonly IAssetStorage _assetStorage;
     private readonly IConfiguration _configuration;
@@ -43,14 +42,12 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     private DateTime _cachedAt;
 
     public GatewayServingReadinessProbe(
-        MongoDbContext mapDb,
         LlmGatewayDataContext gatewayDb,
         IAssetStorage assetStorage,
         IConfiguration configuration,
         IHostEnvironment environment,
         ILogger<GatewayServingReadinessProbe> logger)
     {
-        _mapDb = mapDb;
         _gatewayDb = gatewayDb;
         _assetStorage = assetStorage;
         _configuration = configuration;
@@ -98,7 +95,6 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
 
         var components = new List<GatewayServingReadinessComponent>
         {
-            await CheckMongoAsync("map-mongo", _mapDb.Database, timeout.Token),
             await CheckMongoAsync("gateway-mongo", _gatewayDb.Database, timeout.Token),
             await CheckAssetStorageAsync(timeout.Token),
             await CheckKeyIntegrityAsync(timeout.Token),

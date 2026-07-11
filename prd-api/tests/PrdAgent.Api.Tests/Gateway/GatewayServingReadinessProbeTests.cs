@@ -8,6 +8,29 @@ namespace PrdAgent.Api.Tests.Gateway;
 public sealed class GatewayServingReadinessProbeTests
 {
     [Fact]
+    public void GatewayRuntimeSettings_CopyOnlyFieldsConsumedByServing()
+    {
+        var source = new AppSettings
+        {
+            EnablePromptCache = false,
+            RequestBodyMaxChars = 123,
+            AnswerMaxChars = 456,
+            ErrorMaxChars = 789,
+            MiduoSsoAppSecret = "must-not-copy",
+            PasswordLoginDisabled = true,
+        };
+
+        var copied = GatewayAppSettingsService.CopyGatewayFields(source);
+
+        Assert.False(copied.EnablePromptCache);
+        Assert.Equal(123, copied.RequestBodyMaxChars);
+        Assert.Equal(456, copied.AnswerMaxChars);
+        Assert.Equal(789, copied.ErrorMaxChars);
+        Assert.Null(copied.MiduoSsoAppSecret);
+        Assert.Null(copied.PasswordLoginDisabled);
+    }
+
+    [Fact]
     public void IsCallerRoutable_RejectsPoolWithDifferentRequestType()
     {
         var caller = CreateCaller("asr");

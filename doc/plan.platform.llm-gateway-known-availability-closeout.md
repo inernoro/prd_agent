@@ -30,8 +30,8 @@
 
 | PR | 目标 | 主要改动 | 合并 Gate | 当前状态 |
 |---|---|---|---|---|
-| PR-A | 发布可靠性 | 首次切流与维护发布分离；历史 full-http 证据可审计继承；新 commit 仍强制镜像一致、HTTP health、四协议、runtime gates；修正 auto/pinned 路由误报和探针 `inproc` 伪日志 | 后端 build、发布脚本合同测试、ledger 自测、CI 与审查全绿 | 开发中 |
-| PR-B | 解除 MAP 关键依赖 | 把 serving 必需的资产存储和运行配置迁入 GW-owned 配置域；readiness 不再把 MAP Mongo 当必要依赖 | MAP 配置库不可用时 GW health/readiness 与非 MAP 依赖请求仍可用 | 待开始 |
+| PR-A | 发布可靠性 | 首次切流与维护发布分离；历史 full-http 证据可审计继承；新 commit 仍强制镜像一致、HTTP health、四协议、runtime gates；修正 auto/pinned 路由误报和探针 `inproc` 伪日志 | 后端 build、发布脚本合同测试、ledger 自测、CI 与审查全绿 | 已合并 PR #1076 |
+| PR-B | 解除 MAP 关键依赖 | 把 serving 必需的资产存储和运行配置迁入 GW-owned 配置域；readiness 不再把 MAP Mongo 当必要依赖 | MAP 配置库不可用时 GW health/readiness 与非 MAP 依赖请求仍可用 | 开发中 |
 | PR-C | 生命周期与最终验收 | 启用分层保留与清理；提供一次性验收命令和有限证据清单；只在三 PR 合并后部署最终 commit | 六类请求各最多一次、无自动重试；生产回滚命令和数据备份有效 | 待开始 |
 
 不新增第四个实现 PR。计划文档、测试和 changelog 分别随对应 PR 合并。
