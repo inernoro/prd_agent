@@ -570,6 +570,13 @@
 - 最近 30 分钟 GW 日志复核：`visual-agent.videogen::video-gen`、`video-agent.videogen::video-gen`、`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`open-api.proxy::generation`、`visual-agent.image-gen.generate::generation`、`report-agent.generate::chat`、`tutorial-email.generate::chat`、`prd-agent.arena.battle::chat`、`prd-agent-web.model-lab.run::chat`、`open-api.proxy::chat`、`open-platform-agent.proxy::chat` 均有 `transport=http` 成功记录；失败查询为空。少量 `inproc` 记录均发生在全切之前。
 - 当前结论：正式环境已处于全量 `LlmGateway__Mode=http`，已用维护窗口最小矩阵证明文本、开放接口、ModelLab/Arena、图片、ASR/字幕、视频 submit 与视觉视频完整产物流均经独立 `llmgw-serve` 成功。尚未删除 inproc/legacy 代码，仍作为回滚兜底；APIyi 视频备用池仍是 no available channels 债务，不影响当前默认 Seedance 生产路径，但后续需要单独清理或下线。
 
+## 已知边界（2026-07-12 有限收口）
+
+- 生命周期清理只由主 `llmgw-serve` 实例执行，副实例禁用 worker；两实例仍会幂等维护非破坏性索引。未来若改成多主机动态扩缩容，必须把单实例开关升级为数据库租约，不能同时开启多个清理 worker。
+- 正文脱敏和 multipart 删除由 lifecycle worker 执行；请求元数据、shadow、登录与操作审计由 Mongo TTL 异步删除。TTL 删除时间不是精确到秒，控制台以最近 dry-run、清理结果和索引状态为准。
+- 一次性最终验收允许视频状态轮询，但每次完整矩阵最多提交一个视频任务；失败后只允许带人工批准说明补跑失败单格，禁止整套自动重跑。
+- `inproc` 与 legacy 代码继续作为生产回滚兜底，本计划不删除。稳定期后的删除必须另立有限任务，不能混入本次发布。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

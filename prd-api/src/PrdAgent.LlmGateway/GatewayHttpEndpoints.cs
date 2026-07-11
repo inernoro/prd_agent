@@ -890,6 +890,7 @@ public static class GatewayHttpEndpoints
             }
 
             GatewayCancellationLease? cancellation = null;
+            var multipartRequestSucceeded = false;
             try
             {
                 cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(ingress.AppCallerCode, ingress.RequestId);
@@ -913,6 +914,7 @@ public static class GatewayHttpEndpoints
                     routedRequest.PinnedModelId,
                     token);
                 var raw = await gateway.SendRawWithResolutionAsync(routedRequest, res, token);
+                multipartRequestSucceeded = raw.Success;
                 if (executionStore is not null && execution is not null)
                 {
                     if (raw.Success)
@@ -940,7 +942,12 @@ public static class GatewayHttpEndpoints
             finally
             {
                 cancellation?.Dispose();
-                await CleanupMultipartRefsAsync(request, services.GetService<IAssetStorage>(), services.GetService<LlmGatewayDataContext>());
+                await CleanupMultipartRefsAsync(
+                    request,
+                    services.GetService<IAssetStorage>(),
+                    services.GetService<LlmGatewayDataContext>(),
+                    services.GetService<IConfiguration>(),
+                    multipartRequestSucceeded);
             }
         });
 
@@ -4312,7 +4319,9 @@ public static class GatewayHttpEndpoints
     private static async Task CleanupMultipartRefsAsync(
         GatewayRawRequest request,
         IAssetStorage? storage,
-        LlmGatewayDataContext? data)
+        LlmGatewayDataContext? data,
+        IConfiguration? configuration,
+        bool requestSucceeded)
     {
         if (storage == null || request.MultipartFileRefs is not { Count: > 0 }) return;
         var manifests = data?.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
@@ -4337,13 +4346,16 @@ public static class GatewayHttpEndpoints
             {
                 if (manifests is not null)
                 {
+                    var retentionHours = requestSucceeded
+                        ? Math.Max(1, configuration?.GetValue("LlmGateway:Retention:SuccessfulMultipartHours", 24) ?? 24)
+                        : Math.Max(1, configuration?.GetValue("LlmGateway:Retention:FailedMultipartHours", 72) ?? 72);
                     await manifests.UpdateOneAsync(
                         x => x.RefKey == fileRef.RefKey,
                         Builders<GatewayMultipartObjectRecord>.Update
                             .Set(x => x.Status, "cleanup-pending")
                             .Set(x => x.Detail, ex.GetType().Name)
                             .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                            .Set(x => x.ExpiresAt, DateTime.UtcNow),
+                            .Set(x => x.ExpiresAt, DateTime.UtcNow.AddHours(retentionHours)),
                         cancellationToken: CancellationToken.None);
                 }
             }

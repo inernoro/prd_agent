@@ -36,6 +36,7 @@ public sealed class HttpLlmGatewayClient
     private readonly LlmGatewayDataContext? _gatewayData;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
+    private readonly int _failedMultipartHours;
 
     /// <summary>
     /// 与 serving 端一致的序列化口径：PascalCase + 不写 null 字段。
@@ -65,6 +66,7 @@ public sealed class HttpLlmGatewayClient
         // 不回退到众所周知的占位 key：http 模式未显式配 LlmGwServe:ApiKey 时用空串，让 X-Gateway-Key 门
         // 直接 401 响亮失败，而非用可预测的共享密钥静默通过、削弱本 PR 新增的密钥门（Cursor Bugbot）。
         _gatewayKey = config["LlmGwServe:ApiKey"] ?? string.Empty;
+        _failedMultipartHours = Math.Max(1, config.GetValue("LlmGateway:Retention:FailedMultipartHours", 72));
     }
 
     private HttpClient CreateHttp(bool infiniteTimeout)
@@ -243,6 +245,7 @@ public sealed class HttpLlmGatewayClient
                     _assetStorage,
                     _gatewayData,
                     request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+                    _failedMultipartHours,
                     ct);
             }
             catch (Exception ex)
@@ -334,6 +337,7 @@ public sealed class HttpLlmGatewayClient
         IAssetStorage storage,
         LlmGatewayDataContext? gatewayData,
         string requestId,
+        int failedMultipartHours,
         CancellationToken ct)
     {
         var refs = new Dictionary<string, MultipartFileRef>(StringComparer.Ordinal);
@@ -372,7 +376,7 @@ public sealed class HttpLlmGatewayClient
                                 Sha256 = sha256,
                                 SizeBytes = fileInfo.Content.LongLength,
                                 Status = "uploaded",
-                                ExpiresAt = DateTime.UtcNow.AddHours(24),
+                                ExpiresAt = DateTime.UtcNow.AddHours(failedMultipartHours),
                             },
                             new ReplaceOptions { IsUpsert = true },
                             ct);
