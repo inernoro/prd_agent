@@ -1,15 +1,14 @@
 /**
- * 移动首页模板 A「米多早报」—— 米多刊系（report-design-system）纸墨基因的移动落地。
+ * 「米多早报」/daily-post —— 首页的副页面（报纸版视图），从首页「米多早报」入口进入。
  *
- * 视觉语言：暖纸底 + 油墨字 + 衬线标题 + mono 小标 + 硬投影 + 赭红身份色（对齐日报纸）。
- * 挂载期间把 <html data-theme="light"> 打开（与 report-agent 详情页同一模式），
- * 让 AppShell 顶栏 / 底部 Tab 一起进入纸面语境；卸载即恢复。
+ * 视觉语言：米多刊系（report-design-system）纸墨基因——暖纸底 + 油墨字 + 衬线标题
+ * + mono 小标 + 硬投影 + 赭红身份色（对齐日报纸）。挂载期间把 <html data-theme="light">
+ * 打开（与 report-agent 详情页同一模式），让 AppShell 顶栏 / 底部 Tab 一起进入纸面语境。
  *
  * 信息结构（有信息、有密度、有操作、有历史）：
- *  报头 masthead → 期号 dateline → 头条·继续上次 → 今日数字 stat-row
+ *  报头 masthead → 期号 dateline → 头条·继续上次 → 七日数据 stat-row
  *  → 快捷通道（8 入口索引）→ 我的动态 → 档案室（更新中心/智识殿堂/学习中心）→ 刊尾
  */
-import type { ReactNode } from 'react';
 import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
@@ -23,7 +22,7 @@ import {
   formatRelativeTime,
   greetingFor,
   normalizeFeedTitle,
-  type MobileHomeData,
+  useMobileHomeData,
 } from './shared';
 
 /* 刊系纸墨 token（SSOT：.claude/rules/report-design-system.md §1.1，赭红=日报身份色） */
@@ -40,14 +39,9 @@ const SERIF = '"Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", serif';
 const MONO = '"SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Segoe UI", sans-serif';
 
-export default function MorningPostTemplate({
-  data,
-  switcher,
-}: {
-  data: MobileHomeData;
-  switcher: ReactNode;
-}) {
+export default function DailyPostPage() {
   const navigate = useNavigate();
+  const data = useMobileHomeData();
   const displayName = useAuthStore((s) => s.user?.displayName ?? '同事');
   const now = useMemo(() => new Date(), []);
   const { dateText, weekday } = formatDateline(now);
@@ -77,7 +71,8 @@ export default function MorningPostTemplate({
         overscrollBehavior: 'contain',
       }}
     >
-      <main style={{ padding: '10px 18px 112px' }}>
+      {/* 报纸栏宽：手机满铺，宽屏收到可读栏宽居中 */}
+      <main style={{ padding: '10px 18px 112px', maxWidth: 640, margin: '0 auto' }}>
         {/* ── 报头 masthead ── */}
         <header>
           <div className="flex items-start justify-between" style={{ gap: 12 }}>
@@ -110,7 +105,6 @@ export default function MorningPostTemplate({
                 </div>
               </div>
             </div>
-            {switcher}
           </div>
           <div aria-hidden style={{ marginTop: 12, borderTop: `2.5px solid ${INK}` }} />
           <div aria-hidden style={{ marginTop: 2, borderTop: `1px solid ${INK}` }} />

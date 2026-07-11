@@ -171,6 +171,34 @@ function BuildLogCell(): JSX.Element {
   );
 }
 
+/*
+ * BranchGenesis — hero 的叙事开场:一根 main 主干拉出、三个 commit 落点,
+ * 一条橙色分支 fork 出去,电流沿「main → fork」注入下方的环境板 ——
+ * 这就是「分支,即环境」的字面演出。reduced-motion 下静态呈现、电流隐藏。
+ */
+function BranchGenesis(): JSX.Element {
+  return (
+    <div className="cdsh-genesis" aria-hidden>
+      <svg viewBox="0 0 560 120" preserveAspectRatio="none">
+        <path className="cdsh-gen-main" d="M8 30 H552" />
+        <path className="cdsh-gen-fork" d="M226 30 C300 30 306 98 380 98 L548 98" />
+        <circle className="cdsh-gen-commit" style={{ animationDelay: '1.15s' }} cx="86" cy="30" r="4.5" />
+        <circle className="cdsh-gen-commit" style={{ animationDelay: '1.3s' }} cx="156" cy="30" r="4.5" />
+        <circle className="cdsh-gen-commit" style={{ animationDelay: '1.45s' }} cx="226" cy="30" r="4.5" />
+        <circle className="cdsh-gen-dock" cx="548" cy="98" r="5" />
+        <path id="cdsh-gen-beam-path" d="M8 30 H226 C300 30 306 98 380 98 L548 98" fill="none" stroke="none" />
+        <circle className="cdsh-gen-beam" r="3.2">
+          <animateMotion dur="3.2s" begin="2.3s" repeatCount="indefinite">
+            <mpath href="#cdsh-gen-beam-path" />
+          </animateMotion>
+        </circle>
+      </svg>
+      <span className="cdsh-gen-main-label cdsh-mono">main</span>
+      <span className="cdsh-gen-label cdsh-mono">feature/your-branch</span>
+    </div>
+  );
+}
+
 export function HomePage(): JSX.Element {
   const navigate = useNavigate();
   const [feedIndex, setFeedIndex] = useState(0);
@@ -257,6 +285,12 @@ export function HomePage(): JSX.Element {
 
   return (
     <main className="cdsh-root">
+      {/* 开机帷幕:中线一束橙光划过,画布从中线向上下裂开 —— 进场即「通电」。 */}
+      <div className="cdsh-boot" aria-hidden>
+        <span className="cdsh-boot-beam" />
+        <span className="cdsh-boot-top" />
+        <span className="cdsh-boot-bottom" />
+      </div>
       <div className="cdsh-bg">
         <ShapeGrid
           className="cdsh-shapegrid"
@@ -302,25 +336,27 @@ export function HomePage(): JSX.Element {
         {/* HERO */}
         <section className="cdsh-hero">
           <div>
-            <span className="cdsh-eyebrow cdsh-rise" style={{ animationDelay: '.05s' }}>
-              <span className="cdsh-dot" />Controlled cloud runtime
+            <span className="cdsh-eyebrow cdsh-rise" style={{ animationDelay: '.4s' }}>
+              <span className="cdsh-dot" />CDS · Branch-native runtime
             </span>
-            <h1 className="cdsh-h1">
-              <span className="cdsh-line"><span>Every branch,</span></span>
-              <span className="cdsh-line"><span className="cdsh-sheen">a live stack.</span></span>
+            <h1 className="cdsh-h1 cdsh-h1-cn">
+              <span className="cdsh-line"><span>分支，即环境。</span></span>
             </h1>
-            <p className="cdsh-sub cdsh-rise" style={{ animationDelay: '.35s' }}>
-              CDS turns a Git branch into an isolated, observable runtime — build, containers, logs,
-              webhooks and a preview URL — without ever breaking the control plane.
+            <div className="cdsh-h1-sub cdsh-line" aria-hidden>
+              <span className="cdsh-sheen">Every branch, a live stack.</span>
+            </div>
+            <p className="cdsh-sub cdsh-rise" style={{ animationDelay: '.9s' }}>
+              推一个分支，两分钟后它活了——构建、容器、日志、独立预览域名，全程无人值守。
+              CDS 把每一个 Git 分支都变成一套隔离、可观测的在线环境。
             </p>
-            <div className="cdsh-cta cdsh-rise" style={{ animationDelay: '.45s' }}>
+            <div className="cdsh-cta cdsh-rise" style={{ animationDelay: '1.0s' }}>
               <button className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" type="button" onClick={openAccessMode}>
                 Enter Console
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
               </button>
               <button className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" type="button" onClick={openAccessMode}>System Access</button>
             </div>
-            <div className="cdsh-meta-row cdsh-rise" style={{ animationDelay: '.55s' }}>
+            <div className="cdsh-meta-row cdsh-rise" style={{ animationDelay: '1.1s' }}>
               <span className="cdsh-meta">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z" /></svg>
                 Same-origin sessions
@@ -332,8 +368,10 @@ export function HomePage(): JSX.Element {
             </div>
           </div>
 
-          {/* BOARD — 鼠标跟随边框高光(--mx/--my 由 trackPointer 写入) */}
-          <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }} onPointerMove={trackPointer}>
+          {/* STAGE — 分支诞生(git 图) + 环境板:主干拉出 → fork 分叉 → 电流沿分支注入环境。 */}
+          <div className="cdsh-stage">
+            <BranchGenesis />
+          <div className="cdsh-board cdsh-rise" style={{ animationDelay: '1.9s' }} onPointerMove={trackPointer}>
             <div className="cdsh-board-head">
               <div className="cdsh-left">
                 <BranchIcon />
@@ -345,30 +383,30 @@ export function HomePage(): JSX.Element {
 
             <div className="cdsh-canvas">
               <svg className="cdsh-wires" viewBox="0 0 1000 640" preserveAspectRatio="none">
-                <path id="cdsh-p1" className="cdsh-wire" style={{ animationDelay: '.7s' }} d="M320 246 H348 V144 H360" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '.7s' }} d="M320 246 H348 V144 H360" />
-                <path id="cdsh-p2" className="cdsh-wire" style={{ animationDelay: '.9s' }} d="M320 246 H348 V361 H360" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '.9s' }} d="M320 246 H348 V361 H360" />
-                <path id="cdsh-p3" className="cdsh-wire" style={{ animationDelay: '1.1s' }} d="M640 144 H680" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.1s' }} d="M640 144 H680" />
-                <path id="cdsh-p4" className="cdsh-wire" style={{ animationDelay: '1.3s' }} d="M640 361 H680" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.3s' }} d="M640 361 H680" />
-                <path id="cdsh-p5" className="cdsh-wire" style={{ animationDelay: '1.3s' }} d="M500 212 V294" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.3s' }} d="M500 212 V294" />
-                <path id="cdsh-p6" className="cdsh-wire" style={{ animationDelay: '1.5s' }} d="M820 212 V294" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.5s' }} d="M820 212 V294" />
-                <path id="cdsh-p7" className="cdsh-wire" style={{ animationDelay: '1.7s' }} d="M500 429 V499" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.7s' }} d="M500 429 V499" />
-                <path id="cdsh-p8" className="cdsh-wire" style={{ animationDelay: '1.7s' }} d="M820 429 V470 H700 V499" />
-                <path className="cdsh-wire-dash" style={{ animationDelay: '1.7s' }} d="M820 429 V470 H700 V499" />
+                <path id="cdsh-p1" className="cdsh-wire" style={{ animationDelay: '2.3s' }} d="M320 246 H348 V144 H360" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '2.3s' }} d="M320 246 H348 V144 H360" />
+                <path id="cdsh-p2" className="cdsh-wire" style={{ animationDelay: '2.5s' }} d="M320 246 H348 V361 H360" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '2.5s' }} d="M320 246 H348 V361 H360" />
+                <path id="cdsh-p3" className="cdsh-wire" style={{ animationDelay: '2.7s' }} d="M640 144 H680" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '2.7s' }} d="M640 144 H680" />
+                <path id="cdsh-p4" className="cdsh-wire" style={{ animationDelay: '2.9s' }} d="M640 361 H680" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '2.9s' }} d="M640 361 H680" />
+                <path id="cdsh-p5" className="cdsh-wire" style={{ animationDelay: '2.9s' }} d="M500 212 V294" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '2.9s' }} d="M500 212 V294" />
+                <path id="cdsh-p6" className="cdsh-wire" style={{ animationDelay: '3.1s' }} d="M820 212 V294" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '3.1s' }} d="M820 212 V294" />
+                <path id="cdsh-p7" className="cdsh-wire" style={{ animationDelay: '3.3s' }} d="M500 429 V499" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '3.3s' }} d="M500 429 V499" />
+                <path id="cdsh-p8" className="cdsh-wire" style={{ animationDelay: '3.3s' }} d="M820 429 V470 H700 V499" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '3.3s' }} d="M820 429 V470 H700 V499" />
 
-                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.5s" begin="1.0s" repeatCount="indefinite"><mpath href="#cdsh-p1" /></animateMotion></circle>
-                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.4s" begin="1.5s" repeatCount="indefinite"><mpath href="#cdsh-p3" /></animateMotion></circle>
-                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.4s" begin="1.6s" repeatCount="indefinite"><mpath href="#cdsh-p5" /></animateMotion></circle>
-                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="2.0s" repeatCount="indefinite"><mpath href="#cdsh-p7" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.5s" begin="2.6s" repeatCount="indefinite"><mpath href="#cdsh-p1" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.4s" begin="3.1s" repeatCount="indefinite"><mpath href="#cdsh-p3" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.4s" begin="3.2s" repeatCount="indefinite"><mpath href="#cdsh-p5" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="3.6s" repeatCount="indefinite"><mpath href="#cdsh-p7" /></animateMotion></circle>
               </svg>
 
-              <div className="cdsh-node cdsh-node-glow" style={{ left: '2%', top: '28%', width: '30%', animationDelay: '.5s' }}>
+              <div className="cdsh-node cdsh-node-glow" style={{ left: '2%', top: '28%', width: '30%', animationDelay: '2.1s' }}>
                 <div className="cdsh-row">
                   <span className="cdsh-ico"><BranchIcon /></span>
                   <div><div className="cdsh-title">Branch</div><div className="cdsh-desc cdsh-mono">3 commits · pushed</div></div>
@@ -376,7 +414,7 @@ export function HomePage(): JSX.Element {
                 <div className="cdsh-status"><span className="cdsh-sdot" />Build · profile detected</div>
               </div>
 
-              <div className="cdsh-node" style={{ left: '36%', top: '12%', width: '28%', animationDelay: '.9s' }}>
+              <div className="cdsh-node" style={{ left: '36%', top: '12%', width: '28%', animationDelay: '2.5s' }}>
                 <div className="cdsh-row">
                   <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg></span>
                   <div><div className="cdsh-title">api</div><div className="cdsh-desc">.NET 8 service</div></div>
@@ -385,7 +423,7 @@ export function HomePage(): JSX.Element {
                 <div className="cdsh-status"><span className="cdsh-sdot" />Running · healthy</div>
               </div>
 
-              <div className="cdsh-node" style={{ left: '68%', top: '12%', width: '28%', animationDelay: '1.1s' }}>
+              <div className="cdsh-node" style={{ left: '68%', top: '12%', width: '28%', animationDelay: '2.7s' }}>
                 <div className="cdsh-row">
                   <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 9h18" /></svg></span>
                   <div><div className="cdsh-title">admin</div><div className="cdsh-desc">React · Vite</div></div>
@@ -394,7 +432,7 @@ export function HomePage(): JSX.Element {
                 <div className="cdsh-status"><span className="cdsh-sdot" />Running · healthy</div>
               </div>
 
-              <div className="cdsh-node" style={{ left: '36%', top: '46%', width: '28%', animationDelay: '1.3s' }}>
+              <div className="cdsh-node" style={{ left: '36%', top: '46%', width: '28%', animationDelay: '2.9s' }}>
                 <div className="cdsh-row">
                   <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg></span>
                   <div><div className="cdsh-title">mongo</div><div className="cdsh-desc cdsh-mono">replica · 1</div></div>
@@ -402,7 +440,7 @@ export function HomePage(): JSX.Element {
                 <div className="cdsh-status"><span className="cdsh-sdot" />Healthy</div>
               </div>
 
-              <div className="cdsh-node" style={{ left: '68%', top: '46%', width: '28%', animationDelay: '1.5s' }}>
+              <div className="cdsh-node" style={{ left: '68%', top: '46%', width: '28%', animationDelay: '3.1s' }}>
                 <div className="cdsh-row">
                   <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z" /><path d="M3 6v6c0 1.7 4 3 9 3s9-1.3 9-3V6M3 12v6c0 1.7 4 3 9 3s9-1.3 9-3v-6" /></svg></span>
                   <div><div className="cdsh-title">redis</div><div className="cdsh-desc cdsh-mono">cache</div></div>
@@ -410,7 +448,7 @@ export function HomePage(): JSX.Element {
                 <div className="cdsh-status"><span className="cdsh-sdot" />Healthy</div>
               </div>
 
-              <div className="cdsh-preview" style={{ animationDelay: '2.1s' }}>
+              <div className="cdsh-preview" style={{ animationDelay: '3.6s' }}>
                 <span className="cdsh-pv-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" /></svg></span>
                 <div>
                   <div className="cdsh-lbl">Preview · auto-assigned</div>
@@ -425,6 +463,7 @@ export function HomePage(): JSX.Element {
               <span className="cdsh-feed" key={feedIndex}>{FEED_LINES[feedIndex]}</span>
               <span className="cdsh-caret" aria-hidden />
             </p>
+          </div>
           </div>
         </section>
 

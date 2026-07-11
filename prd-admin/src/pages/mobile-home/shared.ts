@@ -1,7 +1,7 @@
 /**
- * 移动首页双模板共享层：数据 hook + 快捷入口注册 + 格式化工具。
+ * 移动首页 + 米多早报（/daily-post）共享层：数据 hook + 快捷入口注册 + 格式化工具。
  *
- * 两个模板（早报 / 工作台）消费同一份真实数据，只在视觉表达上分叉：
+ * 两个页面消费同一份真实数据，只在视觉表达上分叉：
  *  - getMobileStats  近 7 日使用统计（会话/消息/生图/Token）
  *  - listRecentWork  「继续上次」工作现场（与桌面首页同一后端口径）
  *  - getMobileFeed   我的动态
@@ -24,28 +24,7 @@ import type { RecentWorkItemDto } from '@/services';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 
-export type MobileHomeTemplateKey = 'post' | 'console';
-
-export const TEMPLATE_STORAGE_KEY = 'mobile-home-template-v1';
-
-export function readTemplatePreference(): MobileHomeTemplateKey {
-  try {
-    const raw = sessionStorage.getItem(TEMPLATE_STORAGE_KEY);
-    return raw === 'console' ? 'console' : 'post';
-  } catch {
-    return 'post';
-  }
-}
-
-export function writeTemplatePreference(key: MobileHomeTemplateKey): void {
-  try {
-    sessionStorage.setItem(TEMPLATE_STORAGE_KEY, key);
-  } catch {
-    /* sessionStorage 不可用时静默降级为「不记忆」 */
-  }
-}
-
-/* ───────────── 快捷入口（两个模板共用同一份注册，仅样式分叉） ───────────── */
+/* ───────────── 快捷入口（首页与早报共用同一份注册，仅样式分叉） ───────────── */
 
 export interface QuickEntry {
   key: string;
