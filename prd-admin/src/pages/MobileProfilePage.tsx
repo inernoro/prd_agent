@@ -4,6 +4,7 @@ import {
   Bell,
   ScrollText,
   GraduationCap,
+  FolderOpen,
   LogOut,
   ChevronRight,
   type LucideIcon,
@@ -30,7 +31,9 @@ interface MenuItem {
 }
 
 /* ── 固定菜单：只保留用户真正需要的功能 ── */
+// 「我的资产」原为底部 Tab 一级入口，2026-07-10 起底部 Tab 让位给知识库，资产降为此处二级入口
 const MENU_ITEMS: MenuItem[] = [
+  { key: 'assets', label: '我的资产', desc: '图片、文档、附件、网页产出物', icon: FolderOpen, color: '#FBBF24', path: '/my-assets' },
   { key: 'learn',  label: '学习中心', desc: '全部教程与新手引导',    icon: GraduationCap, color: '#60A5FA', path: '/learning-center' },
   { key: 'theme',  label: '主题设置', desc: '皮肤、配色、玻璃效果',  icon: Palette,    color: '#818CF8', path: '/settings?tab=skin' },
   { key: 'notify', label: '系统通知', desc: '查看与处理系统消息',    icon: Bell,       color: '#FB923C', path: '/notifications' },
