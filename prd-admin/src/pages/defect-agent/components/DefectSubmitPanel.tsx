@@ -149,6 +149,8 @@ export function DefectSubmitPanel() {
 
           if (res.success && res.data?.description) {
             const description = res.data.description;
+            // 竞态守卫：用户可能在分析期间已删除该截图，此时不得再追加其识别结果污染正文
+            if (!attachmentsRef.current.some((a) => a.file === item.file)) return;
             setAttachments((prev) =>
               prev.map((a) =>
                 a.file === item.file

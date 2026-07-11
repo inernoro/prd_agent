@@ -34,6 +34,16 @@ self.addEventListener('fetch', (event) => {
       try {
         const formData = await event.request.formData();
         const cache = await caches.open(SHARE_CACHE);
+
+        // 清掉上一次分享未被消费的残留条目，保证每次分享相互隔离
+        // （否则上次放弃的截图会混进本次分享一起带入提交面板）
+        const staleKeys = await cache.keys();
+        for (const staleReq of staleKeys) {
+          if (new URL(staleReq.url).pathname.startsWith(SHARE_ENTRY_PREFIX)) {
+            await cache.delete(staleReq);
+          }
+        }
+
         const stamp = Date.now();
 
         const files = formData.getAll('screenshots');
