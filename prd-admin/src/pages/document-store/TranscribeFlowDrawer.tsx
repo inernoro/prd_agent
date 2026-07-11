@@ -138,9 +138,13 @@ export function TranscribeFlowDrawer({
       setErrorMessage(res.error?.message ?? '启动转录失败');
       return;
     }
+    // 命令式上报（不依赖 effect）：上传期间用户点「后台运行」关闭抽屉后，
+    // 本协程仍会继续到这里，但组件已卸载、effect 不再执行——直接调用回调
+    // 让父页面拿到迟到的 runId 接手看护（Codex P2）
+    onRunTracking?.(res.data.runId);
     setRunId(res.data.runId);
     void refreshRun(res.data.runId);
-  }, [refreshRun]);
+  }, [refreshRun, onRunTracking]);
 
   // 打开即启动：先上传（如有 file），再发起转录
   useEffect(() => {

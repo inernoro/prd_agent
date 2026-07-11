@@ -881,6 +881,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
   // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
   const transcribeRunRef = useRef<string | null>(null);
+  // 抽屉是否处于打开态（ref 而非 state：上传期关闭后 runId 迟到时，
+  // 回调闭包里读 state 是陈旧值，读 ref 才能判断「已关闭 → 立即接手看护」）
+  const transcribeFlowOpenRef = useRef(false);
   const [bgTranscribeRunId, setBgTranscribeRunId] = useState<string | null>(null);
   /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
   const [reprocessTarget, setReprocessTarget] = useState<{
@@ -1447,7 +1450,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       <input ref={audioInputRef} type="file" className="hidden" accept="audio/*"
         onChange={e => {
           const f = e.target.files?.[0];
-          if (f) setTranscribeFlow({ file: f, title: f.name });
+          if (f) {
+            setTranscribeFlow({ file: f, title: f.name });
+            transcribeFlowOpenRef.current = true;
+          }
           e.target.value = '';
         }} />
 
@@ -1758,7 +1764,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           }}
           onTranscribe={(id) => {
             const entry = entries.find(e => e.id === id);
-            if (entry) setTranscribeFlow({ entryId: id, title: entry.title });
+            if (entry) {
+              setTranscribeFlow({ entryId: id, title: entry.title });
+              transcribeFlowOpenRef.current = true;
+            }
           }}
           onUploadAudio={() => audioInputRef.current?.click()}
           onReprocess={(id) => {
@@ -1887,6 +1896,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             entryTitle={transcribeFlow.title}
             onClose={() => {
               setTranscribeFlow(null);
+              transcribeFlowOpenRef.current = false;
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
               if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
             }}
@@ -1896,7 +1906,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTimeout(() => { void loadEntries(); }, 1500);
             }}
             onOpenEntry={(id) => setSelectedEntryId(id)}
-            onRunTracking={(rid) => { transcribeRunRef.current = rid; }}
+            onRunTracking={(rid) => {
+              transcribeRunRef.current = rid;
+              // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
+              if (rid && !transcribeFlowOpenRef.current) setBgTranscribeRunId(rid);
+            }}
           />
         )}
       </AnimatePresence>
