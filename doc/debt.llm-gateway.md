@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v1.9 | **日期**：2026-07-11 | **状态**：开发中
+> **版本**：v2.0 | **日期**：2026-07-12 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 22 / in-progress: 6 / paid: 9 / 总计: 37
+当前 open: 23 / in-progress: 4 / paid: 15 / 总计: 42
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -14,21 +14,26 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | open | 按 `plan.platform.llm-gateway-external-platform.md` PR-1/PR-2 实施；禁止相信请求自报 tenantId |
+| 2026-07-12-external-developer-onboarding | medium | 2026-07-12 | 控制台没有面向首次接入者的网页 Quickstart、四协议可复制示例、错误码排查和 requestId 定位教程 | 第一个外部开发者接入前 | open | 复用现有四协议与 scoped key，不另造第五套 API |
+| 2026-07-12-appcaller-prompt-policy | high | 2026-07-12 | appCaller registry 尚不能配置版本化提示词前缀/后缀；若直接在 adapter 拼字符串会破坏协议语义、审计和 raw/媒体请求 | 需要按 appCaller 注入品牌、合规或业务上下文时 | open | 首版只允许 chat/vision，固定合并顺序并记录 policy id/version/hash |
+| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | open | 顶部保留全局上下文，左侧分组承载工作区/路由/开发者/组织/治理/设置 |
+| 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | open | 区分 actual/estimated/unknown，展示价格覆盖率；CNY/USD 不无依据相加，并做图表像素与多视口验收 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |
 | 2026-07-09-gw-config-authority-not-migrated | high | 2026-07-09 | GW-owned appCaller、模型池、平台、模型、Exchange、key 和控制台治理能力已经落地，生产也已开启 active caller MAP fallback 退场门；但 `2026-07-10` 快照只有 `active=3`、`configured=15`、`disabled=1`，resolver 对 configured/discovered caller 仍可能读取 MAP 路由配置。执行经过 GW HTTP 不等于全部模型池权威已经迁移 | 宣称“GW 已成为全部 AI 请求的唯一配置权威”或准备让外部系统长期接入 GW 时 | paid | 生产 config-authority 为 ready，MAP fallback 0，configured/active caller 均由 GW-owned 池解析；静态和运行时守卫持续防漂移 |
 | 2026-07-10-appcaller-unique-index | high | 2026-07-10 | `llmgw_app_callers` 缺少 `(AppCallerCode, RequestType)` 复合唯一索引；生产已出现 `literary-agent.illustration.text2img::generation` 重复 configured 记录，并发首次登记可能继续制造重复 | appCaller 被动注册、状态变更或模型池绑定时 | paid | 历史重复已归档并写操作审计，生产重复为 0，大小写不敏感复合唯一索引已建立并通过幂等迁移验证 |
 | 2026-07-10-gw-pool-health-wrong-database | high | 2026-07-10 | active 路由读取 `llm_gateway.llmgw_model_pools`，但成功/失败健康更新仍可能写 MAP `model_groups`，导致 GW-owned 成员的健康状态陈旧 | provider 失败、fallback 或健康熔断时 | paid | 合同测试断言 GW 数据域写回；生产快照显示 GW 池健康时间更新而 MAP 池停留在部署前 |
 | 2026-07-10-production-mode-fail-open | critical | 2026-07-10 | Program、compose 和发布脚本在 mode 缺失时默认 `inproc`，生产漏配环境变量会静默退回旧执行架构 | 新主机部署、环境变量丢失或脚本重构时 | paid | 生产缺 Mode 已改为拒绝启动；同一生产镜像隔离运行验证 fail-closed，回滚仍要求显式破玻璃动作 |
 | 2026-07-11-appcaller-static-runtime-authority | high | 2026-07-11 | serving 会把首次请求写入 `llm_gateway.llmgw_app_callers`，但 `LlmGateway.TryValidateAppCaller` 曾要求命中 MAP `AppCallerRegistry` 静态常量 | 外部系统或新 MAP 功能只按目标协议携带 appCallerCode、未先修改 MAP 代码常量时 | paid | PR #1070 已把运行时准入改为 canonical 格式和 modelType 后缀；生产动态 caller、预算、并发、scoped key、failover 与清理验收全部通过 |
-| 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 19 条日志中有 1 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 18 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | open | 给发布探针统一注入 `release-probe / gw-native / http` 元数据并在控制台单列；当前记录不能解释成 MAP 业务直连 |
-| 2026-07-11-appcaller-mixed-route-policy-drift | medium | 2026-07-11 | registry 仅保存单值 `LastObservedModelPolicy`；同一 appCaller 合法混用 auto 与 pinned 时，后一次请求会覆盖观测值并让 runtime gate 反复报告 route drift | 生产 preflight 使用 auto，但验收或实验请求使用 pinned 时 | open | 改为按 route mode 累计观察，或只对策略禁止项判漂移；不能继续用单一 last value 代表合法混合流量 |
-| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | in-progress | PR-A 增加显式 `--maintenance-from-commit`：只继承已审计 full-http 基线的 shadow 证据，新 commit 仍强制同 commit HTTP health、四协议、配置权威、runtime gate 和成功台账 |
-| 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | in-progress | 查询索引、敏感正文清理和分层 TTL 已实现；删除默认关闭，待生产 dry-run 统计后启用 |
-| 2026-07-10-multipart-object-lifecycle | high | 2026-07-10 | multipart HTTP 会上传临时文件引用，serving rehydrate 后未发现成功、失败、超时统一清理和兜底生命周期 | 图生图、ASR、字幕等跨进程文件调用时 | in-progress | 已记录 ref manifest，并在请求 finally 与后台生命周期任务清理；待生产 dry-run 和单次 ASR/图片验收 |
+| 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 19 条日志中有 1 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 18 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | paid | PR #1076 已统一注入 `release-probe / gw-native / http / IsHealthProbe=true`；最终生产 commit 的 25 条发布门日志均为 `transport=http` |
+| 2026-07-11-appcaller-mixed-route-policy-drift | medium | 2026-07-11 | registry 仅保存单值 `LastObservedModelPolicy`；同一 appCaller 合法混用 auto 与 pinned 时，后一次请求会覆盖观测值并让 runtime gate 反复报告 route drift | 生产 preflight 使用 auto，但验收或实验请求使用 pinned 时 | paid | PR #1076 改为累计 observed policy/pool/parameter 集合，配置值命中集合即无漂移；最终视频 pinned 治理后 runtime gate `blocked=0` |
+| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
+| 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | paid | PR #1078 已实现查询索引、敏感正文清理、分层 TTL、dry-run 与 lifecycle 状态；生产最近一次 lifecycle 为 `applied` 且全部索引 ready |
+| 2026-07-10-multipart-object-lifecycle | high | 2026-07-10 | multipart HTTP 会上传临时文件引用，serving rehydrate 后未发现成功、失败、超时统一清理和兜底生命周期 | 图生图、ASR、字幕等跨进程文件调用时 | paid | PR #1078 已实现请求 finally 与后台生命周期清理；生产 ASR、图片和 vision 一次性验收通过，lifecycle 为 `applied` |
 | 2026-07-10-budget-cancel-idempotency | critical | 2026-07-10 | 月预算按日志估算且无原子预占，成本证据缺失时放行；客户端断开不取消上游；非幂等图片/视频提交超时重试可能重复计费 | 并发请求、用户取消、provider 超时或响应丢失时 | in-progress | Decimal128 原子预算、显式 cancel、raw requestId 状态机和 unknown outcome 已实现；本地 Mongo 并发测试通过，待生产部署验证 |
 | 2026-07-10-serving-readiness-ha | critical | 2026-07-10 | `/gw/v1/healthz` 只证明进程与 commit 存活，未覆盖 Mongo、对象存储、key integrity 和路由；生产 serving 为单实例 | 依赖故障、容器重启或节点故障时 | paid | 生产 `bad1b3b296...` 已运行主备，带 scoped key 的受保护 route 在停主期间仍为 200；恢复后双实例健康，runtime gate `passed=13 retained=2 blocked=0 waiting=0` |
 | 2026-07-10-scoped-service-keys | high | 2026-07-10 | serving 使用共享 Gateway Key，兼容入口允许请求声明 appCallerCode；同一 key 的持有者可能冒用其他 caller 的模型池、预算和权限 | 允许 MAP 之外的系统接入 GW 前 | paid | 生产临时 scoped key 已验证允许范围 200、越权 403、撤销后 401，且清理后无临时 key；MAP 共享 key 仍作为迁移兼容 |
-| 2026-07-10-serving-map-config-dependency | high | 2026-07-10 | serving 的请求数据已进入 `llm_gateway`，但资产存储和 AppSettings 仍依赖 MAP 配置域，readiness 仍检查 MAP Mongo | MAP Mongo 或 MAP 配置域故障、或宣称 GW 已完全物理隔离时 | in-progress | PR-B 已把 runtime settings、资产登记、故障通知、密钥自检和 readiness 迁入 GW 域；ModelResolver 仍保留显式关闭的 MAP 兼容 context，待 CDS 契约验证后归档 |
+| 2026-07-10-serving-map-config-dependency | high | 2026-07-10 | serving 的请求数据已进入 `llm_gateway`，但资产存储和 AppSettings 仍依赖 MAP 配置域，readiness 仍检查 MAP Mongo | MAP Mongo 或 MAP 配置域故障、或宣称 GW 已完全物理隔离时 | paid | PR #1077 已把 runtime settings、资产登记、故障通知、密钥自检和 readiness 迁入 GW 域并通过 MAP 配置域不可用合同测试；显式关闭的 legacy context 只作为回滚代码，由 full-cutover 物理删除阶段跟踪 |
 | 2026-07-10-distributed-provider-concurrency | high | 2026-07-10 | 平台 `MaxConcurrency` 尚未形成跨 serving 实例的分布式令牌；月预算也未原子预占 | serving 从主备改为双活，或同一平台并发流量增长时 | paid | 生产无费用假上游竞争验收仅放行 1 路，另一条 429；结束后验收资源租约为 0，临时数据已清理 |
 | 2026-06-24-dead-strategy-engines | medium | 2026-06-24 | 6 个策略引擎 + ModelPoolDispatcher 不在服务链路，唯一调用是管理预览；纯死复杂度 | 可删（已取证：main 17 池 100% FailFast，2026-06-25） | open | 取证已过，删除排在 P3 黄金快照建立之后 |
 | 2026-06-24-legacy-flag-tier | high | 2026-06-24 | 调度第 3 层 legacy 标记与默认池功能重叠。**取证升级（2026-06-25）：91/153 (60%) code 实际经 legacy 层路由**（非遗迹，是承重墙） | 必须先建 chat/intent/vision/generation 默认池 + 黄金快照确认 91 个 code 改走 DefaultPool 后 | open | 顺序硬约束：直接删 = 砸 60% 调用方；删除前全栈审计（enum-ripple-audit） |
