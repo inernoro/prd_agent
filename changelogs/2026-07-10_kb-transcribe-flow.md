@@ -7,3 +7,4 @@
 | fix | prd-api | 字幕生成/录音转录端点鉴权改为团队可写路径（与上传权限对称），修共享库协作者上传后无法转录的 404（Codex P2） |
 | fix | prd-admin | 修合并 main 引入的 mobileCompatibility 重复键（/document-store 两处登记合并为一条，修 CI Admin Dashboard Build 红灯） |
 | fix | prd-api | 字幕/转录排队复用与认领按 UserId 过滤，避免团队库协作者拿到他人 runId 后状态/SSE 404（Codex P2） |
+| fix | prd-api | 字幕/转录处理器回写源条目 Metadata 改为定点 $set 单键，修两处理器并行时整字典覆盖互相丢键（Codex P2） |

@@ -123,12 +123,14 @@ public class SubtitleGenerationProcessor
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
-        // 源 entry metadata 标记"已生成字幕"，避免重复生成（整个 Metadata 字段 replace）
-        var newMeta = entry.Metadata ?? new Dictionary<string, string>();
-        newMeta["subtitle_entry_id"] = newEntry.Id;
+        // 源 entry metadata 标记"已生成字幕"。定点 $set 单个键而非整字典回写：
+        // 与转录处理器并行时整字典回写会互相覆盖对方的键（Codex P2 lost-update）。
+        var subtitleMetaUpdate = entry.Metadata == null
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string> { ["subtitle_entry_id"] = newEntry.Id })
+            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["subtitle_entry_id"], newEntry.Id);
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
-            Builders<DocumentEntry>.Update.Set(e => e.Metadata, newMeta),
+            subtitleMetaUpdate,
             cancellationToken: CancellationToken.None);
 
         // 写回 Run 的 OutputEntryId
@@ -238,12 +240,16 @@ public class SubtitleGenerationProcessor
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
-        // 源音频 entry 标记「已生成转录笔记」，前端据此展示直达入口而非重复发起
-        var newMeta = entry.Metadata ?? new Dictionary<string, string>();
-        newMeta["transcribe_entry_id"] = newEntry.Id;
+        // 源音频 entry 标记「已生成转录笔记」，前端据此展示直达入口而非重复发起。
+        // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
+        // Metadata，整字典回写会用加载时的旧快照覆盖掉对方刚写入的键（Codex P2 lost-update）。
+        // 旧数据 Metadata 可能是 BSON null（dotted $set 会失败），此时整字典写入无并发丢失风险。
+        var metaUpdate = entry.Metadata == null
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string> { ["transcribe_entry_id"] = newEntry.Id })
+            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_entry_id"], newEntry.Id);
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
-            Builders<DocumentEntry>.Update.Set(e => e.Metadata, newMeta),
+            metaUpdate,
             cancellationToken: CancellationToken.None);
 
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
