@@ -2261,6 +2261,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GATEWAY_KEY_SCOPE_DENIED", runtime);
         Assert.Contains("class GatewayCancellationRegistry", runtime);
         Assert.Contains("class GatewayDataLifecycleWorker", runtime);
+        Assert.Contains("GatewayLifecycleRunRecord", runtime);
+        Assert.Contains("Status = \"dry-run-complete\"", runtime);
+        Assert.Contains("EnsureRetentionTtlIndexesAsync", runtime);
+        Assert.True(
+            runtime.IndexOf("await lifecycle.InsertOneAsync(run", StringComparison.Ordinal)
+            < runtime.IndexOf("EnsureRetentionTtlIndexesAsync", runtime.IndexOf("await lifecycle.InsertOneAsync(run", StringComparison.Ordinal), StringComparison.Ordinal),
+            "必须先持久化 dry-run，再创建会触发删除的 TTL 索引");
+        Assert.Contains("ttl_llmgw_login_audits", initializer);
+        Assert.Contains("LlmGateway:Retention:AuditDays", initializer);
+        Assert.Contains("TimeSpan.FromDays(auditDays)", initializer);
         Assert.True(
             runtime.IndexOf("await _budgets.ReleaseExpiredAsync(ct);", StringComparison.Ordinal)
             < runtime.IndexOf("if (apply)", runtime.IndexOf("var multipart", StringComparison.Ordinal), StringComparison.Ordinal),
@@ -2328,6 +2338,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ValidateBudgetConfiguration", console);
         Assert.Contains("配置月预算时必须同时配置大于 0 的单次预算预占", console);
         Assert.Contains("单次预算预占不能超过月预算", console);
+    }
+
+    [Fact]
+    public void GatewayFinalAcceptance_IsOneShotBoundedAndStopsOnFailure()
+    {
+        var script = ReadRepoFile("scripts/llmgw-final-acceptance.py");
+        var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
+        var compose = ReadRepoFile("docker-compose.yml");
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+
+        Assert.Contains("CELLS = (\"text\", \"stream\", \"image\", \"vision\", \"asr\", \"video\")", script);
+        Assert.Contains("automatic full rerun is forbidden", script);
+        Assert.Contains("serving commit mismatch", script);
+        Assert.Contains("lifecycle apply/index gate is not ready", script);
+        Assert.Contains("no later cells executed", script);
+        Assert.Contains("\"maxUpstreamCalls\": 1", script);
+        Assert.Contains("\"maxSubmitCalls\": 1", script);
+        Assert.Contains("CELLS.index(args.resume_cell)", script);
+        Assert.Contains("--max-canary-calls\", \"1", script);
+        Assert.Contains("--include-report-agent-generate", script);
+        Assert.Contains("--include-image-worker-vision", script);
+        Assert.Contains("--poll-status\", \"--download-result", script);
+        Assert.Contains("args.include_report_agent_generate", seed);
+        Assert.Contains("LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}", compose);
+        Assert.Contains("LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}", compose);
+        Assert.Contains("LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}", compose);
+        Assert.Contains("LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}", compose);
+        Assert.Contains("LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}", compose);
+        Assert.Contains("LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}", compose);
+        Assert.Contains("MapGet(\"/gw/lifecycle/status\"", console);
     }
 
     private static string ReadRepoFile(string relativePath)

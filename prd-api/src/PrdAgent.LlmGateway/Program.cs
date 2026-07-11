@@ -28,7 +28,8 @@ if (string.IsNullOrWhiteSpace(gatewayMongoConn)) gatewayMongoConn = mongoConn;
 var gatewayDb = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
 builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));
 builder.Services.AddSingleton(new LlmGatewayDataContext(gatewayMongoConn, gatewayDb));
-builder.Services.AddHostedService<LlmGatewayDatabaseInitializer>();
+builder.Services.AddSingleton<LlmGatewayDatabaseInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabaseInitializer>());
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
@@ -240,7 +241,8 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 });
 
 builder.Services.AddSingleton<IGatewayServingReadinessProbe, GatewayServingReadinessProbe>();
-builder.Services.AddHostedService<GatewayDataLifecycleWorker>();
+if (builder.Configuration.GetValue("LlmGateway:Retention:WorkerEnabled", true))
+    builder.Services.AddHostedService<GatewayDataLifecycleWorker>();
 
 // 模型池故障通知与自动探活（ModelResolver 解析结果发往健康管理）
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(sp =>

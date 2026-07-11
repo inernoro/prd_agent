@@ -148,6 +148,7 @@ var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
 // GW 自有账号和审计落独立库 llm_gateway，避免被 MAP 项目 env / shared DB 状态覆盖。
 var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
+var lifecycleRuns = gatewayDatabase.GetCollection<BsonDocument>("llmgw_lifecycle_runs");
 // 网关配置面：GW 自有集合优先，MAP 集合作为未迁移时期的兼容来源。
 var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
@@ -220,6 +221,59 @@ app.MapGet("/gw/healthz", () => Results.Json(new
     commit = gitCommit,
     time = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
 }, jsonOptions)).AllowAnonymous();
+
+app.MapGet("/gw/lifecycle/status", async () =>
+{
+    var latest = await lifecycleRuns.Find(FilterDefinition<BsonDocument>.Empty)
+        .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
+        .FirstOrDefaultAsync();
+    var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        ["llmrequestlogs"] = ["ttl_llmgw_logs_started"],
+        ["llmshadow_comparisons"] = ["ttl_llmgw_shadow_compared"],
+        ["llmgw_operation_audits"] = ["ttl_llmgw_operation_audits"],
+        ["llmgw_login_audits"] = ["ttl_llmgw_login_audits"],
+        ["llmgw_lifecycle_runs"] = ["ttl_llmgw_lifecycle_runs"],
+    };
+    var indexes = new List<Dictionary<string, object>>();
+    foreach (var (collectionName, names) in expected)
+    {
+        var actualDocs = await (await gatewayDatabase.GetCollection<BsonDocument>(collectionName)
+            .Indexes.ListAsync()).ToListAsync();
+        var actual = actualDocs.Select(x => x.GetStringOrEmpty("name")).ToHashSet(StringComparer.Ordinal);
+        indexes.AddRange(names.Select(name => new Dictionary<string, object>
+        {
+            ["collection"] = collectionName,
+            ["name"] = name,
+            ["ready"] = actual.Contains(name),
+        }));
+    }
+
+    object? latestRun = latest is null ? null : new
+    {
+        id = latest.GetStringOrEmpty("_id"),
+        mode = latest.GetStringOrEmpty("Mode"),
+        status = latest.GetStringOrEmpty("Status"),
+        startedAt = latest.AsNullableUtcDateTime("StartedAt").ToIso(),
+        dryRunCompletedAt = latest.AsNullableUtcDateTime("DryRunCompletedAt").ToIso(),
+        completedAt = latest.AsNullableUtcDateTime("CompletedAt").ToIso(),
+        expiredRequestLogs = latest.AsNullableLong("ExpiredRequestLogs") ?? 0,
+        sensitiveLogs = latest.AsNullableLong("SensitiveLogs") ?? 0,
+        expiredShadowComparisons = latest.AsNullableLong("ExpiredShadowComparisons") ?? 0,
+        expiredOperationAudits = latest.AsNullableLong("ExpiredOperationAudits") ?? 0,
+        expiredLoginAudits = latest.AsNullableLong("ExpiredLoginAudits") ?? 0,
+        expiredMultipartObjects = latest.AsNullableLong("ExpiredMultipartObjects") ?? 0,
+        redactedSensitiveLogs = latest.AsNullableLong("RedactedSensitiveLogs") ?? 0,
+        deletedMultipartObjects = latest.AsNullableLong("DeletedMultipartObjects") ?? 0,
+        retentionIndexesReady = latest.AsNullableBool("RetentionIndexesReady") ?? false,
+    };
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        latestRun,
+        indexes,
+        allIndexesReady = indexes.All(x => x.TryGetValue("ready", out var value) && value is true),
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 登录（匿名）─────────────────────────────
 // 登录失败返回 HTTP 200 + success:false，避免前端把 401 当作"会话过期"自动清 session。

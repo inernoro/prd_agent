@@ -172,6 +172,15 @@ services:
       - LlmGateway__Readiness__AssetProbeKey=${LLMGW_READINESS_ASSET_PROBE_KEY:-}
       - LlmGateway__Readiness__ProbeTimeoutSeconds=${LLMGW_READINESS_PROBE_TIMEOUT_SECONDS:-10}
       - LlmGateway__Readiness__CacheSeconds=${LLMGW_READINESS_CACHE_SECONDS:-10}
+      - LlmGateway__Retention__WorkerEnabled=true
+      - LlmGateway__Retention__ApplyChanges=${LLMGW_RETENTION_APPLY_CHANGES:-true}
+      - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
+      - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
+      - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
+      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
+      - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
+      - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
+      - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
       # 内部 M2M 共享密钥门（与 api 侧 LlmGwServe__ApiKey 对齐）
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     read_only: true
@@ -224,6 +233,16 @@ services:
       - LlmGateway__Readiness__AssetProbeKey=${LLMGW_READINESS_ASSET_PROBE_KEY:-}
       - LlmGateway__Readiness__ProbeTimeoutSeconds=${LLMGW_READINESS_PROBE_TIMEOUT_SECONDS:-10}
       - LlmGateway__Readiness__CacheSeconds=${LLMGW_READINESS_CACHE_SECONDS:-10}
+      # lifecycle 只由主 serving 执行；副本仍由 initializer 幂等维护非破坏性索引。
+      - LlmGateway__Retention__WorkerEnabled=false
+      - LlmGateway__Retention__ApplyChanges=${LLMGW_RETENTION_APPLY_CHANGES:-true}
+      - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
+      - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
+      - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
+      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
+      - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
+      - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
+      - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
     read_only: true
     tmpfs:

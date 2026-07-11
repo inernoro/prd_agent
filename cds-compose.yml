@@ -202,6 +202,8 @@ services:
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
       LlmGateway__Readiness__RequireAssetProbe: "false"
+      LlmGateway__Retention__ApplyChanges: "false"
+      LlmGateway__Retention__EnableTtlIndexes: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
@@ -317,6 +319,10 @@ services:
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
       # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
       LlmGateway__Readiness__RequireAssetProbe: "false"
+      # CDS 只验证 lifecycle dry-run；破坏性清理由正式 compose 显式启用。
+      LlmGateway__Retention__WorkerEnabled: "true"
+      LlmGateway__Retention__ApplyChanges: "false"
+      LlmGateway__Retention__EnableTtlIndexes: "false"
       # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 只在 CDS
       # 容器网络内供 api 调用，但仍禁止仓库可见 fallback；未注入时由 serving 生产守卫 fail-closed。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
