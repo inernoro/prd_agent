@@ -1,12 +1,12 @@
 # LLM Gateway 协议入口与模型池迁移 · 计划
 
-> **版本**：v1.2 | **日期**：2026-07-11 | **状态**：开发中
+> **版本**：v1.3 | **日期**：2026-07-12 | **状态**：开发中
 
 ## 1. 概述
 
 本计划定义 LLM Gateway 的目标态：MAP 和外部系统都不直接管理上游模型请求，也不直接拥有模型池调度权。所有 AI 请求先进入独立 LLM Gateway，由 Gateway 完成协议适配、appCaller 注册、模型池路由、平台密钥使用、上游发送、日志与审计。
 
-当前生产已经完成 **执行层 full-http** 和存量 caller 的 **配置权威迁移**：MAP 运行时通过 `llmgw-serve` 发送模型请求，GW 日志能看到 `transport=http`，配置权威报告为 ready、MAP fallback 对象为 0。`2026-07-11` 生产验收进一步发现一处最后的双权威：新 caller 虽会被动写入 GW registry，执行层仍要求命中 MAP 静态注册表。本计划当前批次正在移除该运行时硬门；合并部署前不得宣称新外部 caller 已完成目标态。
+当前生产已经完成 **执行层 full-http**、存量 caller 的 **配置权威迁移** 和动态 appCaller 的运行时准入收口：MAP 运行时通过 `llmgw-serve` 发送模型请求，GW 日志能看到 `transport=http`，配置权威报告为 ready、MAP fallback 对象为 0；新 caller 不再要求预先命中 MAP 静态注册表。2026-07-12 最终提交 `17490bfe2c2caf0f6c02163f2e48b768d8041b71` 的 runtime gate 为 `14 passed / 0 waiting / 0 blocked`。本计划仍为开发中，因为外部租户/团队/用户体系、完整开发者接入体验和旧 inproc/legacy 物理删除不属于本次已完成范围。
 
 目标主线：
 
