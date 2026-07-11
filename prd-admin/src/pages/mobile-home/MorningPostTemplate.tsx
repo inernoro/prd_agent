@@ -17,7 +17,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   ARCHIVE_ENTRIES,
   QUICK_ENTRIES,
-  RECENT_AGENT_META,
+  recentAgentMetaFor,
   formatCompactNumber,
   formatDateline,
   formatRelativeTime,
@@ -152,7 +152,7 @@ export default function MorningPostTemplate({
               }}
             >
               <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.12em', color: TERRA }}>
-                {RECENT_AGENT_META[headline.agentKey]?.label ?? headline.agentKey}
+                {recentAgentMetaFor(headline.agentKey).label}
                 {' · '}
                 {formatRelativeTime(headline.lastActiveAt)}
               </div>
@@ -179,7 +179,7 @@ export default function MorningPostTemplate({
             {restRecent.length > 0 && (
               <div style={{ marginTop: 8, borderTop: `1px solid ${LINE}` }}>
                 {restRecent.map((item) => {
-                  const meta = RECENT_AGENT_META[item.agentKey];
+                  const meta = recentAgentMetaFor(item.agentKey);
                   return (
                     <button
                       key={`${item.route}-${item.lastActiveAt}`}
@@ -193,7 +193,7 @@ export default function MorningPostTemplate({
                         {item.title || '未命名工作'}
                       </span>
                       <span style={{ fontFamily: MONO, fontSize: 10, color: INK_3, flex: 'none' }}>
-                        {meta?.label ?? item.agentKey} · {formatRelativeTime(item.lastActiveAt)}
+                        {meta.label} · {formatRelativeTime(item.lastActiveAt)}
                       </span>
                     </button>
                   );

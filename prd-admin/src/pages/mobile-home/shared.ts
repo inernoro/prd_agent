@@ -75,12 +75,21 @@ export const ARCHIVE_ENTRIES: Array<{ key: string; title: string; desc: string; 
   { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center' },
 ];
 
-/** 继续上次条目的 agent 元信息（图标 + 中文名） */
+/** 继续上次条目的 agent 元信息（图标 + 中文名）。
+ * 后端 recent-work 实际会返回 document-store 等 key（真实预览取证发现），
+ * 未覆盖的 key 由 recentAgentMetaFor 兜底成「智能体」而非裸英文。 */
 export const RECENT_AGENT_META: Record<string, { label: string; Icon: LucideIcon; accent: string }> = {
   'visual-agent': { label: '视觉创作', Icon: ImageIcon, accent: '#A78BFA' },
   'literary-agent': { label: '文学创作', Icon: Feather, accent: '#34D399' },
   'workflow-agent': { label: '工作流', Icon: FolderOpen, accent: '#7DD3FC' },
+  'document-store': { label: '知识库', Icon: BookOpen, accent: '#FFB340' },
+  'defect-agent': { label: '缺陷管理', Icon: Bug, accent: '#FB7185' },
+  'report-agent': { label: '周报', Icon: FileText, accent: '#7DD3FC' },
 };
+
+export function recentAgentMetaFor(agentKey: string): { label: string; Icon: LucideIcon; accent: string } {
+  return RECENT_AGENT_META[agentKey] ?? { label: '智能体', Icon: FolderOpen, accent: '#FF9F0A' };
+}
 
 /* ───────────── 数据 hook ───────────── */
 

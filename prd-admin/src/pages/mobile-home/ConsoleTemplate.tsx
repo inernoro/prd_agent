@@ -19,7 +19,7 @@ import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
 import { AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import {
   QUICK_ENTRIES,
-  RECENT_AGENT_META,
+  recentAgentMetaFor,
   formatCompactNumber,
   formatDateline,
   formatRelativeTime,
@@ -149,9 +149,9 @@ export default function ConsoleTemplate({
               }}
             >
               {data.recentWork.slice(0, 6).map((item) => {
-                const meta = RECENT_AGENT_META[item.agentKey];
-                const Icon = meta?.Icon ?? Activity;
-                const accent = meta?.accent ?? AMBER;
+                const meta = recentAgentMetaFor(item.agentKey);
+                const Icon = meta.Icon;
+                const accent = meta.accent;
                 return (
                   <button
                     key={`${item.route}-${item.lastActiveAt}`}
@@ -171,7 +171,7 @@ export default function ConsoleTemplate({
                     <div className="flex items-center" style={{ gap: 6 }}>
                       <Icon size={13} style={{ color: accent }} />
                       <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.1em', color: TEXT_TERTIARY }}>
-                        {meta?.label ?? item.agentKey} · {formatRelativeTime(item.lastActiveAt)}
+                        {meta.label} · {formatRelativeTime(item.lastActiveAt)}
                       </span>
                     </div>
                     <div
