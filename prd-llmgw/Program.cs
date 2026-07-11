@@ -27,6 +27,9 @@ var config = builder.Configuration;
 
 var mongoConn = config["MongoDB:ConnectionString"] ?? "mongodb://localhost:27017";
 var mongoDb = config["MongoDB:DatabaseName"] ?? "prdagent";
+var gatewayMongoConn = config["LlmGateway:MongoConnectionString"]
+    ?? config["LLMGW_MONGO_CONNECTION_STRING"];
+if (string.IsNullOrWhiteSpace(gatewayMongoConn)) gatewayMongoConn = mongoConn;
 var gatewayDbName = config["LlmGateway:DatabaseName"] ?? "llm_gateway";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
@@ -63,10 +66,13 @@ const string DefaultAdminPwd = "admin";
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
 // ── Mongo 客户端（单例）──
-var mongoClient = new MongoClient(mongoConn);
-var mapDatabase = mongoClient.GetDatabase(mongoDb);
-var gatewayDatabase = mongoClient.GetDatabase(gatewayDbName);
-builder.Services.AddSingleton(mongoClient);
+var mapMongoClient = new MongoClient(mongoConn);
+var gatewayMongoClient = string.Equals(gatewayMongoConn, mongoConn, StringComparison.Ordinal)
+    ? mapMongoClient
+    : new MongoClient(gatewayMongoConn);
+var mapDatabase = mapMongoClient.GetDatabase(mongoDb);
+var gatewayDatabase = gatewayMongoClient.GetDatabase(gatewayDbName);
+builder.Services.AddSingleton(mapMongoClient);
 builder.Services.AddSingleton(mapDatabase);
 
 // ── JWT 签发器（独立密钥）──

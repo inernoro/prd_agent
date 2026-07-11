@@ -20,7 +20,7 @@ namespace PrdAgent.Infrastructure.Services.AssetStorage;
 public sealed class RegistryAssetStorage : IAssetStorage
 {
     private readonly IAssetStorage _inner;
-    private readonly MongoDbContext _db;
+    private readonly IMongoCollection<AssetRegistryEntry> _registry;
     private readonly string _providerName;
     private readonly ILogger<RegistryAssetStorage> _logger;
 
@@ -33,10 +33,11 @@ public sealed class RegistryAssetStorage : IAssetStorage
         IAssetStorage inner,
         MongoDbContext db,
         string providerName,
-        ILogger<RegistryAssetStorage> logger)
+        ILogger<RegistryAssetStorage> logger,
+        string collectionName = "asset_registry")
     {
         _inner = inner;
-        _db = db;
+        _registry = db.Database.GetCollection<AssetRegistryEntry>(collectionName);
         _providerName = providerName;
         _logger = logger;
     }
@@ -141,7 +142,7 @@ public sealed class RegistryAssetStorage : IAssetStorage
                 SizeBytes = sizeBytes,
                 Scope = scope,
             };
-            await _db.AssetRegistry.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+            await _registry.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         }
         catch (Exception ex)
         {
