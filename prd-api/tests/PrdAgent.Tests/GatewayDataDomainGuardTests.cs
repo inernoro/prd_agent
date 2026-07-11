@@ -590,9 +590,8 @@ public class GatewayDataDomainGuardTests
         var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
 
         Assert.Contains("--maintenance-from-commit", stage);
-        Assert.Contains("--target-stage http-full", stage);
-        Assert.Contains("--require-target-success", stage);
-        Assert.Contains("--min-observation-hours 0", stage);
+        Assert.Contains("llmgw-rollout-ledger.py maintenance-baseline", stage);
+        Assert.Contains("--json-out \"$maintenance_baseline_json\"", stage);
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
         Assert.Contains("--shadow-evidence-commit \"${maintenance_from_commit:-$commit}\"", stage);
         Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$maintenance_from_commit\"", stage);
@@ -600,6 +599,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_POST_DEPLOY_EXPECT_COMMIT=\"$expect_commit\"", deploy);
         Assert.Contains("shadowEvidenceCommit", ledger);
         Assert.Contains("args.shadow_evidence_commit or args.commit", ledger);
+        Assert.Contains("def maintenance_baseline(args: argparse.Namespace)", ledger);
+        Assert.Contains("maintenance baseline is stale because a later negative event exists", ledger);
+        Assert.Contains("maintenance baseline release gate has no shadow checks", ledger);
         Assert.Contains("deployment_receipt=", stage);
         Assert.Contains("LLM Gateway deploy-once: receipt exists", stage);
         Assert.Contains("LLMGW_VERIFY_ONLY=1", stage);
