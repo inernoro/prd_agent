@@ -1,49 +1,60 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import {
   Home,
   Compass,
   Plus,
-  FolderOpen,
+  BookOpen,
   UserCircle,
   Image,
   PenLine,
   Bug,
+  FileBarChart,
+  Presentation,
+  ChevronRight,
   X,
   type LucideIcon,
 } from 'lucide-react';
 
-/* ── Agent 快捷入口 ── */
-interface AgentShortcut {
+/* ── 快速创建入口 ── */
+interface CreateAction {
   key: string;
   label: string;
+  desc?: string;
   icon: LucideIcon;
   path: string;
   color: string;
-  bg: string;
 }
 
-// 注：PRD 解读智能体 Web 端已下线，移动端浮层不再提供入口
-const AGENT_SHORTCUTS: AgentShortcut[] = [
-  { key: 'visual',   label: '视觉创作', icon: Image,       path: '/visual-agent',   color: '#FB923C', bg: 'rgba(251,146,60,0.20)' },
-  { key: 'literary', label: '文学创作', icon: PenLine,      path: '/literary-agent', color: '#34D399', bg: 'rgba(52,211,153,0.20)' },
-  { key: 'defect',   label: '缺陷管理', icon: Bug,          path: '/defect-agent',   color: '#F87171', bg: 'rgba(248,113,113,0.20)' },
+/** 最近热门：平台当前主推的创作方式（带「热门」标签的大行卡） */
+const HOT_ACTIONS: CreateAction[] = [
+  {
+    key: 'kb-article',
+    label: '知识库文章',
+    desc: '新建一篇文章，沉淀文档与知识',
+    icon: BookOpen,
+    path: '/document-store',
+    color: '#FFB340',
+  },
+  {
+    key: 'md-to-ppt',
+    label: 'MD 转网页 PPT',
+    desc: '粘贴 Markdown，AI 直出网页演示',
+    icon: Presentation,
+    path: '/md-to-ppt-agent',
+    color: '#7DD3FC',
+  },
 ];
 
-/* ── 环形布局计算 ── */
-const RADIAL_RADIUS = 100;
-const ARC_START_DEG = -145; // 从左侧开始 (度)
-const ARC_END_DEG = -35;    // 到右侧结束 (度)
-
-function radialPosition(index: number, total: number) {
-  const deg = ARC_START_DEG + ((ARC_END_DEG - ARC_START_DEG) / (total - 1)) * index;
-  const rad = (deg * Math.PI) / 180;
-  return {
-    x: Math.round(RADIAL_RADIUS * Math.cos(rad)),
-    y: Math.round(RADIAL_RADIUS * Math.sin(rad)),
-  };
-}
+/** 开始创作：核心 Agent 快捷入口（四宫格） */
+const AGENT_ACTIONS: CreateAction[] = [
+  { key: 'visual',   label: '视觉创作', icon: Image,        path: '/visual-agent',   color: '#FB923C' },
+  { key: 'literary', label: '文学创作', icon: PenLine,       path: '/literary-agent', color: '#34D399' },
+  { key: 'defect',   label: '缺陷管理', icon: Bug,           path: '/defect-agent',   color: '#F87171' },
+  { key: 'report',   label: '周报',     icon: FileBarChart,  path: '/report-agent',   color: '#A78BFA' },
+];
 
 /* ── 底部 5 个固定 Tab ── */
 interface FixedTab {
@@ -58,11 +69,11 @@ interface FixedTab {
 }
 
 const FIXED_TABS: FixedTab[] = [
-  { key: 'home',    label: '首页', icon: Home,       path: '/',           matchPrefix: '/', exactMatch: true },
-  { key: 'explore', label: '浏览', icon: Compass,    path: '/ai-toolbox', matchPrefix: '/ai-toolbox' },
-  { key: 'create',  label: '',     icon: Plus,        path: '',            isCenter: true },
-  { key: 'assets',  label: '资产', icon: FolderOpen,  path: '/my-assets',  matchPrefix: '/my-assets' },
-  { key: 'me',      label: '我的', icon: UserCircle,  path: '/profile',    matchPrefix: '/profile' },
+  { key: 'home',    label: '首页',   icon: Home,       path: '/',               matchPrefix: '/', exactMatch: true },
+  { key: 'explore', label: '浏览',   icon: Compass,    path: '/ai-toolbox',     matchPrefix: '/ai-toolbox' },
+  { key: 'create',  label: '',       icon: Plus,       path: '',                isCenter: true },
+  { key: 'kb',      label: '知识库', icon: BookOpen,   path: '/document-store', matchPrefix: '/document-store' },
+  { key: 'me',      label: '我的',   icon: UserCircle, path: '/profile',        matchPrefix: '/profile' },
 ];
 
 interface MobileTabBarProps {
@@ -70,18 +81,19 @@ interface MobileTabBarProps {
 }
 
 /**
- * 移动端底部 Tab 导航栏 — 5 固定 Tab + 环形 Agent 扇形菜单。
+ * 移动端底部 Tab 导航栏 — 5 固定 Tab + 「快速创建」底部抽屉。
  *
- * | 首页 | 浏览 | + | 资产 | 我的 |
+ * | 首页 | 浏览 | + | 知识库 | 我的 |
  *
- * 中间 "+" 点击后扇形展开 Agent 快捷入口，再次点击或点背景关闭。
+ * 中间 "+" 点击后从底部滑出创建抽屉（最近热门大行卡 + 核心 Agent 四宫格），
+ * 点背景 / × / ESC 关闭。抽屉通过 createPortal 挂到 body（frontend-modal 规则）。
  */
 export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const handleAgentSelect = useCallback((path: string) => {
+  const handleActionSelect = useCallback((path: string) => {
     setMenuOpen(false);
     navigate(path);
   }, [navigate]);
@@ -94,135 +106,201 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
     setMenuOpen(false);
   }, []);
 
-  return (
-    <>
-      {/* ── 环形菜单遮罩层 ── */}
+  // ESC 关闭抽屉
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
+  /** 抽屉内条目的入场动画（开启时轻微上浮 + 淡入，逐项错峰） */
+  const itemAnim = (index: number): CSSProperties => ({
+    opacity: menuOpen ? 1 : 0,
+    transform: menuOpen ? 'translateY(0)' : 'translateY(10px)',
+    transition: menuOpen
+      ? `opacity 0.3s ease ${index * 40 + 90}ms, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1) ${index * 40 + 90}ms`
+      : 'opacity 0.12s ease, transform 0.12s ease',
+  });
+
+  /* ── 「快速创建」底部抽屉 ── */
+  const createSheet = (
+    <div
+      className="fixed inset-0"
+      style={{ zIndex: 200, pointerEvents: menuOpen ? 'auto' : 'none' }}
+    >
+      {/* 背景遮罩 */}
       <div
-        className="fixed inset-0"
+        className="absolute inset-0"
         style={{
-          zIndex: 200,
-          pointerEvents: menuOpen ? 'auto' : 'none',
+          background: 'rgba(0, 0, 0, 0.55)',
+          backdropFilter: 'blur(6px)',
+          WebkitBackdropFilter: 'blur(6px)',
+          opacity: menuOpen ? 1 : 0,
+          transition: 'opacity 0.28s ease',
+        }}
+        onClick={closeMenu}
+      />
+
+      {/* 抽屉本体 */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="快速创建"
+        className="absolute left-0 right-0 bottom-0"
+        style={{
+          borderRadius: '24px 24px 0 0',
+          background: 'linear-gradient(180deg, rgba(33,34,43,0.99) 0%, rgba(20,21,28,0.99) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderBottom: 'none',
+          boxShadow: '0 -18px 48px rgba(0,0,0,0.45)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)',
+          transform: menuOpen ? 'translateY(0)' : 'translateY(105%)',
+          transition: menuOpen
+            ? 'transform 0.38s cubic-bezier(0.32, 0.72, 0, 1)'
+            : 'transform 0.26s cubic-bezier(0.55, 0, 1, 0.45)',
         }}
       >
-        {/* 背景遮罩 */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'rgba(0, 0, 0, 0.55)',
-            opacity: menuOpen ? 1 : 0,
-            transition: 'opacity 0.3s ease',
-          }}
-          onClick={closeMenu}
-        />
+        {/* 顶部拖拽指示条 */}
+        <div className="flex justify-center pt-2.5 pb-1">
+          <div style={{ width: 36, height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.18)' }} />
+        </div>
 
-        {/* 环形内容区 — 锚定在底部中心 */}
-        <div
-          className="absolute bottom-0 left-0 right-0"
-          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-        >
-          {/* 半圆形背景 — 宽高需包住所有扇形项 + 底部 × 按钮 + tab 栏区域 */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: '50%',
-              width: 380,
-              height: 270,
-              borderRadius: '190px 190px 0 0',
-              background: 'radial-gradient(ellipse at 50% 100%, rgba(38,38,52,0.99) 0%, rgba(26,26,36,0.98) 50%, rgba(18,18,26,0.97) 100%)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderBottom: 'none',
-              transform: `translateX(-50%) scale(${menuOpen ? 1 : 0})`,
-              transformOrigin: '50% 100%',
-              transition: menuOpen
-                ? 'transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                : 'transform 0.22s cubic-bezier(0.55, 0, 1, 0.45)',
-            }}
-          >
-            {/* 半圆顶部高光弧线 */}
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: '10%',
-                right: '10%',
-                height: 1,
-                borderRadius: '50%',
-                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent)',
-              }}
-            />
+        {/* 标题行 */}
+        <div className="flex items-center justify-between px-5 pt-1 pb-1">
+          <div>
+            <div className="text-[17px] font-bold" style={{ color: 'rgba(255,255,255,0.94)' }}>
+              快速创建
+            </div>
+            <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              选一种方式，开始今天的产出
+            </div>
           </div>
-
-          {/* Agent 扇形项 */}
-          {AGENT_SHORTCUTS.map((agent, i) => {
-            const { x, y } = radialPosition(i, AGENT_SHORTCUTS.length);
-            const Icon = agent.icon;
-            const stagger = i * 50 + 80;
-            return (
-              <button
-                key={agent.key}
-                className="absolute flex flex-col items-center gap-1.5"
-                style={{
-                  bottom: 38,
-                  left: '50%',
-                  transform: menuOpen
-                    ? `translate(calc(-50% + ${x}px), ${y}px) scale(1)`
-                    : 'translate(-50%, 0px) scale(0)',
-                  opacity: menuOpen ? 1 : 0,
-                  transition: menuOpen
-                    ? `transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) ${stagger}ms, opacity 0.28s ease ${stagger}ms`
-                    : 'transform 0.18s ease, opacity 0.12s ease',
-                  pointerEvents: menuOpen ? 'auto' : 'none',
-                }}
-                onClick={() => handleAgentSelect(agent.path)}
-              >
-                <div
-                  className="flex items-center justify-center active:scale-90 transition-transform"
-                  style={{
-                    width: 52,
-                    height: 52,
-                    borderRadius: 26,
-                    background: agent.bg,
-                    border: `1.5px solid ${agent.color}30`,
-                    boxShadow: `0 0 20px ${agent.bg}, 0 0 40px ${agent.bg.replace('0.20', '0.08')}`,
-                  }}
-                >
-                  <Icon size={24} style={{ color: agent.color }} />
-                </div>
-                <span
-                  className="text-[11px] font-medium whitespace-nowrap"
-                  style={{ color: 'rgba(255,255,255,0.82)' }}
-                >
-                  {agent.label}
-                </span>
-              </button>
-            );
-          })}
-
-          {/* × 关闭按钮 — 居中于 tab 栏高度 */}
           <button
-            className="absolute flex items-center justify-center active:scale-90 transition-transform"
-            style={{
-              bottom: 8,
-              left: '50%',
-              transform: `translateX(-50%) rotate(${menuOpen ? '0deg' : '-90deg'}) scale(${menuOpen ? 1 : 0})`,
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              background: 'rgba(255,255,255,0.08)',
-              border: '1.5px solid rgba(255,255,255,0.12)',
-              opacity: menuOpen ? 1 : 0,
-              transition: menuOpen
-                ? 'transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) 60ms, opacity 0.25s ease 60ms'
-                : 'transform 0.18s ease, opacity 0.12s ease',
-              pointerEvents: menuOpen ? 'auto' : 'none',
-            }}
             onClick={closeMenu}
+            aria-label="关闭"
+            className="flex items-center justify-center active:scale-90 transition-transform"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.10)',
+            }}
           >
-            <X size={20} strokeWidth={2.5} style={{ color: 'rgba(255,255,255,0.85)' }} />
+            <X size={16} style={{ color: 'rgba(255,255,255,0.75)' }} />
           </button>
         </div>
+
+        {/* 最近热门 */}
+        <div className="px-5 mt-3" style={itemAnim(0)}>
+          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+            最近热门
+          </div>
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}
+          >
+            {HOT_ACTIONS.map((action, i) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.key}
+                  onClick={() => handleActionSelect(action.path)}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors active:bg-white/[0.06]"
+                  style={{
+                    minHeight: 'var(--mobile-min-touch, 44px)',
+                    borderBottom: i < HOT_ACTIONS.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                  }}
+                >
+                  <div
+                    className="flex items-center justify-center shrink-0"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 12,
+                      background: `${action.color}1F`,
+                      border: `1px solid ${action.color}30`,
+                    }}
+                  >
+                    <Icon size={19} style={{ color: action.color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[14px] font-semibold" style={{ color: 'rgba(255,255,255,0.92)' }}>
+                        {action.label}
+                      </span>
+                      <span
+                        className="px-1.5 py-px rounded-full text-[10px] font-semibold shrink-0"
+                        style={{
+                          background: 'rgba(255,159,10,0.16)',
+                          color: '#FFB340',
+                          border: '1px solid rgba(255,159,10,0.25)',
+                        }}
+                      >
+                        热门
+                      </span>
+                    </div>
+                    <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                      {action.desc}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="shrink-0" style={{ color: 'rgba(255,255,255,0.30)' }} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 开始创作 */}
+        <div className="px-5 mt-4" style={itemAnim(1)}>
+          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+            开始创作
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {AGENT_ACTIONS.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.key}
+                  onClick={() => handleActionSelect(action.path)}
+                  className="flex flex-col items-center gap-1.5 py-3 rounded-2xl active:scale-95 transition-transform"
+                  style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    minHeight: 'var(--mobile-min-touch, 44px)',
+                  }}
+                >
+                  <div
+                    className="flex items-center justify-center"
+                    style={{
+                      width: 42,
+                      height: 42,
+                      borderRadius: 14,
+                      background: `${action.color}1F`,
+                      border: `1px solid ${action.color}30`,
+                      boxShadow: `0 0 16px ${action.color}14`,
+                    }}
+                  >
+                    <Icon size={20} style={{ color: action.color }} />
+                  </div>
+                  <span className="text-[11px] font-medium whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.78)' }}>
+                    {action.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
+    </div>
+  );
+
+  return (
+    <>
+      {createPortal(createSheet, document.body)}
 
       {/* ── Tab Bar ── */}
       <nav
@@ -262,7 +340,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
             const Icon = tab.icon;
 
             if (tab.isCenter) {
-              /* ── 中间 "+" 按钮（展开环形菜单） ── */
+              /* ── 中间 "+" 按钮（展开创建抽屉） ── */
               return (
                 <button
                   key={tab.key}
