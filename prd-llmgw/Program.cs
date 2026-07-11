@@ -938,7 +938,10 @@ app.MapGet("/gw/runtime-gates", async () =>
             .Include("ObservedIngressProtocols")
             .Include("LastObservedModelPoolId")
             .Include("LastObservedModelPolicy")
-            .Include("LastObservedParameterPolicy")).ToListAsync();
+            .Include("LastObservedParameterPolicy")
+            .Include("ObservedModelPoolIds")
+            .Include("ObservedModelPolicies")
+            .Include("ObservedParameterPolicies")).ToListAsync();
 
     static HashSet<string> IdSet(IEnumerable<BsonDocument> docs) =>
         docs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
@@ -950,11 +953,19 @@ app.MapGet("/gw/runtime-gates", async () =>
         return string.Equals(status, "active", StringComparison.OrdinalIgnoreCase)
                || string.Equals(status, "configured", StringComparison.OrdinalIgnoreCase);
     }
-    static bool HasObservedFieldDrift(BsonDocument d, string configuredField, string observedField)
+    static bool HasObservedFieldDrift(BsonDocument d, string configuredField, string observedField, string observedValuesField)
     {
+        var configured = d.AsNullableString(configuredField) ?? string.Empty;
+        if (d.TryGetValue(observedValuesField, out var values) && values.IsBsonArray)
+        {
+            var observedValues = values.AsBsonArray
+                .Where(x => x.IsString && !string.IsNullOrWhiteSpace(x.AsString))
+                .Select(x => x.AsString)
+                .ToHashSet(StringComparer.Ordinal);
+            if (observedValues.Count > 0) return !observedValues.Contains(configured);
+        }
         var observed = d.AsNullableString(observedField);
         if (string.IsNullOrWhiteSpace(observed)) return false;
-        var configured = d.AsNullableString(configuredField) ?? string.Empty;
         return !string.Equals(configured, observed, StringComparison.Ordinal);
     }
     static bool HasUsablePoolMember(BsonDocument pool, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
@@ -1015,10 +1026,10 @@ app.MapGet("/gw/runtime-gates", async () =>
         string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var governedAppCallers = appCallerDocs.Where(IsGovernedAppCaller).ToList();
     var appCallerRouteDrift = governedAppCallers.Count(d =>
-        HasObservedFieldDrift(d, "ModelPolicy", "LastObservedModelPolicy")
-        || HasObservedFieldDrift(d, "ModelPoolId", "LastObservedModelPoolId"));
+        HasObservedFieldDrift(d, "ModelPolicy", "LastObservedModelPolicy", "ObservedModelPolicies")
+        || HasObservedFieldDrift(d, "ModelPoolId", "LastObservedModelPoolId", "ObservedModelPoolIds"));
     var appCallerParameterDrift = governedAppCallers.Count(d =>
-        HasObservedFieldDrift(d, "ParameterPolicy", "LastObservedParameterPolicy"));
+        HasObservedFieldDrift(d, "ParameterPolicy", "LastObservedParameterPolicy", "ObservedParameterPolicies"));
     var enabledGwPlatformIds = gwPlatformDocs
         .Where(d => d.AsNullableBool("Enabled") ?? true)
         .Select(d => d.GetStringOrEmpty("_id"))
@@ -5252,6 +5263,9 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     LastObservedModelPoolId = d.AsNullableString("LastObservedModelPoolId"),
     LastObservedModelPolicy = d.AsNullableString("LastObservedModelPolicy"),
     LastObservedParameterPolicy = d.AsNullableString("LastObservedParameterPolicy"),
+    ObservedModelPoolIds = GetStringArray(d, "ObservedModelPoolIds"),
+    ObservedModelPolicies = GetStringArray(d, "ObservedModelPolicies"),
+    ObservedParameterPolicies = GetStringArray(d, "ObservedParameterPolicies"),
     LastObservedRequestId = d.AsNullableString("LastObservedRequestId"),
     LastObservedSessionId = d.AsNullableString("LastObservedSessionId"),
     LastObservedRunId = d.AsNullableString("LastObservedRunId"),
@@ -5272,9 +5286,9 @@ static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
     var normalized = drift?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(normalized)) return null;
 
-    var routePolicy = BuildFieldDriftExpr("ModelPolicy", "LastObservedModelPolicy");
-    var routePool = BuildFieldDriftExpr("ModelPoolId", "LastObservedModelPoolId");
-    var parameter = BuildFieldDriftExpr("ParameterPolicy", "LastObservedParameterPolicy");
+    var routePolicy = BuildFieldDriftExpr("ModelPolicy", "LastObservedModelPolicy", "ObservedModelPolicies");
+    var routePool = BuildFieldDriftExpr("ModelPoolId", "LastObservedModelPoolId", "ObservedModelPoolIds");
+    var parameter = BuildFieldDriftExpr("ParameterPolicy", "LastObservedParameterPolicy", "ObservedParameterPolicies");
 
     return normalized switch
     {
@@ -5465,15 +5479,31 @@ static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
                       || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
 }
 
-static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField)
+static BsonDocument BuildFieldDriftExpr(string configuredField, string observedField, string observedValuesField)
 {
     var observed = new BsonDocument("$ifNull", new BsonArray { $"${observedField}", "" });
     var configured = new BsonDocument("$ifNull", new BsonArray { $"${configuredField}", "" });
-    return new BsonDocument("$and", new BsonArray
+    var observedValues = new BsonDocument("$ifNull", new BsonArray { $"${observedValuesField}", new BsonArray() });
+    return new BsonDocument("$cond", new BsonArray
     {
-        new BsonDocument("$ne", new BsonArray { observed, "" }),
-        new BsonDocument("$ne", new BsonArray { configured, observed }),
+        new BsonDocument("$gt", new BsonArray { new BsonDocument("$size", observedValues), 0 }),
+        new BsonDocument("$not", new BsonArray { new BsonDocument("$in", new BsonArray { configured, observedValues }) }),
+        new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$ne", new BsonArray { observed, "" }),
+            new BsonDocument("$ne", new BsonArray { configured, observed }),
+        }),
     });
+}
+
+static List<string> GetStringArray(BsonDocument d, string field)
+{
+    if (!d.TryGetValue(field, out var value) || !value.IsBsonArray) return new List<string>();
+    return value.AsBsonArray
+        .Where(x => x.IsString && !string.IsNullOrWhiteSpace(x.AsString))
+        .Select(x => x.AsString)
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)
