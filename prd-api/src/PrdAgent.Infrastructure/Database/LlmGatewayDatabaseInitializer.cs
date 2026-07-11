@@ -110,6 +110,18 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Descending("CreatedAt").Ascending("Action"),
                 new CreateIndexOptions { Name = "idx_llmgw_audit_time_action" }),
         }, ct);
+        await CreateBsonIndexesAsync("llmgw_login_audits", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Descending("CreatedAt").Ascending("Success"),
+                new CreateIndexOptions { Name = "idx_llmgw_login_audit_time_success" }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_lifecycle_runs", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Descending("StartedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_lifecycle_started" }),
+        }, ct);
         await CreateBsonIndexesAsync("llmgw_app_caller_rate_windows", new[]
         {
             new CreateIndexModel<BsonDocument>(
@@ -184,37 +196,62 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 new CreateIndexOptions { Name = "ttl_llmgw_provider_concurrency_slot", ExpireAfter = TimeSpan.Zero }),
         }, cancellationToken: ct);
 
-        if (_configuration.GetValue("LlmGateway:Retention:EnableTtlIndexes", false))
-        {
-            await EnsureRetentionTtlIndexesAsync(logs, shadows, ct);
-        }
-        else
-        {
-            _logger.LogWarning("[LlmGatewayData] TTL 删除索引未启用；先运行生命周期 dry-run，再设置 LlmGateway:Retention:EnableTtlIndexes=true");
-        }
+        _logger.LogInformation("[LlmGatewayData] 非破坏性治理索引已就绪；TTL 索引由 lifecycle worker 在持久化 dry-run 后启用");
     }
 
-    private async Task EnsureRetentionTtlIndexesAsync(
-        IMongoCollection<BsonDocument> logs,
-        IMongoCollection<BsonDocument> shadows,
-        CancellationToken ct)
+    public async Task EnsureRetentionTtlIndexesAsync(CancellationToken ct)
     {
+        if (!_configuration.GetValue("LlmGateway:Retention:EnableTtlIndexes", false))
+        {
+            _logger.LogWarning("[LlmGatewayData] TTL 删除索引未启用；lifecycle 保持 dry-run");
+            return;
+        }
         var logDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:RequestLogDays", 90));
         var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
-        var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:OperationAuditDays", 365));
-        await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-            Builders<BsonDocument>.IndexKeys.Ascending("StartedAt"),
-            new CreateIndexOptions { Name = "ttl_llmgw_logs_started", ExpireAfter = TimeSpan.FromDays(logDays) }), cancellationToken: ct);
-        await shadows.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-            Builders<BsonDocument>.IndexKeys.Ascending("ComparedAt"),
-            new CreateIndexOptions { Name = "ttl_llmgw_shadow_compared", ExpireAfter = TimeSpan.FromDays(shadowDays) }), cancellationToken: ct);
-        await CreateBsonIndexesAsync("llmgw_operation_audits", new[]
-        {
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys.Ascending("CreatedAt"),
-                new CreateIndexOptions { Name = "ttl_llmgw_operation_audits", ExpireAfter = TimeSpan.FromDays(auditDays) }),
-        }, ct);
+        var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
+        await EnsureTtlIndexAsync("llmrequestlogs", "StartedAt", "ttl_llmgw_logs_started", TimeSpan.FromDays(logDays), ct);
+        await EnsureTtlIndexAsync("llmshadow_comparisons", "ComparedAt", "ttl_llmgw_shadow_compared", TimeSpan.FromDays(shadowDays), ct);
+        await EnsureTtlIndexAsync("llmgw_operation_audits", "CreatedAt", "ttl_llmgw_operation_audits", TimeSpan.FromDays(auditDays), ct);
+        await EnsureTtlIndexAsync("llmgw_login_audits", "CreatedAt", "ttl_llmgw_login_audits", TimeSpan.FromDays(auditDays), ct);
+        await EnsureTtlIndexAsync("llmgw_lifecycle_runs", "StartedAt", "ttl_llmgw_lifecycle_runs", TimeSpan.FromDays(auditDays), ct);
         _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d shadow={ShadowDays}d audit={AuditDays}d", logDays, shadowDays, auditDays);
+    }
+
+    private async Task EnsureTtlIndexAsync(
+        string collectionName,
+        string fieldName,
+        string indexName,
+        TimeSpan expiry,
+        CancellationToken ct)
+    {
+        var collection = _data.Database.GetCollection<BsonDocument>(collectionName);
+        var existing = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
+        var current = existing.FirstOrDefault(x => x.GetValue("name", "").AsString == indexName);
+        var seconds = (long)expiry.TotalSeconds;
+        if (current is not null && current.TryGetValue("expireAfterSeconds", out var value) && value.ToInt64() == seconds)
+            return;
+
+        if (current is not null)
+        {
+            try
+            {
+                await _data.Database.RunCommandAsync<BsonDocument>(new BsonDocument
+                {
+                    { "collMod", collectionName },
+                    { "index", new BsonDocument { { "name", indexName }, { "expireAfterSeconds", seconds } } },
+                }, cancellationToken: ct);
+                return;
+            }
+            catch (MongoCommandException ex)
+            {
+                _logger.LogWarning(ex, "[LlmGatewayData] collMod TTL 失败，重建索引 collection={Collection} index={Index}", collectionName, indexName);
+                await collection.Indexes.DropOneAsync(indexName, ct);
+            }
+        }
+
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending(fieldName),
+            new CreateIndexOptions { Name = indexName, ExpireAfter = expiry }), cancellationToken: ct);
     }
 
     private async Task CreateBsonIndexesAsync(
