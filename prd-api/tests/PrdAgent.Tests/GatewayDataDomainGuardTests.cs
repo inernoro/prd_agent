@@ -23,14 +23,21 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void Serving_LogWriter_UsesGatewayDataContext_WhileResolverKeepsMapContext()
+    public void Serving_RuntimeData_UsesGatewayContext_WhileResolverKeepsOptionalMapFallbackContext()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
 
         Assert.Contains("builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));", program);
-        Assert.Contains("builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConn, gatewayDb));", program);
+        Assert.Contains("builder.Services.AddSingleton(new LlmGatewayDataContext(gatewayMongoConn, gatewayDb));", program);
+        Assert.Contains("builder.Configuration[\"LlmGateway:MongoConnectionString\"]", program);
         Assert.Contains("new LlmRequestLogBackground(\n        sp.GetRequiredService<LlmGatewayDataContext>().Context", program);
         Assert.Contains("new LlmRequestLogWriter(\n        sp.GetRequiredService<LlmGatewayDataContext>().Context", program);
+        Assert.Contains("new GatewayAppSettingsService(", program);
+        Assert.Contains("AddHostedService<GatewayRuntimeSettingsInitializer>()", program);
+        Assert.Contains("sp.GetRequiredService<LlmGatewayDataContext>().Context,\n        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>>()", program);
+        Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
+        Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
+        Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
         Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
     }
 
@@ -113,6 +120,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("FindGatewayOwnedDefaultModelPoolsAsync", modelResolver);
         Assert.Contains("gatewayRegistry.TrafficRejected", modelResolver);
         Assert.Contains("DisableMapConfigFallbackForRegisteredAppCallers", modelResolver);
+        Assert.Contains("if (!gatewayConfigRequired)", modelResolver);
+        Assert.True(
+            modelResolver.IndexOf("if (!gatewayConfigRequired)", StringComparison.Ordinal)
+            < modelResolver.IndexOf("_db.LLMAppCallers", StringComparison.Ordinal),
+            "GW-only 模式必须在任何 MAP appCaller 查询前短路");
         Assert.True(
             modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal)
             < modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal),
@@ -1617,7 +1629,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
-        Assert.Contains("map-mongo", readiness);
+        Assert.DoesNotContain("map-mongo", readiness);
         Assert.Contains("gateway-mongo", readiness);
         Assert.Contains("asset-storage", readiness);
         Assert.Contains("key-integrity", readiness);

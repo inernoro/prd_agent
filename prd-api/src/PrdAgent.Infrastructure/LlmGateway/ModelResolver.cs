@@ -45,15 +45,11 @@ public class ModelResolver : IModelResolver
             ExpectedModel = expectedModel
         };
 
-        // ========== 第一步：查找 AppCaller 配置（必须已注册） ==========
-        var appCaller = await _db.LLMAppCallers
-            .Find(a => a.AppCode == appCallerCode)
-            .FirstOrDefaultAsync(ct);
-
         List<ModelGroup>? candidateGroups = null;
         var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
 
+        var gatewayConfigRequired = DisableMapConfigFallbackForRegisteredAppCallers();
         var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
         if (gatewayRegistry.TrafficRejected)
         {
@@ -67,7 +63,15 @@ public class ModelResolver : IModelResolver
                 $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
         }
 
-        var gatewayConfigRequired = DisableMapConfigFallbackForRegisteredAppCallers();
+        // MAP appCaller 只属于兼容 fallback。配置权威开启后不触碰 MAP 配置集合，
+        // 因此 MAP 配置域故障不会阻断 GW-owned 路由。
+        LLMAppCaller? appCaller = null;
+        if (!gatewayConfigRequired)
+        {
+            appCaller = await _db.LLMAppCallers
+                .Find(a => a.AppCode == appCallerCode)
+                .FirstOrDefaultAsync(ct);
+        }
 
         // pinned 是显式精确模型语义，先于 appCaller 默认池解析；但配置权威开启时仍只允许 GW-owned 平台/模型。
         var pinned = await TryResolvePinnedModelAsync(
