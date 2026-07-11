@@ -372,18 +372,21 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
         return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码错误"), jsonOptions);
     }
 
-    var tenantId = !string.IsNullOrWhiteSpace(user.DefaultTenantId)
-        ? user.DefaultTenantId
-        : user.TenantIds.FirstOrDefault();
-    var membership = string.IsNullOrWhiteSpace(tenantId)
-        ? null
-        : await memberships.Find(x => x.TenantId == tenantId && x.UserId == user.Id && x.Status == "active").FirstOrDefaultAsync();
-    var tenant = membership is null
-        ? null
-        : await tenants.Find(x => x.Id == membership.TenantId && x.Status == "active").FirstOrDefaultAsync();
+    var activeMemberships = await memberships.Find(x => x.UserId == user.Id && x.Status == "active").ToListAsync();
+    var activeTenantIds = activeMemberships.Select(x => x.TenantId).Distinct(StringComparer.Ordinal).ToList();
+    var activeTenants = activeTenantIds.Count == 0
+        ? new List<LlmGwTenant>()
+        : await tenants.Find(x => activeTenantIds.Contains(x.Id) && x.Status == "active").ToListAsync();
+    var activeTenantById = activeTenants.ToDictionary(x => x.Id, StringComparer.Ordinal);
+    var membership = activeMemberships
+        .Where(x => activeTenantById.ContainsKey(x.TenantId) && LlmGwTenantRoles.All.Contains(x.Role))
+        .OrderByDescending(x => x.TenantId == user.DefaultTenantId)
+        .ThenBy(x => x.CreatedAt)
+        .FirstOrDefault();
+    var tenant = membership is null ? null : activeTenantById.GetValueOrDefault(membership.TenantId);
     if (tenant is null || membership is null || !LlmGwTenantRoles.All.Contains(membership.Role))
     {
-        await WriteLoginAuditAsync(loginAudits, http, tenantId ?? internalTenantId, username, user.Id, false, "TENANT_MEMBERSHIP_MISSING");
+        await WriteLoginAuditAsync(loginAudits, http, user.DefaultTenantId ?? internalTenantId, username, user.Id, false, "TENANT_MEMBERSHIP_MISSING");
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "账号没有可用的租户成员关系"), jsonOptions, 403);
     }
 
