@@ -26,6 +26,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/profile':                 { level: 'full' },
   '/notifications':           { level: 'full' },
   '/my-assets':               { level: 'full' },
+  '/document-store':          { level: 'full', note: '阅读/管理正常，长文编辑建议 PC' },
   '/ai-toolbox':              { level: 'full' },
   // 注：/prd-agent Web 端已下线，不参与移动兼容性矩阵
   '/defect-agent':            { level: 'full' },
@@ -53,6 +54,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/team-activity':           { level: 'limited', note: '行为洞察图表较宽，横屏查看更佳' },
   '/review-agent':            { level: 'limited' },
   '/pr-review':               { level: 'limited', note: 'diff 阅读较挤，建议 PC' },
+  '/md-to-ppt-agent':         { level: 'limited', note: '生成与预览可用，深度编辑建议 PC' },
   '/lab':                     { level: 'limited' },
 
   // ── PC 专属：画布 / 拖拽 / 大屏复杂交互 ──
