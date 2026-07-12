@@ -1151,6 +1151,45 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task ResolveAndPools_UseVerifiedScopedKeyTenant()
+    {
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
+        await app.StartAsync();
+        try
+        {
+            var resolve = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/resolve")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "external.resolve::chat",
+                    ModelType = "chat",
+                }),
+            };
+            resolve.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            var resolveResponse = await app.GetTestClient().SendAsync(resolve);
+
+            resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastResolveTenantId.ShouldBe("tenant-test");
+
+            var pools = new HttpRequestMessage(
+                HttpMethod.Get,
+                "/gw/v1/pools?appCallerCode=external.resolve%3A%3Achat&modelType=chat");
+            pools.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            var poolsResponse = await app.GetTestClient().SendAsync(pools);
+
+            poolsResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastPoolsTenantId.ShouldBe("tenant-test");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiImagesCompatibleEndpoint_PreservesPinnedTargetProviderMetadata()
     {
         var gateway = new EchoingGateway();
@@ -2352,6 +2391,7 @@ public class GatewayKeyGateContractTests
         public GatewayRawRequest? LastRawRequest { get; private set; }
         public string? LastResolveTenantId { get; private set; }
         public string? LastCreateClientTenantId { get; private set; }
+        public string? LastPoolsTenantId { get; private set; }
         public string? LastResolveExpectedModel { get; private set; }
         public string? LastResolvePinnedPlatformId { get; private set; }
         public string? LastResolvePinnedModelId { get; private set; }
@@ -2477,7 +2517,11 @@ public class GatewayKeyGateContractTests
             return Task.FromResult(Resolve(expectedModel));
         }
 
-        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+        {
+            LastPoolsTenantId = _contextAccessor?.Current?.TenantId;
+            return Task.FromResult(new List<AvailableModelPool>());
+        }
 
         public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
         {

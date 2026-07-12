@@ -668,8 +668,10 @@ public static class GatewayHttpEndpoints
 
         // 预解析模型调度结果（不发送请求）。
         app.MapPost("/gw/v1/resolve", async (
+            HttpContext http,
             ResolveRequestDto body,
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var resolveModelPolicy = NormalizeModelPolicy(body.ModelPolicy)
@@ -679,7 +681,7 @@ public static class GatewayHttpEndpoints
                                          && !string.IsNullOrWhiteSpace(resolveModelPoolId)
                 ? resolveModelPoolId
                 : body.ExpectedModel;
-            await RecordDiscoveredAppCallerAsync(services, new GatewayIngressRequest
+            var ingress = new GatewayIngressRequest
             {
                 RequestId = Guid.NewGuid().ToString("N"),
                 SourceSystem = "map",
@@ -694,7 +696,15 @@ public static class GatewayHttpEndpoints
                 ExpectedModel = effectiveExpectedModel,
                 PinnedPlatformId = body.PinnedPlatformId,
                 PinnedModelId = body.PinnedModelId,
-            }, CancellationToken.None);
+                Context = new GatewayRequestContext
+                {
+                    TenantId = GetVerifiedTenantId(http),
+                    TeamId = GetVerifiedTeamId(http),
+                    GatewayTransport = GatewayTransports.Http,
+                },
+            };
+            await RecordDiscoveredAppCallerAsync(services, ingress, CancellationToken.None);
+            using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
             var resolution = await gateway.ResolveModelAsync(
                 body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
             return Results.Json(resolution, jsonOpts);
@@ -1027,10 +1037,18 @@ public static class GatewayHttpEndpoints
 
         // 可用模型池列表。
         app.MapGet("/gw/v1/pools", async (
+            HttpContext http,
             string appCallerCode,
             string modelType,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway) =>
+            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor) =>
         {
+            using var _ = OpenContextScope(accessor, new GatewayRequestContext
+            {
+                TenantId = GetVerifiedTenantId(http),
+                TeamId = GetVerifiedTeamId(http),
+                GatewayTransport = GatewayTransports.Http,
+            }, modelType, appCallerCode);
             var pools = await gateway.GetAvailablePoolsAsync(appCallerCode, modelType, CancellationToken.None);
             return Results.Json(pools, jsonOpts);
         });
@@ -1221,6 +1239,11 @@ public static class GatewayHttpEndpoints
         => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization { TenantId.Length: > 0 } authorization
             ? authorization.TenantId
             : throw new UnauthorizedAccessException("verified tenant context is unavailable");
+
+    private static string? GetVerifiedTeamId(HttpContext context)
+        => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
+            ? authorization.TeamId
+            : null;
 
     private static string ResolveIngressProtocol(string path)
     {
