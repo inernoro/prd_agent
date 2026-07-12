@@ -41,6 +41,9 @@ echo "  database: $mongo_db"
 echo "  dryRun: $dry_run"
 echo "  modelName: ${LLMGW_CHAT_BOOTSTRAP_MODEL_NAME:-deepseek-ai/DeepSeek-V4-Flash}"
 echo "  platformId: ${LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID:-auto}"
+echo "  poolCode: ${LLMGW_CHAT_BOOTSTRAP_POOL_CODE:-report-agent-weekly}"
+echo "  poolName: ${LLMGW_CHAT_BOOTSTRAP_POOL_NAME:-周报生成专属池}"
+echo "  isolatePool: ${LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL:-1}"
 echo "  targetCallers: ${LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS:-report-agent.generate::chat}"
 echo "  backupDir: $backup_dir"
 
@@ -62,6 +65,9 @@ $COMPOSE -f "$compose_file" exec -T \
   -e LLMGW_CHAT_BOOTSTRAP_MODEL_NAME="${LLMGW_CHAT_BOOTSTRAP_MODEL_NAME:-deepseek-ai/DeepSeek-V4-Flash}" \
   -e LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID="${LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID:-}" \
   -e LLMGW_CHAT_BOOTSTRAP_POOL_ID="${LLMGW_CHAT_BOOTSTRAP_POOL_ID:-}" \
+  -e LLMGW_CHAT_BOOTSTRAP_POOL_CODE="${LLMGW_CHAT_BOOTSTRAP_POOL_CODE:-report-agent-weekly}" \
+  -e LLMGW_CHAT_BOOTSTRAP_POOL_NAME="${LLMGW_CHAT_BOOTSTRAP_POOL_NAME:-周报生成专属池}" \
+  -e LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL="${LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL:-1}" \
   -e LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS="${LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS:-report-agent.generate::chat}" \
   -e LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS="${LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS:-1}" \
   -e LLMGW_CHAT_BOOTSTRAP_PRIORITY="${LLMGW_CHAT_BOOTSTRAP_PRIORITY:-1}" \

@@ -1133,6 +1133,21 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ReportAgentChatBootstrap_UsesIsolatedDedicatedPoolByDefault()
+    {
+        var shell = ReadRepoFile("scripts/llmgw-prod-chat-pool-bootstrap.sh");
+        var script = ReadRepoFile("scripts/llmgw-prod-chat-pool-bootstrap.js");
+
+        Assert.Contains("LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL:-1", shell);
+        Assert.Contains("LLMGW_CHAT_BOOTSTRAP_POOL_CODE:-report-agent-weekly", shell);
+        Assert.Contains("const nextModels = isolatePool ? [modelItem]", script);
+        Assert.Contains("ModelGroupIds: isolatePool ? [pool._id]", script);
+        Assert.Contains("isolated bootstrap refuses pool with Code=", script);
+        Assert.Contains("IsDefaultForType: false", script);
+        Assert.DoesNotContain("const defaultPool = db.model_groups.findOne", script);
+    }
+
+    [Fact]
     public void ProdStageRunner_SequencesShadowCanaryHttpAndRollbackWithoutKeyCli()
     {
         var script = ReadRepoFile("scripts/llmgw-prod-stage.sh");

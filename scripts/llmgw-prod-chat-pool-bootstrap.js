@@ -12,10 +12,14 @@ const dryRun = !(dryRunRaw === "0" || dryRunRaw === "false");
 const modelName = process.env.LLMGW_CHAT_BOOTSTRAP_MODEL_NAME || "deepseek-ai/DeepSeek-V4-Flash";
 const requestedPlatformId = (process.env.LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID || "").trim();
 const requestedPoolId = (process.env.LLMGW_CHAT_BOOTSTRAP_POOL_ID || "").trim();
+const requestedPoolCode = (process.env.LLMGW_CHAT_BOOTSTRAP_POOL_CODE || "report-agent-weekly").trim();
+const requestedPoolName = (process.env.LLMGW_CHAT_BOOTSTRAP_POOL_NAME || "周报生成专属池").trim();
 const targetCallersRaw = process.env.LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS || "report-agent.generate::chat";
 const targetCallers = targetCallersRaw.split(/[,\s]+/).map((x) => x.trim()).filter((x) => x.length > 0);
 const bindCallersRaw = (process.env.LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS || "1").toLowerCase();
 const bindCallers = !(bindCallersRaw === "0" || bindCallersRaw === "false");
+const isolatePoolRaw = (process.env.LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL || "1").toLowerCase();
+const isolatePool = !(isolatePoolRaw === "0" || isolatePoolRaw === "false");
 const requestedPriority = Number.parseInt(process.env.LLMGW_CHAT_BOOTSTRAP_PRIORITY || "1", 10);
 const priority = Number.isFinite(requestedPriority) && requestedPriority > 0 ? requestedPriority : 1;
 
@@ -33,10 +37,6 @@ function uniq(values) {
     out.push(value);
   }
   return out;
-}
-
-function requirementFor(caller, modelType) {
-  return (caller.ModelRequirements || []).find((req) => String(req.ModelType || "").toLowerCase() === modelType);
 }
 
 function modelSortValue(model) {
@@ -74,31 +74,33 @@ if (missingCallers.length > 0) {
   fail(`chat appCallers missing: ${missingCallers.join(", ")}`);
 }
 
-let poolId = requestedPoolId;
-if (!poolId) {
-  for (const code of targetCallers) {
-    const caller = db.llm_app_callers.findOne({ AppCode: code });
-    const req = requirementFor(caller, "chat");
-    const ids = uniq([req && req.ModelGroupId, ...((req && req.ModelGroupIds) || [])]);
-    if (ids.length > 0) {
-      poolId = ids[0];
-      break;
-    }
+let pool = null;
+let poolWillBeCreated = false;
+if (requestedPoolId) {
+  pool = db.model_groups.findOne({ _id: requestedPoolId, ModelType: "chat" });
+  if (!pool) fail(`target chat pool missing or not chat: ${requestedPoolId}`);
+  if (isolatePool && String(pool.Code || "") !== requestedPoolCode) {
+    fail(`isolated bootstrap refuses pool with Code=${pool.Code || "<empty>"}; expected ${requestedPoolCode}`);
   }
-}
-
-if (!poolId) {
-  const defaultPool = db.model_groups.findOne({ ModelType: "chat", IsDefaultForType: true }, { sort: { Priority: 1 } });
-  if (defaultPool) poolId = defaultPool._id;
-}
-
-if (!poolId) {
-  fail("no target chat pool found; set LLMGW_CHAT_BOOTSTRAP_POOL_ID");
-}
-
-const pool = db.model_groups.findOne({ _id: poolId, ModelType: "chat" });
-if (!pool) {
-  fail(`target chat pool missing or not chat: ${poolId}`);
+} else {
+  pool = db.model_groups.findOne({ Code: requestedPoolCode, ModelType: "chat" });
+  if (!pool) {
+    const now = new Date();
+    pool = {
+      _id: new ObjectId().toString(),
+      Name: requestedPoolName,
+      Code: requestedPoolCode,
+      Priority: 10,
+      ModelType: "chat",
+      IsDefaultForType: false,
+      Models: [],
+      StrategyType: 0,
+      Description: "周报草稿生成专用；模型不可用时失败，不允许漂移到通用大池",
+      CreatedAt: now,
+      UpdatedAt: now,
+    };
+    poolWillBeCreated = true;
+  }
 }
 
 const modelItem = {
@@ -120,13 +122,16 @@ const modelItem = {
 
 const planned = {
   dryRun,
-  poolId,
+  poolId: pool._id,
   poolName: pool.Name,
+  poolCode: pool.Code,
+  poolWillBeCreated,
   modelName,
   platformId: selectedPlatform._id,
   platformName: selectedPlatform.Name,
   priority,
   bindCallers,
+  isolatePool,
   targetCallers,
 };
 printjson(planned);
@@ -137,11 +142,14 @@ if (dryRun) {
 }
 
 const now = new Date();
+if (poolWillBeCreated) {
+  db.model_groups.insertOne(pool);
+}
 const existingModels = pool.Models || [];
 const remainingModels = existingModels.filter((item) => {
   return !(String(item.ModelId || "") === modelName && String(item.PlatformId || "") === String(selectedPlatform._id));
 });
-const nextModels = [modelItem, ...remainingModels];
+const nextModels = isolatePool ? [modelItem] : [modelItem, ...remainingModels];
 
 db.model_groups.updateOne(
   { _id: pool._id },
@@ -163,8 +171,8 @@ if (bindCallers) {
       found = true;
       return {
         ...req,
-        ModelGroupIds: uniq([pool._id, ...(req.ModelGroupIds || [])]),
-        ModelGroupId: req.ModelGroupId || pool._id,
+        ModelGroupIds: isolatePool ? [pool._id] : uniq([pool._id, ...(req.ModelGroupIds || [])]),
+        ModelGroupId: pool._id,
         IsRequired: req.IsRequired !== false,
       };
     });
