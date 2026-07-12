@@ -333,11 +333,11 @@ public static class GatewayHttpEndpoints
                 return;
 
             var rawRequest = ToOpenAiImageRawRequest(ingress);
-            using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
             await ExecuteRawWithIdempotencyAsync(
                 http,
                 services,
                 gateway,
+                accessor,
                 ingress,
                 rawRequest,
                 requestId,
@@ -404,11 +404,11 @@ public static class GatewayHttpEndpoints
                 "/v1/images/edits",
                 multipartFields,
                 parsed.MultipartFiles);
-            using var _ = OpenContextScope(accessor, rawRequest.Context, rawRequest.ModelType, rawRequest.AppCallerCode);
             await ExecuteRawWithIdempotencyAsync(
                 http,
                 services,
                 gateway,
+                accessor,
                 ingress,
                 rawRequest,
                 requestId,
@@ -1073,7 +1073,7 @@ public static class GatewayHttpEndpoints
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
-            using var _ = OpenContextScope(accessor, body.Context, body.ModelType, body.AppCallerCode);
+            using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
             var clientExpectedModel = string.Equals(NormalizeModelPolicy(body.Context?.ModelPolicy), "pool", StringComparison.OrdinalIgnoreCase)
                                       && !string.IsNullOrWhiteSpace(body.Context?.ModelPoolId)
                 ? body.Context.ModelPoolId
@@ -2809,6 +2809,7 @@ public static class GatewayHttpEndpoints
         HttpContext http,
         IServiceProvider services,
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        ILLMRequestContextAccessor accessor,
         GatewayIngressRequest ingress,
         GatewayRawRequest request,
         string requestId,
@@ -2856,6 +2857,7 @@ public static class GatewayHttpEndpoints
         }
 
         request = ApplyIngressRouting(request, ingress);
+        using var _ = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
 
         await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async ct =>
         {
