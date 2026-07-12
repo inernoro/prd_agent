@@ -2124,6 +2124,23 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ModelResolver_AvailablePoolsFailClosedBeforeMapFallbackForExternalTenants()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var methodStart = resolver.IndexOf("public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync", StringComparison.Ordinal);
+        var mapFallback = resolver.IndexOf("var appCaller = await _db.LLMAppCallers", methodStart, StringComparison.Ordinal);
+        var externalTenantGuard = resolver.IndexOf(
+            "if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))",
+            methodStart,
+            StringComparison.Ordinal);
+
+        Assert.True(methodStart >= 0 && mapFallback > methodStart, "找不到 available-pools MAP fallback");
+        Assert.True(
+            externalTenantGuard > methodStart && externalTenantGuard < mapFallback,
+            "外部租户必须在读取 MAP LLMAppCallers/ModelGroups 前 fail closed");
+    }
+
+    [Fact]
     public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()
     {
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");

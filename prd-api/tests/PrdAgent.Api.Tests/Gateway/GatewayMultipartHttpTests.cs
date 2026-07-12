@@ -12,7 +12,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.LlmGatewayHost;
@@ -152,6 +155,95 @@ public class GatewayMultipartHttpTests
     }
 
     [Fact]
+    public async Task ScopedRawEndpoint_RejectsMultipartRefOwnedByAnotherTenantBeforeDownload()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var bytes = Encoding.UTF8.GetBytes("tenant-b-secret-image");
+        const string key = "llmgw/multipart/tenant-b/image.png";
+        var storage = new MemoryAssetStorage();
+        await storage.UploadToKeyAsync(key, bytes, "image/png", CancellationToken.None);
+        await scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+            .InsertOneAsync(new GatewayMultipartObjectRecord
+            {
+                TenantId = "tenant-b",
+                RefKey = key,
+                Sha256 = Sha256Hex(bytes),
+                SizeBytes = bytes.LongLength,
+                Status = "uploaded",
+            });
+        var gateway = new CapturingGateway();
+
+        await using var app = BuildHost(
+            storage,
+            gateway,
+            scope.Context,
+            new StaticTenantKeyAuthorizer("tenant-a"));
+        await app.StartAsync();
+        try
+        {
+            HttpRequestMessage CreateRequest()
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
+                {
+                    Content = JsonContent.Create(new GatewayRawRequest
+                    {
+                        AppCallerCode = "tenant-a.app::vision",
+                        ModelType = "vision",
+                        IsMultipart = true,
+                        MultipartFileRefs = new Dictionary<string, MultipartFileRef>
+                        {
+                            ["image"] = new()
+                            {
+                                RefKey = key,
+                                FileName = "image.png",
+                                MimeType = "image/png",
+                                SizeBytes = bytes.LongLength,
+                                Sha256 = Sha256Hex(bytes),
+                            },
+                        },
+                    }, options: PascalJson),
+                };
+                request.Headers.Add("X-Gateway-Key", "tenant-a-scoped-key");
+                return request;
+            }
+
+            using var crossTenantRequest = CreateRequest();
+            var response = await app.GetTestClient().SendAsync(crossTenantRequest);
+            var raw = JsonSerializer.Deserialize<GatewayRawResponse>(
+                await response.Content.ReadAsStringAsync(),
+                PascalJson);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+            raw.ShouldNotBeNull();
+            raw!.ErrorCode.ShouldBe("MULTIPART_REF_NOT_FOUND");
+            storage.DownloadCount.ShouldBe(0);
+            gateway.CapturedRaw.ShouldBeNull();
+
+            await scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+                .InsertOneAsync(new GatewayMultipartObjectRecord
+                {
+                    TenantId = "tenant-a",
+                    RefKey = key,
+                    Sha256 = Sha256Hex(bytes),
+                    SizeBytes = bytes.LongLength,
+                    Status = "uploaded",
+                });
+            using var ownTenantRequest = CreateRequest();
+            var ownTenantResponse = await app.GetTestClient().SendAsync(ownTenantRequest);
+
+            ownTenantResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            storage.DownloadCount.ShouldBe(1);
+            gateway.CapturedRaw.ShouldNotBeNull();
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task RawEndpoint_RejectsMultipartRefHashMismatch()
     {
         var bytes = Encoding.UTF8.GetBytes("real-bytes");
@@ -202,7 +294,11 @@ public class GatewayMultipartHttpTests
         }
     }
 
-    private static WebApplication BuildHost(MemoryAssetStorage storage, CapturingGateway gateway)
+    private static WebApplication BuildHost(
+        MemoryAssetStorage storage,
+        CapturingGateway gateway,
+        LlmGatewayDataContext? data = null,
+        IGatewayScopedKeyAuthorizer? keyAuthorizer = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -211,6 +307,8 @@ public class GatewayMultipartHttpTests
         builder.Services.AddSingleton<IAssetStorage>(storage);
         builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        if (data is not null) builder.Services.AddSingleton(data);
+        if (keyAuthorizer is not null) builder.Services.AddSingleton(keyAuthorizer);
 
         var app = builder.Build();
         app.MapGatewayServingEndpoints(PascalJson, GatewayKey, "multipart-http-test");
@@ -228,6 +326,28 @@ public class GatewayMultipartHttpTests
     {
         using var sha = SHA256.Create();
         return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+    }
+
+    private static async Task<TestDatabase?> TryCreateDatabaseAsync()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://localhost:27017";
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(2);
+        var client = new MongoClient(settings);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(
+                new BsonDocument("ping", 1),
+                cancellationToken: cts.Token);
+            var databaseName = $"llmgw_multipart_tenant_test_{Guid.NewGuid():N}";
+            return new TestDatabase(client, databaseName, new LlmGatewayDataContext(connectionString, databaseName));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed class CapturingHandler : HttpMessageHandler
@@ -258,6 +378,7 @@ public class GatewayMultipartHttpTests
     private sealed class MemoryAssetStorage : IAssetStorage
     {
         private readonly Dictionary<string, (byte[] Bytes, string? ContentType)> _objects = new(StringComparer.Ordinal);
+        public int DownloadCount { get; private set; }
 
         public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
         {
@@ -277,7 +398,10 @@ public class GatewayMultipartHttpTests
             => null;
 
         public Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
-            => Task.FromResult(_objects.TryGetValue(key, out var value) ? value.Bytes : null);
+        {
+            DownloadCount++;
+            return Task.FromResult(_objects.TryGetValue(key, out var value) ? value.Bytes : null);
+        }
 
         public Task<bool> ExistsAsync(string key, CancellationToken ct)
             => Task.FromResult(_objects.ContainsKey(key));
@@ -351,5 +475,46 @@ public class GatewayMultipartHttpTests
             ActualPlatformId = "platform",
             Protocol = "openai",
         };
+    }
+
+    private sealed class StaticTenantKeyAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        private readonly string _tenantId;
+
+        public StaticTenantKeyAuthorizer(string tenantId) => _tenantId = tenantId;
+
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(
+            string providedKey,
+            string legacySharedKey,
+            string sourceSystem,
+            string appCallerCode,
+            string ingressProtocol,
+            string requiredScope,
+            CancellationToken ct)
+            => Task.FromResult(new GatewayKeyAuthorization(
+                true,
+                true,
+                200,
+                string.Empty,
+                "allowed",
+                "tenant-key",
+                _tenantId));
+    }
+
+    private sealed class TestDatabase : IAsyncDisposable
+    {
+        private readonly MongoClient _client;
+        private readonly string _databaseName;
+
+        public TestDatabase(MongoClient client, string databaseName, LlmGatewayDataContext context)
+        {
+            _client = client;
+            _databaseName = databaseName;
+            Context = context;
+        }
+
+        public LlmGatewayDataContext Context { get; }
+
+        public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
     }
 }

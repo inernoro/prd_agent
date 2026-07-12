@@ -908,7 +908,14 @@ public static class GatewayHttpEndpoints
             {
                 cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
                 var token = cancellation?.Token ?? CancellationToken.None;
-                var rehydrated = await RehydrateMultipartFileRefsAsync(request, services.GetService<IAssetStorage>(), token);
+                var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
+                var rehydrated = await RehydrateMultipartFileRefsAsync(
+                    request,
+                    services.GetService<IAssetStorage>(),
+                    services.GetService<LlmGatewayDataContext>(),
+                    GetVerifiedTenantId(http),
+                    requireTenantManifest: authorization is { LegacySharedKey: false },
+                    token);
                 if (!rehydrated.Success)
                 {
                     if (executionStore is not null && execution is not null)
@@ -4298,6 +4305,9 @@ public static class GatewayHttpEndpoints
     private static async Task<RehydrateResult> RehydrateMultipartFileRefsAsync(
         GatewayRawRequest request,
         IAssetStorage? storage,
+        LlmGatewayDataContext? data,
+        string tenantId,
+        bool requireTenantManifest,
         CancellationToken ct)
     {
         if (!request.IsMultipart
@@ -4314,12 +4324,39 @@ public static class GatewayHttpEndpoints
                 "serving 未注册 IAssetStorage，无法按 MultipartFileRefs rehydrate 文件。");
         }
 
+        var manifests = data?.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
+        if (requireTenantManifest && manifests is null)
+        {
+            return RehydrateResult.Fail(
+                "MULTIPART_MANIFEST_UNAVAILABLE",
+                "serving 未注册 multipart manifest 数据源，拒绝处理 tenant-scoped 文件引用。",
+                503);
+        }
+
         var files = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>(StringComparer.Ordinal);
         foreach (var (fieldName, fileRef) in request.MultipartFileRefs)
         {
             if (string.IsNullOrWhiteSpace(fileRef.RefKey))
             {
                 return RehydrateResult.Fail("MULTIPART_REF_INVALID", $"multipart 字段 {fieldName} 缺少 RefKey。", 400);
+            }
+
+            GatewayMultipartObjectRecord? manifest = null;
+            if (manifests is not null)
+            {
+                manifest = await manifests.Find(x =>
+                        x.TenantId == tenantId
+                        && x.RefKey == fileRef.RefKey
+                        && x.Status != "deleted"
+                        && x.ExpiresAt > DateTime.UtcNow)
+                    .FirstOrDefaultAsync(ct);
+                if (manifest is null)
+                {
+                    return RehydrateResult.Fail(
+                        "MULTIPART_REF_NOT_FOUND",
+                        $"multipart 字段 {fieldName} 引用的对象不存在。",
+                        404);
+                }
             }
 
             var bytes = await storage.TryDownloadBytesAsync(fileRef.RefKey, ct);
@@ -4337,6 +4374,16 @@ public static class GatewayHttpEndpoints
             }
 
             var actualSha = Sha256Hex(bytes);
+            if (manifest is not null
+                && ((manifest.SizeBytes > 0 && bytes.LongLength != manifest.SizeBytes)
+                    || (!string.IsNullOrWhiteSpace(manifest.Sha256)
+                        && !string.Equals(actualSha, manifest.Sha256, StringComparison.OrdinalIgnoreCase))))
+            {
+                return RehydrateResult.Fail(
+                    "MULTIPART_MANIFEST_MISMATCH",
+                    $"multipart 字段 {fieldName} 与 tenant manifest 不一致。",
+                    400);
+            }
             if (!string.IsNullOrWhiteSpace(fileRef.Sha256)
                 && !string.Equals(actualSha, fileRef.Sha256, StringComparison.OrdinalIgnoreCase))
             {

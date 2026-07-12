@@ -539,6 +539,8 @@ public class ModelResolver : IModelResolver
         }
         if (result.Count > 0)
             return result;
+        if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))
+            return result;
         if (DisableMapConfigFallbackForRegisteredAppCallers())
             return result;
 
