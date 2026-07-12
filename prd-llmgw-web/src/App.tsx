@@ -46,6 +46,11 @@ function RequireChangePassword({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function RequireInternalTenant({ children }: { children: ReactNode }) {
+  const { tenant } = useAuth();
+  return tenant?.isInternal ? <>{children}</> : <Navigate to="/" replace />;
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -79,8 +84,8 @@ export function App() {
             <Route path="/service-keys" element={<ServiceKeysPage />} />
             <Route path="/quickstart" element={<QuickstartPage />} />
             <Route path="/organization" element={<OrganizationPage />} />
-            <Route path="/shadow" element={<ShadowPage />} />
-            <Route path="/governance" element={<GovernancePage />} />
+            <Route path="/shadow" element={<RequireInternalTenant><ShadowPage /></RequireInternalTenant>} />
+            <Route path="/governance" element={<RequireInternalTenant><GovernancePage /></RequireInternalTenant>} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/usage" element={<UsagePage />} />
           </Route>

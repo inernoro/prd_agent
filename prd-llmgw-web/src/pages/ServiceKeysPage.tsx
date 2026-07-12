@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { createServiceKey, getServiceKeys, revokeServiceKey } from '@/lib/api';
+import { createServiceKey, getGatewayAppCallers, getServiceKeys, revokeServiceKey } from '@/lib/api';
 import type { CreatedServiceKey, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 
-const DEFAULT_PROTOCOLS = 'openai-compatible';
-const DEFAULT_SCOPES = 'invoke';
+const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemini-compatible';
+const DEFAULT_SCOPES = 'invoke, route:read';
 
 export function ServiceKeysPage() {
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
@@ -26,6 +26,7 @@ export function ServiceKeysPage() {
   const [allowedCidrs, setAllowedCidrs] = useState('');
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
+  const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -34,7 +35,12 @@ export function ServiceKeysPage() {
     else setError(res.error?.message || '加载接入密钥失败');
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    void getGatewayAppCallers({ page: 1, pageSize: 200 }).then((res) => {
+      if (res.success) setKnownAppCallers(Array.from(new Set(res.data.items.map((item) => item.appCallerCode))).sort());
+    });
+  }, [load]);
 
   const submit = async () => {
     setCreating(true);
@@ -139,7 +145,8 @@ export function ServiceKeysPage() {
         <div className="lg-service-key-form" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr)', gap: 8, padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <Field label="名称" value={name} onChange={setName} placeholder="例如 content-service" />
           <Field label="Source system" value={sourceSystem} onChange={setSourceSystem} placeholder="external" />
-          <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="逗号分隔" />
+          <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="选择已有值或逗号分隔输入" list="llmgw-app-callers" />
+          <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
           <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
           <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, stream:invoke, raw:invoke, profile:test" />
           <Field label="Team ID（可选）" value={teamId} onChange={setTeamId} placeholder="仅限当前租户团队" />
@@ -155,7 +162,13 @@ export function ServiceKeysPage() {
 
       {error ? <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div> : null}
       {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>暂无接入密钥</div>
+        <div className="lg-service-key-empty">
+          <KeyRound size={24} />
+          <strong>当前租户还没有外部接入密钥</strong>
+          <p>外部系统不能在没有租户密钥的情况下调用 Gateway。创建后，明文只显示一次。</p>
+          <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} />创建第一把密钥</Button>
+          <div><ShieldCheck size={16} /><span><strong>为什么 MAP 仍然可以调用</strong><small>MAP 等平台内部服务使用部署级内部身份。它不属于当前租户的外部密钥，不会显示在本列表，也不能提供给外部系统。</small></span></div>
+        </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <table className="lg-service-key-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -183,8 +196,8 @@ export function ServiceKeysPage() {
   );
 }
 
-function Field({ label, value, onChange, placeholder, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; type?: string }) {
-  return <label style={labelStyle}>{label}<input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
+function Field({ label, value, onChange, placeholder, type = 'text', list }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; type?: string; list?: string }) {
+  return <label style={labelStyle}>{label}<input type={type} list={list} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
 }
 
 function splitValues(value: string) {

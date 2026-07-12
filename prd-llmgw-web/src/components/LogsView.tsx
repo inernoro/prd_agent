@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { RefreshCw, ChevronLeft, ChevronRight, Activity, Clock, GitBranch, Gauge, Layers, Zap } from 'lucide-react';
 import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions, getLogsSummary } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
@@ -109,6 +109,7 @@ export function LogsView() {
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showExampleGuide, setShowExampleGuide] = useState(false);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -558,8 +559,12 @@ export function LogsView() {
     minWidth: 150,
   };
 
-  const emptyCell = (text: string) => (
-    <div style={{ padding: '64px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>{text}</div>
+  const emptyCell = (text: string, showActions = false) => (
+    <div className="lg-log-empty">
+      <strong>{text}</strong>
+      <span>{activeFilterCount > 0 ? '当前筛选条件没有匹配记录，可清除筛选后重试。' : '当当前租户使用接入密钥或平台内部身份调用 Gateway 后，请求会记录在这里。'}</span>
+      {showActions ? <div><Link className="lg-primary-link" to="/quickstart">去快速接入</Link><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(true)}>查看示例说明</button>{activeFilterCount > 0 ? <button className="lg-secondary-action" type="button" onClick={clearFilters}>清除筛选</button> : null}</div> : null}
+    </div>
   );
 
   const activeFilterCount = [
@@ -683,9 +688,9 @@ export function LogsView() {
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Observability</div>
-          <div style={{ fontSize: 22, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>Activity</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>{fmtCompact(summary?.total ?? totalReq)} requests in the selected window</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>调用观测</div>
+          <div style={{ fontSize: 22, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>请求记录</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>所选时间范围内共 {fmtCompact(summary?.total ?? totalReq)} 条请求；这里对应部分平台所称的 Activity。</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
@@ -710,7 +715,7 @@ export function LogsView() {
           </div>
           <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>
             {loading || sessLoading ? <Spinner size={14} /> : <RefreshCw size={14} />}
-            Refresh
+            刷新
           </Button>
         </div>
       </div>
@@ -729,7 +734,7 @@ export function LogsView() {
         }}
       >
           <select value={filterSourceSystem} onChange={(e) => setFilterSourceSystem(e.target.value)} style={selectStyle}>
-            <option value="">All sources</option>
+            <option value="">全部来源系统</option>
             {meta.sourceSystems.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -737,7 +742,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterIngressProtocol} onChange={(e) => setFilterIngressProtocol(e.target.value)} style={selectStyle}>
-            <option value="">All ingress</option>
+            <option value="">全部入口协议</option>
             {meta.ingressProtocols.map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -745,7 +750,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterModelPolicy} onChange={(e) => setFilterModelPolicy(e.target.value)} style={selectStyle}>
-            <option value="">All policies</option>
+            <option value="">全部路由策略</option>
             {meta.modelPolicies.map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -755,33 +760,33 @@ export function LogsView() {
           <input
             value={filterReleaseCommit}
             onChange={(e) => setFilterReleaseCommit(e.target.value)}
-            placeholder="Release commit"
+            placeholder="发布提交"
             spellCheck={false}
             style={inputStyle}
           />
           <input
             value={filterRunId}
             onChange={(e) => setFilterRunId(e.target.value)}
-            placeholder="Run ID"
+            placeholder="运行 ID"
             spellCheck={false}
             style={inputStyle}
           />
           <input
             value={filterRequestId}
             onChange={(e) => setFilterRequestId(e.target.value)}
-            placeholder="Request ID"
+            placeholder="请求 ID"
             spellCheck={false}
             style={inputStyle}
           />
           <input
             value={filterSessionId}
             onChange={(e) => setFilterSessionId(e.target.value)}
-            placeholder="Session ID"
+            placeholder="会话 ID"
             spellCheck={false}
             style={inputStyle}
           />
           <select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} style={selectStyle}>
-            <option value="">All providers</option>
+            <option value="">全部 Provider</option>
             {meta.providers.map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -789,7 +794,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={selectStyle}>
-            <option value="">All models</option>
+            <option value="">全部模型</option>
             {meta.models.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -797,7 +802,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
-            <option value="">All statuses</option>
+            <option value="">全部状态</option>
             {meta.statuses.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -805,7 +810,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterAppCaller} onChange={(e) => setFilterAppCaller(e.target.value)} style={selectStyle}>
-            <option value="">All apps</option>
+            <option value="">全部应用</option>
             {meta.appCallers.map((a) => (
               <option key={a} value={a}>
                 {a}
@@ -813,7 +818,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterTransport} onChange={(e) => setFilterTransport(e.target.value)} style={selectStyle}>
-            <option value="">All transports</option>
+            <option value="">全部传输方式</option>
             {meta.transports.map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -821,7 +826,7 @@ export function LogsView() {
             ))}
           </select>
           <select value={filterRequestType} onChange={(e) => setFilterRequestType(e.target.value)} style={selectStyle}>
-            <option value="">All types</option>
+            <option value="">全部请求类型</option>
             {meta.requestTypes.map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -830,7 +835,7 @@ export function LogsView() {
           </select>
           {activeFilterCount > 0 ? (
             <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Clear {activeFilterCount}
+              清除 {activeFilterCount} 项筛选
             </Button>
           ) : null}
       </div>
@@ -853,16 +858,16 @@ export function LogsView() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8, flexShrink: 0 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(126px, 1fr))', gap: 8 }}>
-          <SummaryTile icon={<Activity size={13} />} label="Requests" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} ok · ${fmtCompact(summary?.failed)} failed`} />
-          <SummaryTile icon={<Zap size={13} />} label="Tokens" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} in · ${fmtCompact(summary?.outputTokens)} out`} />
-          <SummaryTile icon={<Clock size={13} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="completed requests" />
-          <SummaryTile icon={<GitBranch size={13} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="fallback requests" />
-          <SummaryTile icon={<Layers size={13} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} requests` : 'no marks'} />
-          <SummaryTile icon={<Gauge size={13} />} label="Price coverage" value={summary?.total ? `${summary.priceCoveragePercent}%` : DASH} sub={summary?.total ? `${fmtCompact(summary.pricedRequests)} estimated · ${fmtCompact(summary.unknownCostRequests)} unknown` : 'no requests'} />
+          <SummaryTile icon={<Activity size={13} />} label="请求数" value={fmtCompact(summary?.total)} sub={`${fmtCompact(summary?.succeeded)} 成功 · ${fmtCompact(summary?.failed)} 失败`} />
+          <SummaryTile icon={<Zap size={13} />} label="Token" value={fmtCompact(summary?.totalTokens)} sub={`${fmtCompact(summary?.inputTokens)} 输入 · ${fmtCompact(summary?.outputTokens)} 输出`} />
+          <SummaryTile icon={<Clock size={13} />} label="平均耗时" value={fmtMs(summary?.averageDurationMs)} sub="已完成请求" />
+          <SummaryTile icon={<GitBranch size={13} />} label="回退请求" value={fmtCompact(summary?.fallbacks)} sub="发生模型或上游回退" />
+          <SummaryTile icon={<Layers size={13} />} label="主要传输" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} 条请求` : '暂无标记'} />
+          <SummaryTile icon={<Gauge size={13} />} label="价格覆盖率" value={summary?.total ? `${summary.priceCoveragePercent}%` : DASH} sub={summary?.total ? `${fmtCompact(summary.pricedRequests)} 可估算 · ${fmtCompact(summary.unknownCostRequests)} 未知` : '暂无请求'} />
         </div>
         <div className="lg-activity-charts">
-          <Card className="lg-chart-card"><div className="lg-chart-title">Request volume</div><MiniBarChart data={series} height={88} /></Card>
-          <Card className="lg-chart-card"><div className="lg-chart-title">Status mix</div><DistributionChart items={summary?.statusDistribution ?? []} /></Card>
+          <Card className="lg-chart-card"><div className="lg-chart-title">请求趋势</div><MiniBarChart data={series} height={88} /></Card>
+          <Card className="lg-chart-card"><div className="lg-chart-title">状态分布</div><DistributionChart items={summary?.statusDistribution ?? []} /></Card>
         </div>
       </div>
 
@@ -888,9 +893,9 @@ export function LogsView() {
           background: 'var(--bg-surface)',
         }}
       >
-        <DistributionStrip label="Ingress" items={summary?.ingressProtocolDistribution} selected={filterIngressProtocol} onSelect={setFilterIngressProtocol} />
-        <DistributionStrip label="Policy" items={summary?.modelPolicyDistribution} selected={filterModelPolicy} onSelect={setFilterModelPolicy} />
-        <DistributionStrip label="Source" items={summary?.sourceSystemDistribution} selected={filterSourceSystem} onSelect={setFilterSourceSystem} />
+        <DistributionStrip label="入口协议" items={summary?.ingressProtocolDistribution} selected={filterIngressProtocol} onSelect={setFilterIngressProtocol} />
+        <DistributionStrip label="路由策略" items={summary?.modelPolicyDistribution} selected={filterModelPolicy} onSelect={setFilterModelPolicy} />
+        <DistributionStrip label="来源系统" items={summary?.sourceSystemDistribution} selected={filterSourceSystem} onSelect={setFilterSourceSystem} />
       </div>
 
       <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
@@ -907,7 +912,7 @@ export function LogsView() {
                 rowKey={(it) => it.id}
                 onRow={(it) => setSelectedId(it.id)}
                 render={renderGenerationCell}
-                empty={emptyCell('该时间范围内暂无请求')}
+                empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
             )}
             <Pager p={page} setP={setPage} tot={total} busy={loading} />
@@ -924,7 +929,7 @@ export function LogsView() {
                 rowKey={(it) => it.id}
                 onRow={(it) => setSelectedId(it.id)}
                 render={renderUpstreamCell}
-                empty={emptyCell('该时间范围内暂无请求')}
+                empty={emptyCell('该时间范围内还没有上游调用记录', true)}
               />
             )}
             <Pager p={page} setP={setPage} tot={total} busy={loading} />
@@ -966,6 +971,8 @@ export function LogsView() {
           </div>
         )}
       </Card>
+
+      {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
 
       {selectedId ? <GenerationDetailsDrawer logId={selectedId} onClose={() => setSelectedId(null)} /> : null}
     </div>

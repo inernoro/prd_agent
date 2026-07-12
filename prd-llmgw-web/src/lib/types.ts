@@ -24,7 +24,7 @@ export type LoginResult = {
   tenant?: TenantSession | null;
 };
 
-export type TenantSession = { id: string; name: string; role: string; teamIds: string[] };
+export type TenantSession = { id: string; name: string; isInternal: boolean; role: string; teamIds: string[] };
 
 // ── 改密 ──
 export type ChangePasswordRequest = { oldPassword: string; newPassword: string };

@@ -670,6 +670,9 @@
 - [LLM Gateway 外部平台化与控制台体验收口](plan.platform.llm-gateway-external-platform) `plan.platform.llm-gateway-external-platform`
   > 租户/团队/用户/RBAC、外部接入教程、appCaller 提示词策略、左侧导航、图表与金额可信度的有限五 PR 计划
 
+- [LLM Gateway 控制台产品化与独立目录收拢](plan.platform.llm-gateway.console-productization) `plan.platform.llm-gateway.console-productization`
+  > 双主题可发现性、请求记录、安全直测、租户首页、学习中心、模型池用户心智与根目录 llmgw 收拢的分阶段计划
+
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
 
@@ -1076,6 +1079,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-external-platform` | LLM Gateway 外部平台化与控制台体验收口 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
 | 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |

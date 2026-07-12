@@ -939,6 +939,303 @@ a:focus-visible {
   gap: 8px;
 }
 
+.lg-theme-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.lg-theme-options button {
+  min-width: 0;
+  min-height: 104px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+}
+
+.lg-theme-options button:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.lg-theme-options button.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text-primary);
+}
+
+.lg-theme-options button > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lg-theme-options strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.lg-theme-options small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.lg-log-empty {
+  min-height: 220px;
+  padding: 36px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.lg-log-empty strong {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.lg-log-empty > span {
+  max-width: 560px;
+  line-height: 1.6;
+}
+
+.lg-log-empty > div {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.lg-secondary-action {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.lg-example-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.lg-example-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.58);
+  cursor: default;
+}
+
+.lg-example-guide > div {
+  position: relative;
+  width: min(620px, 100%);
+  max-height: min(640px, 90vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  box-shadow: var(--shadow-drawer);
+}
+
+.lg-example-guide h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+}
+
+.lg-example-guide p {
+  margin: 14px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.lg-example-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.lg-example-fields > div {
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.lg-example-fields strong,
+.lg-example-fields span {
+  display: block;
+}
+
+.lg-derived-base-url {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.lg-advanced-base-url {
+  margin: -3px 0 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.lg-advanced-base-url summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.lg-advanced-base-url > label {
+  max-width: 520px;
+  margin-top: 8px;
+}
+
+.lg-safe-test-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.lg-safe-test-panel > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.lg-safe-test-panel > div:first-child > span,
+.lg-service-key-empty > div > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lg-safe-test-panel strong,
+.lg-service-key-empty strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.lg-safe-test-panel small,
+.lg-service-key-empty small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lg-safe-test-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 8px;
+}
+
+.lg-safe-test-controls input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.lg-test-result {
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lg-test-result.is-ok {
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.lg-test-result.is-error {
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.lg-service-key-empty {
+  flex: 1;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 28px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.lg-service-key-empty p {
+  max-width: 520px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.lg-service-key-empty > div {
+  max-width: 620px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.lg-example-fields strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.lg-example-fields span {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 @media (max-width: 1100px) {
   .lg-home-primary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1066,6 +1363,24 @@ a:focus-visible {
   .lg-home-primary-grid,
   .lg-activity-charts {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-theme-options,
+  .lg-example-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-safe-test-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-theme-options button {
+    min-height: 82px;
+  }
+
+  .lg-log-empty {
+    min-height: 280px;
+    font-size: 15px;
   }
 
   .lg-nav-group a {

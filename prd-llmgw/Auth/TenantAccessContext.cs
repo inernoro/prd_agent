@@ -8,6 +8,7 @@ namespace PrdAgent.LlmGw.Auth;
 public sealed record TenantAccessContext(
     string TenantId,
     string TenantName,
+    bool IsInternalTenant,
     string UserId,
     string Username,
     string MembershipId,
@@ -103,6 +104,7 @@ public static class TenantAccess
         return new TenantAccessContext(
             tenant.Id,
             tenant.Name,
+            tenant.IsInternal,
             userId,
             username,
             membership.Id,

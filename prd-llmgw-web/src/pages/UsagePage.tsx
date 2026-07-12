@@ -25,7 +25,7 @@ export function UsagePage() {
     <div className="lg-simple-page">
       <div className="lg-page-heading">
         <div><div className="lg-eyebrow">Governance</div><h1>预算与用量</h1><p>最近 30 天的请求用量与可审计费用估算。</p></div>
-        <Link className="lg-text-link" to="/logs">打开 Activity <ArrowRight size={14} /></Link>
+        <Link className="lg-text-link" to="/logs">打开请求记录 <ArrowRight size={14} /></Link>
       </div>
       {error ? <div className="lg-inline-alert">{error}</div> : null}
       <div className="lg-usage-grid">

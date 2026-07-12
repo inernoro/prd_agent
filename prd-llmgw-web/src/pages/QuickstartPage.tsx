@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, KeyRound, ListFilter, Rocket, Search } from 'lucide-react';
+import { Check, Copy, KeyRound, ListFilter, Rocket, Search, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button, Chip } from '@/components/ui';
 
@@ -17,6 +17,9 @@ export function QuickstartPage() {
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-team.quickstart::chat');
   const [copied, setCopied] = useState(false);
+  const [serviceKey, setServiceKey] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const code = useMemo(
     () => exampleFor(protocol, baseUrl.replace(/\/$/, ''), appCallerCode.trim() || 'my-team.quickstart::chat').replaceAll('\n+', '\n'),
     [protocol, baseUrl, appCallerCode],
@@ -28,25 +31,75 @@ export function QuickstartPage() {
     window.setTimeout(() => setCopied(false), 1600);
   };
 
+  const runSafeTest = async () => {
+    const key = serviceKey.trim();
+    if (!key) {
+      setTestResult({ ok: false, message: '请先粘贴当前租户的接入密钥。' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const target = new URL('/gw/v1/route-self-test', `${baseUrl.replace(/\/$/, '')}/`).toString();
+      const response = await fetch(target, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'X-Gateway-Source': 'external',
+          'X-Gateway-App-Caller': appCallerCode.trim() || 'my-team.quickstart::chat',
+        },
+        credentials: 'omit',
+      });
+      const payload = await response.json().catch(() => null) as {
+        status?: string; Status?: string; upstreamCalled?: boolean; UpstreamCalled?: boolean;
+        passed?: number; Passed?: number; total?: number; Total?: number;
+        error?: { message?: string }; Error?: { Message?: string };
+      } | null;
+      const status = payload?.status ?? payload?.Status;
+      const upstreamCalled = payload?.upstreamCalled ?? payload?.UpstreamCalled;
+      const passed = payload?.passed ?? payload?.Passed ?? 0;
+      const total = payload?.total ?? payload?.Total ?? 0;
+      if (!response.ok) {
+        const scopeHint = response.status === 403 ? '请确认密钥包含 route:read scope，并允许当前 appCaller 与来源。' : '';
+        setTestResult({ ok: false, message: `${payload?.error?.message || payload?.Error?.Message || `验证失败，HTTP ${response.status}`} ${scopeHint}`.trim() });
+      } else if (status === 'ok' && upstreamCalled === false) {
+        setTestResult({ ok: true, message: `密钥与协议路由有效，${passed}/${total} 项通过；本次未调用真实模型，不产生上游费用。` });
+      } else {
+        setTestResult({ ok: false, message: 'Gateway 已响应，但路由自检未全部通过，请联系平台管理员。' });
+      }
+    } catch (error) {
+      setTestResult({ ok: false, message: error instanceof Error ? `无法访问 Gateway：${error.message}` : '无法访问 Gateway。' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
       <div style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <header>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Rocket size={18} /><h1 style={{ margin: 0, fontSize: 18 }}>Quickstart</h1></div>
-          <p style={{ margin: '7px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>从租户密钥到第一条可在 Activity 定位的请求，四种协议使用同一套租户隔离与路由治理。</p>
+          <p style={{ margin: '7px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>从租户密钥到第一条可在请求记录中定位的调用，四种协议使用同一套租户隔离与路由治理。</p>
         </header>
 
         <section className="lg-quickstart-steps" style={gridStyle}>
           <Step number="1" title="准备组织" text="由 owner 或 admin 创建租户、团队和成员。Developer 只能管理自己创建的密钥。" />
           <Step number="2" title="创建密钥" text="绑定 appCaller、协议、scope，可选团队、CIDR、有效期和每分钟限流。明文只显示一次。" link="/service-keys" />
           <Step number="3" title="发送请求" text="复制下方示例。示例永远使用占位符，不会把真实密钥写入页面源码或日志。" />
-          <Step number="4" title="核对 Activity" text="从响应或 X-Request-Id 取得 requestId，再到请求日志搜索并核对租户、费用与路由。" link="/logs" />
+          <Step number="4" title="核对请求记录" text="从响应或 X-Request-Id 取得 requestId，再到请求记录搜索并核对租户、费用与路由。" link="/logs" />
         </section>
 
         <section style={cardStyle}>
           <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-            <Field label="Gateway Base URL" value={baseUrl} onChange={setBaseUrl} />
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 11 }}>Gateway 地址<code className="lg-derived-base-url">{baseUrl}</code></label>
             <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} />
+          </div>
+          <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={setBaseUrl} /></details>
+          <div className="lg-safe-test-panel">
+            <div><ShieldCheck size={17} /><span><strong>先做安全验证</strong><small>只验证密钥、权限和四协议路由，不调用真实模型，不产生上游费用。</small></span></div>
+            <div className="lg-safe-test-controls"><input type="password" value={serviceKey} onChange={(event) => { setServiceKey(event.target.value); setTestResult(null); }} placeholder="粘贴 gwk_ 开头的当前租户密钥" autoComplete="off" spellCheck={false} aria-label="当前租户接入密钥" /><Button variant="primary" disabled={testing || !serviceKey.trim()} onClick={() => void runSafeTest()}>{testing ? '验证中' : '验证密钥与路由'}</Button></div>
+            {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}</div> : null}
+            <small>密钥仅保存在当前页面内存中，不写入浏览器存储、地址栏或控制台日志。关闭或刷新页面后即清除。</small>
           </div>
           <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 10 }}>
             {PROTOCOLS.map((item) => <Button key={item.id} size="sm" variant={protocol === item.id ? 'primary' : 'ghost'} onClick={() => setProtocol(item.id)}>{item.label}</Button>)}
@@ -55,7 +108,7 @@ export function QuickstartPage() {
             <pre style={{ margin: 0, minHeight: 250, overflow: 'auto', padding: 14, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.6 }}><code>{code}</code></pre>
             <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copy()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
           </div>
-          <p style={hintStyle}>先把 <code>YOUR_LLMGW_KEY</code> 放入本地环境变量 <code>LLMGW_API_KEY</code>。不要把真实密钥提交到仓库、截图或浏览器地址栏。</p>
+          <p style={hintStyle}>下方 curl 会发送一条真实模型请求，可能产生费用。确认上方安全验证通过后，再把 <code>YOUR_LLMGW_KEY</code> 放入本地环境变量 <code>LLMGW_API_KEY</code> 执行。不要把真实密钥提交到仓库、截图或浏览器地址栏。</p>
         </section>
 
         <section className="lg-quickstart-detail-grid" style={{ ...gridStyle, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
@@ -73,7 +126,7 @@ export function QuickstartPage() {
               <RouteRow name="401" text="密钥缺失、错误、过期或已撤销。重新创建，旧明文无法找回。" />
               <RouteRow name="403" text="tenant/team、appCaller、协议、scope 或来源 CIDR 不允许。" />
               <RouteRow name="404 / 409" text="目标不存在，或同一 requestId 正在执行。" />
-              <RouteRow name="429 / 5xx" text="密钥或 appCaller 限流；上游失败时用 requestId 到 Activity 查看路由链。" />
+              <RouteRow name="429 / 5xx" text="密钥或 appCaller 限流；上游失败时用 requestId 到请求记录查看路由链。" />
             </dl>
           </div>
         </section>
@@ -97,10 +150,7 @@ export function QuickstartPage() {
 function resolveDefaultServingBaseUrl() {
   const configured = (import.meta.env.VITE_LLMGW_SERVING_BASE_URL || '').trim().replace(/\/$/, '');
   if (configured) return configured;
-
-  const current = new URL(window.location.href);
-  if (current.pathname === '/llmgw' || current.pathname.startsWith('/llmgw/')) return current.origin;
-  return 'https://gateway.example.com';
+  return new URL(window.location.href).origin;
 }
 
 function Step({ number, title, text, link }: { number: string; title: string; text: string; link?: string }) {
