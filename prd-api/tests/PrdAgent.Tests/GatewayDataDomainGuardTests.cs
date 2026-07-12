@@ -388,7 +388,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
-        Assert.Contains("https://gateway.example.com", quickstart);
+        Assert.Contains("return new URL(window.location.href).origin", quickstart);
+        Assert.DoesNotContain("gateway.example.com", quickstart);
     }
 
     [Fact]
@@ -1026,7 +1027,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("initialQueryValue('releaseCommit')", logsView);
         Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
-        Assert.Contains("placeholder=\"Release commit\"", logsView);
+        Assert.Contains("placeholder=\"发布提交\"", logsView);
         Assert.Contains("setFilterReleaseCommit('')", logsView);
 
         Assert.Contains("useSearchParams", shadowPage);
@@ -2401,13 +2402,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<DistributionStrip label=\"Ingress\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"入口协议\"", logsView);
         Assert.Contains("items={summary?.ingressProtocolDistribution}", logsView);
         Assert.Contains("onSelect={setFilterIngressProtocol}", logsView);
-        Assert.Contains("<DistributionStrip label=\"Policy\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"路由策略\"", logsView);
         Assert.Contains("items={summary?.modelPolicyDistribution}", logsView);
         Assert.Contains("onSelect={setFilterModelPolicy}", logsView);
-        Assert.Contains("<DistributionStrip label=\"Source\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"来源系统\"", logsView);
         Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
         Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
     }
@@ -2473,6 +2474,56 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Filter.Eq(x => x.UserId, access.UserId)", endpoint);
         Assert.DoesNotContain("[FromBody]", endpoint);
         Assert.DoesNotContain("body.", endpoint);
+    }
+
+    [Fact]
+    public void Console_InternalOperationsVisibility_ComesFromServerTenantContext()
+    {
+        var tenantModel = ReadRepoFile("prd-llmgw/Models/LlmGwTenantModels.cs");
+        var access = ReadRepoFile("prd-llmgw/Auth/TenantAccessContext.cs");
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var app = ReadRepoFile("prd-llmgw-web/src/App.tsx");
+        var layout = ReadRepoFile("prd-llmgw-web/src/components/ConsoleLayout.tsx");
+
+        Assert.Contains("public bool IsInternal { get; set; }", tenantModel);
+        Assert.Contains("bool IsInternalTenant", access);
+        Assert.Contains("tenant.IsInternal", access);
+        Assert.Contains("IsInternal = access.IsInternalTenant", consoleProgram);
+        Assert.Contains("IsInternal = tenant.IsInternal", consoleProgram);
+        Assert.Contains("function RequireInternalTenant", app);
+        Assert.Contains("tenant?.isInternal ?", app);
+        Assert.Contains("internalOnly: true", layout);
+        Assert.DoesNotContain("TenantId", app);
+    }
+
+    [Fact]
+    public void Console_Productization_UsesRealOriginSafeTestAndGuidedEmptyStates()
+    {
+        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
+        var serviceKeys = ReadRepoFile("prd-llmgw-web/src/pages/ServiceKeysPage.tsx");
+        var logs = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+        var theme = ReadRepoFile("prd-llmgw-web/src/lib/theme.ts");
+        var servingProgram = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
+
+        Assert.Contains("return new URL(window.location.href).origin", quickstart);
+        Assert.Contains("/gw/v1/route-self-test", quickstart);
+        Assert.Contains("upstreamCalled === false", quickstart);
+        Assert.Contains("payload?.UpstreamCalled", quickstart);
+        Assert.Contains("credentials: 'omit'", quickstart);
+        Assert.DoesNotContain("gateway.example.com", quickstart);
+        Assert.DoesNotContain("localStorage", quickstart);
+        Assert.DoesNotContain("sessionStorage", quickstart);
+        Assert.Contains("invoke, route:read", serviceKeys);
+        Assert.Contains("gw-native, openai-compatible, claude-compatible, gemini-compatible", serviceKeys);
+        Assert.Contains("平台内部服务使用部署级内部身份", serviceKeys);
+        Assert.Contains("创建第一把密钥", serviceKeys);
+        Assert.Contains("去快速接入", logs);
+        Assert.Contains("查看示例说明", logs);
+        Assert.Contains("跟随系统", ReadRepoFile("prd-llmgw-web/src/pages/SettingsPage.tsx"));
+        Assert.Contains("prefers-color-scheme: light", theme);
+        Assert.Contains("WithMethods(HttpMethods.Get)", servingProgram);
+        Assert.Contains("WithHeaders(\"Authorization\", \"X-Gateway-Source\", \"X-Gateway-App-Caller\")", servingProgram);
+        Assert.Contains("app.UseCors(BrowserDryRunCors)", servingProgram);
     }
 
     [Fact]

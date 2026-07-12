@@ -49,7 +49,7 @@ export function PlatformsPage() {
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
-      setToast(`已将「${res.data.name}」认领到 GW 平台`);
+      setToast(`已将「${res.data.name}」导入平台配置`);
     } else {
       setToast(res.error?.message || '操作失败');
     }
@@ -135,7 +135,7 @@ export function PlatformsPage() {
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
       <div style={toolbarStyle}>
-        <span style={toolbarTitleStyle}>批量轮换 GW 平台密钥</span>
+        <span style={toolbarTitleStyle}>批量维护平台密钥</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -150,7 +150,7 @@ export function PlatformsPage() {
         </label>
         <label style={checkStyle}>
           <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
-          确认写入 GW 权威平台
+          确认应用到当前平台配置
         </label>
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
           {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
@@ -164,7 +164,7 @@ export function PlatformsPage() {
               <th style={th}>类型</th>
               <th style={th}>API URL</th>
               <th style={th}>并发</th>
-              <th style={th}>权威</th>
+              <th style={th}>配置来源</th>
               <th style={th}>状态</th>
               <th style={th}>密钥</th>
               <th style={th}>操作</th>
@@ -182,9 +182,9 @@ export function PlatformsPage() {
                   <td style={td}>{p.maxConcurrency || '—'}</td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
-                      <Chip label="GW 权威" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `认领于 ${p.claimedAt}` : undefined} />
+                      <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
                     ) : (
-                      <Chip label="MAP 来源" color="var(--text-muted)" bg="var(--bg-elevated)" />
+                      <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                     )}
                   </td>
                   <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
@@ -223,7 +223,7 @@ export function PlatformsPage() {
                             </>
                           ) : (
                             <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPlatform(p)}>
-                              {busyId === p.id ? '处理中…' : '认领到 GW'}
+                              {busyId === p.id ? '处理中…' : '导入到平台'}
                             </Button>
                           )}
                           <Button size="sm" variant={p.enabled ? 'ghost' : 'primary'} disabled={busyId === p.id} onClick={() => void toggle(p)}>

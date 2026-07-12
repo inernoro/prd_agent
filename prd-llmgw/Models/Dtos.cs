@@ -42,6 +42,7 @@ public sealed class TenantSessionDto
 {
     public string Id { get; init; } = string.Empty;
     public string Name { get; init; } = string.Empty;
+    public bool IsInternal { get; init; }
     public string Role { get; init; } = string.Empty;
     public List<string> TeamIds { get; init; } = new();
 }

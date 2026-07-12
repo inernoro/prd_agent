@@ -8,14 +8,15 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { getAvailableTenants, setSession, switchTenant } from '@/lib/api';
 import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { useThemePreference } from '@/lib/theme';
 
-type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean };
+type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; internalOnly?: boolean };
 type NavGroup = { label: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
   { label: '工作区', items: [
     { to: '/', label: '概览', icon: <LayoutDashboard size={16} />, end: true },
-    { to: '/logs', label: 'Activity', icon: <Activity size={16} /> },
+    { to: '/logs', label: '请求记录', icon: <Activity size={16} /> },
     { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} /> },
   ] },
   { label: '路由', items: [
@@ -34,8 +35,8 @@ const NAV_GROUPS: NavGroup[] = [
   { label: '治理', items: [
     { to: '/usage', label: '预算与用量', icon: <CircleDollarSign size={16} /> },
     { to: '/audits', label: '审计', icon: <FileClock size={16} /> },
-    { to: '/shadow', label: 'Shadow', icon: <GitCompare size={16} /> },
-    { to: '/governance', label: '运行状态', icon: <ShieldCheck size={16} /> },
+    { to: '/shadow', label: '影子对比', icon: <GitCompare size={16} />, internalOnly: true },
+    { to: '/governance', label: '系统运维', icon: <ShieldCheck size={16} />, internalOnly: true },
   ] },
   { label: '设置', items: [
     { to: '/settings', label: '控制台设置', icon: <Settings size={16} /> },
@@ -49,8 +50,12 @@ export function ConsoleLayout() {
   const [search, setSearch] = useState('');
   const [tenants, setTenants] = useState<AvailableTenant[]>([]);
   const [switching, setSwitching] = useState(false);
-  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  const { resolved: theme, setPreference: setTheme } = useThemePreference();
   const who = user?.displayName || user?.username || '已登录';
+  const navGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.internalOnly || tenant?.isInternal),
+  })).filter((group) => group.items.length > 0);
 
   useEffect(() => {
     getAvailableTenants().then((res) => {
@@ -80,8 +85,6 @@ export function ConsoleLayout() {
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('llmgw.theme', next);
     setTheme(next);
   }
 
@@ -128,7 +131,7 @@ export function ConsoleLayout() {
         <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
           <div className="lg-sidebar-mobile-heading"><span>导航</span><button type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
           <nav>
-            {NAV_GROUPS.map((group) => (
+            {navGroups.map((group) => (
               <div className="lg-nav-group" key={group.label}>
                 <div className="lg-nav-group-label">{group.label}</div>
                 {group.items.map((item) => (

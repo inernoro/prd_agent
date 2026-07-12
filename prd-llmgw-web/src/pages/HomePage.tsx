@@ -5,8 +5,10 @@ import { getHealth, getLogs, getLogsSummary } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData } from '@/lib/types';
 import { Card, Chip, SectionLoader } from '@/components/ui';
 import { fmtCost, fmtMs, fmtShortTime, statusBadgeStyle } from '@/lib/logsHelpers';
+import { useAuth } from '@/lib/auth';
 
 export function OverviewPage() {
+  const { tenant } = useAuth();
   const [health, setHealth] = useState<{ status: string; commit?: string | null } | null>(null);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [recent, setRecent] = useState<LlmLogListItem[] | null>(null);
@@ -38,11 +40,11 @@ export function OverviewPage() {
     <div className="lg-home-page">
       <div className="lg-page-heading">
         <div>
-          <div className="lg-eyebrow">Workspace</div>
+          <div className="lg-eyebrow">工作区</div>
           <h1>概览</h1>
           <p>从健康状态开始，完成接入并确认最近请求与费用可信度。</p>
         </div>
-        <Link className="lg-text-link" to="/logs">打开 Activity <ArrowRight size={14} /></Link>
+        <Link className="lg-text-link" to="/logs">打开请求记录 <ArrowRight size={14} /></Link>
       </div>
 
       {error ? <div className="lg-inline-alert" role="status">部分首页数据不可用：{error}</div> : null}
@@ -54,14 +56,14 @@ export function OverviewPage() {
             <span className={health?.status === 'ok' ? 'lg-status-dot is-ok' : 'lg-status-dot is-warn'} />
             {health?.status === 'ok' ? '网关运行正常' : '状态未知'}
           </div>
-          <p>{health?.commit ? `Serving commit ${health.commit.slice(0, 9)}` : '暂未取得 serving 版本信息'}</p>
-          <Link className="lg-secondary-link" to="/governance">查看运行状态</Link>
+          <p>{health?.status === 'ok' ? '当前租户可以继续创建密钥或发送请求。' : '健康信息暂不可用，请稍后刷新。'}</p>
+          {tenant?.isInternal ? <Link className="lg-secondary-link" to="/governance">打开系统运维</Link> : null}
         </Card>
 
         <Card className="lg-home-quickstart-card">
           <div className="lg-card-kicker"><Rocket size={15} /> Quickstart</div>
           <h2>用一把租户密钥接入四种协议</h2>
-          <p>选择现有 SDK，复制可运行示例，再用 requestId 回到 Activity 定位请求。</p>
+          <p>选择现有 SDK，复制可运行示例，再用 requestId 回到请求记录定位调用。</p>
           <div className="lg-protocol-list" aria-label="支持协议">
             {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
           </div>

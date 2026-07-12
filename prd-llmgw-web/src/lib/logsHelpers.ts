@@ -85,10 +85,10 @@ export function statusBadgeStyle(
 // ── 4 个子 tab ──
 export type LogsSubTab = 'generations' | 'upstream' | 'sessions' | 'jobs';
 export const LOGS_SUBTABS: { key: LogsSubTab; label: string }[] = [
-  { key: 'generations', label: 'Generations' },
-  { key: 'upstream', label: 'Upstream Requests' },
-  { key: 'sessions', label: 'Sessions' },
-  { key: 'jobs', label: 'Jobs' },
+  { key: 'generations', label: '请求' },
+  { key: 'upstream', label: '上游调用' },
+  { key: 'sessions', label: '会话' },
+  { key: 'jobs', label: '后台任务' },
 ];
 
 // ── 列定义（注册表）──
@@ -101,37 +101,37 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: 'Time', width: '1.1fr' },
-  { key: 'generation', label: 'Generation', width: '1.65fr' },
-  { key: 'model', label: 'Model', width: '1.8fr' },
+  { key: 'date', label: '时间', width: '1.1fr' },
+  { key: 'generation', label: '请求 ID', width: '1.65fr' },
+  { key: 'model', label: '模型', width: '1.8fr' },
   { key: 'provider', label: 'Provider', width: '1.1fr' },
-  { key: 'app', label: 'App', width: '1.35fr' },
-  { key: 'tokens', label: 'Tokens', width: '0.9fr', align: 'right' },
-  { key: 'cost', label: 'Cost', width: '0.7fr', align: 'right', tip: '来自 GW 模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
-  { key: 'latency', label: 'Latency', width: '0.85fr', align: 'right' },
-  { key: 'status', label: 'Status', width: '0.75fr', align: 'center' },
-  { key: 'finish', label: 'Finish', width: '0.85fr', tip: '完成原因 finish_reason（旧日志未记录显示 —）' },
+  { key: 'app', label: '应用', width: '1.35fr' },
+  { key: 'tokens', label: 'Token', width: '0.9fr', align: 'right' },
+  { key: 'cost', label: '费用', width: '0.7fr', align: 'right', tip: '来自平台模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
+  { key: 'latency', label: '耗时', width: '0.85fr', align: 'right' },
+  { key: 'status', label: '状态', width: '0.75fr', align: 'center' },
+  { key: 'finish', label: '结束原因', width: '0.85fr', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: 'Date', width: '1.4fr' },
-  { key: 'model', label: 'Model', width: '1.6fr' },
-  { key: 'provider', label: 'Final Provider', width: '1.3fr' },
-  { key: 'genId', label: 'Generation ID', width: '1.8fr' },
-  { key: 'status', label: 'Status', width: '0.8fr', align: 'center' },
-  { key: 'attempts', label: 'Attempts', width: '0.8fr', align: 'center', tip: '未记录每次重试历史，仅有最终回退标记（isFallback）' },
-  { key: 'fallback', label: 'Fallback', width: '0.9fr' },
-  { key: 'latency', label: 'Latency', width: '0.9fr', align: 'right' },
+  { key: 'date', label: '时间', width: '1.4fr' },
+  { key: 'model', label: '模型', width: '1.6fr' },
+  { key: 'provider', label: '最终 Provider', width: '1.3fr' },
+  { key: 'genId', label: '请求 ID', width: '1.8fr' },
+  { key: 'status', label: '状态', width: '0.8fr', align: 'center' },
+  { key: 'attempts', label: '尝试次数', width: '0.8fr', align: 'center', tip: '未记录每次重试历史，仅有最终回退标记' },
+  { key: 'fallback', label: '是否回退', width: '0.9fr' },
+  { key: 'latency', label: '耗时', width: '0.9fr', align: 'right' },
 ];
 
 export const SESSIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: 'Date', width: '1.6fr' },
-  { key: 'sessionId', label: 'Session ID', width: '1.8fr' },
-  { key: 'app', label: 'App', width: '1.4fr' },
-  { key: 'primaryModel', label: 'Primary Model', width: '1.5fr' },
-  { key: 'primaryProvider', label: 'Primary Provider', width: '1.3fr' },
-  { key: 'supporting', label: 'Supporting Models', width: '1.6fr' },
-  { key: 'requests', label: 'Requests', width: '0.8fr', align: 'right' },
+  { key: 'date', label: '时间', width: '1.6fr' },
+  { key: 'sessionId', label: '会话 ID', width: '1.8fr' },
+  { key: 'app', label: '应用', width: '1.4fr' },
+  { key: 'primaryModel', label: '主要模型', width: '1.5fr' },
+  { key: 'primaryProvider', label: '主要 Provider', width: '1.3fr' },
+  { key: 'supporting', label: '辅助模型', width: '1.6fr' },
+  { key: 'requests', label: '请求数', width: '0.8fr', align: 'right' },
 ];
 
 export function userLabel(it: LlmLogListItem): string {

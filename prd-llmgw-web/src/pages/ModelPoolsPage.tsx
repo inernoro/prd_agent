@@ -71,7 +71,7 @@ export function ModelPoolsPage() {
     setBusyId(null);
     if (res.success) {
       setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
-      setToast(`已将「${res.data.name}」认领到 GW 模型池`);
+      setToast(`已将「${res.data.name}」导入平台模型池`);
     } else {
       setToast(res.error?.message || '操作失败');
     }
@@ -385,7 +385,7 @@ export function ModelPoolsPage() {
         onBulkClaim={() => void bulkClaim()}
         onCalibratePriceCurrency={() => void calibratePriceCurrency()}
       />
-      {pools.length === 0 ? <Empty text="暂无模型池，可先新建 GW 池" /> : null}
+      {pools.length === 0 ? <Empty text="暂无模型池，可先新建第一个模型池" /> : null}
       {pools.map((p) => (
         <div
           key={p.id}
@@ -402,16 +402,16 @@ export function ModelPoolsPage() {
             <Chip label={STRATEGY_LABEL[p.strategyType] || `策略${p.strategyType}`} color="var(--text-secondary)" bg="var(--bg-elevated)" />
             {p.isDefaultForType ? <Chip label="默认池" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}
             {p.authority === 'llm_gateway' ? (
-              <Chip label="GW 权威" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `认领于 ${p.claimedAt}` : undefined} />
+              <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
             ) : (
-              <Chip label="MAP 来源" color="var(--text-muted)" bg="var(--bg-elevated)" />
+              <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
             )}
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>优先级 {p.priority}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.models.length} 个模型</span>
               {p.authority === 'llm_gateway' ? null : (
                 <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPool(p)}>
-                  {busyId === p.id ? '处理中…' : '认领到 GW'}
+                  {busyId === p.id ? '处理中…' : '导入到平台'}
                 </Button>
               )}
               {p.authority === 'llm_gateway' ? (
@@ -677,7 +677,7 @@ function PoolCreateBar({
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-calibrate-price-currency'} onClick={onCalibratePriceCurrency}>
           {busyId === 'bulk-calibrate-price-currency' ? '处理中…' : '校准价格币种'}
         </Button>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>只写 GW 权威池，默认仅校准已有价格字段的历史成员。</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>只更新平台配置中的模型池，默认仅校准已有价格字段的历史成员。</span>
       </div>
     </div>
   );
@@ -848,7 +848,7 @@ function PoolBulkImportBar({
       <Button size="sm" variant="ghost" disabled={busyId === `pool-bulk-import:${pool.id}`} onClick={onImport}>
         {busyId === `pool-bulk-import:${pool.id}` ? '处理中…' : '批量导入'}
       </Button>
-      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>只写 GW 权威池，默认跳过已有成员。</span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>只更新平台配置中的模型池，默认跳过已有成员。</span>
     </div>
   );
 }

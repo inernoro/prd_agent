@@ -531,6 +531,7 @@ app.MapGet("/gw/auth/context", (HttpContext http) =>
     {
         Id = access.TenantId,
         Name = access.TenantName,
+        IsInternal = access.IsInternalTenant,
         Role = access.Role,
         TeamIds = access.TeamIds.ToList(),
     }), jsonOptions);
@@ -5004,6 +5005,7 @@ static TenantSessionDto ToTenantSession(LlmGwTenant tenant, LlmGwMembership memb
 {
     Id = tenant.Id,
     Name = tenant.Name,
+    IsInternal = tenant.IsInternal,
     Role = membership.Role,
     TeamIds = membership.TeamIds,
 };

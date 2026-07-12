@@ -47,6 +47,11 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
 });
+const string BrowserDryRunCors = "llmgw-browser-dry-run";
+builder.Services.AddCors(options => options.AddPolicy(BrowserDryRunCors, policy =>
+    policy.AllowAnyOrigin()
+        .WithMethods(HttpMethods.Get)
+        .WithHeaders("Authorization", "X-Gateway-Source", "X-Gateway-App-Caller")));
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
@@ -284,6 +289,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 app.UseForwardedHeaders();
+app.UseCors(BrowserDryRunCors);
 
 // 端点用的 JSON 选项（与上面口径一致；SSE 端点手动序列化时用）
 var jsonOpts = new JsonSerializerOptions

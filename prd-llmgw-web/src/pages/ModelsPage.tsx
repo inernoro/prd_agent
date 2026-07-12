@@ -76,7 +76,7 @@ export function ModelsPage() {
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
-      setToast(`已将「${res.data.modelName || res.data.name}」认领到 GW 模型`);
+      setToast(`已将「${res.data.modelName || res.data.name}」导入平台模型`);
     } else {
       setToast(res.error?.message || '操作失败');
     }
@@ -159,14 +159,14 @@ export function ModelsPage() {
       return;
     }
     if (!platformId && !capabilityConfirm) {
-      setToast('未选择平台时必须确认写入全部 GW 模型');
+      setToast('未选择平台时必须确认应用到全部平台模型');
       return;
     }
     if (!capabilityConfirm) {
       setToast('请先勾选确认范围');
       return;
     }
-    const scope = platformId ? `当前平台${enabledOnly ? '且启用' : ''}的 GW 模型` : `${enabledOnly ? '启用的 ' : ''}全部 GW 模型`;
+    const scope = platformId ? `当前平台${enabledOnly ? '且启用' : ''}的模型` : `${enabledOnly ? '启用的 ' : ''}全部平台模型`;
     if (!window.confirm(`批量维护${scope}能力？`)) return;
     setBusyId('bulk-model-capabilities');
     setToast(null);
@@ -220,7 +220,7 @@ export function ModelsPage() {
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
       <div style={toolbarStyle}>
-        <span style={toolbarTitleStyle}>批量轮换 GW 模型密钥</span>
+        <span style={toolbarTitleStyle}>批量维护模型密钥</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -235,14 +235,14 @@ export function ModelsPage() {
         </label>
         <label style={checkStyle}>
           <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
-          确认写入当前筛选的 GW 模型
+          确认应用到当前筛选模型
         </label>
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
           {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
         </Button>
       </div>
       <div style={toolbarStyle}>
-        <span style={toolbarTitleStyle}>批量维护 GW 模型能力</span>
+        <span style={toolbarTitleStyle}>批量维护模型能力</span>
         <select
           value=""
           onChange={(e) => applyCapabilityTemplate(e.target.value)}
@@ -267,7 +267,7 @@ export function ModelsPage() {
         </label>
         <label style={checkStyle}>
           <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
-          确认写入当前筛选的 GW 模型
+          确认应用到当前筛选模型
         </label>
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
           {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
@@ -282,7 +282,7 @@ export function ModelsPage() {
                 <th style={th}>平台</th>
                 <th style={th}>协议</th>
                 <th style={th}>能力</th>
-                <th style={th}>权威</th>
+                <th style={th}>配置来源</th>
                 <th style={th}>状态</th>
                 <th style={th}>密钥</th>
                 <th style={th}>操作</th>
@@ -310,9 +310,9 @@ export function ModelsPage() {
                     </td>
                     <td style={td}>
                       {m.authority === 'llm_gateway' ? (
-                        <Chip label="GW 权威" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `认领于 ${m.claimedAt}` : undefined} />
+                        <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
                       ) : (
-                        <Chip label="MAP 来源" color="var(--text-muted)" bg="var(--bg-elevated)" />
+                        <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                       )}
                     </td>
                     <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
@@ -351,7 +351,7 @@ export function ModelsPage() {
                               </>
                             ) : (
                               <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void claimModel(m)}>
-                                {busyId === m.id ? '处理中…' : '认领到 GW'}
+                                {busyId === m.id ? '处理中…' : '导入到平台'}
                               </Button>
                             )}
                             <Button size="sm" variant={m.enabled ? 'ghost' : 'primary'} disabled={busyId === m.id} onClick={() => void toggle(m)}>
