@@ -21,6 +21,7 @@ import type {
   LogsListParams,
   LogsMeta,
   LogsSummaryData,
+  TenantOverviewData,
   ProtocolCoverageData,
   TimeseriesData,
   SessionsData,
@@ -236,6 +237,10 @@ export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {
 
 export function getLogsSummary(params: LogsListParams): Promise<ApiResponse<LogsSummaryData>> {
   return apiRequest<LogsSummaryData>('/logs/summary', { query: { ...params } });
+}
+
+export function getTenantOverview(params: { from: string; to: string }): Promise<ApiResponse<TenantOverviewData>> {
+  return apiRequest<TenantOverviewData>('/overview', { query: params });
 }
 
 export function getProtocolCoverage(params?: { releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ProtocolCoverageData>> {

@@ -985,6 +985,170 @@ app.MapGet("/gw/logs/summary", async (
     return Json(ApiEnvelope<LogsSummaryData>.Ok(data), jsonOptions);
 }).RequireAuthorization("UsageRead");
 
+// ───────────────────────────── 租户全局首页（需鉴权）─────────────────────────────
+// tenant 只来自服务端解析后的 TenantAccessContext；端点不接受 tenantId 参数。
+app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
+{
+    if (!string.IsNullOrWhiteSpace(from) && TryParseUtc(from) is null
+        || !string.IsNullOrWhiteSpace(to) && TryParseUtc(to) is null)
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_RANGE", "from/to 必须是有效的 UTC 日期时间"), jsonOptions, 400);
+    }
+    var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
+    if (toUtc <= fromUtc || toUtc - fromUtc > TimeSpan.FromDays(90))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_RANGE", "时间范围必须大于 0 且不超过 90 天"), jsonOptions, 400);
+    }
+
+    var fb = Builders<BsonDocument>.Filter;
+    var overviewFilter = TenantAccess.Filter(http, fb.And(
+        fb.Gte("StartedAt", fromUtc),
+        fb.Lt("StartedAt", toUtc),
+        fb.Ne("IsHealthProbe", true)));
+    var projection = Builders<BsonDocument>.Projection
+        .Include("Status")
+        .Include("DurationMs")
+        .Include("InputTokens")
+        .Include("OutputTokens")
+        .Include("InputPricePerMillion")
+        .Include("OutputPricePerMillion")
+        .Include("EstimatedCost")
+        .Include("EstimatedCostCurrency")
+        .Include("EstimatedCostUsd")
+        .Include("StartedAt")
+        .Include("UserId")
+        .Include("AppCallerCode")
+        .Include("AppCallerCodeDisplayName")
+        .Include("AppCallerTitle")
+        .Include("Model");
+    var docs = await logs.Find(overviewFilter).Project(projection).ToListAsync();
+
+    var now = DateTime.UtcNow;
+    var keyProjection = Builders<BsonDocument>.Projection
+        .Include("Enabled")
+        .Include("ExpiresAt")
+        .Include("LastUsedAt");
+    var keyDocs = await serviceKeys.Find(TenantAccess.Filter(http)).Project(keyProjection).ToListAsync();
+
+    var canReadRecentRequests = TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead);
+    var recentRequests = new List<LlmLogListItem>();
+    if (canReadRecentRequests)
+    {
+        var recentDocs = await logs.Find(overviewFilter)
+            .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
+            .Limit(5)
+            .ToListAsync();
+        recentRequests = recentDocs.Select(MapListItem).ToList();
+    }
+
+    var durations = docs
+        .Select(d => d.AsNullableLong("DurationMs"))
+        .Where(d => d is >= 0)
+        .Select(d => d!.Value)
+        .OrderBy(d => d)
+        .ToList();
+    var pricedDocs = docs
+        .Select(d => new
+        {
+            Amount = d.AsNullableDecimal("EstimatedCost"),
+            Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
+            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
+                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+        })
+        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .ToList();
+    var estimatedCosts = pricedDocs
+        .GroupBy(x => x.Currency!, StringComparer.Ordinal)
+        .OrderBy(x => x.Key, StringComparer.Ordinal)
+        .Select(x => new EstimatedCostBucket
+        {
+            Currency = x.Key,
+            Amount = x.Sum(item => item.Amount!.Value),
+            Requests = x.LongCount(),
+        })
+        .ToList();
+
+    var rangeMinutes = Math.Max(1d, (toUtc - fromUtc).TotalMinutes);
+    var rateWindowMinutes = Math.Max(1, (int)Math.Min(15d, Math.Ceiling(rangeMinutes)));
+    var rateFrom = toUtc.AddMinutes(-rateWindowMinutes);
+    var rateRequests = docs.LongCount(d => d.AsNullableUtcDateTime("StartedAt") is DateTime started && started >= rateFrom);
+    var succeeded = docs.LongCount(d => d.GetStringOrEmpty("Status") == "succeeded");
+    var lastUsedAt = keyDocs
+        .Select(d => d.AsNullableUtcDateTime("LastUsedAt"))
+        .Where(x => x is not null)
+        .OrderByDescending(x => x)
+        .FirstOrDefault();
+    var activeUserIds = docs
+        .Select(d => d.AsNullableString("UserId"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    var inputTokens = docs.Sum(d => (long)(d.AsNullableInt("InputTokens") ?? 0));
+    var outputTokens = docs.Sum(d => (long)(d.AsNullableInt("OutputTokens") ?? 0));
+    var data = new TenantOverviewData
+    {
+        From = ((DateTime?)fromUtc).ToIso() ?? string.Empty,
+        To = ((DateTime?)toUtc).ToIso() ?? string.Empty,
+        GeneratedAt = ((DateTime?)now).ToIso() ?? string.Empty,
+        TotalRequests = docs.Count,
+        SuccessRatePercent = docs.Count == 0
+            ? null
+            : Math.Round(succeeded * 100m / docs.Count, 1, MidpointRounding.AwayFromZero),
+        P95DurationMs = Percentile95(durations),
+        RequestRatePerMinute = Math.Round(rateRequests / (decimal)rateWindowMinutes, 2, MidpointRounding.AwayFromZero),
+        RateWindowMinutes = rateWindowMinutes,
+        InputTokens = inputTokens,
+        OutputTokens = outputTokens,
+        TotalTokens = inputTokens + outputTokens,
+        ActiveUsers = activeUserIds,
+        PricedRequests = pricedDocs.Count,
+        UnknownCostRequests = docs.Count - pricedDocs.Count,
+        PriceCoveragePercent = docs.Count == 0
+            ? 0m
+            : Math.Round(pricedDocs.Count * 100m / docs.Count, 1, MidpointRounding.AwayFromZero),
+        EstimatedCosts = estimatedCosts,
+        TopUsers = BuildOverviewRank(
+            docs,
+            d => d.AsNullableString("UserId"),
+            d => d.AsNullableString("UserId"),
+            limit: 5),
+        TopAppCallers = BuildOverviewRank(
+            docs,
+            d => d.AsNullableString("AppCallerCode"),
+            d => d.AsNullableString("AppCallerTitle")
+                ?? d.AsNullableString("AppCallerCodeDisplayName")
+                ?? d.AsNullableString("AppCallerCode"),
+            limit: 5),
+        TopModels = BuildOverviewRank(
+            docs,
+            d => d.AsNullableString("Model"),
+            d => d.AsNullableString("Model"),
+            limit: 5),
+        ServiceKeys = new ServiceKeyOverview
+        {
+            Total = keyDocs.Count,
+            Active = keyDocs.LongCount(d =>
+                d.AsNullableBool("Enabled") == true
+                && (d.AsNullableUtcDateTime("ExpiresAt") is not DateTime expiresAt || expiresAt > now)),
+            Disabled = keyDocs.LongCount(d => d.AsNullableBool("Enabled") != true),
+            Expired = keyDocs.LongCount(d => d.AsNullableUtcDateTime("ExpiresAt") is DateTime expiresAt && expiresAt <= now),
+            ExpiringSoon = keyDocs.LongCount(d =>
+                d.AsNullableBool("Enabled") == true
+                && d.AsNullableUtcDateTime("ExpiresAt") is DateTime expiresAt
+                && expiresAt > now
+                && expiresAt <= now.AddDays(7)),
+            NeverUsed = keyDocs.LongCount(d => d.AsNullableUtcDateTime("LastUsedAt") is null),
+            LastUsedAt = lastUsedAt.ToIso(),
+        },
+        CanReadRecentRequests = canReadRecentRequests,
+        RecentRequests = recentRequests,
+    };
+
+    return Json(ApiEnvelope<TenantOverviewData>.Ok(data), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
 // ───────────────────────────── 协议入口运行覆盖（需鉴权）─────────────────────────────
 app.MapGet("/gw/protocol-coverage", async (HttpContext http, string? releaseCommit, int? sinceHours) =>
 {
@@ -5516,6 +5680,36 @@ static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string f
         .Select(g => new LogsBucketItem { Key = g.Key, Count = g.LongCount() })
         .OrderByDescending(x => x.Count)
         .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+static long? Percentile95(IReadOnlyList<long> sortedValues)
+{
+    if (sortedValues.Count == 0) return null;
+    var index = Math.Clamp((int)Math.Ceiling(sortedValues.Count * 0.95d) - 1, 0, sortedValues.Count - 1);
+    return sortedValues[index];
+}
+
+static List<OverviewRankItem> BuildOverviewRank(
+    IEnumerable<BsonDocument> docs,
+    Func<BsonDocument, string?> keySelector,
+    Func<BsonDocument, string?> labelSelector,
+    int limit) =>
+    docs.Select(d => new
+        {
+            Key = keySelector(d)?.Trim(),
+            Label = labelSelector(d)?.Trim(),
+        })
+        .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+        .GroupBy(x => x.Key!, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new OverviewRankItem
+        {
+            Key = g.Key,
+            Label = g.Select(x => x.Label).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? g.Key,
+            Count = g.LongCount(),
+        })
+        .OrderByDescending(x => x.Count)
+        .ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase)
+        .Take(limit)
         .ToList();
 
 static IReadOnlyList<(string Key, string Label)> TargetIngressProtocols() => new[]
