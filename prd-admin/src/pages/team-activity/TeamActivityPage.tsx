@@ -356,7 +356,7 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
+      className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors shrink-0 whitespace-nowrap ${
         active
           ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
           : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
