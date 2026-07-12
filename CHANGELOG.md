@@ -8,6 +8,737 @@
 
 ## [未发布]
 
+### 2026-07-13
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | llm-gateway | 正式发布工作流透传 full-http 维护基线并使用维护语义审计，避免已切流环境被首次迁移门禁阻断 |
+| test | prd-api | 增加生产工作流维护参数与审计路径合同守卫 |
+| fix | llmgw | 生产 runner 无专用管理 token 时由标签 stage 作业完成在线握手 |
+| ops | llmgw | 维护发布从固定生产目录最小恢复并审计 rollout ledger 证据 |
+| fix | llmgw | 周报专属模型池同步写入 GW 权威库并拒绝裁剪共享池 |
+| security | llmgw | 周报池生产修复从权威调用方推导租户并为配置与审计写入 TenantId |
+| ops | llmgw | 周报池执行前同时备份 MAP 与 GW 受影响集合并生成校验和 |
+
+### 2026-07-12
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 移动首页定稿方向落地：浅色默认（工作台式浅灰底+白卡+功能色宫格+琥珀数据头带，参照飞书/Stripe），暗色形态跟随系统（Linear 纪律：近黑底+发丝边+琥珀单点亮色）；米多早报进宫格，更新中心红点徽章 |
+| polish | prd-admin | 移动首页浅色形态二次纠偏（治「老土」）：撤下橙色渐变头带改墨色问候行，宫格实底彩块改 12% tint 底 + 彩色线稿，白卡改发丝边 + 微投影，琥珀只留数字与按钮点睛 |
+| feat | prd-admin | 移动端全局明暗偏好：浅色默认、首页右上角可切换（mobileThemeStore + AppShell 按路由重申 data-theme），底部 TabBar 与快速创建抽屉双主题化，首页/早报隐藏滚动条 |
+| feat | prd-admin | 移动端默认皮肤改为暗色（浅色仍可一键切换，存储 key 升 v2）；首页加长：沉淀与档案卡（智识殿堂/学习中心/我的资产/我的分享）+ 动态 8 条 + 推荐货架 8 个 |
+| feat | prd-admin | 「浏览」百宝箱移动版补白天形态：新增 AS_COLOR_LIGHT（iOS 浅色板）+ useAppStoreColors 主题反应层，MobileSegmented/AppStore 组件/搜索/chips/空态全部跟随；我的、通知页白透明硬编码改主题感知 |
+| feat | prd-admin | 系统级双皮肤机制：硬编码棘轮守卫测试（每文件白透明/深色 hex 只减不增，基线量化 362 文件）+ .claude/rules/admin-dual-theme.md 修法映射表；修复海鲜市场半高/迷你密度卡浅色形态（信息板/缩略图槽补 light 覆盖） |
+| feat | prd-admin | 系统级双皮肤机制落地：硬编码棘轮守卫测试（每文件白透明/深色 hex 只减不增，基线量化 362 文件/2856+562 处）+ .claude/rules/admin-dual-theme.md 修法映射表；修复海鲜市场半高/迷你密度卡浅色形态（信息板/缩略图槽白底覆盖） |
+| feat | prd-llmgw | 新增租户列表与可信费用汇总，缺价格保持 unknown 并按 CNY、USD 原币种分组 |
+| feat | prd-llmgw-web | 重构控制台左侧信息架构、任务优先首页、Activity 图表与费用覆盖率体验 |
+| test | prd-api | 增加控制台信息架构、租户解析和金额可信度领域守卫 |
+| feat | prd-llmgw-web | 新增系统浅深主题、中文请求记录与可操作空态 |
+| feat | prd-llmgw-web | Quickstart 自动使用真实 Gateway 地址并提供不调用上游的密钥路由直测 |
+| security | prd-llmgw | 使用服务端内部租户标记隔离影子对比与系统运维页面 |
+| fix | PrdAgent.LlmGateway | 为浏览器路由自检开放受限 GET CORS，保持真实模型接口不跨域开放 |
+| polish | prd-llmgw-web | 解释平台内部身份与租户外部密钥边界并清理配置迁移术语 |
+| feat | prd-llmgw | 新增服务端租户全局首页聚合，统计请求、成功率、P95、速率、token、费用、用户、appCaller、模型和密钥状态 |
+| feat | prd-llmgw-web | 重构租户概览并新增随版本发布的学习中心，补齐完整接入心智与术语深链 |
+| test | prd-api | 增加首页租户隔离、费用语义和学习中心合同守卫 |
+| fix | prd-llmgw | 修复租户化后生产治理验收脚本的会话解析与数据隔离漂移 |
+| fix | prd-llmgw-web | 对齐首页与 Quickstart 的四协议名称 |
+| test | prd-api | 增加外部平台最终验收的数据域与协议防回归守卫 |
+| ops | prd-api | 固化 LLM Gateway 分层保留策略、删除前 dry-run 与最近清理状态 |
+| test | scripts | 新增六类能力各最多一次且禁止自动重试的最终验收命令 |
+| fix | scripts | 修复 full-http 维护发布错误使用新 schema 重审历史全阶段证据的问题 |
+| fix | ops | 修复 LLM Gateway 维护发布未将已审计 shadow 基线传递给正式部署门的问题 |
+| feat | prd-llmgw | 为租户模型池补充 appCaller 绑定、近期流量、成功率和成员健康聚合 |
+| feat | prd-llmgw-web | 重构模型池首屏业务心智、详情抽屉与高级维护分层 |
+| feat | prd-llmgw-web | 支持按模型池精确查看 appCaller 和请求记录 |
+| test | prd-api | 更新 Gateway 数据域守卫覆盖模型池租户聚合与精确筛选 |
+| feat | prd-api | 为 appCaller 增加租户级版本化提示词策略并只在 chat/vision 入口应用 |
+| feat | prd-llmgw | 新增提示词策略预览、乐观并发保存、版本回滚和脱敏审计 API |
+| feat | prd-llmgw-web | 新增 appCaller 提示词策略编辑、预览和版本历史页面 |
+| security | prd-api | 请求日志仅保存提示词策略 id、版本、hash 和字符数，不保存策略正文 |
+| test | prd-api | 增加提示词合并顺序、禁用、变量、raw 隔离与租户索引合同测试 |
+| fix | prd-api | 对齐控制台与 serving 的提示词策略团队索引方向，避免同名索引冲突导致启动失败 |
+| fix | llm-gateway | 区分首次切流与 full-http 维护发布，修正路由漂移误报和发布探针传输标记 |
+| docs | llm-gateway | 新增已知可用性三 PR 有限收口计划 |
+| refactor | llmgw | 将控制台 API、Web 控制台和 serving host 原子收拢到根目录 llmgw |
+| ci | prd-api | 更新 solution、Docker、CI 与 CDS 路径并保持运行标识不变 |
+| docs | llmgw | 新增独立产品根目录说明、开发规则和部署文档入口 |
+| polish | llmgw | 将登录页和浏览器标题中的旧观测台名称统一为 LLM Gateway 控制台 |
+| refactor | llm-gateway | 将 serving 运行设置、资产登记、故障通知和密钥自检迁入 llm_gateway 数据域 |
+| fix | llm-gateway | 移除 readiness 对 MAP Mongo 的必要依赖，并在 GW-only 路由前跳过 MAP appCaller 查询 |
+| feat | prd-api | 为租户 service key 增加来源 CIDR 和分布式每分钟限流执行门 |
+| feat | prd-llmgw | 增加创建者、自有范围、团队、轮换和高级 service key 管理 |
+| feat | prd-llmgw-web | 新增组织自助接入与四协议网页 Quickstart |
+| test | prd-api | 增加 service key CIDR 和租户分钟窗口集成测试 |
+| security | prd-api | CIDR 门禁只消费 nginx 追加的最右侧来源地址，拒绝调用方伪造转发链 |
+| fix | prd-llmgw-web | Quickstart 无法确认 serving 地址时使用明确占位，避免误把管理后台作为网关地址 |
+| feat | prd-api | LLM Gateway 运行时增加租户解析、tenant-first 数据隔离及跨租户预算、幂等、取消和并发治理 |
+| feat | prd-llmgw | 新增租户、团队、成员、角色权限、租户切换与 tenant-scoped 控制台 API |
+| security | prd-llmgw | 服务 key、日志、审计、路由配置和组织资源按服务端租户上下文隔离 |
+| test | prd-api | 新增 service key、请求幂等、取消注册和 provider 并发的跨租户隔离测试 |
+| fix | prd-api | 生命周期保留任务覆盖全部租户的日志脱敏、对象清理和逐租户审计记录 |
+| security | prd-api | 外部租户模型池预览禁止回退 MAP，multipart 引用按租户 manifest 校验后再下载 |
+| security | prd-api | multipart 清理仅在引用归属确认后执行，并只使用服务端已验证 TenantId |
+| security | prd-api | inline multipart 文件绕过引用 rehydrate 时禁止清理未经 manifest 验证的 RefKey |
+| fix | prd-api | LLM 日志缺省租户跟随 LlmGateway InternalTenantId 配置，避免落入硬编码租户 |
+| fix | prd-api | shadow 证据、provider 并发和 legacy key 的缺省租户统一跟随 InternalTenantId 配置 |
+| fix | prd-api | raw 幂等指纹计算前覆盖服务端已验证 tenant/team，忽略客户端自报租户字段 |
+| fix | prd-api | raw 幂等指纹容忍反序列化后的空 inline 文件内容，避免混合 multipart 请求异常 |
+| fix | prd-llmgw | 团队重命名遇同租户重名时返回 TEAM_CONFLICT 409，不再泄漏 Mongo 500 |
+| fix | prd-llmgw | service key 写操作使用独立 RBAC 权限，developer 可自助管理 key 但不可写路由配置 |
+| fix | ops | 将正式环境 AI_ACCESS_KEY 显式注入 MAP API 容器 |
+| fix | prd-api | 记录周报规则兜底的安全原因代码，避免把模型失败伪装成 AI 生成成功 |
+| fix | prd-admin | 区分 AI 草稿与规则生成草稿，并展示实际模型和可理解的兜底原因 |
+| ops | llm-gateway | 周报默认使用独立单模型池并精确绑定，禁止继承通用 224 模型大池 |
+| test | prd-api | 增加周报兜底原因与独立模型池生产脚本守卫 |
+| fix | ops | 恢复正式环境 standalone nginx 的根级健康检查代理 |
+
+### 2026-07-11
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1/D2/D3/D4 全部干净（0 变更），D6 处理 5 条 changelog 内容覆盖（CDS 密钥脱敏加固/CDS 验收报告文件夹树/知识库分享页图视图+一键双链+2D3D折叠/首页登录页品牌渐变收敛为靛蓝-紫罗兰色系） |
+| fix | prd-llmgw | 修正 full-http 维护发布对同提交 shadow 证据的循环依赖，仅在当前运行态门全绿时保留最近成功迁移证据 |
+| test | prd-api | 新增维护发布 shadow 证据保留条件静态守卫 |
+| fix | prd-api | 移除 LLM Gateway 动态 appCaller 对 MAP 静态注册表的运行时硬依赖，保留规范格式和模型类型校验 |
+| ops | scripts | 新增默认 dry-run 的生产治理批次验收，并支持跳过默认文本种子的多模态精准验收 |
+| test | prd-api | 增加动态 appCaller 与生产治理验收脚本守卫 |
+| docs | doc | 更新 LLM Gateway 当前生产事实、隐性风险、架构修正与迁移复盘 |
+| fix | prd-llmgw | 让 full-http 维护发布从全部有效成功台账中匹配最近干净 shadow 证据，避免当前成功记录覆盖前置迁移证据 |
+| test | prd-api | 补充 full-http 成功历史的 release gate 与协议 canary 守卫 |
+| feat | prd-admin | 移动端首页按 App Store Today 版式重做（appStoreTokens 纪律）：日期眉+大标题、Featured 大卡（继续上次）、七日数据、快捷入口分组列表（更新中心未读徽章）、推荐智能体货架、我的动态，全部接真实数据 |
+| feat | prd-admin | 新增「米多早报」副页面 /daily-post（米多刊系纸墨版式：报头/期号/头条/七日数据/快捷通道/动态/档案室），首页推广行进入；移除首页硬编码近黑渐变背景 |
+| feat | cds | 未登录首页（落地页）hero 重做：开机帷幕入场（橙色光束划出+画布从中线裂开）、中文主标「分支，即环境。」、BranchGenesis 分支诞生动画（main 主干→commit 落点→fork 分支→电流注入环境板的序列编排），reduced-motion 全量降级 |
+| feat | cds | 登录页手机端竖排部署光路（push/build/live 三站+下落电流）、产品事实 chips、暗场双光源、头部白天/黑夜主题切换按钮 |
+
+### 2026-07-10
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | cds | 建立可恢复的 DeploymentRun 部署账本与托管交付契约 |
+| feat | cds | 新增不可变 DeploymentVersion、产物复用、版本重部署与回滚入口 |
+| feat | cds | 新增 managed/compose 双模式、自动构建产物与逻辑能力绑定 |
+| feat | cds | 新增稳定失败码、证据引用、确定性诊断与 AI Gateway 流式解释 |
+| fix | cds | 验收报告页文件夹树随项目筛选联动，修复全局页切项目后仍渲染其它项目文件夹的跨项目串扰；「移动到文件夹」菜单只列与报告同项目的文件夹 |
+| feat | cds | 报告列表顶栏重排：最左项目筛选、右侧筛选、最右「全部折叠/展开」一键按钮，移除「共 N 份报告」计数文案 |
+| feat | skills | 验收归档 archive_report.py 新增 --folder-path 参数，文件夹归类三级解析（--folder-path > config.cdsFolder > --module 自动归类），验收报告默认按模块进文件夹、不再散落项目根 |
+| feat | cds | 验收报告列表新增标题搜索框（搜索时平铺命中项）与「30 天前」系统视图（给巡检/日报类报告批量清理入口） |
+| feat | cds | 「全部项目」视图报告树按项目一级分组（CDS 自身 + 各项目各成一组，可折叠），全部折叠/展开按钮同时作用于分组行 |
+| polish | cds | 报告与文件夹删除确认从原生 window.confirm 统一为 Dialog 风格 |
+| rule | skills | 每日验收 SOP 固化归档必须带 --folder-path「每日验收/YYYY-MM」按月分桶；新增 doc/debt.cds.reports.md 记录存量迁移/保留策略/批量操作等剩余债务 |
+| chore | prd-api | 每日验收 SOP 的 --folder-path 要求改到源文档 doc/guide.acceptance.daily-sop.md 并重跑快照同步与官方技能打包，official-skills.generated.json 同步收录 archive_report.py 新归类行为（Codex review P1/P2） |
+| polish | cds | 将 CDS 更新、自更新历史、Docker 网络容量和危险操作拆分为独立设置页签 |
+| fix | prd-admin | 修复命令面板搜索后快速回车可能进入错误入口的问题 |
+| chore | doc | 每日熵清理巡检：D1/D2/D3/D4 双向扫描零真实欠账（历史命中均为误报，已逐条核实文件仍存在/属正文引用非索引条目）；D6 核实 5 条 changelog 内容已被更近更新的活文档（rule.acceptance.map-enterprise.md / debt.cds.ci-prebuilt.md / plan.llm-gateway.full-cutover.md）覆盖，登记入 manifest |
+| feat | prd-api | 知识库新增录音转录全链路任务（transcribe kind：ASR 转录 + AI 流式摘要，产物为「摘要 + 转录全文」新文档，POST entries/{id}/transcribe，与字幕生成共用 ASR 分发与排队去重） |
+| feat | prd-admin | 知识库新增 Notion 式录音转录流程卡：上传音频 → 转录 → AI 摘要 → 保存笔记四阶段逐项点亮（SSE），摘要流式生长，完成后一键直达转录笔记；移动端为底部弹层、桌面端为右侧抽屉 |
+| feat | prd-admin | 音/视频条目正文顶部新增「开始转录 / 查看转录笔记」常驻入口卡；工具栏与右键菜单新增「转录」；「添加」菜单新增「上传录音转笔记」 |
+| chore | prd-admin | /document-store 登记为移动端 full 兼容等级 |
+| feat | prd-admin | 知识库库内「新增」收敛为右下角调色盘 FAB 唯一入口（点击扇形展开：写文章/录音转笔记/上传文件/解析短视频/新建文件夹），下线侧栏小「+」菜单与顶栏「上传文档」按钮，消除重复与被遮挡入口 |
+| test | prd-api | AppCaller golden 快照补入 document-store.transcribe-summary::chat（修 CI Server Build & Test 红灯） |
+| fix | prd-api | 字幕生成/录音转录端点鉴权改为团队可写路径（与上传权限对称），修共享库协作者上传后无法转录的 404（Codex P2） |
+| fix | prd-admin | 修合并 main 引入的 mobileCompatibility 重复键（/document-store 两处登记合并为一条，修 CI Admin Dashboard Build 红灯） |
+| fix | prd-api | 字幕/转录排队复用与认领按 UserId 过滤，避免团队库协作者拿到他人 runId 后状态/SSE 404（Codex P2） |
+| fix | prd-api | 字幕/转录处理器回写源条目 Metadata 改为定点 $set 单键，修两处理器并行时整字典覆盖互相丢键（Codex P2） |
+| fix | prd-admin | 转录抽屉「后台运行」关闭后页面接手看护 run（轮询到终态自动刷新列表 + toast 告知结果），修后台完成的转录笔记需手动刷新才出现（Codex P2） |
+| fix | prd-admin | 上传录音期间点「后台运行」时迟到的 runId 也被页面接手看护（命令式上报 + 打开态 ref 判定），修该场景转录完成后列表不刷新（Codex P2） |
+| fix | prd-llmgw | 修正 active appCaller 治理校验，允许 auto/pool/pinned 三种目标路由策略 |
+| fix | prd-llmgw | 修正 config-authority 自动绑池逻辑，保留 active appCaller 已配置的 auto/pool/pinned 策略 |
+| fix | prd-api | 修正 active appCaller 在 auto 策略下的运行态解析，使用绑定的 GW 模型池而不是 fail-close |
+| fix | prd-api | 修正 active appCaller 的 pinned 解析顺序，full-http 退场后只允许命中 GW-owned 平台和模型 |
+| feat | prd-api | LLM Gateway appCaller 被动注册累计 ObservedIngressProtocols，支持同一 appCaller 被多入口协议复用 |
+| feat | prd-llmgw | appCaller 列表和协议覆盖矩阵基于 ObservedIngressProtocols 判断注册证据，并兼容旧 IngressProtocol 单值 |
+| polish | prd-llmgw-web | appCaller 控制台入口列展示已观察到的协议列表，避免被最后一次入口覆盖误导 |
+| test | prd-api | 增加 ModelLab/Arena pinned 经 GW 调用的防退化守卫 |
+| feat | prd-llmgw | runtime gates 增加 appCaller 入口协议注册覆盖阻塞项，防止只看日志忽略注册表证据 |
+| polish | prd-llmgw-web | 概览页 runtime gate 为 appCaller 入口协议注册覆盖提供协议覆盖和调用方深链 |
+| test | scripts | release gate 自测覆盖 appCaller 入口协议注册 gate，protocol canary 文案同步说明注册表证据 |
+| test | prd-api | 增加模型池协议优先级防退化测试，守卫池条目 Protocol 优先于模型和平台 |
+| docs | doc | 更新 LLM Gateway 协议绑平台债务状态，区分已守卫文本解析链与剩余图片/raw 分支 |
+| fix | prd-api | 生图 adapter 选择改为优先使用 Gateway 解析出的 Protocol，避免同平台多协议被 URL 或模型名猜回旧适配器 |
+| test | prd-api | 增加生图 adapter 显式协议覆盖 URL/模型名检测的防退化测试 |
+| fix | prd-api | Agent runtime profile 从模型池导入时优先使用模型 Protocol，避免按平台类型或 URL 误判运行协议 |
+| test | prd-api | 增加 runtime profile 协议解析防退化测试，守卫模型 Protocol 覆盖平台和 URL 推断 |
+| fix | prd-api | ASR chat-audio 路由改为优先依据 Gateway 解析出的 Protocol，避免同平台多协议被 PlatformType 误分流 |
+| test | prd-api | 增加 ASR chat-audio 路由策略测试，覆盖协议优先和旧平台兜底 |
+| fix | prd-api | Gateway adapter 选择支持协议别名映射，避免 anthropic/claude-compatible 被误落到 OpenAI 兜底 |
+| test | prd-api | 增加 Gateway adapter 协议别名映射防退化测试 |
+| fix | prd-api | 修复 raw 发送阶段漏传 Gateway Protocol 导致按 PlatformType 误选 adapter 的问题 |
+| test | prd-api | 增加 raw 路径按解析 Protocol 选择 adapter 的防退化测试 |
+| ops | cds | 移除 llmgw 与 llmgw-serve 的 CDS 独立公网预览，仅保留 llmgw-web 控制台入口 |
+| feat | prd-api | 为网关新增 scoped key、Decimal128 原子预算、显式取消、raw 幂等和数据生命周期治理 |
+| security | prd-api | 将显式取消注册表按 appCallerCode 与 requestId 联合隔离，阻止跨调用方取消运行中请求 |
+| security | prd-api | scoped key 的空来源、空协议、空调用方或空 scope 改为拒绝，仅显式星号允许通配 |
+| fix | prd-api | unknown 上游结果的预算预占到期后改为保守结算，避免成功受理但响应丢失时低估月消费 |
+| fix | prd-api | serving readiness 探针携带网关 key，并让预算过期结算独立于数据保留开关 |
+| fix | prd-llmgw | 禁止保存月预算与单次预占不成对或预占超过月预算的 appCaller 配置，并在 serving 启动时阻断无效存量配置 |
+| security | prd-api | profile-test 使用独立特权 scope，普通 invoke key 不再能够探测任意上游地址 |
+| fix | prd-api | 原生 send、raw 与 profile-test 失败信封回写真实 HTTP 状态，避免预算把失败请求误判为成功 |
+| security | prd-api | scoped key 改用实际 body/query appCaller 鉴权并校验 header 一致性，兼容协议 body 流式请求强制 stream scope |
+| fix | prd-api | raw 幂等 replay 提前于预算预占返回，HTTP client 在非 2xx 时保留结构化网关错误信封 |
+| security | prd-api | 兼容协议鉴权按端点实际解析 JSON，不再允许伪造或省略 Content-Type 绕过 stream scope |
+| fix | prd-api | HTTP client 保留 send 结构化失败信封，兼容协议无 header 时按实际 Chat/Vision/Generation 默认 caller 鉴权 |
+| fix | prd-api | 修复月初预算创建竞态与图片幂等顺序，multipart 指纹纳入文件 hash，并让超大重放快照不再反转上游成功 |
+| fix | prd-api | 修正请求控制 scope 优先级，并让显式取消后的未知上游结果保留预算预占 |
+| fix | scripts | 生产 stage 的 serving probe 改用探针实际读取的 LLMGW_GATE_KEY 环境变量 |
+| feat | prd-api | 增加 platform/model 跨 serving 分布式并发租约并接入文本、流式和 raw 上游调用 |
+| feat | prd-llmgw | 新增接入密钥管理 API，并支持 appCaller 单次预算预占额配置 |
+| feat | prd-llmgw-web | 新增接入密钥页面和 appCaller 预算预占配置控件 |
+| fix | prd-llmgw-web | 修复接入密钥页与控制台导航在手机宽度下的整页横向溢出 |
+| fix | prd-api | 将无凭据容器探针切换到公开 healthz，保留带 key 的 deep readyz 发布门 |
+| fix | scripts | 在发布阶段缺少 serving 证据时自动采集零上游费用探针，并同步原子预算审计规则 |
+| test | prd-api | 增加预算、幂等、scope 和跨实例并发 Mongo 竞争测试 |
+| fix | prd-api | 修复 LLM Gateway client-stream 健康探针标记在跨进程链路中丢失，避免发布 gate 把探针流量误判为用户流量 |
+| feat | prd-api | LLM Gateway 请求上下文、日志与兼容入口补充 RunId 业务追踪字段 |
+| polish | prd-llmgw-web | LLM Gateway 日志详情抽屉展示业务 RunId，便于从网关日志反查 MAP run |
+| feat | prd-llmgw-web | LLM Gateway 日志列表、汇总、时间序列与会话视图支持按 RunId 精确过滤 |
+| feat | prd-llmgw-web | LLM Gateway 日志列表、汇总、时间序列与会话视图支持按 RequestId 与 SessionId 精确过滤 |
+| feat | prd-llmgw-web | LLM Gateway appCaller 注册表记录最近请求追踪字段，并可跳转日志页按 requestId、sessionId、runId 反查 |
+| security | prd-api | LLM Gateway serving 运行时按 GW appCaller 注册表状态拒绝 disabled/archived 调用方 |
+| security | prd-llmgw | LLM Gateway 控制台禁止将未绑定 GW 权威模型池或使用 auto 策略的 appCaller 激活 |
+| fix | prd-llmgw | LLM Gateway 配置权威自动绑池工具同步将 active appCaller 路由策略规范化为 pool |
+| security | prd-llmgw | LLM Gateway 控制台激活 appCaller 前校验绑定池存在可解析成员，自动绑池跳过不可用默认池 |
+| security | prd-llmgw | LLM Gateway 控制台禁止将无可解析成员的 GW 模型池设为默认池 |
+| security | prd-llmgw | LLM Gateway 控制台阻止默认 GW 模型池在成员删除、更新或批量导入后变为不可解析 |
+| feat | prd-api | LLM Gateway serving 新增 GW Native `/gw/v1/invoke` 非流式入口并复用 `/gw/v1/send` 路由治理链路 |
+| test | scripts | LLM Gateway D 层 smoke 改为真打 GW Native `/gw/v1/invoke` 主入口，并保留 `/gw/v1/send` 兼容抽样 |
+| test | prd-api | LLM Gateway 入口协议契约补齐 Native/OpenAI/Claude/Gemini 的路由元数据一致性断言 |
+| feat | prd-llmgw-web | LLM Gateway 日志 Activity 顶部展示入口协议、模型策略和来源系统分布，并支持点击快速筛选 |
+| test | prd-api | 增加 LLM Gateway 控制台日志 summary 路由观测字段防退化守卫 |
+| fix | prd-api | LLM Gateway 池成员缺少能力快照时从模型配置补齐协议和能力元数据，避免 strict-require 在旧池路径 unknown 放行 |
+| feat | prd-api | LLM Gateway OpenAI 兼容非流式响应通过 Extensions 保留并回吐 choice logprobs |
+| feat | prd-api | LLM Gateway serving 新增受密钥保护的 `/gw/v1/route-self-test` dry-run 入口，秒级验证四类协议入口路由元数据 |
+| ops | scripts | LLM Gateway 生产 preflight 接入 `/gw/v1/route-self-test`，发布前自动校验四类协议入口 dry-run gate |
+| ops | scripts | LLM Gateway rollout ledger 拒绝缺少 `gateway_route_self_test` 的 canary/http preflight 证据 |
+| ops | scripts | LLM Gateway serving-probe 部署后强制记录并校验 `routeSelfTest`，防止发布后协议入口漂移 |
+| ops | scripts | LLM Gateway rollout ledger 强制校验 gw-smoke 的 invoke/send/stream/client-stream 低成本真实 provider canary 行 |
+| ops | scripts | LLM Gateway gw-smoke 默认真实 provider 调用收窄为 chat-only，intent/vision 改为显式环境变量打开以避免过量测试 |
+| security | scripts | LLM Gateway serving-probe 取消读取短名 `GW_KEY`，仅通过长名环境变量或显式参数取网关密钥 |
+| security | prd-api | LLM Gateway `/gw/v1/profile-test` 接入 appCaller 被动注册与状态、预算、限流治理，避免 runtime profile 测试绕过 GW 治理 |
+| fix | prd-api | LLM Gateway `/gw/v1/profile-test` 复用同一个 requestId 写 appCaller 观测与 raw 请求日志，保证控制台可按 requestId 串联排查 |
+| fix | prd-api | LLM Gateway runtime profile 测试 raw 日志补齐 sourceSystem、ingressProtocol、modelPolicy、transport 上下文，保证控制台筛选统计不漏该类请求 |
+| fix | prd-api | Infra Agent runtime profile 测试调用 LLM Gateway 时携带统一 requestId 与路由上下文，使 inproc/http 两种模式日志字段一致 |
+| ops | prd-llmgw | LLM Gateway 配置权威 summary 与发布 gate 增加 activeBoundPoolWithoutUsableMember 校验，防止 active appCaller 绑定不可用 GW 池时误判 ready |
+| polish | prd-llmgw-web | LLM Gateway 概览页展示 active appCaller 未绑池与不可用池计数，便于定位配置权威退场阻塞原因 |
+| polish | prd-llmgw-web | LLM Gateway 概览页配置权威阻塞计数支持跳转到 active appCaller 与模型池治理页面 |
+| polish | prd-llmgw-web | LLM Gateway 日志与影子比对页面支持从 URL 读取 releaseCommit 等证据筛选条件，便于按当前发布 commit 复核 runtime gate |
+| polish | prd-llmgw-web | LLM Gateway 发布 Gate 卡片增加日志、影子比对、appCaller、模型池和审计深链，阻塞项可直接跳转定位 |
+| test | prd-api | LLM Gateway 静态守卫覆盖发布 Gate 深链筛选能力，防止 releaseCommit 日志、shadow 和审计证据入口回退 |
+| ops | scripts | LLM Gateway 协议路由静态审计不再把静态证据 100% 表示为迁移完成度 100%，rollout ledger 拒绝误导性完成度证据 |
+| feat | prd-llmgw | LLM Gateway runtime gate 响应新增结构化证据链接，控制台优先使用后端 links 定位日志、shadow、appCaller、模型池和审计页面 |
+| feat | prd-llmgw | LLM Gateway 控制台新增协议入口覆盖矩阵，按 GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 展示 appCaller 注册和运行日志证据 |
+| feat | prd-llmgw | LLM Gateway 发布 gate 纳入四类入口协议当前 commit 覆盖检查，缺少运行日志时保持等待并提供协议覆盖深链 |
+| ops | scripts | 新增 LLM Gateway 四协议 canary 脚本，默认 dry-run，显式 --execute 时才限量触发 GW Native、OpenAI、Claude、Gemini 入口运行日志 |
+| ops | scripts | LLM Gateway release gate 与 rollout ledger 支持 protocol canary JSON 证据，发布台账可校验四类入口协议同 commit 运行样本 |
+| ops | scripts | LLM Gateway 四协议 canary 增加已有 PASS 证据复用和 runtime call 上限，避免重复执行同 commit 样本造成过量请求 |
+| ops | scripts | LLM Gateway 四协议 canary 执行态默认要求绑定 expected commit，避免对未知线上版本生成不可用发布证据 |
+| ops | scripts | 新增 LLM Gateway 正式环境只读 health preflight，发布前可确认线上 commit 与鉴权边界，不触发模型请求 |
+| ops | scripts | LLM Gateway rollout ledger 支持记录并校验正式环境 health preflight JSON，canary/http 阶段可绑定同 commit 线上健康证据 |
+| ops | scripts | LLM Gateway 生产 stage runner 自动生成 health preflight 证据，并在 ledger 中记录同 commit 健康检查结果 |
+| ops | scripts | LLM Gateway 生产 stage runner 支持显式开启四协议 canary 证据，绑定 release commit 并限制 runtime 调用次数 |
+| ops | scripts | LLM Gateway canary 与 http-full 生产阶段默认采集四协议 canary 证据，避免维护窗口遗漏协议入口验证 |
+| security | prd-llmgw | LLM Gateway full-http runtime gate 要求同 commit 台账包含 protocol canary required 与 JSON 证据，避免跳过四协议样本仍显示 ready |
+| polish | prd-llmgw-web | LLM Gateway 概览页 full-http 台账事实展示 protocol canary 状态，便于发布复核 |
+| ops | scripts | LLM Gateway exec_dep 在 post-deploy runtime gates 前生成 protocol canary 证据，避免 full-http 阶段先判 gate 后产证据 |
+| ops | scripts | LLM Gateway exec_dep 自动创建 post-deploy protocol canary 证据目录，提升生产阶段脚本可复跑性 |
+| ops | scripts | LLM Gateway exec_dep 禁用 post-deploy protocol canary 时不再把未验证 JSON 路径传给 runtime gates |
+| fix | prd-api | 注册 LLM Gateway route self-test 的四类 appCallerCode，并用注册表常量替换端点字面量 |
+| fix | prd-llmgw | 模型池可用性校验排除 disabled Exchange 子模型，避免配置权威和 runtime gate 误判 |
+| fix | deploy | 将 OpenAI/Claude/Gemini 兼容协议入口转发到 llmgw-serve，避免正式环境被 nginx 静态站点返回 405 |
+| feat | prd-llmgw | 新增 GW 控制台配置权威、appCaller 治理、模型池、模型、平台、Exchange、审计和 runtime gate 观测接口 |
+| feat | prd-llmgw-web | 新增 GW 控制台 appCaller、模型池、模型、平台、Exchange、审计和发布 Gate 页面与日志详情路由解释 |
+| security | prd-llmgw | GW-owned 平台、模型与 Exchange 密钥治理只写 llm_gateway 自有加密字段，并提供健康自检与审计记录 |
+| fix | prd-llmgw | 控制台日志与 runtime gates 改读 llm_gateway 自有请求日志，避免 full-http 证据被误查到 MAP 日志库 |
+| fix | docker-compose | 为 llmgw 控制台容器补齐 rollout ledger 只读挂载和 MAP fallback 退场开关环境变量 |
+| test | prd-api | 增加 LLM Gateway 数据域与 compose 配置静态守卫，防止日志权威库回退 |
+| ops | llmgw | 允许 http-full 阶段在显式人工 waiver 下跳过 MAP 旧日志只读 key 预检，避免缺少 PRD_AGENT_API_KEY 阻塞 GW 全量切换 |
+| ops | scripts | 降低 LLM Gateway 生产发布 smoke 的默认输出长度并支持探针超时配置 |
+| fix | prd-api | 修复 GW Native serving 入口日志 transport 仍显示 inproc 的观测口径 |
+| fix | prd-api | 修复 GW-owned 模型池和中继配置带元数据字段时反序列化失败，避免 video/ASR resolve 在 full-http gate 前返回 500 |
+| fix | prd-api | LLM Gateway 配置权威开关传播到 serving，registered appCaller 路由 fail-closed 并修正 GW 模型池健康写回数据域 |
+| security | prd-api | 生产缺少显式 LLMGW_MODE 时拒绝启动，保留审计化 inproc 回滚路径 |
+| ops | scripts | 新增 LLM Gateway 备份保留、磁盘阈值监控和 systemd timer 安装工具 |
+| docs | llmgw | 新增生产加固计划并纠正全量迁移复盘与债务口径 |
+| feat | prd-api | LLM Gateway 协议路由核心接入 GW Native、OpenAI、Claude 和 Gemini 入口，统一进入 Gateway Request IR |
+| feat | prd-api | LLM Gateway 请求上下文补齐 ingress、appCaller、modelPolicy、modelPoolId、pinned model 和参数策略日志字段 |
+| test | prd-api | 补充 Gateway 协议入口、Gemini transformer、ModelResolver 和 LlmGateway 行为测试，守卫协议路由核心语义 |
+| docs | doc | 新增 LLM Gateway 协议路由目标文档和 PR 拆分计划，明确 staging 大分支需拆成文档、API、控制台、发布 gate 四个可审查单元 |
+| docs | doc | 明确 /gw/v1/resolve route matrix 只证明路由解析，不计入真实请求日志或 runtime coverage gate |
+| ops | scripts | LLM Gateway 发布 gate 拆分生产 stage、readiness、release gate、rollout ledger、备份和回滚脚本，默认不切 full-http |
+| ci | github-actions | 新增 LLM Gateway 生产阶段 workflow，可按 shadow、config-authority、canary、http-full 和 rollback 阶段留存证据 |
+| ops | docker | 为 API/GW compose 增加 LLM Gateway 发布 gate 所需配置透传，保持默认不启用 full-http |
+| feat | prd-api | 新增 LLM Gateway 五组件深度 readiness，并对公开失败摘要脱敏 |
+| ops | deploy | 固化生产 Compose identity、serving 主备、就绪等待和拓扑 fail-fast preflight |
+| fix | scripts | provider audit 改用 GW-owned 配置并区分生产绑定阻塞项与未绑定延后项 |
+| test | prd-api | 增加 readiness、主备拓扑、发布配置和审计作用域防退化验证 |
+| fix | prd-api | 修复 gateway 根地址双前缀，并让 readiness 拒绝 requestType 不匹配的模型池 |
+| fix | prd-llmgw | 调整 runtime gates 的 full-http 预检口径，避免 shadow 阶段 pre-http 日志阻断正式切换 |
+| test | prd-api | 增加 LLM Gateway runtime gate 口径守卫断言 |
+| fix | scripts | 修正 LLM Gateway http-full 发布自举门禁，避免 runtime-gates 在 rollout ledger 写入前形成循环阻塞 |
+| test | prd-api | 补充 LLM Gateway 发布门禁顺序的静态守卫测试 |
+| fix | prd-llmgw | runtime gates 统计当前 commit transport 证据时排除 GW smoke health probe，避免 D 层冒烟日志污染 full-http 门禁 |
+| fix | scripts | gw-smoke 的 send/stream/client-stream/canary 请求显式标记 IsHealthProbe |
+| test | prd-api | 增加 GW smoke health probe 与 runtime gates 排除逻辑静态守卫 |
+| feat | prd-admin | 重做手机端「新增」菜单：半圆扇形升级为底部抽屉，新增「最近热门」（知识库文章、MD 转网页 PPT）与核心 Agent 四宫格 |
+| feat | prd-admin | 手机端底部 Tab「资产」替换为「知识库」，直达 /document-store |
+| refactor | prd-admin | 「我的资产」从底部 Tab 一级入口降为「我的」页二级菜单入口 |
+| chore | prd-admin | 移动兼容性注册表补登 /document-store（full）与 /md-to-ppt-agent（limited） |
+| feat | prd-admin | 新增 PWA share_target：手机截图经系统分享菜单直达缺陷提交面板，截图自动带入并上传为附件 |
+| feat | prd-admin | 缺陷提交面板 VLM 截图识别结果自动追加填充问题描述（带「AI 截图识别」标签，只追加不覆盖用户输入） |
+| feat | prd-admin | 缺陷管理新增 ?action=submit 深链拉起提交面板；提交面板移动端全屏布局适配 |
+| feat | prd-admin | 视觉创作新增移动端线性生成器视图：手机进入编辑器默认对话式生成流（prompt 生成、放大预览、重新生成、以图改图、下载、参考图上传），与桌面画布共享同一 workspace，手机生成的图回填 PC 画布 |
+| fix | prd-admin | 视觉创作画布补触屏手势地基：stage 加 touch-action:none 修复单指拖动被浏览器手势打断，新增双指捏合缩放 + 双指平移 |
+| fix | prd-admin | 视觉创作列表页项目卡的重命名/共享/删除按钮移动端常驻显示，修复触屏无 hover 无法触达 |
+| fix | prd-admin | 移动生成流时间线卡片补 shrink-0：修复卡片被 flex 压缩导致操作按钮被裁掉、列表无法滚动 |
+| fix | prd-admin | 全屏视觉创作页移动端编辑器隐藏浮动返回钮与教程 pill，修复顶部控件叠压看不清 |
+| fix | prd-admin | 补全全局 no-scrollbar 工具类，修复列表页场景标签横滚行滚动条外露 |
+| fix | prd-admin | 移动生成流 SSE 断流后转 run 状态轮询兜底，弱网下生成结果不再卡在占位态 |
+
+### 2026-07-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 堵住带作用域全局 Key 的三类深层绕过（Codex P1）：detect-runtime/validate-runtime 克隆探针收敛为仅管理员/全权 Key（assertUnscopedAdmin）；branches cleanup-stopped/cleanup-damaged-containers 跨项目清扫加作用域门卫（assertScopedSweep，带作用域 Key 必须锁定授权项目）；server 层对 create-only Key 加默认拒绝兜底（仅允许建项目 + 只读，堵死一切未审计写路由） |
+| fix | cds | 修复全局 Agent Key 作用域隔离两个提权漏洞（Codex P1/P2）：签发/吊销全局 Key 端点改为拒绝一切机器 Agent Key（含 create-only cdsg_），只允许人类 cookie 登录或 bootstrap 静态 key，杜绝 create-only key 给自己签全权 key / 吊销他人 key |
+| fix | cds | 新增项目路由级作用域门卫：所有 /projects/:id/* 变更请求进 handler 前统一按项目 id 校验作用域，堵住 preview-mode/comment-template/files 等此前未显式校验的变更路由（create-only key 不再能改现有项目状态） |
+| feat | cds | 全局 Agent Key 统一授权面板：签发时可勾选作用域（允许创建新项目 / 操作所有现有项目 / 指定现有项目多选），签发全局 Key 默认「只能创建新项目」（碰不到现有项目），项目卡钥匙默认当前项目；create-only Key 建项目时后端返回新项目独立 scoped key |
+| feat | cds | 新增 AgentKeyScopePanel 复用组件，全局 Key 签发弹窗 + CDS 系统设置 AccessKeysTab 共用同一套勾选面板，Key 列表展示解析后的授权范围 |
+| feat | cds | cdscli project create 打印后端返回的 issuedProjectKey（新项目 scoped key，明文只一次），AI 建项目后可直接切到该 Key 操作新项目 |
+| perf | cds | state 持久化拆分：webhook 投递与项目活动流从 global 单文档拆到独立 collection（cds_webhook_deliveries / cds_activity_logs，diff-based 增量写 + legacy 回退读零迁移），消灭「追加一条日志重写整份 global 文档」的写放大。注意：拆分后若回滚到旧版 CDS，会丢这两类诊断日志的增量（分支/项目等控制面数据不受影响）；两条读路径索引由代码 init 自动创建（沿 split store 既有惯例），DDL 记录备查于 guide.platform.mongodb-indexes |
+| feat | cds | 分支隔离补强：平台自动向分支容器注入 BULLMQ_PREFIX=分支slug（与 per-branch 库名同一 SSOT），杜绝多分支共用 Redis 时 BullMQ 抢 job 串台。行为变化：项目 customEnv / profile.env 显式定义者优先不覆盖，逃生阀 CDS_BULLMQ_PREFIX_INJECTION=0 可整体关闭；brandai 手填的 BULLMQ_PREFIX 验证通过后可删 |
+| fix | cds | 分支级网络隔离收尾：janitor 清理与启动残留 prune 两处删分支路径补 removeBranchNetwork，空的 cds-br-* 网不再随分支删除堆积（清网失败不阻断删除） |
+| feat | cds | 资源回收对账：janitor 周期 sweep 新增孤儿 infra 容器对账报告（只报不删，进 sweep report + 系统事件告警）；分支显式删除新增按 cds.branch.id label 的遗留 app 容器清扫（best-effort） |
+| feat | cds | 极速版入口校验：webhook 进极速版等待前先查分支 tree 是否有 branch-image.yml（结果 10 分钟缓存），缺文件直接置 CI 失败并给出「切源码编译」归因文案，不再死等 15 分钟看门狗；GitHub API 异常时保持原 waiting 行为 |
+| feat | cds | 验收中心 export 协议支持可选分页（limit 1-500 + cursor 游标，(createdAt,id) 稳定排序，响应带 page 元信息）；不传参时响应与旧协议逐字节兼容，坏 cursor 返回 400 |
+| fix | prd-api | CDS Agent 工作流节点在完全没有系统级 runtime profile 时不再硬报错，改为提示并尝试以 CDS Lite 模式直跑（Lite 不可用时仍显式失败），全新环境开箱可用 |
+| polish | prd-admin | claude-sdk 用户可见文案诚实化：6 处改为「Claude sidecar runtime（自研 sidecar，Anthropic 协议；runtime 标识 claude-sdk）」，不再暗示完整接入官方 SDK（机器值不变） |
+| refactor | cds | 预览等待页收敛：forwarder 等待页迁入 loading-pages SSOT（快照锁字节级等价），删除零调用的 buildTransitPageHtml 死代码（约 290 行）；loading-pages 伪双主题 light 块改为诚实单主题标注 |
+| docs | doc | 债务台账综合对账：performance / state-json / branch-isolation / nginx-loading-pages / removed-branch-pages / acceptance-center / agent D4 / sdk-executor D16 / backlog-matrix 逐项勾销或修正账实不符（含「per-branch infra 容器」错误前提改写）；38 个 smoke-cds-agent 脚本加 RETIRED 头随台账整组退役；cross-project-isolation 清单新增通道 7（BULLMQ_PREFIX） |
+| test | cds | 新增单测：mongo-split 拆分 round-trip/legacy 回退/淘汰 deleteOne/seed 拒绝二次（4 例）、env-provenance BULLMQ_PREFIX 注入（4 例）、janitor 孤儿扫描（3 例）、loading-pages 快照（3 例）、极速版入口校验（2 例）、peer-sync 分页（1 例）；补 state-projects 迁移用例跨实例 flush（修 CI 1ms 竞态抽风） |
+| fix | cds | 修复 CDS basic 模式登录页误展示 GitHub 登录入口导致 401 鉴权提示的问题 |
+| fix | cds | 修复 CDS 密码登录后用户管理页误判为 GitHub 账号且失去系统所有者权限展示的问题 |
+| fix | cds | 修复 Java/Maven/Spring 启动失败被统一显示为就绪探测超时的问题 |
+| fix | cds | 修复接入引导「项目 key 建不了项目 / 没项目签不出项目 key」死循环：技能包接入弹窗改为两级 Key 引导（全新接入用全局 cdsg_ key bootstrap 建首个项目，日常操作用项目级 cdsp_ key），并在引导内直接露出「签发全局 Agent Key」入口，AI 口令同步二选一分支 |
+| perf | cds | 后端请求路径去同步阻塞：验收报告正文/截图资产 IO 全面异步化（含图片流式响应），JSON 存储 save 改 dirty+setImmediate 合并落盘（.bak 60s 节流 + flush + shutdown 兜底），技能导出改异步 tar |
+| perf | cds | 容器日志黑匣子加 per-branch 双闸（10 条/2MB），启动裁剪存量并按 14 天窗口清理已删分支孤儿归档 |
+| perf | cds | 前端时钟下沉：删除分支列表页顶层 1s 整树重渲染 tick，新增 useNowTick 组件级时钟；BranchCard 包 React.memo + latest-ref 稳定回调 + 派生数据 useMemo Map；分支/项目卡加 content-visibility 离屏跳过渲染；自更新页签 250ms tick 降 1s |
+| feat | cds | 构建排队可视化：build-gate 排队状态挂上分支卡（「排队中 · 前面还有 N 个」chip），排队时间从耗时对比与 ETA 中位样本中剔除，排队中不再误报超预计 |
+| fix | cds | 全局错误 Toast 双主题无背景（HSL 三元组未包 hsl() 致属性失效）；部署失败责任徽章白天对比度不足；报告 iframe 配色只跟 OS 不跟应用主题 |
+| fix | cds | z-index 刻度收敛修真实遮挡：报告页移动端抽屉盖住 dropdown/重命名弹窗（11000/12000/10100 → 90/100/300），新栈刻度表写入 cds-theme-tokens 规则 |
+| fix | cds | 发布中心引导深链 ?tab=remote-hosts 断头（设置页只认 #hash），改 #hash 规范写法并兼容 ?tab= fallback |
+| fix | cds | 分支详情错误码 branch_not_found/missing_branch_id 裸展示改中文文案 + 返回/重试出路 |
+| polish | cds | 发布中心项目选择改 /api/projects 下拉（未知 id 明示）；发布运行中 12s 静默轮询跟进终态并 toast；perf-health critical 告警前置为「运维」按钮红点 |
+| docs | cds | 修正四处文档漂移：plan.cds.status 状态板自相矛盾、cds/CLAUDE.md 路由权威与规则路径、spec.cds 快照标注 + 项目管理域、债务台账点分重命名；cds-theme-tokens 规则 SSOT 更正为双栈两处并删 emoji |
+| fix | cds | 彻底堵住带作用域全局 Key 的跨 router 越界（Codex P1，reports/releases/scheduled-jobs 等）：单项目 cdsg_ Key 现同时 stamp cdsProjectKey，透明继承所有既有 cdsp_ 逐路由防护，一处收口全局生效；多项目(≥2)作用域签发暂禁（防无法用单一别名表达的越界），仅放行 create-only / 单项目 / 所有项目三档 |
+| fix | prd-admin | 修复旧资源 CSS 预加载失败时页面停留在渲染错误页 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录/自引用误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（cds 波5 事后栈检测已在 design.cds.config-tree.md + plan.cds.status.md 覆盖；llmgw ASR 直连收口/豆包流式迁移/pinned cutover 已在 plan.llm-gateway.full-cutover.md + plan.platform.llm-gateway-protocol-router.md + guide.speech-agent.doubao-asr-relay.md 覆盖，仅登记 manifest） |
+| feat | prd-admin | 更新中心新增「热修复」子 tab，专列为他人上报缺陷所做的修复，含缺陷编号（可点击进缺陷详情）、修复 commit/PR、发布状态与验收链接 |
+| feat | prd-api | ChangelogController 新增 GET /api/changelog/github-hotfixes，基于 DefectResolutionTrace 全历史返回热修复列表 |
+| fix | prd-api | 热修复发布状态：短 commit sha 追踪先解析为完整 sha 再比对部署历史，避免短 sha 记录恒判为 unknown |
+| fix | prd-api | 热修复发布状态：修复提交仍在 open PR（未进部署历史）且带 PR 号时按 pending 呈现，不再落灰色 unknown |
+| security | prd-api | 热修复列表沿用缺陷可见性口径：无缺陷管理权限者只见自己提交/被指派缺陷的热修复，避免泄露他人缺陷编号/标题/提交人/验收链接 |
+| fix | prd-api | 热修复判定为已发布时同步写回 DefectResolutionTrace.PublishStatus/NotifyStatus，让提交人复验通知能正常排队 |
+| security | prd-api | 热修复端点补缺陷模块门：无 defect-agent.use（且非 manage/super）者返回空，不得绕过缺陷模块读取数据 |
+| fix | prd-api | 热修复 pending 判定仅限仍 open 的 PR，避免已 merge/close 且 commit 超出日志窗口的旧追踪被误判为待发布 |
+| fix | prd-admin | 缺陷详情 markdown 渲染修复溢出：长 URL/表格/代码块横向换行或滚动，不再撑破弹窗 |
+| fix | prd-admin | 缺陷详情/评论超链接补 accent 颜色 + 下划线并在新标签安全打开（此前链接与正文同色不可辨） |
+| feat | prd-api | LLM Gateway 增加四类协议入口，统一进入 GW Request IR，并支持 appCaller 被动注册、auto/pool/pinned 路由语义与 provider attempts 观测 |
+| feat | prd-llmgw | 新增 GW 配置权威接口，覆盖 appCaller、模型池、平台、模型、exchange、密钥健康、操作审计与 runtime gates |
+| ops | docker | 为 llmgw 控制台挂载 rollout ledger 证据目录并显式配置读取路径，确保 runtime-gates 能读取生产台账 |
+| polish | prd-llmgw-web | 控制台补齐日志、调用方、模型池、平台、模型、exchange、审计与 shadow 证据页面 |
+| ops | scripts | 增加协议路由审计、配置权威备份/应用、生产发布 gate 和 inproc/shadow 回滚脚本 |
+| feat | prd-admin | 通知系统更新：按类型区分通知弹窗（缺陷协作/周报/系统告警等各自图标+强调色+气质），右下角浮窗与通知中心统一走通知类型注册表 |
+| fix | prd-admin | 通知（含右下角浮窗）不再出现催办：前端兜底过滤已下线的催办/超时提醒残留 |
+| feat | prd-admin | 移动端通知页支持按类型区分展示，点击通知一键跳转到目标页面 |
+| feat | prd-api | 缺陷解决后站内通知提交缺陷的报告人，点击一键跳转到该缺陷本身（而非缺陷智能体首页） |
+| feat | prd-api | 米多星球 SSO 首次登录自动创建 MAP 用户 |
+| fix | prd-admin | 修复视觉创作首页工作区分页重复请求导致页面持续抖动 |
+
+### 2026-07-08
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 修复缺陷深链关闭后反复弹出和带截图提交缺陷时输入卡顿 |
+| fix | prd-admin | 知识库吸顶工具栏改滚动感知：顶部保持透明（不再压黑底），滚动后才亮出模糊底防透字，终结"透明与黑底反复改"的循环 |
+| fix | prd-admin | 网页托管与百宝箱去页面私有不透明黑底和双重内边距（含百宝箱 -20px 负边距历史补偿），内容与其他页面同基准贴边 |
+| style | prd-admin | 液态玻璃配方去发泡：glassStyles/GlassCard/工具箱条移除"上白下黑 inset 凸面对 + brightness 提亮 + 纵向渐变"的 aqua 按钮公式，玻璃回归平整 |
+| fix | prd-admin | 海鲜市场去页面私有整幅背景（深色遮罩+运营封面图的错位"图片盒子"）与列表双重内边距，min-h-screen 改 min-h-full，对齐统一基准 |
+| fix | prd-admin | 百宝箱瓦片补齐内置工具图标映射（缺失项整排回退成 Bot）并修卡片键盘事件吞掉子按钮操作（Codex P2 x2） |
+| chore | doc | 每日熵清理：D1/D2/D3/D4 净变更为 0（D3/D4 命中的 24+1 条均核实为历史变更表/文档正文中的反引号引用，非真实幽灵条目）；D6 登记 5 条已被 design.cds.config-tree.md / debt.cds.compose-secrets.md 覆盖的 CDS wave3-5 changelog 到 manifest |
+| style | prd-admin | 卡片表面从"渐变+顶部高光"玻璃改为现代扁平（单层微透白+发丝描边，去渐变/高光/静息投影），治"像 2000 年代水晶按钮"；首页与百宝箱经 tileAccent SSOT 同步生效 |
+| style | prd-admin | 首页"继续上次"从卡片网格改为 ghost 履历胶囊条，flex-wrap 铺满整行（桌面默认露 8 条），与下方智能体卡区隔 |
+| fix | prd-admin | 海报设计器非嵌入模式去掉不透明近黑页面底色，坐回外壳画布（治"海报背景发黑"） |
+| style | prd-admin | 首页"继续上次/智能体/实用工具"卡片玻璃化：半透白渐变底 + 顶部高光 + backdrop blur，替换近黑平涂（治"很黑很沉重"） |
+| style | prd-admin | 百宝箱 ToolCard 重写为首页同款玻璃瓦片语言（共享 lib/tileAccent SSOT），弃用封面图/悬停视频卡；全部行为（徽章/操作浮条/Fork/收藏/标签过滤）保留 |
+| style | prd-admin | 画布内页面沟槽收紧到 12px 网格（px-3 py-3），与侧栏/画布外边距节奏统一 |
+| ops | scripts | 修复 LLM Gateway 生产 shadow seed 中 video-to-doc 与 workflow video-to-text ASR 入口未使用带权限 seed 用户导致 403 的问题 |
+| fix | prd-api | 修复 workflow video-to-text ASR 后台执行未继承强制 shadow 采样上下文的问题 |
+| ops | scripts | 增强 LLM Gateway shadow coverage 报告失败样本字段，直接展示模型、模型池、平台类型、fallback 与上游错误 |
+| ops | scripts | 增强 LLM Gateway 视频 canary，支持多模型探测并识别视频供应商余额不可用为发布阻断项 |
+| ops | scripts | LLM Gateway shadow coverage 支持跳过全局聚合单元，用于视频暂缓时执行非视频 scoped gate |
+| ops | scripts | 为 LLM Gateway MAP shadow seed 增加视频提交预算闸门，默认阻止高成本视频批量取证 |
+| docs | doc | 记录 LLM Gateway 生产视频 shadow 取证成本风险债务与后续约束 |
+| ops | scripts | 拆分 LLM Gateway `canary-asr` 生产灰度阶段，允许 ASR/字幕独立于视频生成推进 |
+| ops | scripts | LLM Gateway 生产外置备份支持 Mongo 容器直连兜底，避免 CDS compose 扩展字段阻断备份 |
+| fix | scripts | 修复 LLM Gateway 生产阶段显式禁用 gw-smoke 时台账误判失败的问题 |
+| test | prd-api | 增加生产外置备份脚本容器兜底与非破坏性守卫 |
+| test | prd-api | 增加 LLM Gateway readiness 完成态回归测试，确保没有 http-full rollout 台账时不能误报全量迁移完成 |
+| ops | scripts | 记录 LLM Gateway 生产脚本预算护栏同步，确认 ASR/Video canary 默认在请求前限量拦截 |
+| ops | scripts | LLM Gateway canary-intent-text 阶段前置 rollout status require-ready 门禁，覆盖窗口未满时先阻断发布脚本 |
+| ops | scripts | 新增 LLM Gateway 生产 runner release tree 只读预检，发布阶段先输出 tree-precheck 证据以阻断混合工作树 |
+| ops | scripts | LLM Gateway readiness 静态审计新增 scoped shadow coverage 参数守卫，防止生产脚本缺少 `--skip-global-cells` 时误入 canary gate |
+| ops | scripts | LLM Gateway rollout status 增加 require-ready/require-action 退出码门禁，未到覆盖窗口时可直接阻断灰度推进 |
+| ops | scripts | 新增 LLM Gateway 只读 rollout status 汇总脚本，统一输出 health、shadow coverage、planner 下一步和进度表，并由 readiness 执行多 cell 与 health gate 状态板自测 |
+| ops | scripts | LLM Gateway rollout status 覆盖窗口行新增 `nextEligibleAt`，直接显示最早允许 window-extension 补样的 UTC 时间 |
+| ops | scripts | ASR 与视频 canary 默认增加单次预算上限，防止生产验证误跑多个 caller/model 产生过量供应商费用 |
+| ops | prd-api | LLM Gateway shadow 强制采样标记贯穿后台 run，覆盖生图、ASR、知识库字幕、视频与视频转文档证据采集 |
+| ops | scripts | 收紧 LLM Gateway shadow seed 的图片和视频测试提示词，降低上游内容策略误伤 |
+| test | prd-api | 增加后台 run 强制采样传播守卫，防止队列链路丢失 shadow 证据 |
+| ops | scripts | LLM Gateway shadow 累计脚本增加达标即停止和默认 batch 上限，降低生产取证过量请求风险 |
+| test | prd-api | 补充 LLM Gateway shadow 累计脚本预算守卫的静态测试 |
+| ops | scripts | LLM Gateway shadow 补样累计脚本执行前强制读取只读 planner，拒绝超过推荐批次的过量取证 |
+| test | prd-api | 增加 shadow 补样 planner 约束守卫，防止后续回退为手工批次数 |
+| ops | scripts | 新增 LLM Gateway shadow 样本补齐只读计划脚本，按 coverage 缺口给出受限 batch 建议 |
+| test | prd-api | 补充 shadow 样本计划脚本只读与 batch 上限守卫 |
+| fix | scripts | 修正 LLM Gateway shadow 覆盖窗口门禁，支持样本满额后的受控窗口拉长补样 |
+| ops | scripts | LLM Gateway 生产 canary smoke 支持按模型类型过滤，低风险文本阶段默认排除 vision 欠费阻塞 |
+| ops | scripts | LLM Gateway 生产 stage 增加显式 MAP 日志 preflight 豁免开关，避免 canary 阶段因缺 MAP Bearer 凭证卡死 |
+| ops | scripts | 限制 LLM Gateway MAP 日志 preflight 豁免仅可用于 canary 阶段，防止全量 http 切换跳过 MAP 日志证明 |
+| ops | scripts | LLM Gateway shadow 累计脚本增加 canary-intent-text 低成本取证预设，减少手工配置误差 |
+| ops | scripts | LLM Gateway shadow 累计预设执行时强制指定 release commit，避免混用旧版本样本 |
+| fix | scripts | 修复 LLM Gateway shadow 累计预设未向 seed 命令透传 release commit 的证据错配风险 |
+| fix | scripts | 修复 report-agent shadow seed 未继承强制采样 key，确保 canary-intent-text 预设可稳定补齐目标样本 |
+| security | scripts | LLM Gateway report-agent shadow seed 改用环境变量传递强制采样 key，避免敏感值出现在子进程 argv |
+| test | prd-api | 增加 LLM Gateway shadow 累计预设守卫，防止 canary-intent-text 取证参数漂移 |
+| test | prd-api | 增加 LLM Gateway 生产 stage preflight 豁免开关守卫，防止误删 release gate 说明与参数传递 |
+| docs | doc | 记录 LLM Gateway 最新生产 shadow 证据期状态与下一步门禁 |
+| fix | prd-api | 产品评审员评审失败后支持替换附件并重新排队评审 |
+| fix | prd-admin | 产品评审员失败详情页新增重新上传方案并评审入口 |
+| test | prd-api | 增加产品评审员 Error 状态重传门槛测试 |
+| fix | prd-admin | 修复单站点分享页 iframe 区域黑屏 |
+| fix | prd-admin | 修百宝箱卡片悬停"整排拉长/顶部被遮"：摘除旧封面卡时代 CSS（标签/页脚默认折叠 hover 展开、inset 水晶高光、blur）对新瓦片同名类的误伤，并删除 14 条死样式规则 |
+| style | prd-admin | 首页画布改全出血（无边距/圆角/描边），消除明亮极光顶上的 12px 黑色细缝；其余页面保留画布面板 |
+| style | prd-admin | 侧栏从"12px 悬浮圆角浮岛"改为业界主流全高贴边直边栏（通顶通底 + 右侧发丝分隔线），与全出血首页和圆角画布页均协调 |
+| style | prd-admin | 外壳画布去面板外观（保留全高滚动几何，去边距/描边/底色/圆角），页面回归 Linear 式平整，消除"框套框浮肿" |
+| fix | prd-admin | 双链图布局塌陷修复:页面根补 h-full(外壳非 flex 时高度塌 0 导致节点全挤顶栏下沿)、resize 防御 0 尺寸、移除顶层路由早退分支(渲染循环挂载不再落空) |
+| feat | prd-admin | 双链图加载后自动适配视野(fitView 包围盒居中撑满)+ 右下角「适配视图」按钮;滚轮缩放步进 1.12→1.18 提速 |
+| feat | prd-admin | 星系 2D 放射树「看得清」:布局收紧+相机贴合让图盘占满视口(半高 ~89%),2D 态星点/光晕放大 1.9 倍、枢纽标签放大 1.45 倍且更早显现,相机拉近时叶子文档懒加载显示名字(每帧限流建纹理),滚轮缩放每档 5%→11% 提速 |
+| fix | prd-api | 自动补链任务复用/认领限定当前用户:团队库另一成员复用他人 runId 会因 agent-runs 端点按 UserId 鉴权而 404(Codex P2);任务幂等,双人同时发起各跑一遍无害 |
+| fix | prd-admin | 生成双链 SSE 流关闭兜底:终态事件漏发时流正常关闭而 done 回调不触发,按钮会永远卡「生成中」;流关闭后补拉一次 run 终态(Codex P2) |
+| fix | prd-api | 自动补链丢更新竞态修复:批量任务期间用户编辑过的文档不再被旧正文覆盖——逐篇处理前重取最新 entry + 写前 UpdatedAt 乐观并发检查,变化即跳过(下次重跑幂等补上)(Codex P1) |
+| fix | prd-api | 自动补链乐观并发升级为条件更新(CAS):UpdatedAt 检查并入 entry 更新本身,检查与写入零竞态窗口;并发模式下 ParsedPrd 不就地覆盖独占旧文档,冲突放弃时旧正文原样保留(Codex P2 追问) |
+| fix | prd-api | 自动补链保护区间:markdown 链接 URL 含括号(如维基式地址)时整段保护失配、链接文本会被误改写——URL 段正则允许一层平衡括号,补单测(Codex P2) |
+| feat | prd-api | 自动补链 progress 事件携带 newLinks 明细(from/to/anchorText),供前端边生长动画增量绘制;标题撞名映射取最早创建(与 MentionService 同口径,含单测) |
+| feat | prd-admin | 双链图页实体顶栏(返回/库名统计/搜索/生成双链/标题模式/库切换/星系,对齐知识星球顶栏),canvas 改容器尺寸+事件坐标修正 |
+| perf | prd-admin | 双链图视口丝滑化:平移/缩放走目标值+帧率无关指数缓动,拖拽 1:1 跟手,滚轮锚点在 target 空间计算不漂移;渲染循环只挂一次(状态走 ref) |
+| feat | prd-admin | 生成双链时边「一根根长出经脉」:SSE newLinks 增量加边(布局按 id diff 保坐标不重排),新边沿线段 0→1 亮色生长+头部光点+渐隐回常规色 |
+| feat | prd-admin | 双链图节点标签默认显示正文标题(frontmatter title 派生,可切结构名),搜索/悬停卡双字段口径;deriveContentTitle 提取为共享 lib 与星系页共用 |
+| feat | prd-admin | 双链图单击节点打开正文预览面板(ReaderPanel 从星系页提取共用,ESC 关闭/左缘拖宽/宽度偏好共享),双击进入文档改为自取命中节点 |
+| feat | prd-admin | 星系折叠 2D 重做:放射状层级树布局(root 居中/层级同心环/分支按叶子数占扇区,环半径按节点数自适应),每颗星按深度错峰飞向 2D 目标位(折叠外层先动 1.5s 层层收拢),光路/引用弧/流光按两端进度双套曲线插值跟随,2D 态线路透明度/亮度/光点尺寸提升(变实变粗),相机取景距离按图盘半径自适应;替换第一轮 scale.z 压扁方案 |
+| fix | prd-admin | 修复网页托管筛选排序按钮被压缩换行的问题 |
+
+### 2026-07-07
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| rule | acceptance | 集中定义单个验收、每日验收、日报三条链路的技能、样式、归档和 Verdict 边界 |
+| fix | cds | 拒收缺少标准模板血统的执行类验收 HTML，防止每日验收被临时手写页面覆盖 |
+| rule | acceptance | 明确规范文档使用 Markdown SSOT，执行报告必须由标准交互模板归档 |
+| rule | prd-agent | 建立 MAP 验收规范仓库 Markdown SSOT、技能离线快照与 CDS Markdown 发布链路 |
+| polish | cds | 支持验收报告 PATCH 切换 Markdown 格式并记录源文档元数据 |
+| test | prd-api | 官方验收技能包校验规则快照与规范发布脚本 |
+| fix | prd-agent | 修复验收报告缺陷定位门禁，覆盖表格、冒号与列表格式并禁止 overview 绕过标注 |
+| fix | prd-agent | 收窄验收缺陷定位视觉匹配并校验官方技能包内嵌规则内容 |
+| ops | cds | 新增分支 prebuilt 镜像认领接口与 CLI 命令，修复 webhook 漏投后预览分支仍跑旧 ciTargetSha 的发布阻塞 |
+| test | cds | 补充 CI 预构建镜像认领的 SHA、部署模式和 metadata 收敛单测 |
+| security | cds | 修复生效配置溯源端点(effective-config)对 .NET/camelCase 密钥 key(如 Changelog__GitHubToken / GitHubOAuth__ClientSecret / ApiKeyCrypto__LegacySecrets)与含内联口令连接串(SQLSERVER_URL 的 Password=)未脱敏的明文泄漏——isSensitiveKey 增加 camelCase 边界归一 + 新增连接串口令值检测(SSOT maskEnvRecord) |
+| security | cds | 容器 exec 输出脱敏收敛到同一 SSOT(looksLikeSecretBearingValue)：`echo $SQLSERVER_URL`(连接串口令) / `echo $NEUTRAL`(中性 key 下 ghp_ 令牌) 不再从 stdout/stderr 吐明文(Codex PR #1008 review) |
+| security | cds | 行模式脱敏(maskLine，日志快照/资源日志/容器日志经它)也接入值形态检测：`NEUTRAL=ghp_...` / `DATABASE_URL=postgres://u:p@h/db` 这类「中性 key + 密钥值」的日志行同样脱敏，与 maskEnvRecord 同口径(Codex PR #1008 review) |
+| security | cds | maskLine 增行级密钥擦除(step4)：KEY=VALUE 在 `;` 处截断且前缀类不含 `;`，导致连接串深处 `;Password=` 段(SQLSERVER_URL=Server=x;…;Password=…)从不被匹配而在日志中泄漏；补 `;Password=`/`;pwd=` 段、行内 `scheme://user:pass@` 口令、自由文本中的 vendor 前缀令牌(ghp_/sk-/…)全覆盖(Codex PR #1008 review) |
+| polish | cds | 将验收报告库折叠为项目与视图筛选下拉，左侧改为可展开的文件夹报告树，并支持移动端目录抽屉、拖拽宽度、文件夹管理与报告预览全屏查看 |
+| feat | prd-admin | 知识库公开分享页支持知识星球和 Obsidian 双链图视图 |
+| fix | prd-api | 知识库分享链接复用有效记录并登记统一短链 |
+| style | prd-admin | 品牌主渐变收敛为靛蓝-紫罗兰同族色（HERO_GRADIENT SSOT），落地页/登录页/Arena 的 CTA 与 Logo 同步统一，替换早期青-紫-玫红三色霓虹 |
+| style | prd-admin | 落地页 Hero 标题改白转长春花蓝纵向渐变 + drop-shadow 辉光，地平线/合成太阳/Tron 地板装饰同步收敛到品牌色族 |
+| style | prd-admin | 落地页 StatsStrip/ThreePillars/FinalCta 纵向留白收紧，FinalCta 玫红 eyebrow 改品牌紫 |
+| style | prd-admin | 登录页 RetroHorizon 装饰与主 CTA 投影收敛到品牌色族 |
+| style | prd-admin | 首页启动器三类卡片描边提亮至 0.08 并统一色相渗光与顶部高光，提升卡片质感 |
+| style | prd-admin | 桌面端内容区改为全屏画布面板：与侧栏 12px 网格对齐、常驻撑满视口的圆角画布，滚动移入画布内部，根治"页面半截子/顶部空带"问题 |
+| feat | prd-api | 知识库新增一键生成双链任务(autolink Run/Worker):标题精确匹配,把正文中其他文档标题的首次出现改写为 [[标题]],跳过代码块/链接/frontmatter,幂等可重跑,SSE 推送逐篇进度 |
+| refactor | prd-api | 从 DocumentStoreController 抽取 EntryContentWriteService 共享正文写入路径(ParsedPrd 内容寻址+摘要索引+重锚评论+重算双链+双版本快照),在线编辑/版本恢复/自动补链三方共用 |
+| test | prd-api | 新增 WikiLinkAutoLinker 单元测试 17 例(长标题优先/保护区间/幂等/ASCII 边界/候选过滤) |
+| feat | prd-admin | Obsidian 双链图页右上角新增「生成双链」按钮:SSE 实时显示 N/总数 扫描进度,完成后展示扫描/改写/新增链接统计并自动刷新图谱 |
+| feat | prd-admin | 知识星球 3D 页顶栏新增「折叠 2D / 展开 3D」切换:星点/光路/流光整组沿 Z 轴动画压平成平面图,相机同步飞到正视机位;折叠态锁旋转、两指滑动改平移 |
+| refactor | prd-api | 将管理侧刷新模型列表日志从 direct transport 分离为 admin-probe |
+| polish | prd-llmgw-web | 补充 admin-probe 网关日志传输通道展示 |
+| security | prd-agent | 生产 compose 强制要求 API_KEY_CRYPTO_SECRET，避免 llmgw-serve 因解不开平台密钥而以空凭据调用上游 |
+| ops | prd-api | 扩展 LLM Gateway ASR HTTP canary，默认覆盖字幕、转写、视频转写全部 ASR appCaller |
+| ops | prd-api | 将 ASR canary 多入口覆盖纳入 readiness 静态审计，避免单入口样本误放行 |
+| ops | prd-api | 将 ASR HTTP canary 纳入生产 rollout ledger 证据链 |
+| ops | prd-api | 新增 LLM Gateway ASR HTTP canary 端点，验证 MAP API 到独立 llmgw-serve 的 multipart raw 链路 |
+| ops | scripts | 新增 ASR HTTP canary 脚本并接入生产 stage runner 与 readiness 审计 |
+| ops | prd-agent | LLM Gateway ASR/视频 canary 输出 externalBlockers，rollout ledger 失败台账聚合 canary 外部阻断，避免 provider audit 之前的现场失败丢失结构化原因 |
+| ops | prd-api | 新增 LLM Gateway 生产 chat 模型池 bootstrap 脚本，将已验证可用模型前置到 chat 池并强制 dry-run/备份 |
+| ops | prd-api | 将 chat 模型池 bootstrap 纳入 LLM Gateway readiness 静态审计 |
+| fix | prd-llmgw-web | 支持网关控制台在生产 `/llmgw` 子路径下识别前端路由 basename |
+| ops | prd-agent | LLM Gateway 生产部署和回滚后自动刷新 gateway，避免 Docker DNS 旧 upstream 导致公网 502 |
+| ops | prd-agent | LLM Gateway 发布脚本读取 .env 中的有效模式、allowlist 与 shadow 采样配置，避免误判 release gate |
+| test | prd-api | 补充 LLM Gateway pinned 模型合同测试并纳入 readiness gate，防止 ModelLab/Arena 选中模型被默认池覆盖 |
+| fix | prd-api | 修正 ModelLab pinned gateway 调用的 transport 观测，避免已走网关的请求被误记为 direct |
+| test | prd-api | 增加 direct transport 标记守卫，防止全量迁移证据被 stale direct 上下文污染 |
+| feat | prd-api | 为 llmgw-serve 增加受密钥保护的 OpenAI-compatible chat/completions 入口，供 sidecar 工具循环经网关调用模型 |
+| refactor | prd-api | CapsuleExecutor 的 claude-sdk 执行器默认改为经 llmgw-serve 的 openai-compatible 路径，不再向 sidecar 下发真实上游密钥 |
+| ci | prd-agent | Branch Image 在 API/llmgw-serve 改动时同步产出 llmgw 与 llmgw-web 同 SHA 镜像，避免生产 commit 发布缺 tag |
+| ops | prd-api | 修正 image 灰度发布 allowlist 与 stage runner 不一致 |
+| ops | prd-agent | llmgw-rollout-ledger audit 将目标成功后的 failed/rollback 视为终态失败，避免回滚后仍误报全量迁移完成 |
+| fix | prd-api | LLM Gateway 按模型池/模型声明的 MaxTokens 裁剪 max_tokens，避免生产上游拒绝超限请求 |
+| test | prd-api | 新增 Gateway max_tokens 裁剪单元测试 |
+| ops | prd-api | 生产 completion preflight 增加近期 direct transport 日志阻断门 |
+| ops | prd-agent | 新增 llmgw-prod-preflight.py 只读生产预检，支持 start/completion 两种模式检查 MAP 日志权限、GW serving key 与 rollout ledger 终态证据 |
+| ops | prd-agent | llmgw-prod-stage.sh 真实发布阶段接入生产预检，并把 prod-preflight.json 纳入 rollout ledger 成功证据 |
+| ops | prd-agent | exec_dep.sh 禁止直接执行 LLM Gateway shadow/canary/http 发布，必须由 llmgw-prod-stage.sh 注入阶段上下文与台账证据 |
+| ci | prd-agent | 新增 llmgw-prod-preflight workflow，支持在 GitHub Secrets/Vars 环境中运行 start/completion 生产预检并上传 prod-preflight.json |
+| ci | prd-agent | 新增 llmgw-prod-stage workflow，支持在生产 self-hosted runner 上执行分阶段网关发布并上传 rollout evidence |
+| fix | prd-agent | 放宽 llmgw-prod-stage 紧急回滚入口，rollback-inproc 不再要求 commit、MAP logs key 或 gateway key |
+| fix | prd-agent | llmgw-prod-stage 和 llmgw-prod-preflight 支持下载 rollout evidence artifact，保证跨 workflow run 的台账审计不断链 |
+| docs | prd-agent | 记录 llmgw 生产 workflow 必须合入默认分支后才能通过 GitHub workflow_dispatch 调度 |
+| ops | prd-agent | LLM Gateway provider audit 增加 externalBlockers 行为级 self-test，并接入 readiness audit，防止 ASR/视频外部阻断 code 回归丢失 |
+| ops | prd-agent | LLM Gateway provider 配置审计新增 externalBlockers 机器可读字段，明确 ASR 凭据拒绝与视频模型未开通等外部发布阻断 |
+| ops | scripts | LLM Gateway provider audit 将 ASR/video 模型池静态不健康状态写入 externalBlockers，避免最近日志过期后误放行 video/ASR 灰度 |
+| ops | scripts | 新增 LLM Gateway report-agent shadow 证据采集脚本，固化采样恢复、临时数据清理和证据统计 |
+| ops | scripts | 扩展 LLM Gateway MAP shadow seed，新增 visual-agent 视频 raw 入口补证据能力 |
+| ops | scripts | 新增 LLM Gateway 短时 shadow 采样窗口脚本，固化生产备份、100% 采样、seed 取证和强制恢复 |
+| ops | scripts | 新增 LLM Gateway shadow 样本累计脚本，按 batch 复用短时采样窗口并自动输出 coverage 证据 |
+| ops | scripts | 扩展 LLM Gateway MAP shadow seed，补齐 desktop chat、ModelLab、Arena 真实入口和 open-platform send 增长计数 |
+| fix | scripts | 修复 LLM Gateway shadow 采样窗口恢复时被 shell 环境变量覆盖导致 sample percent 未降回低采样的问题 |
+| fix | scripts | 修正 LLM Gateway ModelLab/Arena shadow seed 的文本模型选择，避免把 Seedance 视频模型误计为 chat 证据 |
+| ops | scripts | 扩展 LLM Gateway MAP shadow seed，补齐 VideoToDoc 与 Workflow video-to-text 两条视频 ASR 真实入口 |
+| security | scripts | LLM Gateway shadow 采样窗口打印 seed flags 时隐藏 ASR 视频 URL，避免 signed URL 出现在日志 |
+| test | prd-api | 增加 LLM Gateway 采样窗口脚本守卫，防止恢复采样和密钥传参退化 |
+| docs | doc | 记录 LLM Gateway 直连 ratchet baseline 清零证据，明确剩余发布阻塞转为运行态样本门 |
+| ops | prd-api | 将 report-agent.generate 纳入 LLM Gateway shadow seed 矩阵，补齐 full-http 发布 gate 的 send 证据单元 |
+| test | prd-api | 增加网关数据域守卫，防止 report-agent.generate 证据入口从全量迁移计划中漂移 |
+| fix | prd-api | 修复视觉生图 worker 参考图加载不完整时静默降级 text2img，确保 img2img 和多图 vision 按真实 AppCallerCode 落网关证据 |
+| ops | prd-api | 新增 LLM Gateway 内部强制 shadow 采样 header 和无重启累计模式，用于生产证据期低扰动补样本 |
+| ops | prd-agent | llmgw-prod-stage.sh 对 rollback-inproc 失败也写入 failed rollout ledger，避免回滚失败无记录 |
+| ops | prd-agent | readiness audit 在 --require-rollout-complete 时强制执行 rollout ledger 审计，防止终态发布校验漏跑台账 |
+| ops | prd-agent | LLM Gateway rollout ledger 与阶段报告透传 providerAuditExternalBlockers，生产失败台账可直接看到 ASR/视频外部阻断 code |
+| ops | prd-agent | 修正 LLM Gateway 首次 shadow-start 发布门禁，允许发布前延后 gateway 探针并把发布 key 注入 llmgw-serve |
+| ops | prd-agent | LLM Gateway 生产 stage 增加 runner 可用性预检，缺少 self-hosted 生产 runner 时快速失败并产出证据 |
+| ops | prd-agent | 新增 LLM Gateway 生产 runner bootstrap 脚本，标准化恢复 `self-hosted,prd-agent-prod` 发布执行通道 |
+| ops | prd-agent | LLM Gateway 生产 stage dry-run 也写出 rollout stage 证据文件，避免只依赖 workflow 日志审计 |
+| ops | prd-agent | 修正 LLM Gateway 生产 stage artifact 上传隐藏证据目录，确保 rollout evidence 能被下载审计 |
+| fix | llmgw | 修正 shadow coverage 报告为显式 appCaller/kind 单元，避免不适用组合误报 |
+| ops | llmgw | shadow 累计器支持传递显式 kind 与 appCaller:kind 发布证据门 |
+| security | llmgw | shadow 累计器日志脱敏 seed flags 中的口令、token 与视频 URL 参数 |
+| ops | llmgw | 新增 shadow 累计器只读监控脚本，检测采样比例未恢复的高风险状态 |
+| ops | llmgw | 收紧全量 http 发布默认 app-kind gate，覆盖 OpenAI-compatible API 与核心 send/stream 入口 |
+| ops | llmgw | shadow seed 增加 OpenAI-compatible chat/image 真实入口，并修正 OpenPlatform 代理证据采样 |
+| fix | prd-api | 修复流式调用方在 done 后提前结束枚举时漏写 LLM Gateway shadow comparison 的问题 |
+| ops | llmgw | 将 OpenPlatform 发布门样本类型对齐为真实流式调用链，避免要求不存在的 send 格子 |
+| ops | scripts | LLM Gateway shadow coverage 报告新增 httpFail/critical 失败样本摘要，发布 gate 失败时直接展示 appCaller、kind、model 与错误原因 |
+| ops | prd-api | `/gw/v1/shadow-comparisons` 支持 `failureLimit` 并返回 `failureRecent`，便于零惊吓发布审计定位失败入口 |
+| fix | prd-api | 收敛 LLM Gateway shadow 图片采样提示词为抽象几何安全样本，降低上游内容政策拒绝污染发布门的风险 |
+| ops | prd-agent | 新增 LLM Gateway shadow 证据采样脚本，支持通过 MAP 真实文本、send 与图片 raw 入口产生 shadow 样本 |
+| ops | prd-agent | LLM Gateway shadow 证据采样脚本支持按 baseline 轮询 send/stream/raw 增量，避免异步落库误报 |
+| fix | prd-agent | 修复 commit 发布被 PRD_AGENT_*_IMAGE 环境覆盖导致实际镜像漂移的问题 |
+| fix | prd-agent | LLM Gateway 发布 gate 将后台单张生图 raw 入口纳入全量与图片灰度证据要求 |
+| ops | prd-agent | LLM Gateway shadow 采样脚本新增 ImageGenRunWorker 文生图路径，补齐后台生图 raw 证据入口 |
+| ops | prd-agent | LLM Gateway shadow 采样脚本新增 ImageGenRunWorker 图生图与多图 vision 路径，支持用既有图片资产 SHA 取证 |
+| ops | prd-agent | LLM Gateway shadow 采样脚本新增视频提交、转写 ASR 与文档字幕 ASR 真实业务入口取证 |
+| ops | prd-agent | LLM Gateway shadow 采样脚本支持失败后继续执行并输出 JSON 证据，便于生产 gate 归档 |
+| ops | prd-agent | LLM Gateway 生产阶段脚本支持显式运行 MAP shadow seed 并归档证据 |
+| ops | prd-agent | LLM Gateway 发布阶段新增 video/ASR upstream readiness 解析门，防止缺池缺 key 进入灰度或全量 |
+| ops | prd-agent | LLM Gateway canary-video-asr 与 http-full 阶段在部署前执行 upstream readiness，避免上游配置不可用时先发镜像 |
+| ops | prd-agent | LLM Gateway video-asr 发布门覆盖视频转文档与视频转文字 ASR 入口，并新增生产 ASR 模型池引导脚本 |
+| fix | prd-agent | 修正 upstream readiness 对 /gw/v1/resolve 脱敏响应的误判，密钥解密改由 ServingKeyIntegrity 和 raw seed 证明 |
+| ops | prd-agent | 记录生产 ASR raw seed 返回 Invalid X-Api-Key 的阻断证据，禁止 video-asr 灰度误放行 |
+| ops | prd-agent | 新增 LLM Gateway 生产 provider 配置只读审计脚本，诊断 video/ASR 模型池、caller 绑定和 key 形态 |
+| ops | prd-agent | 将 provider 配置审计接入 LLM Gateway 生产 stage 与 rollout ledger，video-asr/http-full 部署前自动阻断异常配置 |
+| ops | prd-agent | LLM Gateway shadow-start 高采样失败时输出恢复采样告警 |
+| ops | prd-agent | 新增 LLM Gateway shadow 安全恢复脚本，并在高采样 shadow-start 失败时自动恢复低采样 |
+| ops | prd-agent | LLM Gateway shadow 安全恢复脚本默认持久化低采样环境配置，避免后续 compose 重启恢复高采样 |
+| docs | prd-agent | 在全量迁移计划中补充 shadow 证据不足时的采样方式和 raw gate 边界 |
+| ops | prd-agent | exec_dep.sh 在 LLM Gateway http 与 video-asr 灰度发布前重复执行 provider 配置审计，防止绕过 stage 脚本误发 |
+| ops | prd-agent | 新增 LLM Gateway 生产磁盘空间 guard，并接入 ASR 备份、prod-stage 与 exec_dep 发布路径 |
+| ops | prd-agent | LLM Gateway provider 审计识别 ASR seed 的 Invalid X-Api-Key，并输出明确的凭据修复指引 |
+| ops | prd-agent | LLM Gateway ASR bootstrap 与 provider 审计支持 stream 候选池参数化，便于在 BigModel 凭据失败时安全切换取证 |
+| ops | prd-agent | LLM Gateway provider 审计补充 video 平台 key 形态、候选模型健康状态和 no available channels 分类 |
+| ops | prd-agent | LLM Gateway provider 审计默认读取近期 GW 请求日志，自动阻断 video/ASR 最近真实上游失败 |
+| ops | prd-agent | 新增 LLM Gateway 生产外置流式备份脚本，避免大 Mongo 备份继续占满生产根盘 |
+| ops | prd-agent | LLM Gateway 生产外置备份支持 critical 模式，快速保护网关迁移关键集合 |
+| ops | prd-agent | LLM Gateway ASR bootstrap 支持只创建候选池不绑定 caller，降低 stream 试切风险 |
+| fix | prd-api | LLM Gateway 豆包 stream ASR 失败路径补齐诊断包，避免生产日志出现未初始化排障信息 |
+| ops | prd-agent | LLM Gateway provider 审计解析 ASR stream 诊断包，阻断未初始化诊断日志进入 video/ASR 灰度 |
+| ops | prd-agent | shadow-start 发布阶段支持复用现有 prd-admin 静态站，避免后端/GW 诊断部署被 Pages 包缺失阻断 |
+| ops | prd-agent | 对齐 LLM Gateway shadow watch 与全量 http 发布门的核心入口清单，补齐 image-gen、视频转文档 ASR 与视频转文字 ASR 样本观测 |
+| ops | prd-agent | exec_dep.sh 禁止在需要 LLM Gateway 证据的 shadow/canary/http 发布中使用 LLMGW_SKIP_RELEASE_GATE 绕过门禁 |
+| ops | prd-agent | llmgw-prod-stage.sh 在真实执行阶段失败时自动写入 failed rollout ledger，便于生产迁移复盘 |
+| ops | prd-agent | LLM Gateway 生产 stage preflight 兼容 `LLMGW_STAGE_MAP_BASE`，避免 shadow-start 按帮助文档执行时误报缺少 MAP 地址 |
+| test | prd-api | 补充 LLM Gateway 生产 stage MAP 地址变量静态守卫，防止 preflight 与 stage 参数再次漂移 |
+| ops | prd-agent | ASR HTTP canary 外部阻断证据补充模型、状态码和上游错误，便于 video-asr gate 直接定位凭据问题 |
+| ops | prd-agent | 新增 LLM Gateway 生产 ASR 凭据安全轮换脚本，默认 dry-run，执行前备份 `model_exchanges` 并通过 MAP API 完成应用侧加密 |
+| test | prd-api | 补充 ASR 凭据轮换脚本静态守卫，防止绕过备份或应用加密 |
+| fix | prd-agent | rollback rehearsal 记录 release main SHA 但不做 main ancestry 阻断，仍保留 canary/http 发布阶段的 main 合入保护 |
+| feat | prd-api | LLM Gateway shadow 支持按 appCaller 强制 full sample，便于图片/ASR/video raw 发布证据确定性采样 |
+| ops | prd-agent | 发布、回滚和 shadow restore 脚本接入并清理 `LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST`，避免 raw 采样配置长期滞留 |
+| fix | prd-agent | `exec_dep.sh` 将 per-app full sample allowlist 也纳入 LLM Gateway 发布 gate，防止 raw 采样发布绕过 stage runner |
+| test | prd-api | 补充 raw shadow 强制采样与运维变量守卫，防止发布证据再次退化为随机命中 |
+| fix | prd-agent | LLM Gateway 发布脚本持久化四个 release 镜像 pin，避免后续单服务重启读取旧 `.env` 镜像 |
+| fix | prd-agent | `llmgw-restore-shadow-safe.sh` 恢复 shadow 时保留当前运行镜像并同步写回 `.env`，防止 API 回退到旧版本 |
+| test | prd-api | 补充 LLM Gateway 发布镜像 pin 与 shadow restore 镜像保留的静态守卫 |
+| fix | prd-api | `video-gen`/`asr` 专属模型池不可用时拒绝 legacy 直连兜底，避免迁移 gate 误打旧上游路径 |
+| test | prd-api | 补充 raw 专属池 fail-closed 与 expectedModel 直连兜底守卫 |
+| ops | scripts | LLM Gateway 生产阶段执行前同时校验 compose 与 nginx 部署配置必须和目标 commit 一致 |
+| ops | scripts | LLM Gateway 生产阶段执行前校验关键发布脚本必须与目标 commit 一致，避免脏生产工作树使用错版 gate 发布 |
+| ops | prd-api | 将视频 canary 纳入 LLM Gateway canary-video-asr/http-full 生产阶段证据门 |
+| ops | prd-api | 扩展 rollout ledger，要求视频 canary 证据通过后才能记录 video/ASR 阶段成功 |
+| ops | llmgw | 将视觉视频入口纳入 LLM Gateway video/ASR 发布门禁与 shadow watch，避免 raw 样本缺口被误放行 |
+| ops | llmgw | 新增视觉视频 appCaller 绑定引导脚本，执行前备份并默认 dry-run，补齐 video/ASR 发布门配置修复路径 |
+| ops | prd-api | 扩展 LLM Gateway 视频 canary，默认覆盖 video-agent 与 visual-agent 两个视频生成入口 |
+| ops | prd-api | 将视频 canary 双入口覆盖纳入 readiness 静态审计，避免单入口视频样本误放行 |
+| ops | prd-api | 扩展 LLM Gateway 视频 exchange canary，支持 submit 后轮询 status 与结果 URL 下载探测 |
+| ops | prd-api | 将视频 canary 的 status/download 覆盖纳入 readiness 静态审计 |
+| ops | llmgw | 发布前 provider audit 增加 video-gen 平台协议检查，阻止火山 Ark chat base URL 误作为 OpenRouter /videos 平台放行 |
+| feat | prd-api | 新增火山方舟 Seedance 视频 exchange 转换器，支持 MAP OpenRouter 视频请求经 LLM Gateway 转为原生 task API |
+| ops | scripts | 新增生产视频 exchange bootstrap 脚本，默认 dry-run，执行前备份 Mongo 并复用加密后的火山平台密钥 |
+| ops | scripts | 扩展 LLM Gateway provider audit 和 readiness audit，识别 video-gen 模型绑定到 model_exchanges 的合法路径 |
+| fix | scripts | 修复上游 readiness 对 exchange 的 apiKey 判定，避免要求 resolve 暴露明文密钥 |
+| ops | scripts | 新增视频 exchange canary 脚本并精确归因火山 Ark 模型未开通错误 |
+| test | prd-api | 增加视频网关客户端与火山视频转换器测试，覆盖提交、状态查询、签名视频下载和响应映射 |
+| fix | prd-admin | 知识库更多菜单加回 Obsidian 双链图入口 |
+| polish | skill | 四种汇报产物视觉统一为「米多刊系」：周报新增 HTML 周刊版模板（靛蓝，封面故事+一周脉络时间轴+数据版，移动端适配），验收报告与每日视觉验收报告换肤为检验档案风（青碧档案/钢蓝巡检双刊头 + 判定印章，模板契约与交互不变） |
+| feat | skill | 日报发布脚本 publish.py 新增 --store/--kind/--tags 刊系复用参数，周报 HTML 版可发布到「周报知识库」出分享链 |
+| rule | .claude | 新增 report-design-system.md：米多刊系共享纸墨基因 token + 一刊一色一版式设定 + 验收模板兼容红线 |
+| polish | skill | 周刊模板防漏数据五闸：附录 PR 全量硬性化（44 条样稿 + 分类列 + 归属口径行）、成分占比%、优先级「动作——依据」句式、baseline 多行口径/漂移样例、SKILL.md 纪律 8 成稿对账清单 |
+| chore | prd-api | 重跑 bundle-official-skills 重新生成 official-skills.generated.json，官方技能目录同步验收报告新皮肤（Codex review P2） |
+| fix | skill | _report_flavor 加宽匹配兜底：「每日视觉验收报告」「每日巡检」等中间插词目标正确归巡检特刊皮肤，措辞（含巡检系/中间插词/英文变体）并入门禁本体 _declares_daily_acceptance 作唯一入口，皮肤直接复用——巡检特刊刊头必过每日门禁，复杂验收判定收敛为每日的超集（Codex review P2 三条追加） |
+
+### 2026-07-06
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 分支级临时额外服务产品化:分支抽屉/详情页新增「临时额外服务」管理面板(预设 Nacos/Kafka/RabbitMQ/Redis/MinIO + 表单校验与服务端对齐 + 保存即重部署) |
+| feat | cds | cdscli 新增 branch extra-services list/set/remove 子命令(读改写 PUT + --redeploy + 掩码哨兵安全往返) |
+| fix | cds | 分支 profile-overrides PUT 白名单补 dbScope 透传 + 枚举校验,per-branch DB 开关首次可按分支生效(F16 收尾) |
+| feat | cds | 分支抽屉「本分支运行模式」每行新增数据库隔离选择器(继承/共享库/分支独立库),切换只保存不自动重部署 |
+| docs | cds | plan.cds.status.md 活看板重建:补 2026-05-03 以来里程碑 + 配置体系三波演进六列轨道表 |
+| feat | cds | 新增分支「生效配置检查器」:GET /branches/:id/effective-config 端点输出逐 key env 溯源(12 种来源:全局/项目/分支/服务底座/分支覆盖/部署模式/临时服务/平台注入/分支库改写等)+ 覆盖链(shadowed)+ 部署计划预览(起哪些容器/连哪些网/拉起哪些共享 infra) |
+| feat | cds | 分支抽屉新增「配置」tab + 分支详情页新增「生效配置」区,继承链树视图 + 来源徽标 + 密钥脱敏 |
+| refactor | cds | 容器运行时 env 解析抽为纯函数 env-provenance.ts(带溯源分层),部署路径退化为单层包装,行为逐字节等价(container.test.ts 43 例护栏 + 等价断言) |
+| feat | cds | 分支从分支派生(快照拷贝):POST /branches 支持 sourceBranchId 深拷贝来源分支的 profileOverrides+extraProfiles 并写派生溯源指针;cdscli branch create 新增 --from |
+| feat | cds | PR opened/reopened 自动回填派生指针(base 分支,只回填不拷贝配置);新增 POST /branches/:id/copy-config-from/:sourceId 显式一键拉取(拷贝前自动拍快照,可回滚,支持 ?redeploy=1) |
+| feat | cds | ConfigSnapshot 快照覆盖分支层(profileOverrides/extraProfiles/派生指针):回滚仅恢复仍存在的分支、不复活已删分支、旧快照零迁移 no-op |
+| feat | cds | 生效配置检查器新增派生溯源行(派生自哪个分支/何时/来源是否还在)+ 「重新拉取来源配置」按钮 |
+| docs | cds | 新增 design.cds.config-tree.md:四层配置树模型 + 派生三层策略 + 溯源契约 + 波4(repo compose 纯结构种子/漂移巡检)波5(无 Agent 接入)方向;同步 index.yml 与 guide.list |
+| fix | cds | 修复本机生产脚本依赖检查、worktree 路径和域名别名互撞问题 |
+| feat | cds | 分支列表页新建分支支持「配置来源」选择器,可从本项目已有分支快照拷贝分支级配置(透传 sourceBranchId,默认走项目模板不派生) |
+| feat | cds | 波4 repo cds-compose.yml 降为纯结构种子:x-cds-env 剥离全部密钥/占位符键(密钥统一走 CDS env scope) |
+| feat | cds | 波4 新增 classifyEnvSeed(seed 级 env 权威) + computeComposeDrift(repo->CDS 单向漂移巡检纯函数) |
+| feat | cds | 波4 新增 POST /api/projects/:id/compose-drift-scan 端点,漂移可开 repo-sync PendingImport 走人审(去重,不回写 repo) |
+| chore | cds | 偿还 debt D1 代码层:剥离 cds-compose.yml 的 TODO 密钥占位,消除全量 import 被拒根因(运行实例注入验证仍为唯一 blocker) |
+| chore | cds | 波4 D1 债偿还验证通过(运行实例):env scope prd-agent 8 密钥全 present+非TODO + 本分支 api-prd-agent running(构建自剥离后 compose)= 密钥注入不丢的端到端确证,D1 判 paid |
+| feat | cds | 波5 UI:空项目(无构建配置)态引导「检测技术栈」→ DetectStackDialog 调 detect-preview/detect-apply 一键生成构建配置(主题 token 双色,shadcn Dialog 移动安全) |
+| feat | cds | 波5 已 clone 空项目事后栈检测:GET /api/projects/:id/detect-preview(只读扫 worktree)+ POST detect-apply(用户确认后建构建配置,空项目守门,race-free) |
+| refactor | cds | 抽出 buildDetectedServicesFromDir 共享检测逻辑,detect-runtime 复用(去重) |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（llmgw 控制台演进补入 design.llm-gateway-physical-isolation.md §9；cds 配置两波已在 design.cds.config-tree.md 覆盖，仅登记 manifest） |
+| fix | prd-api | 禁止 MAP 生产路径直连豆包 WebSocket ASR，改为提示绑定 HTTP ASR/Whisper 以避免绕过 llmgw-serve |
+| test | prd-api | 扩展 LLM Gateway 直连棘轮，阻止业务路径重新引用 DoubaoStreamAsrService |
+| feat | prd-api | 将豆包 WebSocket ASR 协议迁入 LLM Gateway raw 路径，Mode=http 时由 llmgw-serve 承载 |
+| refactor | prd-api | 将 API 层图片生成依赖收口到生图网关接口，避免业务层直接持有 OpenAIImageClient |
+| test | prd-api | 新增豆包流式 ASR 网关分派测试，验证音频经 Gateway 执行并归一为 verbose_json |
+| test | prd-api | 新增图片直连棘轮守卫，阻止 API 层重新依赖具体生图上游客户端 |
+| test | prd-api | 新增 OpenRouter 视频网关路径测试，覆盖 submit、status、download 均经 Gateway raw |
+| test | prd-api | 新增视频直连棘轮守卫，阻止 API 层重新依赖具体视频上游客户端 |
+| ops | prd-api | llmgw-serve 镜像安装 ffmpeg，支持网关内 ASR 音频格式转换 |
+| feat | prd-api | 新增 LLM Gateway pinned platform/model 精确调用链路，ModelLab/Arena 可经网关保持选定模型语义 |
+| feat | prd-api | 打通 LLM Gateway multipart raw HTTP 跨进程文件引用协议，支持对象存储上传与 serving rehydrate 校验 |
+| feat | prd-api | 将 LLM Gateway shadow 证据与 serving 请求日志切入独立 llm_gateway 数据域，MAP 业务日志继续留在 MAP |
+| ops | scripts | 新增 LLM Gateway 发布前证据门脚本，统一检查 serving healthz、shadow 样本数、critical/httpFail 清零 |
+| ops | deploy | exec_dep.sh 在 LLMGW_MODE=http 时强制执行 LLM Gateway 发布证据门，阻止无 shadow 证据的全量切换 |
+| refactor | prd-api | 收口 Program、ModelDomainService、ModelLab、Arena 直连上游客户端，直连棘轮 baseline 清零 |
+| test | prd-api | 补充 pinned model、multipart raw HTTP 与 GW 数据域守卫测试，并同步网关 serving/shadow/key gate 合约 fake 签名 |
+| ops | prd-agent | 生产发布脚本的不可变 commit 发布同步钉住 llmgw、llmgw-serve、llmgw-web 三个网关镜像，避免 API 已切 sha 但网关仍漂在 latest |
+| ops | prd-agent | 发布 manifest 补充网关三镜像 ref，便于正式环境部署前后核对 |
+| ci | prd-agent | branch-image 手动触发改为全组件构建，确保正式环境热修前能补齐同一 sha 的 API/Admin/GW 镜像组 |
+| test | prd-api | 修正跨进程 LLM Gateway pools 错 key 用例断言，确保 401 鉴权失败按 fail-closed 契约暴露而不是伪装成空模型池 |
+| test | prd-api | 扩展 LLM Gateway 直连棘轮，显式跟踪模型池探活和 Infra Agent profile 校验中的手写上游 HTTP 待迁移债务 |
+| refactor | prd-api | 模型池健康探活改走 LLM Gateway raw pinned 调用，保留 IsHealthProbe 日志标记并收紧手写上游 HTTP baseline |
+| fix | prd-api | LLM Gateway raw 非 Exchange 路径按协议设置 Claude 和 Google 原生鉴权头，避免探活或 raw 请求误用 Bearer |
+| refactor | prd-api | Infra Agent runtime profile 连通性测试改走 llmgw-serve profile-test 契约，清零手写 completion/messages 上游 HTTP baseline |
+| ops | prd-agent | 新增 execdep.sh 兼容入口并补发布 gate 守卫，确保 LLMGW_MODE=http 时 shadow 证据钉到同一不可变 commit |
+| ops | prd-agent | 发布 gate 支持按 shadow kind 与 appCaller+kind 强制最小样本数，避免全量切 http 时仅靠 resolve-only 证据放行 |
+| ops | prd-agent | 发布 gate 支持输出 JSON 与 Markdown 证据报告，并由 exec_dep.sh 透传报告路径，便于正式发布前第三方复核 |
+| ops | prd-agent | 发布 gate 增加 serving health 连续采样与 commit 稳定性检查，正式 LLMGW_MODE=http 前默认 3 次探活 |
+| ops | prd-agent | 正式部署透传 LLMGW_HTTP_APP_CALLER_ALLOWLIST 与 LLMGW_SHADOW_FULL_SAMPLE_PERCENT，并让 allowlist canary 发布也强制执行 GW release gate |
+| security | prd-llmgw | 控制台改密、平台启停、模型启停、默认池切换写入 llm_gateway.llmgw_operation_audits，补齐 GW 自有操作审计 |
+| security | prd-llmgw | 首次 bootstrap、破玻璃 reset、admin 重新激活和历史账号禁用也写入 llmgw_operation_audits，补齐启动级账号审计 |
+| ops | prd-agent | 发布 gate 支持 shadow sinceHours 新鲜度窗口，exec_dep.sh 默认只接受最近 24 小时样本，避免旧证据误放行 http/canary |
+| ops | prd-agent | 新增 LLMGW http/canary 紧急回滚脚本，一键将 MAP API 切回 inproc 且不回滚数据库或 GW 证据 |
+| ops | prd-agent | 新增 LLMGW 全量迁移 readiness audit，总结直连、multipart、发布脚本、回滚 dry-run 与 live release gate 证据 |
+| ops | prd-agent | readiness audit 支持 --run-smoke，把 gw-smoke.py D 层真机冒烟纳入 S5/S6 发布前总 gate |
+| ops | prd-agent | 全量 LLMGW_MODE=http 发布默认要求 send 与 stream 两类 shadow 样本达标，避免只靠总样本或 resolve-only 证据放行 |
+| ops | prd-agent | gw-smoke.py D 层真机冒烟扩展到 /stream 与 /client-stream，覆盖流式和 ILLMClient 跨进程发布风险 |
+| ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 gw-smoke.py，避免人工漏跑 D 层真机冒烟 |
+| ops | prd-agent | 新增 llmgw-shadow-coverage-report.py，生成 appCaller x kind shadow 覆盖矩阵供 S5/S6 发布前复核 |
+| ops | prd-agent | 新增 llmgw-serving-probe.py，发布前连续检查 serving health commit 稳定性与受保护端点未认证拒绝 |
+| ops | prd-agent | exec_dep.sh 在 http/canary 发布时默认强制运行 serving probe，防止滚动未稳定或鉴权裸奔时进入发布 |
+| ops | prd-agent | exec_dep.sh 在 shadow 采样证据期启动时强制 serving/smoke 预检，避免坏 serving 产生无效 shadow 证据 |
+| ops | prd-agent | readiness audit 新增 CDS runtime 检查，要求预览/灰度网关后端与 serving 以 express 预构建镜像运行并匹配发布 commit，避免源码容器或旧容器假阳性 |
+| test | prd-api | 新增 HttpLlmGatewayClientFailureTests，覆盖 serving 不可达或 401 时 send/stream/raw/profile-test/resolve/pools/client-stream 全部显式失败且不伪成功 |
+| ops | prd-agent | serving 运行态探针扩展到所有 /gw/v1 受保护边界，覆盖 GET pools/shadow 与 POST resolve/send/stream/client-stream/raw/profile-test 的无 key 401 |
+| ops | prd-agent | 生产 compose 不再强制要求 LLMGW_ADMIN_PASSWORD，网关控制台恢复 admin/admin 首登改密引导，env 仅作首次 bootstrap 或破玻璃输入 |
+| feat | prd-api | ShadowLlmGateway 为 raw 图片/ASR/视频原始代理增加采样 shadow 证据，发布 gate 全量 http 默认要求 raw 样本和核心 appCaller 覆盖 |
+| fix | prd-api | 补齐 Claude 流式 tool_use 到 OpenAI tool_calls delta 的网关归一，避免切 http 后流式工具调用丢失 |
+| test | prd-api | 将 Claude 流式 tool_use 纳入 LLM Gateway 协议保真矩阵，B 层数据驱动 cell 从 91 扩展到 93 |
+| test | prd-agent | 扩展 llmgw-readiness-audit --run-dotnet，发布前总 gate 覆盖协议矩阵、跨进程矩阵、shadow/raw、媒体合同与 HTTP 边界 |
+| ops | prd-agent | 全量 LLMGW_MODE=http 发布默认要求图片、视频、ASR 等 raw appCaller 逐个具备 raw shadow 样本，避免入口级证据搭车过关 |
+| ops | prd-agent | 灰度 LLMGW_HTTP_APP_CALLER_ALLOWLIST 发布必须声明 LLMGW_CANARY_STAGE，并按阶段限制入口与自动补齐 send/stream/raw 样本门 |
+| ops | prd-agent | fast.sh 写入 release intent，exec_dep.sh 校验同一 commit/tag/repo 后才继续部署，防止正式发布时 API 与 LLMGW 镜像组漂移 |
+| ops | prd-agent | LLM Gateway release gate 增加 shadow 覆盖时长检查，http/canary 发布默认要求每个证据格覆盖 24 小时 |
+| polish | prd-llmgw-web | Shadow 页面展示影子比对覆盖时长，便于人工复核 S5 灰度观察窗口 |
+| ci | prd-agent | 新增 LLM Gateway shadow watch 定时巡检，持续归档 serving 探针、shadow 覆盖矩阵与 live release gate 证据 |
+| security | prd-agent | readiness audit 证据报告脱敏子命令中的 --key 参数，避免上传 GW key |
+| ops | prd-agent | 调整 LLM Gateway 正式部署 gate 顺序，发布前只校验 shadow 证据，compose 起新镜像后再校验 serving commit 与 D 层 smoke |
+| ops | prd-agent | 新增 LLM Gateway 生产阶段推进脚本，统一 shadow、canary、http 全量和 inproc 回滚入口，避免正式发布手工拼环境变量 |
+| ops | prd-agent | LLM Gateway 生产阶段推进脚本新增 JSONL 台账和同 commit 顺序校验，防止跳过 shadow/canary 证据阶段 |
+| ops | prd-agent | LLM Gateway 生产阶段台账 success 前强制校验 stage、serving probe、gw-smoke 与 release gate 证据 verdict=pass |
+| ops | prd-agent | LLM Gateway 生产阶段推进默认要求前一阶段 success 至少观察 24 小时，防止连续跳过 canary 观察窗口 |
+| ops | prd-agent | LLM Gateway 生产阶段新增 rollback-rehearsal，同一 commit 未演练回滚脚本时禁止进入 canary/http 阶段 |
+| ops | prd-agent | LLM Gateway readiness 新增 rollout ledger 完成态审计，http-full 未落同 commit 证据时不能宣称全量迁移完成 |
+| ops | prd-agent | LLM Gateway 生产阶段执行前强制校验发布 commit 包含最新 main，并在阶段证据中记录 main ref/SHA |
+| test | prd-api | 扩展 LLM Gateway 手写上游 HTTP 守卫到 text/image/audio/video endpoint，防止图片、ASR、视频请求绕过 llmgw-serve 后仍被测试漏放 |
+| ops | prd-agent | LLM Gateway 生产阶段越级推进必须填写原因并写入 stage report 与 rollout ledger，避免 allow-out-of-order 成为无记录后门 |
+| ops | prd-agent | LLM Gateway shadow 证据新增 release commit 归属字段，release gate 与覆盖矩阵可按候选 commit 过滤，防止旧样本误放行新版本 |
+| ops | prd-agent | LLM Gateway rollout ledger 审计升级为校验证据文件 commit 归属，防止错 commit 的 stage、serving 或 release gate 报告挂账通过 |
+| ci | prd-agent | LLM Gateway shadow watch 要求显式生产目标 commit，缺少 commit 时拒绝巡检，避免旧 shadow 样本证明新版本 |
+| ops | prd-agent | D 层 gw-smoke 证据绑定 healthz commit，rollout ledger 拒绝错 commit 或缺 healthCommit 的 smoke 报告 |
+| ops | prd-agent | rollout ledger 审计要求 serving/smoke 证据显式 expectedCommit，并校验 stage report 的 main ref/SHA 与台账一致 |
+| ops | prd-agent | rollout ledger 阶段推进前复核所有前置 success 证据文件，坏证据不能等到最终 audit 才暴露 |
+| ops | prd-agent | rollout ledger 越级推进前仍复核已有前置 success 证据，防止 allow-out-of-order 跳过坏证据 |
+| ops | prd-agent | readiness audit 要求 CDS 分支 running 且部署派发 commit 匹配，防止 building 或旧容器被误判为可发布 |
+| ops | prd-agent | readiness runtime gate 默认纳入 API express 镜像并检查所有 CDS 服务 running，防止 MAP 入口不在候选发布上 |
+| ops | prd-agent | exec_dep.sh 校验 fast.sh 预热的 API/GW/GW serving/GW Web 镜像与实际部署镜像逐项一致 |
+
+### 2026-07-05
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 每日熵清理：D1-D5 六维扫描无欠款，D6 处理 1 条未归档 changelog（cds 本机发布评审修复，narrow fix 无需新增设计文档章节） |
+
+### 2026-07-04
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| polish | prd-llmgw-web | 打磨网关控制台日志与影子比对页面，补齐筛选、汇总和详情排障字段 |
+| feat | prd-llmgw | 扩展网关日志只读 API，新增多维筛选、元信息和窗口汇总接口 |
+| refactor | prd-llmgw | 将网关控制台账号与登录审计切到独立 llm_gateway 数据库 |
+| fix | prd-llmgw | 停止 LLMGW_ADMIN_PASSWORD 在每次启动时覆盖已存在的控制台口令 |
+| docs | doc | 更新 LLM Gateway 目标模式文档，明确 MAP 与 GW 日志边界 |
+| polish | prd-llmgw-web | 将网关控制台 Logs/Generation 视觉与信息架构改为 OpenRouter 风格的高密度 Activity 控制台 |
+
+
 ### 2026-07-05
 
 | 类型 | 模块 | 描述 |
