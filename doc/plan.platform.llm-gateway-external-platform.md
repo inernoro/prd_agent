@@ -30,7 +30,7 @@
 
 PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。GitHub CI、四个相关镜像、Codex Review、CDS Deploy 与直连预览验收通过，PR #1085 已 squash 合并为 `19a33c7f4461eae24861f8ad59123b0ec0679389`。
 
-PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 109 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。提交 `73f3098ff` 的 GitHub CI、四镜像、CDS Deploy 和 smoke 3/3 已通过，CDS 五个服务运行且 serving health 回显同 commit；`llmgw-web` 容器 `/quickstart` 与静态产物包含本次页面。CDS 公网预览只暴露主 admin profile 的既有边界已记录到 `doc/debt.llm-gateway.md`，不伪造不可达深链。尚待最终 Codex Review。
+PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。提交 `73f3098ff` 的 GitHub CI、四镜像、CDS Deploy 和 smoke 3/3 已通过，CDS 五个服务运行且 serving health 回显同 commit；`llmgw-web` 容器 `/quickstart` 与静态产物包含本次页面。CDS 公网预览只暴露主 admin profile 的既有边界已记录到 `doc/debt.llm-gateway.md`，不伪造不可达深链。尚待最终 Codex Review。
 
 执行期间保持以下边界：
 

@@ -690,6 +690,45 @@ public sealed class GatewayRuntimeGovernanceTests
         window.Count.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task ScopedKey_FirstMinuteConcurrentRequests_DoNotFailWithDuplicateWindow()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_concurrent_rate_key";
+        var keyRecord = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "concurrent-rate-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            RateLimitPerMinute = 10,
+        };
+        await InsertServiceKeyAsync(scope.Context, keyRecord);
+        var windows = scope.Context.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");
+        await windows.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyRateWindowRecord>(
+            Builders<GatewayServiceKeyRateWindowRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ServiceKeyId)
+                .Ascending(x => x.WindowStart),
+            new CreateIndexOptions { Unique = true }));
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            null, CancellationToken.None)));
+
+        results.Count(x => x.Allowed).ShouldBe(10);
+        results.Count(x => x.StatusCode == 429).ShouldBe(10);
+        var window = await windows.Find(x => x.TenantId == "tenant-a" && x.ServiceKeyId == keyRecord.Id).SingleAsync();
+        window.Count.ShouldBe(20);
+    }
+
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")

@@ -158,15 +158,33 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 .SetOnInsert(x => x.WindowStart, windowStart)
                 .SetOnInsert(x => x.ExpiresAt, windowStart.AddMinutes(2))
                 .Inc(x => x.Count, 1);
-            var window = await windows.FindOneAndUpdateAsync(
-                filter,
-                update,
-                new FindOneAndUpdateOptions<GatewayServiceKeyRateWindowRecord>
-                {
-                    IsUpsert = true,
-                    ReturnDocument = ReturnDocument.After,
-                },
-                ct);
+            GatewayServiceKeyRateWindowRecord window;
+            try
+            {
+                window = await windows.FindOneAndUpdateAsync(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<GatewayServiceKeyRateWindowRecord>
+                    {
+                        IsUpsert = true,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct);
+            }
+            catch (MongoException ex) when (IsDuplicateKey(ex))
+            {
+                // 同一分钟的首批并发请求可能同时观察到窗口不存在；唯一索引只允许一个 upsert 成功。
+                // 竞争者改为非 upsert 原子递增，不能把正常限流请求放大成 500。
+                window = await windows.FindOneAndUpdateAsync(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<GatewayServiceKeyRateWindowRecord>
+                    {
+                        IsUpsert = false,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct) ?? throw new InvalidOperationException("service key rate window disappeared after duplicate upsert");
+            }
             if (window.Count > record.RateLimitPerMinute.Value)
             {
                 await WriteKeyDeniedAuditAsync(record, "service_key.rate_limited", "rate-limited", new MongoDB.Bson.BsonDocument
@@ -223,6 +241,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var normalizedAddress = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
         return network.Contains(normalizedAddress);
     }
+
+    private static bool IsDuplicateKey(MongoException exception)
+        => exception is MongoCommandException { Code: 11000 or 11001 }
+           || exception is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey };
 
     private Task WriteKeyDeniedAuditAsync(
         GatewayServiceKeyRecord record,
