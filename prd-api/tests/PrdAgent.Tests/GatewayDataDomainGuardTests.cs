@@ -1540,6 +1540,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--sample-percent \"$sample_percent\"", workflow);
         Assert.Contains("--min-observation-hours \"$min_observation_hours\"", workflow);
         Assert.Contains("--main-ref \"$main_ref\"", workflow);
+        Assert.Contains("maintenance_from_commit", workflow);
+        Assert.Contains("INPUT_MAINTENANCE_FROM_COMMIT", workflow);
+        Assert.Contains("args+=(--maintenance-from-commit \"$maintenance_from_commit\")", workflow);
+        Assert.Contains("maintenance_from_commit is only valid for stage http-full", workflow);
+        Assert.Contains("Audit recorded maintenance release", workflow);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py maintenance-baseline", workflow);
         Assert.Contains("--evidence-dir \".llmgw-release-evidence\"", workflow);
         Assert.Contains("--allow-out-of-order-reason \"$allow_out_of_order_reason\"", workflow);
         Assert.Contains("scripts/llmgw-prod-tree-precheck.py", workflow);
