@@ -9,3 +9,4 @@
 | fix | prd-admin | VOC 动态流手机端定高网格致三块统计互相重叠、筛选三行堆叠：改自然滚动 + 单条横滚筛选 |
 | fix | prd-admin | 周报「团队」tab 手机端被 280px 周导航侧栏挤成竖条：改上下堆叠，周树默认收起可展开 |
 | fix | prd-admin | 二级 tab 定宽双栏专项：技能内容浏览器/周报详情右栏/团队管理三处 280px 级侧栏手机端改上下堆叠 |
+| fix | prd-admin | VOC 动态流模块筛选 chips 在横滚条内被压缩致文字竖排：补 shrink-0 + whitespace-nowrap |
