@@ -925,7 +925,7 @@ public static class GatewayHttpEndpoints
                     return JsonContentResult(rehydrated.Error!, jsonOpts);
                 }
 
-                multipartOwnershipEstablished = true;
+                multipartOwnershipEstablished = rehydrated.MultipartRefOwnershipEstablished;
                 request = rehydrated.Request ?? request;
                 var routedRequest = ApplyIngressRouting(request, ingress);
                 using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
@@ -4321,7 +4321,7 @@ public static class GatewayHttpEndpoints
             || request.MultipartFileRefs is not { Count: > 0 }
             || request.MultipartFiles is { Count: > 0 })
         {
-            return RehydrateResult.Ok(request);
+            return RehydrateResult.Ok(request, multipartRefOwnershipEstablished: false);
         }
 
         if (storage == null)
@@ -4429,7 +4429,7 @@ public static class GatewayHttpEndpoints
             Context = request.Context,
         };
 
-        return RehydrateResult.Ok(hydrated);
+        return RehydrateResult.Ok(hydrated, multipartRefOwnershipEstablished: manifests is not null);
     }
 
     private static async Task CleanupMultipartRefsAsync(
@@ -4489,12 +4489,14 @@ public static class GatewayHttpEndpoints
     private sealed record RehydrateResult(
         bool Success,
         GatewayRawRequest? Request,
-        GatewayRawResponse? Error)
+        GatewayRawResponse? Error,
+        bool MultipartRefOwnershipEstablished)
     {
-        public static RehydrateResult Ok(GatewayRawRequest request) => new(true, request, null);
+        public static RehydrateResult Ok(GatewayRawRequest request, bool multipartRefOwnershipEstablished)
+            => new(true, request, null, multipartRefOwnershipEstablished);
 
         public static RehydrateResult Fail(string code, string message, int statusCode = 500)
-            => new(false, null, GatewayRawResponse.Fail(code, message, statusCode));
+            => new(false, null, GatewayRawResponse.Fail(code, message, statusCode), false);
     }
 
     private sealed record GatewayAuthorizationInputs(

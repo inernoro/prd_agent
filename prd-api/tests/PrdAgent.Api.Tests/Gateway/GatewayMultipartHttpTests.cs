@@ -247,6 +247,75 @@ public class GatewayMultipartHttpTests
     }
 
     [Fact]
+    public async Task ScopedRawEndpoint_DoesNotCleanupUnverifiedRefsWhenInlineFilesBypassRehydration()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var victimBytes = Encoding.UTF8.GetBytes("tenant-b-secret-image");
+        var inlineBytes = Encoding.UTF8.GetBytes("tenant-a-inline-image");
+        const string key = "llmgw/multipart/tenant-b/mixed-image.png";
+        var storage = new MemoryAssetStorage();
+        await storage.UploadToKeyAsync(key, victimBytes, "image/png", CancellationToken.None);
+        await scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+            .InsertOneAsync(new GatewayMultipartObjectRecord
+            {
+                TenantId = "tenant-b",
+                RefKey = key,
+                Sha256 = Sha256Hex(victimBytes),
+                SizeBytes = victimBytes.LongLength,
+                Status = "uploaded",
+            });
+
+        await using var app = BuildHost(
+            storage,
+            new CapturingGateway(),
+            scope.Context,
+            new StaticTenantKeyAuthorizer("tenant-a"));
+        await app.StartAsync();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
+            {
+                Content = JsonContent.Create(new GatewayRawRequest
+                {
+                    AppCallerCode = "tenant-a.app::vision",
+                    ModelType = "vision",
+                    IsMultipart = true,
+                    Context = new GatewayRequestContext { TenantId = "tenant-b" },
+                    MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                    {
+                        ["inline"] = ("inline.png", inlineBytes, "image/png"),
+                    },
+                    MultipartFileRefs = new Dictionary<string, MultipartFileRef>
+                    {
+                        ["victim"] = new()
+                        {
+                            RefKey = key,
+                            FileName = "mixed-image.png",
+                            MimeType = "image/png",
+                            SizeBytes = victimBytes.LongLength,
+                            Sha256 = Sha256Hex(victimBytes),
+                        },
+                    },
+                }, options: PascalJson),
+            };
+            request.Headers.Add("X-Gateway-Key", "tenant-a-scoped-key");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            storage.DownloadCount.ShouldBe(0);
+            storage.DeleteCount.ShouldBe(0);
+            (await storage.ExistsAsync(key, CancellationToken.None)).ShouldBeTrue();
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task RawEndpoint_RejectsMultipartRefHashMismatch()
     {
         var bytes = Encoding.UTF8.GetBytes("real-bytes");
