@@ -14,7 +14,7 @@
  *  → 我的动态 → 推荐智能体货架 → 页脚。全部真实数据（useMobileHomeData）。
  */
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -24,8 +24,10 @@ import {
   FileText,
   Image as ImageIcon,
   Megaphone,
+  Moon,
   Newspaper,
   Store,
+  Sun,
   type LucideIcon,
 } from 'lucide-react';
 import { accentFor, iconFor } from '@/lib/agentAccent';
@@ -33,6 +35,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 import {
   formatCompactNumber,
   formatDateline,
@@ -110,45 +113,23 @@ const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideI
   { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, tint: '#5aa9ff' },
 ];
 
-/** 跟随系统明暗（定稿：浅色默认，暗色形态给系统暗色用户） */
-function useSystemDark(): boolean {
-  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return dark;
-}
-
 export default function MobileHomePage() {
   const navigate = useNavigate();
   const data = useMobileHomeData();
   const displayName = useAuthStore((s) => s.user?.displayName ?? '同事');
-  const systemDark = useSystemDark();
-  const S = systemDark ? DARK_SKIN : LIGHT_SKIN;
+  // 全局移动明暗偏好:浅色默认,右上角按钮可切换;data-theme 由 AppShell 统一落。
+  const themeMode = useMobileThemeStore((st) => st.mode);
+  const toggleTheme = useMobileThemeStore((st) => st.toggle);
+  const S = themeMode === 'dark' ? DARK_SKIN : LIGHT_SKIN;
   const now = useMemo(() => new Date(), []);
   const { weekday } = formatDateline(now);
-
-  // 浅色形态：壳层（顶栏/底部 Tab）一起进入白天 token（与 report/daily-post 同一模式）。
-  useEffect(() => {
-    const root = document.documentElement;
-    const prev = root.getAttribute('data-theme');
-    if (!systemDark) root.setAttribute('data-theme', 'light');
-    else root.removeAttribute('data-theme');
-    return () => {
-      if (prev) root.setAttribute('data-theme', prev);
-      else root.removeAttribute('data-theme');
-    };
-  }, [systemDark]);
 
   const headline = data.recentWork[0] ?? null;
   const restRecent = data.recentWork.slice(1, 3);
 
   return (
     <div
-      className="h-full min-h-0 overflow-auto"
+      className="h-full min-h-0 overflow-auto no-scrollbar"
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
         background: S.dark
@@ -162,13 +143,31 @@ export default function MobileHomePage() {
       <main style={{ padding: '0 12px 112px', maxWidth: 720, margin: '0 auto' }}>
         {/* ── 头部：两形态同为安静问候行（橙色大色块已因「老土」撤下，
               琥珀只留给数字与按钮做点睛） ── */}
-        <header style={{ padding: '16px 6px 4px' }}>
-          <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
+        <header style={{ padding: '14px 6px 4px' }}>
+          <div className="flex items-center justify-between" style={{ gap: 10 }}>
             <span style={{ fontSize: S.dark ? 17 : 21, fontWeight: S.dark ? 510 : 700, letterSpacing: '-0.02em' }}>
               {greetingFor(now)}，{displayName}
             </span>
-            <span style={{ fontSize: 12, color: S.text3, flex: 'none' }}>
-              {now.getMonth() + 1}月{now.getDate()}日 {weekday}
+            <span className="flex items-center" style={{ gap: 8, flex: 'none' }}>
+              <span style={{ fontSize: 12, color: S.text3 }}>
+                {now.getMonth() + 1}月{now.getDate()}日 {weekday}
+              </span>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={S.dark ? '切换到浅色' : '切换到暗色'}
+                className="flex items-center justify-center active:opacity-60"
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 9,
+                  border: `1px solid ${S.dark ? 'rgba(255,255,255,0.12)' : '#e9eaee'}`,
+                  background: S.card,
+                  color: S.text2,
+                }}
+              >
+                {S.dark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
             </span>
           </div>
         </header>

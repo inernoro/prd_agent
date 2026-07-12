@@ -70,6 +70,7 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -198,6 +199,17 @@ export default function AppShell() {
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
+  const mobileThemeMode = useMobileThemeStore((st) => st.mode);
+
+  // 移动端全局明暗（2026-07-12）:浅色默认、可切换,壳层统一落 <html data-theme>。
+  // deps 带 pathname:report/daily-post 等自管 data-theme 的页面卸载时会清属性,
+  // 导航后由这里重申,保证「其他页面也是白的」。桌面端不干预(维持既有暗色体系)。
+  useEffect(() => {
+    if (!isMobile) return;
+    const root = document.documentElement;
+    if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
+    else root.removeAttribute('data-theme');
+  }, [isMobile, mobileThemeMode, location.pathname]);
   const {
     navOrder,
     navHidden,

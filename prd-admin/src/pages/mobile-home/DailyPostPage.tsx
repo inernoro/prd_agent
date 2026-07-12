@@ -62,7 +62,7 @@ export default function DailyPostPage() {
 
   return (
     <div
-      className="h-full min-h-0 overflow-auto"
+      className="h-full min-h-0 overflow-auto no-scrollbar"
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
         background: PAPER,
