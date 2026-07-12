@@ -22,14 +22,14 @@
 ## 二、当前状态（本 session 已落地）
 
 ### Point 1 — 两个 web / 两个域名 / 一主一副：**已达成（结构层）**
-- 部署了独立网关控制台容器 **`llmgw-web`**（`prd-llmgw-web`，nginx 托管 SPA + 反代 `/gw/*` → `llmgw:8090`）。
+- 部署了独立网关控制台容器 **`llmgw-web`**（`llmgw/web`，nginx 托管 SPA + 反代 `/gw/*` → `llmgw:8090`）。
 - CDS 分支详情面板已「多出口」：**主应用入口**（`main-prd-agent.miduo.org`）+ **网关控制台**
   （`main-prd-agent-llmgw-web.miduo.org/`，真实页面）+ **网关引擎·健康**（`llmgw` `/gw/healthz`、
   `llmgw-serve` `/gw/v1/healthz`）。预览按钮默认主入口，网关入口并列。
 - prd-agent-main 现 **5 容器**：api / admin / llmgw / llmgw-serve / llmgw-web。
 
 ### Point 2 — 简单账号密码：**已达成（PR #978 + 首登强制改密 2026-07-02；独立账号库 2026-07-04）**
-- 后端 `prd-llmgw/Program.cs` 缺省内置 **admin/admin**，开箱可用；不再因未配 `LLMGW_ADMIN_PASSWORD`
+- 后端 `llmgw/console-api/Program.cs` 缺省内置 **admin/admin**，开箱可用；不再因未配 `LLMGW_ADMIN_PASSWORD`
   而拒启动（仅告警）。
 - `SeedAdminAsync` 现在以 `llm_gateway.llmgw_console_users` 为长期权威；已有账号只保活，不再被
   `LLMGW_ADMIN_PASSWORD` 每次启动覆盖。
@@ -118,7 +118,7 @@
 3. 最后按 Point 4 的 evidence-gated 流程逐步让 MAP 调用 GW；此时 MAP 可继续保留 MAP 侧业务日志，GW 记录网关侧链路日志。
 
 ### Point 3 — OpenRouter 风格控制台：**部分（骨架在，需对齐设计）**
-- `prd-llmgw-web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
+- `llmgw/web` 已有：`LoginPage` / `LogsPage` / `LogsView`（请求日志表）/ `GenerationDetailsDrawer`
   （单条 generation 详情，OpenRouter Activity 风格）/ `MiniBarChart`（时序）。后端 `/gw/logs` `/gw/logs/{id}`
   `/gw/logs/timeseries` `/gw/logs/sessions` `/gw/logs/meta` 已就绪。
 - **待接力**：与 OpenRouter 逐屏比对补齐（Activity 表列/筛选、Generation 详情字段：tokens/cost/latency/
@@ -150,9 +150,9 @@ B 类（ModelLab/Arena）等网关加 pinned 入口 → 翻 http（灰度 allowl
 
 | 关注点 | 位置 |
 |---|---|
-| 网关控制台前端 | `prd-llmgw-web/`（Vite React，`nginx.conf` 反代 `/gw`→`llmgw:8090`，运行时 DNS resolver） |
-| 网关控制台后端 | `prd-llmgw/Program.cs`（独立 ASP.NET，`/gw/auth/login` + `/gw/logs*`，SeedAdmin 以 `llm_gateway` 为权威） |
-| serving 引擎 | `prd-api/src/PrdAgent.LlmGateway/`（`/gw/v1/*`，X-Gateway-Key 门） |
+| 网关控制台前端 | `llmgw/web/`（Vite React，`nginx.conf` 反代 `/gw`→`llmgw:8090`，运行时 DNS resolver） |
+| 网关控制台后端 | `llmgw/console-api/Program.cs`（独立 ASP.NET，`/gw/auth/login` + `/gw/logs*`，SeedAdmin 以 `llm_gateway` 为权威） |
+| serving 引擎 | `llmgw/serving/`（`/gw/v1/*`，X-Gateway-Key 门） |
 | CDS 预构建镜像 app 站点识别 | `cds/src/services/compose-parser.ts` `isAppServiceCandidate`（image+cds.prebuilt-image+subdomain） |
 | CDS 裸别名（llmgw-prd-agent→llmgw） | `cds/src/services/container.ts` `computeProfileAliases`（剥离完整项目 slug 后缀） |
 | 落地路径 / 面板 | `cds/src/routes/branches.ts` `resolveGatewayLandingPath` / `computeBranchGatewayUrls`；`cds/web/src/components/BranchDetailDrawer.tsx` |
@@ -169,8 +169,8 @@ B 类（ModelLab/Arena）等网关加 pinned 入口 → 翻 http（灰度 allowl
 
 ## 五、接力下一步（point 3 / 4）
 
-**Point 3（前端打磨，低风险）**：以 OpenRouter Activity/Generation 为参照，逐屏补齐 `prd-llmgw-web`
-`LogsView`/`GenerationDetailsDrawer` 的列/筛选/聚合/主题；无需动 CDS/后端架构。改 `prd-llmgw-web/**`
+**Point 3（前端打磨，低风险）**：以 OpenRouter Activity/Generation 为参照，逐屏补齐 `llmgw/web`
+`LogsView`/`GenerationDetailsDrawer` 的列/筛选/聚合/主题；无需动 CDS/后端架构。改 `llmgw/web/**`
 会触发 CI 重建 `prdagent-llmgw-web` 镜像，redeploy prd-agent-main 即生效。
 
 **Point 4（高风险，evidence-gated）**：严格按 `plan.llm-gateway.full-cutover.md` 的 S3-A→S3-B→S5→S6

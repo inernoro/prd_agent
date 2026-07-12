@@ -5,7 +5,7 @@ namespace PrdAgent.LlmGw.Security;
 
 /// <summary>
 /// Platform/model/exchange API key encryption compatible with PrdAgent.Core.Helpers.ApiKeyCrypto.
-/// prd-llmgw intentionally does not reference PrdAgent.* projects, so the minimal compatible writer lives here.
+/// llmgw/console-api intentionally does not reference PrdAgent.* projects, so the minimal compatible writer lives here.
 /// </summary>
 public static class GwApiKeyCrypto
 {

@@ -1,10 +1,10 @@
-# prd-llmgw-web
+# llmgw/web
 
-独立的 LLM 网关观测前端 mini-app。**完全隔离**：自带账号体系、路由、组件风格，不依赖 `prd-admin` / `prd-api` 的任何源码或全局状态。
+独立的 LLM Gateway 租户控制台。自带会话、路由、主题和组件体系，不依赖 `prd-admin` / `prd-api` 的前端源码或全局状态。
 
 ## 技术栈
 
-Vite 6 + React 18 + TypeScript（pnpm only）。无 UI 框架，OpenRouter 风格走自带的 CSS token（`src/theme.css`，暗色默认，`[data-theme="light"]` 预留浅色）。
+Vite 6 + React 18 + TypeScript（pnpm only）。无 UI 框架，主题由 `src/theme.css` 的暗色与亮色 token 统一管理。
 
 ## 启动
 
@@ -39,9 +39,9 @@ src/
 
 ## API base
 
-走 `import.meta.env.VITE_LLMGW_API_BASE`，默认 `/gw`（dev 由 vite proxy 反代到 `LLMGW_PROXY_TARGET`，默认 `http://localhost:5000`）。
+走 `import.meta.env.VITE_LLMGW_API_BASE`，默认 `/gw`（dev 由 Vite proxy 反代到 `LLMGW_PROXY_TARGET`，默认 `http://localhost:5090`）。
 
-## 后端端点约定（后端另做，stub 即可）
+## 后端端点约定
 
 数据形状与现有 `/api/logs/llm` 对齐，对接时把 base 指过去即可。
 

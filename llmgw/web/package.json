@@ -1,5 +1,5 @@
 {
-  "name": "prd-llmgw-web",
+  "name": "llmgw-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

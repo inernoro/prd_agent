@@ -1,6 +1,6 @@
 # LLM Gateway 控制台产品化与独立目录收拢 · 计划
 
-> **版本**：v1.3 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.4 | **日期**：2026-07-12 | **状态**：开发中
 
 ## 一、概述
 
@@ -124,7 +124,7 @@ llmgw/
 
 **交付物**：
 
-1. 将 `prd-llmgw`、`prd-llmgw-web` 和 `PrdAgent.LlmGateway` 相关工程按依赖顺序收拢。
+1. 将 `llmgw/console-api`、`llmgw/web` 和 `PrdAgent.LlmGateway` 相关工程按依赖顺序收拢。
 2. 同步 solution、Docker、Compose、CI、CDS、脚本和文档路径。
 3. 用兼容入口或一次性原子迁移保证调用地址、协议、配置集合、TenantId 语义和发布流程不变。
 
@@ -160,17 +160,19 @@ llmgw/
 |---|---|---|---|
 | P0 | 已合并 | `codex/llmgw-console-productization-p0` | PR #1090 已合并到 `main`；双主题、请求记录、真实地址、安全直测、密钥解释和内部运维隔离已通过本地、GitHub CI 与 CDS 预览验收 |
 | P1 | 已合并 | `codex/llmgw-console-productization-p1` | PR #1091 已合并到 `main`；租户首页聚合、全局概览和学习中心已通过本地、GitHub CI 与 CDS 预览验收 |
-| P2 | 已完成，待合并 | `codex/llmgw-console-productization-p2` | PR #1092；模型池业务心智、绑定与流量统计、健康卡片、详情抽屉和高级维护分层已通过本地、GitHub CI 与 CDS 预览验收 |
-| P3 | 待开始 | 待 P2 合并后创建 | 根目录收拢，运行语义不变 |
+| P2 | 已合并 | `codex/llmgw-console-productization-p2` | PR #1092 已合并到 `main`；模型池业务心智、绑定与流量统计、健康卡片、详情抽屉和高级维护分层已通过本地、GitHub CI 与 CDS 预览验收 |
+| P3 | 本地验收完成 | `codex/llmgw-console-productization-p3` | 控制台 API、Web、serving 已原子收拢到根目录 `llmgw/`；旧目录消失，等待独立 PR 的 GitHub CI 与 CDS 验收 |
 
 每个阶段都使用独立分支、独立测试和独立验收；前一阶段未完成时，不把后一阶段的实现混入当前提交。Bugbot 因订阅停止记为不适用，不再等待。
 
-P0 本地证据（2026-07-12）：`prd-llmgw-web` 生产构建通过；`prd-llmgw` 编译 0 warning/0 error；serving 编译 0 error；Gateway 数据域与控制台合同守卫 64/64 通过。临时 Mongo、真实 console API、真实 serving 与浏览器完成登录验收：系统主题默认浅色，切换深色后刷新保持；请求记录空态、示例说明、密钥身份说明和移动导航可用，页面无横向溢出且浏览器无 warning/error；新建四协议租户密钥后，`route-self-test` 返回 4/4 且明确未调用上游。外部租户导航不显示影子对比和系统运维，直接访问 `/governance` 回到首页。验收发现并修复跨域 CORS、单协议默认范围和 serving 响应字段大小写三项缺陷；临时容器、租户和密钥随临时数据库删除，未调用付费模型。
+P0 本地证据（2026-07-12）：`llmgw/web` 生产构建通过；`llmgw/console-api` 编译 0 warning/0 error；serving 编译 0 error；Gateway 数据域与控制台合同守卫 64/64 通过。临时 Mongo、真实 console API、真实 serving 与浏览器完成登录验收：系统主题默认浅色，切换深色后刷新保持；请求记录空态、示例说明、密钥身份说明和移动导航可用，页面无横向溢出且浏览器无 warning/error；新建四协议租户密钥后，`route-self-test` 返回 4/4 且明确未调用上游。外部租户导航不显示影子对比和系统运维，直接访问 `/governance` 回到首页。验收发现并修复跨域 CORS、单协议默认范围和 serving 响应字段大小写三项缺陷；临时容器、租户和密钥随临时数据库删除，未调用付费模型。
 
 P0 远端证据（2026-07-12）：实现提交 `f6427c02b` 与证据提交 `f9216f6f1` 已推送，独立 PR #1090 已创建。GitHub 共 15 个检查进入终态，9 个成功、6 个按变更范围跳过、0 个失败；`prd-api`、`prd-llmgw`、`prd-llmgw-web`、`prd-llmgw-serve` 四个相关镜像全部构建成功。CDS 分支绑定 PR #1090 和提交 `a92b6706f`，5/5 服务运行，镜像状态 ready，CI 结论 success，部署无漂移；预览环境的 `/llmgw/quickstart`、`/llmgw/logs`、`/llmgw/settings` 三个最终深链均返回 200。Bugbot 因订阅停止记为不适用。PR #1090 已 squash 合并到 `main`，合并提交为 `ec6596374`。
 
-P1 本地证据（2026-07-12）：`prd-llmgw-web` TypeScript 与 Vite 生产构建通过，`prd-llmgw` 编译 0 warning/0 error，Gateway 数据域守卫 65/65 通过。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 为 5 请求、80% 成功率、900ms P95、730 token、2 个活跃身份、60% 价格覆盖、CNY/USD 分列、1 把租户密钥；Beta 为 2 请求、100% 成功率、250ms P95、140 token、1 个活跃身份、0% 价格覆盖、2 个 unknown cost、0 把租户密钥。Alpha 会话附带 Beta `tenantId` 查询参数时仍返回 Alpha 的 5 条请求与 Top appCaller，证明端点不信任自报租户。独立空租户返回 0 请求、null 成功率、null P95、0 个费用桶、0 把密钥和 0 条最近请求；非法日期与反向时间范围均返回 HTTP 400。桌面和移动端完成 Alpha/Beta 切换、浅色/深色、首页与学习中心验收，无横向溢出且浏览器 warning/error 为 0；学习中心包含三步首条请求路径、完整概念链、10 个术语及对应页面深链。验收未启动 serving，未调用任何模型；临时 API、Web、Mongo 与测试数据已删除。
+P1 本地证据（2026-07-12）：`llmgw/web` TypeScript 与 Vite 生产构建通过，`llmgw/console-api` 编译 0 warning/0 error，Gateway 数据域守卫 65/65 通过。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 为 5 请求、80% 成功率、900ms P95、730 token、2 个活跃身份、60% 价格覆盖、CNY/USD 分列、1 把租户密钥；Beta 为 2 请求、100% 成功率、250ms P95、140 token、1 个活跃身份、0% 价格覆盖、2 个 unknown cost、0 把租户密钥。Alpha 会话附带 Beta `tenantId` 查询参数时仍返回 Alpha 的 5 条请求与 Top appCaller，证明端点不信任自报租户。独立空租户返回 0 请求、null 成功率、null P95、0 个费用桶、0 把密钥和 0 条最近请求；非法日期与反向时间范围均返回 HTTP 400。桌面和移动端完成 Alpha/Beta 切换、浅色/深色、首页与学习中心验收，无横向溢出且浏览器 warning/error 为 0；学习中心包含三步首条请求路径、完整概念链、10 个术语及对应页面深链。验收未启动 serving，未调用任何模型；临时 API、Web、Mongo 与测试数据已删除。
 
-P2 本地证据（2026-07-12）：`prd-llmgw-web` TypeScript 与 Vite 生产构建通过，`prd-llmgw` 编译 0 warning/0 error。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 模型池显示 2 个绑定 appCaller、近 7 天 4 次请求、3 成功、1 失败、75% 成功率；Beta 模型池显示 1 个绑定 appCaller、9 次请求、100% 成功率。Alpha 会话附带 Beta `tenantId` 查询参数时仍只返回 Alpha 模型池，模型池到 appCaller 与请求记录的精确深链分别只返回 Alpha 的 2 条和 4 条数据。桌面暗色、桌面浅色与 433px 移动视口均无横向溢出，移动详情抽屉宽度等于视口，租户切换后卡片统计即时刷新，浏览器 warning/error 为 0。流量统计在 Mongo 内按模型池聚合，不把窗口内全部日志加载到控制台 API 内存。验收未启动 serving，未调用任何模型。
+P2 本地证据（2026-07-12）：`llmgw/web` TypeScript 与 Vite 生产构建通过，`llmgw/console-api` 编译 0 warning/0 error。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 模型池显示 2 个绑定 appCaller、近 7 天 4 次请求、3 成功、1 失败、75% 成功率；Beta 模型池显示 1 个绑定 appCaller、9 次请求、100% 成功率。Alpha 会话附带 Beta `tenantId` 查询参数时仍只返回 Alpha 模型池，模型池到 appCaller 与请求记录的精确深链分别只返回 Alpha 的 2 条和 4 条数据。桌面暗色、桌面浅色与 433px 移动视口均无横向溢出，移动详情抽屉宽度等于视口，租户切换后卡片统计即时刷新，浏览器 warning/error 为 0。流量统计在 Mongo 内按模型池聚合，不把窗口内全部日志加载到控制台 API 内存。验收未启动 serving，未调用任何模型。
 
-P2 远端证据（2026-07-12）：实现提交 `c6e37c25f` 已推送，独立 PR #1092 已创建。GitHub 16 项检查进入终态，10 项成功、6 项按变更范围跳过、0 项失败；`prd-api`、`prd-llmgw`、`prd-llmgw-web`、`prd-llmgw-serve` 四个相关镜像和 Server Build & Test 全部通过。CDS 分支绑定 PR #1092 和同一提交，5/5 服务运行，镜像状态 ready，CI 结论 success，部署无漂移；预览环境的 `/llmgw/pools`、`/llmgw/app-callers?modelPoolId=test`、`/llmgw/logs?modelPoolId=test` 三个最终深链均返回 200。Bugbot 因订阅停止记为不适用。
+P2 远端证据（2026-07-12）：实现提交 `c6e37c25f` 与证据提交 `3ec8c8193` 已推送，独立 PR #1092 已创建。GitHub 16 项检查进入终态，10 项成功、6 项按变更范围跳过、0 项失败；`prd-api`、`prd-llmgw`、`prd-llmgw-web`、`prd-llmgw-serve` 四个相关镜像和 Server Build & Test 全部通过。CDS 分支绑定 PR #1092，5/5 服务运行，镜像状态 ready，CI 结论 success，部署无漂移；预览环境的 `/llmgw/pools`、`/llmgw/app-callers?modelPoolId=test`、`/llmgw/logs?modelPoolId=test` 三个最终深链均返回 200。Bugbot 因订阅停止记为不适用。PR #1092 已 squash 合并到 `main`，合并提交为 `b53c7085f`。
+
+P3 本地证据（2026-07-12）：`prd-llmgw`、`prd-llmgw-web` 和 `prd-api/src/PrdAgent.LlmGateway` 已分别移动到 `llmgw/console-api`、`llmgw/web` 和 `llmgw/serving`，并新增 `deploy`、`docs` 产品边界；活跃代码、配置与文档中的旧物理路径扫描为 0，镜像名、容器名、端口、HTTP 路径、Mongo 集合及 `TenantId` 语义保持不变。控制台 API 编译 0 warning/0 error，serving 与完整 solution 编译 0 error，Web 生产构建通过；非集成测试共 2183 项通过、4 项跳过、0 项失败，Gateway 数据域与目录边界守卫 66/66 通过，协议路由静态审计 10/10 通过。控制台 API、Web 与 serving 三个 Docker 镜像均从新路径构建成功，两个 GitHub workflow 与三份 Compose 均通过 YAML 解析。readiness audit 的两项失败在最新 `origin/main` 独立归档中完全一致，属于既有 full-http 发布账本检查，本阶段按范围约束不重建 runtime gate。验收没有调用付费模型。

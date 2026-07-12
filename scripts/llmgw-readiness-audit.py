@@ -1457,7 +1457,7 @@ def _static_checks() -> list[dict]:
         f"{detail}; DirectTransportMarkerBaseline={direct_transport_empty}",
     ))
 
-    gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    gateway_src = _read("llmgw/serving/GatewayHttpEndpoints.cs")
     multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
     no_unsupported = "MULTIPART_HTTP_UNSUPPORTED" not in "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")

@@ -12,7 +12,7 @@ $RepoRoot = Join-Path $ScriptDir ".."
 $ApiDir = Join-Path $RepoRoot "prd-api"
 $OutputDir = Join-Path $ApiDir "output"
 
-Set-Location $ApiDir
+Set-Location $RepoRoot
 
 Write-Host "Building backend code using Docker..." -ForegroundColor Cyan
 Write-Host "Output directory: $OutputDir" -ForegroundColor Cyan
@@ -26,7 +26,7 @@ if (Test-Path $OutputDir) {
 # 构建 Docker 镜像并输出产物
 $buildArgs = @(
     "build",
-    "-f", "Dockerfile.build",
+    "-f", "prd-api/Dockerfile.build",
     "-t", "prdagent-build:local",
     "--target", "build",
     "--output", $OutputDir,

@@ -1,6 +1,7 @@
 # 专门用于编译后台代码的 Docker 镜像
 # 使用方式：
-#   DOCKER_BUILDKIT=1 docker build -f Dockerfile.build -t prdagent-build --target build --output ./output .
+#   DOCKER_BUILDKIT=1 docker build -f prd-api/Dockerfile.build -t prdagent-build --target build --output ./output .
+# 构建上下文必须是仓库根目录，因为解决方案包含 llmgw/serving。
 #   产物将输出到 ./output 目录
 # syntax=docker/dockerfile:1.4
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
@@ -8,26 +9,27 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # 先拷贝项目文件以利用 Docker 缓存层
-COPY ["PrdAgent.sln", "."]
-COPY ["src/PrdAgent.Api/PrdAgent.Api.csproj", "src/PrdAgent.Api/"]
-COPY ["src/PrdAgent.Core/PrdAgent.Core.csproj", "src/PrdAgent.Core/"]
-COPY ["src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "src/PrdAgent.Infrastructure/"]
-COPY ["src/PrdAgent.LlmGateway/PrdAgent.LlmGateway.csproj", "src/PrdAgent.LlmGateway/"]
-COPY ["tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj", "tests/PrdAgent.Api.Tests/"]
+COPY ["prd-api/PrdAgent.sln", "prd-api/"]
+COPY ["prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj", "prd-api/src/PrdAgent.Api/"]
+COPY ["prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj", "prd-api/src/PrdAgent.Core/"]
+COPY ["prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "prd-api/src/PrdAgent.Infrastructure/"]
+COPY ["prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj", "prd-api/tests/PrdAgent.Api.Tests/"]
+COPY ["prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj", "prd-api/tests/PrdAgent.Tests/"]
+COPY ["llmgw/serving/PrdAgent.LlmGateway.csproj", "llmgw/serving/"]
 
 # 恢复依赖：使用 BuildKit cache mount，NuGet 包跨 build 复用（换服务器只首次冷下载一次）
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet restore PrdAgent.sln
+    dotnet restore prd-api/PrdAgent.sln
 
 # 拷贝所有源码
 COPY . .
 
 # 编译解决方案（复用 restore 缓存）
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet build PrdAgent.sln -c Release --no-restore
+    dotnet build prd-api/PrdAgent.sln -c Release --no-restore
 
 # 发布 API 项目
-WORKDIR "/src/src/PrdAgent.Api"
+WORKDIR "/src/prd-api/src/PrdAgent.Api"
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "PrdAgent.Api.csproj" && \
     dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
