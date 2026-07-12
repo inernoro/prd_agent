@@ -122,6 +122,12 @@ public class LlmRequestLog
     /// </summary>
     public string? ParameterPolicy { get; set; }
 
+    /// <summary>提示词策略只记录不可逆元数据，禁止保存策略正文。</summary>
+    public string? PromptPolicyId { get; set; }
+    public int? PromptPolicyVersion { get; set; }
+    public string? PromptPolicyHash { get; set; }
+    public int? PromptPolicyChars { get; set; }
+
     /// <summary>
     /// 入口适配器或 Provider adapter 丢弃的参数名。
     /// </summary>

@@ -223,6 +223,12 @@ public class GatewayRequestContext
     /// </summary>
     public string? SystemPromptText { get; init; }
 
+    /// <summary>已应用的提示词策略元数据。正文不进入日志，只传 id/version/hash/字符数。</summary>
+    public string? PromptPolicyId { get; set; }
+    public int? PromptPolicyVersion { get; set; }
+    public string? PromptPolicyHash { get; set; }
+    public int? PromptPolicyChars { get; set; }
+
     /// <summary>
     /// 图片引用列表（参考图 COS URL 等元数据，用于日志页展示）
     /// </summary>
@@ -297,6 +303,10 @@ public class GatewayRequestContext
             QuestionText = source?.QuestionText,
             SystemPromptChars = source?.SystemPromptChars,
             SystemPromptText = source?.SystemPromptText,
+            PromptPolicyId = source?.PromptPolicyId,
+            PromptPolicyVersion = source?.PromptPolicyVersion,
+            PromptPolicyHash = source?.PromptPolicyHash,
+            PromptPolicyChars = source?.PromptPolicyChars,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
             SourceSystem = source?.SourceSystem,
@@ -363,6 +373,10 @@ public sealed class GatewayIngressRequest
                 QuestionText = Context?.QuestionText,
                 SystemPromptChars = Context?.SystemPromptChars,
                 SystemPromptText = Context?.SystemPromptText,
+                PromptPolicyId = Context?.PromptPolicyId,
+                PromptPolicyVersion = Context?.PromptPolicyVersion,
+                PromptPolicyHash = Context?.PromptPolicyHash,
+                PromptPolicyChars = Context?.PromptPolicyChars,
                 ImageReferences = Context?.ImageReferences,
                 GatewayTransport = GatewayTransports.Http,
                 SourceSystem = SourceSystem,

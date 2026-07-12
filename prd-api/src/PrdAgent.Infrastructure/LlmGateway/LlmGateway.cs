@@ -3053,7 +3053,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
-            var requestJson = requestBody.ToJsonString();
+            var requestBodyForLog = RedactAppliedPromptPolicy(requestBody, request.Context);
+            var requestJson = requestBodyForLog.ToJsonString();
             var redactedJson = LlmLogRedactor.RedactJson(requestJson);
             // 是否流式：SendAsync 置 stream=false，StreamAsync 置 stream=true，此处统一从请求体读
             bool? isStreaming = requestBody.TryGetPropertyValue("stream", out var streamNode)
@@ -3077,7 +3078,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     QuestionText: request.Context?.QuestionText,
                     SystemPromptChars: request.Context?.SystemPromptChars,
                     SystemPromptHash: null,
-                    SystemPromptText: request.Context?.SystemPromptText,
+                    SystemPromptText: string.IsNullOrWhiteSpace(request.Context?.PromptPolicyId) ? request.Context?.SystemPromptText : null,
                     MessageCount: null,
                     GroupId: request.Context?.GroupId,
                     SessionId: request.Context?.SessionId,
@@ -3121,6 +3122,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PriceCurrency: resolution.PriceCurrency,
                     TenantId: request.Context?.TenantId,
                     TeamId: request.Context?.TeamId,
+                    PromptPolicyId: request.Context?.PromptPolicyId,
+                    PromptPolicyVersion: request.Context?.PromptPolicyVersion,
+                    PromptPolicyHash: request.Context?.PromptPolicyHash,
+                    PromptPolicyChars: request.Context?.PromptPolicyChars,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -3501,6 +3506,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             _logger.LogWarning(ex, "[LlmGateway] 写入 Raw 日志失败");
             return null;
         }
+    }
+
+    private static JsonObject RedactAppliedPromptPolicy(JsonObject requestBody, GatewayRequestContext? context)
+    {
+        if (string.IsNullOrWhiteSpace(context?.PromptPolicyId)) return requestBody;
+        var clone = requestBody.DeepClone().AsObject();
+        var marker = $"[PROMPT_POLICY:{context.PromptPolicyId}:v{context.PromptPolicyVersion}:{context.PromptPolicyHash}]";
+        if (clone["messages"] is JsonArray messages)
+        {
+            foreach (var node in messages)
+            {
+                if (node is JsonObject message
+                    && string.Equals(message["role"]?.GetValue<string>(), "system", StringComparison.OrdinalIgnoreCase))
+                    message["content"] = marker;
+            }
+        }
+        if (clone.ContainsKey("system")) clone["system"] = marker;
+        if (clone.ContainsKey("systemInstruction")) clone["systemInstruction"] = marker;
+        return clone;
     }
 
     private Task FinishRawLogAsync(

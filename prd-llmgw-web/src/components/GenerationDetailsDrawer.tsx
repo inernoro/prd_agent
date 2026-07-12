@@ -446,6 +446,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="Resolution" v={detail.resolutionReason} />
                 <Row k="Parameter policy" v={detail.parameterPolicy} />
                 <Row k="Dropped parameters" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
+                <Row k="Prompt policy" v={detail.promptPolicyId ? `${detail.promptPolicyId} / v${detail.promptPolicyVersion ?? '—'}` : null} mono />
+                <Row k="Prompt policy hash" v={detail.promptPolicyHash} mono />
+                <Row k="Prompt policy chars" v={detail.promptPolicyChars == null ? null : String(detail.promptPolicyChars)} />
               </div>
 
               {detail.error ? (

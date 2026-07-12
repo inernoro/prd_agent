@@ -100,6 +100,10 @@ export type LlmLogDetail = {
   model: string;
   requestBodyRedacted?: string | null;
   systemPromptText?: string | null;
+  promptPolicyId?: string | null;
+  promptPolicyVersion?: number | null;
+  promptPolicyHash?: string | null;
+  promptPolicyChars?: number | null;
   questionText?: string | null;
   answerText?: string | null;
   thinkingText?: string | null;
@@ -677,6 +681,25 @@ export type BulkUpdateGatewayAppCallersResult = {
   matchedCount: number;
   modifiedCount: number;
   filterSummary: string;
+};
+
+export type PromptPolicyVersion = {
+  id: string; teamId?: string | null; appCallerCode: string; requestType: string;
+  systemPromptPrefix: string; systemPromptSuffix: string; enabled: boolean; version: number;
+  allowedVariables: string[]; maxChars: number; policyHash: string; policyChars: number;
+  createdBy?: string | null; updatedBy?: string | null; updatedAt?: string | null;
+};
+export type PromptPolicyData = {
+  appCallerId: string; appCallerCode: string; requestType: string;
+  current?: PromptPolicyVersion | null; versions: PromptPolicyVersion[];
+};
+export type PromptPolicyDraft = {
+  expectedVersion: number; systemPromptPrefix: string; systemPromptSuffix: string;
+  enabled: boolean; allowedVariables: string[]; maxChars: number;
+};
+export type PromptPolicyPreview = {
+  mergedSystemPrompt: string; policyChars: number; mergedChars: number;
+  policyHash: string; appliedVariables: string[];
 };
 
 export type OperationAuditItem = {

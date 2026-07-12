@@ -142,6 +142,10 @@ public sealed class LlmLogDetail
     public string Model { get; set; } = string.Empty;
     public string? RequestBodyRedacted { get; set; }
     public string? SystemPromptText { get; set; }
+    public string? PromptPolicyId { get; set; }
+    public int? PromptPolicyVersion { get; set; }
+    public string? PromptPolicyHash { get; set; }
+    public int? PromptPolicyChars { get; set; }
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
     public string? ThinkingText { get; set; }
@@ -528,6 +532,64 @@ public sealed class BulkUpdateGatewayAppCallersResult
     public long MatchedCount { get; set; }
     public long ModifiedCount { get; set; }
     public string FilterSummary { get; set; } = "";
+}
+
+public sealed class PromptPolicyVersionItem
+{
+    public string Id { get; set; } = "";
+    public string? TeamId { get; set; }
+    public string AppCallerCode { get; set; } = "";
+    public string RequestType { get; set; } = "";
+    public string SystemPromptPrefix { get; set; } = "";
+    public string SystemPromptSuffix { get; set; } = "";
+    public bool Enabled { get; set; }
+    public int Version { get; set; }
+    public List<string> AllowedVariables { get; set; } = new();
+    public int MaxChars { get; set; }
+    public string PolicyHash { get; set; } = "";
+    public int PolicyChars { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? UpdatedBy { get; set; }
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class PromptPolicyData
+{
+    public string AppCallerId { get; set; } = "";
+    public string AppCallerCode { get; set; } = "";
+    public string RequestType { get; set; } = "";
+    public PromptPolicyVersionItem? Current { get; set; }
+    public List<PromptPolicyVersionItem> Versions { get; set; } = new();
+}
+
+public class SavePromptPolicyRequest
+{
+    public int ExpectedVersion { get; set; }
+    public string? SystemPromptPrefix { get; set; }
+    public string? SystemPromptSuffix { get; set; }
+    public bool Enabled { get; set; } = true;
+    public List<string>? AllowedVariables { get; set; }
+    public int MaxChars { get; set; } = 8000;
+}
+
+public sealed class PreviewPromptPolicyRequest : SavePromptPolicyRequest
+{
+    public string? SampleSystemPrompt { get; set; }
+}
+
+public sealed class RollbackPromptPolicyRequest
+{
+    public int ExpectedVersion { get; set; }
+    public int TargetVersion { get; set; }
+}
+
+public sealed class PromptPolicyPreview
+{
+    public string MergedSystemPrompt { get; set; } = "";
+    public int PolicyChars { get; set; }
+    public int MergedChars { get; set; }
+    public string PolicyHash { get; set; } = "";
+    public List<string> AppliedVariables { get; set; } = new();
 }
 
 // ── GW 操作审计（llm_gateway.llmgw_operation_audits，只读）──

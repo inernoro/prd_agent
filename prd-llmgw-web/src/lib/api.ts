@@ -66,6 +66,10 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  PromptPolicyData,
+  PromptPolicyDraft,
+  PromptPolicyPreview,
+  PromptPolicyVersion,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -342,6 +346,19 @@ export function getOperationAudits(params?: {
 }
 export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string; kind?: string; releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ShadowData>> {
   return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode, kind: params?.kind, releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours } });
+}
+
+export function getPromptPolicy(appCallerId: string): Promise<ApiResponse<PromptPolicyData>> {
+  return apiRequest<PromptPolicyData>(`/app-callers/${encodeURIComponent(appCallerId)}/prompt-policy`);
+}
+export function previewPromptPolicy(appCallerId: string, body: PromptPolicyDraft & { sampleSystemPrompt: string }): Promise<ApiResponse<PromptPolicyPreview>> {
+  return apiRequest<PromptPolicyPreview>(`/app-callers/${encodeURIComponent(appCallerId)}/prompt-policy/preview`, { method: 'POST', body });
+}
+export function savePromptPolicy(appCallerId: string, body: PromptPolicyDraft): Promise<ApiResponse<PromptPolicyVersion>> {
+  return apiRequest<PromptPolicyVersion>(`/app-callers/${encodeURIComponent(appCallerId)}/prompt-policy`, { method: 'PUT', body });
+}
+export function rollbackPromptPolicy(appCallerId: string, expectedVersion: number, targetVersion: number): Promise<ApiResponse<PromptPolicyVersion>> {
+  return apiRequest<PromptPolicyVersion>(`/app-callers/${encodeURIComponent(appCallerId)}/prompt-policy/rollback`, { method: 'POST', body: { expectedVersion, targetVersion } });
 }
 
 // ── 配置面（可写）——布尔开关，写入共享 Mongo 后 MAP 立即生效 ──

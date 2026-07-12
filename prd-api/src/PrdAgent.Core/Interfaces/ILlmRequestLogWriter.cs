@@ -81,7 +81,11 @@ public record LlmLogStart(
     /// <summary>MAP 业务运行 ID，用于把 GW 请求日志反查到业务 run。</summary>
     string? RunId = null,
     string? TenantId = null,
-    string? TeamId = null);
+    string? TeamId = null,
+    string? PromptPolicyId = null,
+    int? PromptPolicyVersion = null,
+    string? PromptPolicyHash = null,
+    int? PromptPolicyChars = null);
 
 public record LlmLogDone(
     int? StatusCode,

@@ -197,6 +197,10 @@ a:focus-visible {
   .lg-quickstart-inputs {
     grid-template-columns: minmax(0, 1fr) !important;
   }
+
+  .lg-prompt-policy-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
 }
 
 @media (max-width: 480px) {
