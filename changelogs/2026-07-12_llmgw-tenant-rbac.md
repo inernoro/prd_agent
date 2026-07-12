@@ -10,3 +10,4 @@
 | fix | prd-api | shadow 证据、provider 并发和 legacy key 的缺省租户统一跟随 InternalTenantId 配置 |
 | fix | prd-api | raw 幂等指纹计算前覆盖服务端已验证 tenant/team，忽略客户端自报租户字段 |
 | fix | prd-api | raw 幂等指纹容忍反序列化后的空 inline 文件内容，避免混合 multipart 请求异常 |
+| fix | prd-llmgw | 团队重命名遇同租户重名时返回 TEAM_CONFLICT 409，不再泄漏 Mongo 500 |

@@ -327,6 +327,20 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void TeamRename_MapsTenantScopedUniqueNameCollisionToConflict()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var updateStart = consoleProgram.IndexOf("app.MapPut(\"/gw/teams/{id}\"", StringComparison.Ordinal);
+        var memberStart = consoleProgram.IndexOf("app.MapPost(\"/gw/members\"", updateStart, StringComparison.Ordinal);
+        var updateBlock = consoleProgram[updateStart..memberStart];
+
+        Assert.Contains("x.Id == id && x.TenantId == access.TenantId", updateBlock);
+        Assert.Contains("ServerErrorCategory.DuplicateKey", updateBlock);
+        Assert.Contains("Fail(\"TEAM_CONFLICT\", \"当前租户已存在同名团队\")", updateBlock);
+        Assert.Contains("jsonOptions, 409", updateBlock);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");

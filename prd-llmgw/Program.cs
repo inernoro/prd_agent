@@ -669,7 +669,14 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
     }
     if (updates.Count == 0) return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<LlmGwTeam>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
-    await teams.UpdateOneAsync(x => x.Id == id && x.TenantId == access.TenantId, Builders<LlmGwTeam>.Update.Combine(updates));
+    try
+    {
+        await teams.UpdateOneAsync(x => x.Id == id && x.TenantId == access.TenantId, Builders<LlmGwTeam>.Update.Combine(updates));
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<object>.Fail("TEAM_CONFLICT", "当前租户已存在同名团队"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "team.update", "llmgw_team", id, team.Name, true, null);
     return Json(ApiEnvelope<object>.Ok(new { id, updated = true }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
