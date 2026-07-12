@@ -928,7 +928,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
             <Settings size={14} />
             {!isMobile && '系统配置'}
           </Button>
-          <Button variant="primary" size="sm" onClick={() => window.location.href = '/mds?tab=pools'} title="新建模型池">
+          <Button variant="primary" size="sm" onClick={() => navigate('/mds?tab=pools')} title="新建模型池">
             <Plus size={14} />
             {!isMobile && '新建模型池'}
           </Button>

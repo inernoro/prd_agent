@@ -3,7 +3,8 @@
  * 不受外层 AppShell 布局影响
  */
 import { ArrowLeft } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
@@ -12,7 +13,6 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
 export default function VisualAgentFullscreenPage() {
-  const navigate = useNavigate();
   const params = useParams();
   const workspaceId = params.workspaceId;
   const isMobile = useIsMobile();
@@ -24,14 +24,9 @@ export default function VisualAgentFullscreenPage() {
   // 教程入口按 onboarding-tips 规范手机端走「我的 → 学习中心」承载。
   const hideFloatingChrome = isMobile && isEditor;
 
-  // 返回目标：编辑页返回列表页，列表页返回首页
-  const onBack = () => {
-    if (isEditor) {
-      navigate('/visual-agent');
-    } else {
-      navigate('/');
-    }
-  };
+  // 智能返回：优先弹栈回真正的上一页（与浏览器/手势返回一致）；
+  // 无站内历史（深链直达）时兜底：编辑页回列表页，列表页回首页
+  const onBack = useSmartBack(isEditor ? '/visual-agent' : '/');
 
   return (
     <div

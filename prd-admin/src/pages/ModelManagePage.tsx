@@ -931,7 +931,7 @@ export default function ModelManagePage() {
     // 虚拟中继平台不能在此页面切换启用状态，需到「模型中继」页管理
     if (p.kind === 'exchange' || p.isVirtual) {
       toast.info('虚拟中继平台请到「模型中继」页面管理');
-      setSearchParams({ tab: 'exchange' });
+      setSearchParams({ tab: 'exchange' }, { replace: true });
       return;
     }
     if (platformTogglingId) return;
@@ -1415,7 +1415,7 @@ export default function ModelManagePage() {
                   style={{ color: 'var(--text-primary)' }}
                   onClick={() => {
                     closePlatformCtxMenu();
-                    setSearchParams({ tab: 'exchange' });
+                    setSearchParams({ tab: 'exchange' }, { replace: true });
                   }}
                 >
                   <Link2 size={16} />
@@ -1707,7 +1707,7 @@ export default function ModelManagePage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSearchParams({ tab: 'exchange' })}
+                      onClick={() => setSearchParams({ tab: 'exchange' }, { replace: true })}
                       className="ml-4 shrink-0 flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/8"
                       style={{ color: 'var(--accent-primary)', border: '1px solid var(--border-default)' }}
                     >
@@ -2177,7 +2177,7 @@ export default function ModelManagePage() {
             {isExchangePlatform && (
               <button
                 type="button"
-                onClick={() => setSearchParams({ tab: 'exchange' })}
+                onClick={() => setSearchParams({ tab: 'exchange' }, { replace: true })}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-[10px] font-semibold transition-colors hover:bg-white/8"
                 style={{ color: 'var(--accent-primary)', background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
               >

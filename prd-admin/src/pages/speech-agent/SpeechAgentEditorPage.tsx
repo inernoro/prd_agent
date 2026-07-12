@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { ChevronLeft, Sparkles, Loader2, Save, Play, AlertTriangle, RotateCcw, Brain, Share2, Image as ImageIcon, ScrollText, Wand2, Copy, Check } from 'lucide-react';
 import { speechAgentApi } from '@/services/real/speechAgent';
 import type { SpeechDeck, SpeechNode } from '@/services/contracts/speechAgent';
@@ -11,6 +12,8 @@ import { SpeechMindmapView } from './SpeechMindmapView';
 export default function SpeechAgentEditorPage() {
   const { deckId = '' } = useParams<{ deckId: string }>();
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack('/speech-agent');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [deck, setDeck] = useState<SpeechDeck | null>(null);
@@ -277,7 +280,7 @@ export default function SpeechAgentEditorPage() {
       <header className="shrink-0 px-5 py-3 border-b border-white/10 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => navigate('/speech-agent')}
+          onClick={goBack}
           className="p-1.5 rounded-md hover:bg-white/10 text-white/70"
           aria-label="返回"
         >

@@ -53,6 +53,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
@@ -2246,17 +2247,19 @@ export function DocumentStorePage() {
     return sessionStorage.getItem('doc-store-selected-id');
   });
 
+  // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
+  // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
+  useHistoryBackedView({
+    param: 'store',
+    value: selectedStoreId,
+    onExit: () => setSelectedStoreId(null),
+    onRestore: (id) => { setSelectedStoreId(id); },
+  });
+
   // 深链 ?tab=xxx：清空详情视图 + 切到该 tab，
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   const location = useLocation();
   useEffect(() => {
-    // 深链 ?store=xxx：直接打开该知识库详情（首页「继续上次」回跳用），消费后抹掉 query
-    const deepStore = new URLSearchParams(location.search).get('store');
-    if (deepStore) {
-      setSelectedStoreId(deepStore);
-      navigate(location.pathname, { replace: true });
-      return;
-    }
     const t = new URLSearchParams(location.search).get('tab');
     const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {

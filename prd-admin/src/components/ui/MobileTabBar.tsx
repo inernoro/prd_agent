@@ -89,6 +89,11 @@ interface MobileTabBarProps {
  * 中间 "+" 点击后从底部滑出创建抽屉（最近热门大行卡 + 核心 Agent 四宫格），
  * 点背景 / × / ESC 关闭。抽屉通过 createPortal 挂到 body（frontend-modal 规则）。
  */
+/** 底部 Tab 的根路径集合：tab 根之间互切属同级切换，用 replace 不进 history。 */
+const TAB_ROOT_PATHS = new Set(
+  FIXED_TABS.filter((t) => !t.isCenter && t.path).map((t) => t.path)
+);
+
 export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -445,7 +450,14 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
             return (
               <button
                 key={tab.key}
-                onClick={() => navigate(tab.path)}
+                onClick={() => {
+                  if (location.pathname === tab.path) return;
+                  // tab 根之间互切（首页/浏览/知识库/我的）用 replace：不把导航页压进
+                  // history，手机右滑返回/浏览器返回直接回到进入 tab 前的真实上一页，
+                  // 而不是逐个回放之前点过的每个 tab（2026-07-12 用户反馈的「奇怪导航页」主源）。
+                  // 从内容页（非 tab 根）进 tab 仍然 push，保证能返回该内容页。
+                  navigate(tab.path, { replace: TAB_ROOT_PATHS.has(location.pathname) });
+                }}
                 className="flex-1 flex flex-col items-center justify-center gap-[3px] transition-all duration-200 active:scale-95"
                 style={{ minHeight: 'var(--mobile-min-touch, 44px)' }}
               >

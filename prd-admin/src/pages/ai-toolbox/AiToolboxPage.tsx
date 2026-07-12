@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Surface } from '@/components/design/Surface';
 import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services';
@@ -57,6 +58,28 @@ export default function AiToolboxPage() {
   useEffect(() => {
     loadItems();
   }, [loadItems]);
+
+  // 网格 -> 详情/创建/编辑/运行 都是全屏级视图切换，必须进浏览器历史：
+  // 右滑/浏览器返回 = 关当前视图回网格，而不是跳出整个百宝箱。
+  // detail 带 item id（支持恢复）；create/edit/running/quick-create 只记视图名（刷新不恢复，回落网格）。
+  useHistoryBackedView({
+    param: 'panel',
+    value:
+      view === 'grid' ? null
+      : (view === 'detail' || view === 'running') && selectedItem ? `${view}.${selectedItem.id}`
+      : view,
+    onExit: () => useToolboxStore.getState().backToGrid(),
+    onRestore: (v) => {
+      if (v.startsWith('detail.')) {
+        const store = useToolboxStore.getState();
+        const item = store.items.find((it) => it.id === v.slice('detail.'.length));
+        if (!item) return false;
+        store.selectItem(item);
+        return;
+      }
+      return false;
+    },
+  });
 
   // 最近使用：从 items 里按 recentlyUsedIds 顺序取，过滤掉已从列表消失的 id
   const recentItems = useMemo(() => {

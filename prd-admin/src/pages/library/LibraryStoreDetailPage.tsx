@@ -5,6 +5,7 @@
  * 复用 DocBrowser 只读模式 + 顶部 claymorphism 互动按钮（点赞/收藏/分享）
  */
 import { useEffect, useState, useCallback } from 'react';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -48,6 +49,8 @@ function useFredokaFonts() {
 export function LibraryStoreDetailPage() {
   const { storeId } = useParams<{ storeId: string }>();
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回智识殿堂落地页
+  const goBack = useSmartBack('/library');
   const isLoggedIn = useAuthStore((s) => Boolean(s.token));
   useFredokaFonts();
 
@@ -165,7 +168,7 @@ export function LibraryStoreDetailPage() {
       {/* 顶部悬浮 Navbar — 与 landing page 一致 */}
       <DetailNavbar
         storeName={store.name}
-        onBack={() => navigate('/library')}
+        onBack={goBack}
       />
 
       {/* Hero 头部 */}

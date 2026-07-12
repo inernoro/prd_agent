@@ -12,6 +12,7 @@
  *  - 2x2 课程卡片网格（彩色图标盒 + 作者 + 星级 + 统计）
  *  - 所有可点击元素 hover:-translate-y
  */
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -72,6 +73,8 @@ function useFredokaFonts() {
 
 export function LibraryLandingPage() {
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回首页
+  const goBack = useSmartBack('/');
   const [stores, setStores] = useState<PublicDocumentStore[]>([]);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState<SortKey>('hot');
@@ -124,7 +127,7 @@ export function LibraryLandingPage() {
           const el = document.getElementById('catalog');
           el?.scrollIntoView({ behavior: 'smooth' });
         }}
-        onBack={() => navigate(-1)}
+        onBack={goBack}
       />
 
       {/* ── Hero 区 ── */}

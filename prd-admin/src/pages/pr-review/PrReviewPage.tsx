@@ -1,6 +1,7 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, GitPullRequest, X } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { GitHubConnectCard } from './GitHubConnectCard';
 import { AddPrForm } from './AddPrForm';
 import { PrItemList } from './PrItemList';
@@ -21,7 +22,8 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
  * RequireAuth 通过 returnUrl 自动回跳本页，登录后 query 参数仍在。
  */
 export function PrReviewPage() {
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回首页（原 /admin 并非有效路由）
+  const goBack = useSmartBack('/');
   const [searchParams, setSearchParams] = useSearchParams();
   const errorMessage = usePrReviewStore((s) => s.errorMessage);
   const clearError = usePrReviewStore((s) => s.clearError);
@@ -120,7 +122,7 @@ export function PrReviewPage() {
         <div data-tour-id="pr-review-page-title" className="flex items-center gap-4 mb-6">
           <button
             type="button"
-            onClick={() => navigate('/admin')}
+            onClick={goBack}
             className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 transition"
             aria-label="返回"
           >
