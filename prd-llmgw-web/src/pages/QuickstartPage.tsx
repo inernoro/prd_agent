@@ -100,11 +100,6 @@ function resolveDefaultServingBaseUrl() {
 
   const current = new URL(window.location.href);
   if (current.pathname === '/llmgw' || current.pathname.startsWith('/llmgw/')) return current.origin;
-  if (current.hostname.includes('-llmgw-web.')) {
-    current.hostname = current.hostname.replace('-llmgw-web.', '.');
-    current.port = '';
-    return current.origin;
-  }
   return 'https://gateway.example.com';
 }
 
