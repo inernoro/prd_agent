@@ -93,7 +93,8 @@ public sealed class GatewayProviderConcurrencyCoordinator
         {
             var slotId = $"{Sha256Hex(tenantId)}:{Sha256Hex(resourceKey)}:{slot}";
             var filter = Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.TenantId, tenantId)
-                         & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.Id, slotId)
+                         & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.ResourceKey, resourceKey)
+                         & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.Slot, slot)
                          & (Builders<GatewayProviderConcurrencySlotRecord>.Filter.Lte(x => x.ExpiresAt, now)
                             | Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.LeaseId, string.Empty));
             try
@@ -116,7 +117,7 @@ public sealed class GatewayProviderConcurrencyCoordinator
                     },
                     ct);
                 if (acquired?.LeaseId == leaseId)
-                    return slotId;
+                    return acquired.Id;
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {

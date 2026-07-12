@@ -80,6 +80,50 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
         if (tenantB.Lease is not null) await tenantB.Lease.DisposeAsync();
     }
 
+    [Fact]
+    public async Task BackfilledLegacySlotId_IsAcquiredAndReleasedWithoutDuplicateInsert()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var slots = scope.Context.Database.GetCollection<GatewayProviderConcurrencySlotRecord>(
+            "llmgw_provider_concurrency_slots");
+        await slots.Indexes.CreateOneAsync(new CreateIndexModel<GatewayProviderConcurrencySlotRecord>(
+            Builders<GatewayProviderConcurrencySlotRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ResourceKey)
+                .Ascending(x => x.Slot),
+            new CreateIndexOptions { Unique = true }));
+        await slots.InsertOneAsync(new GatewayProviderConcurrencySlotRecord
+        {
+            Id = "legacy-resource-hash:0",
+            TenantId = "tenant-a",
+            ResourceKey = "platform:legacy-platform",
+            Slot = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var coordinator = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+
+        var admission = await coordinator.AcquireAsync(
+            "tenant-a",
+            Resolution("legacy-platform", "legacy-model", platformLimit: 1, modelLimit: 0),
+            30,
+            CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        var records = await slots.Find(FilterDefinition<GatewayProviderConcurrencySlotRecord>.Empty).ToListAsync();
+        records.Count.ShouldBe(1);
+        records[0].Id.ShouldBe("legacy-resource-hash:0");
+        records[0].LeaseId.ShouldNotBeEmpty();
+
+        admission.Lease.ShouldNotBeNull();
+        await admission.Lease.DisposeAsync();
+        var remaining = await slots.CountDocumentsAsync(FilterDefinition<GatewayProviderConcurrencySlotRecord>.Empty);
+        remaining.ShouldBe(0);
+    }
+
     private static ModelResolutionResult Resolution(string platform, string model, int platformLimit, int modelLimit)
         => new()
         {
