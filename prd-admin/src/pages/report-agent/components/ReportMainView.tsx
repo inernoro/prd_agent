@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
@@ -77,6 +78,7 @@ export function ReportMainView() {
 
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
+  const isMobile = useIsMobile();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
@@ -93,6 +95,9 @@ export function ReportMainView() {
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem(REPORT_VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+  // 手机端固定卡片视图：时间树（240px 侧栏 + 预览）在小屏价值低，视图切换按钮同时隐藏。
+  // 仅影响渲染，不改写 sessionStorage 里用户在桌面端的选择。
+  const effectiveViewMode = isMobile ? 'cards' : viewMode;
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -180,12 +185,35 @@ export function ReportMainView() {
     );
   }
 
+  // "写周报" 常驻显示,无模板时禁用 + 可见提示文字(title 在移动端不可达),避免普通成员看不到入口。
+  // 手机端并入控制横滚条(提示文字改为行内),桌面端保持右上角独立列。
+  const writeReportControl = hasTeam ? (
+    <div className={isMobile ? 'flex items-center gap-1.5 shrink-0' : 'flex flex-col items-end gap-1'}>
+      <Button
+        variant="primary"
+        size="sm"
+        data-tour-id="report-template-picker"
+        onClick={handleCreateReport}
+        disabled={!hasTemplate}
+        className="whitespace-nowrap shrink-0"
+        title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
+      >
+        <Plus size={14} /> 写周报
+      </Button>
+      {!hasTemplate && (
+        <span className="text-[10px] whitespace-nowrap shrink-0" style={{ color: 'var(--text-muted)' }}>
+          团队未配置模板，请联系负责人
+        </span>
+      )}
+    </div>
+  ) : null;
+
   // ── Main workspace ──
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto pb-6" style={{ scrollbarWidth: 'thin' }}>
-      <GlassCard variant="subtle" className="px-5 py-4">
-        <div className="flex items-start justify-between flex-wrap gap-3">
-          <div className="flex flex-col gap-3">
+      <GlassCard variant="subtle" className={isMobile ? 'px-3 py-3' : 'px-5 py-4'}>
+        <div className={isMobile ? 'flex flex-col gap-2.5' : 'flex items-start justify-between flex-wrap gap-3'}>
+          <div className={isMobile ? 'flex flex-col gap-2.5 min-w-0' : 'flex flex-col gap-3'}>
             <div>
               <div
                 className="text-[20px] font-semibold"
@@ -197,15 +225,30 @@ export function ReportMainView() {
                 }}
               >
                 我的周报
+                {isMobile && (
+                  <span className="text-[11px] font-normal ml-2" style={{ color: 'var(--text-muted)' }}>
+                    共 {reports.length} 份
+                  </span>
+                )}
               </div>
-              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                共 {reports.length} 份 · 默认展示全部周报
-              </div>
+              {!isMobile && (
+                <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  共 {reports.length} 份 · 默认展示全部周报
+                </div>
+              )}
             </div>
-            {/* Segmented control — 一个 track 内嵌 3 个 seg,选中为白 thumb */}
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* 控制簇：桌面 flex-wrap;手机端压成一条 overflow-x-auto 横滚条(禁换行),写周报按钮并入行尾 */}
+            <div
+              className={
+                isMobile
+                  ? 'flex items-center gap-2 flex-nowrap overflow-x-auto -mx-3 px-3'
+                  : 'flex items-center gap-2 flex-wrap'
+              }
+              style={isMobile ? { scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } : undefined}
+            >
+              {/* Segmented control — 一个 track 内嵌 3 个 seg,选中为白 thumb */}
               <div
-                className="inline-flex items-center p-0.5 rounded-lg"
+                className="inline-flex items-center p-0.5 rounded-lg shrink-0"
                 style={{
                   background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
                   border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
@@ -233,13 +276,13 @@ export function ReportMainView() {
                 ))}
               </div>
               <div
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                className={isMobile ? 'flex items-center gap-1.5 px-2 py-1 rounded-lg shrink-0' : 'flex items-center gap-2 px-2.5 py-1.5 rounded-lg shrink-0'}
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
               >
-                <Calendar size={13} style={{ color: 'var(--text-muted)' }} />
+                <Calendar size={13} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <select
                   className="text-[12px] bg-transparent outline-none"
-                  style={{ color: 'var(--text-primary)' }}
+                  style={{ color: 'var(--text-primary)', maxWidth: isMobile ? 150 : undefined }}
                   value={selectedWeekKey}
                   onChange={(e) => {
                     setWeekFilterMode('specific');
@@ -253,9 +296,10 @@ export function ReportMainView() {
                   ))}
                 </select>
               </div>
-              {/* 视图切换：卡片 / 时间树 */}
+              {/* 视图切换：卡片 / 时间树（手机端隐藏,固定卡片视图,见 effectiveViewMode） */}
+              {!isMobile && (
               <div
-                className="inline-flex items-center p-0.5 rounded-lg"
+                className="inline-flex items-center p-0.5 rounded-lg shrink-0"
                 style={{
                   background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
                   border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
@@ -288,31 +332,17 @@ export function ReportMainView() {
                   );
                 })}
               </div>
+              )}
+              {/* 手机端：写周报按钮并入横滚条尾部 */}
+              {isMobile && writeReportControl}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* "写周报" 常驻显示,无模板时禁用 + 可见提示文字(title 在移动端不可达),避免普通成员看不到入口 */}
-            {hasTeam && (
-              <div className="flex flex-col items-end gap-1">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  data-tour-id="report-template-picker"
-                  onClick={handleCreateReport}
-                  disabled={!hasTemplate}
-                  className="whitespace-nowrap"
-                  title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
-                >
-                  <Plus size={14} /> 写周报
-                </Button>
-                {!hasTemplate && (
-                  <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
-                    团队未配置模板，请联系负责人
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+          {/* 桌面端：写周报按钮保持右上角独立列 */}
+          {!isMobile && (
+            <div className="flex items-center gap-2">
+              {writeReportControl}
+            </div>
+          )}
         </div>
       </GlassCard>
 
@@ -321,7 +351,7 @@ export function ReportMainView() {
       )}
 
       {hasReports ? (
-        viewMode === 'cards' ? (
+        effectiveViewMode === 'cards' ? (
           <ReportHistoryStrip
             groupedReports={groupedReports}
             onOpen={handleEditReport}
@@ -347,7 +377,7 @@ export function ReportMainView() {
               </div>
               <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 {weekFilterMode === 'all'
-                  ? '还没有任何周报，点击右上角开始创建'
+                  ? '还没有任何周报，点击「写周报」开始创建'
                   : `${formatWeekLabel(parseWeekKey(selectedWeekKey))} 暂无周报`}
               </div>
             </div>
