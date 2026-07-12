@@ -1076,7 +1076,8 @@ public class GatewayKeyGateContractTests
     public async Task OpenAiImagesCompatibleEndpoint_AcceptsBearerGatewayKey()
     {
         var gateway = new EchoingGateway();
-        await using var app = BuildHostWithGateway(gateway);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
         await app.StartAsync();
         try
         {
@@ -1091,7 +1092,8 @@ public class GatewayKeyGateContractTests
                     background = "transparent",
                 }),
             };
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "scoped-test-key");
+            req.Headers.Add("X-Gateway-Source", "external");
 
             var resp = await client.SendAsync(req);
             var body = await resp.Content.ReadAsStringAsync();
@@ -1103,6 +1105,7 @@ public class GatewayKeyGateContractTests
             gateway.LastRawRequest.ModelType.ShouldBe("generation");
             gateway.LastRawRequest.ExpectedModel.ShouldBe("image-picked");
             gateway.LastRawRequest.Context.ShouldNotBeNull();
+            gateway.LastRawRequest.Context!.TenantId.ShouldBe("tenant-test");
             var dropped = gateway.LastRawRequest.Context!.DroppedParameters;
             dropped.ShouldNotBeNull();
             dropped!.ShouldContain("background");

@@ -2855,6 +2855,8 @@ public static class GatewayHttpEndpoints
             return;
         }
 
+        request = ApplyIngressRouting(request, ingress);
+
         await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, async ct =>
         {
             try
