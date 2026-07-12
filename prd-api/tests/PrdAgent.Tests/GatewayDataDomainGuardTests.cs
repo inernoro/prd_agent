@@ -1532,12 +1532,21 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("PRD_AGENT_PROD_GITHUB_TOKEN", workflow);
+        Assert.Contains("RUNNER_ADMIN_TOKEN_CONFIGURED", workflow);
+        Assert.Contains("args+=(--allow-api-unavailable)", workflow);
+        Assert.Contains("timeout-minutes: 30", workflow);
         Assert.Contains("rollout_evidence_run_id", workflow);
         Assert.Contains("actions: read", workflow);
         Assert.Contains("logs:read access", workflow);
         Assert.Contains("fetch-depth: 0", workflow);
         Assert.Contains("actions/download-artifact@v4", workflow);
         Assert.Contains("Restore previous rollout evidence", workflow);
+        Assert.Contains("Restore trusted production maintenance evidence", workflow);
+        Assert.Contains("PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence", workflow);
+        Assert.DoesNotContain("production_evidence_source:", workflow);
+        Assert.Contains("scripts/llmgw-prod-evidence-restore.py", workflow);
+        Assert.Contains("--require-owner-uid 0", workflow);
+        Assert.Contains("production-evidence-baseline-audit.json", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
@@ -1581,6 +1590,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("treePrecheckExecutable", readiness);
         Assert.Contains("treePrecheckDestructive", readiness);
         Assert.Contains("Restore previous rollout evidence", readiness);
+        Assert.Contains("Restore trusted production maintenance evidence", readiness);
+
+        var runnerPrecheck = ReadRepoFile("scripts/llmgw-prod-runner-precheck.py");
+        Assert.Contains("--allow-api-unavailable", runnerPrecheck);
+        Assert.Contains("deferred-to-stage-job", runnerPrecheck);
+        Assert.Contains("runner_job_handshake", runnerPrecheck);
+
+        var evidenceRestore = ReadRepoFile("scripts/llmgw-prod-evidence-restore.py");
+        Assert.Contains("Restore the minimum trusted rollout evidence", evidenceRestore);
+        Assert.Contains("trusted evidence must not be a symlink", evidenceRestore);
+        Assert.Contains("trusted evidence escapes source root", evidenceRestore);
+        Assert.Contains("trusted evidence is world-writable", evidenceRestore);
+        Assert.Contains("missing successful http-full baseline", evidenceRestore);
+        Assert.Contains("LLM Gateway production evidence restore self-test: PASS", evidenceRestore);
 
         Assert.Contains("LLM Gateway production release tree precheck", treePrecheck);
         Assert.Contains("CRITICAL_PATHS", treePrecheck);

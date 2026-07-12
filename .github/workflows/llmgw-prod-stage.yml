@@ -130,6 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       INPUT_RUNNER_LABELS_JSON: ${{ github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]' }}
+      RUNNER_ADMIN_TOKEN_CONFIGURED: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN != '' && '1' || '0' }}
       GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout release scripts
@@ -140,10 +141,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .llmgw-release-evidence
-          python3 scripts/llmgw-prod-runner-precheck.py \
-            --repo "${{ github.repository }}" \
-            --labels-json "$INPUT_RUNNER_LABELS_JSON" \
+          args=(
+            --repo "${{ github.repository }}"
+            --labels-json "$INPUT_RUNNER_LABELS_JSON"
             --json-out .llmgw-release-evidence/runner-precheck.json
+          )
+          if [ "$RUNNER_ADMIN_TOKEN_CONFIGURED" != "1" ]; then
+            args+=(--allow-api-unavailable)
+          fi
+          python3 scripts/llmgw-prod-runner-precheck.py "${args[@]}"
 
       - name: Upload runner precheck report
         if: always()
@@ -156,6 +162,7 @@ jobs:
   stage:
     needs: runner-precheck
     runs-on: ${{ fromJSON(github.event.inputs.runner_labels_json || '["self-hosted","prd-agent-prod"]') }}
+    timeout-minutes: 30
     environment: production
     env:
       INPUT_STAGE: ${{ github.event.inputs.stage || '' }}
@@ -189,6 +196,7 @@ jobs:
       LLMGW_CONSOLE_USER: ${{ secrets.LLMGW_PROD_CONSOLE_USER }}
       LLMGW_CONSOLE_PASSWORD: ${{ secrets.LLMGW_PROD_CONSOLE_PASSWORD }}
       GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+      PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence
 
     steps:
       - name: Checkout release scripts
@@ -204,6 +212,29 @@ jobs:
           name: ${{ github.event.inputs.rollout_evidence_artifact != '' && github.event.inputs.rollout_evidence_artifact || format('llmgw-prod-stage-{0}', github.event.inputs.rollout_evidence_run_id) }}
           path: .llmgw-release-evidence/
           github-token: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+
+      - name: Restore trusted production maintenance evidence
+        if: ${{ github.event.inputs.maintenance_from_commit != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=".llmgw-release-evidence"
+          ledger="$target/rollout-ledger.jsonl"
+          mkdir -p "$target"
+          if [ ! -s "$ledger" ]; then
+            python3 scripts/llmgw-prod-evidence-restore.py \
+              --source "$PRODUCTION_EVIDENCE_SOURCE" \
+              --target "$target" \
+              --commit "${{ github.event.inputs.maintenance_from_commit }}" \
+              --require-owner-uid 0 \
+              --json-out "$target/production-evidence-restore.json"
+          else
+            echo "Rollout ledger restored from the requested GitHub Actions artifact."
+          fi
+          python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
+            --ledger "$ledger" \
+            --commit "${{ github.event.inputs.maintenance_from_commit }}" \
+            --json-out "$target/production-evidence-baseline-audit.json"
 
       - name: Run production stage
         shell: bash
