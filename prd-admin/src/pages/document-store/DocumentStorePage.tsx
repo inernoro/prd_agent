@@ -57,7 +57,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { MobileFab } from '@/components/mobile/MobileFab';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -79,7 +78,7 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
-  uploadDocumentFile,
+  uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
   addSubscription,
@@ -145,7 +144,13 @@ import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
-const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+// 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
+// 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
+const ACCEPT_TYPES = '.md,.mdc,.txt,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.json,.yaml,.yml,.csv,.xml,.html,'
+  + '.mp3,.m4a,.wav,.aac,.ogg,.flac,.weba,.webm,.mp4,.mov,.png,.jpg,.jpeg,.gif,.webp';
+
+/** 后端单文件上限（DocumentStoreController.MaxUploadBytes = 20MB），前端预检即时报错，不让用户白等 */
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 export type DocumentStoreEmptyActionKey = 'create' | 'upload' | 'emergence';
 
@@ -900,6 +905,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
+  // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
+  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
   // 保险箱恢复只在进页时检查一次
   const vaultCheckedRef = useRef(false);
 
@@ -1103,11 +1110,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
+    // 前端预检 20MB 上限：超限文件即时报错，不进入上传白等
+    const oversized = files.filter(f => f.size > MAX_UPLOAD_BYTES);
+    for (const f of oversized) {
+      toast.error(`文件过大: ${f.name}`, `单文件上限 20MB（该文件 ${(f.size / 1024 / 1024).toFixed(1)}MB）`);
+    }
+    const accepted = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    if (accepted.length === 0) return;
+
     setUploading(true);
     let successCount = 0;
     let firstUploadedId: string | null = null;
-    for (const file of files) {
-      const res = await uploadDocumentFile(storeId, file);
+    for (let i = 0; i < accepted.length; i++) {
+      const file = accepted[i];
+      setUploadProgress({ name: file.name, percent: 0, index: i + 1, total: accepted.length });
+      const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
+        setUploadProgress({ name: file.name, percent, index: i + 1, total: accepted.length });
+      });
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
         firstUploadedId ??= res.data.entry.id;
@@ -1116,6 +1135,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         toast.error(`上传失败: ${file.name}`, res.error?.message);
       }
     }
+    setUploadProgress(null);
     if (successCount > 0) {
       toast.success(`上传完成`, `${successCount} 个文件已存储`);
       // 上传成功自动跳转到刚上传的文档（多文件跳第一个），不让用户自己去列表里找
@@ -2047,6 +2067,31 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           />
         )}
       </AnimatePresence>
+
+      {/* 上传进度卡：大文件不再"卡住没反馈"——文件名 + 实时百分比 + 第 n/共 m */}
+      {uploadProgress && (
+        <div
+          className="fixed left-1/2 z-[70] w-[min(360px,88vw)] -translate-x-1/2 rounded-[14px] px-4 py-3"
+          style={{
+            bottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + 20px)',
+            background: 'var(--bg-card, rgba(20,20,24,0.95))',
+            border: '1px solid var(--border-faint)',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
+          }}>
+          <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
+            <span className="truncate font-semibold text-token-primary">正在上传 {uploadProgress.name}</span>
+            <span className="shrink-0 tabular-nums text-token-muted">
+              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-200"
+              style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
           bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}
@@ -3228,9 +3273,8 @@ export function DocumentStorePage() {
         </MobileBottomSheet>
       )}
 
-      {isMobile && isStoreTab && (
-        <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
-      )}
+      {/* 旧移动端「新建」MobileFab 已下线（2026-07-13）：它只开新建库弹窗，与下方统一
+          CreatePaletteFab 撞位且内容不一致——内外「+」必须点开显示一致的新增菜单。 */}
 
       <div className="px-5 pb-6 w-full">
         {tab === 'sync' ? (

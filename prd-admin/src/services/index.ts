@@ -1947,6 +1947,7 @@ export {
   updateDocumentEntryReal as updateDocumentEntry,
   deleteDocumentEntryReal as deleteDocumentEntry,
   uploadDocumentFile,
+  uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
   addSubscription,

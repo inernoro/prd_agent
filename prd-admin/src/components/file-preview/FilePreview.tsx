@@ -85,16 +85,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd }: {
   // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
   const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
   if ((kind === 'audio' || isAudioEntry) && fileUrl) {
+    // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
+    // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
       <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-6' : 'justify-center py-12'}`}>
-        <div className="flex h-14 w-14 items-center justify-center rounded-[18px]"
-          style={{
-            background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.10))',
-            border: '1px solid rgba(168,85,247,0.22)',
-          }}>
-          <cfg.icon size={26} style={{ color: cfg.color }} />
-        </div>
-        <p className="text-[13px] font-semibold text-center" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {transcriptNoteMd
           ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} />

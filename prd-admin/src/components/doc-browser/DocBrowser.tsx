@@ -9,7 +9,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -3657,6 +3657,31 @@ export function DocBrowser({
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
+                {/* 生成产物（转录笔记/字幕/再加工）→ 来源文件快速跳转：
+                    从笔记一键回到源音频/源文档（2026-07-13 用户确认交互） */}
+                {!contentLoading && !editMode && selectedEntryData && (() => {
+                  const srcId = selectedEntryData.metadata?.source_entry_id;
+                  if (!srcId) return null;
+                  const srcEntry = entries.find(e => e.id === srcId);
+                  if (!srcEntry) return null;
+                  const isAudioSrc = (srcEntry.contentType ?? '').toLowerCase().startsWith('audio/');
+                  return (
+                    <button
+                      onClick={() => handleSelectEntry(srcId)}
+                      className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover:bg-white/8"
+                      style={{
+                        background: 'rgba(168,85,247,0.08)',
+                        border: '1px solid rgba(168,85,247,0.22)',
+                        color: 'rgba(216,180,254,0.95)',
+                      }}
+                      title="打开来源文件">
+                      {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
+                      <span className="truncate">来源文件：{srcEntry.title}</span>
+                      <ChevronRight size={12} className="shrink-0" />
+                    </button>
+                  );
+                })()}
+
                 {/* 录音转录入口卡（Notion 式）：音/视频条目正文顶部常驻——
                     未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
@@ -3684,7 +3709,9 @@ export function DocBrowser({
                               value={editContent}
                               onChange={(v) => setEditContent(v ?? '')}
                               height="100%"
-                              preview="live"
+                              // 移动端屏幕放不下双栏 live（源码+预览各挤成一条窄柱，没法编辑，
+                              // 2026-07-13 用户截图反馈）→ 单栏编辑，预览走保存后的阅读态
+                              preview={isMobile ? 'edit' : 'live'}
                               visibleDragbar={false}
                             />
                           </Suspense>

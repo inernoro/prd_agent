@@ -9,7 +9,7 @@ import { useSseStream } from '@/lib/useSseStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { MarkdownViewer } from '@/components/file-preview';
 import { api } from '@/services/api';
-import { transcribeEntry, getAgentRun, uploadDocumentFile, listTranscribeStyles, restyleTranscribeRun } from '@/services';
+import { transcribeEntry, getAgentRun, uploadDocumentFileWithProgress, listTranscribeStyles, restyleTranscribeRun } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { deriveTranscribeSteps, type TranscribeStepState } from './transcribeFlowSteps';
 
@@ -97,6 +97,8 @@ export function TranscribeFlowDrawer({
   // 归档到文件夹（第二波：智能文件夹归档的第一步——手选归档）
   const [archiving, setArchiving] = useState(false);
   const [archivedTo, setArchivedTo] = useState<string | null>(null);
+  // 上传进度（大录音文件不再"卡住没反馈"）
+  const [uploadPercent, setUploadPercent] = useState(0);
 
   const streamUrl = useMemo(
     () => (runId ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0` : ''),
@@ -181,7 +183,8 @@ export function TranscribeFlowDrawer({
     if (file && !targetEntryId) {
       setStatus('uploading');
       setErrorMessage(null);
-      const res = await uploadDocumentFile(storeId, file);
+      setUploadPercent(0);
+      const res = await uploadDocumentFileWithProgress(storeId, file, setUploadPercent);
       if (!res.success) {
         setStatus('failed');
         setErrorMessage(res.error?.message ?? '录音上传失败（录音数据仍在本机保留，可点击重试）');
@@ -331,6 +334,22 @@ export function TranscribeFlowDrawer({
           </div>
         ))}
       </div>
+
+      {/* 上传进度条：仅上传阶段显示 */}
+      {status === 'uploading' && (
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[11px] text-token-muted">
+            <span>正在上传录音</span>
+            <span className="tabular-nums">{uploadPercent}%</span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-200"
+              style={{ width: `${uploadPercent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 摘要流式生长区（产物即体验：等待期主视觉是摘要本身在长）。
           完成后不在这里展示——完成态的摘要在下方操作区之后以 markdown 渲染（限高内滚），

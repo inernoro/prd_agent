@@ -144,6 +144,55 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 }
 
 /**
+ * 带进度回调的上传（XHR：fetch 拿不到 upload progress 事件）。
+ * onProgress 收 0-100 整数百分比；大文件上传不再"卡住没反馈"（2026-07-13 用户反馈）。
+ */
+export async function uploadDocumentFileWithProgress(
+  storeId: string,
+  file: File,
+  onProgress: (percent: number) => void,
+): Promise<import('@/types/api').ApiResponse<{
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  attachmentId: string;
+  documentId?: string;
+  fileUrl: string;
+}>> {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return await new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', api.documentStore.entries.upload(storeId));
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+    };
+    xhr.onload = () => {
+      onProgress(100);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+          return;
+        } catch { /* fallthrough */ }
+      }
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'UPLOAD_FAILED', message: xhr.responseText || `HTTP ${xhr.status}` },
+      });
+    };
+    xhr.onerror = () => resolve({
+      success: false,
+      data: null as never,
+      error: { code: 'UPLOAD_FAILED', message: '网络错误，上传中断（文件仍在本机，可重试）' },
+    });
+    xhr.send(formData);
+  });
+}
+
+/**
  * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
  * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
