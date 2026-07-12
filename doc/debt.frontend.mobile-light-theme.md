@@ -19,6 +19,14 @@
 | 3 | report/daily-post 自管 data-theme 与全局偏好的竞态 | 暗色偏好下进入这些页强制变浅（纸面身份），退出后由 AppShell 按路由重申恢复 | 现机制可用；若出现闪烁再收敛为「页面声明式主题请求 + 壳层仲裁」 |
 | 4 | 首页宫格 tint 底在暗色形态下的层次 | 暗色形态图标块为中性底 + 彩色线稿，用户若觉得素可加低饱和 tint 底 | 待用户反馈决定 |
 
+## 系统级机制（2026-07-12 晚落地，本台账从「逐页救火」转为「棘轮清偿」）
+
+- 守卫：`prd-admin/src/lib/__tests__/themeHardcodeRatchet.test.ts` —— 每文件白透明/深色 hex
+  计数只减不增，基线 `themeHardcodeBaseline.json`（首次量化：362 文件 / 2856 白透明 / 562 深色 hex）
+- 规则：`.claude/rules/admin-dual-theme.md`（修法映射表 + 基线更新流程）
+- 已清偿：海鲜市场半高/迷你密度卡（用户截图病灶）、底部 TabBar、快速创建抽屉、
+  百宝箱移动版（AS_COLOR_LIGHT + useAppStoreColors）、我的/通知页
+
 ## 已完成（本轮）
 
 - `mobileThemeStore`（localStorage 持久化，浅色默认）+ 首页右上角明暗切换按钮
