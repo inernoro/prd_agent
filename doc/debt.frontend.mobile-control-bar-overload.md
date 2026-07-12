@@ -22,6 +22,25 @@
 | 3 | 知识库/缺陷/学习中心/设置/文学创作 | — | 各 1-2 条 P2 微调项（状态文字行、gap 偏大、headbar 略挤） | 待办 P2 |
 | ≤2 | 首页/我的/资产/通知/早报 | — | 达标，`/daily-post` 与 `/` 为密度范本 | 无需处理 |
 
+### 补充：二级 tab 盲区专项（2026-07-12 用户真机截图触发的第二轮排查）
+
+首轮审计只看了各路由**默认首屏**，用户随即在二级 tab 抓到两处崩坏。据此归纳出两个事故模式并全站扫描：
+**模式 A** 定宽侧栏双栏不塌陷（`width:280` 级 rail 无断点门控 → 手机端另一栏挤成竖条）；
+**模式 B** 定高容器压扁堆叠内容（`flex-1/h-full + min-h-0` 的单列 grid 在手机端保留视口定高 → 多块内容互相渗透重叠）。
+
+| 位置 | 模式 | 状态 |
+|------|------|------|
+| team-activity 动态流网格 + 筛选行 | B + 控制条堆叠 | 已修（用户截图 1） |
+| report-agent 团队 tab（TeamDashboard + WeekNavRail 280px） | A | 已修（用户截图 2） |
+| marketplace SkillContentBrowser（260px 文件树，含公开分享页） | A | 已修 |
+| report-agent 周报详情 RightRailPanel（280px 右栏） | A | 已修 |
+| report-agent 设置→团队 TeamManager（280px 列表） | A | 已修 |
+| doc-browser VersionHistoryModal 内芯 280px 双栏 | A（合格外壳+违规内芯） | **待办 P2**：窄屏 modal 内收单列 |
+| literary-agent ArticleIllustrationEditorPage 三格定高 grid | B 存疑 | **待办 P2**：确认移动可达性后加 auto-rows-min + 滚动 |
+| ccas-agent 三个二级 tab（Flow/Equipment/Prd）定高 grid + overflow-hidden | B | **待办 P2** |
+
+防回潮：新建双栏一律 `flex-col lg:flex-row` + `w-full lg:w-[Npx]`；高度约束（`h-full`/`flex-1` + `min-h-0`）一律 `lg:` 前缀化，手机端靠页面自然滚动。审计/验收必须覆盖**每个二级 tab**，不能只看默认首屏。
+
 ## 问题这一类（不是单点）
 
 桌面工具栏的一排排按钮在手机上 `flex-wrap` 挤成三四行，把首屏吃光，"进内容前控制条 ≤1 条"（`.claude/rules/mobile-first-density.md`）被反复违反。典型：知识库列表、知识库详情（验收报告那种 4 行按钮）、缺陷、周报、模型中心、海鲜市场。

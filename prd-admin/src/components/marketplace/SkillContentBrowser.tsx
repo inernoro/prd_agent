@@ -307,10 +307,11 @@ export function SkillContentBrowser({
   }, [selectedPath, preview]);
 
   return (
-    <div className="flex h-full min-h-0">
+    // 手机端上下堆叠（文件树限高在上、内容在下），lg 起恢复左右双栏——固定 260px 树曾把手机端预览挤成竖条
+    <div className="flex flex-col lg:flex-row h-full min-h-0">
       {/* 左：文件树 */}
       <div
-        className="w-[260px] shrink-0 border-r py-2"
+        className="w-full lg:w-[260px] shrink-0 border-b lg:border-b-0 lg:border-r py-2 max-h-[200px] lg:max-h-none"
         style={{
           borderColor: 'var(--border-subtle)',
           minHeight: 0,
@@ -345,7 +346,7 @@ export function SkillContentBrowser({
 
       {/* 右：内容 */}
       <div
-        className="flex-1 px-6 py-5"
+        className="flex-1 px-3 py-3 sm:px-6 sm:py-5"
         style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
         {status === 'loading' && <MapSectionLoader text={`正在解压技能包${sizeHint}…`} />}

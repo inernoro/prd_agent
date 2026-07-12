@@ -74,10 +74,8 @@ export function RightRailPanel({ reportId, viewSummary, versionHistory, fallback
   });
 
   return (
-    <aside
-      className="flex-none flex flex-col min-h-0 gap-3"
-      style={{ width: 280 }}
-    >
+    // 手机端全宽随正文下方流式排布，lg 起恢复 280px 右栏（定宽曾把手机端正文挤成竖条）
+    <aside className="flex-none flex flex-col min-h-0 gap-3 w-full lg:w-[280px]">
       {/* 点赞段 */}
       <GlassCard variant="subtle" className="px-4 py-3 flex flex-col gap-2.5">
         <div className="flex items-center gap-1.5">

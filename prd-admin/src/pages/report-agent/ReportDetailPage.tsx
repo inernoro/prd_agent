@@ -297,7 +297,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   ];
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
+    // 高度约束只给 lg+：手机端三栏改上下堆叠靠页面自然滚动（定高会把堆叠内容压扁，同 team-activity 事故）
+    <div className="lg:h-full min-h-0 flex flex-col gap-4">
       {/* Return Dialog */}
       {showReturnDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
@@ -373,7 +374,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex gap-4">
+      <div className="lg:flex-1 min-h-0 flex flex-col lg:flex-row gap-4">
         {hasSiblingCtx && siblings.length > 0 && (
           <SiblingReportsSidebar
             items={siblings}
@@ -613,7 +614,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           {/* 不可见占位：高度 = 主列 Tabs 栏高度，让右栏顶部对齐正文 */}
           <div
             aria-hidden="true"
-            className="flex items-center gap-1 px-1"
+            className="hidden lg:flex items-center gap-1 px-1"
             style={{
               borderBottom: '1px solid var(--border-primary)',
               visibility: 'hidden',
