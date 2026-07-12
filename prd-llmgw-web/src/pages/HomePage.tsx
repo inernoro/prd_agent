@@ -85,7 +85,7 @@ export function OverviewPage() {
               ))}
             </div>
           ) : <p>费用未知，未将缺价格请求显示为 0。</p>}
-          <div className="lg-cost-note">Actual 账单未接入；缺价格 {summary?.unknownCostRequests ?? 0} 个请求；CNY 与 USD 分开呈现。</div>
+          <div className="lg-cost-note">Actual 账单未接入；缺价格 {summary ? summary.unknownCostRequests : '—'} 个请求；CNY 与 USD 分开呈现。</div>
         </Card>
       </div>
 

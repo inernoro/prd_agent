@@ -2397,6 +2397,9 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains(".Include(\"EstimatedCost\")", consoleProgram);
         Assert.Contains(".Include(\"EstimatedCostCurrency\")", consoleProgram);
+        Assert.Contains(".Include(\"InputPricePerMillion\")", consoleProgram);
+        Assert.Contains(".Include(\"OutputPricePerMillion\")", consoleProgram);
+        Assert.Contains("x.Amount is not null && x.Currency is not null && x.Complete", consoleProgram);
         Assert.Contains("GroupBy(x => x.Currency!", consoleProgram);
         Assert.Contains("UnknownCostRequests = docs.Count - pricedDocs.Count", consoleProgram);
         Assert.Contains("EstimatedCostUsd = usdDocs.Count == 0 ? null", consoleProgram);

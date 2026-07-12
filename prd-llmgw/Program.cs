@@ -922,6 +922,8 @@ app.MapGet("/gw/logs/summary", async (
         .Include("DurationMs")
         .Include("InputTokens")
         .Include("OutputTokens")
+        .Include("InputPricePerMillion")
+        .Include("OutputPricePerMillion")
         .Include("EstimatedCost")
         .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
@@ -939,8 +941,10 @@ app.MapGet("/gw/logs/summary", async (
             Amount = d.AsNullableDecimal("EstimatedCost"),
             Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
             Usd = d.AsNullableDecimal("EstimatedCostUsd"),
+            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
+                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
         })
-        .Where(x => x.Amount is not null && x.Currency is not null)
+        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
         .ToList();
     var estimatedCosts = pricedDocs
         .GroupBy(x => x.Currency!, StringComparer.Ordinal)
