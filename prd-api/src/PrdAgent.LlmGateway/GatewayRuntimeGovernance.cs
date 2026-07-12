@@ -713,7 +713,7 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
 
     private async Task RunOnceAsync(CancellationToken ct)
     {
-        var tenantId = _configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
+        var internalTenantId = _configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
             ? configuredTenantId
             : GatewayTenantDefaults.InternalTenantId;
         var now = DateTime.UtcNow;
@@ -723,45 +723,58 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
         var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
         var logs = _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmrequestlogs");
-        var sensitiveFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", tenantId)
-                              & Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-sensitiveDays))
-                              & Builders<MongoDB.Bson.BsonDocument>.Filter.Or(
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("RequestBodyRedacted", ""),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("QuestionText", true),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("AnswerText", true),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("ThinkingText", true));
-        var sensitiveCount = await logs.CountDocumentsAsync(sensitiveFilter, cancellationToken: ct);
         var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
-        var expiredFilter = Builders<GatewayMultipartObjectRecord>.Filter.Eq(x => x.TenantId, tenantId)
-                            & Builders<GatewayMultipartObjectRecord>.Filter.Ne(x => x.Status, "deleted")
-                            & Builders<GatewayMultipartObjectRecord>.Filter.Lte(x => x.ExpiresAt, now);
-        var expiredMultipartCount = await multipart.CountDocumentsAsync(expiredFilter, cancellationToken: ct);
-        var expired = await multipart.Find(expiredFilter).SortBy(x => x.ExpiresAt).Limit(200).ToListAsync(ct);
         var indexStatus = await ReadRetentionIndexStatusAsync(ct);
         var lifecycle = _data.Database.GetCollection<GatewayLifecycleRunRecord>("llmgw_lifecycle_runs");
-        var run = new GatewayLifecycleRunRecord
+        var tenantIds = await ResolveLifecycleTenantIdsAsync(internalTenantId, ct);
+        var passes = new List<(
+            string TenantId,
+            FilterDefinition<MongoDB.Bson.BsonDocument> SensitiveFilter,
+            long SensitiveCount,
+            IReadOnlyList<GatewayMultipartObjectRecord> ExpiredMultipart,
+            long ExpiredMultipartCount,
+            GatewayLifecycleRunRecord Run)>(tenantIds.Count);
+
+        foreach (var tenantId in tenantIds)
         {
-            TenantId = tenantId,
-            Mode = apply ? "apply" : "dry-run",
-            Status = "dry-run-complete",
-            StartedAt = now,
-            DryRunCompletedAt = DateTime.UtcNow,
-            SensitiveLogs = sensitiveCount,
-            ExpiredRequestLogs = await CountExpiredAsync(tenantId, "llmrequestlogs", "StartedAt", now.AddDays(-requestLogDays), ct),
-            ExpiredShadowComparisons = await CountExpiredAsync(tenantId, "llmshadow_comparisons", "ComparedAt", now.AddDays(-shadowDays), ct),
-            ExpiredOperationAudits = await CountExpiredAsync(tenantId, "llmgw_operation_audits", "CreatedAt", now.AddDays(-auditDays), ct),
-            ExpiredLoginAudits = await CountExpiredAsync(tenantId, "llmgw_login_audits", "CreatedAt", now.AddDays(-auditDays), ct),
-            ExpiredMultipartObjects = expiredMultipartCount,
-            OldestExpiredRequestLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-requestLogDays)), ct),
-            OldestSensitiveLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", sensitiveFilter, ct),
-            OldestExpiredShadowAt = await OldestAsync(tenantId, "llmshadow_comparisons", "ComparedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("ComparedAt", now.AddDays(-shadowDays)), ct),
-            OldestExpiredOperationAuditAt = await OldestAsync(tenantId, "llmgw_operation_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
-            OldestExpiredLoginAuditAt = await OldestAsync(tenantId, "llmgw_login_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
-            OldestExpiredMultipartAt = expired.FirstOrDefault()?.ExpiresAt,
-            RetentionIndexesReady = indexStatus.Count == 0,
-            MissingRetentionIndexes = indexStatus.ToArray(),
-        };
-        await lifecycle.InsertOneAsync(run, cancellationToken: ct);
+            var sensitiveFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", tenantId)
+                                  & Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-sensitiveDays))
+                                  & Builders<MongoDB.Bson.BsonDocument>.Filter.Or(
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("RequestBodyRedacted", ""),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("QuestionText", true),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("AnswerText", true),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("ThinkingText", true));
+            var sensitiveCount = await logs.CountDocumentsAsync(sensitiveFilter, cancellationToken: ct);
+            var expiredFilter = Builders<GatewayMultipartObjectRecord>.Filter.Eq(x => x.TenantId, tenantId)
+                                & Builders<GatewayMultipartObjectRecord>.Filter.Ne(x => x.Status, "deleted")
+                                & Builders<GatewayMultipartObjectRecord>.Filter.Lte(x => x.ExpiresAt, now);
+            var expiredMultipartCount = await multipart.CountDocumentsAsync(expiredFilter, cancellationToken: ct);
+            var expired = await multipart.Find(expiredFilter).SortBy(x => x.ExpiresAt).Limit(200).ToListAsync(ct);
+            var run = new GatewayLifecycleRunRecord
+            {
+                TenantId = tenantId,
+                Mode = apply ? "apply" : "dry-run",
+                Status = "dry-run-complete",
+                StartedAt = now,
+                DryRunCompletedAt = DateTime.UtcNow,
+                SensitiveLogs = sensitiveCount,
+                ExpiredRequestLogs = await CountExpiredAsync(tenantId, "llmrequestlogs", "StartedAt", now.AddDays(-requestLogDays), ct),
+                ExpiredShadowComparisons = await CountExpiredAsync(tenantId, "llmshadow_comparisons", "ComparedAt", now.AddDays(-shadowDays), ct),
+                ExpiredOperationAudits = await CountExpiredAsync(tenantId, "llmgw_operation_audits", "CreatedAt", now.AddDays(-auditDays), ct),
+                ExpiredLoginAudits = await CountExpiredAsync(tenantId, "llmgw_login_audits", "CreatedAt", now.AddDays(-auditDays), ct),
+                ExpiredMultipartObjects = expiredMultipartCount,
+                OldestExpiredRequestLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-requestLogDays)), ct),
+                OldestSensitiveLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", sensitiveFilter, ct),
+                OldestExpiredShadowAt = await OldestAsync(tenantId, "llmshadow_comparisons", "ComparedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("ComparedAt", now.AddDays(-shadowDays)), ct),
+                OldestExpiredOperationAuditAt = await OldestAsync(tenantId, "llmgw_operation_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
+                OldestExpiredLoginAuditAt = await OldestAsync(tenantId, "llmgw_login_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
+                OldestExpiredMultipartAt = expired.FirstOrDefault()?.ExpiresAt,
+                RetentionIndexesReady = indexStatus.Count == 0,
+                MissingRetentionIndexes = indexStatus.ToArray(),
+            };
+            await lifecycle.InsertOneAsync(run, cancellationToken: ct);
+            passes.Add((tenantId, sensitiveFilter, sensitiveCount, expired, expiredMultipartCount, run));
+        }
 
         // Budget reservation expiry is runtime accounting, not data retention. It must run
         // even while destructive retention remains in dry-run mode.
@@ -771,61 +784,98 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         {
             await _databaseInitializer.EnsureRetentionTtlIndexesAsync(ct);
             indexStatus = await ReadRetentionIndexStatusAsync(ct);
-            await lifecycle.UpdateOneAsync(x => x.TenantId == tenantId && x.Id == run.Id,
-                Builders<GatewayLifecycleRunRecord>.Update
-                    .Set(x => x.RetentionIndexesReady, indexStatus.Count == 0)
-                    .Set(x => x.MissingRetentionIndexes, indexStatus.ToArray()),
-                cancellationToken: ct);
+            foreach (var pass in passes)
+            {
+                await lifecycle.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == pass.Run.Id,
+                    Builders<GatewayLifecycleRunRecord>.Update
+                        .Set(x => x.RetentionIndexesReady, indexStatus.Count == 0)
+                        .Set(x => x.MissingRetentionIndexes, indexStatus.ToArray()),
+                    cancellationToken: ct);
+            }
         }
 
         if (apply)
         {
-            var redacted = sensitiveCount > 0
-                ? (await logs.UpdateManyAsync(sensitiveFilter,
-                    Builders<MongoDB.Bson.BsonDocument>.Update
-                        .Set("RequestBodyRedacted", "[retention-redacted]")
-                        .Unset("QuestionText")
-                        .Unset("AnswerText")
-                        .Unset("ThinkingText")
-                        .Unset("SystemPromptText")
-                        .Unset("ResponseToolCalls"),
-                    cancellationToken: ct)).ModifiedCount
-                : 0;
-            long deleted = 0;
-            foreach (var item in expired)
+            foreach (var pass in passes)
             {
-                try
+                var redacted = pass.SensitiveCount > 0
+                    ? (await logs.UpdateManyAsync(pass.SensitiveFilter,
+                        Builders<MongoDB.Bson.BsonDocument>.Update
+                            .Set("RequestBodyRedacted", "[retention-redacted]")
+                            .Unset("QuestionText")
+                            .Unset("AnswerText")
+                            .Unset("ThinkingText")
+                            .Unset("SystemPromptText")
+                            .Unset("ResponseToolCalls"),
+                        cancellationToken: ct)).ModifiedCount
+                    : 0;
+                long deleted = 0;
+                foreach (var item in pass.ExpiredMultipart)
                 {
-                    await _storage.DeleteByKeyAsync(item.RefKey, ct);
-                    await multipart.UpdateOneAsync(x => x.TenantId == tenantId && x.Id == item.Id,
-                        Builders<GatewayMultipartObjectRecord>.Update
-                            .Set(x => x.Status, "deleted")
-                            .Set(x => x.DeletedAt, DateTime.UtcNow)
-                            .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
-                    deleted++;
+                    try
+                    {
+                        await _storage.DeleteByKeyAsync(item.RefKey, ct);
+                        await multipart.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == item.Id,
+                            Builders<GatewayMultipartObjectRecord>.Update
+                                .Set(x => x.Status, "deleted")
+                                .Set(x => x.DeletedAt, DateTime.UtcNow)
+                                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+                        deleted++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "[GatewayLifecycle] multipart cleanup failed tenant={TenantId} ref={RefKey}",
+                            pass.TenantId,
+                            item.RefKey);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[GatewayLifecycle] multipart cleanup failed ref={RefKey}", item.RefKey);
-                }
-            }
 
-            await lifecycle.UpdateOneAsync(x => x.TenantId == tenantId && x.Id == run.Id,
-                Builders<GatewayLifecycleRunRecord>.Update
-                    .Set(x => x.Status, "applied")
-                    .Set(x => x.RedactedSensitiveLogs, redacted)
-                    .Set(x => x.DeletedMultipartObjects, deleted)
-                    .Set(x => x.CompletedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                await lifecycle.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == pass.Run.Id,
+                    Builders<GatewayLifecycleRunRecord>.Update
+                        .Set(x => x.Status, "applied")
+                        .Set(x => x.RedactedSensitiveLogs, redacted)
+                        .Set(x => x.DeletedMultipartObjects, deleted)
+                        .Set(x => x.CompletedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+            }
         }
 
         _logger.LogInformation(
-            "[GatewayLifecycle] mode={Mode} sensitiveLogs={SensitiveLogs} expiredMultipart={ExpiredMultipart} indexesReady={IndexesReady} runId={RunId}",
+            "[GatewayLifecycle] mode={Mode} tenants={TenantCount} sensitiveLogs={SensitiveLogs} expiredMultipart={ExpiredMultipart} indexesReady={IndexesReady} runIds={RunIds}",
             apply ? "apply" : "dry-run",
-            sensitiveCount,
-            expiredMultipartCount,
+            passes.Count,
+            passes.Sum(x => x.SensitiveCount),
+            passes.Sum(x => x.ExpiredMultipartCount),
             indexStatus.Count == 0,
-            run.Id);
+            string.Join(',', passes.Select(x => x.Run.Id)));
+    }
+
+    private async Task<List<string>> ResolveLifecycleTenantIdsAsync(string internalTenantId, CancellationToken ct)
+    {
+        var tenantIds = new HashSet<string>(StringComparer.Ordinal) { internalTenantId };
+        var tenantCollections = new[]
+        {
+            "llmgw_tenants",
+            "llmrequestlogs",
+            "llmshadow_comparisons",
+            "llmgw_operation_audits",
+            "llmgw_login_audits",
+            "llmgw_lifecycle_runs",
+            "llmgw_multipart_objects",
+        };
+        var validTenant = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+            Builders<MongoDB.Bson.BsonDocument>.Filter.Type("TenantId", MongoDB.Bson.BsonType.String),
+            Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("TenantId", ""));
+        foreach (var collectionName in tenantCollections)
+        {
+            var values = await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>(collectionName)
+                .Distinct<string>("TenantId", validTenant)
+                .ToListAsync(ct);
+            foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)))
+                tenantIds.Add(value.Trim());
+        }
+        return tenantIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
     }
 
     private async Task<long> CountExpiredAsync(string tenantId, string collectionName, string field, DateTime cutoff, CancellationToken ct)

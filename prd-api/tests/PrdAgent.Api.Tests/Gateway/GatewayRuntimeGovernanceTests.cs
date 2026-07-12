@@ -1,8 +1,11 @@
+using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
@@ -362,6 +365,93 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task LifecycleApply_RedactsAndDeletesExpiredDataForEveryTenant()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var now = DateTime.UtcNow;
+        var logs = scope.Context.Database.GetCollection<BsonDocument>("llmrequestlogs");
+        await logs.InsertManyAsync(new[]
+        {
+            new BsonDocument
+            {
+                { "_id", "log-a" },
+                { "TenantId", "tenant-a" },
+                { "StartedAt", now.AddDays(-10) },
+                { "QuestionText", "tenant-a-secret" },
+            },
+            new BsonDocument
+            {
+                { "_id", "log-b" },
+                { "TenantId", "tenant-b" },
+                { "StartedAt", now.AddDays(-10) },
+                { "QuestionText", "tenant-b-secret" },
+            },
+        });
+        var multipart = scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
+        await multipart.InsertManyAsync(new[]
+        {
+            new GatewayMultipartObjectRecord
+            {
+                TenantId = "tenant-a",
+                RefKey = "tenant-a/expired.bin",
+                Status = "stored",
+                ExpiresAt = now.AddMinutes(-1),
+            },
+            new GatewayMultipartObjectRecord
+            {
+                TenantId = "tenant-b",
+                RefKey = "tenant-b/expired.bin",
+                Status = "stored",
+                ExpiresAt = now.AddMinutes(-1),
+            },
+        });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:InternalTenantId"] = "tenant-internal",
+            ["LlmGateway:Retention:ApplyChanges"] = "true",
+            ["LlmGateway:Retention:EnableTtlIndexes"] = "false",
+            ["LlmGateway:Retention:SensitiveBodyDays"] = "1",
+        }).Build();
+        var storage = new RecordingAssetStorage();
+        var worker = new GatewayDataLifecycleWorker(
+            scope.Context,
+            storage,
+            new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance),
+            new LlmGatewayDatabaseInitializer(
+                scope.Context,
+                configuration,
+                NullLogger<LlmGatewayDatabaseInitializer>.Instance),
+            configuration,
+            NullLogger<GatewayDataLifecycleWorker>.Instance);
+        var runOnce = typeof(GatewayDataLifecycleWorker).GetMethod(
+            "RunOnceAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        runOnce.ShouldNotBeNull();
+
+        await (Task)runOnce.Invoke(worker, new object[] { CancellationToken.None })!;
+
+        var updatedLogs = await logs.Find(_ => true).ToListAsync();
+        updatedLogs.Count.ShouldBe(2);
+        updatedLogs.ShouldAllBe(x => x["RequestBodyRedacted"].AsString == "[retention-redacted]");
+        updatedLogs.ShouldAllBe(x => !x.Contains("QuestionText"));
+        var updatedMultipart = await multipart.Find(_ => true).ToListAsync();
+        updatedMultipart.ShouldAllBe(x => x.Status == "deleted");
+        storage.DeletedKeys.OrderBy(x => x).ShouldBe(new[]
+        {
+            "tenant-a/expired.bin",
+            "tenant-b/expired.bin",
+        });
+        var tenantRuns = await scope.Context.Database.GetCollection<GatewayLifecycleRunRecord>("llmgw_lifecycle_runs")
+            .Find(x => x.TenantId == "tenant-a" || x.TenantId == "tenant-b")
+            .ToListAsync();
+        tenantRuns.Count.ShouldBe(2);
+        tenantRuns.ShouldAllBe(x => x.Status == "applied");
+        tenantRuns.ShouldAllBe(x => x.RedactedSensitiveLogs == 1 && x.DeletedMultipartObjects == 1);
+    }
+
+    [Fact]
     public async Task ScopedKey_RejectsCrossAppCallerAndWritesAudit()
     {
         var testDatabase = await TryCreateDatabaseAsync();
@@ -542,6 +632,42 @@ public sealed class GatewayRuntimeGovernanceTests
                 TenantId = record.TenantId,
                 ServiceKeyId = record.Id,
             });
+    }
+
+    private sealed class RecordingAssetStorage : IAssetStorage
+    {
+        public List<string> DeletedKeys { get; } = [];
+
+        public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
+            => throw new NotSupportedException();
+
+        public Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
+            => throw new NotSupportedException();
+
+        public Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
+            => throw new NotSupportedException();
+
+        public string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null)
+            => throw new NotSupportedException();
+
+        public Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<bool> ExistsAsync(string key, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
+            => throw new NotSupportedException();
+
+        public string BuildUrlForKey(string key) => throw new NotSupportedException();
+
+        public Task DeleteByKeyAsync(string key, CancellationToken ct)
+        {
+            DeletedKeys.Add(key);
+            return Task.CompletedTask;
+        }
+
+        public string BuildSiteKey(string siteId, string filePath) => throw new NotSupportedException();
     }
 
     private sealed class TestDatabase : IAsyncDisposable
