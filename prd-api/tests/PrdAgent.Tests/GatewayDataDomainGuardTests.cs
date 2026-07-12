@@ -148,12 +148,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
-        Assert.Contains("默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员", consoleProgram);
+        Assert.Contains("默认模型池必须至少包含一个可用成员", consoleProgram);
         Assert.Contains("body.IsDefaultForType == true", consoleProgram);
         Assert.Contains("targetAuthority == \"llm_gateway\"", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
-        Assert.Contains("默认 GW 模型池必须保留至少一个可解析、非 unavailable 的成员", consoleProgram);
+        Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
+        Assert.Contains("TenantAccess.Filter(http, logFilter)", consoleProgram);
+        Assert.Contains("fb.Eq(\"ModelPoolId\", modelPoolId.Trim())", consoleProgram);
         Assert.Contains("action: \"pool.models.bulk_import\"", consoleProgram);
         Assert.Contains("action: wasExisting ? \"pool.model.update\" : \"pool.model.add\"", consoleProgram);
         Assert.Contains("action: \"pool.model.remove\"", consoleProgram);

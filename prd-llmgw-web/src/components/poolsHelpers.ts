@@ -2,13 +2,13 @@
 export function healthChip(status: number): { label: string; color: string; bg: string } {
   switch (status) {
     case 0:
-      return { label: 'Healthy', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
+      return { label: '健康', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
     case 1:
-      return { label: 'Degraded', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
+      return { label: '部分异常', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
     case 2:
-      return { label: 'Unavailable', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
+      return { label: '不可用', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
     default:
-      return { label: 'Unknown', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
+      return { label: '未知', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
   }
 }
 

@@ -70,6 +70,7 @@ export function LogsView() {
   const [filterRunId, setFilterRunId] = useState(() => initialQueryValue('runId'));
   const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
   const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
+  const [filterModelPoolId, setFilterModelPoolId] = useState(() => initialQueryValue('modelPoolId'));
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -120,6 +121,7 @@ export function LogsView() {
     setFilterRunId(query.get('runId') ?? '');
     setFilterRequestId(query.get('requestId') ?? '');
     setFilterSessionId(query.get('sessionId') ?? '');
+    setFilterModelPoolId(query.get('modelPoolId') ?? '');
     setFilterStatus(query.get('status') ?? '');
     setFilterAppCaller(query.get('appCallerCode') ?? '');
   }, [location.search]);
@@ -146,8 +148,9 @@ export function LogsView() {
       runId: filterRunId.trim() || undefined,
       requestId: filterRequestId.trim() || undefined,
       sessionId: filterSessionId.trim() || undefined,
+      modelPoolId: filterModelPoolId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId],
   );
 
   useEffect(() => {
@@ -581,6 +584,7 @@ export function LogsView() {
     filterRunId.trim(),
     filterRequestId.trim(),
     filterSessionId.trim(),
+    filterModelPoolId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -596,6 +600,7 @@ export function LogsView() {
     setFilterRunId('');
     setFilterRequestId('');
     setFilterSessionId('');
+    setFilterModelPoolId('');
   };
 
   function SummaryTile({
@@ -782,6 +787,13 @@ export function LogsView() {
             value={filterSessionId}
             onChange={(e) => setFilterSessionId(e.target.value)}
             placeholder="会话 ID"
+            spellCheck={false}
+            style={inputStyle}
+          />
+          <input
+            value={filterModelPoolId}
+            onChange={(e) => setFilterModelPoolId(e.target.value)}
+            placeholder="模型池 ID"
             spellCheck={false}
             style={inputStyle}
           />

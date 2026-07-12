@@ -821,13 +821,13 @@ app.MapGet("/gw/logs", async (
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId));
+    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -882,10 +882,10 @@ app.MapGet("/gw/logs/timeseries", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId));
+    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -914,10 +914,10 @@ app.MapGet("/gw/logs/summary", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId));
+    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -1257,13 +1257,13 @@ app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId));
+    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -1316,7 +1316,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 // 让网关控制台不只有日志，还能看模型池 / 平台 / 模型 / 影子比对。密钥字段一律不返回（只回 hasKey）。
 
 // 模型池列表
-app.MapGet("/gw/pools", async (HttpContext http, string? modelType) =>
+app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
     var fb = Builders<BsonDocument>.Filter;
     var filter = string.IsNullOrWhiteSpace(modelType) ? fb.Empty : fb.Eq("ModelType", modelType);
@@ -1326,7 +1326,76 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType) =>
     var gwDocs = await gwModelPools.Find(TenantAccess.Filter(http, filter)).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
     var gwIds = gwDocs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
-    var data = new PoolsData { Items = docs.Select(MapPool).ToList(), Total = docs.Count };
+    var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
+    var since = DateTime.UtcNow.AddHours(-hours);
+    var appCallerDocs = await gwAppCallers.Find(TenantAccess.Filter(http))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("_id")
+            .Include("AppCallerCode")
+            .Include("Title")
+            .Include("Status")
+            .Include("ModelPoolId"))
+        .ToListAsync();
+    var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
+    var logStatsDocs = await logs.Aggregate()
+        .Match(TenantAccess.Filter(http, logFilter))
+        .Group(new BsonDocument
+        {
+            { "_id", "$ModelPoolId" },
+            { "Requests", new BsonDocument("$sum", 1) },
+            { "Succeeded", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$eq", new BsonArray { "$Status", "succeeded" }), 1, 0,
+                })) },
+            { "Failed", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$eq", new BsonArray { "$Status", "failed" }), 1, 0,
+                })) },
+            { "LastRequestAt", new BsonDocument("$max", "$StartedAt") },
+        })
+        .ToListAsync();
+    var logStatsByPool = logStatsDocs
+        .Where(d => !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+        .ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var items = docs.Select(MapPool).ToList();
+    foreach (var item in items)
+    {
+        var bound = appCallerDocs
+            .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), item.Id, StringComparison.Ordinal))
+            .OrderByDescending(d => string.Equals(d.AsNullableString("Status"), "active", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(d => d.AsNullableString("Title") ?? d.GetStringOrEmpty("AppCallerCode"), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        item.BoundAppCallerCount = bound.Count;
+        item.BoundAppCallers = bound.Take(5).Select(d => new PoolAppCallerItem
+        {
+            Id = d.GetStringOrEmpty("_id"),
+            AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
+            Title = d.AsNullableString("Title"),
+            Status = d.AsNullableString("Status") ?? "discovered",
+        }).ToList();
+
+        item.TrafficWindowHours = hours;
+        logStatsByPool.TryGetValue(item.Id, out var stats);
+        item.RecentRequests = stats?.AsNullableLong("Requests") ?? 0;
+        item.RecentSucceeded = stats?.AsNullableLong("Succeeded") ?? 0;
+        item.RecentFailed = stats?.AsNullableLong("Failed") ?? 0;
+        item.RecentSuccessRatePercent = item.RecentRequests == 0
+            ? null
+            : Math.Round(item.RecentSucceeded * 100m / item.RecentRequests, 1, MidpointRounding.AwayFromZero);
+        item.LastRequestAt = stats?.AsNullableUtcDateTime("LastRequestAt").ToIso();
+
+        item.HealthyMembers = item.Models.Count(model => model.HealthStatus == 0);
+        item.DegradedMembers = item.Models.Count(model => model.HealthStatus == 1);
+        item.UnavailableMembers = item.Models.Count(model => model.HealthStatus == 2);
+        item.Health = item.Models.Count == 0
+            ? "empty"
+            : item.HealthyMembers == 0
+                ? "unavailable"
+                : item.DegradedMembers > 0 || item.UnavailableMembers > 0
+                    ? "degraded"
+                    : "healthy";
+    }
+    var data = new PoolsData { Items = items, Total = docs.Count };
     return Json(ApiEnvelope<PoolsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -2596,6 +2665,7 @@ app.MapGet("/gw/app-callers", async (
     string? sourceSystem,
     string? ingressProtocol,
     string? requestType,
+    string? modelPoolId,
     string? drift,
     string? search,
     int? page,
@@ -2618,6 +2688,7 @@ app.MapGet("/gw/app-callers", async (
             fb.AnyEq("ObservedIngressProtocols", protocolNormalized)));
     }
     if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType.Trim()));
+    if (!string.IsNullOrWhiteSpace(modelPoolId)) filters.Add(fb.Eq("ModelPoolId", modelPoolId.Trim()));
     var driftFilter = BuildAppCallerDriftFilter(drift);
     if (driftFilter is not null) filters.Add(driftFilter);
     if (!string.IsNullOrWhiteSpace(search))
@@ -4341,7 +4412,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
     {
         return Json(ApiEnvelope<PoolItem>.Fail(
             "INVALID_INPUT",
-            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先创建为非默认池并添加 enabled 模型或 Exchange。"),
+            "默认模型池必须至少包含一个可用成员；请先创建为非默认池并添加可用模型。"),
             jsonOptions,
             400);
     }
@@ -4389,7 +4460,7 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
             : null;
         if (mapDoc is not null)
         {
-            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池认领到 GW，再编辑模型池属性"), jsonOptions, 409);
+            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池导入为平台配置，再编辑模型池属性"), jsonOptions, 409);
         }
         return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     }
@@ -4472,7 +4543,7 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
     {
         return Json(ApiEnvelope<PoolItem>.Fail(
             "INVALID_INPUT",
-            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            "默认模型池必须至少包含一个可用成员；请先添加可用模型。"),
             jsonOptions,
             400);
     }
@@ -4665,7 +4736,7 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     body ??= new BulkImportPoolModelsRequest();
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("NOT_GW_AUTHORITY", "请先将模型池认领到 GW，再在 GW 中批量导入成员"), jsonOptions, 409);
+    if (pool is null) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再批量导入成员"), jsonOptions, 409);
 
     var capabilityFilter = (body.CapabilityFilter ?? "compatible").Trim().ToLowerInvariant();
     var allowedFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -4823,7 +4894,7 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
 {
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池认领到 GW，再在 GW 中管理池成员"), jsonOptions, 409);
+    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
 
     var modelId = (body.ModelId ?? string.Empty).Trim();
@@ -5005,7 +5076,7 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
 
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池认领到 GW，再在 GW 中管理池成员"), jsonOptions, 409);
+    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
     var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
@@ -5086,7 +5157,7 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     {
         return Json(ApiEnvelope<PoolItem>.Fail(
             "INVALID_INPUT",
-            "默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange。"),
+            "默认模型池必须至少包含一个可用成员；请先添加可用模型。"),
             jsonOptions,
             400);
     }
@@ -5639,7 +5710,8 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? releaseCommit,
     string? runId,
     string? requestId,
-    string? sessionId)
+    string? sessionId,
+    string? modelPoolId)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -5659,6 +5731,7 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(runId)) filters.Add(fb.Eq("RunId", runId.Trim()));
     if (!string.IsNullOrWhiteSpace(requestId)) filters.Add(fb.Eq("RequestId", requestId.Trim()));
     if (!string.IsNullOrWhiteSpace(sessionId)) filters.Add(fb.Eq("SessionId", sessionId.Trim()));
+    if (!string.IsNullOrWhiteSpace(modelPoolId)) filters.Add(fb.Eq("ModelPoolId", modelPoolId.Trim()));
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
@@ -6553,7 +6626,7 @@ static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
         return null;
     }
 
-    return "默认 GW 模型池必须保留至少一个可解析、非 unavailable 的成员；请先添加 enabled 模型或 Exchange，再删除或覆盖现有成员。";
+    return "默认模型池必须保留至少一个可用成员；请先添加可用模型，再删除或覆盖现有成员。";
 }
 
 static async Task<bool> HasUsableGatewayPoolMemberAsync(

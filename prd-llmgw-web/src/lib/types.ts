@@ -341,6 +341,7 @@ export type LogsListParams = {
   runId?: string;
   requestId?: string;
   sessionId?: string;
+  modelPoolId?: string;
 };
 
 export type LogsListData = {
@@ -389,6 +390,12 @@ export type ModelPool = {
   isDefaultForType: boolean; strategyType: number; description?: string | null;
   sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null; models: PoolModelInfo[];
+  boundAppCallerCount: number;
+  boundAppCallers: Array<{ id: string; appCallerCode: string; title?: string | null; status: string }>;
+  recentRequests: number; recentSucceeded: number; recentFailed: number;
+  recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
+  health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
+  healthyMembers: number; degradedMembers: number; unavailableMembers: number;
 };
 export type PoolsData = { items: ModelPool[]; total: number };
 export type CreatePoolRequest = {

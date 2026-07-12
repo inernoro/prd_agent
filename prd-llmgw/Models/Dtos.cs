@@ -689,6 +689,25 @@ public sealed class PoolItem
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
     public List<PoolModelItem> Models { get; set; } = new();
+    public long BoundAppCallerCount { get; set; }
+    public List<PoolAppCallerItem> BoundAppCallers { get; set; } = new();
+    public long RecentRequests { get; set; }
+    public long RecentSucceeded { get; set; }
+    public long RecentFailed { get; set; }
+    public decimal? RecentSuccessRatePercent { get; set; }
+    public string? LastRequestAt { get; set; }
+    public int TrafficWindowHours { get; set; } = 168;
+    public string Health { get; set; } = "empty";
+    public int HealthyMembers { get; set; }
+    public int DegradedMembers { get; set; }
+    public int UnavailableMembers { get; set; }
+}
+public sealed class PoolAppCallerItem
+{
+    public string Id { get; set; } = "";
+    public string AppCallerCode { get; set; } = "";
+    public string? Title { get; set; }
+    public string Status { get; set; } = "";
 }
 public sealed class PoolModelItem
 {

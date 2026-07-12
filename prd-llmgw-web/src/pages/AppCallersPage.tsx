@@ -82,6 +82,7 @@ export function AppCallersPage() {
   const [ingressProtocol, setIngressProtocol] = useState(() => searchParams.get('ingressProtocol') || '');
   const [requestType, setRequestType] = useState(() => searchParams.get('requestType') || '');
   const [drift, setDrift] = useState(() => searchParams.get('drift') || '');
+  const [modelPoolId, setModelPoolId] = useState(() => searchParams.get('modelPoolId') || '');
 
   const loadCurrentPage = async () => {
     setError(null);
@@ -94,6 +95,7 @@ export function AppCallersPage() {
       ingressProtocol: ingressProtocol || undefined,
       requestType: requestType || undefined,
       drift: drift || undefined,
+      modelPoolId: modelPoolId || undefined,
     });
     if (res.success) setData(res.data);
     else setError(res.error?.message || '加载失败');
@@ -111,6 +113,7 @@ export function AppCallersPage() {
       ingressProtocol: ingressProtocol || undefined,
       requestType: requestType || undefined,
       drift: drift || undefined,
+      modelPoolId: modelPoolId || undefined,
     }).then((res) => {
       if (!alive) return;
       if (res.success) setData(res.data);
@@ -119,7 +122,7 @@ export function AppCallersPage() {
     return () => {
       alive = false;
     };
-  }, [page, search, status, sourceSystem, ingressProtocol, requestType, drift]);
+  }, [page, search, status, sourceSystem, ingressProtocol, requestType, drift, modelPoolId]);
 
   useEffect(() => {
     let alive = true;
@@ -243,6 +246,7 @@ export function AppCallersPage() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {modelPoolId ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 11 }}>当前模型池绑定<button type="button" onClick={() => { setPage(1); setModelPoolId(''); }} style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', padding: 0 }}>清除</button></span> : null}
         <input
           value={search}
           onChange={(e) => {
