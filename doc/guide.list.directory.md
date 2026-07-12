@@ -683,6 +683,7 @@
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 
 - [周报 Agent 实施进度追踪](plan.report-agent.impl) `plan.report-agent.impl`
+- [Report Agent 模型质量治理](plan.report-agent.model-governance) `plan.report-agent.model-governance`
   > 周报 Agent 各阶段的实施进度与状态
 
 - [统一缺陷管理平台实施计划](plan.defect-agent.unified-management) `plan.defect-agent.unified-management`
