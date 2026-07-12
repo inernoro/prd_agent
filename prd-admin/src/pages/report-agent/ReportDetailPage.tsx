@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -64,6 +65,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回周报首页
+  const goBack = useSmartBack('/report-agent');
   const [searchParams] = useSearchParams();
   const ctxTeamId = props.teamIdOverride ?? (searchParams.get('teamId') ?? '');
   const ctxWeekYearRaw = props.weekYearOverride ?? Number.parseInt(searchParams.get('weekYear') ?? '', 10);
@@ -323,7 +326,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={props.onBack ?? (() => navigate(-1))}>
+            <Button variant="ghost" size="sm" onClick={props.onBack ?? goBack}>
               <ArrowLeft size={16} />
             </Button>
             <div>

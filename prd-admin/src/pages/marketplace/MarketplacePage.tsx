@@ -8,9 +8,10 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, Clock, Hash, PanelTop, Rows3, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import type { MixedMarketplaceItem } from '@/lib/marketplaceTypes';
@@ -126,7 +127,8 @@ const CARD_DEMO_SKILLS: CardDemoSkill[] = [
 
 export const MarketplacePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回首页
+  const goBack = useSmartBack('/');
   const location = useLocation();
 
   const typeFromUrl = searchParams.get('type') || 'skill';
@@ -192,7 +194,8 @@ export const MarketplacePage: React.FC = () => {
     const newParams = new URLSearchParams(searchParams);
     if (type === 'skill') newParams.delete('type');
     else newParams.set('type', type);
-    setSearchParams(newParams);
+    // 筛选切换用 replace：不堆 history，浏览器/手势返回直接回上一页而非上一个筛选态
+    setSearchParams(newParams, { replace: true });
   };
 
   const loadAllData = useCallback(async () => {
@@ -275,7 +278,7 @@ export const MarketplacePage: React.FC = () => {
             <div className="marketplace-title-group">
               <button
                 type="button"
-                onClick={() => navigate(-1)}
+                onClick={goBack}
                 className="marketplace-icon-button"
                 title="返回"
               >

@@ -320,7 +320,8 @@ export default function SettingsPage() {
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
-    setSearchParams({ tab: key });
+    // tab 切换用 replace：不往 history 堆条目，浏览器/手势返回直接离开本页回真正的上一页
+    setSearchParams({ tab: key }, { replace: true });
   };
 
   return (

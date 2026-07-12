@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -117,7 +117,8 @@ function cardRatio(size: string): number {
 
 export default function MobileVisualAgentEditor(props: { workspaceId: string; onOpenCanvas: () => void }) {
   const { workspaceId, onOpenCanvas } = props;
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack('/visual-agent');
 
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
@@ -591,7 +592,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           type="button"
           className="h-9 w-9 inline-flex items-center justify-center rounded-lg active:opacity-70"
           style={{ color: 'rgba(255,255,255,0.8)' }}
-          onClick={() => navigate('/visual-agent')}
+          onClick={goBack}
           aria-label="返回项目列表"
         >
           <ArrowLeft size={18} />

@@ -6,6 +6,7 @@
  * + 右属性栏(分级/状态/属性型自定义字段/信息)。系统字段与自定义字段同一套视觉语言、必填带星号。
  * 自定义模板里与系统字段重名的项(标题/描述)自动去重，避免「重复填两遍」。
  */
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -150,10 +151,8 @@ export function ProductObjectDetailPage() {
   const customerName = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const requirementName = useMemo(() => new Map(requirements.map((r) => [r.id, r.title])), [requirements]);
 
-  const back = () => {
-    if (window.history.length > 1) navigate(-1);
-    else navigate('/product-agent');
-  };
+  // 智能返回：window.history.length 含跨站条目不可靠，改用路由 idx 判定
+  const back = useSmartBack('/product-agent');
 
   if (kind === 'release') {
     return (
