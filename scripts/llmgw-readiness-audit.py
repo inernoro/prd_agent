@@ -567,7 +567,7 @@ def _static_checks() -> list[dict]:
         chat_bootstrap + "\n" + chat_bootstrap_js,
         [
             "LLMGW_CHAT_BOOTSTRAP_DRY_RUN:-1",
-            "mongodump --db \"$mongo_db\" --archive",
+            "backup_collection \"$mongo_db\" model_groups",
             "llmgw-disk-space-guard.sh",
             "LLMGW_CHAT_BOOTSTRAP_MIN_FREE_MB:-6144",
             "llmgw-prod-before-chat-pool-bootstrap",
@@ -589,14 +589,25 @@ def _static_checks() -> list[dict]:
             "ModelGroupIds: isolatePool ? [pool._id]",
             "ModelGroupIds",
             "ModelGroupId",
+            "db.getSiblingDB(gatewayDbName)",
+            "GW authority caller must resolve exactly once",
+            "isolated GW authority bootstrap requires caller binding",
+            "otherGatewayReferences.length > 0",
+            "ModelPolicy: \"pool\"",
+            "TenantId: tenantId",
+            "GW authority post-write verification failed",
+            "backup_collection \"$gateway_db\" llmgw_model_pools",
+            "--collection \"$backup_collection_name\" --archive --gzip",
+            "SHA256SUMS",
         ],
     )
     chat_bootstrap_executable = bool(chat_bootstrap_path.exists() and (chat_bootstrap_path.stat().st_mode & stat.S_IXUSR))
     chat_bootstrap_destructive = any(item in chat_bootstrap + chat_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    chat_bootstrap_accepts_tenant_input = "LLMGW_CHAT_BOOTSTRAP_TENANT_ID" in chat_bootstrap + chat_bootstrap_js
     checks.append(_check(
         "prod_chat_pool_bootstrap_is_backed_up_and_dry_run_first",
-        ok and chat_bootstrap_executable and not chat_bootstrap_destructive,
-        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}",
+        ok and chat_bootstrap_executable and not chat_bootstrap_destructive and not chat_bootstrap_accepts_tenant_input,
+        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}; acceptsTenantInput={chat_bootstrap_accepts_tenant_input}",
     ))
 
     ok, detail = _contains_all(
