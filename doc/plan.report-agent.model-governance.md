@@ -1,6 +1,6 @@
 # Report Agent 模型质量治理 · 计划
 
-> **版本**：v1.0 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-07-13 | **状态**：开发中
 
 ## 概述
 
@@ -19,16 +19,18 @@
 
 | 阶段 | 范围 | 验收标准 | 状态 |
 |---|---|---|---|
-| P1 代码治理 | 独立周报模型池脚本、精确 AppCaller 绑定、规则兜底原因持久化 | 默认不再继承通用大池；原因代码不包含上游错误原文 | 进行中 |
-| P2 用户可见性 | 编辑器展示实际模型，规则草稿使用独立警告样式和原因文案 | 用户能直接判断内容来自 AI 还是规则 | 进行中 |
-| P3 生产配置 | dry-run、备份、创建 `report-agent-weekly` 池并绑定 | 池为非默认池，成员数量受控，原大池不删除 | 待开始 |
+| P1 代码治理 | 独立周报模型池脚本、精确 AppCaller 绑定、规则兜底原因持久化 | 默认不再继承通用大池；原因代码不包含上游错误原文 | 已完成 |
+| P2 用户可见性 | 编辑器展示实际模型，规则草稿使用独立警告样式和原因文案 | 用户能直接判断内容来自 AI 还是规则 | 已完成 |
+| P3 生产配置 | dry-run、双库受影响集合备份、创建 GW 权威 `report-agent-weekly` 池并绑定 | 池为非默认池，成员数量为 1，原共享大池不删除也不裁剪 | 进行中 |
 | P4 单次验收 | 假上游回归加一次真实周报生成 | LLM 日志模型与页面展示一致；失败不会无感伪装 | 待开始 |
 
 ## 数据变更
 
 - `report_weekly_reports.AutoGenerationFallbackReason`：只保存稳定原因代码，不保存上游错误、密钥或响应正文。
-- `model_groups`：创建代码为 `report-agent-weekly` 的非默认池。
-- `llm_app_callers`：`report-agent.generate::chat` 的 chat 需求精确绑定该池，不继续附带旧通用池。
+- `prdagent.model_groups`：保留兼容配置，创建代码为 `report-agent-weekly` 的非默认池。
+- `prdagent.llm_app_callers`：保留兼容绑定，chat 需求精确指向该池。
+- `llm_gateway.llmgw_model_pools`：创建同 ID、同代码、带 `TenantId` 的 GW 权威非默认池，成员严格为 1。
+- `llm_gateway.llmgw_app_callers`：从权威 caller 或服务端内部租户配置推导 `TenantId`，只把 `report-agent.generate::chat` 改为 `modelPolicy=pool` 并绑定专属池；禁止接收外部自报 `tenantId`。
 
 ## 风险与依赖
 
@@ -45,3 +47,6 @@
 |---|---|---|
 | 2026-07-12 | 完成生产事实审计 | 周报最近调用实际模型为 DeepSeek V4 Flash；应用绑定显示 1 个池、224 个模型 |
 | 2026-07-12 | 创建独立修复分支 | `codex/fix-report-agent-model-governance` |
+| 2026-07-13 | 确认生产 full-http 实际权威数据 | 周报池 `fc839911...` 有 224 个成员且被 6 个调用方共享，不能原地裁剪 |
+| 2026-07-13 | 完成模型切换事实对比 | `gpt-5.5`（至 07-05）→ `HealthGPT-L14`（07-06 至 07-07）→ `DeepSeek-V4-Flash`（07-07 起） |
+| 2026-07-13 | 增补 GW 权威池收敛 | 默认 dry-run、MAP 与 GW 双库备份、租户范围推导、共享引用拒绝、写后验证与 TenantId 审计 |

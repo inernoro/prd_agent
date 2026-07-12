@@ -10,6 +10,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 compose_file="${LLMGW_CHAT_BOOTSTRAP_COMPOSE_FILE:-$repo_root/docker-compose.yml}"
 mongo_service="${LLMGW_CHAT_BOOTSTRAP_MONGO_SERVICE:-mongodb}"
 mongo_db="${LLMGW_CHAT_BOOTSTRAP_DB:-prdagent}"
+gateway_db="${LLMGW_CHAT_BOOTSTRAP_GW_DB:-llm_gateway}"
 dry_run="${LLMGW_CHAT_BOOTSTRAP_DRY_RUN:-1}"
 backup_root="${LLMGW_CHAT_BOOTSTRAP_BACKUP_ROOT:-/root/backups}"
 backup_stamp="$(date '+%Y%m%dT%H%M%S%z' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
@@ -38,6 +39,7 @@ echo "LLM Gateway chat pool bootstrap"
 echo "  compose: $compose_file"
 echo "  mongoService: $mongo_service"
 echo "  database: $mongo_db"
+echo "  gatewayDatabase: $gateway_db"
 echo "  dryRun: $dry_run"
 echo "  modelName: ${LLMGW_CHAT_BOOTSTRAP_MODEL_NAME:-deepseek-ai/DeepSeek-V4-Flash}"
 echo "  platformId: ${LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID:-auto}"
@@ -52,11 +54,24 @@ if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
 else
   "$script_dir/llmgw-disk-space-guard.sh" "$backup_dir" "${LLMGW_CHAT_BOOTSTRAP_MIN_FREE_MB:-6144}" "LLM Gateway chat pool bootstrap backup"
   mkdir -p "$backup_dir"
-  echo "LLM Gateway chat pool bootstrap: writing Mongo backup"
-  # shellcheck disable=SC2086
-  $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
-    mongodump --db "$mongo_db" --archive \
-    | gzip > "$backup_dir/mongo-$mongo_db-chat-pool-bootstrap.archive.gz"
+  echo "LLM Gateway chat pool bootstrap: writing affected-collection backups"
+  backup_collection() {
+    backup_database="$1"
+    backup_collection_name="$2"
+    backup_file="$backup_dir/mongo-$backup_database-$backup_collection_name.archive.gz"
+    # 使用 mongodump 内建 gzip，避免管道末端成功掩盖 dump 失败。
+    # shellcheck disable=SC2086
+    $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
+      mongodump --db "$backup_database" --collection "$backup_collection_name" --archive --gzip \
+      > "$backup_file"
+    test -s "$backup_file"
+  }
+  backup_collection "$mongo_db" model_groups
+  backup_collection "$mongo_db" llm_app_callers
+  backup_collection "$gateway_db" llmgw_model_pools
+  backup_collection "$gateway_db" llmgw_app_callers
+  backup_collection "$gateway_db" llmgw_operation_audits
+  sha256sum "$backup_dir"/*.archive.gz > "$backup_dir/SHA256SUMS"
 fi
 
 # shellcheck disable=SC2086
@@ -71,7 +86,9 @@ $COMPOSE -f "$compose_file" exec -T \
   -e LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS="${LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS:-report-agent.generate::chat}" \
   -e LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS="${LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS:-1}" \
   -e LLMGW_CHAT_BOOTSTRAP_PRIORITY="${LLMGW_CHAT_BOOTSTRAP_PRIORITY:-1}" \
-  "$mongo_service" mongosh "$mongo_db" --quiet < "$script_dir/llmgw-prod-chat-pool-bootstrap.js"
+  -e LLMGW_CHAT_BOOTSTRAP_GW_DB="$gateway_db" \
+  -e LLMGW_INTERNAL_TENANT_ID="${LLMGW_INTERNAL_TENANT_ID:-tenant_map_internal}" \
+  "$mongo_service" mongosh "$mongo_db" --quiet --file /dev/stdin < "$script_dir/llmgw-prod-chat-pool-bootstrap.js"
 
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway chat pool bootstrap dry-run completed"
