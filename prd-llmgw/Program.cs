@@ -123,6 +123,10 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
                 && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.ConfigWrite)));
+    options.AddPolicy("ServiceKeyWrite", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
+                && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.ServiceKeyWrite)));
     options.AddPolicy("OrganizationWrite", policy =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
@@ -3099,7 +3103,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         scopes,
         expiresAt,
     }), jsonOptions, 201);
-}).RequireAuthorization("ConfigWrite");
+}).RequireAuthorization("ServiceKeyWrite");
 
 app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
 {
@@ -3120,7 +3124,7 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
         true,
         null);
     return Json(ApiEnvelope<object>.Ok(new { id, revoked = true }), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
+}).RequireAuthorization("ServiceKeyWrite");
 
 // 影子比对：汇总 + 最近 N 条
 app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>

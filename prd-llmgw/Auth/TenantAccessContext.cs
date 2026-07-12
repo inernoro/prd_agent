@@ -22,14 +22,15 @@ public static class LlmGwPermissions
     public const string UsageRead = "usage:read";
     public const string AuditRead = "audit:read";
     public const string ConfigWrite = "config:write";
+    public const string ServiceKeyWrite = "service-key:write";
     public const string OrganizationWrite = "organization:write";
     public const string TenantOwner = "tenant:owner";
 
     public static bool Allows(string role, string permission) => role switch
     {
         LlmGwTenantRoles.Owner => true,
-        LlmGwTenantRoles.Admin => permission is LogsRead or RequestBodyRead or UsageRead or AuditRead or ConfigWrite or OrganizationWrite,
-        LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead,
+        LlmGwTenantRoles.Admin => permission is LogsRead or RequestBodyRead or UsageRead or AuditRead or ConfigWrite or ServiceKeyWrite or OrganizationWrite,
+        LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite,
         LlmGwTenantRoles.Viewer => permission is LogsRead or RequestBodyRead or UsageRead,
         LlmGwTenantRoles.Billing => permission is UsageRead,
         _ => false,
