@@ -568,12 +568,19 @@ def _static_checks() -> list[dict]:
             "LLMGW_CHAT_BOOTSTRAP_MODEL_NAME",
             "LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID",
             "LLMGW_CHAT_BOOTSTRAP_POOL_ID",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_CODE",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_NAME",
+            "LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL",
             "LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS",
             "LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS",
             "deepseek-ai/DeepSeek-V4-Flash",
             "report-agent.generate::chat",
             "enabled LLMModel not found",
             "target chat pool missing or not chat",
+            "poolWillBeCreated",
+            "isolated bootstrap refuses pool with Code=",
+            "const nextModels = isolatePool ? [modelItem]",
+            "ModelGroupIds: isolatePool ? [pool._id]",
             "ModelGroupIds",
             "ModelGroupId",
         ],
@@ -1457,7 +1464,7 @@ def _static_checks() -> list[dict]:
         f"{detail}; DirectTransportMarkerBaseline={direct_transport_empty}",
     ))
 
-    gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    gateway_src = _read("llmgw/serving/GatewayHttpEndpoints.cs")
     multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
     no_unsupported = "MULTIPART_HTTP_UNSUPPORTED" not in "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")

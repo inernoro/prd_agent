@@ -37,6 +37,7 @@ public sealed class GatewayProviderConcurrencyCoordinator
     }
 
     public async Task<GatewayProviderConcurrencyAdmission> AcquireAsync(
+        string tenantId,
         ModelResolutionResult resolution,
         int timeoutSeconds,
         CancellationToken ct)
@@ -59,10 +60,10 @@ public sealed class GatewayProviderConcurrencyCoordinator
         var acquired = new List<string>(limits.Count);
         foreach (var (resourceKey, limit) in limits)
         {
-            var slotId = await TryAcquireSlotAsync(resourceKey, Math.Clamp(limit, 1, 10000), leaseId, expiresAt, ct);
+            var slotId = await TryAcquireSlotAsync(tenantId, resourceKey, Math.Clamp(limit, 1, 10000), leaseId, expiresAt, ct);
             if (slotId is null)
             {
-                await ReleaseAsync(leaseId, acquired, CancellationToken.None);
+                await ReleaseAsync(tenantId, leaseId, acquired, CancellationToken.None);
                 _logger.LogWarning(
                     "[GatewayConcurrency] provider concurrency exhausted resource={ResourceKey} limit={Limit} platform={Platform} model={Model}",
                     resourceKey,
@@ -75,10 +76,11 @@ public sealed class GatewayProviderConcurrencyCoordinator
         }
 
         return GatewayProviderConcurrencyAdmission.Allow(
-            new GatewayProviderConcurrencyLease(this, leaseId, acquired));
+            new GatewayProviderConcurrencyLease(this, tenantId, leaseId, acquired));
     }
 
     private async Task<string?> TryAcquireSlotAsync(
+        string tenantId,
         string resourceKey,
         int limit,
         string leaseId,
@@ -89,8 +91,10 @@ public sealed class GatewayProviderConcurrencyCoordinator
         var collection = _data.Database.GetCollection<GatewayProviderConcurrencySlotRecord>(CollectionName);
         for (var slot = 0; slot < limit; slot++)
         {
-            var slotId = $"{Sha256Hex(resourceKey)}:{slot}";
-            var filter = Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.Id, slotId)
+            var slotId = $"{Sha256Hex(tenantId)}:{Sha256Hex(resourceKey)}:{slot}";
+            var filter = Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.TenantId, tenantId)
+                         & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.ResourceKey, resourceKey)
+                         & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.Slot, slot)
                          & (Builders<GatewayProviderConcurrencySlotRecord>.Filter.Lte(x => x.ExpiresAt, now)
                             | Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.LeaseId, string.Empty));
             try
@@ -99,6 +103,7 @@ public sealed class GatewayProviderConcurrencyCoordinator
                     filter,
                     Builders<GatewayProviderConcurrencySlotRecord>.Update
                         .SetOnInsert(x => x.Id, slotId)
+                        .SetOnInsert(x => x.TenantId, tenantId)
                         .SetOnInsert(x => x.ResourceKey, resourceKey)
                         .SetOnInsert(x => x.Slot, slot)
                         .Set(x => x.LeaseId, leaseId)
@@ -112,7 +117,7 @@ public sealed class GatewayProviderConcurrencyCoordinator
                     },
                     ct);
                 if (acquired?.LeaseId == leaseId)
-                    return slotId;
+                    return acquired.Id;
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
@@ -127,21 +132,22 @@ public sealed class GatewayProviderConcurrencyCoordinator
         return null;
     }
 
-    internal async Task ReleaseAsync(string leaseId, IReadOnlyCollection<string> slotIds, CancellationToken ct)
+    internal async Task ReleaseAsync(string tenantId, string leaseId, IReadOnlyCollection<string> slotIds, CancellationToken ct)
     {
         if (slotIds.Count == 0) return;
         var collection = _data.Database.GetCollection<GatewayProviderConcurrencySlotRecord>(CollectionName);
         await collection.DeleteManyAsync(
-            Builders<GatewayProviderConcurrencySlotRecord>.Filter.In(x => x.Id, slotIds)
+            Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.TenantId, tenantId)
+            & Builders<GatewayProviderConcurrencySlotRecord>.Filter.In(x => x.Id, slotIds)
             & Builders<GatewayProviderConcurrencySlotRecord>.Filter.Eq(x => x.LeaseId, leaseId),
             ct);
     }
 
-    internal async Task ReleaseSafelyAsync(string leaseId, IReadOnlyCollection<string> slotIds)
+    internal async Task ReleaseSafelyAsync(string tenantId, string leaseId, IReadOnlyCollection<string> slotIds)
     {
         try
         {
-            await ReleaseAsync(leaseId, slotIds, CancellationToken.None);
+            await ReleaseAsync(tenantId, leaseId, slotIds, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -159,16 +165,19 @@ public sealed class GatewayProviderConcurrencyCoordinator
 public sealed class GatewayProviderConcurrencyLease : IAsyncDisposable
 {
     private readonly GatewayProviderConcurrencyCoordinator _owner;
+    private readonly string _tenantId;
     private readonly string _leaseId;
     private readonly IReadOnlyCollection<string> _slotIds;
     private int _released;
 
     internal GatewayProviderConcurrencyLease(
         GatewayProviderConcurrencyCoordinator owner,
+        string tenantId,
         string leaseId,
         IReadOnlyCollection<string> slotIds)
     {
         _owner = owner;
+        _tenantId = tenantId;
         _leaseId = leaseId;
         _slotIds = slotIds;
     }
@@ -176,6 +185,6 @@ public sealed class GatewayProviderConcurrencyLease : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _released, 1) != 0) return;
-        await _owner.ReleaseSafelyAsync(_leaseId, _slotIds);
+        await _owner.ReleaseSafelyAsync(_tenantId, _leaseId, _slotIds);
     }
 }

@@ -17,7 +17,7 @@ public sealed class GatewayProductionGovernanceScriptTests
         Assert.Contains("cleanup_database", script);
         Assert.Contains("db.llmgw_app_callers.deleteMany", script);
         Assert.Contains("db.llmgw_service_keys.deleteMany", script);
-        Assert.Contains("llmgw_service_keys", File.ReadAllText(LocateRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayRuntimeGovernance.cs")));
+        Assert.Contains("llmgw_service_keys", File.ReadAllText(LocateRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs")));
     }
 
     [Fact]

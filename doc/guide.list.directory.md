@@ -667,6 +667,12 @@
 - [LLM Gateway 已知可用性收口计划](plan.platform.llm-gateway-known-availability-closeout) `plan.platform.llm-gateway-known-availability-closeout`
   > 三个有限 PR 收口维护发布、MAP 配置依赖和数据生命周期；最终只做一次生产部署与一次性能力矩阵验收
 
+- [LLM Gateway 外部平台化与控制台体验收口](plan.platform.llm-gateway-external-platform) `plan.platform.llm-gateway-external-platform`
+  > 租户/团队/用户/RBAC、外部接入教程、appCaller 提示词策略、左侧导航、图表与金额可信度的有限五 PR 计划
+
+- [LLM Gateway 控制台产品化与独立目录收拢](plan.platform.llm-gateway.console-productization) `plan.platform.llm-gateway.console-productization`
+  > 双主题可发现性、请求记录、安全直测、租户首页、学习中心、模型池用户心智与根目录 llmgw 收拢的分阶段计划
+
 - [LLM Gateway 协议入口与模型池迁移计划](plan.platform.llm-gateway-protocol-router) `plan.platform.llm-gateway-protocol-router`
   > GW Native/OpenAI/Claude/Gemini 多入口统一到 GW Request IR，appCaller、模型池、路由、密钥、日志与审计归 GW 管理
 
@@ -677,6 +683,7 @@
   > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
 
 - [周报 Agent 实施进度追踪](plan.report-agent.impl) `plan.report-agent.impl`
+- [Report Agent 模型质量治理](plan.report-agent.model-governance) `plan.report-agent.model-governance`
   > 周报 Agent 各阶段的实施进度与状态
 
 - [统一缺陷管理平台实施计划](plan.defect-agent.unified-management) `plan.defect-agent.unified-management`
@@ -978,7 +985,7 @@
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
 - [周报 2026-W27 (06-29 ~ 07-05)](report.2026-W27) `report.2026-W27`
-  > 2026 年第 27 周工作总结（356 commits / 44 PRs，剥离落地周 + 视觉归一周：LLM 网关从 MAP 物理剥离 跨进程 serving+shadow 影子比对+CDS 命名子域+双出口面板+真实观测控制台 prd-llmgw-web 可登录可观测可配置+Mongo Console 受控写(#965/#971~#985 八连)、首页/登录页/CDS 品牌视觉语言归一 首页工作台重构继续上次+极光氛围+落地页性能+CDS 宝石六芒标+布局架构归一+日报报纸版 HTML、米多星球 SSO 登录+禁用密码登录、知识星球 3D 星系视觉艺术升级 v2 深空穹顶+星云+热核着色、CDS 稳定性 分支级网络隔离+docker 网络跨路径回收+不可变生产发布、新增邮件模板智能体+用户通知推送订阅 Bark 协议+涌现探索器流式生长节点+快捷指令短视频解析；fix 占比 43% 大功能落地+密集收口）
+  > 2026 年第 27 周工作总结（356 commits / 44 PRs，剥离落地周 + 视觉归一周：LLM 网关从 MAP 物理剥离 跨进程 serving+shadow 影子比对+CDS 命名子域+双出口面板+真实观测控制台 llmgw/web 可登录可观测可配置+Mongo Console 受控写(#965/#971~#985 八连)、首页/登录页/CDS 品牌视觉语言归一 首页工作台重构继续上次+极光氛围+落地页性能+CDS 宝石六芒标+布局架构归一+日报报纸版 HTML、米多星球 SSO 登录+禁用密码登录、知识星球 3D 星系视觉艺术升级 v2 深空穹顶+星云+热核着色、CDS 稳定性 分支级网络隔离+docker 网络跨路径回收+不可变生产发布、新增邮件模板智能体+用户通知推送订阅 Bark 协议+涌现探索器流式生长节点+快捷指令短视频解析；fix 占比 43% 大功能落地+密集收口）
 
 - [周报 2026-W26 (06-22 ~ 06-28)](report.2026-W26) `report.2026-W26`
   > 2026 年第 26 周工作总结（414 commits / 30 PRs，W25 收口后的反弹周，两条大新功能 + CDS 稳定性深水区三线并进：知识库「文档星系/宇宙图」三维视图 buildDocGalaxy+UnrealBloom 辉光+双链连线+六批交互迭代到演示级、VOC 行为之声「AI 用户分析下钻」端点三段式 证据→大模型→Tab+根因置顶+加载动效 1:1 复刻、CDS 自更新极速版 CI 预构建到 ghcr+决策层+运行层三步基建、CDS 部署卡死收敛器 看门狗租约判活+调度器永不降温主干+持久化投影剥离 runtime 派生(#886 75commits)、CDS 性能治理 构建并发闸+分支列表缓存+状态广播节流+mongo-split 写入合并、CDS 验收报告升级为验收中心 项目级文件夹+匿名分享链+深链+PR 回写+MAP peer-sync+base64 截图内容寻址、知识库跨节点同步支持二进制附件一篇不差、移动端整体重构首批 headbar/首页 Hero/百宝箱发现、生图等待流光进度条+文学配图缩放预览、revert 删除所有催办产品决策；fix 占比 47% 边清债边开新坑）
@@ -1074,6 +1081,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |
+| 2026-07-12 | 新增 | `plan.platform.llm-gateway-external-platform` | LLM Gateway 外部平台化与控制台体验收口 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
 | 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |
 | 2026-07-10 | 更新 | `plan.platform.llm-gateway-production-hardening` | LLM Gateway 生产事实、隐性风险与架构修正 · 计划 |

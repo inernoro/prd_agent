@@ -1,0 +1,17 @@
+.git
+.git/**
+**/bin
+**/bin/**
+**/obj
+**/obj/**
+**/node_modules
+**/node_modules/**
+**/dist
+**/dist/**
+**/output
+**/output/**
+**/.DS_Store
+**/*.user
+**/*.suo
+**/TestResults
+**/TestResults/**

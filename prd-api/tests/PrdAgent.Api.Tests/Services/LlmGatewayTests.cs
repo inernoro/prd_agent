@@ -1247,6 +1247,50 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendAsync_AppliedPromptPolicySendsMergedPromptButLogsOnlyMetadata()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform { Id = "platform-a", Name = "Provider A", PlatformType = "openai", ApiUrl = "https://provider-a.example.com", Enabled = true }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a", Name = "Pool A", Code = "pool-a", ModelType = "chat", IsDefaultForType = true, Priority = 0,
+                Models = [new ModelGroupItem { PlatformId = "platform-a", ModelId = "model-a", Priority = 0, HealthStatus = ModelHealthStatus.Healthy }]
+            });
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
+
+        _ = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat", ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = "sensitive-policy-prefix\n\nrequest-system\n\nsensitive-policy-suffix" },
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" },
+                },
+            },
+            Context = new GatewayRequestContext
+            {
+                TenantId = "tenant-a", PromptPolicyId = "policy-a", PromptPolicyVersion = 7,
+                PromptPolicyHash = "policy-hash", PromptPolicyChars = 48,
+                SystemPromptText = "sensitive-policy-prefix\n\nrequest-system\n\nsensitive-policy-suffix",
+            },
+        });
+
+        Assert.Contains("sensitive-policy-prefix", http.RequestBodies.Single());
+        Assert.NotNull(logWriter.Start);
+        Assert.DoesNotContain("sensitive-policy-prefix", logWriter.Start!.RequestBodyRedacted);
+        Assert.Contains("[PROMPT_POLICY:policy-a:v7:policy-hash]", logWriter.Start.RequestBodyRedacted);
+        Assert.Null(logWriter.Start.SystemPromptText);
+        Assert.Equal("policy-a", logWriter.Start.PromptPolicyId);
+        Assert.Equal(7, logWriter.Start.PromptPolicyVersion);
+        Assert.Equal("policy-hash", logWriter.Start.PromptPolicyHash);
+        Assert.Equal(48, logWriter.Start.PromptPolicyChars);
+    }
+
+    [Fact]
     public async Task SendAsync_PreservesOpenAiLogprobsInExtensions()
     {
         var resolver = new InMemoryModelResolver()

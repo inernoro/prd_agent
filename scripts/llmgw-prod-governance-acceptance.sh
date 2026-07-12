@@ -11,6 +11,7 @@ set -euo pipefail
 
 execute="${LLMGW_GOVERNANCE_ACCEPTANCE_EXECUTE:-0}"
 root="${LLMGW_GOVERNANCE_ACCEPTANCE_ROOT:-https://map.ebcone.net}"
+console_base="${LLMGW_CONSOLE_API_BASE:-$root/gw}"
 env_file="${LLMGW_ENV_FILE:-.env}"
 mongo_container="${LLMGW_MONGO_CONTAINER:-prdagent-mongodb}"
 primary_container="${LLMGW_SERVE_PRIMARY_CONTAINER:-prdagent-llmgw-serve}"
@@ -26,9 +27,10 @@ if [[ "$execute" != "1" ]]; then
 LLM Gateway production governance acceptance dry-run
 - root: $root
 - temporary caller: $temp_caller
+- tenant: resolved from the authenticated console session
 - checks: scoped key allow/deny/revoke, budget reservation, provider concurrency, lifecycle dry-run, serving failover
 - paid upstream calls: 0 (host-local fake upstream)
-- database changes: temporary records only; cleanup trap removes all records
+- database changes: tenant-scoped temporary records only; cleanup trap removes all records
 Set LLMGW_GOVERNANCE_ACCEPTANCE_EXECUTE=1 to execute.
 EOF
   exit 0
@@ -49,29 +51,32 @@ set -a
 # shellcheck disable=SC1090
 source "$env_file"
 set +a
-: "${LLMGW_JWT_SECRET:?LLMGW_JWT_SECRET is required}"
+export LLMGW_CONSOLE_PASSWORD="${LLMGW_CONSOLE_PASSWORD:-${LLMGW_ADMIN_PASSWORD:-}}"
 
 tmp_dir="$(mktemp -d /tmp/llmgw-governance-acceptance.XXXXXX)"
 fake_pid=""
 token=""
+tenant_id=""
 key_id=""
 scoped_key=""
 primary_stopped=0
 
 cleanup_database() {
-  docker exec "$mongo_container" mongosh --quiet llm_gateway --eval '
+  [[ -n "$tenant_id" ]] || return 0
+  docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
+    const tenantId = '$tenant_id';
     const caller = "llmgw-acceptance.governance::chat";
-    db.llmgw_app_callers.deleteMany({ AppCallerCode: caller });
-    db.llmgw_model_pools.deleteMany({ _id: "llmgw-acceptance-pool" });
-    db.llmgw_models.deleteMany({ _id: "llmgw-acceptance-model" });
-    db.llmgw_platforms.deleteMany({ _id: "llmgw-acceptance-platform" });
-    db.llmgw_budget_reservations.deleteMany({ AppCallerCode: caller });
-    db.llmgw_budget_months.deleteMany({ AppCallerCode: caller });
-    db.llmgw_provider_concurrency_slots.deleteMany({ ResourceKey: /llmgw-acceptance/ });
-    db.llmgw_service_keys.deleteMany({ Name: "governance-acceptance-temporary" });
-    db.llmrequestlogs.deleteMany({ AppCallerCode: caller });
-    db.llmshadow_comparisons.deleteMany({ AppCallerCode: caller });
-  ' >/dev/null 2>&1 || true
+    db.llmgw_app_callers.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+    db.llmgw_model_pools.deleteMany({ TenantId: tenantId, _id: "llmgw-acceptance-pool" });
+    db.llmgw_models.deleteMany({ TenantId: tenantId, _id: "llmgw-acceptance-model" });
+    db.llmgw_platforms.deleteMany({ TenantId: tenantId, _id: "llmgw-acceptance-platform" });
+    db.llmgw_budget_reservations.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+    db.llmgw_budget_months.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+    db.llmgw_provider_concurrency_slots.deleteMany({ TenantId: tenantId, ResourceKey: /llmgw-acceptance/ });
+    db.llmgw_service_keys.deleteMany({ TenantId: tenantId, Name: "governance-acceptance-temporary" });
+    db.llmrequestlogs.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+    db.llmshadow_comparisons.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+  " >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -81,7 +86,7 @@ cleanup() {
   if [[ -n "$token" && -n "$key_id" ]]; then
     curl -sS -o /dev/null -X DELETE \
       -H "Authorization: Bearer $token" \
-      "$root/gw/service-keys/$key_id" || true
+      "$console_base/service-keys/$key_id" || true
   fi
   [[ -n "$fake_pid" ]] && kill "$fake_pid" >/dev/null 2>&1 || true
   cleanup_database
@@ -153,36 +158,68 @@ docker exec "$primary_container" curl -fsS -o /dev/null -X POST \
 : >"$counter"
 
 fake_url="http://$gateway_ip:$fake_port"
+: "${LLMGW_CONSOLE_PASSWORD:?LLMGW_CONSOLE_PASSWORD or LLMGW_ADMIN_PASSWORD is required}"
+login_body="$(python3 - <<'PY'
+import json
+import os
+print(json.dumps({
+    "username": os.environ.get("LLMGW_CONSOLE_USERNAME", "admin"),
+    "password": os.environ["LLMGW_CONSOLE_PASSWORD"],
+}))
+PY
+)"
+login_response="$(curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data "$login_body" "$console_base/auth/login")"
+token="$(printf '%s' "$login_response" | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+if payload.get("success") is not True:
+    raise SystemExit("console login failed")
+print(payload["data"]["token"])
+')"
+tenant_id="$(curl -fsS -H "Authorization: Bearer $token" "$console_base/auth/context" | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+if payload.get("success") is not True:
+    raise SystemExit("tenant context failed")
+print(payload["data"]["id"])
+')"
+[[ -n "$tenant_id" ]] || {
+  echo "console token did not resolve a tenant" >&2
+  exit 1
+}
+
 docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
   const now = new Date();
-  const sourceCaller = db.llmgw_app_callers.findOne({ AppCallerCode: 'report-agent.generate::chat', RequestType: 'chat' });
+  const tenantId = '$tenant_id';
+  const sourceCaller = db.llmgw_app_callers.findOne({ TenantId: tenantId, AppCallerCode: 'report-agent.generate::chat', RequestType: 'chat' });
   if (!sourceCaller || !sourceCaller.ModelPoolId) throw new Error('source appCaller pool missing');
-  const sourcePool = db.llmgw_model_pools.findOne({ _id: sourceCaller.ModelPoolId });
+  const sourcePool = db.llmgw_model_pools.findOne({ TenantId: tenantId, _id: sourceCaller.ModelPoolId });
   if (!sourcePool) throw new Error('source model pool missing');
   let sourceModel = null;
   let sourcePlatform = null;
   let sourceEntry = null;
   for (const entry of sourcePool.Models || []) {
-    const model = db.llmgw_models.findOne({ PlatformId: entry.PlatformId, ModelName: entry.ModelId })
-      || db.llmgw_models.findOne({ _id: entry.ModelId });
-    const platform = model && db.llmgw_platforms.findOne({ _id: model.PlatformId, Enabled: true });
+    const model = db.llmgw_models.findOne({ TenantId: tenantId, PlatformId: entry.PlatformId, ModelName: entry.ModelId })
+      || db.llmgw_models.findOne({ TenantId: tenantId, _id: entry.ModelId });
+    const platform = model && db.llmgw_platforms.findOne({ TenantId: tenantId, _id: model.PlatformId, Enabled: true });
     if (model && platform) { sourceModel = model; sourcePlatform = platform; sourceEntry = entry; break; }
   }
   if (!sourceModel || !sourcePlatform || !sourceEntry) throw new Error('source model/platform missing');
   db.llmgw_platforms.insertOne({ ...sourcePlatform,
-    _id: '$temp_platform', Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url',
+    _id: '$temp_platform', TenantId: tenantId, Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url',
     PlatformType: 'openai', MaxConcurrency: 1, CreatedAt: now, UpdatedAt: now });
   db.llmgw_models.insertOne({ ...sourceModel,
-    _id: '$temp_model_id', PlatformId: '$temp_platform', ModelName: '$temp_model_name',
+    _id: '$temp_model_id', TenantId: tenantId, PlatformId: '$temp_platform', ModelName: '$temp_model_name',
     Name: 'LLMGW acceptance fake', ApiUrl: '$fake_url', Protocol: 'openai', MaxConcurrency: 1,
     MaxRetries: 0, Timeout: 15000, CreatedAt: now, UpdatedAt: now });
   db.llmgw_model_pools.insertOne({ ...sourcePool,
-    _id: '$temp_pool', Code: '$temp_pool', Name: 'LLMGW acceptance pool',
+    _id: '$temp_pool', TenantId: tenantId, Code: '$temp_pool', Name: 'LLMGW acceptance pool',
     Models: [{ ModelId: '$temp_model_name', PlatformId: '$temp_platform', Protocol: 'openai', Priority: 1,
       HealthStatus: 0, ConsecutiveFailures: 0, ConsecutiveSuccesses: 0 }],
     IsDefaultForType: false, CreatedAt: now, UpdatedAt: now });
   db.llmgw_app_callers.insertOne({
-    _id: 'llmgw-acceptance-caller', AppCallerCode: '$temp_caller',
+    _id: 'llmgw-acceptance-caller', TenantId: tenantId, AppCallerCode: '$temp_caller',
     Title: 'LLMGW governance acceptance', RequestType: 'chat', SourceSystem: 'map',
     Status: 'configured', ModelPolicy: 'pool', ModelPoolId: '$temp_pool',
     ParameterPolicy: 'default-drop', MonthlyBudgetUsd: NumberDecimal('0.01'),
@@ -190,37 +227,6 @@ docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
     ObservedIngressProtocols: ['gw-native'], CreatedAt: now, UpdatedAt: now,
     FirstSeenAt: now, LastSeenAt: now });
 " >/dev/null
-
-token="$(python3 - <<'PY'
-import base64
-import hashlib
-import hmac
-import json
-import os
-import time
-import uuid
-
-encode = lambda value: base64.urlsafe_b64encode(
-    json.dumps(value, separators=(",", ":")).encode()
-).rstrip(b"=").decode()
-now = int(time.time())
-header = encode({"alg": "HS256", "typ": "JWT"})
-payload = encode({
-    "sub": "admin",
-    "jti": uuid.uuid4().hex,
-    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "admin",
-    "nbf": now - 5,
-    "exp": now + 900,
-    "iss": "prdagent-llmgw",
-})
-signature = base64.urlsafe_b64encode(hmac.new(
-    os.environ["LLMGW_JWT_SECRET"].encode(),
-    f"{header}.{payload}".encode(),
-    hashlib.sha256,
-).digest()).rstrip(b"=").decode()
-print(f"{header}.{payload}.{signature}")
-PY
-)"
 
 key_body="$(python3 - <<'PY'
 import datetime
@@ -236,7 +242,7 @@ print(json.dumps({
 PY
 )"
 created="$(curl -fsS -X POST -H "Authorization: Bearer $token" \
-  -H 'Content-Type: application/json' --data "$key_body" "$root/gw/service-keys")"
+  -H 'Content-Type: application/json' --data "$key_body" "$console_base/service-keys")"
 mapfile -t key_pair < <(printf '%s' "$created" | python3 -c '
 import json, sys
 data = json.load(sys.stdin).get("data", {})
@@ -312,23 +318,26 @@ if successes != 1 or rejections != 1 or calls != 1:
 print("budget_atomic_reservation=pass")
 PY
 
-docker exec "$mongo_container" mongosh --quiet llm_gateway --eval '
+docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
+  const tenantId = '$tenant_id';
   const caller = "llmgw-acceptance.governance::chat";
-  db.llmgw_app_callers.updateOne({ AppCallerCode: caller },
-    { $unset: { MonthlyBudgetUsd: "", BudgetReservationUsd: "" } });
-  db.llmgw_budget_reservations.deleteMany({ AppCallerCode: caller });
-  db.llmgw_budget_months.deleteMany({ AppCallerCode: caller });
-' >/dev/null
+  db.llmgw_app_callers.updateOne({ TenantId: tenantId, AppCallerCode: caller },
+    { \$unset: { MonthlyBudgetUsd: "", BudgetReservationUsd: "" } });
+  db.llmgw_budget_reservations.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+  db.llmgw_budget_months.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
+" >/dev/null
 : >"$counter"
 
 concurrency_rows="$(run_pair concurrency)"
 concurrency_calls="$(wc -l <"$counter" | tr -d ' ')"
-active_leases="$(docker exec "$mongo_container" mongosh --quiet llm_gateway --eval '
+active_leases="$(docker exec "$mongo_container" mongosh --quiet llm_gateway --eval "
+  const tenantId = '$tenant_id';
   print(db.llmgw_provider_concurrency_slots.countDocuments({
+    TenantId: tenantId,
     ResourceKey: /llmgw-acceptance/,
-    LeaseId: { $nin: ["", null] }, ExpiresAt: { $gt: new Date() }
+    LeaseId: { \$nin: ["", null] }, ExpiresAt: { \$gt: new Date() }
   }))
-')"
+")"
 python3 - "$concurrency_rows" "$concurrency_calls" "$active_leases" <<'PY'
 import json, sys
 rows = json.loads(sys.argv[1])
@@ -373,7 +382,7 @@ done
 echo "serving_failover=pass"
 
 revoke_status="$(status_for -X DELETE -H "Authorization: Bearer $token" \
-  "$root/gw/service-keys/$key_id")"
+  "$console_base/service-keys/$key_id")"
 [[ "$revoke_status" == "200" ]] || {
   echo "service key revoke failed: status=$revoke_status" >&2
   exit 1

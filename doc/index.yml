@@ -255,6 +255,7 @@ docs:
   # ── 五、计划与方案 ──
   plan.daily-tips.scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
   plan.report-agent.impl: 周报 Agent 实施进度追踪
+  plan.report-agent.model-governance: Report Agent 模型质量治理
   plan.defect-agent.unified-management: 统一缺陷管理平台实施计划
   plan.product-agent.pa.competitive-improvements: PA Agent 竞品调研与改进方案
   plan.knowledge-base.multi-document: PRD Agent 多文档系统设计方案
@@ -280,6 +281,8 @@ docs:
   plan.llm-gateway.status-dashboard: LLM 网关剥离活状态看板（唯一"现在到哪了/能不能发布"入口，记分卡 + Gate + 下一步 + 验收证据）
   plan.platform.llm-gateway-production-hardening: LLM Gateway 生产事实、隐性风险与架构修正 · 计划
   plan.platform.llm-gateway-known-availability-closeout: LLM Gateway 已知可用性收口计划（三个有限 PR、一次生产部署、一次性验收）
+  plan.platform.llm-gateway-external-platform: LLM Gateway 外部平台化与控制台体验收口 · 计划
+  plan.platform.llm-gateway.console-productization: LLM Gateway 控制台产品化与独立目录收拢 · 计划
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
