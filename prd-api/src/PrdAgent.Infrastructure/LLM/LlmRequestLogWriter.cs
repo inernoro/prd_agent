@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.LLM;
@@ -51,7 +52,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var log = new LlmRequestLog
             {
                 Id = Guid.NewGuid().ToString(),
-                TenantId = start.TenantId ?? string.Empty,
+                TenantId = ResolveTenantId(start.TenantId),
                 TeamId = start.TeamId,
                 RequestId = start.RequestId,
                 ReleaseCommit = releaseCommit,
@@ -152,7 +153,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 var fallbackLog = new LlmRequestLog
                 {
                     Id = Guid.NewGuid().ToString(),
-                    TenantId = start.TenantId ?? string.Empty,
+                    TenantId = ResolveTenantId(start.TenantId),
                     TeamId = start.TeamId,
                     RequestId = start.RequestId,
                     ReleaseCommit = releaseCommit,
@@ -191,6 +192,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             }
         }
     }
+
+    private static string ResolveTenantId(string? tenantId)
+        => string.IsNullOrWhiteSpace(tenantId)
+            ? GatewayTenantDefaults.InternalTenantId
+            : tenantId.Trim();
 
     public void MarkFirstByte(string logId, DateTime at)
     {

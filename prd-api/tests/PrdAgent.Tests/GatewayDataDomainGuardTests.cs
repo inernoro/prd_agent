@@ -269,6 +269,25 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void TenantBoundaryPropagation_PreservesVerifiedTenantAndInternalLogFallback()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
+
+        Assert.Contains("GetMetadata<IAllowAnonymous>()", consoleProgram);
+        Assert.True(
+            endpoints.Split("TenantId = ingress.Context?.TenantId", StringSplitOptions.None).Length - 1 >= 2,
+            "native 与 raw 路由重建都必须使用 service key 校验后写入的 ingress tenant");
+        Assert.True(
+            endpoints.Split("TeamId = ingress.Context?.TeamId", StringSplitOptions.None).Length - 1 >= 2,
+            "native 与 raw 路由重建都必须使用 service key 校验后写入的 ingress team");
+        Assert.Contains("TenantId = ResolveTenantId(start.TenantId)", logWriter);
+        Assert.Contains("GatewayTenantDefaults.InternalTenantId", logWriter);
+        Assert.DoesNotContain("TenantId = start.TenantId ?? string.Empty", logWriter);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");

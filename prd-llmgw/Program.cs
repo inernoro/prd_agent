@@ -10,6 +10,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -213,7 +214,8 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
 
 app.Use(async (http, next) =>
 {
-    if (http.User.Identity?.IsAuthenticated != true)
+    if (http.User.Identity?.IsAuthenticated != true
+        || http.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() is not null)
     {
         await next();
         return;

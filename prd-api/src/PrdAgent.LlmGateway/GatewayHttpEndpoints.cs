@@ -4064,8 +4064,8 @@ public static class GatewayHttpEndpoints
             IncludeThinking = request.IncludeThinking,
             Context = new GatewayRequestContext
             {
-                TenantId = source?.TenantId,
-                TeamId = source?.TeamId,
+                TenantId = ingress.Context?.TenantId,
+                TeamId = ingress.Context?.TeamId,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
@@ -4113,8 +4113,8 @@ public static class GatewayHttpEndpoints
             ExpectBinaryResponse = request.ExpectBinaryResponse,
             Context = new GatewayRequestContext
             {
-                TenantId = source?.TenantId,
-                TeamId = source?.TeamId,
+                TenantId = ingress.Context?.TenantId,
+                TeamId = ingress.Context?.TeamId,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
