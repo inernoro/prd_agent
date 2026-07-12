@@ -904,16 +904,18 @@ public static class GatewayHttpEndpoints
 
             GatewayCancellationLease? cancellation = null;
             var multipartRequestSucceeded = false;
+            var multipartOwnershipEstablished = false;
+            var verifiedTenantId = GetVerifiedTenantId(http);
             try
             {
-                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
+                cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(verifiedTenantId, ingress.AppCallerCode, ingress.RequestId);
                 var token = cancellation?.Token ?? CancellationToken.None;
                 var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
                 var rehydrated = await RehydrateMultipartFileRefsAsync(
                     request,
                     services.GetService<IAssetStorage>(),
                     services.GetService<LlmGatewayDataContext>(),
-                    GetVerifiedTenantId(http),
+                    verifiedTenantId,
                     requireTenantManifest: authorization is { LegacySharedKey: false },
                     token);
                 if (!rehydrated.Success)
@@ -923,6 +925,7 @@ public static class GatewayHttpEndpoints
                     return JsonContentResult(rehydrated.Error!, jsonOpts);
                 }
 
+                multipartOwnershipEstablished = true;
                 request = rehydrated.Request ?? request;
                 var routedRequest = ApplyIngressRouting(request, ingress);
                 using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
@@ -962,12 +965,16 @@ public static class GatewayHttpEndpoints
             finally
             {
                 cancellation?.Dispose();
-                await CleanupMultipartRefsAsync(
-                    request,
-                    services.GetService<IAssetStorage>(),
-                    services.GetService<LlmGatewayDataContext>(),
-                    services.GetService<IConfiguration>(),
-                    multipartRequestSucceeded);
+                if (multipartOwnershipEstablished)
+                {
+                    await CleanupMultipartRefsAsync(
+                        request,
+                        services.GetService<IAssetStorage>(),
+                        services.GetService<LlmGatewayDataContext>(),
+                        services.GetService<IConfiguration>(),
+                        verifiedTenantId,
+                        multipartRequestSucceeded);
+                }
             }
         });
 
@@ -4430,11 +4437,11 @@ public static class GatewayHttpEndpoints
         IAssetStorage? storage,
         LlmGatewayDataContext? data,
         IConfiguration? configuration,
+        string tenantId,
         bool requestSucceeded)
     {
         if (storage == null || request.MultipartFileRefs is not { Count: > 0 }) return;
         var manifests = data?.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
-        var tenantId = request.Context?.TenantId;
         if (string.IsNullOrWhiteSpace(tenantId)) return;
         foreach (var fileRef in request.MultipartFileRefs.Values)
         {

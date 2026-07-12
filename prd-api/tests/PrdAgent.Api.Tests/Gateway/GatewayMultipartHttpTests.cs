@@ -192,6 +192,7 @@ public class GatewayMultipartHttpTests
                         AppCallerCode = "tenant-a.app::vision",
                         ModelType = "vision",
                         IsMultipart = true,
+                        Context = new GatewayRequestContext { TenantId = "tenant-b" },
                         MultipartFileRefs = new Dictionary<string, MultipartFileRef>
                         {
                             ["image"] = new()
@@ -219,6 +220,7 @@ public class GatewayMultipartHttpTests
             raw.ShouldNotBeNull();
             raw!.ErrorCode.ShouldBe("MULTIPART_REF_NOT_FOUND");
             storage.DownloadCount.ShouldBe(0);
+            storage.DeleteCount.ShouldBe(0);
             gateway.CapturedRaw.ShouldBeNull();
 
             await scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
@@ -235,6 +237,7 @@ public class GatewayMultipartHttpTests
 
             ownTenantResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
             storage.DownloadCount.ShouldBe(1);
+            storage.DeleteCount.ShouldBe(1);
             gateway.CapturedRaw.ShouldNotBeNull();
         }
         finally
@@ -379,6 +382,7 @@ public class GatewayMultipartHttpTests
     {
         private readonly Dictionary<string, (byte[] Bytes, string? ContentType)> _objects = new(StringComparer.Ordinal);
         public int DownloadCount { get; private set; }
+        public int DeleteCount { get; private set; }
 
         public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
         {
@@ -416,6 +420,7 @@ public class GatewayMultipartHttpTests
 
         public Task DeleteByKeyAsync(string key, CancellationToken ct)
         {
+            DeleteCount++;
             _objects.Remove(key);
             return Task.CompletedTask;
         }
