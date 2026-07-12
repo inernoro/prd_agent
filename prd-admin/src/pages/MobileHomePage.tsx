@@ -66,17 +66,18 @@ interface Skin {
 
 const LIGHT_SKIN: Skin = {
   dark: false,
-  canvas: '#f2f3f7',
+  canvas: '#f7f7f8',
   card: '#ffffff',
-  cardBorder: 'transparent',
-  cardShadow: '0 1px 4px rgba(31,35,41,0.06)',
-  text: '#1f2329',
-  text2: '#646a73',
-  text3: '#8f959e',
-  hairline: '#eff0f4',
-  amber: '#e8890c',
-  tileBg: (tint) => tint,
-  tileFg: () => '#ffffff',
+  cardBorder: '#e9eaee',
+  cardShadow: '0 1px 2px rgba(20,21,26,0.04)',
+  text: '#18191c',
+  text2: '#5f6167',
+  text3: '#9a9ca3',
+  hairline: '#f0f0f2',
+  amber: '#d97a08',
+  // 质感浅色(2026-07-12 二次纠偏):实底彩块读作 OA 老土,改 12% tint 底 + 彩色线稿
+  tileBg: (tint) => `${tint}1f`,
+  tileFg: (tint) => tint,
   tileBorder: 'transparent',
 };
 
@@ -128,7 +129,7 @@ export default function MobileHomePage() {
   const systemDark = useSystemDark();
   const S = systemDark ? DARK_SKIN : LIGHT_SKIN;
   const now = useMemo(() => new Date(), []);
-  const { dateText, weekday } = formatDateline(now);
+  const { weekday } = formatDateline(now);
 
   // 浅色形态：壳层（顶栏/底部 Tab）一起进入白天 token（与 report/daily-post 同一模式）。
   useEffect(() => {
@@ -159,42 +160,18 @@ export default function MobileHomePage() {
       }}
     >
       <main style={{ padding: '0 12px 112px', maxWidth: 720, margin: '0 auto' }}>
-        {/* ── 头部：浅色=琥珀头带（问候+关键数字）；暗色=安静问候行 ── */}
-        {S.dark ? (
-          <header style={{ padding: '14px 6px 2px' }}>
-            <div style={{ fontSize: 17, fontWeight: 510, letterSpacing: '-0.02em' }}>
+        {/* ── 头部：两形态同为安静问候行（橙色大色块已因「老土」撤下，
+              琥珀只留给数字与按钮做点睛） ── */}
+        <header style={{ padding: '16px 6px 4px' }}>
+          <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
+            <span style={{ fontSize: S.dark ? 17 : 21, fontWeight: S.dark ? 510 : 700, letterSpacing: '-0.02em' }}>
               {greetingFor(now)}，{displayName}
-            </div>
-            <div style={{ marginTop: 2, fontSize: 12, color: S.text3 }}>
-              {dateText} {weekday}
-            </div>
-          </header>
-        ) : (
-          <header
-            style={{
-              margin: '0 -12px',
-              padding: '16px 22px 18px',
-              background: 'linear-gradient(140deg, #ff9f0a 0%, #ef820a 62%, #e0740a 100%)',
-              color: '#fff',
-              borderRadius: '0 0 20px 20px',
-            }}
-          >
-            <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
-              <span style={{ fontSize: 15, fontWeight: 600 }}>
-                {greetingFor(now)}，{displayName}
-              </span>
-              <span style={{ fontSize: 12, opacity: 0.85, flex: 'none' }}>
-                {dateText} {weekday}
-              </span>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 30, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
-              {data.loading ? '—' : formatCompactNumber(data.stats?.totalTokens ?? 0)}
-            </div>
-            <div style={{ marginTop: 3, fontSize: 11.5, opacity: 0.82 }}>
-              近 7 日 Token 用量 · 生图 {data.stats?.imageGenerations ?? 0} 张 · 会话 {data.stats?.sessions ?? 0} 次
-            </div>
-          </header>
-        )}
+            </span>
+            <span style={{ fontSize: 12, color: S.text3, flex: 'none' }}>
+              {now.getMonth() + 1}月{now.getDate()}日 {weekday}
+            </span>
+          </div>
+        </header>
 
         {/* ── 继续上次 ── */}
         {headline && (
@@ -315,7 +292,7 @@ export default function MobileHomePage() {
                     fontWeight: S.dark ? 510 : 700,
                     letterSpacing: '-0.01em',
                     fontVariantNumeric: 'tabular-nums',
-                    color: stat.hot && S.dark ? S.amber : S.text,
+                    color: stat.hot ? S.amber : S.text,
                   }}
                 >
                   {data.loading ? '—' : formatCompactNumber(stat.value)}
@@ -394,8 +371,8 @@ function Card({
       style={{
         marginTop: 12,
         background: S.card,
-        border: S.dark ? `0.5px solid ${S.cardBorder}` : undefined,
-        borderRadius: 12,
+        border: `${S.dark ? '0.5px' : '1px'} solid ${S.cardBorder}`,
+        borderRadius: 14,
         padding: '12px 14px 13px',
         boxShadow: S.cardShadow,
       }}
@@ -490,9 +467,9 @@ function RecommendedShelf({ S, onNavigate }: { S: Skin; onNavigate: (to: string)
                 width: 250,
                 gap: 10,
                 padding: '11px 12px',
-                borderRadius: 12,
+                borderRadius: 14,
                 background: S.card,
-                border: S.dark ? `0.5px solid ${S.cardBorder}` : undefined,
+                border: `${S.dark ? '0.5px' : '1px'} solid ${S.cardBorder}`,
                 boxShadow: S.cardShadow,
                 color: S.text,
               }}
