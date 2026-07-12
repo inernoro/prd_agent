@@ -214,7 +214,13 @@ export default function AppShell() {
       const selfManaged = ['/daily-post', '/report-agent', '/weekly-poster'].some(
         (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
       );
-      if (selfManaged) return;
+      if (selfManaged) {
+        // 属性所有权移交给页面:此后拉宽到桌面/壳层卸载都不由壳层清理,
+        // 避免误清页面自管的主题(Codex P2 二轮)。离开该路由回普通页时,
+        // 下方 set/remove 会重新接管所有权。
+        ownsThemeRef.current = false;
+        return;
+      }
       if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
       else root.removeAttribute('data-theme');
       ownsThemeRef.current = true;
