@@ -283,6 +283,8 @@ public class GatewayDataDomainGuardTests
             endpoints.Split("TeamId = ingress.Context?.TeamId", StringSplitOptions.None).Length - 1 >= 2,
             "native 与 raw 路由重建都必须使用 service key 校验后写入的 ingress team");
         Assert.Contains("TenantId = ResolveTenantId(start.TenantId)", logWriter);
+        Assert.Contains("configuration[\"LlmGateway:InternalTenantId\"]", logWriter);
+        Assert.Contains("? _internalTenantId", logWriter);
         Assert.Contains("GatewayTenantDefaults.InternalTenantId", logWriter);
         Assert.DoesNotContain("TenantId = start.TenantId ?? string.Empty", logWriter);
     }
