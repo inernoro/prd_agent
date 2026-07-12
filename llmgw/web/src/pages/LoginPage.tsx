@@ -1,4 +1,4 @@
-// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 sessionStorage → 跳观测主页。
+// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 sessionStorage → 跳控制台首页。
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, Lock, User } from 'lucide-react';
@@ -89,7 +89,7 @@ export function LoginPage() {
             <Activity size={20} />
           </span>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>LLM 网关观测台</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>LLM Gateway 控制台</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>请登录以查看请求日志</div>
           </div>
         </div>
@@ -137,7 +137,7 @@ export function LoginPage() {
         </form>
 
         <div style={{ marginTop: 18, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          独立观测台账号体系。后端端点约定：POST {`{API_BASE}`}/auth/login，返回 {`{ success, data: { token } }`}。
+          使用独立控制台账号登录。认证端点：POST {`{API_BASE}`}/auth/login，返回 {`{ success, data: { token } }`}。
         </div>
       </div>
     </div>

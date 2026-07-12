@@ -1,4 +1,4 @@
-# 多阶段构建：sdk 编译 → aspnet 运行。构建上下文为 ./prd-llmgw
+# 多阶段构建：sdk 编译 → aspnet 运行。构建上下文为 ./llmgw/console-api
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 

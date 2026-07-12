@@ -1,4 +1,4 @@
-# 独立 LLM 网关前端站 prd-llmgw-web —— 多阶段构建：pnpm 构建静态产物 → nginx 托管。
+# 独立 LLM 网关前端站 llmgw/web —— 多阶段构建：pnpm 构建静态产物 → nginx 托管。
 # 与 prd-admin 同款 pnpm/corepack 流程；nginx 负责 SPA 回退 + /gw 反代到网关后端容器。
 # syntax=docker/dockerfile:1.4
 FROM node:20-slim AS build

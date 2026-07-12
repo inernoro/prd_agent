@@ -1,9 +1,9 @@
 {
-  "name": "prd-llmgw-web",
+  "name": "llmgw-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "独立的 LLM 网关观测前端 mini-app（独立账号/路由/组件风格，不依赖 prd-admin/prd-api）",
+  "description": "独立的 LLM Gateway 租户控制台（独立账号、路由和组件体系）",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -281,8 +281,8 @@ if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
   export PRD_AGENT_API_IMAGE="$default_api_image"
 fi
 
-# 默认独立 LLM 网关镜像（控制台 prd-llmgw，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
-# /gw/auth/login、/gw/logs）。prd-llmgw 已是独立项目（CI branch-image 构建 prdagent-llmgw 镜像），
+# 默认独立 LLM 网关镜像（控制台 llmgw/console-api，自包含 ASP.NET 服务，监听 8090，提供 /gw/healthz、
+# /gw/auth/login、/gw/logs）。llmgw/console-api 已是独立项目（CI branch-image 构建 prdagent-llmgw 镜像），
 # 故默认必须指向 prdagent-llmgw:<发布ref>，不能复用 api 镜像——否则 llmgw 服务会错跑
 # PrdAgent.Api.dll、/gw/* 端点全缺。指定 --commit 时也必须钉到同一个 sha ref，避免
 # api 是不可变版本而 GW 三容器仍漂在 latest。

@@ -33,6 +33,7 @@ jobs:
           filters: |
             server:
               - 'prd-api/**'
+              - 'llmgw/serving/**'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
