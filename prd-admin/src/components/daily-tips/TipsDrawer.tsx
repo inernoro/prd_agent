@@ -27,18 +27,28 @@ import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
 
 const PIN_KEY = 'tipsBookPinned';
 const HIDDEN_KEY = 'tipsBookHidden';
-/** 本 session 已自动弹过的 tip id 集合(按 id 记忆,新推送的 tip 还能再弹) */
+/** 已自动弹过的 tip id 集合(按 id 记忆,新推送的 tip 还能再弹)。
+ *  2026-07-12 用户反馈「教程有点烦人,不要反复弹出」:从 sessionStorage 升级为 localStorage——
+ *  每条更新教程每台设备只自动展开一次,跨 session 不再重弹。属 no-localstorage.md 例外清单
+ *  (纯 UI 偏好+用户明确要求跨会话记住,发版后旧值无害:最坏只是不自动弹,入口 pill 始终可手动打开)。 */
 const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
 /** 自动弹出的日级节流:记录今日已自动弹过的日期串(YYYY-M-D)。
  *  无论是「首次兜底」还是「新推送定向 tip」,每天只允许自动弹一次。
  *  受 no-localStorage 规则约束走 sessionStorage,同 tab 内严格只弹一次;
  *  新 tab 同日仍会弹一次,这是 sessionStorage 的固有边界。 */
 const AUTO_OPEN_DATE_KEY = 'tipsBookAutoOpenedDate';
-/** 强制新手引导:本 session 已「自动开讲」过的本页教程(*-page-guide)sourceId 集合。
- *  tips 已由后端过滤掉「已学会」的——还在 tips 里 = 用户没走完整套，进该页就自动开讲一次，
- *  逼着人人都过一遍；本 session 内每条只自动开一次（避免切页反复弹），跨 session 未完成会再弹，
- *  直到用户点「完成」走完最后一步（SpotlightOverlay 末步才 markLearned）。 */
+/** 新手引导:本 session 已「自动开讲」过的本页教程(*-page-guide)sourceId 集合。
+ *  仍保留 sessionStorage 一份——供下方「轻微提醒更新」effect 判断「本 session 刚开过整套教程,
+ *  不紧跟着再弹气泡」(该判断只关心本 session,不能用跨 session 的持久层替代)。 */
 const AUTO_STARTED_GUIDES_KEY = 'tipsAutoStartedGuides';
+/** 新手引导的跨 session 记忆:每台设备每条 *-page-guide 一生只自动开讲一次。
+ *  2026-07-12 用户反馈「教程有点烦人,以前的教程不要自动触发/不要反复弹出」:
+ *  旧行为是「每个新 session 都自动开讲,直到走完最后一步」,用户没走完就会被反复打断。
+ *  新行为:自动开讲一次后(无论是否走完)永久记忆,之后进页不再自动弹;
+ *  想重看随时可点页头「本页教程」pill(入口常驻,未走完时仍有强调态)。
+ *  走 localStorage 属 no-localstorage.md 例外清单(纯 UI 偏好+用户明确要求跨会话记住,
+ *  发版后旧值无害:最坏只是不自动弹,不影响任何服务器权威数据)。 */
+const AUTO_STARTED_GUIDES_FOREVER_KEY = 'tipsAutoStartedGuidesForever';
 /** 轻微提醒更新:本 session 已自动「悬浮气泡」弹过的 *-update-reminder sourceId 集合。
  *  跨 session 的「只弹一次」由 markLearned(服务端)兜底——气泡弹出当下即标记学会,
  *  之后不管用户取消还是点「知道了」都不再显示。本 session set 仅防同 session 内切页重弹。 */
@@ -81,9 +91,10 @@ function isVisualAuditMode(search: string): boolean {
   }
 }
 
-function readAutoOpenedIds(): Set<string> {
+/** 从 storage 读 string 集合(容错:损坏/不可用一律当空集) */
+function readIdSet(storage: 'local' | 'session', key: string): Set<string> {
   try {
-    const raw = sessionStorage.getItem(AUTO_OPENED_IDS_KEY);
+    const raw = (storage === 'local' ? localStorage : sessionStorage).getItem(key);
     if (!raw) return new Set();
     const arr = JSON.parse(raw);
     return new Set(Array.isArray(arr) ? arr : []);
@@ -92,12 +103,21 @@ function readAutoOpenedIds(): Set<string> {
   }
 }
 
-function writeAutoOpenedIds(ids: Set<string>) {
+function writeIdSet(storage: 'local' | 'session', key: string, ids: Set<string>) {
   try {
-    sessionStorage.setItem(AUTO_OPENED_IDS_KEY, JSON.stringify(Array.from(ids)));
+    (storage === 'local' ? localStorage : sessionStorage).setItem(key, JSON.stringify(Array.from(ids)));
   } catch {
     /* noop */
   }
+}
+
+// 更新教程抽屉的「已自动弹过」走 localStorage:每条每台设备只自动展开一次(见 key 注释)
+function readAutoOpenedIds(): Set<string> {
+  return readIdSet('local', AUTO_OPENED_IDS_KEY);
+}
+
+function writeAutoOpenedIds(ids: Set<string>) {
+  writeIdSet('local', AUTO_OPENED_IDS_KEY, ids);
 }
 
 export function TipsDrawer() {
@@ -298,18 +318,14 @@ export function TipsDrawer() {
     // → 不要紧接着再弹更新提醒:新人刚走完整套教程(里面已讲到该新功能),立刻又弹气泡是重复打断(Codex P2)。
     // 留到「下次进页」(page-guide 非本 session 新开)再弹。filterPageTips 不按 learned 过滤,
     // 已学会的 page-guide 仍在 pageTips 里,可据此拿到本页 page-guide 的 sourceId。
-    let startedGuides: Set<string>;
-    try { startedGuides = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
-    catch { startedGuides = new Set(); }
+    const startedGuides = readIdSet('session', AUTO_STARTED_GUIDES_KEY);
     const pageGuide = pageTips.find((t) => typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide'));
     if (pageGuide?.sourceId && startedGuides.has(pageGuide.sourceId)) return;
 
-    let started: Set<string>;
-    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_REMINDERS_KEY) || '[]')); }
-    catch { started = new Set(); }
+    const started = readIdSet('session', AUTO_STARTED_REMINDERS_KEY);
     if (started.has(reminder.sourceId)) return;
     started.add(reminder.sourceId);
-    try { sessionStorage.setItem(AUTO_STARTED_REMINDERS_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    writeIdSet('session', AUTO_STARTED_REMINDERS_KEY, started);
     // 占用当天「自动弹一次」额度:reminder 弹出当下即 markLearned 会把它移出 pageTips,
     // 上方抽屉自动展开 effect 的「有未学会 reminder 就跳过」守卫随之失效;若本页同时还有未学会的
     // 周更新教程,抽屉会在 reminder 气泡上层再自动展开(Bugbot Medium)。这里占掉日额度,抽屉本 session 不再自动弹。
@@ -390,22 +406,23 @@ export function TipsDrawer() {
     [navigate, location.pathname],
   );
 
-  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
-  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
-  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
-  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
-  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
+  // ── 新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
+  // 2026-07-12 用户反馈「教程有点烦人,不要反复弹出」,规则从「每 session 重弹直到走完」改为:
+  //   每条教程每台设备**一生只自动开讲一次**(localStorage 永久记忆,弹过即记,走没走完都不再自动弹)。
+  //   没走完的教程入口 pill 仍保持强调态,学习中心也能随时重看——自动弹只是首次引导,不是强制关卡。
   useEffect(() => {
     if (visualAuditMode) return;
     if (!loaded) return;
     const guide = pageGuideHere;
     if (!guide || !guide.sourceId) return;
-    let started: Set<string>;
-    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
-    catch { started = new Set(); }
-    if (started.has(guide.sourceId)) return;
-    started.add(guide.sourceId);
-    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    const startedEver = readIdSet('local', AUTO_STARTED_GUIDES_FOREVER_KEY);
+    if (startedEver.has(guide.sourceId)) return;
+    startedEver.add(guide.sourceId);
+    writeIdSet('local', AUTO_STARTED_GUIDES_FOREVER_KEY, startedEver);
+    // sessionStorage 同步记一份:供「轻微提醒更新」effect 判断「本 session 刚开过整套教程」
+    const startedSession = readIdSet('session', AUTO_STARTED_GUIDES_KEY);
+    startedSession.add(guide.sourceId);
+    writeIdSet('session', AUTO_STARTED_GUIDES_KEY, startedSession);
     // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
     handleOpenTip(guide);
   }, [loaded, pageGuideHere, handleOpenTip, visualAuditMode]);

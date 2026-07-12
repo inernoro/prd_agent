@@ -20,8 +20,8 @@ import { AppStoreSection, AppStoreRankedList } from '@/components/mobile/appStor
  * 这里首屏直接用静态 BUILTIN_TOOLS 立即出内容（与 MobileHomePage 同款数据源），
  * 接口返回的自建/公开工具到位后再并入，永不空白等待（CLAUDE.md §6）。
  *
- * 布局遵循 mobile-first-density：一条段控 + 一行横滚 chip + FAB，
- * 内容卡片 edge-to-edge 铺满，杜绝「中间操作区缩成小盒子」。
+ * 布局遵循 mobile-first-density：搜索框 + 一条横滚控制条（段控与权属 chip 同行）+ FAB，
+ * 进内容前控制条不超过 2 条且不换行；内容卡片 edge-to-edge 铺满，杜绝「中间操作区缩成小盒子」。
  */
 
 const KIND_SEG = [
@@ -108,15 +108,15 @@ export function MobileToolboxView() {
       style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}
     >
       <div style={{ paddingBottom: 120 }}>
-        {/* 大标题 */}
-        <div style={{ padding: '6px 16px 0', fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, color: C.label }}>
+        {/* 大标题（紧凑：28px + 收紧上下间距，让卡片更早进首屏） */}
+        <div style={{ padding: '4px 16px 0', fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, color: C.label }}>
           发现
         </div>
 
         {/* 搜索 */}
         <div
           className="flex items-center gap-2"
-          style={{ margin: '12px 16px', background: light ? 'rgba(120,120,128,0.12)' : 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
+          style={{ margin: '8px 16px', background: light ? 'rgba(120,120,128,0.12)' : 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
         >
           <Search size={18} style={{ color: C.labelTertiary }} />
           <input
@@ -128,16 +128,16 @@ export function MobileToolboxView() {
           />
         </div>
 
-        {/* 段控：类型维度（一条，替代桌面的两排 tab） */}
-        <MobileSegmented
-          items={KIND_SEG}
-          activeKey={funcKindFilter}
-          onChange={(k) => setFuncKindFilter(k as 'all' | 'agent' | 'tool')}
-          style={{ margin: '4px 16px 6px' }}
-        />
-
-        {/* chip 行：权属维度（单行横滚，永不堆叠） */}
-        <div className="flex gap-2 overflow-x-auto" style={{ padding: '4px 16px 2px', scrollbarWidth: 'none' }}>
+        {/* 控制条：类型段控 + 权属 chip 合并为一条横滚（mobile-first-density §二.3：进内容前控制条 ≤2 且不换行） */}
+        <div className="flex items-center gap-2 overflow-x-auto" style={{ padding: '4px 16px 2px', scrollbarWidth: 'none' }}>
+          <MobileSegmented
+            items={KIND_SEG}
+            activeKey={funcKindFilter}
+            onChange={(k) => setFuncKindFilter(k as 'all' | 'agent' | 'tool')}
+            className="shrink-0"
+            style={{ width: 216 }}
+          />
+          <span aria-hidden className="shrink-0" style={{ width: 1, height: 20, background: C.hairline }} />
           {OWNERSHIP_CHIPS.map((c) => {
             const on = category === c.key;
             return (
