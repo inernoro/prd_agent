@@ -98,6 +98,25 @@ public class VideoGenScene
 
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
+
+    /// <summary>当前采用的视频版本 ID</summary>
+    public string? ActiveVersionId { get; set; }
+
+    /// <summary>本镜历史生成版本，重新渲染不会覆盖旧产物</summary>
+    public List<VideoGenSceneVersion> Versions { get; set; } = new();
+}
+
+/// <summary>单个分镜的一次生成结果</summary>
+public class VideoGenSceneVersion
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string VideoUrl { get; set; } = string.Empty;
+    public string? JobId { get; set; }
+    public string? Model { get; set; }
+    public string Prompt { get; set; } = string.Empty;
+    public int? Duration { get; set; }
+    public double? Cost { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>
@@ -150,6 +169,15 @@ public class VideoGenRun
 
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
+
+    /// <summary>用户已请求把全部分镜合成为完整视频</summary>
+    public bool ExportRequested { get; set; }
+
+    /// <summary>最近一次导出错误；成功后清空</summary>
+    public string? ExportErrorMessage { get; set; }
+
+    public DateTime? ExportStartedAt { get; set; }
+    public DateTime? ExportedAt { get; set; }
 
     // ─── storyboard 模式：分镜列表 ───
 
@@ -217,4 +245,10 @@ public class UpdateVideoSceneRequest
     public int? Duration { get; set; }
     public string? AspectRatio { get; set; }
     public string? Resolution { get; set; }
+}
+
+/// <summary>批量渲染分镜请求；不传 indexes 时渲染所有未完成或失败分镜</summary>
+public class BatchRenderVideoScenesRequest
+{
+    public List<int>? SceneIndexes { get; set; }
 }

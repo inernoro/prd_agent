@@ -132,12 +132,11 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status != VideoGenRunStatus.Editing)
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可修改分镜");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
 
-        var update = Builders<VideoGenRun>.Update.Combine();
         var updates = new List<UpdateDefinition<VideoGenRun>>();
         if (!string.IsNullOrWhiteSpace(request.Topic)) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Topic", request.Topic.Trim()));
         if (!string.IsNullOrWhiteSpace(request.Prompt)) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Prompt", request.Prompt.Trim()));
@@ -146,6 +145,7 @@ public class VideoGenService : IVideoGenService
         if (request.AspectRatio != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.AspectRatio", string.IsNullOrWhiteSpace(request.AspectRatio) ? null : request.AspectRatio.Trim()));
         if (request.Resolution != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Resolution", string.IsNullOrWhiteSpace(request.Resolution) ? null : request.Resolution.Trim()));
         if (updates.Count == 0) return;
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
 
         await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
             Builders<VideoGenRun>.Update.Combine(updates), cancellationToken: ct);
@@ -155,15 +155,19 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status != VideoGenRunStatus.Editing)
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可重新生成分镜");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
 
+        var updates = new List<UpdateDefinition<VideoGenRun>>
+        {
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+        };
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
-            Builders<VideoGenRun>.Update
-                .Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating)
-                .Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+            Builders<VideoGenRun>.Update.Combine(updates),
             cancellationToken: ct);
     }
 
@@ -171,17 +175,122 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status != VideoGenRunStatus.Editing)
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可生成分镜视频");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
 
+        var updates = new List<UpdateDefinition<VideoGenRun>>
+        {
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Rendering),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+        };
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
-            Builders<VideoGenRun>.Update
-                .Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Rendering)
-                .Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null)
-                .Set($"Scenes.{sceneIndex}.VideoUrl", (string?)null),
+            Builders<VideoGenRun>.Update.Combine(updates),
             cancellationToken: ct);
+    }
+
+    public async Task<int> RenderScenesAsync(
+        string runId,
+        string ownerAdminId,
+        IReadOnlyCollection<int>? sceneIndexes = null,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+            throw new InvalidOperationException("仅在编辑阶段可批量生成分镜视频");
+
+        var requested = sceneIndexes == null || sceneIndexes.Count == 0
+            ? null
+            : sceneIndexes.ToHashSet();
+        if (requested?.Any(index => index < 0 || index >= run.Scenes.Count) == true)
+            throw new ArgumentOutOfRangeException(nameof(sceneIndexes), "分镜序号超出范围");
+
+        var updates = new List<UpdateDefinition<VideoGenRun>>();
+        for (var index = 0; index < run.Scenes.Count; index++)
+        {
+            var scene = run.Scenes[index];
+            if (requested != null && !requested.Contains(index)) continue;
+            if (scene.Status is SceneItemStatus.Done or SceneItemStatus.Rendering or SceneItemStatus.Generating) continue;
+
+            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.Status", SceneItemStatus.Rendering));
+            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.ErrorMessage", (string?)null));
+        }
+
+        if (updates.Count == 0) return 0;
+        var count = updates.Count / 2;
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update.Combine(updates),
+            cancellationToken: ct);
+        await PublishEventAsync(runId, "scenes.render.queued", new { count });
+        return count;
+    }
+
+    public async Task ActivateSceneVersionAsync(
+        string runId,
+        string ownerAdminId,
+        int sceneIndex,
+        string versionId,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+            throw new InvalidOperationException("仅在编辑阶段可切换分镜版本");
+        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
+            throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+
+        var version = run.Scenes[sceneIndex].Versions.FirstOrDefault(item => item.Id == versionId)
+                      ?? throw new KeyNotFoundException("分镜版本不存在");
+        var updates = new List<UpdateDefinition<VideoGenRun>>
+        {
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ActiveVersionId", version.Id),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.VideoUrl", version.VideoUrl),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.JobId", version.JobId),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Model", version.Model),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Duration", version.Duration),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Cost", version.Cost),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Done),
+        };
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update.Combine(updates),
+            cancellationToken: ct);
+        await PublishEventAsync(runId, "scene.version.activated", new { sceneIndex, versionId });
+    }
+
+    public async Task RequestExportAsync(
+        string runId,
+        string ownerAdminId,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Mode != VideoGenMode.Storyboard)
+            throw new InvalidOperationException("仅分镜项目需要合成导出");
+        if (run.Status != VideoGenRunStatus.Editing)
+            throw new InvalidOperationException("当前任务不在可导出状态");
+        if (run.Scenes.Count == 0 || run.Scenes.Any(scene => scene.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(scene.VideoUrl)))
+            throw new InvalidOperationException("所有分镜生成完成后才能导出完整视频");
+
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Rendering)
+                .Set(x => x.ExportRequested, true)
+                .Set(x => x.ExportErrorMessage, (string?)null)
+                .Set(x => x.CurrentPhase, "export-queued")
+                .Set(x => x.PhaseProgress, 1),
+            cancellationToken: ct);
+        await PublishEventAsync(runId, "export.queued", new { sceneCount = run.Scenes.Count });
     }
 
     public async Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
@@ -260,5 +369,15 @@ public class VideoGenService : IVideoGenService
         {
             _logger.LogWarning(ex, "VideoGen 事件发布失败: runId={RunId}, event={Event}", runId, eventName);
         }
+    }
+
+    private static void AddReopenEditingUpdates(List<UpdateDefinition<VideoGenRun>> updates)
+    {
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing));
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.CurrentPhase, "editing"));
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.PhaseProgress, 100));
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.VideoAssetUrl, (string?)null));
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.ExportedAt, (DateTime?)null));
+        updates.Add(Builders<VideoGenRun>.Update.Set(x => x.EndedAt, (DateTime?)null));
     }
 }

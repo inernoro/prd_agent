@@ -11,7 +11,8 @@
  * 设计风格参考：Sora / Pika —— 黑色沉浸、单焦点画布、prompt 前置
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle, ChevronDown, ChevronUp, Zap, Scale, Crown } from 'lucide-react';
+import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle, ChevronDown, ChevronUp, Zap, Scale, Crown, Monitor, Smartphone, Square } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -32,10 +33,10 @@ type AspectRatio = '16:9' | '9:16' | '1:1';
 type Resolution = '480p' | '720p' | '1080p';
 
 const DURATION_OPTIONS = [5, 8, 10, 12, 15] as const;
-const ASPECT_OPTIONS: { value: AspectRatio; label: string; emoji: string }[] = [
-  { value: '16:9', label: '横屏 16:9', emoji: '🖥️' },
-  { value: '9:16', label: '竖屏 9:16', emoji: '📱' },
-  { value: '1:1', label: '方形 1:1', emoji: '⬛' },
+const ASPECT_OPTIONS: { value: AspectRatio; label: string; icon: LucideIcon }[] = [
+  { value: '16:9', label: '横屏 16:9', icon: Monitor },
+  { value: '9:16', label: '竖屏 9:16', icon: Smartphone },
+  { value: '1:1', label: '方形 1:1', icon: Square },
 ];
 const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
@@ -176,7 +177,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
   const progressText = (() => {
     if (!currentRun) return '';
     if (currentRun.status === 'Queued') return '排队中…';
-    if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到 OpenRouter…';
+    if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到模型网关…';
     if (currentRun.currentPhase === 'videogen-polling') return 'AI 正在生成视频…';
     if (currentRun.status === 'Completed') return '生成完成';
     if (currentRun.status === 'Failed') return '生成失败';
@@ -219,7 +220,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </div>
               <div className="text-xs text-white/40">
                 任务 ID：{currentRun?.id.slice(0, 12)}…
-                {currentRun?.directVideoJobId && <> · OpenRouter：{currentRun.directVideoJobId.slice(0, 10)}…</>}
+                {currentRun?.directVideoJobId && <> · 上游任务：{currentRun.directVideoJobId.slice(0, 10)}…</>}
               </div>
             </div>
           ) : isFailed ? (
@@ -385,21 +386,24 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
             {/* 宽高比 */}
             <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
-              {ASPECT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setAspect(opt.value)}
-                  disabled={isActive || isSubmitting}
-                  className={cn('px-2 py-1 text-xs transition-colors')}
-                  style={{
-                    background: aspect === opt.value ? 'rgba(236,72,153,0.18)' : 'var(--bg-base)',
-                    color: aspect === opt.value ? '#f472b6' : 'var(--text-muted)',
-                  }}
-                  title={opt.label}
-                >
-                  {opt.emoji} {opt.value}
-                </button>
-              ))}
+              {ASPECT_OPTIONS.map((opt) => {
+                const AspectIcon = opt.icon;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => setAspect(opt.value)}
+                    disabled={isActive || isSubmitting}
+                    className={cn('px-2 py-1 text-xs transition-colors')}
+                    style={{
+                      background: aspect === opt.value ? 'rgba(236,72,153,0.18)' : 'var(--bg-base)',
+                      color: aspect === opt.value ? '#f472b6' : 'var(--text-muted)',
+                    }}
+                    title={opt.label}
+                  >
+                    <span className="inline-flex items-center gap-1"><AspectIcon size={11} /> {opt.value}</span>
+                  </button>
+                );
+              })}
             </div>
 
             {/* 分辨率 */}
@@ -455,7 +459,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
           {/* 费用 + 提示 */}
           <div className="text-[11px] text-white/40 flex items-center gap-3 flex-wrap">
-            <span>💡 视频生成通常需要 1-3 分钟，页面保持打开即可</span>
+            <span className="inline-flex items-center gap-1"><Clock size={11} /> 视频生成通常需要 1-3 分钟，离开页面也会继续执行</span>
             {currentRun?.directVideoCost != null && (
               <span>本次费用：${currentRun.directVideoCost.toFixed(3)}</span>
             )}
@@ -498,7 +502,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
         {/* 完成后的播放器信息 */}
         {isCompleted && currentRun?.videoAssetUrl && (
           <div className="text-[11px] text-white/40 text-center flex items-center justify-center gap-2">
-            <Play size={12} /> 视频链接 7 天内有效，建议尽快下载到本地
+            <Play size={12} /> 视频已保存到项目资产，可继续下载或复用
           </div>
         )}
       </div>

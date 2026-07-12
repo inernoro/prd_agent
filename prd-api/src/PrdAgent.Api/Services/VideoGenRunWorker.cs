@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Diagnostics;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -80,6 +81,22 @@ public class VideoGenRunWorker : BackgroundService
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGen 单镜渲染异常: runId={RunId}", sceneRun.Id);
+                    }
+                    continue;
+                }
+
+                // 路径 4: 全部分镜已完成后，合成为完整 MP4
+                var exportRun = await ClaimExportRunAsync(stoppingToken);
+                if (exportRun != null)
+                {
+                    try
+                    {
+                        await ProcessExportAsync(exportRun);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGen 合成导出异常: runId={RunId}", exportRun.Id);
+                        await FailExportAsync(exportRun, ex.Message);
                     }
                     continue;
                 }
@@ -398,7 +415,7 @@ public class VideoGenRunWorker : BackgroundService
 
     private const string StoryboardScriptingPrompt =
         @"你是视频导演。请基于用户提供的文章/PRD：
-1. 给整段视频取一个吸引人的中文标题（≤14 字，可加 emoji）
+1. 给整段视频取一个吸引人的中文标题（不超过 14 字）
 2. 拆解为 3-8 个适合短视频生成的分镜，每个 5-10 秒，能用一句话英文 prompt 喂给视频大模型（Veo / Kling / Wan / Sora）生成
 
 输出 JSON 对象，schema：
@@ -714,12 +731,26 @@ public class VideoGenRunWorker : BackgroundService
                         CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
 
+                    var version = new VideoGenSceneVersion
+                    {
+                        VideoUrl = stored.Url,
+                        JobId = submitResult.JobId,
+                        Model = submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel,
+                        Prompt = scene.Prompt,
+                        Duration = scene.Duration ?? run.DirectDuration,
+                        Cost = status.Cost,
+                    };
+
                     await _db.VideoGenRuns.UpdateOneAsync(
                         x => x.Id == run.Id,
                         Builders<VideoGenRun>.Update
                             .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Done)
                             .Set($"Scenes.{sceneIdx}.VideoUrl", stored.Url)
-                            .Set($"Scenes.{sceneIdx}.Cost", status.Cost),
+                            .Set($"Scenes.{sceneIdx}.ActiveVersionId", version.Id)
+                            .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
+                            .Set($"Scenes.{sceneIdx}.Model", version.Model)
+                            .Set($"Scenes.{sceneIdx}.Cost", status.Cost)
+                            .Push($"Scenes.{sceneIdx}.Versions", version),
                         cancellationToken: CancellationToken.None);
 
                     await PublishEventAsync(run.Id, "scene.render.done",
@@ -831,6 +862,148 @@ public class VideoGenRunWorker : BackgroundService
             cancellationToken: CancellationToken.None);
         await PublishEventAsync(runId, "scene.render.error",
             new { sceneIndex = sceneIdx, message = trimmed });
+    }
+
+    private async Task<VideoGenRun?> ClaimExportRunAsync(CancellationToken ct)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+                     & fb.Eq(x => x.ExportRequested, true);
+        var update = Builders<VideoGenRun>.Update
+            .Set(x => x.ExportRequested, false)
+            .Set(x => x.ExportStartedAt, DateTime.UtcNow)
+            .Set(x => x.CurrentPhase, "export-preparing")
+            .Set(x => x.PhaseProgress, 5);
+        return await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            filter,
+            update,
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+    }
+
+    private async Task ProcessExportAsync(VideoGenRun run)
+    {
+        if (run.CancelRequested) { await CancelRunAsync(run); return; }
+        var sceneUrls = run.Scenes.Select(scene => scene.VideoUrl).ToList();
+        if (sceneUrls.Count == 0 || sceneUrls.Any(string.IsNullOrWhiteSpace))
+        {
+            await FailExportAsync(run, "存在尚未生成的视频分镜");
+            return;
+        }
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"prd-video-export-{run.Id}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+            var httpClient = httpClientFactory.CreateClient();
+            var inputFiles = new List<string>();
+
+            for (var index = 0; index < sceneUrls.Count; index++)
+            {
+                var inputFile = Path.Combine(tempDir, $"scene-{index:D3}.mp4");
+                using var response = await httpClient.GetAsync(
+                    sceneUrls[index]!, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+                response.EnsureSuccessStatusCode();
+                await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
+                await using var target = File.Create(inputFile);
+                await source.CopyToAsync(target, CancellationToken.None);
+                inputFiles.Add(inputFile);
+
+                var progress = 10 + (int)Math.Round((index + 1d) / sceneUrls.Count * 30d);
+                await UpdateExportProgressAsync(run.Id, "export-downloading", progress);
+            }
+
+            var outputFile = Path.Combine(tempDir, "export.mp4");
+            var args = VideoExportCommandBuilder.Build(inputFiles, outputFile, run.DirectAspectRatio);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            foreach (var arg in args) startInfo.ArgumentList.Add(arg);
+
+            await UpdateExportProgressAsync(run.Id, "export-composing", 50);
+            using var process = Process.Start(startInfo)
+                                ?? throw new InvalidOperationException("ffmpeg 进程启动失败");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var exitTask = process.WaitForExitAsync(CancellationToken.None);
+            var completed = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(15), CancellationToken.None));
+            if (completed != exitTask)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException("视频合成超过 15 分钟");
+            }
+            await exitTask;
+            var stderr = await stderrTask;
+            _ = await stdoutTask;
+            if (process.ExitCode != 0 || !File.Exists(outputFile))
+            {
+                var detail = stderr.Length > 1200 ? stderr[^1200..] : stderr;
+                throw new InvalidOperationException($"ffmpeg 合成失败 (exit={process.ExitCode}): {detail}");
+            }
+
+            await UpdateExportProgressAsync(run.Id, "export-uploading", 90);
+            var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
+            RegistryAssetStorage.OverrideNextScope("generated");
+            var stored = await _assetStorage.SaveAsync(
+                bytes,
+                "video/mp4",
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent,
+                type: AppDomainPaths.TypeVideo);
+
+            var totalCost = run.Scenes.Where(scene => scene.Cost.HasValue).Sum(scene => scene.Cost!.Value);
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.Status, VideoGenRunStatus.Completed)
+                    .Set(x => x.VideoAssetUrl, stored.Url)
+                    .Set(x => x.DirectVideoCost, totalCost)
+                    .Set(x => x.ExportErrorMessage, (string?)null)
+                    .Set(x => x.ExportedAt, DateTime.UtcNow)
+                    .Set(x => x.EndedAt, DateTime.UtcNow)
+                    .Set(x => x.CurrentPhase, "completed")
+                    .Set(x => x.PhaseProgress, 100),
+                cancellationToken: CancellationToken.None);
+            await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); }
+            catch (Exception ex) { _logger.LogWarning(ex, "VideoGen 导出临时目录清理失败: {Path}", tempDir); }
+        }
+    }
+
+    private async Task UpdateExportProgressAsync(string runId, string phase, int progress)
+    {
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.CurrentPhase, phase)
+                .Set(x => x.PhaseProgress, progress),
+            cancellationToken: CancellationToken.None);
+        await PublishEventAsync(runId, "export.progress", new { phase, progress });
+    }
+
+    private async Task FailExportAsync(VideoGenRun run, string errorMessage)
+    {
+        var trimmed = errorMessage.Length > 1200 ? errorMessage[..1200] : errorMessage;
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Editing)
+                .Set(x => x.ExportRequested, false)
+                .Set(x => x.ExportErrorMessage, trimmed)
+                .Set(x => x.CurrentPhase, "export-failed")
+                .Set(x => x.PhaseProgress, 0),
+            cancellationToken: CancellationToken.None);
+        await PublishEventAsync(run.Id, "export.error", new { message = trimmed });
     }
 
     private async Task UpdatePhaseAsync(VideoGenRun run, string phase, int progress)

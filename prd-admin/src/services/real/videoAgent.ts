@@ -8,6 +8,9 @@ import type {
   UpdateVideoSceneContract,
   RegenerateVideoSceneContract,
   RenderVideoSceneContract,
+  RenderVideoScenesContract,
+  ActivateVideoSceneVersionContract,
+  ExportVideoGenRunContract,
   VideoGenRun,
   VideoGenRunListItem,
 } from '@/services/contracts/videoAgent';
@@ -86,4 +89,26 @@ export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (run
 
 export const renderVideoSceneReal: RenderVideoSceneContract = async (runId, sceneIndex) => {
   return await apiRequest<boolean>(api.videoAgent.scenes.render(runId, sceneIndex), { method: 'POST' });
+};
+
+export const renderVideoScenesReal: RenderVideoScenesContract = async (runId, sceneIndexes) => {
+  return await apiRequest<{ count: number }>(api.videoAgent.scenes.renderBatch(runId), {
+    method: 'POST',
+    body: { sceneIndexes },
+  });
+};
+
+export const activateVideoSceneVersionReal: ActivateVideoSceneVersionContract = async (
+  runId,
+  sceneIndex,
+  versionId,
+) => {
+  return await apiRequest<boolean>(
+    api.videoAgent.scenes.activateVersion(runId, sceneIndex, versionId),
+    { method: 'POST' },
+  );
+};
+
+export const exportVideoGenRunReal: ExportVideoGenRunContract = async (runId) => {
+  return await apiRequest<boolean>(api.videoAgent.runs.export(runId), { method: 'POST' });
 };

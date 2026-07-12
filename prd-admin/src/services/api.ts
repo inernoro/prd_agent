@@ -1127,11 +1127,15 @@ export const api = {
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
+      export: (runId: string) => `/api/video-agent/runs/${runId}/export`,
     },
     scenes: {
       update: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}`,
       regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,
       render: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/render`,
+      renderBatch: (runId: string) => `/api/video-agent/runs/${runId}/scenes/render-batch`,
+      activateVersion: (runId: string, sceneIndex: number, versionId: string) =>
+        `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/versions/${versionId}/activate`,
     },
   },
 

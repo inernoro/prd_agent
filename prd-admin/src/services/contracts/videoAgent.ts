@@ -52,6 +52,17 @@ export type VideoGenMode = 'direct' | 'storyboard';
 /** 单分镜状态 */
 export type SceneItemStatus = 'Draft' | 'Generating' | 'Rendering' | 'Done' | 'Error';
 
+export interface VideoGenSceneVersion {
+  id: string;
+  videoUrl: string;
+  jobId?: string;
+  model?: string;
+  prompt: string;
+  duration?: number;
+  cost?: number;
+  createdAt: string;
+}
+
 /** storyboard 模式下的单分镜 */
 export interface VideoGenScene {
   index: number;
@@ -66,6 +77,8 @@ export interface VideoGenScene {
   jobId?: string;
   cost?: number;
   videoUrl?: string;
+  activeVersionId?: string;
+  versions: VideoGenSceneVersion[];
 }
 
 /** 视频生成任务（含 direct + storyboard） */
@@ -93,6 +106,10 @@ export interface VideoGenRun {
   scenes: VideoGenScene[];
   // 产出
   videoAssetUrl?: string;
+  exportRequested: boolean;
+  exportErrorMessage?: string;
+  exportStartedAt?: string;
+  exportedAt?: string;
   // 进度
   currentPhase: string;
   phaseProgress: number;
@@ -107,10 +124,11 @@ export interface VideoGenRun {
   errorMessage?: string;
 }
 
-/** 任务列表项（精简版，含 scenesCount/scenesReady = 0 兼容旧前端字段） */
+/** 任务列表项（精简版） */
 export interface VideoGenRunListItem {
   id: string;
   status: string;
+  mode: VideoGenMode;
   articleTitle?: string;
   currentPhase: string;
   phaseProgress: number;
@@ -120,10 +138,10 @@ export interface VideoGenRunListItem {
   startedAt?: string;
   endedAt?: string;
   errorMessage?: string;
-  /** 已废弃：原分镜数量，恒为 0 */
+  exportErrorMessage?: string;
   scenesCount: number;
-  /** 已废弃：原已就绪分镜数量，恒为 0 */
   scenesReady: number;
+  hasActiveScenes: boolean;
 }
 
 export type CreateVideoGenRunContract = (input: {
@@ -168,6 +186,19 @@ export type RegenerateVideoSceneContract = (runId: string, sceneIndex: number) =
 
 /** 触发 OpenRouter 渲染单镜视频 */
 export type RenderVideoSceneContract = (runId: string, sceneIndex: number) => Promise<ApiResponse<boolean>>;
+
+export type RenderVideoScenesContract = (
+  runId: string,
+  sceneIndexes?: number[],
+) => Promise<ApiResponse<{ count: number }>>;
+
+export type ActivateVideoSceneVersionContract = (
+  runId: string,
+  sceneIndex: number,
+  versionId: string,
+) => Promise<ApiResponse<boolean>>;
+
+export type ExportVideoGenRunContract = (runId: string) => Promise<ApiResponse<boolean>>;
 
 export type ListVideoGenRunsContract = (input?: {
   limit?: number;

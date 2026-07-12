@@ -116,6 +116,7 @@ public class VideoAgentController : ControllerBase
         {
             r.Id,
             r.Status,
+            r.Mode,
             r.ArticleTitle,
             r.CurrentPhase,
             r.PhaseProgress,
@@ -125,9 +126,10 @@ public class VideoAgentController : ControllerBase
             r.StartedAt,
             r.EndedAt,
             r.ErrorMessage,
-            // 兼容旧前端：scenes 字段已废弃，保留 0 / 0 让前端不崩
-            ScenesCount = 0,
-            ScenesReady = 0,
+            r.ExportErrorMessage,
+            ScenesCount = r.Scenes.Count,
+            ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
+            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Rendering),
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
@@ -190,6 +192,57 @@ public class VideoAgentController : ControllerBase
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>批量触发未完成分镜渲染，worker 按顺序处理</summary>
+    [HttpPost("runs/{runId}/scenes/render-batch")]
+    public async Task<IActionResult> RenderScenes(
+        string runId,
+        [FromBody] BatchRenderVideoScenesRequest? request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var count = await _videoGenService.RenderScenesAsync(
+                runId, GetAdminId(), request?.SceneIndexes, ct: ct);
+            return Ok(ApiResponse<object>.Ok(new { count }));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>选择一个历史生成版本作为当前分镜产物</summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/versions/{versionId}/activate")]
+    public async Task<IActionResult> ActivateSceneVersion(
+        string runId,
+        int sceneIndex,
+        string versionId,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.ActivateSceneVersionAsync(
+                runId, GetAdminId(), sceneIndex, versionId, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>把全部已完成分镜合成为完整 MP4</summary>
+    [HttpPost("runs/{runId}/export")]
+    public async Task<IActionResult> ExportRun(string runId, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.RequestExportAsync(runId, GetAdminId(), ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (InvalidOperationException ex)
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 

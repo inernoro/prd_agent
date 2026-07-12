@@ -43,4 +43,13 @@ public interface IVideoGenService
 
     /// <summary>标记单镜为 Rendering，触发 worker 调 OpenRouter 生成视频</summary>
     Task RenderSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>批量标记未完成分镜为 Rendering，worker 会按顺序生成</summary>
+    Task<int> RenderScenesAsync(string runId, string ownerAdminId, IReadOnlyCollection<int>? sceneIndexes = null, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>选择一个历史生成版本作为当前分镜产物</summary>
+    Task ActivateSceneVersionAsync(string runId, string ownerAdminId, int sceneIndex, string versionId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>请求把全部已完成分镜合成为完整视频</summary>
+    Task RequestExportAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 }

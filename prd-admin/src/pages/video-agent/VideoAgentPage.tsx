@@ -18,7 +18,8 @@ import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
-import { Plus, Wand2, Sparkles, X, Upload, FileText, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Plus, Wand2, Sparkles, X, Upload, FileText, ChevronRight, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { listVideoGenRunsReal, createVideoGenRunReal } from '@/services/real/videoAgent';
 import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
@@ -86,7 +87,7 @@ export const VideoAgentPage: React.FC = () => {
   // 列表自动轮询（活跃任务可见进度推进）；详情页里 Editor/Panel 自己各有轮询
   useEffect(() => {
     if (selectedRunId) return; // 详情页时不在外层重复轮询
-    const hasActive = runs.some(r => ['Queued', 'Scripting', 'Editing', 'Rendering'].includes(r.status));
+    const hasActive = runs.some(r => ['Queued', 'Scripting', 'Rendering'].includes(r.status) || r.hasActiveScenes);
     if (!hasActive) return;
     const t = setInterval(() => { void loadRuns(); }, 5000);
     return () => clearInterval(t);
@@ -110,14 +111,14 @@ export const VideoAgentPage: React.FC = () => {
             视频创作智能体
           </span>
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            · OpenRouter · Veo / Kling / Wan / Sora
+            · 模型网关 · Seedance / Wan / Veo / Sora
           </span>
         </div>
         <div className="flex items-center gap-2">
           <TipsEntryButton compact />
           {selectedRunId && (
             <Button size="sm" variant="secondary" onClick={handleBackToList}>
-              ← 返回列表
+              <ArrowLeft size={14} /> 返回列表
             </Button>
           )}
           <Button ref={createBtnRef} size="sm" variant="primary" onClick={() => setCreateMenuOpen(v => !v)}>
@@ -146,7 +147,7 @@ export const VideoAgentPage: React.FC = () => {
           />
         ) : selectedMode === null ? (
           <GlassCard className="h-full flex flex-col items-center justify-center gap-3 p-8">
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>加载任务中…</span>
+            <MapSectionLoader text="加载视频项目" />
             <Button size="sm" variant="secondary" onClick={handleBackToList}>返回列表</Button>
           </GlassCard>
         ) : selectedMode === 'storyboard' ? (
@@ -228,7 +229,7 @@ const CreateMenu: React.FC<{
         >
           <Wand2 size={16} style={{ color: '#f472b6' }} />
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>🎬 创作分镜（高级）</div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>创作分镜（高级）</div>
             <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>上传文案 → AI 拆分镜 → 编辑每镜</div>
           </div>
         </button>
@@ -239,7 +240,7 @@ const CreateMenu: React.FC<{
         >
           <Sparkles size={16} style={{ color: '#a78bfa' }} />
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>✨ 大模型直出（初级）</div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>大模型直出（初级）</div>
             <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>一段 prompt → 5-15s 短视频</div>
           </div>
         </button>
@@ -259,7 +260,7 @@ const RunListView: React.FC<{
   if (loading) {
     return (
       <GlassCard className="h-full flex items-center justify-center p-12">
-        <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+        <MapSpinner size={20} />
       </GlassCard>
     );
   }
@@ -340,6 +341,12 @@ const RunListRow: React.FC<{ run: VideoGenRunListItem; onClick: () => void }> = 
         </div>
         <div className="text-[11px] flex items-center gap-3 flex-wrap" style={{ color: 'var(--text-muted)' }}>
           <span>{run.totalDurationSeconds > 0 ? `约 ${run.totalDurationSeconds.toFixed(0)} 秒` : '时长未知'}</span>
+          {run.scenesCount > 0 && (
+            <>
+              <span>·</span>
+              <span>{run.scenesReady}/{run.scenesCount} 镜头就绪</span>
+            </>
+          )}
           <span>·</span>
           <span>{new Date(run.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
           {run.errorMessage && (
@@ -361,7 +368,7 @@ const RunThumbPlaceholder: React.FC<{ status: string }> = ({ status }) => {
     return <AlertCircle size={20} style={{ color: '#f87171' }} />;
   }
   if (['Queued', 'Scripting', 'Editing', 'Rendering'].includes(status)) {
-    return <Loader2 size={18} className="animate-spin" style={{ color: '#a78bfa' }} />;
+    return <MapSpinner size={18} />;
   }
   if (status === 'Completed') {
     return <CheckCircle2 size={20} style={{ color: '#4ade80' }} />;
