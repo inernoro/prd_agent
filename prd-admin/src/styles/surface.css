@@ -2371,6 +2371,13 @@
   padding: 0 8px;
 }
 
+/* 浅色:卡底作者/操作条从深夜蓝换半透明暖白(治「白卡拖一条黑尾」) */
+[data-theme="light"] .mkt-card-density-short .mkt-card-glass-footer,
+[data-theme="light"] .mkt-card-density-micro .mkt-card-glass-footer {
+  background: rgba(248, 246, 242, 0.78);
+  border-top-color: rgba(26, 26, 31, 0.08);
+}
+
 .mkt-card-density-short .mkt-card-preview-badge,
 .mkt-card-density-micro .mkt-card-preview-badge {
   top: 5px;
