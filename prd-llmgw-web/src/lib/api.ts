@@ -262,8 +262,8 @@ export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
 }
 
 // ── 配置面（只读）──
-export function getPools(modelType?: string): Promise<ApiResponse<PoolsData>> {
-  return apiRequest<PoolsData>('/pools', { query: { modelType } });
+export function getPools(modelType?: string, sinceHours = 168): Promise<ApiResponse<PoolsData>> {
+  return apiRequest<PoolsData>('/pools', { query: { modelType, sinceHours } });
 }
 export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
   return apiRequest<PlatformsData>('/platforms');
@@ -303,6 +303,7 @@ export function getGatewayAppCallers(params?: {
   sourceSystem?: string;
   ingressProtocol?: string;
   requestType?: string;
+  modelPoolId?: string;
   drift?: string;
   search?: string;
 }): Promise<ApiResponse<GatewayAppCallersData>> {
@@ -314,6 +315,7 @@ export function getGatewayAppCallers(params?: {
       sourceSystem: params?.sourceSystem,
       ingressProtocol: params?.ingressProtocol,
       requestType: params?.requestType,
+      modelPoolId: params?.modelPoolId,
       drift: params?.drift,
       search: params?.search,
     },

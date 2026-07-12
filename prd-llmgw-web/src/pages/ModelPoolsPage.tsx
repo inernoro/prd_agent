@@ -1,6 +1,7 @@
 // 模型池：每个池一张卡，展示策略/类型/默认标记 + 池内每个模型的健康 chip。
 // 「默认池」可就地切换：GW 权威池写 llm_gateway，MAP 来源池写旧集合。
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, getModels, getParameterCapabilitiesMeta, getPools, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo } from '@/lib/types';
 import { Chip, SectionLoader, Button } from '@/components/ui';
@@ -34,6 +35,7 @@ export function ModelPoolsPage() {
   const [memberParameterCaps, setMemberParameterCaps] = useState<Record<string, string>>({});
   const [memberPriorities, setMemberPriorities] = useState<Record<string, string>>({});
   const [editDrafts, setEditDrafts] = useState<Record<string, PoolEditDraft>>({});
+  const [drawer, setDrawer] = useState<{ kind: 'create' } | { kind: 'pool'; poolId: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -70,7 +72,7 @@ export function ModelPoolsPage() {
     const res = await claimPoolToGateway(pool.id);
     setBusyId(null);
     if (res.success) {
-      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
       setToast(`已将「${res.data.name}」导入平台模型池`);
     } else {
       setToast(res.error?.message || '操作失败');
@@ -114,7 +116,8 @@ export function ModelPoolsPage() {
         return [res.data, ...normalized];
       });
       setCreateDraft({ name: '', code: '', modelType, priority: '50', isDefaultForType: false, description: '' });
-      setToast(`已创建 GW 模型池「${res.data.name}」`);
+      setDrawer({ kind: 'pool', poolId: res.data.id });
+      setToast(`已创建模型池「${res.data.name}」`);
     } else {
       setToast(res.error?.message || '操作失败');
     }
@@ -162,7 +165,7 @@ export function ModelPoolsPage() {
         modelType: pool.modelType || 'chat',
         priority: String(pool.priority),
         strategyType: String(pool.strategyType),
-        description: pool.description || '',
+        description: publicPoolDescription(pool.description) || '',
       },
     }));
   }
@@ -220,7 +223,7 @@ export function ModelPoolsPage() {
         const normalized = res.data.isDefaultForType
           ? prev.map((p) => (p.modelType === res.data.modelType ? { ...p, isDefaultForType: false } : p))
           : prev;
-        return normalized.map((p) => (p.id === res.data.id ? res.data : p));
+        return normalized.map((p) => (p.id === res.data.id ? mergePoolMutation(p, res.data) : p));
       });
       cancelEditPool(pool.id);
       setToast(`已保存模型池「${res.data.name}」`);
@@ -258,7 +261,7 @@ export function ModelPoolsPage() {
     });
     setBusyId(null);
     if (res.success) {
-      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
       setAddDrafts((prev) => ({ ...prev, [pool.id]: emptyMemberDraft() }));
       setToast(`已更新「${res.data.name}」的模型池成员`);
     } else {
@@ -286,7 +289,7 @@ export function ModelPoolsPage() {
     setBusyId(null);
     if (res.success) {
       if (res.data.pool) {
-        setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.pool?.id ? res.data.pool : x)) : prev));
+        setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.pool?.id ? mergePoolMutation(x, res.data.pool) : x)) : prev));
       }
       setToast(`批量导入完成：新增 ${res.data.imported}，更新 ${res.data.updated}，跳过已有 ${res.data.skippedExisting}`);
     } else {
@@ -319,7 +322,7 @@ export function ModelPoolsPage() {
     });
     setBusyId(null);
     if (res.success) {
-      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
       setMemberParameterCaps((prev) => {
         const next = { ...prev };
         delete next[key];
@@ -354,7 +357,7 @@ export function ModelPoolsPage() {
     const res = await removePoolModel(pool.id, member.modelId, member.platformId);
     setBusyId(null);
     if (res.success) {
-      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
       setToast(`已从「${res.data.name}」移除「${member.modelId}」`);
     } else {
       setToast(res.error?.message || '操作失败');
@@ -365,187 +368,204 @@ export function ModelPoolsPage() {
   if (!pools) return <SectionLoader text="正在加载模型池…" />;
   const modelTypes = Array.from(new Set(pools.map((p) => p.modelType).filter(Boolean))).sort();
   const platformIds = Array.from(new Set(models.map((m) => m.platformId).filter((x): x is string => !!x))).sort();
+  const selectedPool = drawer?.kind === 'pool' ? pools.find((pool) => pool.id === drawer.poolId) ?? null : null;
+  const totalBoundAppCallers = pools.reduce((sum, pool) => sum + pool.boundAppCallerCount, 0);
+  const totalRecentRequests = pools.reduce((sum, pool) => sum + pool.recentRequests, 0);
+  const attentionPools = pools.filter((pool) => pool.health === 'unavailable' || pool.health === 'empty').length;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <ParameterCapabilityOptions parameterMeta={parameterMeta} />
+      <section style={{ display: 'flex', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 760 }}>
+          <h1 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 24 }}>模型池</h1>
+          <p style={{ margin: '7px 0 0', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.7 }}>
+            模型池把同一类业务需要的多个模型组织成一条稳定路由。先看它服务谁、承接多少请求和是否健康，需要调整时再进入详情。
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button size="sm" variant="secondary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button>
+          <Link to="/learn" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12, textDecoration: 'none' }}>了解模型池如何参与路由</Link>
+        </div>
+      </section>
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      <PoolCreateBar
-        draft={createDraft}
-        modelTypes={modelTypes}
-        busyId={busyId}
-        bulkModelType={bulkModelType}
-        priceCurrencyDraft={priceCurrencyDraft}
-        onDraftChange={setCreateDraft}
-        onBulkModelTypeChange={setBulkModelType}
-        onPriceCurrencyDraftChange={setPriceCurrencyDraft}
-        onCreate={() => void createGatewayPool()}
-        onBulkClaim={() => void bulkClaim()}
-        onCalibratePriceCurrency={() => void calibratePriceCurrency()}
-      />
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 10 }}>
+        <PoolMetric label="模型池" value={String(pools.length)} hint={`${modelTypes.length} 类业务路由`} />
+        <PoolMetric label="已绑定 appCaller" value={String(totalBoundAppCallers)} hint="明确绑定到模型池的调用方" />
+        <PoolMetric label="近 7 天请求" value={String(totalRecentRequests)} hint="按当前租户请求记录统计" />
+        <PoolMetric label="需要处理" value={String(attentionPools)} hint={attentionPools ? '无可用成员或尚未配置成员' : '所有模型池均有可用成员'} tone={attentionPools ? '#d29922' : '#3fb950'} />
+      </section>
       {pools.length === 0 ? <Empty text="暂无模型池，可先新建第一个模型池" /> : null}
-      {pools.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius)',
-            padding: 16,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{p.name}</span>
-            <Chip label={p.modelType || 'chat'} color="var(--accent)" bg="var(--accent-soft)" />
-            <Chip label={STRATEGY_LABEL[p.strategyType] || `策略${p.strategyType}`} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-            {p.isDefaultForType ? <Chip label="默认池" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}
-            {p.authority === 'llm_gateway' ? (
-              <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
-            ) : (
-              <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
-            )}
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>优先级 {p.priority}</span>
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.models.length} 个模型</span>
-              {p.authority === 'llm_gateway' ? null : (
-                <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPool(p)}>
-                  {busyId === p.id ? '处理中…' : '导入到平台'}
-                </Button>
-              )}
-              {p.authority === 'llm_gateway' ? (
-                <Button size="sm" variant="ghost" disabled={busyId === `pool-edit:${p.id}`} onClick={() => (editDrafts[p.id] ? cancelEditPool(p.id) : startEditPool(p))}>
-                  {editDrafts[p.id] ? '取消编辑' : '编辑属性'}
-                </Button>
-              ) : null}
-              {p.isDefaultForType ? null : (
-                <Button size="sm" variant="secondary" disabled={busyId === p.id} onClick={() => void makeDefault(p)}>
-                  {busyId === p.id ? '处理中…' : '设为默认'}
-                </Button>
-              )}
-            </span>
-          </div>
-          {editDrafts[p.id] ? (
-            <PoolEditBar
-              draft={editDrafts[p.id]}
-              busy={busyId === `pool-edit:${p.id}`}
-              onDraftChange={(next) => setEditDrafts((prev) => ({ ...prev, [p.id]: next }))}
-              onSave={() => void savePool(p)}
-              onCancel={() => cancelEditPool(p.id)}
-            />
-          ) : null}
-          {p.description ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{p.description}</div>
-          ) : null}
-          {p.authority === 'llm_gateway' ? (
-            <>
-              <PoolBulkImportBar
-                pool={p}
-                platformIds={platformIds}
-                draft={bulkImportDrafts[p.id] || emptyBulkImportDraft()}
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))', gap: 12 }}>
+        {pools.map((pool) => <PoolOverviewCard key={pool.id} pool={pool} busyId={busyId} onOpen={() => setDrawer({ kind: 'pool', poolId: pool.id })} onMakeDefault={() => void makeDefault(pool)} />)}
+      </section>
+      <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', padding: 12 }}>
+        <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600 }}>高级维护</summary>
+        <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.6 }}>用于批量导入历史配置和校准价格币种。日常查看与路由判断不需要操作这里。</p>
+        <PoolCreateBar
+          mode="advanced"
+          draft={createDraft}
+          modelTypes={modelTypes}
+          busyId={busyId}
+          bulkModelType={bulkModelType}
+          priceCurrencyDraft={priceCurrencyDraft}
+          onDraftChange={setCreateDraft}
+          onBulkModelTypeChange={setBulkModelType}
+          onPriceCurrencyDraftChange={setPriceCurrencyDraft}
+          onCreate={() => void createGatewayPool()}
+          onBulkClaim={() => void bulkClaim()}
+          onCalibratePriceCurrency={() => void calibratePriceCurrency()}
+        />
+      </details>
+      {drawer ? (
+        <div role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setDrawer(null); }} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.42)', display: 'flex', justifyContent: 'flex-end' }}>
+          <aside role="dialog" aria-modal="true" aria-label={drawer.kind === 'create' ? '新建模型池' : '模型池详情'} style={{ width: 'min(680px, 100vw)', height: '100%', overflowY: 'auto', background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-subtle)', padding: 18, boxShadow: '-16px 0 40px rgba(0,0,0,0.22)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+              <div style={{ flex: 1 }}><h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 19 }}>{drawer.kind === 'create' ? '新建模型池' : selectedPool?.name || '模型池详情'}</h2><p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>{drawer.kind === 'create' ? '先定义业务类型，再添加实际承接流量的模型。' : poolPurpose(selectedPool)}</p></div>
+              <Button size="sm" variant="ghost" onClick={() => setDrawer(null)}>关闭</Button>
+            </div>
+            {drawer.kind === 'create' ? (
+              <PoolCreateBar
+                mode="create"
+                draft={createDraft}
+                modelTypes={modelTypes}
                 busyId={busyId}
-                onDraftChange={(next) => setBulkImportDrafts((prev) => ({ ...prev, [p.id]: next }))}
-                onImport={() => void bulkImportModels(p)}
+                bulkModelType={bulkModelType}
+                priceCurrencyDraft={priceCurrencyDraft}
+                onDraftChange={setCreateDraft}
+                onBulkModelTypeChange={setBulkModelType}
+                onPriceCurrencyDraftChange={setPriceCurrencyDraft}
+                onCreate={() => void createGatewayPool()}
+                onBulkClaim={() => void bulkClaim()}
+                onCalibratePriceCurrency={() => void calibratePriceCurrency()}
               />
-              <PoolMemberEditor
-                pool={p}
-                models={models}
-                parameterMeta={parameterMeta}
-                draft={addDrafts[p.id] || emptyMemberDraft()}
-                busyId={busyId}
-                onDraftChange={(next) => setAddDrafts((prev) => ({ ...prev, [p.id]: next }))}
-                onAdd={() => void addPoolModel(p)}
-              />
-            </>
-          ) : null}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {p.models.map((m, i) => {
-              const chip = healthChip(m.healthStatus);
-              const key = memberKey(p.id, m);
-              return (
-                <div
-                  key={`${m.modelId}-${i}`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    flexWrap: 'wrap',
-                    padding: '8px 10px',
-                    background: 'var(--bg-elevated)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: 12,
-                  }}
-                >
-                  <Chip label={chip.label} color={chip.color} bg={chip.bg} title={`连续失败 ${m.consecutiveFailures} / 连续成功 ${m.consecutiveSuccesses}`} />
-                  <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-primary)' }}>{m.modelId}</span>
-                  {m.protocol ? <span style={{ color: 'var(--text-muted)' }}>{m.protocol}</span> : null}
-                  <CapabilityTags labels={capabilityLabelsForMember(m)} />
-                  {p.authority === 'llm_gateway' ? (
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)' }}>
-                      P
-                      <input
-                        value={memberPriorities[key] ?? String(m.priority)}
-                        onChange={(e) => setMemberPriorities((prev) => ({ ...prev, [key]: e.target.value }))}
-                        style={smallInputStyle(56)}
-                        inputMode="numeric"
-                      />
-                    </label>
-                  ) : (
-                    <span style={{ color: 'var(--text-muted)' }}>P{m.priority}</span>
-                  )}
-                  {m.maxTokens ? <span style={{ color: 'var(--text-muted)' }}>maxTokens {m.maxTokens}</span> : null}
-	                  {p.authority === 'llm_gateway' ? (
-	                    <select
-	                      value={(m.priceCurrency || 'CNY').toUpperCase()}
-	                      onChange={(e) => updateMemberPriceCurrency(p.id, m, e.target.value)}
-	                      style={smallSelectStyle(74)}
-                      aria-label="价格币种"
-                      title="价格币种：CNY 为历史模型池价格默认值；USD 可参与月预算美元统计"
-                    >
-                      <option value="CNY">CNY</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  ) : m.priceCurrency ? (
-                    <span style={{ color: 'var(--text-muted)' }}>{m.priceCurrency}</span>
-                  ) : null}
-                  {m.consecutiveFailures > 0 ? (
-                    <span style={{ color: '#f85149' }}>连败 {m.consecutiveFailures}</span>
-                  ) : null}
-                  {p.authority === 'llm_gateway' ? (
-                    <input
-                      value={memberParameterCaps[key] ?? parameterCapabilityText(m.capabilities)}
-                      onChange={(e) => setMemberParameterCaps((prev) => ({ ...prev, [key]: e.target.value }))}
-                      placeholder="seed, stop=false"
-                      list="gw-parameter-capability-options"
-                      style={{ ...inputStyle, flex: '1 1 180px', minWidth: 160 }}
-                      aria-label="字段级参数能力"
-                      title="字段级参数能力，例：seed, stop=false；保存为 parameter:<name>"
-                    />
-                  ) : null}
-                  <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-                    {p.authority === 'llm_gateway' ? (
-                      <>
-                        <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void savePoolModelPriority(p, m)}>
-                          {busyId === key ? '处理中…' : '保存'}
-                        </Button>
-                        <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void deletePoolModel(p, m)}>
-                          移除
-                        </Button>
-                      </>
-                    ) : null}
-                  </span>
+            ) : selectedPool ? (
+              <>
+                <PoolDetailSummary pool={selectedPool} />
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '14px 0' }}>
+                  {selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="secondary" onClick={() => (editDrafts[selectedPool.id] ? cancelEditPool(selectedPool.id) : startEditPool(selectedPool))}>{editDrafts[selectedPool.id] ? '取消编辑' : '编辑属性'}</Button> : <Button size="sm" variant="secondary" disabled={busyId === selectedPool.id} onClick={() => void claimPool(selectedPool)}>导入为可维护配置</Button>}
+                  {!selectedPool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void makeDefault(selectedPool)}>设为默认池</Button> : null}
+                  <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12, textDecoration: 'none' }}>查看 appCaller</Link>
+                  <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12, textDecoration: 'none' }}>查看请求记录</Link>
                 </div>
-              );
-            })}
-          </div>
+                {editDrafts[selectedPool.id] ? <PoolEditBar draft={editDrafts[selectedPool.id]} busy={busyId === `pool-edit:${selectedPool.id}`} onDraftChange={(next) => setEditDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onSave={() => void savePool(selectedPool)} onCancel={() => cancelEditPool(selectedPool.id)} /> : null}
+                {selectedPool.authority === 'llm_gateway' ? <PoolMemberEditor pool={selectedPool} models={models} parameterMeta={parameterMeta} draft={addDrafts[selectedPool.id] || emptyMemberDraft()} busyId={busyId} onDraftChange={(next) => setAddDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onAdd={() => void addPoolModel(selectedPool)} /> : null}
+                <h3 style={{ color: 'var(--text-primary)', fontSize: 14, margin: '18px 0 8px' }}>模型成员</h3>
+                <PoolMembers pool={selectedPool} busyId={busyId} memberPriorities={memberPriorities} memberParameterCaps={memberParameterCaps} onPriorityChange={(key, value) => setMemberPriorities((prev) => ({ ...prev, [key]: value }))} onParameterChange={(key, value) => setMemberParameterCaps((prev) => ({ ...prev, [key]: value }))} onCurrencyChange={updateMemberPriceCurrency} onSave={savePoolModelPriority} onDelete={deletePoolModel} />
+                {selectedPool.authority === 'llm_gateway' ? <details style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}><summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 12 }}>高级成员维护</summary><div style={{ marginTop: 10 }}><PoolBulkImportBar pool={selectedPool} platformIds={platformIds} draft={bulkImportDrafts[selectedPool.id] || emptyBulkImportDraft()} busyId={busyId} onDraftChange={(next) => setBulkImportDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onImport={() => void bulkImportModels(selectedPool)} /></div></details> : null}
+              </>
+            ) : <Empty text="模型池不存在或已被移除" />}
+          </aside>
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
 
+function PoolMetric({ label, value, hint, tone = 'var(--text-primary)' }: { label: string; value: string; hint: string; tone?: string }) {
+  return <div style={{ padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><div style={{ color: 'var(--text-muted)', fontSize: 11 }}>{label}</div><div style={{ marginTop: 5, color: tone, fontSize: 23, fontWeight: 700 }}>{value}</div><div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5 }}>{hint}</div></div>;
+}
+
+function PoolOverviewCard({ pool, busyId, onOpen, onMakeDefault }: { pool: ModelPool; busyId: string | null; onOpen: () => void; onMakeDefault: () => void }) {
+  const status = poolHealthChip(pool);
+  const visibleModels = pool.models.slice().sort((a, b) => a.priority - b.priority).slice(0, 3);
+  return (
+    <article style={{ display: 'flex', flexDirection: 'column', gap: 13, padding: 16, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}><strong style={{ color: 'var(--text-primary)', fontSize: 15 }}>{pool.name}</strong><Chip label={pool.modelType || 'chat'} color="var(--accent)" bg="var(--accent-soft)" />{pool.isDefaultForType ? <Chip label="默认路由" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}</div><p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.65, margin: '7px 0 0' }}>{poolPurpose(pool)}</p></div>
+        <Chip label={status.label} color={status.color} bg={status.bg} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+        <CardStat label="绑定" value={`${pool.boundAppCallerCount} 个`} />
+        <CardStat label="近 7 天" value={`${pool.recentRequests} 次`} />
+        <CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} />
+      </div>
+      <div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 7 }}>模型组成</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {visibleModels.length ? visibleModels.map((model) => { const chip = healthChip(model.healthStatus); return <div key={`${model.platformId}:${model.modelId}`} style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, color: 'var(--text-secondary)', fontSize: 12 }}><span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: chip.color }} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</span><span style={{ marginLeft: 'auto', color: 'var(--text-muted)', flexShrink: 0 }}>优先级 {model.priority}</span></div>; }) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>尚未添加模型，当前不能承接请求。</span>}
+          {pool.models.length > visibleModels.length ? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>另有 {pool.models.length - visibleModels.length} 个模型</span> : null}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto' }}><Button size="sm" variant="secondary" onClick={onOpen}>查看与维护</Button>{!pool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === pool.id} onClick={onMakeDefault}>设为默认</Button> : null}<span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 11 }}>{formatRecentTime(pool.lastRequestAt)}</span></div>
+    </article>
+  );
+}
+
+function CardStat({ label, value }: { label: string; value: string }) {
+  return <div style={{ padding: '9px 8px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', minWidth: 0 }}><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{label}</div><div style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 650, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div></div>;
+}
+
+function PoolDetailSummary({ pool }: { pool: ModelPool }) {
+  const status = poolHealthChip(pool);
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.65 }}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ color: '#d29922', fontSize: 12 }}>尚无明确绑定的 appCaller。若它是默认池，仍可能承接同类型的自动路由流量。</div>}</section>;
+}
+
+function PoolMembers({ pool, busyId, memberPriorities, memberParameterCaps, onPriorityChange, onParameterChange, onCurrencyChange, onSave, onDelete }: { pool: ModelPool; busyId: string | null; memberPriorities: Record<string, string>; memberParameterCaps: Record<string, string>; onPriorityChange: (key: string, value: string) => void; onParameterChange: (key: string, value: string) => void; onCurrencyChange: (poolId: string, member: PoolModelInfo, value: string) => void; onSave: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onDelete: (pool: ModelPool, member: PoolModelInfo) => Promise<void> }) {
+  if (!pool.models.length) return <div style={{ padding: 16, border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 12 }}>暂无模型成员。添加至少一个健康模型后，这个池才能承接请求。</div>;
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>{pool.models.slice().sort((a, b) => a.priority - b.priority).map((member) => { const chip = healthChip(member.healthStatus); const key = memberKey(pool.id, member); return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 10, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}><Chip label={chip.label} color={chip.color} bg={chip.bg} /><span style={{ color: 'var(--text-primary)', fontFamily: 'ui-monospace, monospace', overflowWrap: 'anywhere' }}>{member.modelId}</span>{member.protocol ? <span style={{ color: 'var(--text-muted)' }}>{member.protocol}</span> : null}<CapabilityTags labels={capabilityLabelsForMember(member)} />{pool.authority === 'llm_gateway' ? <><label style={inlineCheckStyle}>优先级<input value={memberPriorities[key] ?? String(member.priority)} onChange={(event) => onPriorityChange(key, event.target.value)} style={smallInputStyle(58)} inputMode="numeric" /></label><select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select><input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 170px' }} aria-label="字段级参数能力" /><span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSave(pool, member)}>保存</Button><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDelete(pool, member)}>移除</Button></span></> : <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>优先级 {member.priority}</span>}</div>; })}</div>;
+}
+
+function poolPurpose(pool: ModelPool | null) {
+  if (!pool) return '';
+  if (pool.boundAppCallerCount > 0) {
+    const names = pool.boundAppCallers.slice(0, 2).map((caller) => caller.title || caller.appCallerCode).filter(Boolean);
+    return `为 ${names.join('、')}${pool.boundAppCallerCount > names.length ? ` 等 ${pool.boundAppCallerCount} 个 appCaller` : ''} 提供 ${pool.modelType || 'chat'} 路由。`;
+  }
+  if (pool.isDefaultForType) return `作为 ${pool.modelType || 'chat'} 类型的默认路由，在调用方未指定其他池时提供模型选择。`;
+  return `用于组织 ${pool.modelType || 'chat'} 模型；尚未绑定业务，当前不会承接已登记 appCaller 的指定流量。`;
+}
+
+function poolHealthChip(pool: ModelPool) {
+  if (pool.health === 'healthy') return { label: '运行健康', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
+  if (pool.health === 'degraded') return { label: '部分模型异常', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
+  if (pool.health === 'unavailable') return { label: '无可用模型', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
+  return { label: '尚未配置模型', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
+}
+
+function formatRecentTime(value?: string | null) {
+  if (!value) return '近 7 天无请求';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '最近有请求' : `最近请求 ${date.toLocaleString()}`;
+}
+
+function publicPoolDescription(value?: string | null) {
+  if (!value) return null;
+  return /\b(?:P\d+|legacy|stub|full-http|gate)\b|权威|迁移|兜底/i.test(value) ? null : value;
+}
+
+function mergePoolMutation(previous: ModelPool, next: ModelPool): ModelPool {
+  const healthyMembers = next.models.filter((model) => model.healthStatus === 0).length;
+  const degradedMembers = next.models.filter((model) => model.healthStatus === 1).length;
+  const unavailableMembers = next.models.filter((model) => model.healthStatus === 2).length;
+  const health: ModelPool['health'] = next.models.length === 0
+    ? 'empty'
+    : healthyMembers === 0
+      ? 'unavailable'
+      : degradedMembers > 0 || unavailableMembers > 0
+        ? 'degraded'
+        : 'healthy';
+  return {
+    ...next,
+    boundAppCallerCount: previous.boundAppCallerCount,
+    boundAppCallers: previous.boundAppCallers,
+    recentRequests: previous.recentRequests,
+    recentSucceeded: previous.recentSucceeded,
+    recentFailed: previous.recentFailed,
+    recentSuccessRatePercent: previous.recentSuccessRatePercent,
+    lastRequestAt: previous.lastRequestAt,
+    trafficWindowHours: previous.trafficWindowHours,
+    health,
+    healthyMembers,
+    degradedMembers,
+    unavailableMembers,
+  };
+}
+
 function PoolCreateBar({
+  mode,
   draft,
   modelTypes,
   busyId,
@@ -558,6 +578,7 @@ function PoolCreateBar({
   onBulkClaim,
   onCalibratePriceCurrency,
 }: {
+  mode: 'create' | 'advanced';
   draft: { name: string; code: string; modelType: string; priority: string; isDefaultForType: boolean; description: string };
   modelTypes: string[];
   busyId: string | null;
@@ -583,13 +604,13 @@ function PoolCreateBar({
         background: 'var(--bg-surface)',
       }}
     >
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {mode === 'create' ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <input
           value={draft.name}
           onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
-          placeholder="新 GW 模型池名称"
+          placeholder="模型池名称，例如客服对话"
           style={{ ...inputStyle, flex: '1 1 180px' }}
-          aria-label="新 GW 模型池名称"
+          aria-label="新模型池名称"
         />
         <input
           value={draft.code}
@@ -626,18 +647,19 @@ function PoolCreateBar({
           默认
         </label>
         <Button size="sm" variant="secondary" disabled={busyId === 'create-pool'} onClick={onCreate}>
-          {busyId === 'create-pool' ? '处理中…' : '新建 GW 池'}
+          {busyId === 'create-pool' ? '处理中…' : '创建模型池'}
         </Button>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <input value={draft.description} onChange={(e) => onDraftChange({ ...draft, description: e.target.value })} placeholder="业务说明（可选）" style={{ ...inputStyle, flex: '1 1 100%' }} aria-label="模型池业务说明" />
+      </div> : null}
+      {mode === 'advanced' ? <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <select value={bulkModelType} onChange={(e) => onBulkModelTypeChange(e.target.value)} style={{ ...selectStyle, width: 180 }} aria-label="批量认领模型类型">
           <option value="">全部类型</option>
           {modelTypes.map((type) => <option key={type} value={type}>{type}</option>)}
         </select>
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-claim-pools'} onClick={onBulkClaim}>
-          {busyId === 'bulk-claim-pools' ? '处理中…' : '批量认领 MAP 池'}
+          {busyId === 'bulk-claim-pools' ? '处理中…' : '批量导入历史模型池'}
         </Button>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>默认跳过已存在的 GW 池，不覆盖已有调整。</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>默认跳过已存在的平台模型池，不覆盖已有调整。</span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <select
@@ -678,7 +700,7 @@ function PoolCreateBar({
           {busyId === 'bulk-calibrate-price-currency' ? '处理中…' : '校准价格币种'}
         </Button>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>只更新平台配置中的模型池，默认仅校准已有价格字段的历史成员。</span>
-      </div>
+      </div></> : null}
     </div>
   );
 }

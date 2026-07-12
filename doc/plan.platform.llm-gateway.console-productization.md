@@ -103,9 +103,9 @@
 
 **验收标准**：
 
-- [ ] 用户无需滚动即可说清每个池负责什么、是否健康、由哪些 appCaller 使用。
-- [ ] 80% 常用操作在首屏完成，高级维护不遮挡主任务。
-- [ ] 页面不出现 P3、legacy、stub、full-http、Gate、权威迁移等开发阶段文案。
+- [x] 用户无需滚动即可说清每个池负责什么、是否健康、由哪些 appCaller 使用。
+- [x] 80% 常用操作在首屏完成，高级维护不遮挡主任务。
+- [x] 页面不出现 P3、legacy、stub、full-http、Gate、权威迁移等开发阶段文案。
 
 ### P3：根目录 `llmgw/` 收拢
 
@@ -159,8 +159,8 @@ llmgw/
 | 阶段 | 状态 | 分支 | 备注 |
 |---|---|---|---|
 | P0 | 已合并 | `codex/llmgw-console-productization-p0` | PR #1090 已合并到 `main`；双主题、请求记录、真实地址、安全直测、密钥解释和内部运维隔离已通过本地、GitHub CI 与 CDS 预览验收 |
-| P1 | 已完成，待 PR | `codex/llmgw-console-productization-p1` | 服务端租户首页聚合、全局概览和学习中心已通过编译、双租户 API 与双主题响应式浏览器验收 |
-| P2 | 待开始 | 待 P1 合并后创建 | 模型池信息架构与术语收口 |
+| P1 | 已合并 | `codex/llmgw-console-productization-p1` | PR #1091 已合并到 `main`；租户首页聚合、全局概览和学习中心已通过本地、GitHub CI 与 CDS 预览验收 |
+| P2 | 已完成，待 PR | `codex/llmgw-console-productization-p2` | 模型池业务心智、绑定与流量统计、健康卡片、详情抽屉和高级维护分层已通过编译、双租户 API 与双主题响应式浏览器验收 |
 | P3 | 待开始 | 待 P2 合并后创建 | 根目录收拢，运行语义不变 |
 
 每个阶段都使用独立分支、独立测试和独立验收；前一阶段未完成时，不把后一阶段的实现混入当前提交。Bugbot 因订阅停止记为不适用，不再等待。
@@ -170,3 +170,5 @@ P0 本地证据（2026-07-12）：`prd-llmgw-web` 生产构建通过；`prd-llmg
 P0 远端证据（2026-07-12）：实现提交 `f6427c02b` 与证据提交 `f9216f6f1` 已推送，独立 PR #1090 已创建。GitHub 共 15 个检查进入终态，9 个成功、6 个按变更范围跳过、0 个失败；`prd-api`、`prd-llmgw`、`prd-llmgw-web`、`prd-llmgw-serve` 四个相关镜像全部构建成功。CDS 分支绑定 PR #1090 和提交 `a92b6706f`，5/5 服务运行，镜像状态 ready，CI 结论 success，部署无漂移；预览环境的 `/llmgw/quickstart`、`/llmgw/logs`、`/llmgw/settings` 三个最终深链均返回 200。Bugbot 因订阅停止记为不适用。PR #1090 已 squash 合并到 `main`，合并提交为 `ec6596374`。
 
 P1 本地证据（2026-07-12）：`prd-llmgw-web` TypeScript 与 Vite 生产构建通过，`prd-llmgw` 编译 0 warning/0 error，Gateway 数据域守卫 65/65 通过。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 为 5 请求、80% 成功率、900ms P95、730 token、2 个活跃身份、60% 价格覆盖、CNY/USD 分列、1 把租户密钥；Beta 为 2 请求、100% 成功率、250ms P95、140 token、1 个活跃身份、0% 价格覆盖、2 个 unknown cost、0 把租户密钥。Alpha 会话附带 Beta `tenantId` 查询参数时仍返回 Alpha 的 5 条请求与 Top appCaller，证明端点不信任自报租户。独立空租户返回 0 请求、null 成功率、null P95、0 个费用桶、0 把密钥和 0 条最近请求；非法日期与反向时间范围均返回 HTTP 400。桌面和移动端完成 Alpha/Beta 切换、浅色/深色、首页与学习中心验收，无横向溢出且浏览器 warning/error 为 0；学习中心包含三步首条请求路径、完整概念链、10 个术语及对应页面深链。验收未启动 serving，未调用任何模型；临时 API、Web、Mongo 与测试数据已删除。
+
+P2 本地证据（2026-07-12）：`prd-llmgw-web` TypeScript 与 Vite 生产构建通过，`prd-llmgw` 编译 0 warning/0 error。一次性 Mongo、真实 console API 与浏览器完成双租户验收：Alpha 模型池显示 2 个绑定 appCaller、近 7 天 4 次请求、3 成功、1 失败、75% 成功率；Beta 模型池显示 1 个绑定 appCaller、9 次请求、100% 成功率。Alpha 会话附带 Beta `tenantId` 查询参数时仍只返回 Alpha 模型池，模型池到 appCaller 与请求记录的精确深链分别只返回 Alpha 的 2 条和 4 条数据。桌面暗色、桌面浅色与 433px 移动视口均无横向溢出，移动详情抽屉宽度等于视口，租户切换后卡片统计即时刷新，浏览器 warning/error 为 0。流量统计在 Mongo 内按模型池聚合，不把窗口内全部日志加载到控制台 API 内存。验收未启动 serving，未调用任何模型。
