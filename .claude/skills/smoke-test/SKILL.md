@@ -1,11 +1,12 @@
 ---
 name: smoke-test
+version: 1.0.1
 description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Controller 端点，生成链式 curl 命令（前一步的输出 ID 传给后续请求），读取环境变量 AI_ACCESS_KEY 作为认证凭据。触发词："冒烟测试"、"smoke test"、"跑个冒烟"。
 ---
 
 # 自动化冒烟测试生成
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/smoke`、"冒烟测试"、"smoke test"、"跑个冒烟"
+> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/smoke`、"冒烟测试"、"smoke test"、"跑个冒烟"
 
 > **CDS 分支冒烟请优先用 `cds` 技能** (2026-04-18)：`cdscli smoke <branchId>` 覆盖了
 > 分层冒烟（L1 根路径 / L2 无认证 API / L3 认证 API）+ 预览域名自动推断。
@@ -16,6 +17,10 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 ---
 
 为指定模块自动生成链式冒烟测试 curl 命令，验证 CRUD + 核心业务流程的端到端可用性。
+
+## 能力边界
+
+本技能证明 API 契约和业务接口，不证明 HTML、入口 JS/CSS、浏览器渲染或完整用户路径。目标涉及发布、nginx、静态站或页面 500/502 时，必须先读 `doc/rule.platform.production-release-safety.md`，API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`；正式环境发布由 `production-hotfix-release` 承担。
 
 ## 触发词
 
@@ -469,3 +474,13 @@ cds_exec "curl -s http://localhost:5000/api/shortcuts/version-check"
 6. **最小权限**：只测试必要的端点，不做破坏性操作
 7. **生产环境警告**：如果 HOST 不是 localhost，输出警告提示
 8. **container-exec 仅作兜底**：仅当预览域名直连被 CDN 干扰时才使用 container-exec
+
+## 关联技能
+
+| 后续目标 | 技能 |
+|---|---|
+| CDS 灰度部署与日志 | `cds-deploy-pipeline` |
+| 获取真实预览深链 | `preview-url` |
+| 页面、资源与真人路径验收 | `acceptance-checklist` |
+| 正式环境最小热修 | `production-hotfix-release` |
+| 证据与债务交接 | `task-handoff-checklist` |

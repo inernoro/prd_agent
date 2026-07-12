@@ -1,15 +1,18 @@
 ---
 name: cds-deploy-pipeline
+version: 1.0.1
 description: Deploys code to an existing CDS branch, monitors readiness, runs layered smoke tests, fetches container logs, and diagnoses deploy failures (the hot path of CDS lifecycle). Activates when the user wants to push and verify on the grey/灰度 environment, inspect logs from a deployed branch, debug a failing deploy, restart a profile, or check live grey-env status. Every operation runs through cdscli (no hand-written curl). Does NOT handle initial project onboarding, tech-stack scanning, or cds-compose.yml generation — those belong to cds-project-scan (cold path). Does NOT handle credential setup or CDS self-update — those belong to cds (core). Trigger phrases include "部署到灰度", "deploy pipeline", "推送并测试", "灰度状态", "容器报错", "看容器日志", "deploy 失败", "帮我看看 cds 报错", "重启 api", "冒烟测试", "/cds-deploy", "/cds-debug", "/cds-smoke".
 ---
 
 # CDS 部署流水线
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/cds-deploy`、`/cds-debug`、`/cds-smoke`、"部署到灰度"、"看容器日志"、"deploy 失败"
+> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/cds-deploy`、`/cds-debug`、`/cds-smoke`、"部署到灰度"、"看容器日志"、"deploy 失败"
 
 > **热路径定位**：高频 / 每天 N 次。已部署项目的"代码 → 灰度 → 验证 → 排错"闭环。
 > 还没接入 CDS 的新项目 → 走 `cds-project-scan`（冷路径）。
 > 配置认证 / env / Key / CDS 服务自更新 → 走 `cds`（核心）。
+
+涉及 `exec_dep.sh`、`fast.sh`、nginx、静态产物或生产 workflow 时，必须先读 `doc/rule.platform.production-release-safety.md`。CDS 的 running/smoke 只证明灰度部署层，不能替代公网 HTML、入口资源和真人页面验收。
 
 ## 本技能处理 / 不处理
 
@@ -139,6 +142,8 @@ $CLI branch status <branchId>            # 单分支详情
 | L2 代码验证 | 改动确实部署上去了 | `$CLI branch exec <id> --profile api 'grep -c NewFunc /app/...'` |
 | L3 认证 API | 业务接口通 | 直连预览域名 + `X-AI-Access-Key` + `X-AI-Impersonate: $MAP_AI_USER` |
 
+若变更影响页面、nginx 或静态产物，必须追加 L4 产品表面：GET 最终页面，解析并请求实际入口 JS/CSS，确认状态码、MIME 和非空内容，再交给 `acceptance-checklist` 从真人路径验收。
+
 完整冒烟策略 → [../cds/reference/smoke.md](../cds/reference/smoke.md)
 
 ## 预览域名公式（SSOT）
@@ -164,6 +169,9 @@ $CLI branch status <branchId>            # 单分支详情
 | 配置 `AI_ACCESS_KEY` / 旋转项目 Key | `cds` |
 | CDS 服务本体变更后重启 | `cds` 的 `cdscli self update` |
 | 反馈 CDS bug / 提 issue | `auto-fix-issues` 技能（`/audit`） |
+| 获取最终预览深链 | `preview-url` |
+| 页面与静态资源真人验收 | `acceptance-checklist` |
+| 正式环境最小发布 | `production-hotfix-release` |
 
 ## 参考索引（按需加载）
 
