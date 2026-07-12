@@ -4643,7 +4643,8 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     await targetPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
     var fb = Builders<BsonDocument>.Filter;
     var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-    var clearOthers = await targetPools.UpdateManyAsync(others, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    var scopedOthers = targetAuthority == "llm_gateway" ? TenantAccess.Filter(http, others) : others;
+    var clearOthers = await targetPools.UpdateManyAsync(scopedOthers, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
     await WriteOperationAuditAsync(
         operationAudits,
         http,

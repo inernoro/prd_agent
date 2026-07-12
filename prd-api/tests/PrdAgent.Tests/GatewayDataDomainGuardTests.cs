@@ -2281,6 +2281,28 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleDefaultPoolSwitch_ClearsOnlyCurrentTenantGatewayPools()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var endpointStart = console.IndexOf(
+            "app.MapPut(\"/gw/pools/{id}/default\"",
+            StringComparison.Ordinal);
+        var endpointEnd = console.IndexOf(
+            "app.MapPut(\"/gw/pools/{id}/claim\"",
+            endpointStart,
+            StringComparison.Ordinal);
+        Assert.True(endpointStart >= 0, "找不到默认模型池切换端点");
+        Assert.True(endpointEnd > endpointStart, "默认模型池切换端点边界无效");
+        var endpoint = console[endpointStart..endpointEnd];
+
+        Assert.Contains(
+            "targetAuthority == \"llm_gateway\" ? TenantAccess.Filter(http, others) : others",
+            endpoint);
+        Assert.Contains("targetPools.UpdateManyAsync(scopedOthers", endpoint);
+        Assert.DoesNotContain("targetPools.UpdateManyAsync(others", endpoint);
+    }
+
+    [Fact]
     public void ModelLabAndArena_PinSelectedModelThroughGateway()
     {
         var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
