@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Surface } from '@/components/design/Surface';
@@ -55,8 +55,10 @@ export default function AiToolboxPage() {
     startCreate,
   } = useToolboxStore();
 
+  // items 首轮加载完成信号：深链 ?panel=detail.xxx 的恢复要等列表数据到位（Codex P2）
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   useEffect(() => {
-    loadItems();
+    void loadItems().finally(() => setItemsLoaded(true));
   }, [loadItems]);
 
   // 网格 -> 详情/创建/编辑/运行 都是全屏级视图切换，必须进浏览器历史：
@@ -68,6 +70,7 @@ export default function AiToolboxPage() {
       view === 'grid' ? null
       : (view === 'detail' || view === 'running') && selectedItem ? `${view}.${selectedItem.id}`
       : view,
+    restoreReady: itemsLoaded && !itemsLoading,
     onExit: () => useToolboxStore.getState().backToGrid(),
     onRestore: (v) => {
       if (v.startsWith('detail.')) {

@@ -37,10 +37,16 @@ export interface HistoryBackedViewOptions {
   onExit: () => void;
   /**
    * URL 带 param 而视图关闭（深链/刷新/前进）时恢复视图。
-   * 返回 false 表示当前无法恢复（如数据未加载），hook 会 replace 清掉 param 并回落列表态。
+   * 返回 false 表示无法恢复（如目标已被删除），hook 会 replace 清掉 param 并回落列表态。
    * 省略时视为不可恢复。
    */
   onRestore?: (value: string) => boolean | void;
+  /**
+   * 恢复所需的数据是否已就绪（默认 true）。依赖异步加载数据做恢复的页面（如百宝箱
+   * 需要 items 列表）传入加载完成信号：未就绪时 hook 保留 param 挂起恢复，就绪后自动
+   * 重试一次，避免「刷新/深链进来时数据还没到，param 被立刻清掉回落列表」。
+   */
+  restoreReady?: boolean;
 }
 
 /** 一次 value/urlValue 变化应执行的动作（纯决策，供单测覆盖） */
@@ -87,7 +93,7 @@ export function resolveHistoryViewAction(s: HistoryViewSnapshot): HistoryViewAct
   return { kind: 'none' };
 }
 
-export function useHistoryBackedView({ param, value, onExit, onRestore }: HistoryBackedViewOptions) {
+export function useHistoryBackedView({ param, value, onExit, onRestore, restoreReady = true }: HistoryBackedViewOptions) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlValue = searchParams.get(param);
@@ -97,6 +103,9 @@ export function useHistoryBackedView({ param, value, onExit, onRestore }: Histor
   const prevValueRef = useRef<string | null>(null);
   const prevUrlRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
+  // 数据未就绪时挂起的恢复目标：restoreReady 翻 true 后重试（Codex P2：
+  // 异步加载数据的页面不能在挂载瞬间就把深链 param 清掉）
+  const pendingRestoreRef = useRef<string | null>(null);
 
   // 回调走 ref，避免调用方内联函数导致 effect 每轮重跑
   const onExitRef = useRef(onExit);
@@ -105,6 +114,39 @@ export function useHistoryBackedView({ param, value, onExit, onRestore }: Histor
   onRestoreRef.current = onRestore;
 
   useEffect(() => {
+    const writeParams = (mutate: (p: URLSearchParams) => void, replace: boolean) => {
+      // 从 window.location.search 取当前值，避免闭包里的 searchParams 过期覆盖别的参数
+      const next = new URLSearchParams(window.location.search);
+      mutate(next);
+      setSearchParams(next, { replace });
+    };
+    /** 立即尝试恢复；数据未就绪则挂起等 restoreReady，彻底恢复不了才清 param 回落列表 */
+    const attemptRestore = (target: string) => {
+      if (!restoreReady) {
+        pendingRestoreRef.current = target;
+        return;
+      }
+      pendingRestoreRef.current = null;
+      const ok = onRestoreRef.current ? onRestoreRef.current(target) !== false : false;
+      if (!ok) {
+        // 恢复失败：清 param 并回落列表态，避免「URL 说开着、界面是列表」的分裂
+        writeParams((p) => p.delete(param), true);
+        onExitRef.current();
+      }
+    };
+
+    // 先处理挂起的恢复：URL 已变/页面已自行恢复则放弃；数据就绪则重试
+    if (pendingRestoreRef.current) {
+      if (!urlValue || urlValue !== pendingRestoreRef.current || value === urlValue) {
+        pendingRestoreRef.current = null;
+      } else if (restoreReady) {
+        prevValueRef.current = value;
+        prevUrlRef.current = urlValue;
+        attemptRestore(urlValue);
+        return;
+      }
+    }
+
     const action = resolveHistoryViewAction({
       mounted: mountedRef.current,
       pushed: pushedRef.current,
@@ -117,13 +159,6 @@ export function useHistoryBackedView({ param, value, onExit, onRestore }: Histor
     mountedRef.current = true;
     prevValueRef.current = value;
     prevUrlRef.current = urlValue;
-
-    const writeParams = (mutate: (p: URLSearchParams) => void, replace: boolean) => {
-      // 从 window.location.search 取当前值，避免闭包里的 searchParams 过期覆盖别的参数
-      const next = new URLSearchParams(window.location.search);
-      mutate(next);
-      setSearchParams(next, { replace });
-    };
 
     switch (action.kind) {
       case 'push':
@@ -142,17 +177,11 @@ export function useHistoryBackedView({ param, value, onExit, onRestore }: Histor
         pushedRef.current = false;
         onExitRef.current();
         break;
-      case 'restore': {
-        const ok = onRestoreRef.current ? onRestoreRef.current(urlValue as string) !== false : false;
-        if (!ok) {
-          // 恢复失败：清 param 并回落列表态，避免「URL 说开着、界面是列表」的分裂
-          writeParams((p) => p.delete(param), true);
-          onExitRef.current();
-        }
+      case 'restore':
+        attemptRestore(urlValue as string);
         break;
-      }
       case 'none':
         break;
     }
-  }, [value, urlValue, param, navigate, setSearchParams]);
+  }, [value, urlValue, param, navigate, setSearchParams, restoreReady]);
 }

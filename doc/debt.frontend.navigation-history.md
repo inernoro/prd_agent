@@ -24,7 +24,7 @@
 | 2 | NavigationBridge（`App.tsx` bridge:navigate 事件）恒为 push | CDS Widget / 外部脚本触发的导航会压栈；属显式指令，多数场景合理 | 若出现「后台事件凭空插历史」投诉，给事件 detail 增加 replace 可选参数 |
 | 3 | 百宝箱 cds-agent 条目仍走 `window.location.assign`（三处，有意保留） | 进入 CDS 终端整页刷新，路由历史序号重置，进入后首次 smart back 走兜底而非弹栈 | cds-agent 页面依赖整页环境，保留；若迁移为 SPA 内页面再回收 |
 | 4 | 未逐页覆盖所有 `navigate('/xxx')` 型返回/跳转 | 长尾页面（如部分 admin 深页）可能仍有硬编码返回 | 后续「用户走到哪修到哪」，新代码一律用 useSmartBack，返回按钮禁止硬编码列表路由 |
-| 7 | useHistoryBackedView 的刷新恢复按页降级 | 百宝箱 create/edit/running、工作流执行子视图依赖内存态，刷新后回落列表并清 param（不是恢复原视图）；知识库/涌现/缺陷/周报可完整恢复 | 需要完整恢复时给对应页补「按 id 拉数据」的 onRestore |
+| 7 | useHistoryBackedView 的刷新恢复按页降级 | 百宝箱 create/edit/running、工作流执行子视图依赖内存态，刷新后回落列表并清 param（不是恢复原视图）；知识库/涌现/缺陷/周报可完整恢复；百宝箱 detail 与技能详情已接 restoreReady（数据加载完成后重试恢复，Codex P2 已修） | 需要完整恢复的其余视图补「按 id 拉数据」的 onRestore |
 | 8 | report-agent 页内编辑器与路由版详情页仍是两套实现 | 页内 `?report=` 走 hook，路由版 `/report-agent/report/:id` 各管各 | 后续收敛为一套（倾向路由版），届时删 store 的 showReportEditor |
 | 5 | prd-desktop 为 Tauri 状态机导航（无浏览器历史），不在本次范围 | 桌面端返回为 `previousMode` 单层栈，深度 1 | 若桌面端出现同类反馈，把 `sessionStore.mode` 扩展为多层栈 |
 | 6 | 移动端 TabBar「同级互切 replace」依赖 FIXED_TABS 根路径集合 | 新增底部 tab 时若忘记 path 一致性，replace 判定失效 | 新增 tab 时确认 `TAB_ROOT_PATHS` 自动包含（由 FIXED_TABS 派生，通常无需手动） |

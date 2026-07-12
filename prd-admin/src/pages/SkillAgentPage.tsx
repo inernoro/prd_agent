@@ -687,10 +687,12 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
 
   useEffect(() => { loadSkills(); loadDrafts(); }, [loadSkills, loadDrafts]);
 
-  // 列表 -> 技能详情是全屏切换，必须进浏览器历史：右滑/浏览器返回 = 关详情回列表
+  // 列表 -> 技能详情是全屏切换，必须进浏览器历史：右滑/浏览器返回 = 关详情回列表。
+  // restoreReady：深链恢复等技能列表加载完成再查找（Codex P2）
   useHistoryBackedView({
     param: 'skill',
     value: selectedSkill?.skillKey ?? null,
+    restoreReady: !loading,
     onExit: () => { setSelectedSkill(null); loadSkills(); },
     onRestore: (key) => {
       const hit = skills.find((s) => s.skillKey === key);
