@@ -42,6 +42,10 @@ public static class GatewayHttpEndpoints
         string gatewayApiKey,
         string gitCommit)
     {
+        var configuredInternalTenantId = app.Configuration["LlmGateway:InternalTenantId"]?.Trim();
+        var internalTenantId = string.IsNullOrWhiteSpace(configuredInternalTenantId)
+            ? GatewayTenantDefaults.InternalTenantId
+            : configuredInternalTenantId;
         // 服务密钥门（内部 M2M，不走 JWT）：
         // - /gw/v1/* 除 healthz 外必须带 key，readyz 也不能公网匿名读取依赖状态。
         // - 迁移期共享 key 只服务 MAP；新接入方使用 llmgw_service_keys 的 scoped key。
@@ -85,7 +89,7 @@ public static class GatewayHttpEndpoints
                         StatusCodes.Status401Unauthorized,
                         "GATEWAY_KEY_INVALID",
                         "gateway key rejected",
-                        TenantId: GatewayTenantDefaults.InternalTenantId,
+                        TenantId: internalTenantId,
                         LegacySharedKey: true)
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,

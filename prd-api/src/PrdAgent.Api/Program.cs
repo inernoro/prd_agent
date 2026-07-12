@@ -251,7 +251,8 @@ else if (isShadow || httpAllowlist.Count > 0)
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>()),
+                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
+                configuration: sp.GetRequiredService<IConfiguration>()),
             http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IConfiguration>(),
@@ -265,7 +266,8 @@ else if (isShadow || httpAllowlist.Count > 0)
             ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
             httpAllowlist: httpAllowlist,
             fullSampleAllowlist: shadowFullSampleAllowlist,
-            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA")));
+            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA"),
+            configuration: sp.GetRequiredService<IConfiguration>()));
 }
 else
 {

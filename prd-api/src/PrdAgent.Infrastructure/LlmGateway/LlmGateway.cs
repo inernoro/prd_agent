@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
@@ -26,6 +27,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
+    private readonly string _internalTenantId;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -54,7 +56,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILLMRequestContextAccessor? contextAccessor = null,
         ModelPool.IPoolFailoverNotifier? failoverNotifier = null,
         IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
-        GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null)
+        GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null,
+        IConfiguration? configuration = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -63,6 +66,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
         _concurrencyCoordinator = concurrencyCoordinator;
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
 
@@ -936,7 +942,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => _concurrencyCoordinator is null
             ? Task.FromResult(GatewayProviderConcurrencyAdmission.Allow())
             : _concurrencyCoordinator.AcquireAsync(
-                string.IsNullOrWhiteSpace(tenantId) ? GatewayTenantDefaults.InternalTenantId : tenantId,
+                string.IsNullOrWhiteSpace(tenantId) ? _internalTenantId : tenantId,
                 resolution,
                 timeoutSeconds,
                 ct);

@@ -290,6 +290,23 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void InternalTenantFallbacks_UseConfigurationAcrossLogsShadowConcurrencyAndLegacyKeys()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var shadow = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("configuration?[\"LlmGateway:InternalTenantId\"]", shadow);
+        Assert.DoesNotContain("?? GatewayTenantDefaults.InternalTenantId", shadow);
+        Assert.Contains("configuration?[\"LlmGateway:InternalTenantId\"]", gateway);
+        Assert.Contains("string.IsNullOrWhiteSpace(tenantId) ? _internalTenantId : tenantId", gateway);
+        Assert.Contains("app.Configuration[\"LlmGateway:InternalTenantId\"]", endpoints);
+        Assert.Contains("TenantId: internalTenantId", endpoints);
+        Assert.Contains("configuration: sp.GetRequiredService<IConfiguration>()", apiProgram);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");

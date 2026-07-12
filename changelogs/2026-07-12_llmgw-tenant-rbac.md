@@ -7,3 +7,4 @@
 | security | prd-api | multipart 清理仅在引用归属确认后执行，并只使用服务端已验证 TenantId |
 | security | prd-api | inline multipart 文件绕过引用 rehydrate 时禁止清理未经 manifest 验证的 RefKey |
 | fix | prd-api | LLM 日志缺省租户跟随 LlmGateway InternalTenantId 配置，避免落入硬编码租户 |
+| fix | prd-api | shadow 证据、provider 并发和 legacy key 的缺省租户统一跟随 InternalTenantId 配置 |

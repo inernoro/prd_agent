@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -35,6 +36,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly IReadOnlySet<string> _httpAllowlist;
     private readonly IReadOnlySet<string> _fullSampleAllowlist;
     private readonly string? _releaseCommit;
+    private readonly string _internalTenantId;
 
     public ShadowLlmGateway(
         ILlmGateway inproc,
@@ -45,7 +47,8 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILLMRequestContextAccessor? ctx = null,
         IReadOnlySet<string>? httpAllowlist = null,
         IReadOnlySet<string>? fullSampleAllowlist = null,
-        string? releaseCommit = null)
+        string? releaseCommit = null,
+        IConfiguration? configuration = null)
     {
         _inproc = inproc;
         _http = http;
@@ -56,6 +59,9 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _httpAllowlist = httpAllowlist ?? new HashSet<string>();
         _fullSampleAllowlist = fullSampleAllowlist ?? new HashSet<string>();
         _releaseCommit = NormalizeCommit(releaseCommit);
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
     }
 
     /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
@@ -201,7 +207,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
-        var tenantId = _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
+        var tenantId = _ctx?.Current?.TenantId ?? _internalTenantId;
         SafeRun(async () =>
         {
             var sw = Stopwatch.StartNew();
@@ -219,7 +225,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
-        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
+        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? _internalTenantId;
         // 构造**私有副本**用于 http 全量比对，绝不改调用方仍持有的 request.RequestBody：
         //   - inproc 已把 body["model"] 改写为其选中模型；这里在副本上把 model 恢复成原始有效期望模型
         //     （有则写回、无则移除），让 http 独立解析（与 resolve 探针同根，评审 P2）。
@@ -285,7 +291,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
-        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
+        var tenantId = request.Context?.TenantId ?? _ctx?.Current?.TenantId ?? _internalTenantId;
         var shadowReq = CloneRawRequest(request);
         SafeRun(async () =>
         {
@@ -370,7 +376,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         if (_writer == null) return;
         var requestId = _ctx?.Current?.RequestId;
-        var tenantId = _ctx?.Current?.TenantId ?? GatewayTenantDefaults.InternalTenantId;
+        var tenantId = _ctx?.Current?.TenantId ?? _internalTenantId;
         SafeRun(async () =>
         {
             var sw = Stopwatch.StartNew();
