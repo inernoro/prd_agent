@@ -70,10 +70,12 @@ import type {
   PromptPolicyDraft,
   PromptPolicyPreview,
   PromptPolicyVersion,
+  AvailableTenant,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
+const TENANT_KEY = 'llmgw.tenant';
 // 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
 const MCP_KEY = 'llmgw.mustChangePwd';
 
@@ -93,12 +95,24 @@ export function getStoredUser(): { username?: string; displayName?: string } | n
   }
 }
 
+export function getStoredTenant(): import('./types').TenantSession | null {
+  const raw = sessionStorage.getItem(TENANT_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function setSession(result: LoginResult) {
   sessionStorage.setItem(TOKEN_KEY, result.token);
   sessionStorage.setItem(
     USER_KEY,
     JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
   );
+  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
+  else sessionStorage.removeItem(TENANT_KEY);
   if (result.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
   else sessionStorage.removeItem(MCP_KEY);
 }
@@ -110,12 +124,14 @@ export function applyChangePasswordResult(result: ChangePasswordResult) {
     USER_KEY,
     JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
   );
+  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
   sessionStorage.removeItem(MCP_KEY);
 }
 
 export function clearSession() {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(TENANT_KEY);
   sessionStorage.removeItem(MCP_KEY);
 }
 
@@ -208,6 +224,10 @@ export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<
 // ── 日志 ──
 export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListData>> {
   return apiRequest<LogsListData>('/logs', { query: { ...params } });
+}
+
+export function getHealth(): Promise<ApiResponse<{ status: string; commit?: string | null; time?: string | null }>> {
+  return apiRequest<{ status: string; commit?: string | null; time?: string | null }>('/healthz');
 }
 
 export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {
@@ -320,6 +340,9 @@ export function createTeam(req: { name: string }): Promise<ApiResponse<CreatedTe
 }
 export function switchTenant(tenantId: string): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/switch-tenant', { method: 'POST', body: { tenantId } });
+}
+export function getAvailableTenants(): Promise<ApiResponse<AvailableTenant[]>> {
+  return apiRequest<AvailableTenant[]>('/auth/tenants');
 }
 export function getOperationAudits(params?: {
   page?: number;

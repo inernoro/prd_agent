@@ -34,6 +34,7 @@ export type ChangePasswordResult = {
   username?: string | null;
   displayName?: string | null;
   expiresAt?: string | null;
+  tenant?: TenantSession | null;
 };
 
 // ── 日志列表项 ──
@@ -228,13 +229,25 @@ export type LogsSummaryData = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-  estimatedCostUsd: number;
+  estimatedCostUsd?: number | null;
+  pricedRequests: number;
+  unknownCostRequests: number;
+  priceCoveragePercent: number;
+  estimatedCosts: { currency: string; amount: number; requests: number }[];
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
   statusDistribution: LogsBucketItem[];
   sourceSystemDistribution: LogsBucketItem[];
   ingressProtocolDistribution: LogsBucketItem[];
   modelPolicyDistribution: LogsBucketItem[];
+};
+
+export type AvailableTenant = {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+  current: boolean;
 };
 
 export type ProtocolCoverageItem = {

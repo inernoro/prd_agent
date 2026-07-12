@@ -536,6 +536,33 @@ app.MapGet("/gw/auth/context", (HttpContext http) =>
     }), jsonOptions);
 }).RequireAuthorization("UsageRead");
 
+app.MapGet("/gw/auth/tenants", async (HttpContext http) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var user = await users.Find(x => x.Id == access.UserId && x.IsActive).FirstOrDefaultAsync();
+    var authorizedTenantIds = user?.TenantIds.Distinct(StringComparer.Ordinal).ToList() ?? new List<string>();
+    var membershipFilter = Builders<LlmGwMembership>.Filter.And(
+        Builders<LlmGwMembership>.Filter.In(x => x.TenantId, authorizedTenantIds),
+        Builders<LlmGwMembership>.Filter.Eq(x => x.UserId, access.UserId),
+        Builders<LlmGwMembership>.Filter.Eq(x => x.Status, "active"));
+    var tenantMemberships = authorizedTenantIds.Count == 0
+        ? new List<LlmGwMembership>()
+        : await memberships.Find(membershipFilter).ToListAsync();
+    var tenantIds = tenantMemberships.Select(x => x.TenantId).Distinct(StringComparer.Ordinal).ToList();
+    var availableTenants = await tenants.Find(x => tenantIds.Contains(x.Id) && x.Status == "active").SortBy(x => x.Name).ToListAsync();
+    var membershipByTenant = tenantMemberships
+        .GroupBy(x => x.TenantId, StringComparer.Ordinal)
+        .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+    return Json(ApiEnvelope<object>.Ok(availableTenants.Select(tenant => new
+    {
+        tenant.Id,
+        tenant.Name,
+        tenant.Slug,
+        role = membershipByTenant[tenant.Id].Role,
+        current = tenant.Id == access.TenantId,
+    })), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
 app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] SwitchTenantRequestDto body) =>
 {
     var requestedTenantId = (body.TenantId ?? string.Empty).Trim();
@@ -895,6 +922,10 @@ app.MapGet("/gw/logs/summary", async (
         .Include("DurationMs")
         .Include("InputTokens")
         .Include("OutputTokens")
+        .Include("InputPricePerMillion")
+        .Include("OutputPricePerMillion")
+        .Include("EstimatedCost")
+        .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
         .Include("IsFallback")
         .Include("GatewayTransport")
@@ -904,6 +935,28 @@ app.MapGet("/gw/logs/summary", async (
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
+    var pricedDocs = docs
+        .Select(d => new
+        {
+            Amount = d.AsNullableDecimal("EstimatedCost"),
+            Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
+            Usd = d.AsNullableDecimal("EstimatedCostUsd"),
+            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
+                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+        })
+        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .ToList();
+    var estimatedCosts = pricedDocs
+        .GroupBy(x => x.Currency!, StringComparer.Ordinal)
+        .OrderBy(x => x.Key, StringComparer.Ordinal)
+        .Select(x => new EstimatedCostBucket
+        {
+            Currency = x.Key,
+            Amount = x.Sum(item => item.Amount!.Value),
+            Requests = x.LongCount(),
+        })
+        .ToList();
+    var usdDocs = pricedDocs.Where(x => x.Currency == "USD" && x.Usd is not null).ToList();
     var data = new LogsSummaryData
     {
         Total = docs.Count,
@@ -914,7 +967,11 @@ app.MapGet("/gw/logs/summary", async (
         Fallbacks = docs.LongCount(d => d.AsNullableBool("IsFallback") == true),
         InputTokens = docs.Sum(d => (long)(d.AsNullableInt("InputTokens") ?? 0)),
         OutputTokens = docs.Sum(d => (long)(d.AsNullableInt("OutputTokens") ?? 0)),
-        EstimatedCostUsd = docs.Sum(d => d.AsNullableDecimal("EstimatedCostUsd") ?? 0m),
+        EstimatedCostUsd = usdDocs.Count == 0 ? null : usdDocs.Sum(x => x.Usd!.Value),
+        PricedRequests = pricedDocs.Count,
+        UnknownCostRequests = docs.Count - pricedDocs.Count,
+        PriceCoveragePercent = docs.Count == 0 ? 0m : Math.Round(pricedDocs.Count * 100m / docs.Count, 1, MidpointRounding.AwayFromZero),
+        EstimatedCosts = estimatedCosts,
         AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
         TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
         StatusDistribution = BuildBucket(docs, "Status", fallbackKey: "unknown"),

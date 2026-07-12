@@ -6,16 +6,18 @@ import {
   changePassword as apiChangePassword,
   clearSession,
   getStoredUser,
+  getStoredTenant,
   isAuthed,
   login as apiLogin,
   mustChangePassword as readMustChangePassword,
   setSession,
 } from './api';
-import type { ApiResponse, ChangePasswordResult, LoginResult } from './types';
+import type { ApiResponse, ChangePasswordResult, LoginResult, TenantSession } from './types';
 
 type AuthState = {
   authed: boolean;
   user: { username?: string; displayName?: string } | null;
+  tenant: TenantSession | null;
   /** 首登强制改密：为 true 时守卫强制跳 /change-password，改密成功前不放行日志页。 */
   mustChangePassword: boolean;
   login: (username: string, password: string) => Promise<ApiResponse<LoginResult>>;
@@ -28,18 +30,21 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState<boolean>(() => isAuthed());
   const [user, setUser] = useState(() => getStoredUser());
+  const [tenant, setTenant] = useState(() => getStoredTenant());
   const [mustChange, setMustChange] = useState<boolean>(() => readMustChangePassword());
 
   const value = useMemo<AuthState>(
     () => ({
       authed,
       user,
+      tenant,
       mustChangePassword: mustChange,
       async login(username: string, password: string) {
         const res = await apiLogin({ username, password });
         if (res.success && res.data?.token) {
           setSession(res.data);
           setUser(getStoredUser());
+          setTenant(getStoredTenant());
           setMustChange(readMustChangePassword());
           setAuthed(true);
         }
@@ -50,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (res.success && res.data?.token) {
           applyChangePasswordResult(res.data);
           setUser(getStoredUser());
+          setTenant(getStoredTenant());
           setMustChange(false);
         }
         return res;
@@ -58,10 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearSession();
         setAuthed(false);
         setUser(null);
+        setTenant(null);
         setMustChange(false);
       },
     }),
-    [authed, user, mustChange],
+    [authed, user, tenant, mustChange],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { RefreshCw, ChevronLeft, ChevronRight, Activity, Clock, GitBranch, Gauge, Layers, Zap } from 'lucide-react';
 import { getLogs, getLogsMeta, getLogsTimeseries, getLogsSessions, getLogsSummary } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
@@ -53,6 +54,7 @@ function initialQueryValue(key: string) {
 }
 
 export function LogsView() {
+  const location = useLocation();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
@@ -107,6 +109,19 @@ export function LogsView() {
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const query = new URLSearchParams(location.search);
+    setFilterSourceSystem(query.get('sourceSystem') ?? '');
+    setFilterIngressProtocol(query.get('ingressProtocol') ?? '');
+    setFilterModelPolicy(query.get('modelPolicy') ?? '');
+    setFilterReleaseCommit(query.get('releaseCommit') ?? '');
+    setFilterRunId(query.get('runId') ?? '');
+    setFilterRequestId(query.get('requestId') ?? '');
+    setFilterSessionId(query.get('sessionId') ?? '');
+    setFilterStatus(query.get('status') ?? '');
+    setFilterAppCaller(query.get('appCallerCode') ?? '');
+  }, [location.search]);
 
   const range = useMemo(() => {
     const p = TIME_RANGE_PRESETS.find((x) => x.key === presetKey) ?? TIME_RANGE_PRESETS[2];
@@ -843,11 +858,22 @@ export function LogsView() {
           <SummaryTile icon={<Clock size={13} />} label="Avg latency" value={fmtMs(summary?.averageDurationMs)} sub="completed requests" />
           <SummaryTile icon={<GitBranch size={13} />} label="Fallbacks" value={fmtCompact(summary?.fallbacks)} sub="fallback requests" />
           <SummaryTile icon={<Layers size={13} />} label="Transport" value={primaryTransport?.key ?? DASH} sub={primaryTransport ? `${fmtCompact(primaryTransport.count)} requests` : 'no marks'} />
-          <SummaryTile icon={<Gauge size={13} />} label="Estimated USD" value={fmtCost(summary?.estimatedCostUsd, 'USD')} sub={`${fmtCompact(summary?.running)} running · ${fmtCompact(summary?.cancelled)} cancelled`} />
+          <SummaryTile icon={<Gauge size={13} />} label="Price coverage" value={summary?.total ? `${summary.priceCoveragePercent}%` : DASH} sub={summary?.total ? `${fmtCompact(summary.pricedRequests)} estimated · ${fmtCompact(summary.unknownCostRequests)} unknown` : 'no requests'} />
         </div>
-        <Card style={{ padding: 8, minHeight: 92, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <MiniBarChart data={series} height={82} />
-        </Card>
+        <div className="lg-activity-charts">
+          <Card className="lg-chart-card"><div className="lg-chart-title">Request volume</div><MiniBarChart data={series} height={88} /></Card>
+          <Card className="lg-chart-card"><div className="lg-chart-title">Status mix</div><DistributionChart items={summary?.statusDistribution ?? []} /></Card>
+        </div>
+      </div>
+
+      <div className="lg-cost-trust-strip">
+        <div><strong>费用估算</strong><span>按价格快照原币种分组，不做无汇率换算</span></div>
+        <div className="lg-cost-trust-values">
+          <span><small>actual</small><strong>{DASH}</strong></span>
+          {(summary?.estimatedCosts ?? []).map((item) => <span key={item.currency}><small>{item.currency} estimated</small><strong>{fmtCost(item.amount, item.currency)}</strong></span>)}
+          {(summary?.estimatedCosts ?? []).length === 0 ? <span><small>estimated</small><strong>{DASH}</strong></span> : null}
+          <span><small>unknown</small><strong>{summary?.total ? fmtCompact(summary.unknownCostRequests) : DASH}</strong></span>
+        </div>
       </div>
 
       <div
@@ -942,6 +968,18 @@ export function LogsView() {
       </Card>
 
       {selectedId ? <GenerationDetailsDrawer logId={selectedId} onClose={() => setSelectedId(null)} /> : null}
+    </div>
+  );
+}
+
+function DistributionChart({ items }: { items: { key: string; count: number }[] }) {
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  if (total === 0) return <div className="lg-chart-empty">暂无数据</div>;
+  return (
+    <div className="lg-distribution-chart" role="img" aria-label={items.map((item) => `${item.key} ${item.count}`).join('，')}>
+      {items.slice(0, 4).map((item) => (
+        <div key={item.key}><span>{item.key}</span><div><i style={{ width: `${item.count * 100 / total}%` }} /></div><strong>{fmtCompact(item.count)}</strong></div>
+      ))}
     </div>
   );
 }

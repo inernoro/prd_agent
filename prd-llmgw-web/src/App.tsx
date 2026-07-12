@@ -5,7 +5,8 @@ import { AuthProvider, useAuth } from '@/lib/auth';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
-import { OverviewPage } from '@/pages/OverviewPage';
+import { OverviewPage } from '@/pages/HomePage';
+import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
@@ -18,6 +19,8 @@ import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
+import { SettingsPage } from '@/pages/SettingsPage';
+import { UsagePage } from '@/pages/UsagePage';
 
 function getRouterBasename() {
   if (typeof window === 'undefined') return undefined;
@@ -77,6 +80,9 @@ export function App() {
             <Route path="/quickstart" element={<QuickstartPage />} />
             <Route path="/organization" element={<OrganizationPage />} />
             <Route path="/shadow" element={<ShadowPage />} />
+            <Route path="/governance" element={<GovernancePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/usage" element={<UsagePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

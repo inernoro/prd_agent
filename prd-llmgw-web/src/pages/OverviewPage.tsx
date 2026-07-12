@@ -1,6 +1,5 @@
-// 概览：网关控制台的「全面视图」入口（用户 2026-07-02：希望在 gw 看到全面的，而不是只有一个日志）。
-// 一屏聚合：① 容器拓扑（每个容器的职责，治「多只脚」困惑）② 配置概览（平台/模型池/模型计数）
-// ③ 影子比对摘要（剥离干净度信号）④ 快速入口。数据全部复用现有只读端点，无新增后端。
+// 治理运行状态：承载容器拓扑、发布 gate、配置权威迁移与协议运行证据。
+// 这些内部运维信息从普通首页移入本页，避免干扰首次接入与日常观测。
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Boxes, Server, GitCompare, ScrollText, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
@@ -34,7 +33,7 @@ const GROUP_META: Record<TopoRole['group'], { label: string; color: string; bg: 
   infra: { label: '共享基础设施', color: '#3fb950', bg: 'rgba(63,185,80,0.14)', icon: <Database size={13} /> },
 };
 
-export function OverviewPage() {
+export function GovernancePage() {
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [platforms, setPlatforms] = useState<PlatformItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[] | null>(null);
@@ -178,7 +177,7 @@ export function OverviewPage() {
           label="发布 Gate"
           value={runtimeGates!.readyForHttpFull ? 'Ready' : runtimeGateLabel(runtimeGates!)}
           sub={`${runtimeGates!.passed} 通过 · ${runtimeGates!.blocked} 阻塞 · ${runtimeGates!.waiting} 等待`}
-          to="/"
+          to="/governance"
           color={runtimeGateColor(runtimeGates!.status)}
         />
         <StatCard
@@ -301,7 +300,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
         </span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-        这些 gate 聚合控制台已有证据；它们不替代发布脚本和生产台账，只用于第一屏定位当前阻塞点。
+        这些 gate 聚合控制台已有证据；它们不替代发布脚本和生产台账，只用于治理页定位当前阻塞点。
         {gates.releaseCommit ? <span style={{ fontFamily: 'ui-monospace, monospace' }}> commit={gates.releaseCommit}</span> : null}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
