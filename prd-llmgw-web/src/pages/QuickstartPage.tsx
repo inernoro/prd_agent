@@ -114,7 +114,7 @@ function exampleFor(protocol: Protocol, baseUrl: string, appCaller: string) {
     "requestBody": {
       "messages": [{ "role": "user", "content": "Reply with OK" }]
     },
-    "context": { "requestId": "quickstart-native", "modelPolicy": "auto" }
+    "context": { "requestId": "quickstart-native", "sourceSystem": "external", "modelPolicy": "auto" }
   }'`;
   if (protocol === 'claude') return `curl "${baseUrl}/v1/messages" \\\n+  ${common} \\\n+  -H "Content-Type: application/json" \\\n+  -H "anthropic-version: 2023-06-01" \\\n+  -d '{
     "model": "auto",

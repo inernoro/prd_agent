@@ -379,6 +379,16 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void NativeQuickstart_UsesTheSameSourceSystemInHeaderAndBody()
+    {
+        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
+
+        Assert.Contains("X-Gateway-Source: external", quickstart);
+        Assert.Contains("\"sourceSystem\": \"external\"", quickstart);
+        Assert.Contains("/gw/v1/invoke", quickstart);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
