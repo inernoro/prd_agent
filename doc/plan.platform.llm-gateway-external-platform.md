@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.1 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.2 | **日期**：2026-07-12 | **状态**：开发中
 
 ## 1. 目标
 
@@ -20,7 +20,7 @@
 
 | PR | 当前状态 | 分支 | 独立完成门 |
 |---|---|---|---|
-| PR-1 | 本地验收完成，等待 CI/Bugbot/CDS | `codex/llmgw-tenant-rbac` | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
+| PR-1 | CI、CDS、预览验收通过，等待 Codex Review；Bugbot 被仓库设置禁用 | `codex/llmgw-tenant-rbac` / [PR #1085](https://github.com/inernoro/prd_agent/pull/1085) | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
 | PR-2 | 待开始 | 待 PR-1 完成后创建 | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
 | PR-3 | 待开始 | 待 PR-2 完成后创建 | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
 | PR-4 | 待开始 | 待 PR-3 完成后创建 | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
@@ -28,7 +28,7 @@
 
 每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Bugbot、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。
 
-PR-1 本地证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关 101 项测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。PR-1 尚未完成的门仅为远端 CI、Bugbot、CDS 和预览环境验收。
+PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关 101 项测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。针对旧版 provider 并发槽位 `_id` 的迁移兼容又增加 4 项真实 Mongo 测试并全部通过。GitHub Server Build & Test、四个相关镜像、CDS Deploy 已在实现提交 `071209eda` 上通过，CDS 五个服务均运行且 commit SHA 一致；控制台预览可直接访问。当前尚未完成的门为最终 Codex Review，以及被 Cursor 明确报告“Bugbot is disabled for this repository”的 Bugbot 外部门禁；未解除或明确豁免前不合并 PR-1、不启动 PR-2。
 
 执行期间保持以下边界：
 
