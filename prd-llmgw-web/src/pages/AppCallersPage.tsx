@@ -1,7 +1,7 @@
 // GW appCaller 注册表：展示 llmgw-serve 被动发现的调用方。
 // 这是目标架构里“appCaller 权威迁到 GW”的第一步，只读，不修改 MAP 旧配置。
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -495,7 +495,7 @@ function AppCallerRow({
       </td>
       <td style={td}>{item.totalSeen}</td>
       <td style={td}>{fmtTime(item.lastSeenAt)}</td>
-      <td style={td}><Button size="sm" variant="ghost" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存'}</Button></td>
+      <td style={td}><div style={{ display: 'flex', gap: 5 }}><Button size="sm" variant="ghost" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存'}</Button>{['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`} style={{ color: 'var(--accent)', fontSize: 11, alignSelf: 'center' }}>提示词</Link> : null}</div></td>
     </tr>
   );
 }

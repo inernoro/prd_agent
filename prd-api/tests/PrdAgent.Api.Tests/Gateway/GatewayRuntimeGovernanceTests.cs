@@ -1,6 +1,8 @@
 using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json.Nodes;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
@@ -14,6 +16,92 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayRuntimeGovernanceTests
 {
+    [Fact]
+    public void PromptPolicy_MergesPrefixRequestAndSuffixInFixedOrder()
+    {
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "user", ["content"] = "question" },
+                new JsonObject { ["role"] = "system", ["content"] = "request-system" },
+            },
+        };
+
+        GatewayPromptPolicyApplier.ApplyToStandardMessages(body, "policy-prefix", "policy-suffix");
+
+        var messages = body["messages"]!.AsArray();
+        messages.Count.ShouldBe(2);
+        messages[0]!["role"]!.GetValue<string>().ShouldBe("system");
+        messages[0]!["content"]!.GetValue<string>().ShouldBe("policy-prefix\n\nrequest-system\n\npolicy-suffix");
+        messages[1]!["role"]!.GetValue<string>().ShouldBe("user");
+    }
+
+    [Fact]
+    public async Task PromptPolicy_RawAndNonChatRequestTypesAreNeverInjected()
+    {
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var body = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "keep" }) };
+        var request = new GatewayRequest { AppCallerCode = "demo.raw::generation", ModelType = "generation", RequestBody = body, Context = new GatewayRequestContext { TenantId = "tenant-a" } };
+
+        var result = await GatewayPromptPolicyApplier.ApplyAsync(services, request, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Request.ShouldBeSameAs(request);
+        result.Request.Context!.PromptPolicyId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PromptPolicy_UsesVerifiedTenantAndTeamAndOnlyStoresMetadataInContext()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_prompt_policies").InsertOneAsync(new BsonDocument
+        {
+            { "_id", "policy-a" }, { "TenantId", "tenant-a" }, { "TeamId", "team-a" },
+            { "AppCallerCode", "demo.chat::chat" }, { "RequestType", "chat" }, { "Enabled", true }, { "Version", 3 },
+            { "SystemPromptPrefix", "tenant={{tenantId}}" }, { "SystemPromptSuffix", "caller={{appCallerCode}}" },
+            { "AllowedVariables", new BsonArray { "tenantId", "appCallerCode" } }, { "MaxChars", 200 }, { "PolicyHash", "hash-a" },
+        });
+        using var services = new ServiceCollection().AddSingleton(scope.Context).BuildServiceProvider();
+        var request = new GatewayRequest
+        {
+            AppCallerCode = "demo.chat::chat", ModelType = "chat",
+            RequestBody = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "system", ["content"] = "request" }) },
+            Context = new GatewayRequestContext { TenantId = "tenant-a", TeamId = "team-a", SourceSystem = "external" },
+        };
+
+        var result = await GatewayPromptPolicyApplier.ApplyAsync(services, request, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Request.RequestBody!["messages"]![0]!["content"]!.GetValue<string>().ShouldBe("tenant=tenant-a\n\nrequest\n\ncaller=demo.chat::chat");
+        result.Request.Context!.PromptPolicyId.ShouldBe("policy-a");
+        result.Request.Context.PromptPolicyVersion.ShouldBe(3);
+        result.Request.Context.PromptPolicyHash.ShouldBe("hash-a");
+        result.Request.Context.PromptPolicyChars.ShouldBe(37);
+    }
+
+    [Fact]
+    public async Task PromptPolicy_LatestDisabledVersionDoesNotFallBackToOlderEnabledVersion()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var policies = scope.Context.Database.GetCollection<BsonDocument>("llmgw_prompt_policies");
+        await policies.InsertManyAsync(new[]
+        {
+            new BsonDocument { { "_id", "old-enabled" }, { "TenantId", "tenant-a" }, { "AppCallerCode", "demo.chat::chat" }, { "RequestType", "chat" }, { "Enabled", true }, { "Version", 1 }, { "SystemPromptPrefix", "old" }, { "SystemPromptSuffix", "" }, { "AllowedVariables", new BsonArray() }, { "MaxChars", 200 }, { "PolicyHash", "old-hash" } },
+            new BsonDocument { { "_id", "new-disabled" }, { "TenantId", "tenant-a" }, { "AppCallerCode", "demo.chat::chat" }, { "RequestType", "chat" }, { "Enabled", false }, { "Version", 2 }, { "SystemPromptPrefix", "disabled" }, { "SystemPromptSuffix", "" }, { "AllowedVariables", new BsonArray() }, { "MaxChars", 200 }, { "PolicyHash", "new-hash" } },
+        });
+        using var services = new ServiceCollection().AddSingleton(scope.Context).BuildServiceProvider();
+        var request = new GatewayRequest { AppCallerCode = "demo.chat::chat", ModelType = "chat", RequestBody = new JsonObject { ["messages"] = new JsonArray() }, Context = new GatewayRequestContext { TenantId = "tenant-a" } };
+
+        var result = await GatewayPromptPolicyApplier.ApplyAsync(services, request, CancellationToken.None);
+
+        result.Request.ShouldBeSameAs(request);
+        result.Request.Context!.PromptPolicyId.ShouldBeNull();
+    }
     [Fact]
     public async Task ConcurrentBudgetReservations_CannotExceedMonthlyBudget()
     {

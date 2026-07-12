@@ -82,6 +82,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_model_exchanges",
             "llmgw_service_keys",
             "llmgw_service_key_rate_windows",
+            "llmgw_prompt_policies",
             "llmrequestlogs",
             "llmshadow_comparisons",
             "llmgw_operation_audits",
@@ -321,6 +322,17 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         await serviceKeyDirectory.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyDirectoryRecord>(
             Builders<GatewayServiceKeyDirectoryRecord>.IndexKeys.Ascending(x => x.KeyHash),
             new CreateIndexOptions { Name = "uniq_llmgw_service_key_directory_hash", Unique = true }), cancellationToken: ct);
+
+        var promptPolicies = _data.Database.GetCollection<BsonDocument>("llmgw_prompt_policies");
+        await promptPolicies.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("AppCallerCode").Ascending("RequestType").Ascending("Version"),
+                new CreateIndexOptions { Name = "uniq_llmgw_prompt_policy_tenant_caller_type_version", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Descending("UpdatedAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_prompt_policy_tenant_team_updated" }),
+        }, cancellationToken: ct);
 
         var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
         await multipart.Indexes.CreateManyAsync(new[]

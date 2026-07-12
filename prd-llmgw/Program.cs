@@ -187,6 +187,7 @@ var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
 var modelExchanges = mapDatabase.GetCollection<BsonDocument>("model_exchanges");
 var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
+var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
 var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pools");
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
@@ -226,6 +227,15 @@ await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
         new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
+});
+await promptPolicies.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("AppCallerCode").Ascending("RequestType").Ascending("Version"),
+        new CreateIndexOptions { Name = "uniq_llmgw_prompt_policy_tenant_caller_type_version", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("UpdatedAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_prompt_policy_tenant_team_updated" }),
 });
 
 app.Use(async (http, next) =>
@@ -2681,6 +2691,137 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
     return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+app.MapGet("/gw/app-callers/{id}/prompt-policy", async (HttpContext http, string id) =>
+{
+    var caller = await gwAppCallers.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync();
+    if (caller is null) return Json(ApiEnvelope<PromptPolicyData>.Fail("NOT_FOUND", "appCaller 不存在"), jsonOptions, 404);
+    var requestType = caller.GetStringOrEmpty("RequestType").Trim().ToLowerInvariant();
+    if (requestType is not ("chat" or "vision"))
+        return Json(ApiEnvelope<PromptPolicyData>.Fail("PROMPT_POLICY_UNSUPPORTED_REQUEST_TYPE", "提示词策略首版只支持 chat/vision"), jsonOptions, 400);
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var appCallerCode = caller.GetStringOrEmpty("AppCallerCode").Trim().ToLowerInvariant();
+    var filter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+        Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+    var versions = await promptPolicies.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("Version")).Limit(50).ToListAsync();
+    return Json(ApiEnvelope<PromptPolicyData>.Ok(new PromptPolicyData
+    {
+        AppCallerId = id,
+        AppCallerCode = appCallerCode,
+        RequestType = requestType,
+        Current = versions.Count == 0 ? null : MapPromptPolicy(versions[0]),
+        Versions = versions.Select(MapPromptPolicy).ToList(),
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPost("/gw/app-callers/{id}/prompt-policy/preview", async (HttpContext http, string id, [FromBody] PreviewPromptPolicyRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<PromptPolicyPreview>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if ((body.SampleSystemPrompt?.Length ?? 0) > 20000) return Json(ApiEnvelope<PromptPolicyPreview>.Fail("INVALID_INPUT", "示例 system prompt 最多 20000 字符"), jsonOptions, 400);
+    var caller = await gwAppCallers.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync();
+    if (caller is null) return Json(ApiEnvelope<PromptPolicyPreview>.Fail("NOT_FOUND", "appCaller 不存在"), jsonOptions, 404);
+    var validation = ValidatePromptPolicyDraft(body, caller, TenantAccess.GetRequired(http));
+    if (validation.Error is not null) return Json(ApiEnvelope<PromptPolicyPreview>.Fail("INVALID_INPUT", validation.Error), jsonOptions, 400);
+    var prefix = RenderPromptPolicy(validation.Prefix, validation.AllowedVariables, validation.Variables);
+    var suffix = RenderPromptPolicy(validation.Suffix, validation.AllowedVariables, validation.Variables);
+    var merged = string.Join("\n\n", new[] { prefix, body.SampleSystemPrompt?.Trim() ?? "", suffix }.Where(x => x.Length > 0));
+    return Json(ApiEnvelope<PromptPolicyPreview>.Ok(new PromptPolicyPreview
+    {
+        MergedSystemPrompt = merged,
+        PolicyChars = prefix.Length + suffix.Length,
+        MergedChars = merged.Length,
+        PolicyHash = ComputePromptPolicyHash(validation.Prefix, validation.Suffix, body.Enabled, validation.AllowedVariables, body.MaxChars),
+        AppliedVariables = validation.AllowedVariables,
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/app-callers/{id}/prompt-policy", async (HttpContext http, string id, [FromBody] SavePromptPolicyRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var caller = await gwAppCallers.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync();
+    if (caller is null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("NOT_FOUND", "appCaller 不存在"), jsonOptions, 404);
+    var access = TenantAccess.GetRequired(http);
+    var validation = ValidatePromptPolicyDraft(body, caller, access);
+    if (validation.Error is not null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("INVALID_INPUT", validation.Error), jsonOptions, 400);
+    var appCallerCode = caller.GetStringOrEmpty("AppCallerCode").Trim().ToLowerInvariant();
+    var requestType = caller.GetStringOrEmpty("RequestType").Trim().ToLowerInvariant();
+    var scopeFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+        Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+    var current = await promptPolicies.Find(scopeFilter).Sort(Builders<BsonDocument>.Sort.Descending("Version")).FirstOrDefaultAsync();
+    var currentVersion = current?.AsNullableInt("Version") ?? 0;
+    if (body.ExpectedVersion != currentVersion)
+        return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("PROMPT_POLICY_VERSION_CONFLICT", $"当前版本为 {currentVersion}"), jsonOptions, 409);
+    var now = DateTime.UtcNow;
+    var policyHash = ComputePromptPolicyHash(validation.Prefix, validation.Suffix, body.Enabled, validation.AllowedVariables, body.MaxChars);
+    var doc = new BsonDocument
+    {
+        { "_id", Guid.NewGuid().ToString("N") },
+        { "TenantId", access.TenantId },
+        { "TeamId", caller.TryGetValue("TeamId", out var teamId) ? teamId : BsonNull.Value },
+        { "AppCallerCode", appCallerCode },
+        { "RequestType", requestType },
+        { "SystemPromptPrefix", validation.Prefix },
+        { "SystemPromptSuffix", validation.Suffix },
+        { "Enabled", body.Enabled },
+        { "Version", currentVersion + 1 },
+        { "AllowedVariables", new BsonArray(validation.AllowedVariables) },
+        { "MaxChars", body.MaxChars },
+        { "PolicyHash", policyHash },
+        { "PolicyChars", validation.Prefix.Length + validation.Suffix.Length },
+        { "CreatedBy", access.UserId },
+        { "UpdatedBy", access.UserId },
+        { "CreatedAt", now },
+        { "UpdatedAt", now },
+    };
+    try { await promptPolicies.InsertOneAsync(doc); }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("PROMPT_POLICY_VERSION_CONFLICT", "策略已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http, "prompt_policy.update", "llmgw_prompt_policy", doc["_id"].AsString, appCallerCode, true, null,
+        PromptPolicyAuditChanges(doc));
+    return Json(ApiEnvelope<PromptPolicyVersionItem>.Ok(MapPromptPolicy(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPost("/gw/app-callers/{id}/prompt-policy/rollback", async (HttpContext http, string id, [FromBody] RollbackPromptPolicyRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if (body.TargetVersion < 1) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("INVALID_INPUT", "targetVersion 必须大于 0"), jsonOptions, 400);
+    var caller = await gwAppCallers.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync();
+    if (caller is null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("NOT_FOUND", "appCaller 不存在"), jsonOptions, 404);
+    var access = TenantAccess.GetRequired(http);
+    var appCallerCode = caller.GetStringOrEmpty("AppCallerCode").Trim().ToLowerInvariant();
+    var requestType = caller.GetStringOrEmpty("RequestType").Trim().ToLowerInvariant();
+    var scopeFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+        Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+    var current = await promptPolicies.Find(scopeFilter).Sort(Builders<BsonDocument>.Sort.Descending("Version")).FirstOrDefaultAsync();
+    var currentVersion = current?.AsNullableInt("Version") ?? 0;
+    if (body.ExpectedVersion != currentVersion)
+        return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("PROMPT_POLICY_VERSION_CONFLICT", $"当前版本为 {currentVersion}"), jsonOptions, 409);
+    var target = await promptPolicies.Find(Builders<BsonDocument>.Filter.And(scopeFilter, Builders<BsonDocument>.Filter.Eq("Version", body.TargetVersion))).FirstOrDefaultAsync();
+    if (target is null) return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("NOT_FOUND", "目标版本不存在"), jsonOptions, 404);
+    var restored = target.DeepClone().AsBsonDocument;
+    restored["_id"] = Guid.NewGuid().ToString("N");
+    restored["Version"] = currentVersion + 1;
+    restored["CreatedBy"] = access.UserId;
+    restored["UpdatedBy"] = access.UserId;
+    restored["CreatedAt"] = DateTime.UtcNow;
+    restored["UpdatedAt"] = DateTime.UtcNow;
+    try { await promptPolicies.InsertOneAsync(restored); }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<PromptPolicyVersionItem>.Fail("PROMPT_POLICY_VERSION_CONFLICT", "策略已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http, "prompt_policy.rollback", "llmgw_prompt_policy", restored["_id"].AsString, appCallerCode, true, null,
+        new BsonDocument { { "fromVersion", currentVersion }, { "targetVersion", body.TargetVersion }, { "newVersion", currentVersion + 1 }, { "policyHash", restored["PolicyHash"] } });
+    return Json(ApiEnvelope<PromptPolicyVersionItem>.Ok(MapPromptPolicy(restored)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 // GW appCaller 批量治理：按当前筛选批量设置 registry 自身治理字段，不批量改模型池绑定，避免跨 requestType 误绑。
 app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBody] BulkUpdateGatewayAppCallersRequest body) =>
 {
@@ -4824,6 +4965,7 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_model_exchanges",
         "llmgw_service_keys",
         "llmgw_service_key_rate_windows",
+        "llmgw_prompt_policies",
         "llmrequestlogs",
         "llmshadow_comparisons",
         "llmgw_operation_audits",
@@ -5436,6 +5578,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     Model = d.GetStringOrEmpty("Model"),
     RequestBodyRedacted = d.AsNullableString("RequestBodyRedacted"),
     SystemPromptText = d.AsNullableString("SystemPromptText"),
+    PromptPolicyId = d.AsNullableString("PromptPolicyId"),
+    PromptPolicyVersion = d.AsNullableInt("PromptPolicyVersion"),
+    PromptPolicyHash = d.AsNullableString("PromptPolicyHash"),
+    PromptPolicyChars = d.AsNullableInt("PromptPolicyChars"),
     QuestionText = d.AsNullableString("QuestionText"),
     AnswerText = d.AsNullableString("AnswerText"),
     ThinkingText = d.AsNullableString("ThinkingText"),
@@ -6614,6 +6760,81 @@ static string? ValidateBudgetConfiguration(decimal? monthlyBudgetUsd, decimal? b
         return "单次预算预占不能超过月预算";
     return null;
 }
+
+static (string Prefix, string Suffix, List<string> AllowedVariables, Dictionary<string, string> Variables, string? Error)
+    ValidatePromptPolicyDraft(SavePromptPolicyRequest body, BsonDocument caller, TenantAccessContext access)
+{
+    var requestType = caller.GetStringOrEmpty("RequestType").Trim().ToLowerInvariant();
+    if (requestType is not ("chat" or "vision"))
+        return ("", "", [], new(), "提示词策略首版只支持 chat/vision");
+    if (body.MaxChars is < 1 or > 20000)
+        return ("", "", [], new(), "maxChars 仅支持 1..20000");
+    var prefix = (body.SystemPromptPrefix ?? "").Trim();
+    var suffix = (body.SystemPromptSuffix ?? "").Trim();
+    if (prefix.Length + suffix.Length > body.MaxChars)
+        return (prefix, suffix, [], new(), "前缀和后缀字符数超过 maxChars");
+    var supported = new HashSet<string>(new[] { "tenantId", "teamId", "appCallerCode", "requestType", "sourceSystem" }, StringComparer.Ordinal);
+    var allowed = (body.AllowedVariables ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.Ordinal).ToList();
+    var unsupported = allowed.FirstOrDefault(x => !supported.Contains(x));
+    if (unsupported is not null)
+        return (prefix, suffix, allowed, new(), $"不支持变量：{unsupported}");
+    var referenced = System.Text.RegularExpressions.Regex.Matches(prefix + "\n" + suffix, "\\{\\{([A-Za-z][A-Za-z0-9]*)\\}\\}")
+        .Select(x => x.Groups[1].Value).Distinct(StringComparer.Ordinal).ToList();
+    var denied = referenced.FirstOrDefault(x => !allowed.Contains(x, StringComparer.Ordinal));
+    if (denied is not null)
+        return (prefix, suffix, allowed, new(), $"变量未加入 allowedVariables：{denied}");
+    var variables = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["tenantId"] = access.TenantId,
+        ["teamId"] = caller.AsNullableString("TeamId") ?? "",
+        ["appCallerCode"] = caller.GetStringOrEmpty("AppCallerCode"),
+        ["requestType"] = requestType,
+        ["sourceSystem"] = caller.AsNullableString("SourceSystem") ?? "",
+    };
+    return (prefix, suffix, allowed, variables, null);
+}
+
+static string RenderPromptPolicy(string template, IReadOnlyCollection<string> allowed, IReadOnlyDictionary<string, string> variables)
+    => System.Text.RegularExpressions.Regex.Replace(template, "\\{\\{([A-Za-z][A-Za-z0-9]*)\\}\\}", match =>
+        allowed.Contains(match.Groups[1].Value, StringComparer.Ordinal)
+        && variables.TryGetValue(match.Groups[1].Value, out var value) ? value : match.Value);
+
+static string ComputePromptPolicyHash(string prefix, string suffix, bool enabled, IEnumerable<string> allowedVariables, int maxChars)
+{
+    var canonical = string.Join("\n", new[]
+    {
+        prefix, suffix, enabled ? "true" : "false", string.Join(",", allowedVariables.OrderBy(x => x, StringComparer.Ordinal)), maxChars.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    });
+    return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+}
+
+static PromptPolicyVersionItem MapPromptPolicy(BsonDocument doc) => new()
+{
+    Id = doc.GetStringOrEmpty("_id"),
+    TeamId = doc.AsNullableString("TeamId"),
+    AppCallerCode = doc.GetStringOrEmpty("AppCallerCode"),
+    RequestType = doc.GetStringOrEmpty("RequestType"),
+    SystemPromptPrefix = doc.AsNullableString("SystemPromptPrefix") ?? "",
+    SystemPromptSuffix = doc.AsNullableString("SystemPromptSuffix") ?? "",
+    Enabled = doc.AsNullableBool("Enabled") == true,
+    Version = doc.AsNullableInt("Version") ?? 0,
+    AllowedVariables = doc.AsStringList("AllowedVariables"),
+    MaxChars = doc.AsNullableInt("MaxChars") ?? 8000,
+    PolicyHash = doc.AsNullableString("PolicyHash") ?? "",
+    PolicyChars = doc.AsNullableInt("PolicyChars") ?? 0,
+    CreatedBy = doc.AsNullableString("CreatedBy"),
+    UpdatedBy = doc.AsNullableString("UpdatedBy"),
+    UpdatedAt = doc.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+};
+
+static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
+{
+    { "version", doc["Version"] },
+    { "enabled", doc["Enabled"] },
+    { "policyHash", doc["PolicyHash"] },
+    { "policyChars", doc["PolicyChars"] },
+    { "maxChars", doc["MaxChars"] },
+};
 
 // 统一 JSON 输出（带信封 + 指定状态码）。
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)

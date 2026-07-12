@@ -274,7 +274,13 @@ public static class GatewayHttpEndpoints
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var gatewayRequest = ingress.ToGatewayRequest(stream);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamOpenAiResponsesCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
@@ -491,7 +497,13 @@ public static class GatewayHttpEndpoints
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var gatewayRequest = ingress.ToGatewayRequest(stream);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
@@ -563,7 +575,13 @@ public static class GatewayHttpEndpoints
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var gatewayRequest = ingress.ToGatewayRequest(stream);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamClaudeCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
@@ -664,7 +682,13 @@ public static class GatewayHttpEndpoints
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var gatewayRequest = ingress.ToGatewayRequest(stream);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
             await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
                 ? StreamGeminiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
@@ -726,7 +750,10 @@ public static class GatewayHttpEndpoints
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
-            var routedRequest = ApplyIngressRouting(request, ingress, stream: false);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ApplyIngressRouting(request, ingress, stream: false), CancellationToken.None);
+            if (!promptPolicy.Success)
+                return Results.Json(GatewayResponse.Fail(promptPolicy.ErrorCode!, promptPolicy.ErrorMessage!, 400), jsonOpts, statusCode: 400);
+            var routedRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             GatewayCancellationLease? cancellation = null;
             try
@@ -822,11 +849,17 @@ public static class GatewayHttpEndpoints
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ApplyIngressRouting(request, ingress, stream: true), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
 
-            var routedRequest = ApplyIngressRouting(request, ingress, stream: true);
+            var routedRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             GatewayCancellationLease? cancellation = null;
             try
@@ -4125,6 +4158,10 @@ public static class GatewayHttpEndpoints
                 QuestionText = source?.QuestionText,
                 SystemPromptChars = source?.SystemPromptChars,
                 SystemPromptText = source?.SystemPromptText,
+                PromptPolicyId = source?.PromptPolicyId,
+                PromptPolicyVersion = source?.PromptPolicyVersion,
+                PromptPolicyHash = source?.PromptPolicyHash,
+                PromptPolicyChars = source?.PromptPolicyChars,
                 ImageReferences = source?.ImageReferences,
                 GatewayTransport = GatewayTransports.Http,
                 SourceSystem = ingress.SourceSystem,

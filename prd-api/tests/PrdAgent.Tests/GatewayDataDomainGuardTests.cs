@@ -392,6 +392,25 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var serving = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayPromptPolicyApplier.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+
+        Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
+        Assert.Contains("Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"AppCallerCode\").Ascending(\"RequestType\").Ascending(\"Version\")", console);
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId)", serving);
+        Assert.Contains("requestType is not (\"chat\" or \"vision\")", serving);
+        Assert.DoesNotContain("GatewayPromptPolicyApplier.ApplyAsync(services, request, ingress)", endpoints);
+        Assert.Contains("RedactAppliedPromptPolicy(requestBody, request.Context)", gateway);
+        Assert.Contains("PromptPolicyId: request.Context?.PromptPolicyId", gateway);
+        Assert.Contains("PromptPolicyHash: request.Context?.PromptPolicyHash", gateway);
+        Assert.Contains("SystemPromptText: string.IsNullOrWhiteSpace(request.Context?.PromptPolicyId) ? request.Context?.SystemPromptText : null", gateway);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");

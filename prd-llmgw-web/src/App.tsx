@@ -17,6 +17,7 @@ import { ShadowPage } from '@/pages/ShadowPage';
 import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
+import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
 
 function getRouterBasename() {
   if (typeof window === 'undefined') return undefined;
@@ -66,6 +67,7 @@ export function App() {
             <Route path="/" element={<OverviewPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/app-callers" element={<AppCallersPage />} />
+            <Route path="/app-callers/:id/prompt-policy" element={<PromptPolicyPage />} />
             <Route path="/pools" element={<ModelPoolsPage />} />
             <Route path="/platforms" element={<PlatformsPage />} />
             <Route path="/models" element={<ModelsPage />} />

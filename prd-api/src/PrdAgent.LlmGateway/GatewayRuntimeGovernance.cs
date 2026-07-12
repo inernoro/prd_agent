@@ -985,6 +985,7 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
             ("llmgw_model_exchanges", "TenantId"),
             ("llmgw_service_keys", "TenantId"),
             ("llmgw_service_key_rate_windows", "TenantId"),
+            ("llmgw_prompt_policies", "TenantId"),
             ("llmrequestlogs", "TenantId"),
             ("llmshadow_comparisons", "TenantId"),
             ("llmgw_operation_audits", "TenantId"),

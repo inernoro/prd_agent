@@ -21,8 +21,8 @@
 | PR | 当前状态 | 分支 | 独立完成门 |
 |---|---|---|---|
 | PR-1 | 已合并；CI、Codex Review、CDS 与预览验收通过；Bugbot 因订阅停用记为不适用 | `codex/llmgw-tenant-rbac` / [PR #1085](https://github.com/inernoro/prd_agent/pull/1085) | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
-| PR-2 | 开发中；本地编译、前端构建及 109 项 Gateway 测试通过 | `codex/llmgw-service-key-quickstart` | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
-| PR-3 | 待开始 | 待 PR-2 完成后创建 | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
+| PR-2 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-service-key-quickstart` / [PR #1086](https://github.com/inernoro/prd_agent/pull/1086) | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
+| PR-3 | 本地实现与验收完成，待独立 PR 的 CI、Codex Review 和 CDS | `codex/llmgw-prompt-policy` | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
 | PR-4 | 待开始 | 待 PR-3 完成后创建 | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
 | PR-5 | 待开始 | 待 PR-4 完成后创建 | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
 
@@ -30,7 +30,9 @@
 
 PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。GitHub CI、四个相关镜像、Codex Review、CDS Deploy 与直连预览验收通过，PR #1085 已 squash 合并为 `19a33c7f4461eae24861f8ad59123b0ec0679389`。
 
-PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。提交 `73f3098ff` 的 GitHub CI、四镜像、CDS Deploy 和 smoke 3/3 已通过，CDS 五个服务运行且 serving health 回显同 commit；独立控制台公网深链为 `<previewSlug>-llmgw-web.<root>/quickstart`，已确认返回当前 SPA。Quickstart 的 serving base 优先读取显式配置；生产 `/llmgw` 路径部署使用同源；无法可靠推断 serving origin 的独立控制台使用明确占位域名，禁止把管理后台 origin 误作 serving。尚待最终 Codex Review。
+PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。最终提交 `b618d17f2` 的 GitHub CI 10 项成功、四镜像、CDS Deploy 和 smoke 3/3 通过，serving health 精确回显同 commit；独立控制台 Quickstart 深链返回 200，无法确认 serving origin 时的线上产物使用明确占位域名。Codex 自动复审因云端额度耗尽无法覆盖最终提交，按仓库 `human-verify` 完成正确性、错误处理、安全、边界、数据流与用户场景替代复审并修复发现的问题。PR #1086 已 squash 合并为 `f2550f2e298ec7621480facd77f33661de99d78c`；Bugbot 不适用。
+
+PR-3 本地证据（2026-07-12）：新增 `llmgw_prompt_policies` 不可变版本集合，唯一索引为 TenantId + AppCallerCode + RequestType + Version；控制台 GET/预览/保存/回滚全部先以服务端会话 TenantId 过滤 appCaller 和策略。实跑临时库完成无版本、预览、保存 v1、陈旧版本 409、禁用 v2、回滚新建 v3，操作审计不含前缀/后缀正文。serving 只在四协议统一后的 chat/vision `messages` 应用策略，合并顺序为前缀、请求 system、后缀；raw/非 chat/vision 回归保持原请求。日志向上游发送合并正文，但 `RequestBodyRedacted` 只保留策略标记，`SystemPromptText` 置空，仅写 id/version/hash/chars。PromptPolicy 定向行为 4/4、日志脱敏 1/1、数据域守卫 58/58 通过；Gateway 扩大回归在本机 .NET 9 运行 net8 测试时 567/577 通过，剩余 10 项均为 TestServer `PipeWriter.UnflushedBytes` 运行时兼容错误，交由标准 .NET 8 CI 判定。三项目构建通过，真实登录浏览器完成桌面、移动、变量、预览和版本历史验收，0 console error。尚待独立 PR 的 CI、Codex Review 与 CDS。
 
 执行期间保持以下边界：
 
