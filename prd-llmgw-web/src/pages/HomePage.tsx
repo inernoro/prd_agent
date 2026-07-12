@@ -63,7 +63,7 @@ export function OverviewPage() {
           <h2>用一把租户密钥接入四种协议</h2>
           <p>选择现有 SDK，复制可运行示例，再用 requestId 回到 Activity 定位请求。</p>
           <div className="lg-protocol-list" aria-label="支持协议">
-            {['OpenAI Chat', 'OpenAI Responses', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
+            {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
           </div>
           <div className="lg-card-actions">
             <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> 开始接入</Link>

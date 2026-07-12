@@ -392,6 +392,31 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void FinalPlatformAcceptance_UsesAuthenticatedTenantContextAndFourPublicProtocols()
+    {
+        var acceptance = ReadRepoFile("scripts/llmgw-prod-governance-acceptance.sh");
+        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
+        var home = ReadRepoFile("prd-llmgw-web/src/pages/HomePage.tsx");
+
+        Assert.Contains("$console_base/auth/login", acceptance);
+        Assert.Contains("$console_base/auth/context", acceptance);
+        Assert.Contains("TenantId: tenantId", acceptance);
+        Assert.DoesNotContain("LLMGW_JWT_SECRET", acceptance);
+        Assert.DoesNotContain("urlsafe_b64encode", acceptance);
+        Assert.DoesNotContain("deleteMany({ AppCallerCode: caller })", acceptance);
+        Assert.DoesNotContain("findOne({ AppCallerCode:", acceptance);
+
+        foreach (var protocol in new[] { "GW Native", "OpenAI", "Claude", "Gemini" })
+        {
+            Assert.Contains($"label: '{protocol}'", quickstart);
+            Assert.Contains($"'{protocol}'", home);
+        }
+
+        Assert.DoesNotContain("'OpenAI Chat'", home);
+        Assert.DoesNotContain("'OpenAI Responses'", home);
+    }
+
+    [Fact]
     public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
     {
         var console = ReadRepoFile("prd-llmgw/Program.cs");
