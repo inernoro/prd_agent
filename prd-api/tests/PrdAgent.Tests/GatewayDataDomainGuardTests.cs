@@ -418,6 +418,50 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var dtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
+        var webApi = ReadRepoFile("prd-llmgw-web/src/lib/api.ts");
+        var webTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var home = ReadRepoFile("prd-llmgw-web/src/pages/HomePage.tsx");
+        var learning = ReadRepoFile("prd-llmgw-web/src/pages/LearningCenterPage.tsx");
+        var app = ReadRepoFile("prd-llmgw-web/src/App.tsx");
+        var layout = ReadRepoFile("prd-llmgw-web/src/components/ConsoleLayout.tsx");
+
+        const string overviewSignature = "app.MapGet(\"/gw/overview\", async (HttpContext http, string? from, string? to) =>";
+        var overviewStart = console.IndexOf(overviewSignature, StringComparison.Ordinal);
+        var overviewEnd = console.IndexOf("app.MapGet(\"/gw/protocol-coverage\"", overviewStart, StringComparison.Ordinal);
+        Assert.True(overviewStart >= 0 && overviewEnd > overviewStart, "找不到租户首页聚合端点");
+        var overview = console[overviewStart..overviewEnd];
+
+        Assert.Contains(overviewSignature, overview);
+        Assert.Contains("TenantAccess.Filter(http, fb.And(", overview);
+        Assert.Contains("serviceKeys.Find(TenantAccess.Filter(http))", overview);
+        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
+        Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
+        Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
+        Assert.Contains("RequireAuthorization(\"UsageRead\")", overview);
+        Assert.DoesNotContain("string? tenantId", overview);
+        Assert.DoesNotContain("EstimatedCostUsd = 0", overview);
+        Assert.Contains("public sealed class TenantOverviewData", dtos);
+        Assert.Contains("public sealed class ServiceKeyOverview", dtos);
+        Assert.Contains("TenantOverviewData", webTypes);
+        Assert.Contains("getTenantOverview", webApi);
+        Assert.Contains("getTenantOverview({ from: from.toISOString(), to: to.toISOString() })", home);
+        Assert.Contains("CNY 与 USD 不做无汇率相加", home);
+        Assert.Contains("无请求时不显示 0%", home);
+
+        Assert.Contains("path=\"/learn\"", app);
+        Assert.Contains("to: '/learn', label: '学习中心'", layout);
+        Assert.Contains("to=\"/learn\"", layout);
+        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "模型池", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
+        {
+            Assert.Contains(concept, learning);
+        }
+    }
+
+    [Fact]
     public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
     {
         var console = ReadRepoFile("prd-llmgw/Program.cs");

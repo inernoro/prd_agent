@@ -28,6 +28,7 @@ const NAV_GROUPS: NavGroup[] = [
   { label: '开发者', items: [
     { to: '/quickstart', label: 'Quickstart', icon: <BookOpen size={16} /> },
     { to: '/service-keys', label: '接入密钥', icon: <KeyRound size={16} /> },
+    { to: '/learn', label: '学习中心', icon: <BookOpen size={16} /> },
   ] },
   { label: '组织', items: [
     { to: '/organization', label: '团队与成员', icon: <Building2 size={16} /> },
@@ -114,7 +115,7 @@ export function ConsoleLayout() {
         </form>
 
         <div className="lg-header-actions">
-          <NavLink className="lg-header-link" to="/quickstart"><BookOpen size={15} /><span>文档</span></NavLink>
+          <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
           <details className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">

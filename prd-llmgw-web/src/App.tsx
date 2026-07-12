@@ -21,6 +21,7 @@ import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { UsagePage } from '@/pages/UsagePage';
+import { LearningCenterPage } from '@/pages/LearningCenterPage';
 
 function getRouterBasename() {
   if (typeof window === 'undefined') return undefined;
@@ -83,6 +84,7 @@ export function App() {
             <Route path="/audits" element={<AuditsPage />} />
             <Route path="/service-keys" element={<ServiceKeysPage />} />
             <Route path="/quickstart" element={<QuickstartPage />} />
+            <Route path="/learn" element={<LearningCenterPage />} />
             <Route path="/organization" element={<OrganizationPage />} />
             <Route path="/shadow" element={<RequireInternalTenant><ShadowPage /></RequireInternalTenant>} />
             <Route path="/governance" element={<RequireInternalTenant><GovernancePage /></RequireInternalTenant>} />

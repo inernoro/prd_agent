@@ -298,6 +298,51 @@ public sealed class LogsBucketItem
     public long Count { get; set; }
 }
 
+// ── 租户首页聚合 ──
+public sealed class TenantOverviewData
+{
+    public string From { get; set; } = string.Empty;
+    public string To { get; set; } = string.Empty;
+    public string GeneratedAt { get; set; } = string.Empty;
+    public long TotalRequests { get; set; }
+    public decimal? SuccessRatePercent { get; set; }
+    public long? P95DurationMs { get; set; }
+    public decimal RequestRatePerMinute { get; set; }
+    public int RateWindowMinutes { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public long TotalTokens { get; set; }
+    public int ActiveUsers { get; set; }
+    public long PricedRequests { get; set; }
+    public long UnknownCostRequests { get; set; }
+    public decimal PriceCoveragePercent { get; set; }
+    public List<EstimatedCostBucket> EstimatedCosts { get; set; } = new();
+    public List<OverviewRankItem> TopUsers { get; set; } = new();
+    public List<OverviewRankItem> TopAppCallers { get; set; } = new();
+    public List<OverviewRankItem> TopModels { get; set; } = new();
+    public ServiceKeyOverview ServiceKeys { get; set; } = new();
+    public bool CanReadRecentRequests { get; set; }
+    public List<LlmLogListItem> RecentRequests { get; set; } = new();
+}
+
+public sealed class OverviewRankItem
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public long Count { get; set; }
+}
+
+public sealed class ServiceKeyOverview
+{
+    public long Total { get; set; }
+    public long Active { get; set; }
+    public long Disabled { get; set; }
+    public long Expired { get; set; }
+    public long ExpiringSoon { get; set; }
+    public long NeverUsed { get; set; }
+    public string? LastUsedAt { get; set; }
+}
+
 // ── 协议入口运行覆盖 ──
 public sealed class ProtocolCoverageData
 {

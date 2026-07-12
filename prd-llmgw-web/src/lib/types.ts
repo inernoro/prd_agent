@@ -242,6 +242,47 @@ export type LogsSummaryData = {
   modelPolicyDistribution: LogsBucketItem[];
 };
 
+export type OverviewRankItem = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+export type ServiceKeyOverview = {
+  total: number;
+  active: number;
+  disabled: number;
+  expired: number;
+  expiringSoon: number;
+  neverUsed: number;
+  lastUsedAt?: string | null;
+};
+
+export type TenantOverviewData = {
+  from: string;
+  to: string;
+  generatedAt: string;
+  totalRequests: number;
+  successRatePercent?: number | null;
+  p95DurationMs?: number | null;
+  requestRatePerMinute: number;
+  rateWindowMinutes: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  activeUsers: number;
+  pricedRequests: number;
+  unknownCostRequests: number;
+  priceCoveragePercent: number;
+  estimatedCosts: { currency: string; amount: number; requests: number }[];
+  topUsers: OverviewRankItem[];
+  topAppCallers: OverviewRankItem[];
+  topModels: OverviewRankItem[];
+  serviceKeys: ServiceKeyOverview;
+  canReadRecentRequests: boolean;
+  recentRequests: LlmLogListItem[];
+};
+
 export type AvailableTenant = {
   id: string;
   name: string;
