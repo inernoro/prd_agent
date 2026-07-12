@@ -200,16 +200,38 @@ export default function AppShell() {
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
+  // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
+  // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
+  const ownsThemeRef = useRef(false);
 
-  // 移动端全局明暗（2026-07-12）:浅色默认、可切换,壳层统一落 <html data-theme>。
-  // deps 带 pathname:report/daily-post 等自管 data-theme 的页面卸载时会清属性,
-  // 导航后由这里重申,保证「其他页面也是白的」。桌面端不干预(维持既有暗色体系)。
+  // 移动端全局明暗（2026-07-12）:暗色默认、可切换,壳层统一落 <html data-theme>。
+  // deps 带 pathname:自管主题的页面卸载清属性后,导航到普通页由这里重申。
+  // 自管主题路由(纸面身份,页面自己 set/remove data-theme)壳层不插手,
+  // 否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
   useEffect(() => {
-    if (!isMobile) return;
     const root = document.documentElement;
-    if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
-    else root.removeAttribute('data-theme');
+    if (isMobile) {
+      const selfManaged = ['/daily-post', '/report-agent', '/weekly-poster'].some(
+        (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
+      );
+      if (selfManaged) return;
+      if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
+      else root.removeAttribute('data-theme');
+      ownsThemeRef.current = true;
+    } else if (ownsThemeRef.current) {
+      // 移动 -> 桌面(旋转/拉宽):清掉移动偏好,桌面维持既有暗色体系(Codex P2)
+      root.removeAttribute('data-theme');
+      ownsThemeRef.current = false;
+    }
   }, [isMobile, mobileThemeMode, location.pathname]);
+
+  // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
+  useEffect(
+    () => () => {
+      if (ownsThemeRef.current) document.documentElement.removeAttribute('data-theme');
+    },
+    [],
+  );
   const {
     navOrder,
     navHidden,
