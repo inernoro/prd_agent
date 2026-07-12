@@ -40,7 +40,9 @@ builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 2;
+    // nginx 使用 $proxy_add_x_forwarded_for，把它看到的真实来源追加在最右侧。
+    // 这里只消费一个最右 hop，禁止把调用方自报的更左侧 X-Forwarded-For 提升为授权 IP。
+    options.ForwardLimit = 1;
     // serving 容器不发布宿主端口，只接受同一部署网络内的 nginx；容器网段会动态变化。
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();

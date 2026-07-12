@@ -363,6 +363,22 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ServingCidrGate_ConsumesOnlyTheProxyAppendedRightmostHop()
+    {
+        var servingProgram = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("options.ForwardLimit = 1", servingProgram);
+        Assert.Contains("options.KnownNetworks.Clear()", servingProgram);
+        Assert.Contains("options.KnownProxies.Clear()", servingProgram);
+        Assert.True(
+            servingProgram.IndexOf("app.UseForwardedHeaders()", StringComparison.Ordinal)
+            < servingProgram.IndexOf("app.MapGatewayServingEndpoints", StringComparison.Ordinal),
+            "CIDR 鉴权前必须先把代理追加的最右侧来源地址解析到 RemoteIpAddress");
+        Assert.Contains("context.Connection.RemoteIpAddress", endpoints);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
