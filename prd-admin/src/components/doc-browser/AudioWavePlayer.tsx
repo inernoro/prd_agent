@@ -19,8 +19,10 @@ import { Play, Pause } from 'lucide-react';
 
 interface AudioWavePlayerProps {
   src: string;
-  /** 字幕 / 时间戳跟随高亮的回调（Wave 3 字幕跟随高亮使用） */
+  /** 字幕 / 时间戳跟随高亮的回调（转录跟读滚轮使用） */
   onTimeUpdate?: (currentSec: number) => void;
+  /** 注册跳播函数：父组件拿到 seek(sec) 后可实现「点歌词跳播」；跳播后若暂停会自动继续播 */
+  registerSeek?: (seek: (sec: number) => void) => void;
   className?: string;
 }
 
@@ -33,12 +35,14 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWavePlayerProps) {
+export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '' }: AudioWavePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
   // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
   const onTimeUpdateRef = useRef(onTimeUpdate);
   useEffect(() => { onTimeUpdateRef.current = onTimeUpdate; }, [onTimeUpdate]);
+  const registerSeekRef = useRef(registerSeek);
+  useEffect(() => { registerSeekRef.current = registerSeek; }, [registerSeek]);
 
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -90,9 +94,13 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
     ws.on('play', () => setPlaying(true));
     ws.on('pause', () => setPlaying(false));
     ws.on('finish', () => setPlaying(false));
+    // 点歌词跳播：seek 到目标秒；暂停态下自动继续播（音乐 App 心智）
+    registerSeekRef.current?.((sec) => {
+      ws.setTime(sec);
+      if (!ws.isPlaying()) void ws.play();
+    });
     audio.addEventListener('error', () => {
       // audio 元素本身加载失败 → 完全 fallback 到原生
-      // eslint-disable-next-line no-console
       console.warn('[AudioWavePlayer] audio 加载失败，回退原生:', src);
       setError('audio load failed');
     });

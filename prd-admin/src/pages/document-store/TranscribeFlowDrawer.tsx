@@ -30,6 +30,14 @@ export type TranscribeFlowDrawerProps = {
   /** 已有条目场景：源音/视频 entry */
   entryId?: string;
   entryTitle: string;
+  /** 首次转录的整理方式（音频结果区快捷按钮传入；空 = 智能摘要） */
+  initialStyle?: import('@/services/real/documentStore').TranscribeStyleParams;
+  /** 「换个整理方式」场景：带已完成的转录 run 直接进入 done 态整理面板（不重跑上传/转录） */
+  restyleRun?: { runId: string; outputEntryId: string };
+  /** 归档目标：库内文件夹列表（提供时 done 面板显示「归档到文件夹」） */
+  folders?: { id: string; title: string }[];
+  /** 把转录笔记移动到目标文件夹（null = 库根目录） */
+  onMoveNote?: (noteEntryId: string, folderId: string | null) => Promise<void>;
   onClose: () => void;
   /** 上传成功后回调（新 entry 注入父页面列表） */
   onEntryCreated?: (entry: DocumentEntry) => void;
@@ -52,6 +60,10 @@ export function TranscribeFlowDrawer({
   file,
   entryId: initialEntryId,
   entryTitle,
+  initialStyle,
+  restyleRun,
+  folders,
+  onMoveNote,
   onClose,
   onEntryCreated,
   onDone,
@@ -60,20 +72,27 @@ export function TranscribeFlowDrawer({
 }: TranscribeFlowDrawerProps) {
   const isMobile = useIsMobile();
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
-  const [runId, setRunId] = useState<string | null>(null);
-  const [phase, setPhase] = useState('排队中');
-  const [status, setStatus] = useState<'uploading' | 'running' | 'done' | 'failed'>(file ? 'uploading' : 'running');
+  const [runId, setRunId] = useState<string | null>(restyleRun?.runId ?? null);
+  const [phase, setPhase] = useState(restyleRun ? '完成' : '排队中');
+  const [status, setStatus] = useState<'uploading' | 'running' | 'done' | 'failed'>(
+    file ? 'uploading' : restyleRun ? 'done' : 'running');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [summaryText, setSummaryText] = useState('');
   const [summaryFailed, setSummaryFailed] = useState(false);
-  const [outputEntryId, setOutputEntryId] = useState<string | null>(null);
+  const [outputEntryId, setOutputEntryId] = useState<string | null>(restyleRun?.outputEntryId ?? null);
+  // restyle 场景挂载时 run 已是终态：跳过对它的首次 SSE 订阅（换方式后订阅新 run）
+  const skipInitialSseRef = useRef(!!restyleRun);
   const hasStartedRef = useRef(false);
+  const initialStyleRef = useRef(initialStyle);
   // 整理方式（完成后可换风格重新整理，免重跑 ASR）。列表来自后端 SSOT，禁止前端硬编码。
   const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>([]);
   const [styleKey, setStyleKey] = useState('general');
   const [styleContext, setStyleContext] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [restyleSubmitting, setRestyleSubmitting] = useState(false);
+  // 归档到文件夹（第二波：智能文件夹归档的第一步——手选归档）
+  const [archiving, setArchiving] = useState(false);
+  const [archivedTo, setArchivedTo] = useState<string | null>(null);
 
   const streamUrl = useMemo(
     () => (runId ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0` : ''),
@@ -138,7 +157,7 @@ export function TranscribeFlowDrawer({
   const startTranscribe = useCallback(async (targetEntryId: string) => {
     setStatus('running');
     setErrorMessage(null);
-    const res = await transcribeEntry(targetEntryId);
+    const res = await transcribeEntry(targetEntryId, initialStyleRef.current);
     if (!res.success) {
       setStatus('failed');
       setErrorMessage(res.error?.message ?? '启动转录失败');
@@ -177,17 +196,18 @@ export function TranscribeFlowDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entryId, startTranscribe]);
 
-  // 打开即启动
+  // 打开即启动（restyle 场景不启动：run 已完成，等用户选方式）
   useEffect(() => {
-    if (hasStartedRef.current) return;
+    if (hasStartedRef.current || restyleRun) return;
     hasStartedRef.current = true;
     void bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // runId 就绪后订阅 SSE
+  // runId 就绪后订阅 SSE（restyle 挂载时的终态 run 跳过首订阅）
   useEffect(() => {
     if (!runId) return;
+    if (skipInitialSseRef.current) { skipInitialSseRef.current = false; return; }
     void start();
     return () => abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -379,6 +399,40 @@ export function TranscribeFlowDrawer({
             onClick={() => { void startRestyle(); }}>
             {restyleSubmitting ? <MapSpinner size={12} /> : null} 按此方式重新整理
           </Button>
+        </div>
+      )}
+
+      {/* 归档到文件夹：默认跟随源音频位置，可现在归档到指定文件夹 */}
+      {status === 'done' && outputEntryId && onMoveNote && (folders?.length ?? 0) > 0 && (
+        <div className="surface-inset rounded-[12px] p-3.5">
+          <p className="mb-1 text-[12px] font-semibold text-token-primary">归档到文件夹</p>
+          <p className="mb-2 text-[11px] text-token-muted">默认跟随源音频所在位置，选择后立即移动转录笔记。</p>
+          <div className="flex items-center gap-2">
+            <select
+              disabled={archiving}
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v || !outputEntryId) return;
+                setArchiving(true);
+                const target = v === '__root__' ? null : v;
+                const label = v === '__root__' ? '库根目录' : (folders!.find(f => f.id === v)?.title ?? '目标文件夹');
+                void onMoveNote(outputEntryId, target)
+                  .then(() => setArchivedTo(label))
+                  .catch(() => setArchivedTo(null))
+                  .finally(() => setArchiving(false));
+              }}
+              className="w-full cursor-pointer rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}>
+              <option value="">选择文件夹…</option>
+              <option value="__root__">库根目录</option>
+              {folders!.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}
+            </select>
+            {archiving && <MapSpinner size={13} />}
+          </div>
+          {archivedTo && (
+            <p className="mt-1.5 text-[11px]" style={{ color: 'rgba(74,222,128,0.95)' }}>已归档到「{archivedTo}」</p>
+          )}
         </div>
       )}
     </>

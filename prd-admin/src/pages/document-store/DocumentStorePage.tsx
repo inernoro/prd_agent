@@ -87,6 +87,7 @@ import {
   getDocumentStore,
   deleteDocumentEntry,
   moveDocumentEntry,
+  getLatestAgentRun,
   updateDocumentContent,
   listEntryVersions,
   getEntryVersion,
@@ -879,8 +880,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目。
-  // vaultSessionId = 本机保险箱会话（上传成功才删除，断网/崩溃可恢复，不丢数据）
-  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string; vaultSessionId?: string } | null>(null);
+  // vaultSessionId = 本机保险箱会话（上传成功才删除，断网/崩溃可恢复，不丢数据）。
+  // style = 首次转录整理方式；restyleRun = 「换个整理方式」直接进 done 态整理面板。
+  const [transcribeFlow, setTranscribeFlow] = useState<{
+    file?: File;
+    entryId?: string;
+    title: string;
+    vaultSessionId?: string;
+    style?: import('@/services/real/documentStore').TranscribeStyleParams;
+    restyleRun?: { runId: string; outputEntryId: string };
+  } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
   // 保险箱恢复只在进页时检查一次
@@ -1806,12 +1815,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
-          onTranscribe={(id) => {
+          onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
-              setTranscribeFlow({ entryId: id, title: entry.title });
+              setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }
+          }}
+          onRestyleTranscribe={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (!entry) return;
+            // 免重跑 ASR：取该音频最近一次已完成的转录 run，直接进 done 态整理面板
+            void getLatestAgentRun(id, 'transcribe').then((res) => {
+              const run = res.success ? res.data : null;
+              if (run && run.status === 'done' && run.outputEntryId) {
+                setTranscribeFlow({
+                  entryId: id,
+                  title: entry.title,
+                  restyleRun: { runId: run.id, outputEntryId: run.outputEntryId },
+                });
+                transcribeFlowOpenRef.current = true;
+              } else {
+                toast.error('暂不能重新整理', '没有找到已完成的转录记录，请先完成一次转录');
+              }
+            });
           }}
           onUploadAudio={() => setShowRecorder(true)}
           onReprocess={(id) => {
@@ -1958,6 +1985,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             file={transcribeFlow.file}
             entryId={transcribeFlow.entryId}
             entryTitle={transcribeFlow.title}
+            initialStyle={transcribeFlow.style}
+            restyleRun={transcribeFlow.restyleRun}
+            folders={entries.filter(e => e.isFolder).map(f => ({ id: f.id, title: f.title }))}
+            onMoveNote={async (noteId, folderId) => {
+              const res = await moveDocumentEntry(noteId, folderId);
+              if (!res.success) {
+                toast.error('归档失败', res.error?.message);
+                throw new Error(res.error?.message ?? 'move failed');
+              }
+              setEntries(prev => prev.map(e => e.id === noteId ? { ...e, parentId: folderId ?? undefined } : e));
+            }}
             onClose={() => {
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;

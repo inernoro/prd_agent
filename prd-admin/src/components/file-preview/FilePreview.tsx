@@ -1,6 +1,7 @@
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
+import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { MarkdownViewer } from './MarkdownViewer';
 
@@ -25,7 +26,12 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: EntryPreview | null }) {
+export function FilePreview({ entry, preview, transcriptNoteMd }: {
+  entry?: DocBrowserEntry;
+  preview: EntryPreview | null;
+  /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
+  transcriptNoteMd?: string | null;
+}) {
   if (!entry) {
     return (
       <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -74,10 +80,13 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
     );
   }
 
-  // 音频预览 — 自定义波形播放器（wavesurfer.js）
-  if (kind === 'audio' && fileUrl) {
+  // 音频预览 — 自定义波形播放器（wavesurfer.js）。
+  // contentType audio/* 优先于扩展名路由：录音产出的 .webm 是音频（audio/webm），
+  // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
+  const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
+  if ((kind === 'audio' || isAudioEntry) && fileUrl) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center py-12 gap-5">
+      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-6' : 'justify-center py-12'}`}>
         <div className="flex h-14 w-14 items-center justify-center rounded-[18px]"
           style={{
             background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.10))',
@@ -86,7 +95,10 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
           <cfg.icon size={26} style={{ color: cfg.color }} />
         </div>
         <p className="text-[13px] font-semibold text-center" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
-        <AudioWavePlayer src={fileUrl} />
+        {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
+        {transcriptNoteMd
+          ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} />
+          : <AudioWavePlayer src={fileUrl} />}
       </div>
     );
   }
