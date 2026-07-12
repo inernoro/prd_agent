@@ -10,3 +10,5 @@
 - `doc/debt.platform.production-release.md`：尚未偿还的实现缺口。
 
 硬约束：公网 HTML 与入口资源是完成门；API/容器健康不能替代；静态站必须原子切换；旧命令必须兼容；发布必须留下可追溯证据。
+
+技能链：`risk-matrix` → `human-verify` → `cds-deploy-pipeline` → `smoke-test` → `preview-url` → `acceptance-checklist` → `production-hotfix-release` → `task-handoff-checklist`。每个技能必须遵守规则 SSOT 的职责边界。

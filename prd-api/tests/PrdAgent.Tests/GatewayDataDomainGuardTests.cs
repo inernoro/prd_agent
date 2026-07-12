@@ -424,6 +424,11 @@ public class GatewayDataDomainGuardTests
         var agentRule = ReadRepoFile(".claude/rules/production-release-safety.md");
         var codexRule = ReadRepoFile(".Codex/rules/production-release-safety.md");
         var agents = ReadRepoFile("AGENTS.md");
+        var hotfixSkill = ReadRepoFile(".claude/skills/production-hotfix-release/SKILL.md");
+        var cdsDeploySkill = ReadRepoFile(".claude/skills/cds-deploy-pipeline/SKILL.md");
+        var smokeSkill = ReadRepoFile(".claude/skills/smoke-test/SKILL.md");
+        var acceptanceSkill = ReadRepoFile(".claude/skills/acceptance-checklist/SKILL.md");
+        var handoffSkill = ReadRepoFile(".claude/skills/task-handoff-checklist/SKILL.md");
 
         Assert.Contains("公网 HTML 与入口资源是完成门", codexRule);
         Assert.Contains("doc/rule.platform.production-release-safety.md", agentRule);
@@ -437,6 +442,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("2026-07-12-public-surface-smoke", debt);
         Assert.Contains("2026-07-12-release-command-compatibility", debt);
         Assert.Contains("2026-07-12-release-forensic-ledger", debt);
+        foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill, handoffSkill })
+            Assert.Contains("doc/rule.platform.production-release-safety.md", skill);
+        Assert.Contains("API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`", smokeSkill);
+        Assert.Contains("实际入口 JS/CSS", hotfixSkill);
+        Assert.Contains("previous/回滚验证", acceptanceSkill);
+        Assert.Contains("不能写完成", handoffSkill);
     }
 
     [Fact]

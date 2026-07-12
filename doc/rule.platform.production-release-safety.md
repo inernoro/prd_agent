@@ -110,3 +110,26 @@
 ## 关联债务
 
 - `debt.platform.production-release.md`：记录尚未完成的原子静态切换、发布证据账本、外部监控和命令兼容整改。
+
+## 关联技能与闭环
+
+生产发布不能由单个技能包办。以下技能共同引用本规则，并各自只承担一段责任：
+
+| 阶段 | 技能 | 责任 | 不能替代 |
+|---|---|---|---|
+| 风险识别 | `risk-matrix` (`/risk`) | 识别正确性、兼容性、运维部署和用户体验风险 | 不能证明代码或页面可用 |
+| 对抗复审 | `human-verify` (`/verify`) | 逆向验证、边界测试和用户场景审查 | 不能替代真实部署 |
+| 灰度部署 | `cds-deploy-pipeline` (`/cds-deploy`) | 部署分支、等待就绪、读取日志和分层 smoke | 容器 running 不能替代页面表面验收 |
+| API 冒烟 | `smoke-test` (`/smoke`) | 验证 API 契约和核心 CRUD/业务链 | API 200 不能证明 HTML、JS/CSS 和渲染正常 |
+| 预览入口 | `preview-url` (`/preview`) | 从 CDS SSOT 获取真实预览域名 | 只生成地址，不证明页面健康 |
+| 真人验收 | `acceptance-checklist` (`/uat`) | 从最终入口检查页面、资源、交互、回归和回滚 | 不能替代 CI 和 API 契约测试 |
+| 正式热修 | `production-hotfix-release` (`/hotfix-prod`) | 基于生产 revision 做最小发布并执行公网验证 | 不得绕过本规则和 open 债务 |
+| 交接收口 | `task-handoff-checklist` (`/handoff`) | 汇总证据、风险、回滚和未偿债务 | 不能把缺失证据包装成完成 |
+
+标准链路为：
+
+```text
+/risk → /verify → /cds-deploy → /smoke → /preview → /uat → /hotfix-prod → /handoff
+```
+
+若是线上故障，可从 `/hotfix-prod` 进入最小恢复，但恢复后仍必须补齐公网表面证据，并由 `/handoff` 把未偿机制写入债务台账。
