@@ -854,23 +854,36 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
     private async Task<List<string>> ResolveLifecycleTenantIdsAsync(string internalTenantId, CancellationToken ct)
     {
         var tenantIds = new HashSet<string>(StringComparer.Ordinal) { internalTenantId };
-        var tenantCollections = new[]
+        var tenantSources = new (string CollectionName, string FieldName)[]
         {
-            "llmgw_tenants",
-            "llmrequestlogs",
-            "llmshadow_comparisons",
-            "llmgw_operation_audits",
-            "llmgw_login_audits",
-            "llmgw_lifecycle_runs",
-            "llmgw_multipart_objects",
+            ("llmgw_tenants", "_id"),
+            ("llmgw_app_callers", "TenantId"),
+            ("llmgw_model_pools", "TenantId"),
+            ("llmgw_platforms", "TenantId"),
+            ("llmgw_models", "TenantId"),
+            ("llmgw_model_exchanges", "TenantId"),
+            ("llmgw_service_keys", "TenantId"),
+            ("llmrequestlogs", "TenantId"),
+            ("llmshadow_comparisons", "TenantId"),
+            ("llmgw_operation_audits", "TenantId"),
+            ("llmgw_login_audits", "TenantId"),
+            ("llmgw_lifecycle_runs", "TenantId"),
+            ("llmgw_app_caller_rate_windows", "TenantId"),
+            ("llmgw_budget_months", "TenantId"),
+            ("llmgw_budget_reservations", "TenantId"),
+            ("llmgw_request_executions", "TenantId"),
+            ("llmgw_multipart_objects", "TenantId"),
+            ("llmgw_provider_concurrency_slots", "TenantId"),
+            ("llmgw_runtime_settings", "TenantId"),
+            ("llmgw_asset_registry", "TenantId"),
         };
-        var validTenant = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-            Builders<MongoDB.Bson.BsonDocument>.Filter.Type("TenantId", MongoDB.Bson.BsonType.String),
-            Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("TenantId", ""));
-        foreach (var collectionName in tenantCollections)
+        foreach (var (collectionName, fieldName) in tenantSources)
         {
+            var validTenant = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Type(fieldName, MongoDB.Bson.BsonType.String),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Ne(fieldName, ""));
             var values = await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>(collectionName)
-                .Distinct<string>("TenantId", validTenant)
+                .Distinct<string>(fieldName, validTenant)
                 .ToListAsync(ct);
             foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)))
                 tenantIds.Add(value.Trim());

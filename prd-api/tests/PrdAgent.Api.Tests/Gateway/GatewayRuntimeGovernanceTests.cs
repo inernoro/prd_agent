@@ -407,6 +407,15 @@ public sealed class GatewayRuntimeGovernanceTests
                 ExpiresAt = now.AddMinutes(-1),
             },
         });
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(
+            new BsonDocument { { "_id", "tenant-c" }, { "Name", "Tenant C" } });
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_request_executions").InsertOneAsync(
+            new BsonDocument
+            {
+                { "_id", "execution-d" },
+                { "TenantId", "tenant-d" },
+                { "ExpiresAt", now.AddHours(1) },
+            });
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["LlmGateway:InternalTenantId"] = "tenant-internal",
@@ -449,6 +458,11 @@ public sealed class GatewayRuntimeGovernanceTests
         tenantRuns.Count.ShouldBe(2);
         tenantRuns.ShouldAllBe(x => x.Status == "applied");
         tenantRuns.ShouldAllBe(x => x.RedactedSensitiveLogs == 1 && x.DeletedMultipartObjects == 1);
+        var discoveredTenantIds = await scope.Context.Database.GetCollection<GatewayLifecycleRunRecord>("llmgw_lifecycle_runs")
+            .Distinct<string>("TenantId", FilterDefinition<GatewayLifecycleRunRecord>.Empty)
+            .ToListAsync();
+        discoveredTenantIds.ShouldContain("tenant-c");
+        discoveredTenantIds.ShouldContain("tenant-d");
     }
 
     [Fact]
