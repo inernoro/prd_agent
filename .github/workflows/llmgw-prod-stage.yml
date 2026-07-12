@@ -60,6 +60,10 @@ on:
         description: "Mainline ref that the release commit must include."
         required: false
         default: "origin/main"
+      maintenance_from_commit:
+        description: "Full-http maintenance only: audited prior http-full commit whose shadow evidence may be inherited."
+        required: false
+        default: ""
       allow_out_of_order:
         description: "Allow stage order override. Requires allow_out_of_order_reason."
         required: true
@@ -166,6 +170,7 @@ jobs:
       INPUT_SAMPLE_PERCENT: ${{ github.event.inputs.sample_percent || '1' }}
       INPUT_MIN_OBSERVATION_HOURS: ${{ github.event.inputs.min_observation_hours || '24' }}
       INPUT_MAIN_REF: ${{ github.event.inputs.main_ref || 'origin/main' }}
+      INPUT_MAINTENANCE_FROM_COMMIT: ${{ github.event.inputs.maintenance_from_commit || '' }}
       INPUT_ALLOW_OUT_OF_ORDER: ${{ github.event.inputs.allow_out_of_order || 'false' }}
       INPUT_ALLOW_OUT_OF_ORDER_REASON: ${{ github.event.inputs.allow_out_of_order_reason || '' }}
       INPUT_ALLOW_RELEASE_TREE_MISMATCH: ${{ github.event.inputs.allow_release_tree_mismatch || 'false' }}
@@ -218,6 +223,7 @@ jobs:
           sample_percent="$(printf '%s' "$INPUT_SAMPLE_PERCENT" | xargs)"
           min_observation_hours="$(printf '%s' "$INPUT_MIN_OBSERVATION_HOURS" | xargs)"
           main_ref="$(printf '%s' "$INPUT_MAIN_REF" | xargs)"
+          maintenance_from_commit="$(printf '%s' "$INPUT_MAINTENANCE_FROM_COMMIT" | xargs)"
           allow_out_of_order="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER" | xargs)"
           allow_out_of_order_reason="$(printf '%s' "$INPUT_ALLOW_OUT_OF_ORDER_REASON" | xargs)"
           allow_release_tree_mismatch="$(printf '%s' "$INPUT_ALLOW_RELEASE_TREE_MISMATCH" | xargs)"
@@ -268,6 +274,16 @@ jobs:
             echo "ERROR: allow_out_of_order requires allow_out_of_order_reason." >&2
             exit 1
           fi
+          if [ -n "$maintenance_from_commit" ]; then
+            if [ "$stage" != "http-full" ]; then
+              echo "ERROR: maintenance_from_commit is only valid for stage http-full." >&2
+              exit 1
+            fi
+            if ! printf '%s' "$maintenance_from_commit" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+              echo "ERROR: maintenance_from_commit requires a full 40-char commit." >&2
+              exit 1
+            fi
+          fi
           if [ "$stage" != "shadow-start" ] && [ "$stage" != "rollback-inproc" ] && [ -z "$rollout_evidence_run_id" ]; then
             echo "ERROR: stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored." >&2
             exit 1
@@ -308,6 +324,9 @@ jobs:
           if [ "$allow_out_of_order" = "true" ]; then
             args+=(--allow-out-of-order --allow-out-of-order-reason "$allow_out_of_order_reason")
           fi
+          if [ -n "$maintenance_from_commit" ]; then
+            args+=(--maintenance-from-commit "$maintenance_from_commit")
+          fi
 
           if [ "$execute" = "true" ] && [ "$stage" != "rollback-inproc" ]; then
             tree_precheck_args=(
@@ -331,7 +350,7 @@ jobs:
           scripts/llmgw-prod-stage.sh "${args[@]}"
 
       - name: Audit recorded rollout stage
-        if: ${{ github.event.inputs.execute == 'true' && github.event.inputs.stage != 'rollback-inproc' }}
+        if: ${{ github.event.inputs.execute == 'true' && github.event.inputs.stage != 'rollback-inproc' && github.event.inputs.maintenance_from_commit == '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -343,6 +362,16 @@ jobs:
             --min-observation-hours "${{ github.event.inputs.min_observation_hours || '24' }}" \
             --json-out .llmgw-release-evidence/stage-audit.json \
             --report-md .llmgw-release-evidence/stage-audit.md
+
+      - name: Audit recorded maintenance release
+        if: ${{ github.event.inputs.execute == 'true' && github.event.inputs.stage == 'http-full' && github.event.inputs.maintenance_from_commit != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
+            --ledger .llmgw-release-evidence/rollout-ledger.jsonl \
+            --commit "${{ github.event.inputs.commit }}" \
+            --json-out .llmgw-release-evidence/stage-audit.json
 
       - name: Upload rollout evidence
         if: always()
