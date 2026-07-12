@@ -132,6 +132,7 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
+import { vaultListSessions, vaultLoadSessionFile, vaultDeleteSession } from './recordingVault';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -877,10 +878,50 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
-  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
-  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
+  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目。
+  // vaultSessionId = 本机保险箱会话（上传成功才删除，断网/崩溃可恢复，不丢数据）
+  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string; vaultSessionId?: string } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
+  // 保险箱恢复只在进页时检查一次
+  const vaultCheckedRef = useRef(false);
+
+  // 进页检查录音保险箱：上次录音若因断网/崩溃/忘关没有完成上传，提示恢复并转录（不丢数据）
+  useEffect(() => {
+    if (vaultCheckedRef.current) return;
+    vaultCheckedRef.current = true;
+    void (async () => {
+      const all = await vaultListSessions();
+      // 过期会话（>7 天）直接清理；恢复只提示【本库】的会话，避免笔记落错库
+      const now = Date.now();
+      for (const s of all.filter(s => now - s.startedAt > 7 * 24 * 3600 * 1000)) void vaultDeleteSession(s.id);
+      const sessions = all.filter(s => s.storeId === storeId && now - s.startedAt <= 7 * 24 * 3600 * 1000);
+      if (sessions.length === 0) return;
+      const latest = sessions[0];
+      const d = new Date(latest.startedAt);
+      const p = (n: number) => String(n).padStart(2, '0');
+      const when = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      const sizeMb = Math.max(0.1, latest.bytes / 1024 / 1024).toFixed(1);
+      const ok = await systemDialog.confirm({
+        title: '发现未完成的录音',
+        message: `上次有一段录音（${when} 开始，约 ${sizeMb}MB）没有完成上传。要恢复并转录成笔记吗？`,
+        confirmText: '恢复并转录',
+        cancelText: '丢弃',
+      });
+      if (ok) {
+        const file = await vaultLoadSessionFile(latest.id);
+        if (file) {
+          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id });
+          transcribeFlowOpenRef.current = true;
+        }
+        // 本库更老的滞留会话一并清理，只恢复最新一段（避免弹窗轰炸）
+        for (const s of sessions.slice(1)) void vaultDeleteSession(s.id);
+      } else {
+        for (const s of sessions) void vaultDeleteSession(s.id);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
   // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
   const transcribeRunRef = useRef<string | null>(null);
@@ -1894,10 +1935,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       <AnimatePresence>
         {showRecorder && (
           <RecordAudioSheet
+            storeId={storeId}
             onClose={() => setShowRecorder(false)}
-            onComplete={(file) => {
+            onComplete={(file, vaultSessionId) => {
               setShowRecorder(false);
-              setTranscribeFlow({ file, title: file.name });
+              setTranscribeFlow({ file, title: file.name, vaultSessionId });
               transcribeFlowOpenRef.current = true;
             }}
             onPickFile={() => {
@@ -1922,7 +1964,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
               if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
             }}
-            onEntryCreated={(entry) => setEntries(prev => [entry, ...prev])}
+            onEntryCreated={(entry) => {
+              setEntries(prev => [entry, ...prev]);
+              // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
+              if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
+            }}
             onDone={() => {
               void loadEntries();
               setTimeout(() => { void loadEntries(); }, 1500);

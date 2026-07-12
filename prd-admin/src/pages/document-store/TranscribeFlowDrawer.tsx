@@ -8,7 +8,7 @@ import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { api } from '@/services/api';
-import { transcribeEntry, getAgentRun, uploadDocumentFile } from '@/services';
+import { transcribeEntry, getAgentRun, uploadDocumentFile, listTranscribeStyles, restyleTranscribeRun } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { deriveTranscribeSteps, type TranscribeStepState } from './transcribeFlowSteps';
 
@@ -68,6 +68,12 @@ export function TranscribeFlowDrawer({
   const [summaryFailed, setSummaryFailed] = useState(false);
   const [outputEntryId, setOutputEntryId] = useState<string | null>(null);
   const hasStartedRef = useRef(false);
+  // 整理方式（完成后可换风格重新整理，免重跑 ASR）。列表来自后端 SSOT，禁止前端硬编码。
+  const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>([]);
+  const [styleKey, setStyleKey] = useState('general');
+  const [styleContext, setStyleContext] = useState('');
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [restyleSubmitting, setRestyleSubmitting] = useState(false);
 
   const streamUrl = useMemo(
     () => (runId ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0` : ''),
@@ -146,31 +152,36 @@ export function TranscribeFlowDrawer({
     void refreshRun(res.data.runId);
   }, [refreshRun, onRunTracking]);
 
-  // 打开即启动：先上传（如有 file），再发起转录
+  // 启动流程：先上传（如有 file），再发起转录。上传失败可重试（网络断开不丢已录数据）。
+  const bootstrap = useCallback(async () => {
+    let targetEntryId = initialEntryId ?? entryId ?? null;
+    if (file && !targetEntryId) {
+      setStatus('uploading');
+      setErrorMessage(null);
+      const res = await uploadDocumentFile(storeId, file);
+      if (!res.success) {
+        setStatus('failed');
+        setErrorMessage(res.error?.message ?? '录音上传失败（录音数据仍在本机保留，可点击重试）');
+        return;
+      }
+      targetEntryId = res.data.entry.id;
+      setEntryId(targetEntryId);
+      onEntryCreated?.(res.data.entry);
+    }
+    if (!targetEntryId) {
+      setStatus('failed');
+      setErrorMessage('缺少源音频条目');
+      return;
+    }
+    await startTranscribe(targetEntryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryId, startTranscribe]);
+
+  // 打开即启动
   useEffect(() => {
     if (hasStartedRef.current) return;
     hasStartedRef.current = true;
-    (async () => {
-      let targetEntryId = initialEntryId ?? null;
-      if (file) {
-        setStatus('uploading');
-        const res = await uploadDocumentFile(storeId, file);
-        if (!res.success) {
-          setStatus('failed');
-          setErrorMessage(res.error?.message ?? '录音上传失败');
-          return;
-        }
-        targetEntryId = res.data.entry.id;
-        setEntryId(targetEntryId);
-        onEntryCreated?.(res.data.entry);
-      }
-      if (!targetEntryId) {
-        setStatus('failed');
-        setErrorMessage('缺少源音频条目');
-        return;
-      }
-      await startTranscribe(targetEntryId);
-    })();
+    void bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -195,6 +206,41 @@ export function TranscribeFlowDrawer({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 完成后拉取整理方式列表（懒加载，进入 done 才需要）
+  useEffect(() => {
+    if (status !== 'done' || styles.length > 0) return;
+    void listTranscribeStyles().then((res) => {
+      if (res.success) setStyles(res.data.items);
+    });
+  }, [status, styles.length]);
+
+  // 换个整理方式：免重跑 ASR，新 run 只重生成摘要并原地更新笔记的「摘要」小节
+  const startRestyle = useCallback(async () => {
+    if (!runId || restyleSubmitting) return;
+    setRestyleSubmitting(true);
+    try {
+      const res = await restyleTranscribeRun(runId, {
+        styleKey,
+        styleContext: styleContext.trim() || undefined,
+        customPrompt: styleKey === 'custom' ? customPrompt.trim() : undefined,
+      });
+      if (!res.success) {
+        setErrorMessage(res.error?.message ?? '发起重新整理失败');
+        return;
+      }
+      abort();
+      setSummaryText('');
+      setSummaryFailed(false);
+      setErrorMessage(null);
+      setStatus('running');
+      setPhase('排队中');
+      onRunTracking?.(res.data.runId);
+      setRunId(res.data.runId); // runId 变化触发 SSE 重订阅
+    } finally {
+      setRestyleSubmitting(false);
+    }
+  }, [runId, restyleSubmitting, styleKey, styleContext, customPrompt, abort, onRunTracking]);
 
   // ── 四步清单的状态推导（纯函数，见 transcribeFlowSteps.ts，单测覆盖） ──
   const steps = useMemo(
@@ -284,6 +330,57 @@ export function TranscribeFlowDrawer({
           <ChevronRight size={15} style={{ color: 'rgba(74,222,128,0.95)' }} />
         </button>
       )}
+
+      {/* 换个整理方式：默认智能摘要已生成，这里可换预设风格或自定义要求重新整理（不重跑转录） */}
+      {status === 'done' && outputEntryId && styles.length > 0 && (
+        <div className="surface-inset rounded-[12px] p-3.5">
+          <p className="mb-1 text-[12px] font-semibold text-token-primary">换个整理方式</p>
+          <p className="mb-2.5 text-[11px] text-token-muted">
+            只重新整理摘要，转录全文保持不动；原摘要可在文档「历史版本」中找回。
+          </p>
+          <div className="mb-2.5 flex flex-wrap gap-1.5">
+            {styles.map((s) => {
+              const active = s.key === styleKey;
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => setStyleKey(s.key)}
+                  title={s.description}
+                  className="cursor-pointer rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors"
+                  style={active
+                    ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,197,253,0.98)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
+                    : { background: 'var(--bg-elevated, rgba(255,255,255,0.06))', color: 'var(--text-muted)' }}>
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          {styleKey === 'custom' && (
+            <textarea
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              rows={3}
+              placeholder="描述你想要的整理方式，例如：按时间线整理成流水记录，标注每件事的相关人。"
+              className="mb-2 w-full resize-none rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+            />
+          )}
+          <input
+            value={styleContext}
+            onChange={(e) => setStyleContext(e.target.value)}
+            placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
+            className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+            style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={restyleSubmitting || (styleKey === 'custom' && !customPrompt.trim())}
+            onClick={() => { void startRestyle(); }}>
+            {restyleSubmitting ? <MapSpinner size={12} /> : null} 按此方式重新整理
+          </Button>
+        </div>
+      )}
     </>
   );
 
@@ -312,6 +409,12 @@ export function TranscribeFlowDrawer({
         {running ? '可关闭面板，任务在后台继续' : ''}
       </span>
       <div className="flex items-center gap-2">
+        {/* 上传阶段失败（网络断开等）：录音 File 还在内存/本机保险箱，直接重试整条链路 */}
+        {status === 'failed' && !entryId && file && (
+          <Button variant="primary" size="sm" onClick={() => { void bootstrap(); }}>
+            重试上传
+          </Button>
+        )}
         {status === 'failed' && entryId && (
           <Button variant="primary" size="sm" onClick={() => { void startTranscribe(entryId); }}>
             重试转录
