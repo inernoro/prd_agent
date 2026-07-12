@@ -1,4 +1,5 @@
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSseStream } from '@/lib/useSseStream';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -685,6 +686,18 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   }, []);
 
   useEffect(() => { loadSkills(); loadDrafts(); }, [loadSkills, loadDrafts]);
+
+  // 列表 -> 技能详情是全屏切换，必须进浏览器历史：右滑/浏览器返回 = 关详情回列表
+  useHistoryBackedView({
+    param: 'skill',
+    value: selectedSkill?.skillKey ?? null,
+    onExit: () => { setSelectedSkill(null); loadSkills(); },
+    onRestore: (key) => {
+      const hit = skills.find((s) => s.skillKey === key);
+      if (!hit) return false;
+      setSelectedSkill(hit);
+    },
+  });
 
   const handleDelete = async (skillKey: string) => {
     setDeleting(skillKey);
