@@ -131,6 +131,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
+import { RecordAudioSheet } from './RecordAudioSheet';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -878,6 +879,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
   const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
+  // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
+  const [showRecorder, setShowRecorder] = useState(false);
   // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
   // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
   const transcribeRunRef = useRef<string | null>(null);
@@ -1769,7 +1772,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               transcribeFlowOpenRef.current = true;
             }
           }}
-          onUploadAudio={() => audioInputRef.current?.click()}
+          onUploadAudio={() => setShowRecorder(true)}
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
@@ -1881,6 +1884,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setSelectedEntryId(newId);
               // 1.5s 后再兜底刷一次：兼容 DB 副本同步延迟 / 后端进度状态稍后才稳定的情况
               setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 「录音转笔记」现场录音：MediaRecorder 录音 → 产出 File → 进入下方转录全链路；
+          无权限/不支持/已有文件时兜底走 audioInputRef 文件选择 */}
+      <AnimatePresence>
+        {showRecorder && (
+          <RecordAudioSheet
+            onClose={() => setShowRecorder(false)}
+            onComplete={(file) => {
+              setShowRecorder(false);
+              setTranscribeFlow({ file, title: file.name });
+              transcribeFlowOpenRef.current = true;
+            }}
+            onPickFile={() => {
+              setShowRecorder(false);
+              audioInputRef.current?.click();
             }}
           />
         )}

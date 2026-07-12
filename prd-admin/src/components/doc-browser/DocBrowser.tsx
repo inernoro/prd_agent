@@ -9,7 +9,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -437,7 +437,7 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"转录"时触发（仅 audio/video entries 显示）：ASR 转录 + AI 摘要全链路 */
   onTranscribe?: (entryId: string) => void;
-  /** 「添加」菜单项：上传录音并自动转录（Notion 式录音流程入口）。 */
+  /** 「添加」菜单项：录音转笔记入口（Notion 式录音流程）。调用方决定打开录音面板或音频文件选择。 */
   onUploadAudio?: () => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
@@ -3859,15 +3859,24 @@ export function DocBrowser({
       </div>
       </ReaderColumnFrame>
 
-      {/* 库内唯一「新增」入口：右下角调色盘 FAB（有任一写回调才渲染；只读调用方自动无 FAB） */}
+      {/* 库内唯一「新增」入口：右下角竖排 FAB 菜单（有任一写回调才渲染；只读调用方自动无 FAB）。
+          上传/导入类动作归入「上传与导入」分组，点分组展开子项、再点收起（2026-07-12 用户确认）。 */}
       {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
         <CreatePaletteFab
           actions={[
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
-            ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: Upload, onClick: onUploadFile }] : []),
-            ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
-            ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+            ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{
+              key: 'import-group',
+              label: '上传与导入',
+              icon: Upload,
+              hue: 'rgba(14,165,233,0.92)',
+              children: [
+                ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: FileUp, onClick: onUploadFile }] : []),
+                ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
+                ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+              ],
+            }] : []),
             ...(onCreateFolder ? [{ key: 'folder', label: '新建文件夹', icon: FolderPlus, onClick: () => setCreatingFolder(true), hue: 'rgba(234,179,8,0.92)' }] : []),
           ]}
         />
