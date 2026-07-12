@@ -14,7 +14,7 @@ const PROTOCOLS: { id: Protocol; label: string; path: string }[] = [
 
 export function QuickstartPage() {
   const [protocol, setProtocol] = useState<Protocol>('openai');
-  const [baseUrl, setBaseUrl] = useState(() => window.location.origin);
+  const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-team.quickstart::chat');
   const [copied, setCopied] = useState(false);
   const code = useMemo(
@@ -92,6 +92,20 @@ export function QuickstartPage() {
       </div>
     </div>
   );
+}
+
+function resolveDefaultServingBaseUrl() {
+  const configured = (import.meta.env.VITE_LLMGW_SERVING_BASE_URL || '').trim().replace(/\/$/, '');
+  if (configured) return configured;
+
+  const current = new URL(window.location.href);
+  if (current.pathname === '/llmgw' || current.pathname.startsWith('/llmgw/')) return current.origin;
+  if (current.hostname.includes('-llmgw-web.')) {
+    current.hostname = current.hostname.replace('-llmgw-web.', '.');
+    current.port = '';
+    return current.origin;
+  }
+  return 'https://gateway.example.com';
 }
 
 function Step({ number, title, text, link }: { number: string; title: string; text: string; link?: string }) {
