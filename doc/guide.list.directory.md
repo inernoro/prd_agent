@@ -607,6 +607,9 @@
 - [测试组织规范](rule.platform.test-organization) `rule.platform.test-organization`
   > 单元测试与集成测试的组织与命名规范
 
+- [生产发布表面健康与可追溯性规则](rule.platform.production-release-safety) `rule.platform.production-release-safety`
+  > 以公网 HTML 和实际入口资源为完成门，约束静态站原子切换、旧命令兼容、错误收敛和发布证据追溯
+
 - [技能系统规则与创建指南](rule.skill.system) `rule.skill.system`
   > Claude Code Skill 的创建、注册与管理规范
 
@@ -839,6 +842,9 @@
 
 - [资源存储（IAssetStorage 实现）债务台账](debt.platform.asset-storage) `debt.platform.asset-storage`
   > IAssetStorage 实现层的已知边界与后续优化债务
+
+- [生产发布安全 · 债务台账](debt.platform.production-release) `debt.platform.production-release`
+  > 记录原子静态切换、公网表面 smoke、旧发布命令兼容和权限变化追溯四项未偿债务
 
 - [Claude SDK 执行器 / Python sidecar 债务台账](debt.cds.agent.sdk-executor) `debt.cds.agent.sdk-executor`
   > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
@@ -1076,6 +1082,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
+| 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-external-platform` | LLM Gateway 外部平台化与控制台体验收口 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
 | 2026-07-10 | 新增 | `guide.cds.managed-delivery` | CDS 托管交付使用指南 |

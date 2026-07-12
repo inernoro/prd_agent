@@ -417,6 +417,29 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionReleaseSafety_IsPersistedAsRuleDebtAndAgentTrigger()
+    {
+        var rule = ReadRepoFile("doc/rule.platform.production-release-safety.md");
+        var debt = ReadRepoFile("doc/debt.platform.production-release.md");
+        var agentRule = ReadRepoFile(".claude/rules/production-release-safety.md");
+        var codexRule = ReadRepoFile(".Codex/rules/production-release-safety.md");
+        var agents = ReadRepoFile("AGENTS.md");
+
+        Assert.Contains("公网 HTML 与入口资源是完成门", codexRule);
+        Assert.Contains("doc/rule.platform.production-release-safety.md", agentRule);
+        Assert.Contains("production-release-safety.md", agents);
+        Assert.Contains("`GET /` 返回 200", rule);
+        Assert.Contains("`umask 077`", rule);
+        Assert.Contains("`./exec_dep.sh release` 的兼容合同是部署 latest", rule);
+        Assert.Contains("自动恢复 previous", rule);
+        Assert.Contains("首次把目录设置为 `700` 的具体进程无法从现有证据中确定", rule);
+        Assert.Contains("2026-07-12-atomic-static-release", debt);
+        Assert.Contains("2026-07-12-public-surface-smoke", debt);
+        Assert.Contains("2026-07-12-release-command-compatibility", debt);
+        Assert.Contains("2026-07-12-release-forensic-ledger", debt);
+    }
+
+    [Fact]
     public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
     {
         var console = ReadRepoFile("prd-llmgw/Program.cs");
