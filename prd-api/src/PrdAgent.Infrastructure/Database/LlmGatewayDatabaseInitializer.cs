@@ -81,6 +81,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_models",
             "llmgw_model_exchanges",
             "llmgw_service_keys",
+            "llmgw_service_key_rate_windows",
             "llmrequestlogs",
             "llmshadow_comparisons",
             "llmgw_operation_audits",
@@ -303,6 +304,19 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
         }, cancellationToken: ct);
         await DropIndexIfPresentAsync(serviceKeys, "uniq_llmgw_service_key_hash", ct);
+        var serviceKeyRateWindows = _data.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");
+        await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayServiceKeyRateWindowRecord>(
+                Builders<GatewayServiceKeyRateWindowRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.ServiceKeyId)
+                    .Ascending(x => x.WindowStart),
+                new CreateIndexOptions { Name = "uniq_llmgw_service_key_rate_tenant_window", Unique = true }),
+            new CreateIndexModel<GatewayServiceKeyRateWindowRecord>(
+                Builders<GatewayServiceKeyRateWindowRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
+        }, cancellationToken: ct);
         var serviceKeyDirectory = _data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory");
         await serviceKeyDirectory.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyDirectoryRecord>(
             Builders<GatewayServiceKeyDirectoryRecord>.IndexKeys.Ascending(x => x.KeyHash),

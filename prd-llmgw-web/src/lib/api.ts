@@ -63,6 +63,9 @@ import type {
   ServiceKeyItem,
   CreateServiceKeyRequest,
   CreatedServiceKey,
+  OrganizationData,
+  CreatedTenant,
+  CreatedTeam,
 } from './types';
 
 const TOKEN_KEY = 'llmgw.token';
@@ -301,6 +304,18 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 }
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+export function getOrganization(): Promise<ApiResponse<OrganizationData>> {
+  return apiRequest<OrganizationData>('/organization');
+}
+export function createTenant(req: { name: string; slug: string }): Promise<ApiResponse<CreatedTenant>> {
+  return apiRequest<CreatedTenant>('/tenants', { method: 'POST', body: req });
+}
+export function createTeam(req: { name: string }): Promise<ApiResponse<CreatedTeam>> {
+  return apiRequest<CreatedTeam>('/teams', { method: 'POST', body: req });
+}
+export function switchTenant(tenantId: string): Promise<ApiResponse<LoginResult>> {
+  return apiRequest<LoginResult>('/auth/switch-tenant', { method: 'POST', body: { tenantId } });
 }
 export function getOperationAudits(params?: {
   page?: number;

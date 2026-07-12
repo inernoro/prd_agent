@@ -844,6 +844,10 @@ public sealed class ServiceKeyCreateRequest
     public List<string>? AppCallerCodes { get; set; }
     public List<string>? IngressProtocols { get; set; }
     public List<string>? Scopes { get; set; }
+    public string? TeamId { get; set; }
+    public List<string>? AllowedCidrs { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? RotatesKeyId { get; set; }
     public DateTime? ExpiresAt { get; set; }
 }
 
@@ -851,11 +855,16 @@ public sealed class ServiceKeyItem
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+    public string KeyPrefix { get; set; } = "gwk_";
     public bool Enabled { get; set; }
+    public string? TeamId { get; set; }
+    public string? CreatedByUsername { get; set; }
     public string SourceSystem { get; set; } = "";
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();
+    public List<string> AllowedCidrs { get; set; } = new();
+    public int? RateLimitPerMinute { get; set; }
     public string? ExpiresAt { get; set; }
     public string? LastUsedAt { get; set; }
     public string? CreatedAt { get; set; }

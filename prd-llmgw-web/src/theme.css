@@ -189,7 +189,13 @@ a:focus-visible {
   }
 
   .lg-service-key-table {
-    min-width: 920px;
+    min-width: 1320px;
+  }
+
+  .lg-quickstart-steps,
+  .lg-quickstart-detail-grid,
+  .lg-quickstart-inputs {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
 

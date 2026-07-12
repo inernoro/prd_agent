@@ -21,7 +21,10 @@ export type LoginResult = {
   expiresAt?: string | null;
   /** 首登强制改密：true 时前端须跳「设置新口令」页，改密成功前不放行日志页。 */
   mustChangePassword?: boolean | null;
+  tenant?: TenantSession | null;
 };
+
+export type TenantSession = { id: string; name: string; role: string; teamIds: string[] };
 
 // ── 改密 ──
 export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
@@ -716,11 +719,16 @@ export type GatewayAppCallersData = {
 export type ServiceKeyItem = {
   id: string;
   name: string;
+  keyPrefix: string;
   enabled: boolean;
+  teamId?: string | null;
+  createdByUsername?: string | null;
   sourceSystem: string;
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
+  allowedCidrs: string[];
+  rateLimitPerMinute?: number | null;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   createdAt?: string | null;
@@ -732,6 +740,10 @@ export type CreateServiceKeyRequest = {
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
+  teamId?: string;
+  allowedCidrs: string[];
+  rateLimitPerMinute?: number;
+  rotatesKeyId?: string;
   expiresAt?: string;
 };
 
@@ -739,7 +751,17 @@ export type CreatedServiceKey = CreateServiceKeyRequest & {
   id: string;
   key: string;
   warning: string;
+  keyPrefix: string;
 };
+
+export type OrganizationData = {
+  tenant: { id: string; name: string; slug: string; status: string; isInternal: boolean } | null;
+  teams: { id: string; name: string; status: string; createdAt: string; updatedAt: string }[];
+  members: { id: string; userId: string; username?: string | null; displayName?: string | null; role: string; teamIds: string[]; status: string; version: number }[];
+};
+
+export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
+export type CreatedTeam = { id: string; name: string; status: string };
 
 // ── 影子比对（只读）──
 export type ShadowSnapshot = {

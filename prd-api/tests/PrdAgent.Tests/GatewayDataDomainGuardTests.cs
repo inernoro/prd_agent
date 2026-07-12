@@ -345,6 +345,7 @@ public class GatewayDataDomainGuardTests
     {
         var access = ReadRepoFile("prd-llmgw/Auth/TenantAccessContext.cs");
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var listStart = consoleProgram.IndexOf("app.MapGet(\"/gw/service-keys\"", StringComparison.Ordinal);
         var createStart = consoleProgram.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
         var deleteStart = consoleProgram.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
         var shadowStart = consoleProgram.IndexOf("// 影子比对", deleteStart, StringComparison.Ordinal);
@@ -353,7 +354,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite", access);
         Assert.DoesNotContain("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ConfigWrite", access);
         Assert.Contains("options.AddPolicy(\"ServiceKeyWrite\"", consoleProgram);
+        Assert.Contains("CreatedByUserId", consoleProgram[listStart..createStart]);
+        Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[listStart..createStart]);
+        Assert.Contains("CreatedByUserId", consoleProgram[createStart..deleteStart]);
         Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[createStart..deleteStart]);
+        Assert.Contains("CreatedByUserId", consoleProgram[deleteStart..shadowStart]);
         Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[deleteStart..shadowStart]);
     }
 

@@ -98,6 +98,7 @@ public static class GatewayHttpEndpoints
                         authorizationInputs.AppCallerCode,
                         authorizationInputs.IngressProtocol,
                         authorizationInputs.RequiredScope,
+                        context.Connection.RemoteIpAddress,
                         context.RequestAborted);
                 if (!authorization.Allowed)
                 {

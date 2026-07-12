@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using MongoDB.Driver;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.HttpOverrides;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.LlmGatewayHost;
@@ -36,6 +37,14 @@ builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
 builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 2;
+    // serving 容器不发布宿主端口，只接受同一部署网络内的 nginx；容器网段会动态变化。
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();
@@ -272,6 +281,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+app.UseForwardedHeaders();
 
 // 端点用的 JSON 选项（与上面口径一致；SSE 端点手动序列化时用）
 var jsonOpts = new JsonSerializerOptions
