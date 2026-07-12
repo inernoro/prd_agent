@@ -345,6 +345,7 @@ public class GatewayDataDomainGuardTests
     {
         var access = ReadRepoFile("prd-llmgw/Auth/TenantAccessContext.cs");
         var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var listStart = consoleProgram.IndexOf("app.MapGet(\"/gw/service-keys\"", StringComparison.Ordinal);
         var createStart = consoleProgram.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
         var deleteStart = consoleProgram.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
         var shadowStart = consoleProgram.IndexOf("// 影子比对", deleteStart, StringComparison.Ordinal);
@@ -353,8 +354,41 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite", access);
         Assert.DoesNotContain("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ConfigWrite", access);
         Assert.Contains("options.AddPolicy(\"ServiceKeyWrite\"", consoleProgram);
+        Assert.Contains("CreatedByUserId", consoleProgram[listStart..createStart]);
+        Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[listStart..createStart]);
+        Assert.Contains("CreatedByUserId", consoleProgram[createStart..deleteStart]);
         Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[createStart..deleteStart]);
+        Assert.Contains("CreatedByUserId", consoleProgram[deleteStart..shadowStart]);
         Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[deleteStart..shadowStart]);
+    }
+
+    [Fact]
+    public void ServingCidrGate_ConsumesOnlyTheProxyAppendedRightmostHop()
+    {
+        var servingProgram = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("options.ForwardLimit = 1", servingProgram);
+        Assert.Contains("options.KnownNetworks.Clear()", servingProgram);
+        Assert.Contains("options.KnownProxies.Clear()", servingProgram);
+        Assert.True(
+            servingProgram.IndexOf("app.UseForwardedHeaders()", StringComparison.Ordinal)
+            < servingProgram.IndexOf("app.MapGatewayServingEndpoints", StringComparison.Ordinal),
+            "CIDR 鉴权前必须先把代理追加的最右侧来源地址解析到 RemoteIpAddress");
+        Assert.Contains("context.Connection.RemoteIpAddress", endpoints);
+    }
+
+    [Fact]
+    public void NativeQuickstart_UsesTheSameSourceSystemInHeaderAndBody()
+    {
+        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
+
+        Assert.Contains("X-Gateway-Source: external", quickstart);
+        Assert.Contains("\"sourceSystem\": \"external\"", quickstart);
+        Assert.Contains("/gw/v1/invoke", quickstart);
+        Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
+        Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
+        Assert.Contains("https://gateway.example.com", quickstart);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.2 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.3 | **日期**：2026-07-12 | **状态**：开发中
 
 ## 1. 目标
 
@@ -20,15 +20,17 @@
 
 | PR | 当前状态 | 分支 | 独立完成门 |
 |---|---|---|---|
-| PR-1 | CI、CDS、预览验收通过，等待 Codex Review；Bugbot 被仓库设置禁用 | `codex/llmgw-tenant-rbac` / [PR #1085](https://github.com/inernoro/prd_agent/pull/1085) | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
-| PR-2 | 待开始 | 待 PR-1 完成后创建 | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
+| PR-1 | 已合并；CI、Codex Review、CDS 与预览验收通过；Bugbot 因订阅停用记为不适用 | `codex/llmgw-tenant-rbac` / [PR #1085](https://github.com/inernoro/prd_agent/pull/1085) | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
+| PR-2 | 开发中；本地编译、前端构建及 109 项 Gateway 测试通过 | `codex/llmgw-service-key-quickstart` | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
 | PR-3 | 待开始 | 待 PR-2 完成后创建 | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
 | PR-4 | 待开始 | 待 PR-3 完成后创建 | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
 | PR-5 | 待开始 | 待 PR-4 完成后创建 | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
 
-每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Bugbot、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。
+每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Codex Review、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。Bugbot 自 2026-07-12 起因用户停止续费而不再作为门禁，统一记录为不适用，不触发、不等待。
 
-PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关 101 项测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。针对旧版 provider 并发槽位 `_id` 的迁移兼容又增加 4 项真实 Mongo 测试并全部通过。GitHub Server Build & Test、四个相关镜像、CDS Deploy 已在实现提交 `071209eda` 上通过，CDS 五个服务均运行且 commit SHA 一致；控制台预览可直接访问。当前尚未完成的门为最终 Codex Review，以及被 Cursor 明确报告“Bugbot is disabled for this repository”的 Bugbot 外部门禁；未解除或明确豁免前不合并 PR-1、不启动 PR-2。
+PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。GitHub CI、四个相关镜像、Codex Review、CDS Deploy 与直连预览验收通过，PR #1085 已 squash 合并为 `19a33c7f4461eae24861f8ad59123b0ec0679389`。
+
+PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。提交 `73f3098ff` 的 GitHub CI、四镜像、CDS Deploy 和 smoke 3/3 已通过，CDS 五个服务运行且 serving health 回显同 commit；独立控制台公网深链为 `<previewSlug>-llmgw-web.<root>/quickstart`，已确认返回当前 SPA。Quickstart 的 serving base 优先读取显式配置；生产 `/llmgw` 路径部署使用同源；无法可靠推断 serving origin 的独立控制台使用明确占位域名，禁止把管理后台 origin 误作 serving。尚待最终 Codex Review。
 
 执行期间保持以下边界：
 
@@ -54,8 +56,8 @@ PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编
 
 | 缺口 | 当前问题 |
 |---|---|
-| 租户体系 | service key 没有 tenant 归属，无法做租户级数据隔离、预算、审计和配额 |
-| 用户与团队 | 控制台仍是独立管理员账号，没有邀请、成员、团队、角色和切换上下文 |
+| 租户体系 | PR-1 已补齐租户归属与数据隔离；PR-2 正在补齐 key 自助约束和接入体验 |
+| 用户与团队 | PR-1 已补齐 tenant/team/user/membership/RBAC；网页组织入口在 PR-2 接入自助流程 |
 | 外部开发者体验 | 没有面向首次接入者的网页 Quickstart、SDK/cURL 示例、错误排查和在线请求检查器 |
 | appCaller 提示词策略 | registry 没有系统提示词前缀/后缀、版本、启停和审计字段 |
 | 首页可理解性 | 第一屏优先展示 runtime gate、协议覆盖等内部运维概念，普通用户不知道下一步做什么 |
@@ -173,7 +175,7 @@ Tenant
 | PR-4 | 控制台信息架构、左侧导航、首页、Activity 图表与金额可信度 | 桌面/移动、双主题、空态、长文本、图表像素和金额覆盖率验收通过 |
 | PR-5 | 端到端安全验收、迁移脚本、文档收口与生产灰度 | 一个测试租户完整走通，删除测试数据；不改 MAP full-http 主链 |
 
-一次只做一个 PR。每个 PR 合并前先合入最新 main，等待 CI、Bugbot 和 CDS 完成；不得把五个 PR 合成不可审查的大提交。
+一次只做一个 PR。每个 PR 合并前先合入最新 main，等待 CI、Codex Review 和 CDS 完成；不得把五个 PR 合成不可审查的大提交。Bugbot 因订阅停用统一记为不适用。
 
 ## 8. 调研要求
 
@@ -240,7 +242,7 @@ doc/plan.platform.llm-gateway-external-platform.md
 - unknown cost 不得显示为 0，CNY/USD 不得无汇率直接相加。
 - 顶部只放全局上下文，左侧承担页面导航；普通首页不展示发布 gate 和容器拓扑。
 - 不进行批量付费模型测试；每类真实协议最多一次，其余用假上游。
-- 每个 PR 独立完成测试、CI、Bugbot、CDS 预览和交接，不允许一次实现五个 PR。
+- 每个 PR 独立完成测试、CI、Codex Review、CDS 预览和交接，不允许一次实现五个 PR；Bugbot 因订阅停用记为不适用。
 
 先输出仓库事实审计和 PR-1 的精确实施计划，确认没有重复建设，再开始编码。每次进度用表格汇报：事项、完成百分比、证据、阻塞、下一步。
 ```

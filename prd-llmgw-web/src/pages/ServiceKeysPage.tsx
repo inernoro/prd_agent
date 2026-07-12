@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { createServiceKey, getServiceKeys, revokeServiceKey } from '@/lib/api';
 import type { CreatedServiceKey, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
@@ -21,6 +22,10 @@ export function ServiceKeysPage() {
   const [ingressProtocols, setIngressProtocols] = useState(DEFAULT_PROTOCOLS);
   const [scopes, setScopes] = useState(DEFAULT_SCOPES);
   const [expiresAt, setExpiresAt] = useState('');
+  const [teamId, setTeamId] = useState('');
+  const [allowedCidrs, setAllowedCidrs] = useState('');
+  const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
+  const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
 
   const load = useCallback(async () => {
     setError(null);
@@ -40,6 +45,10 @@ export function ServiceKeysPage() {
       appCallerCodes: splitValues(appCallerCodes),
       ingressProtocols: splitValues(ingressProtocols),
       scopes: splitValues(scopes),
+      teamId: teamId.trim() || undefined,
+      allowedCidrs: splitValues(allowedCidrs),
+      rateLimitPerMinute: rateLimitPerMinute ? Number(rateLimitPerMinute) : undefined,
+      rotatesKeyId,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
     });
     setCreating(false);
@@ -51,6 +60,10 @@ export function ServiceKeysPage() {
     setShowCreate(false);
     setName('');
     setAppCallerCodes('');
+    setTeamId('');
+    setAllowedCidrs('');
+    setRateLimitPerMinute('');
+    setRotatesKeyId(undefined);
     setExpiresAt('');
     await load();
   };
@@ -74,6 +87,19 @@ export function ServiceKeysPage() {
     window.setTimeout(() => setCopied(false), 1600);
   };
 
+  const startRotation = (item: ServiceKeyItem) => {
+    setName(`${item.name} rotation`);
+    setSourceSystem(item.sourceSystem);
+    setAppCallerCodes(item.appCallerCodes.join(', '));
+    setIngressProtocols(item.ingressProtocols.join(', '));
+    setScopes(item.scopes.join(', '));
+    setTeamId(item.teamId || '');
+    setAllowedCidrs(item.allowedCidrs.join(', '));
+    setRateLimitPerMinute(item.rateLimitPerMinute ? String(item.rateLimitPerMinute) : '');
+    setRotatesKeyId(item.id);
+    setShowCreate(true);
+  };
+
   const canSubmit = name.trim() && sourceSystem.trim() && splitValues(appCallerCodes).length
     && splitValues(ingressProtocols).length && splitValues(scopes).length;
 
@@ -86,6 +112,8 @@ export function ServiceKeysPage() {
         </div>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{items ? `${items.length} 个` : ''}</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <Link to="/organization" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12 }}>组织与团队</Link>
+          <Link to="/quickstart" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12 }}>Quickstart</Link>
           <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
           <Button size="sm" variant="primary" onClick={() => setShowCreate((value) => !value)}>
             {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}
@@ -102,6 +130,7 @@ export function ServiceKeysPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <code style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '9px 10px', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>{created.key}</code>
             <Button size="sm" onClick={() => void copyCreatedKey()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
+            <Link to="/quickstart" style={{ color: 'var(--accent)', fontSize: 12 }}>打开 Quickstart</Link>
           </div>
         </div>
       ) : null}
@@ -113,7 +142,11 @@ export function ServiceKeysPage() {
           <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="逗号分隔" />
           <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
           <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, stream:invoke, raw:invoke, profile:test" />
+          <Field label="Team ID（可选）" value={teamId} onChange={setTeamId} placeholder="仅限当前租户团队" />
+          <Field label="来源 CIDR（可选）" value={allowedCidrs} onChange={setAllowedCidrs} placeholder="10.20.0.0/16, 2001:db8::/32" />
+          <Field label="每分钟上限（可选）" value={rateLimitPerMinute} onChange={setRateLimitPerMinute} placeholder="例如 60" type="number" />
           <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
+          {rotatesKeyId ? <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 12 }}>正在轮换 {rotatesKeyId}。新旧密钥会并行有效，完成客户端切换后再撤销旧密钥。</div> : null}
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
             <Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '创建密钥'}</Button>
           </div>
@@ -127,18 +160,21 @@ export function ServiceKeysPage() {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <table className="lg-service-key-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
-              {['名称', '来源', 'AppCaller', '协议', 'Scope', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
+              {['名称', '前缀', '团队/创建者', '来源', 'AppCaller', '协议', 'Scope', '网络/限流', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
             </tr></thead>
             <tbody>{items.map((item) => <tr key={item.id}>
               <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.id}</div></td>
+              <td style={{ ...td, ...mutedMono }}>{item.keyPrefix}</td>
+              <td style={td}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
               <td style={td}>{item.sourceSystem}</td>
               <td style={td}>{item.appCallerCodes.join(', ')}</td>
               <td style={td}>{item.ingressProtocols.join(', ')}</td>
               <td style={td}>{item.scopes.join(', ')}</td>
+              <td style={td}>{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'}<div style={mutedMono}>{item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</div></td>
               <td style={td}>{formatTime(item.lastUsedAt)}</td>
               <td style={td}>{formatTime(item.expiresAt)}</td>
               <td style={td}><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? '#3fb950' : '#8b949e'} bg={item.enabled ? 'rgba(63,185,80,0.14)' : 'rgba(139,148,158,0.12)'} /></td>
-              <td style={{ ...td, textAlign: 'right' }}>{item.enabled ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void revoke(item)}>撤销</Button> : null}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{item.enabled ? <div style={{ display: 'flex', gap: 4 }}><Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button><Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void revoke(item)}>撤销</Button></div> : null}</td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -147,8 +183,8 @@ export function ServiceKeysPage() {
   );
 }
 
-function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
-  return <label style={labelStyle}>{label}<input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
+function Field({ label, value, onChange, placeholder, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; type?: string }) {
+  return <label style={labelStyle}>{label}<input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
 }
 
 function splitValues(value: string) {

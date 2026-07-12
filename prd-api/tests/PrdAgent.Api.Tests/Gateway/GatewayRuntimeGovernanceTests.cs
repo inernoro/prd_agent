@@ -493,6 +493,7 @@ public sealed class GatewayRuntimeGovernanceTests
             "allowed-caller",
             "openai-compatible",
             "chat",
+            null,
             CancellationToken.None);
         var denied = await authorizer.AuthorizeAsync(
             key,
@@ -501,6 +502,7 @@ public sealed class GatewayRuntimeGovernanceTests
             "other-caller",
             "openai-compatible",
             "chat",
+            null,
             CancellationToken.None);
 
         allowed.Allowed.ShouldBeTrue();
@@ -573,6 +575,7 @@ public sealed class GatewayRuntimeGovernanceTests
             "requested-caller",
             "openai-compatible",
             "invoke",
+            null,
             CancellationToken.None);
 
         denied.Allowed.ShouldBeFalse();
@@ -607,11 +610,123 @@ public sealed class GatewayRuntimeGovernanceTests
             "profile-caller",
             "gw-native",
             "profile:test",
+            null,
             CancellationToken.None);
 
         denied.Allowed.ShouldBeFalse();
         denied.Authenticated.ShouldBeTrue();
         denied.StatusCode.ShouldBe(403);
+    }
+
+    [Fact]
+    public async Task ScopedKey_EnforcesSourceCidrFromServerConnection()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_cidr_key";
+        await InsertServiceKeyAsync(scope.Context, new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "cidr-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            AllowedCidrs = ["10.20.0.0/16"],
+        });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var allowed = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            System.Net.IPAddress.Parse("10.20.3.4"), CancellationToken.None);
+        var denied = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            System.Net.IPAddress.Parse("10.21.3.4"), CancellationToken.None);
+
+        allowed.Allowed.ShouldBeTrue();
+        denied.Allowed.ShouldBeFalse();
+        denied.StatusCode.ShouldBe(403);
+        denied.ErrorCode.ShouldBe("GATEWAY_KEY_SOURCE_IP_DENIED");
+    }
+
+    [Fact]
+    public async Task ScopedKey_EnforcesTenantScopedPerMinuteLimit()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_rate_key";
+        await InsertServiceKeyAsync(scope.Context, new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "rate-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            RateLimitPerMinute = 1,
+        });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var first = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            null, CancellationToken.None);
+        var second = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            null, CancellationToken.None);
+
+        first.Allowed.ShouldBeTrue();
+        second.Allowed.ShouldBeFalse();
+        second.StatusCode.ShouldBe(429);
+        second.ErrorCode.ShouldBe("GATEWAY_KEY_RATE_LIMITED");
+        var window = await scope.Context.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows")
+            .Find(x => x.TenantId == "tenant-a" && x.ServiceKeyId != string.Empty)
+            .SingleAsync();
+        window.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ScopedKey_FirstMinuteConcurrentRequests_DoNotFailWithDuplicateWindow()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_concurrent_rate_key";
+        var keyRecord = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "concurrent-rate-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            RateLimitPerMinute = 10,
+        };
+        await InsertServiceKeyAsync(scope.Context, keyRecord);
+        var windows = scope.Context.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");
+        await windows.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyRateWindowRecord>(
+            Builders<GatewayServiceKeyRateWindowRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ServiceKeyId)
+                .Ascending(x => x.WindowStart),
+            new CreateIndexOptions { Unique = true }));
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+            null, CancellationToken.None)));
+
+        results.Count(x => x.Allowed).ShouldBe(10);
+        results.Count(x => x.StatusCode == 429).ShouldBe(10);
+        var window = await windows.Find(x => x.TenantId == "tenant-a" && x.ServiceKeyId == keyRecord.Id).SingleAsync();
+        window.Count.ShouldBe(20);
     }
 
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()

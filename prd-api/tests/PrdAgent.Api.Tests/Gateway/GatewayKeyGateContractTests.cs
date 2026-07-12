@@ -2259,6 +2259,7 @@ public class GatewayKeyGateContractTests
             string appCallerCode,
             string ingressProtocol,
             string requiredScope,
+            System.Net.IPAddress? remoteIp,
             CancellationToken ct)
         {
             CallCount++;

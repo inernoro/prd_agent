@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -32,6 +33,7 @@ public interface IGatewayScopedKeyAuthorizer
         string appCallerCode,
         string ingressProtocol,
         string requiredScope,
+        IPAddress? remoteIp,
         CancellationToken ct);
 }
 
@@ -55,6 +57,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string appCallerCode,
         string ingressProtocol,
         string requiredScope,
+        IPAddress? remoteIp,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(providedKey))
@@ -121,6 +124,87 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 record.TeamId);
         }
 
+        if (record.AllowedCidrs.Count > 0
+            && (remoteIp is null || !record.AllowedCidrs.Any(cidr => ContainsAddress(cidr, remoteIp))))
+        {
+            await WriteKeyDeniedAuditAsync(record, "service_key.source_ip_denied", "source-ip-denied", new MongoDB.Bson.BsonDocument
+            {
+                { "remoteIp", remoteIp?.ToString() ?? string.Empty },
+            }, ct);
+            return new(
+                false,
+                true,
+                403,
+                "GATEWAY_KEY_SOURCE_IP_DENIED",
+                "gateway key does not allow this source IP",
+                record.Id,
+                record.TenantId,
+                record.TeamId);
+        }
+
+        if (record.RateLimitPerMinute is > 0)
+        {
+            var now = DateTime.UtcNow;
+            var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+            var windows = _data.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");
+            var filter = Builders<GatewayServiceKeyRateWindowRecord>.Filter.And(
+                Builders<GatewayServiceKeyRateWindowRecord>.Filter.Eq(x => x.TenantId, record.TenantId),
+                Builders<GatewayServiceKeyRateWindowRecord>.Filter.Eq(x => x.ServiceKeyId, record.Id),
+                Builders<GatewayServiceKeyRateWindowRecord>.Filter.Eq(x => x.WindowStart, windowStart));
+            var update = Builders<GatewayServiceKeyRateWindowRecord>.Update
+                .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                .SetOnInsert(x => x.TenantId, record.TenantId)
+                .SetOnInsert(x => x.ServiceKeyId, record.Id)
+                .SetOnInsert(x => x.WindowStart, windowStart)
+                .SetOnInsert(x => x.ExpiresAt, windowStart.AddMinutes(2))
+                .Inc(x => x.Count, 1);
+            GatewayServiceKeyRateWindowRecord window;
+            try
+            {
+                window = await windows.FindOneAndUpdateAsync(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<GatewayServiceKeyRateWindowRecord>
+                    {
+                        IsUpsert = true,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct);
+            }
+            catch (MongoException ex) when (IsDuplicateKey(ex))
+            {
+                // 同一分钟的首批并发请求可能同时观察到窗口不存在；唯一索引只允许一个 upsert 成功。
+                // 竞争者改为非 upsert 原子递增，不能把正常限流请求放大成 500。
+                window = await windows.FindOneAndUpdateAsync(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<GatewayServiceKeyRateWindowRecord>
+                    {
+                        IsUpsert = false,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct) ?? throw new InvalidOperationException("service key rate window disappeared after duplicate upsert");
+            }
+            if (window.Count > record.RateLimitPerMinute.Value)
+            {
+                await WriteKeyDeniedAuditAsync(record, "service_key.rate_limited", "rate-limited", new MongoDB.Bson.BsonDocument
+                {
+                    { "windowStart", windowStart },
+                    { "count", window.Count },
+                    { "limit", record.RateLimitPerMinute.Value },
+                }, ct);
+                return new(
+                    false,
+                    true,
+                    429,
+                    "GATEWAY_KEY_RATE_LIMITED",
+                    "gateway key per-minute rate limit exceeded",
+                    record.Id,
+                    record.TenantId,
+                    record.TeamId);
+            }
+        }
+
         _ = keys.UpdateOneAsync(
             Builders<GatewayServiceKeyRecord>.Filter.And(
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.TenantId, record.TenantId),
@@ -150,6 +234,39 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var values = configured?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? [];
         return values.Count > 0 && values.Any(x => Matches(x, actual));
     }
+
+    private static bool ContainsAddress(string cidr, IPAddress address)
+    {
+        if (!IPNetwork.TryParse(cidr, out var network)) return false;
+        var normalizedAddress = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        return network.Contains(normalizedAddress);
+    }
+
+    private static bool IsDuplicateKey(MongoException exception)
+        => exception is MongoCommandException { Code: 11000 or 11001 }
+           || exception is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey };
+
+    private Task WriteKeyDeniedAuditAsync(
+        GatewayServiceKeyRecord record,
+        string action,
+        string reason,
+        MongoDB.Bson.BsonDocument changes,
+        CancellationToken ct)
+        => _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_operation_audits").InsertOneAsync(
+            new MongoDB.Bson.BsonDocument
+            {
+                { "_id", Guid.NewGuid().ToString("N") },
+                { "TenantId", record.TenantId },
+                { "TeamId", string.IsNullOrWhiteSpace(record.TeamId) ? MongoDB.Bson.BsonNull.Value : record.TeamId },
+                { "Action", action },
+                { "TargetType", "llmgw_service_key" },
+                { "TargetId", record.Id },
+                { "TargetName", record.Name },
+                { "Success", false },
+                { "Reason", reason },
+                { "Changes", changes },
+                { "CreatedAt", DateTime.UtcNow },
+            }, cancellationToken: ct);
 }
 
 public sealed record GatewayBudgetLease(string TenantId, string ReservationId, decimal ReservedUsd);
@@ -867,6 +984,7 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
             ("llmgw_models", "TenantId"),
             ("llmgw_model_exchanges", "TenantId"),
             ("llmgw_service_keys", "TenantId"),
+            ("llmgw_service_key_rate_windows", "TenantId"),
             ("llmrequestlogs", "TenantId"),
             ("llmshadow_comparisons", "TenantId"),
             ("llmgw_operation_audits", "TenantId"),

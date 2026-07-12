@@ -10,16 +10,32 @@ public sealed class GatewayServiceKeyRecord
     public string TenantId { get; set; } = string.Empty;
     public string? TeamId { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = string.Empty;
     public string KeyHash { get; set; } = string.Empty;
+    public string CreatedByUserId { get; set; } = string.Empty;
+    public string CreatedByUsername { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
     public string SourceSystem { get; set; } = "external";
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();
+    public List<string> AllowedCidrs { get; set; } = new();
+    public int? RateLimitPerMinute { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUsedAt { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayServiceKeyRateWindowRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string ServiceKeyId { get; set; } = string.Empty;
+    public DateTime WindowStart { get; set; }
+    public long Count { get; set; }
+    public DateTime ExpiresAt { get; set; }
 }
 
 [BsonIgnoreExtraElements]

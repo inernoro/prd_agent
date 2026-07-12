@@ -10,6 +10,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -192,6 +193,7 @@ var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
+var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -215,6 +217,15 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("CreatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
+});
+await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ServiceKeyId").Ascending("WindowStart"),
+        new CreateIndexOptions { Name = "uniq_llmgw_service_key_rate_tenant_window", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
 });
 
 app.Use(async (http, next) =>
@@ -2990,7 +3001,11 @@ app.MapGet("/gw/audits", async (
 // M2M scoped key：明文只在创建响应返回一次，数据库只保存 SHA-256。
 app.MapGet("/gw/service-keys", async (HttpContext http) =>
 {
-    var docs = await serviceKeys.Find(TenantAccess.Filter(http))
+    var access = TenantAccess.GetRequired(http);
+    var ownScope = access.Role == LlmGwTenantRoles.Developer
+        ? Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId)
+        : Builders<BsonDocument>.Filter.Empty;
+    var docs = await serviceKeys.Find(TenantAccess.Filter(http, ownScope))
         .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
         .Limit(500)
         .ToListAsync();
@@ -2998,17 +3013,22 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
     {
         Id = d.GetStringOrEmpty("_id"),
         Name = d.GetStringOrEmpty("Name"),
+        KeyPrefix = d.AsNullableString("KeyPrefix") ?? "gwk_",
         Enabled = d.AsNullableBool("Enabled") ?? false,
+        TeamId = d.AsNullableString("TeamId"),
+        CreatedByUsername = d.AsNullableString("CreatedByUsername"),
         SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
         AppCallerCodes = d.AsStringList("AppCallerCodes"),
         IngressProtocols = d.AsStringList("IngressProtocols"),
         Scopes = d.AsStringList("Scopes"),
+        AllowedCidrs = d.AsStringList("AllowedCidrs"),
+        RateLimitPerMinute = d.AsNullableInt("RateLimitPerMinute"),
         ExpiresAt = d.AsNullableUtcDateTime("ExpiresAt").ToIso(),
         LastUsedAt = d.AsNullableUtcDateTime("LastUsedAt").ToIso(),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
     }).ToList();
     return Json(ApiEnvelope<List<ServiceKeyItem>>.Ok(items), jsonOptions);
-}).RequireAuthorization("LogsRead");
+}).RequireAuthorization("ServiceKeyWrite");
 
 app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest body) =>
 {
@@ -3018,6 +3038,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
     var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
     var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
+    var allowedCidrs = NormalizeDistinct(body.AllowedCidrs ?? [], 50);
     if (name.Length == 0 || sourceSystem.Length == 0 || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
     {
         return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
@@ -3036,9 +3057,47 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
             "INVALID_SERVICE_KEY_SCOPE",
             "ingressProtocols 或 scopes 包含未支持值"), jsonOptions, 400);
     }
+    if (allowedCidrs.Any(x => !IPNetwork.TryParse(x, out _)))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_SOURCE_CIDR", "allowedCidrs 包含无效 CIDR"), jsonOptions, 400);
+    }
+    if (body.RateLimitPerMinute is < 1 or > 100000)
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_RATE_LIMIT", "rateLimitPerMinute 仅支持 1 至 100000"), jsonOptions, 400);
+    }
+    if (body.ExpiresAt is not null && body.ExpiresAt.Value.ToUniversalTime() <= DateTime.UtcNow)
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_EXPIRY", "expiresAt 必须晚于当前时间"), jsonOptions, 400);
+    }
+
+    var teamId = string.IsNullOrWhiteSpace(body.TeamId) ? null : body.TeamId.Trim();
+    if (teamId is not null)
+    {
+        var teamExists = await teams.CountDocumentsAsync(x => x.Id == teamId && x.TenantId == tenant.TenantId && x.Status == "active") == 1;
+        if (!teamExists || tenant.Role == LlmGwTenantRoles.Developer && !tenant.TeamIds.Contains(teamId, StringComparer.Ordinal))
+        {
+            return Json(ApiEnvelope<object>.Fail("TEAM_SCOPE_DENIED", "不能为该团队创建 service key"), jsonOptions, 403);
+        }
+    }
+    else if (tenant.TeamIds.Count == 1)
+    {
+        teamId = tenant.TeamIds[0];
+    }
+
+    BsonDocument? rotatedKey = null;
+    if (!string.IsNullOrWhiteSpace(body.RotatesKeyId))
+    {
+        var rotationFilter = Builders<BsonDocument>.Filter.Eq("_id", body.RotatesKeyId.Trim());
+        if (tenant.Role == LlmGwTenantRoles.Developer)
+            rotationFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", tenant.UserId);
+        rotatedKey = await serviceKeys.Find(TenantAccess.Filter(http, rotationFilter)).FirstOrDefaultAsync();
+        if (rotatedKey is null)
+            return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_NOT_FOUND", "待轮换密钥不存在或不在当前管理范围"), jsonOptions, 404);
+    }
 
     var secretBytes = RandomNumberGenerator.GetBytes(32);
     var plainKey = "gwk_" + Convert.ToBase64String(secretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var keyPrefix = plainKey[..Math.Min(plainKey.Length, 12)];
     var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
     var id = Guid.NewGuid().ToString("N");
     var now = DateTime.UtcNow;
@@ -3047,14 +3106,20 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     {
         { "_id", id },
         { "TenantId", tenant.TenantId },
-        { "TeamId", tenant.TeamIds.Count == 1 ? tenant.TeamIds[0] : BsonNull.Value },
+        { "TeamId", teamId is null ? BsonNull.Value : teamId },
         { "Name", name },
+        { "KeyPrefix", keyPrefix },
         { "KeyHash", keyHash },
+        { "CreatedByUserId", tenant.UserId },
+        { "CreatedByUsername", tenant.Username },
         { "Enabled", true },
         { "SourceSystem", sourceSystem },
         { "AppCallerCodes", new BsonArray(appCallerCodes) },
         { "IngressProtocols", new BsonArray(protocols) },
         { "Scopes", new BsonArray(scopes) },
+        { "AllowedCidrs", new BsonArray(allowedCidrs) },
+        { "RateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
+        { "RotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
         { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
         { "CreatedAt", now },
         { "UpdatedAt", now },
@@ -3090,24 +3155,37 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
             { "appCallerCount", appCallerCodes.Count },
             { "protocolCount", protocols.Count },
             { "scopeCount", scopes.Count },
+            { "teamId", teamId is null ? BsonNull.Value : teamId },
+            { "allowedCidrCount", allowedCidrs.Count },
+            { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
+            { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
         });
     return Json(ApiEnvelope<object>.Ok(new
     {
         id,
         name,
+        keyPrefix,
         key = plainKey,
         warning = "该 key 只显示一次；数据库未保存明文",
         sourceSystem,
         appCallerCodes,
         ingressProtocols = protocols,
         scopes,
+        teamId,
+        allowedCidrs,
+        rateLimitPerMinute = body.RateLimitPerMinute,
+        rotatesKeyId = rotatedKey?.GetStringOrEmpty("_id"),
         expiresAt,
     }), jsonOptions, 201);
 }).RequireAuthorization("ServiceKeyWrite");
 
 app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
 {
-    var keyFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var access = TenantAccess.GetRequired(http);
+    var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    if (access.Role == LlmGwTenantRoles.Developer)
+        scopeFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId);
+    var keyFilter = TenantAccess.Filter(http, scopeFilter);
     var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
@@ -4745,6 +4823,7 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_models",
         "llmgw_model_exchanges",
         "llmgw_service_keys",
+        "llmgw_service_key_rate_windows",
         "llmrequestlogs",
         "llmshadow_comparisons",
         "llmgw_operation_audits",
