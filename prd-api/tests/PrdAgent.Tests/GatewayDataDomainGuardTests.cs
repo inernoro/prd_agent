@@ -1144,6 +1144,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ModelGroupIds: isolatePool ? [pool._id]", script);
         Assert.Contains("isolated bootstrap refuses pool with Code=", script);
         Assert.Contains("IsDefaultForType: false", script);
+        Assert.Contains("const gatewayDb = db.getSiblingDB(gatewayDbName)", script);
+        Assert.Contains("GW authority caller must resolve exactly once", script);
+        Assert.Contains("isolated GW authority bootstrap requires caller binding", script);
+        Assert.Contains("tenantSource: callerTenantId ? \"caller\" : \"server-internal-default\"", script);
+        Assert.Contains("otherGatewayReferences.length > 0", script);
+        Assert.Contains("ModelPolicy: \"pool\"", script);
+        Assert.Contains("TenantId: tenantId", script);
+        Assert.Contains("GW authority post-write verification failed", script);
+        Assert.Contains("backup_collection \"$gateway_db\" llmgw_model_pools", shell);
+        Assert.Contains("--collection \"$backup_collection_name\" --archive --gzip", shell);
+        Assert.Contains("SHA256SUMS", shell);
+        Assert.DoesNotContain("LLMGW_CHAT_BOOTSTRAP_TENANT_ID", shell + script);
         Assert.DoesNotContain("const defaultPool = db.model_groups.findOne", script);
     }
 
