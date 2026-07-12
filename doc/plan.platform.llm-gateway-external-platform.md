@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.3 | **日期**：2026-07-12 | **状态**：开发中
+> **版本**：v1.4 | **日期**：2026-07-12 | **状态**：已完成
 
 ## 1. 目标
 
@@ -24,7 +24,7 @@
 | PR-2 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-service-key-quickstart` / [PR #1086](https://github.com/inernoro/prd_agent/pull/1086) | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
 | PR-3 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-prompt-policy` / [PR #1087](https://github.com/inernoro/prd_agent/pull/1087) | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
 | PR-4 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-console-experience` / [PR #1088](https://github.com/inernoro/prd_agent/pull/1088) | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
-| PR-5 | 开发与本地合同验收中 | `codex/llmgw-final-platform-acceptance` | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
+| PR-5 | 已完成；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-final-platform-acceptance` / [PR #1089](https://github.com/inernoro/prd_agent/pull/1089) | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
 
 每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Codex Review、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。Bugbot 自 2026-07-12 起因用户停止续费而不再作为门禁，统一记录为不适用，不触发、不等待。
 
@@ -40,7 +40,7 @@ PR-4 发布证据（2026-07-12）：最终提交 `5fba56b9552e161f16b74cb720b8be
 
 PR-5 精确计划（2026-07-12）：不再增加平台能力，只做有限验收收口。第一，修复生产治理验收脚本在 PR-1 后仍伪造无租户 claim JWT、Mongo 查询和清理缺少 TenantId 的漂移，改为通过真实控制台登录与 `/auth/context` 取得服务端租户。第二，用既有假上游合同覆盖 tenant-scoped key 的授权、越权、撤销和 GW Native、OpenAI、Claude、Gemini 四协议，不批量调用付费模型。第三，串联 PR-1 至 PR-4 的租户创建、密钥接入、PromptPolicy 元数据、Activity、费用可信度与桌面/移动证据，避免重复建设 full-http、模型池和发布 gate。第四，PR 分支在 CI、Codex Review 或替代人工复审、CDS、直连预览和完整测试租户清理全部通过后才能合并。
 
-PR-5 本地证据（进行中）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。生产/灰度执行、测试租户清理和独立 PR 门禁仍待完成。
+PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。完整接入融合验收复用 PR-1 的真实 tenant A/B 跨租户拒绝、PR-2 的真实登录创建并撤销 key、PR-3 的 PromptPolicy 版本与日志脱敏、PR-4 的 Activity/费用/多视口证据，再由本 PR 的四协议与 key 合同做最终回归；未增加付费调用，测试数据均已清理。最终提交的 GitHub CI、四镜像和 CDS Deploy 全绿，独立预览首页、Quickstart 与 Activity 深链均返回 200。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代；Bugbot 不适用。
 
 执行期间保持以下边界：
 
