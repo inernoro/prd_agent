@@ -19,6 +19,8 @@ public sealed record GatewayKeyAuthorization(
     string ErrorCode,
     string Detail,
     string? KeyId = null,
+    string? TenantId = null,
+    string? TeamId = null,
     bool LegacySharedKey = false);
 
 public interface IGatewayScopedKeyAuthorizer
@@ -36,8 +38,15 @@ public interface IGatewayScopedKeyAuthorizer
 public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 {
     private readonly LlmGatewayDataContext _data;
+    private readonly string _internalTenantId;
 
-    public GatewayScopedKeyAuthorizer(LlmGatewayDataContext data) => _data = data;
+    public GatewayScopedKeyAuthorizer(LlmGatewayDataContext data, IConfiguration? configuration = null)
+    {
+        _data = data;
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configured
+            ? configured
+            : "tenant_map_internal";
+    }
 
     public async Task<GatewayKeyAuthorization> AuthorizeAsync(
         string providedKey,
@@ -52,12 +61,26 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
 
         if (FixedTimeEquals(providedKey, legacySharedKey))
-            return new(true, true, 200, string.Empty, "legacy MAP shared key", LegacySharedKey: true);
+            return new(
+                true,
+                true,
+                200,
+                string.Empty,
+                "legacy MAP shared key",
+                TenantId: _internalTenantId,
+                LegacySharedKey: true);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
-        var record = await keys.Find(x => x.KeyHash == hash).FirstOrDefaultAsync(ct);
-        if (record == null || !record.Enabled || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
+        var directory = _data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory");
+        var locator = await directory.Find(x => x.KeyHash == hash).FirstOrDefaultAsync(ct);
+        var record = locator is null
+            ? null
+            : await keys.Find(x => x.TenantId == locator.TenantId && x.Id == locator.ServiceKeyId && x.KeyHash == hash).FirstOrDefaultAsync(ct);
+        if (record == null
+            || string.IsNullOrWhiteSpace(record.TenantId)
+            || !record.Enabled
+            || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
 
         if (!Matches(record.SourceSystem, sourceSystem)
@@ -69,6 +92,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 new MongoDB.Bson.BsonDocument
                 {
                     { "_id", Guid.NewGuid().ToString("N") },
+                    { "TenantId", record.TenantId },
+                    { "TeamId", string.IsNullOrWhiteSpace(record.TeamId) ? MongoDB.Bson.BsonNull.Value : record.TeamId },
                     { "Action", "service_key.scope_denied" },
                     { "TargetType", "llmgw_service_key" },
                     { "TargetId", record.Id },
@@ -85,14 +110,24 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                     },
                     { "CreatedAt", DateTime.UtcNow },
                 }, cancellationToken: ct);
-            return new(false, true, 403, "GATEWAY_KEY_SCOPE_DENIED", "gateway key scope does not allow this request", record.Id);
+            return new(
+                false,
+                true,
+                403,
+                "GATEWAY_KEY_SCOPE_DENIED",
+                "gateway key scope does not allow this request",
+                record.Id,
+                record.TenantId,
+                record.TeamId);
         }
 
         _ = keys.UpdateOneAsync(
-            Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id),
+            Builders<GatewayServiceKeyRecord>.Filter.And(
+                Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.TenantId, record.TenantId),
+                Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        return new(true, true, 200, string.Empty, "scoped key", record.Id);
+        return new(true, true, 200, string.Empty, "scoped key", record.Id, record.TenantId, record.TeamId);
     }
 
     public static string Sha256Hex(string value)
@@ -117,7 +152,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     }
 }
 
-public sealed record GatewayBudgetLease(string ReservationId, decimal ReservedUsd);
+public sealed record GatewayBudgetLease(string TenantId, string ReservationId, decimal ReservedUsd);
 
 public sealed record GatewayBudgetAdmission(
     bool Allowed,
@@ -167,6 +202,7 @@ public sealed class GatewayBudgetCoordinator
         var reservations = _data.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
         var reservation = new GatewayBudgetReservationRecord
         {
+            TenantId = caller.TenantId,
             AppCallerCode = caller.AppCallerCode,
             RequestType = caller.RequestType,
             RequestId = requestId,
@@ -184,7 +220,8 @@ public sealed class GatewayBudgetCoordinator
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             var existing = await reservations.Find(x =>
-                    x.AppCallerCode == caller.AppCallerCode
+                    x.TenantId == caller.TenantId
+                    && x.AppCallerCode == caller.AppCallerCode
                     && x.RequestType == caller.RequestType
                     && x.RequestId == requestId)
                 .FirstOrDefaultAsync(ct);
@@ -196,6 +233,7 @@ public sealed class GatewayBudgetCoordinator
 
         var months = _data.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
         var identity = Builders<GatewayBudgetMonthRecord>.Filter.And(
+            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.TenantId, caller.TenantId),
             Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.AppCallerCode, caller.AppCallerCode),
             Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.RequestType, caller.RequestType),
             Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.MonthStart, monthStart));
@@ -227,6 +265,7 @@ public sealed class GatewayBudgetCoordinator
                 identity,
                 Builders<GatewayBudgetMonthRecord>.Update
                     .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                    .SetOnInsert(x => x.TenantId, caller.TenantId)
                     .SetOnInsert(x => x.AppCallerCode, caller.AppCallerCode)
                     .SetOnInsert(x => x.RequestType, caller.RequestType)
                     .SetOnInsert(x => x.MonthStart, monthStart)
@@ -248,7 +287,7 @@ public sealed class GatewayBudgetCoordinator
         if (updated == null)
         {
             await reservations.UpdateOneAsync(
-                x => x.Id == reservation.Id && x.Status == "pending",
+                x => x.TenantId == caller.TenantId && x.Id == reservation.Id && x.Status == "pending",
                 Builders<GatewayBudgetReservationRecord>.Update
                     .Set(x => x.Status, "rejected")
                     .Set(x => x.Detail, "monthly-budget-exceeded")
@@ -259,12 +298,12 @@ public sealed class GatewayBudgetCoordinator
         }
 
         await reservations.UpdateOneAsync(
-            x => x.Id == reservation.Id && x.Status == "pending",
+            x => x.TenantId == caller.TenantId && x.Id == reservation.Id && x.Status == "pending",
             Builders<GatewayBudgetReservationRecord>.Update
                 .Set(x => x.Status, "reserved")
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
-        return GatewayBudgetAdmission.Allow(budget, updated.ReservedUsd + updated.SpentUsd, new GatewayBudgetLease(reservation.Id, amount));
+        return GatewayBudgetAdmission.Allow(budget, updated.ReservedUsd + updated.SpentUsd, new GatewayBudgetLease(caller.TenantId, reservation.Id, amount));
     }
 
     public async Task FinalizeAsync(
@@ -277,17 +316,17 @@ public sealed class GatewayBudgetCoordinator
         {
             if (outcomeUnknown || pipelineThrew || responseStatusCode >= 500)
             {
-                await SetReservationStatusAsync(lease.ReservationId, "unknown", "upstream-outcome-unknown", adjustMonth: false, settle: false, CancellationToken.None);
+                await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "unknown", "upstream-outcome-unknown", adjustMonth: false, settle: false, CancellationToken.None);
                 return;
             }
 
             if (responseStatusCode >= 400)
             {
-                await SetReservationStatusAsync(lease.ReservationId, "released", "request-rejected-before-success", adjustMonth: true, settle: false, CancellationToken.None);
+                await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "released", "request-rejected-before-success", adjustMonth: true, settle: false, CancellationToken.None);
                 return;
             }
 
-            await SetReservationStatusAsync(lease.ReservationId, "settled", "conservative-reservation-settlement", adjustMonth: true, settle: true, CancellationToken.None);
+            await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "settled", "conservative-reservation-settlement", adjustMonth: true, settle: true, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -298,25 +337,34 @@ public sealed class GatewayBudgetCoordinator
     public async Task ReleaseExpiredAsync(CancellationToken ct)
     {
         var reservations = _data.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
-        var expired = await reservations.Find(x =>
-                (x.Status == "pending" || x.Status == "reserved" || x.Status == "unknown")
-                && x.ExpiresAt <= DateTime.UtcNow)
-            .Limit(500)
-            .ToListAsync(ct);
-        foreach (var item in expired)
+        var tenantIds = await reservations.Distinct<string>(
+            "TenantId",
+            Builders<GatewayBudgetReservationRecord>.Filter.Ne(x => x.TenantId, "")).ToListAsync(ct);
+        foreach (var tenantId in tenantIds)
         {
-            var outcomeUnknown = item.Status == "unknown";
-            await SetReservationStatusAsync(
-                item.Id,
-                outcomeUnknown ? "settled-unknown-expired" : "released-expired",
-                outcomeUnknown ? "unknown-outcome-conservative-settlement" : "reservation-expired",
-                adjustMonth: item.Status != "pending",
-                settle: outcomeUnknown,
-                ct);
+            var expired = await reservations.Find(x =>
+                    x.TenantId == tenantId
+                    && (x.Status == "pending" || x.Status == "reserved" || x.Status == "unknown")
+                    && x.ExpiresAt <= DateTime.UtcNow)
+                .Limit(500)
+                .ToListAsync(ct);
+            foreach (var item in expired)
+            {
+                var outcomeUnknown = item.Status == "unknown";
+                await SetReservationStatusAsync(
+                    tenantId,
+                    item.Id,
+                    outcomeUnknown ? "settled-unknown-expired" : "released-expired",
+                    outcomeUnknown ? "unknown-outcome-conservative-settlement" : "reservation-expired",
+                    adjustMonth: item.Status != "pending",
+                    settle: outcomeUnknown,
+                    ct);
+            }
         }
     }
 
     private async Task SetReservationStatusAsync(
+        string tenantId,
         string reservationId,
         string targetStatus,
         string detail,
@@ -327,6 +375,7 @@ public sealed class GatewayBudgetCoordinator
         var reservations = _data.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
         var current = await reservations.FindOneAndUpdateAsync(
             Builders<GatewayBudgetReservationRecord>.Filter.And(
+                Builders<GatewayBudgetReservationRecord>.Filter.Eq(x => x.TenantId, tenantId),
                 Builders<GatewayBudgetReservationRecord>.Filter.Eq(x => x.Id, reservationId),
                 Builders<GatewayBudgetReservationRecord>.Filter.In(x => x.Status, new[] { "pending", "reserved", "unknown" })),
             Builders<GatewayBudgetReservationRecord>.Update
@@ -340,7 +389,7 @@ public sealed class GatewayBudgetCoordinator
         if (settle)
         {
             await reservations.UpdateOneAsync(
-                x => x.Id == current.Id,
+                x => x.TenantId == current.TenantId && x.Id == current.Id,
                 Builders<GatewayBudgetReservationRecord>.Update.Set(x => x.SettledUsd, current.ReservedUsd),
                 cancellationToken: ct);
         }
@@ -351,7 +400,8 @@ public sealed class GatewayBudgetCoordinator
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
         if (settle) update = update.Inc(x => x.SpentUsd, current.ReservedUsd);
         await months.UpdateOneAsync(x =>
-            x.AppCallerCode == current.AppCallerCode
+            x.TenantId == current.TenantId
+            && x.AppCallerCode == current.AppCallerCode
             && x.RequestType == current.RequestType
             && x.MonthStart == current.MonthStart, update, cancellationToken: ct);
     }
@@ -388,6 +438,7 @@ public sealed class GatewayRequestExecutionStore
     }
 
     public async Task<GatewayExecutionBeginResult> BeginAsync(
+        string tenantId,
         string appCallerCode,
         string requestId,
         string operation,
@@ -397,6 +448,7 @@ public sealed class GatewayRequestExecutionStore
         var records = _data.Database.GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions");
         var record = new GatewayRequestExecutionRecord
         {
+            TenantId = tenantId,
             AppCallerCode = appCallerCode,
             RequestId = requestId,
             Operation = operation,
@@ -411,7 +463,8 @@ public sealed class GatewayRequestExecutionStore
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             var existing = await records.Find(x =>
-                    x.AppCallerCode == appCallerCode
+                    x.TenantId == tenantId
+                    && x.AppCallerCode == appCallerCode
                     && x.RequestId == requestId
                     && x.Operation == operation)
                 .FirstAsync(ct);
@@ -429,16 +482,16 @@ public sealed class GatewayRequestExecutionStore
         }
     }
 
-    public async Task CompleteAsync(string executionId, string responseJson, CancellationToken ct)
+    public async Task CompleteAsync(string tenantId, string executionId, string responseJson, CancellationToken ct)
     {
         var responseTooLarge = Encoding.UTF8.GetByteCount(responseJson) > MaxReplayResponseBytes;
 
         try
         {
             if (responseTooLarge)
-                await MarkReplayUnavailableAsync(executionId, "GATEWAY_REPLAY_RESPONSE_TOO_LARGE", ct);
+                await MarkReplayUnavailableAsync(tenantId, executionId, "GATEWAY_REPLAY_RESPONSE_TOO_LARGE", ct);
             else
-                await UpdateAsync(executionId, "completed", responseJson, null, ct);
+                await UpdateAsync(tenantId, executionId, "completed", responseJson, null, ct);
         }
         catch (MongoException ex)
         {
@@ -449,7 +502,7 @@ public sealed class GatewayRequestExecutionStore
             {
                 try
                 {
-                    await MarkReplayUnavailableAsync(executionId, "GATEWAY_REPLAY_SNAPSHOT_UNAVAILABLE", CancellationToken.None);
+                    await MarkReplayUnavailableAsync(tenantId, executionId, "GATEWAY_REPLAY_SNAPSHOT_UNAVAILABLE", CancellationToken.None);
                 }
                 catch (Exception fallbackEx)
                 {
@@ -459,13 +512,14 @@ public sealed class GatewayRequestExecutionStore
         }
     }
 
-    public Task UnknownAsync(string executionId, string errorCode, CancellationToken ct)
-        => UpdateAsync(executionId, "unknown", null, errorCode, ct);
+    public Task UnknownAsync(string tenantId, string executionId, string errorCode, CancellationToken ct)
+        => UpdateAsync(tenantId, executionId, "unknown", null, errorCode, ct);
 
-    public Task FailAsync(string executionId, string errorCode, CancellationToken ct)
-        => UpdateAsync(executionId, "failed", null, errorCode, ct);
+    public Task FailAsync(string tenantId, string executionId, string errorCode, CancellationToken ct)
+        => UpdateAsync(tenantId, executionId, "failed", null, errorCode, ct);
 
     public async Task<GatewayRequestExecutionRecord?> GetAsync(
+        string tenantId,
         string appCallerCode,
         string requestId,
         string operation,
@@ -473,18 +527,19 @@ public sealed class GatewayRequestExecutionStore
     {
         GatewayRequestExecutionRecord? record = await _data.Database
             .GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions")
-            .Find(x => x.AppCallerCode == appCallerCode
+            .Find(x => x.TenantId == tenantId
+                       && x.AppCallerCode == appCallerCode
                        && x.RequestId == requestId
                        && x.Operation == operation)
             .FirstOrDefaultAsync(ct);
         return record;
     }
 
-    private async Task UpdateAsync(string id, string status, string? responseJson, string? errorCode, CancellationToken ct)
+    private async Task UpdateAsync(string tenantId, string id, string status, string? responseJson, string? errorCode, CancellationToken ct)
     {
         var records = _data.Database.GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions");
         await records.UpdateOneAsync(
-            x => x.Id == id && x.Status == "running",
+            x => x.TenantId == tenantId && x.Id == id && x.Status == "running",
             Builders<GatewayRequestExecutionRecord>.Update
                 .Set(x => x.Status, status)
                 .Set(x => x.ResponseJson, responseJson)
@@ -493,20 +548,24 @@ public sealed class GatewayRequestExecutionStore
             cancellationToken: ct);
     }
 
-    private Task MarkReplayUnavailableAsync(string executionId, string errorCode, CancellationToken ct)
-        => UpdateAsync(executionId, "completed-unreplayable", null, errorCode, ct);
+    private Task MarkReplayUnavailableAsync(string tenantId, string executionId, string errorCode, CancellationToken ct)
+        => UpdateAsync(tenantId, executionId, "completed-unreplayable", null, errorCode, ct);
 
     public static string Fingerprint(GatewayRawRequest request)
     {
         var multipartFiles = request.MultipartFiles?
             .OrderBy(x => x.Key, StringComparer.Ordinal)
-            .Select(x => new
+            .Select(x =>
             {
-                FieldName = x.Key,
-                x.Value.FileName,
-                x.Value.MimeType,
-                SizeBytes = x.Value.Content.LongLength,
-                Sha256 = Convert.ToHexString(SHA256.HashData(x.Value.Content)).ToLowerInvariant(),
+                var content = x.Value.Content ?? Array.Empty<byte>();
+                return new
+                {
+                    FieldName = x.Key,
+                    x.Value.FileName,
+                    x.Value.MimeType,
+                    SizeBytes = content.LongLength,
+                    Sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+                };
             })
             .ToArray();
         var multipartRefs = request.MultipartFileRefs?
@@ -552,9 +611,9 @@ public sealed class GatewayCancellationRegistry
 {
     private readonly ConcurrentDictionary<GatewayCancellationKey, CancellationTokenSource> _requests = new();
 
-    public GatewayCancellationLease Register(string appCallerCode, string requestId)
+    public GatewayCancellationLease Register(string tenantId, string appCallerCode, string requestId)
     {
-        var key = GatewayCancellationKey.Create(appCallerCode, requestId);
+        var key = GatewayCancellationKey.Create(tenantId, appCallerCode, requestId);
         var cts = new CancellationTokenSource();
         if (!_requests.TryAdd(key, cts))
         {
@@ -564,9 +623,9 @@ public sealed class GatewayCancellationRegistry
         return new GatewayCancellationLease(this, key, cts);
     }
 
-    public bool Cancel(string appCallerCode, string requestId)
+    public bool Cancel(string tenantId, string appCallerCode, string requestId)
     {
-        var key = GatewayCancellationKey.Create(appCallerCode, requestId);
+        var key = GatewayCancellationKey.Create(tenantId, appCallerCode, requestId);
         return _requests.TryGetValue(key, out var cts) && Cancel(cts);
     }
 
@@ -584,15 +643,17 @@ public sealed class GatewayCancellationRegistry
     }
 }
 
-public readonly record struct GatewayCancellationKey(string AppCallerCode, string RequestId)
+public readonly record struct GatewayCancellationKey(string TenantId, string AppCallerCode, string RequestId)
 {
-    public static GatewayCancellationKey Create(string appCallerCode, string requestId)
+    public static GatewayCancellationKey Create(string tenantId, string appCallerCode, string requestId)
     {
+        if (string.IsNullOrWhiteSpace(tenantId))
+            throw new ArgumentException("tenantId is required", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(appCallerCode))
             throw new ArgumentException("appCallerCode is required", nameof(appCallerCode));
         if (string.IsNullOrWhiteSpace(requestId))
             throw new ArgumentException("requestId is required", nameof(requestId));
-        return new(appCallerCode.Trim().ToLowerInvariant(), requestId.Trim());
+        return new(tenantId.Trim(), appCallerCode.Trim().ToLowerInvariant(), requestId.Trim());
     }
 }
 
@@ -656,6 +717,9 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
 
     private async Task RunOnceAsync(CancellationToken ct)
     {
+        var internalTenantId = _configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
+            ? configuredTenantId
+            : GatewayTenantDefaults.InternalTenantId;
         var now = DateTime.UtcNow;
         var apply = _configuration.GetValue("LlmGateway:Retention:ApplyChanges", false);
         var sensitiveDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:SensitiveBodyDays", 7));
@@ -663,42 +727,58 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
         var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
         var logs = _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmrequestlogs");
-        var sensitiveFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-sensitiveDays))
-                              & Builders<MongoDB.Bson.BsonDocument>.Filter.Or(
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("RequestBodyRedacted", ""),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("QuestionText", true),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("AnswerText", true),
-                                  Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("ThinkingText", true));
-        var sensitiveCount = await logs.CountDocumentsAsync(sensitiveFilter, cancellationToken: ct);
         var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
-        var expiredFilter = Builders<GatewayMultipartObjectRecord>.Filter.Ne(x => x.Status, "deleted")
-                            & Builders<GatewayMultipartObjectRecord>.Filter.Lte(x => x.ExpiresAt, now);
-        var expiredMultipartCount = await multipart.CountDocumentsAsync(expiredFilter, cancellationToken: ct);
-        var expired = await multipart.Find(expiredFilter).SortBy(x => x.ExpiresAt).Limit(200).ToListAsync(ct);
         var indexStatus = await ReadRetentionIndexStatusAsync(ct);
         var lifecycle = _data.Database.GetCollection<GatewayLifecycleRunRecord>("llmgw_lifecycle_runs");
-        var run = new GatewayLifecycleRunRecord
+        var tenantIds = await ResolveLifecycleTenantIdsAsync(internalTenantId, ct);
+        var passes = new List<(
+            string TenantId,
+            FilterDefinition<MongoDB.Bson.BsonDocument> SensitiveFilter,
+            long SensitiveCount,
+            IReadOnlyList<GatewayMultipartObjectRecord> ExpiredMultipart,
+            long ExpiredMultipartCount,
+            GatewayLifecycleRunRecord Run)>(tenantIds.Count);
+
+        foreach (var tenantId in tenantIds)
         {
-            Mode = apply ? "apply" : "dry-run",
-            Status = "dry-run-complete",
-            StartedAt = now,
-            DryRunCompletedAt = DateTime.UtcNow,
-            SensitiveLogs = sensitiveCount,
-            ExpiredRequestLogs = await CountExpiredAsync("llmrequestlogs", "StartedAt", now.AddDays(-requestLogDays), ct),
-            ExpiredShadowComparisons = await CountExpiredAsync("llmshadow_comparisons", "ComparedAt", now.AddDays(-shadowDays), ct),
-            ExpiredOperationAudits = await CountExpiredAsync("llmgw_operation_audits", "CreatedAt", now.AddDays(-auditDays), ct),
-            ExpiredLoginAudits = await CountExpiredAsync("llmgw_login_audits", "CreatedAt", now.AddDays(-auditDays), ct),
-            ExpiredMultipartObjects = expiredMultipartCount,
-            OldestExpiredRequestLogAt = await OldestAsync("llmrequestlogs", "StartedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-requestLogDays)), ct),
-            OldestSensitiveLogAt = await OldestAsync("llmrequestlogs", "StartedAt", sensitiveFilter, ct),
-            OldestExpiredShadowAt = await OldestAsync("llmshadow_comparisons", "ComparedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("ComparedAt", now.AddDays(-shadowDays)), ct),
-            OldestExpiredOperationAuditAt = await OldestAsync("llmgw_operation_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
-            OldestExpiredLoginAuditAt = await OldestAsync("llmgw_login_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
-            OldestExpiredMultipartAt = expired.FirstOrDefault()?.ExpiresAt,
-            RetentionIndexesReady = indexStatus.Count == 0,
-            MissingRetentionIndexes = indexStatus.ToArray(),
-        };
-        await lifecycle.InsertOneAsync(run, cancellationToken: ct);
+            var sensitiveFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", tenantId)
+                                  & Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-sensitiveDays))
+                                  & Builders<MongoDB.Bson.BsonDocument>.Filter.Or(
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("RequestBodyRedacted", ""),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("QuestionText", true),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("AnswerText", true),
+                                      Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("ThinkingText", true));
+            var sensitiveCount = await logs.CountDocumentsAsync(sensitiveFilter, cancellationToken: ct);
+            var expiredFilter = Builders<GatewayMultipartObjectRecord>.Filter.Eq(x => x.TenantId, tenantId)
+                                & Builders<GatewayMultipartObjectRecord>.Filter.Ne(x => x.Status, "deleted")
+                                & Builders<GatewayMultipartObjectRecord>.Filter.Lte(x => x.ExpiresAt, now);
+            var expiredMultipartCount = await multipart.CountDocumentsAsync(expiredFilter, cancellationToken: ct);
+            var expired = await multipart.Find(expiredFilter).SortBy(x => x.ExpiresAt).Limit(200).ToListAsync(ct);
+            var run = new GatewayLifecycleRunRecord
+            {
+                TenantId = tenantId,
+                Mode = apply ? "apply" : "dry-run",
+                Status = "dry-run-complete",
+                StartedAt = now,
+                DryRunCompletedAt = DateTime.UtcNow,
+                SensitiveLogs = sensitiveCount,
+                ExpiredRequestLogs = await CountExpiredAsync(tenantId, "llmrequestlogs", "StartedAt", now.AddDays(-requestLogDays), ct),
+                ExpiredShadowComparisons = await CountExpiredAsync(tenantId, "llmshadow_comparisons", "ComparedAt", now.AddDays(-shadowDays), ct),
+                ExpiredOperationAudits = await CountExpiredAsync(tenantId, "llmgw_operation_audits", "CreatedAt", now.AddDays(-auditDays), ct),
+                ExpiredLoginAudits = await CountExpiredAsync(tenantId, "llmgw_login_audits", "CreatedAt", now.AddDays(-auditDays), ct),
+                ExpiredMultipartObjects = expiredMultipartCount,
+                OldestExpiredRequestLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-requestLogDays)), ct),
+                OldestSensitiveLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", sensitiveFilter, ct),
+                OldestExpiredShadowAt = await OldestAsync(tenantId, "llmshadow_comparisons", "ComparedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("ComparedAt", now.AddDays(-shadowDays)), ct),
+                OldestExpiredOperationAuditAt = await OldestAsync(tenantId, "llmgw_operation_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
+                OldestExpiredLoginAuditAt = await OldestAsync(tenantId, "llmgw_login_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
+                OldestExpiredMultipartAt = expired.FirstOrDefault()?.ExpiresAt,
+                RetentionIndexesReady = indexStatus.Count == 0,
+                MissingRetentionIndexes = indexStatus.ToArray(),
+            };
+            await lifecycle.InsertOneAsync(run, cancellationToken: ct);
+            passes.Add((tenantId, sensitiveFilter, sensitiveCount, expired, expiredMultipartCount, run));
+        }
 
         // Budget reservation expiry is runtime accounting, not data retention. It must run
         // even while destructive retention remains in dry-run mode.
@@ -708,78 +788,133 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         {
             await _databaseInitializer.EnsureRetentionTtlIndexesAsync(ct);
             indexStatus = await ReadRetentionIndexStatusAsync(ct);
-            await lifecycle.UpdateOneAsync(x => x.Id == run.Id,
-                Builders<GatewayLifecycleRunRecord>.Update
-                    .Set(x => x.RetentionIndexesReady, indexStatus.Count == 0)
-                    .Set(x => x.MissingRetentionIndexes, indexStatus.ToArray()),
-                cancellationToken: ct);
+            foreach (var pass in passes)
+            {
+                await lifecycle.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == pass.Run.Id,
+                    Builders<GatewayLifecycleRunRecord>.Update
+                        .Set(x => x.RetentionIndexesReady, indexStatus.Count == 0)
+                        .Set(x => x.MissingRetentionIndexes, indexStatus.ToArray()),
+                    cancellationToken: ct);
+            }
         }
 
         if (apply)
         {
-            var redacted = sensitiveCount > 0
-                ? (await logs.UpdateManyAsync(sensitiveFilter,
-                    Builders<MongoDB.Bson.BsonDocument>.Update
-                        .Set("RequestBodyRedacted", "[retention-redacted]")
-                        .Unset("QuestionText")
-                        .Unset("AnswerText")
-                        .Unset("ThinkingText")
-                        .Unset("SystemPromptText")
-                        .Unset("ResponseToolCalls"),
-                    cancellationToken: ct)).ModifiedCount
-                : 0;
-            long deleted = 0;
-            foreach (var item in expired)
+            foreach (var pass in passes)
             {
-                try
+                var redacted = pass.SensitiveCount > 0
+                    ? (await logs.UpdateManyAsync(pass.SensitiveFilter,
+                        Builders<MongoDB.Bson.BsonDocument>.Update
+                            .Set("RequestBodyRedacted", "[retention-redacted]")
+                            .Unset("QuestionText")
+                            .Unset("AnswerText")
+                            .Unset("ThinkingText")
+                            .Unset("SystemPromptText")
+                            .Unset("ResponseToolCalls"),
+                        cancellationToken: ct)).ModifiedCount
+                    : 0;
+                long deleted = 0;
+                foreach (var item in pass.ExpiredMultipart)
                 {
-                    await _storage.DeleteByKeyAsync(item.RefKey, ct);
-                    await multipart.UpdateOneAsync(x => x.Id == item.Id,
-                        Builders<GatewayMultipartObjectRecord>.Update
-                            .Set(x => x.Status, "deleted")
-                            .Set(x => x.DeletedAt, DateTime.UtcNow)
-                            .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
-                    deleted++;
+                    try
+                    {
+                        await _storage.DeleteByKeyAsync(item.RefKey, ct);
+                        await multipart.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == item.Id,
+                            Builders<GatewayMultipartObjectRecord>.Update
+                                .Set(x => x.Status, "deleted")
+                                .Set(x => x.DeletedAt, DateTime.UtcNow)
+                                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+                        deleted++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "[GatewayLifecycle] multipart cleanup failed tenant={TenantId} ref={RefKey}",
+                            pass.TenantId,
+                            item.RefKey);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[GatewayLifecycle] multipart cleanup failed ref={RefKey}", item.RefKey);
-                }
-            }
 
-            await lifecycle.UpdateOneAsync(x => x.Id == run.Id,
-                Builders<GatewayLifecycleRunRecord>.Update
-                    .Set(x => x.Status, "applied")
-                    .Set(x => x.RedactedSensitiveLogs, redacted)
-                    .Set(x => x.DeletedMultipartObjects, deleted)
-                    .Set(x => x.CompletedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                await lifecycle.UpdateOneAsync(x => x.TenantId == pass.TenantId && x.Id == pass.Run.Id,
+                    Builders<GatewayLifecycleRunRecord>.Update
+                        .Set(x => x.Status, "applied")
+                        .Set(x => x.RedactedSensitiveLogs, redacted)
+                        .Set(x => x.DeletedMultipartObjects, deleted)
+                        .Set(x => x.CompletedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+            }
         }
 
         _logger.LogInformation(
-            "[GatewayLifecycle] mode={Mode} sensitiveLogs={SensitiveLogs} expiredMultipart={ExpiredMultipart} indexesReady={IndexesReady} runId={RunId}",
+            "[GatewayLifecycle] mode={Mode} tenants={TenantCount} sensitiveLogs={SensitiveLogs} expiredMultipart={ExpiredMultipart} indexesReady={IndexesReady} runIds={RunIds}",
             apply ? "apply" : "dry-run",
-            sensitiveCount,
-            expiredMultipartCount,
+            passes.Count,
+            passes.Sum(x => x.SensitiveCount),
+            passes.Sum(x => x.ExpiredMultipartCount),
             indexStatus.Count == 0,
-            run.Id);
+            string.Join(',', passes.Select(x => x.Run.Id)));
     }
 
-    private async Task<long> CountExpiredAsync(string collectionName, string field, DateTime cutoff, CancellationToken ct)
+    private async Task<List<string>> ResolveLifecycleTenantIdsAsync(string internalTenantId, CancellationToken ct)
+    {
+        var tenantIds = new HashSet<string>(StringComparer.Ordinal) { internalTenantId };
+        var tenantSources = new (string CollectionName, string FieldName)[]
+        {
+            ("llmgw_tenants", "_id"),
+            ("llmgw_app_callers", "TenantId"),
+            ("llmgw_model_pools", "TenantId"),
+            ("llmgw_platforms", "TenantId"),
+            ("llmgw_models", "TenantId"),
+            ("llmgw_model_exchanges", "TenantId"),
+            ("llmgw_service_keys", "TenantId"),
+            ("llmrequestlogs", "TenantId"),
+            ("llmshadow_comparisons", "TenantId"),
+            ("llmgw_operation_audits", "TenantId"),
+            ("llmgw_login_audits", "TenantId"),
+            ("llmgw_lifecycle_runs", "TenantId"),
+            ("llmgw_app_caller_rate_windows", "TenantId"),
+            ("llmgw_budget_months", "TenantId"),
+            ("llmgw_budget_reservations", "TenantId"),
+            ("llmgw_request_executions", "TenantId"),
+            ("llmgw_multipart_objects", "TenantId"),
+            ("llmgw_provider_concurrency_slots", "TenantId"),
+            ("llmgw_runtime_settings", "TenantId"),
+            ("llmgw_asset_registry", "TenantId"),
+        };
+        foreach (var (collectionName, fieldName) in tenantSources)
+        {
+            var validTenant = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Type(fieldName, MongoDB.Bson.BsonType.String),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Ne(fieldName, ""));
+            var values = await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>(collectionName)
+                .Distinct<string>(fieldName, validTenant)
+                .ToListAsync(ct);
+            foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)))
+                tenantIds.Add(value.Trim());
+        }
+        return tenantIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
+    private async Task<long> CountExpiredAsync(string tenantId, string collectionName, string field, DateTime cutoff, CancellationToken ct)
     {
         var collection = _data.Database.GetCollection<MongoDB.Bson.BsonDocument>(collectionName);
         return await collection.CountDocumentsAsync(
-            Builders<MongoDB.Bson.BsonDocument>.Filter.Lt(field, cutoff), cancellationToken: ct);
+            Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Lt(field, cutoff)), cancellationToken: ct);
     }
 
     private async Task<DateTime?> OldestAsync(
+        string tenantId,
         string collectionName,
         string field,
         FilterDefinition<MongoDB.Bson.BsonDocument> filter,
         CancellationToken ct)
     {
         var document = await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>(collectionName)
-            .Find(filter)
+            .Find(Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", tenantId),
+                filter))
             .Sort(Builders<MongoDB.Bson.BsonDocument>.Sort.Ascending(field))
             .Project(Builders<MongoDB.Bson.BsonDocument>.Projection.Include(field).Exclude("_id"))
             .FirstOrDefaultAsync(ct);

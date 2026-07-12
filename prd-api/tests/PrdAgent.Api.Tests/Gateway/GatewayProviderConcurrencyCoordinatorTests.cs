@@ -25,7 +25,7 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
         var resolution = Resolution("platform-a", "model-a", platformLimit: 1, modelLimit: 5);
 
         var admissions = await Task.WhenAll(coordinators.Select(x =>
-            x.AcquireAsync(resolution, timeoutSeconds: 30, CancellationToken.None)));
+            x.AcquireAsync("tenant-a", resolution, timeoutSeconds: 30, CancellationToken.None)));
 
         admissions.Count(x => x.Allowed).ShouldBe(1);
         admissions.Count(x => !x.Allowed && x.ErrorCode == "PROVIDER_CONCURRENCY_EXHAUSTED").ShouldBe(7);
@@ -34,7 +34,7 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
         winner.ShouldNotBeNull();
         await winner.DisposeAsync();
 
-        var afterRelease = await coordinators[1].AcquireAsync(resolution, 30, CancellationToken.None);
+        var afterRelease = await coordinators[1].AcquireAsync("tenant-a", resolution, 30, CancellationToken.None);
         afterRelease.Allowed.ShouldBeTrue();
         if (afterRelease.Lease is not null) await afterRelease.Lease.DisposeAsync();
     }
@@ -53,12 +53,75 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
             scope.Context,
             NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
 
-        var modelA = await first.AcquireAsync(Resolution("platform-a", "model-a", 1, 1), 30, CancellationToken.None);
-        var modelB = await second.AcquireAsync(Resolution("platform-a", "model-b", 1, 1), 30, CancellationToken.None);
+        var modelA = await first.AcquireAsync("tenant-a", Resolution("platform-a", "model-a", 1, 1), 30, CancellationToken.None);
+        var modelB = await second.AcquireAsync("tenant-a", Resolution("platform-a", "model-b", 1, 1), 30, CancellationToken.None);
 
         modelA.Allowed.ShouldBeTrue();
         modelB.Allowed.ShouldBeFalse();
         if (modelA.Lease is not null) await modelA.Lease.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task SameProviderLimits_AreIndependentAcrossTenants()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var first = new GatewayProviderConcurrencyCoordinator(scope.Context, NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var second = new GatewayProviderConcurrencyCoordinator(scope.Context, NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var resolution = Resolution("shared-platform", "shared-model", 1, 1);
+
+        var tenantA = await first.AcquireAsync("tenant-a", resolution, 30, CancellationToken.None);
+        var tenantB = await second.AcquireAsync("tenant-b", resolution, 30, CancellationToken.None);
+
+        tenantA.Allowed.ShouldBeTrue();
+        tenantB.Allowed.ShouldBeTrue();
+        if (tenantA.Lease is not null) await tenantA.Lease.DisposeAsync();
+        if (tenantB.Lease is not null) await tenantB.Lease.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BackfilledLegacySlotId_IsAcquiredAndReleasedWithoutDuplicateInsert()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var slots = scope.Context.Database.GetCollection<GatewayProviderConcurrencySlotRecord>(
+            "llmgw_provider_concurrency_slots");
+        await slots.Indexes.CreateOneAsync(new CreateIndexModel<GatewayProviderConcurrencySlotRecord>(
+            Builders<GatewayProviderConcurrencySlotRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ResourceKey)
+                .Ascending(x => x.Slot),
+            new CreateIndexOptions { Unique = true }));
+        await slots.InsertOneAsync(new GatewayProviderConcurrencySlotRecord
+        {
+            Id = "legacy-resource-hash:0",
+            TenantId = "tenant-a",
+            ResourceKey = "platform:legacy-platform",
+            Slot = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var coordinator = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+
+        var admission = await coordinator.AcquireAsync(
+            "tenant-a",
+            Resolution("legacy-platform", "legacy-model", platformLimit: 1, modelLimit: 0),
+            30,
+            CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        var records = await slots.Find(FilterDefinition<GatewayProviderConcurrencySlotRecord>.Empty).ToListAsync();
+        records.Count.ShouldBe(1);
+        records[0].Id.ShouldBe("legacy-resource-hash:0");
+        records[0].LeaseId.ShouldNotBeEmpty();
+
+        admission.Lease.ShouldNotBeNull();
+        await admission.Lease.DisposeAsync();
+        var remaining = await slots.CountDocumentsAsync(FilterDefinition<GatewayProviderConcurrencySlotRecord>.Empty);
+        remaining.ShouldBe(0);
     }
 
     private static ModelResolutionResult Resolution(string platform, string model, int platformLimit, int modelLimit)

@@ -162,6 +162,13 @@ public class GatewayRequest
 public class GatewayRequestContext
 {
     /// <summary>
+    /// 仅由 serving 的已验证会话或 service key 上下文写入。入口适配器不得信任请求自报值。
+    /// </summary>
+    public string? TenantId { get; set; }
+
+    public string? TeamId { get; set; }
+
+    /// <summary>
     /// 请求 ID（用于关联日志）
     /// </summary>
     public string? RequestId { get; init; }
@@ -277,6 +284,8 @@ public class GatewayRequestContext
     public static GatewayRequestContext WithTransport(GatewayRequestContext? source, string transport)
         => new()
         {
+            TenantId = source?.TenantId,
+            TeamId = source?.TeamId,
             RequestId = source?.RequestId,
             SessionId = source?.SessionId,
             RunId = source?.RunId,
@@ -321,7 +330,7 @@ public sealed class GatewayIngressRequest
     public string? PinnedModelId { get; init; }
     public JsonObject RequestBody { get; init; } = new();
     public List<string> DroppedParameters { get; init; } = new();
-    public GatewayRequestContext? Context { get; init; }
+    public GatewayRequestContext? Context { get; set; }
 
     public GatewayRequest ToGatewayRequest(bool stream, int timeoutSeconds = 600, bool includeThinking = true)
     {
@@ -341,6 +350,8 @@ public sealed class GatewayIngressRequest
             TimeoutSeconds = timeoutSeconds,
             Context = new GatewayRequestContext
             {
+                TenantId = Context?.TenantId,
+                TeamId = Context?.TeamId,
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,
@@ -374,6 +385,8 @@ public sealed class GatewayIngressRequest
 public sealed class GatewayAppCallerRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
     public string AppCallerCode { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public string SourceSystem { get; set; } = "external";

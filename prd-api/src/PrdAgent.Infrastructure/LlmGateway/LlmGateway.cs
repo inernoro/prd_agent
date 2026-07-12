@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
@@ -26,6 +27,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
+    private readonly string _internalTenantId;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -54,7 +56,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ILLMRequestContextAccessor? contextAccessor = null,
         ModelPool.IPoolFailoverNotifier? failoverNotifier = null,
         IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
-        GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null)
+        GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null,
+        IConfiguration? configuration = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -63,6 +66,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
         _concurrencyCoordinator = concurrencyCoordinator;
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
 
@@ -318,7 +324,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                var concurrency = await AcquireProviderConcurrencyAsync(activeResolution, request.TimeoutSeconds, ct);
+                var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, activeResolution, request.TimeoutSeconds, ct);
                 if (!concurrency.Allowed)
                 {
                     const string message = "上游平台或模型已达到最大并发";
@@ -558,7 +564,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                var concurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+                var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
                 if (!concurrency.Allowed)
                 {
                     terminalError = "上游平台或模型已达到最大并发";
@@ -929,12 +935,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     private Task<GatewayProviderConcurrencyAdmission> AcquireProviderConcurrencyAsync(
+        string? tenantId,
         ModelResolutionResult resolution,
         int timeoutSeconds,
         CancellationToken ct)
         => _concurrencyCoordinator is null
             ? Task.FromResult(GatewayProviderConcurrencyAdmission.Allow())
-            : _concurrencyCoordinator.AcquireAsync(resolution, timeoutSeconds, ct);
+            : _concurrencyCoordinator.AcquireAsync(
+                string.IsNullOrWhiteSpace(tenantId) ? _internalTenantId : tenantId,
+                resolution,
+                timeoutSeconds,
+                ct);
 
     /// <inheritdoc />
     public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
@@ -1066,6 +1077,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             },
             Context = new GatewayRequestContext
             {
+                TenantId = sourceContext?.TenantId,
+                TeamId = sourceContext?.TeamId,
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
@@ -1306,7 +1319,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         try
         {
             var gatewayResolution = resolution.ToGatewayResolution();
-            var concurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+            var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
             {
                 return GatewayRawResponse.Fail(
@@ -1642,7 +1655,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await providerLease.DisposeAsync();
                     providerLease = null;
                 }
-                var retryConcurrency = await AcquireProviderConcurrencyAsync(resolution, request.TimeoutSeconds, ct);
+                var retryConcurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
                 if (!retryConcurrency.Allowed)
                 {
                     var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
@@ -3106,6 +3119,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,
                     PriceCurrency: resolution.PriceCurrency,
+                    TenantId: request.Context?.TenantId,
+                    TeamId: request.Context?.TeamId,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -3474,6 +3489,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
                     PricePerCall: resolution.PricePerCall,
                     PriceCurrency: resolution.PriceCurrency,
+                    TenantId: request.Context?.TenantId,
+                    TeamId: request.Context?.TeamId,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),

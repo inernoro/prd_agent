@@ -35,6 +35,20 @@ public sealed class LoginResultDto
 
     /// <summary>首登强制改密：为 true 时前端须跳「设置新口令」页，改密成功前不放行日志页。</summary>
     public bool MustChangePassword { get; init; }
+    public TenantSessionDto? Tenant { get; init; }
+}
+
+public sealed class TenantSessionDto
+{
+    public string Id { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+    public List<string> TeamIds { get; init; } = new();
+}
+
+public sealed class SwitchTenantRequestDto
+{
+    public string? TenantId { get; set; }
 }
 
 // ── 改密 ──
@@ -51,6 +65,7 @@ public sealed class ChangePasswordResultDto
     public string? Username { get; init; }
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
+    public TenantSessionDto? Tenant { get; init; }
 }
 
 // ── 日志列表 ──
@@ -844,4 +859,37 @@ public sealed class ServiceKeyItem
     public string? ExpiresAt { get; set; }
     public string? LastUsedAt { get; set; }
     public string? CreatedAt { get; set; }
+}
+
+public sealed class CreateTenantRequest
+{
+    public string? Name { get; set; }
+    public string? Slug { get; set; }
+}
+
+public sealed class CreateTeamRequest
+{
+    public string? Name { get; set; }
+}
+
+public sealed class UpdateTeamRequest
+{
+    public string? Name { get; set; }
+    public string? Status { get; set; }
+}
+
+public sealed class CreateMemberRequest
+{
+    public string? Username { get; set; }
+    public string? DisplayName { get; set; }
+    public string? InitialPassword { get; set; }
+    public string? Role { get; set; }
+    public List<string>? TeamIds { get; set; }
+}
+
+public sealed class UpdateMemberRequest
+{
+    public string? Role { get; set; }
+    public string? Status { get; set; }
+    public List<string>? TeamIds { get; set; }
 }

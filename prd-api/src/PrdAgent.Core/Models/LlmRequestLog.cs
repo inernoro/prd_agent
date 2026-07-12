@@ -28,6 +28,10 @@ public class LlmRequestLog
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
+    /// <summary>服务端解析的租户边界；所有查询和费用聚合必须以此为首要过滤条件。</summary>
+    public string TenantId { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
+
     // 关联/定位
     public string RequestId { get; set; } = string.Empty;
     /// <summary>

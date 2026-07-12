@@ -259,10 +259,102 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"admin.force_reset_bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
-        Assert.Contains("action: \"admin.deactivate_legacy_users\"", consoleProgram);
+        Assert.Contains("\"team.create\"", consoleProgram);
+        Assert.Contains("\"membership.create\"", consoleProgram);
+        Assert.Contains("\"membership.update\"", consoleProgram);
+        Assert.DoesNotContain("action: \"admin.deactivate_legacy_users\"", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] operation audit write failed:", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] system operation audit write failed:", consoleProgram);
         Assert.DoesNotContain("mapDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\")", consoleProgram);
+    }
+
+    [Fact]
+    public void TenantBoundaryPropagation_PreservesVerifiedTenantAndInternalLogFallback()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
+
+        Assert.Contains("GetMetadata<IAllowAnonymous>()", consoleProgram);
+        Assert.True(
+            endpoints.Split("TenantId = ingress.Context?.TenantId", StringSplitOptions.None).Length - 1 >= 2,
+            "native 与 raw 路由重建都必须使用 service key 校验后写入的 ingress tenant");
+        Assert.True(
+            endpoints.Split("TeamId = ingress.Context?.TeamId", StringSplitOptions.None).Length - 1 >= 2,
+            "native 与 raw 路由重建都必须使用 service key 校验后写入的 ingress team");
+        Assert.Contains("TenantId = ResolveTenantId(start.TenantId)", logWriter);
+        Assert.Contains("configuration[\"LlmGateway:InternalTenantId\"]", logWriter);
+        Assert.Contains("? _internalTenantId", logWriter);
+        Assert.Contains("GatewayTenantDefaults.InternalTenantId", logWriter);
+        Assert.DoesNotContain("TenantId = start.TenantId ?? string.Empty", logWriter);
+    }
+
+    [Fact]
+    public void InternalTenantFallbacks_UseConfigurationAcrossLogsShadowConcurrencyAndLegacyKeys()
+    {
+        var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var shadow = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("configuration?[\"LlmGateway:InternalTenantId\"]", shadow);
+        Assert.DoesNotContain("?? GatewayTenantDefaults.InternalTenantId", shadow);
+        Assert.Contains("configuration?[\"LlmGateway:InternalTenantId\"]", gateway);
+        Assert.Contains("string.IsNullOrWhiteSpace(tenantId) ? _internalTenantId : tenantId", gateway);
+        Assert.Contains("app.Configuration[\"LlmGateway:InternalTenantId\"]", endpoints);
+        Assert.Contains("TenantId: internalTenantId", endpoints);
+        Assert.Contains("configuration: sp.GetRequiredService<IConfiguration>()", apiProgram);
+    }
+
+    [Fact]
+    public void RawIdempotency_NormalizesVerifiedTenantContextBeforeFingerprinting()
+    {
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var nativeStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
+        var compatStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
+
+        Assert.True(nativeStart >= 0 && compatStart > nativeStart, "找不到 raw 幂等入口");
+        Assert.True(
+            endpoints.IndexOf("request = ApplyVerifiedRawRequestContext(http, request, ingress);", nativeStart, StringComparison.Ordinal)
+            < endpoints.IndexOf("GatewayRequestExecutionStore.Fingerprint(request)", nativeStart, StringComparison.Ordinal),
+            "native raw 必须在 fingerprint 前覆盖服务端 tenant/team");
+        Assert.True(
+            endpoints.IndexOf("request = ApplyVerifiedRawRequestContext(http, request, ingress);", compatStart, StringComparison.Ordinal)
+            < endpoints.IndexOf("GatewayRequestExecutionStore.Fingerprint(request)", compatStart, StringComparison.Ordinal),
+            "兼容 raw 必须在 fingerprint 前覆盖服务端 tenant/team");
+        Assert.Contains("ingress.Context.TenantId = GetVerifiedTenantId(http)", endpoints);
+        Assert.Contains("ingress.Context.TeamId = GetVerifiedTeamId(http)", endpoints);
+    }
+
+    [Fact]
+    public void TeamRename_MapsTenantScopedUniqueNameCollisionToConflict()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var updateStart = consoleProgram.IndexOf("app.MapPut(\"/gw/teams/{id}\"", StringComparison.Ordinal);
+        var memberStart = consoleProgram.IndexOf("app.MapPost(\"/gw/members\"", updateStart, StringComparison.Ordinal);
+        var updateBlock = consoleProgram[updateStart..memberStart];
+
+        Assert.Contains("x.Id == id && x.TenantId == access.TenantId", updateBlock);
+        Assert.Contains("ServerErrorCategory.DuplicateKey", updateBlock);
+        Assert.Contains("Fail(\"TEAM_CONFLICT\", \"当前租户已存在同名团队\")", updateBlock);
+        Assert.Contains("jsonOptions, 409", updateBlock);
+    }
+
+    [Fact]
+    public void ServiceKeyWrites_HaveDedicatedDeveloperPermissionWithoutConfigWrite()
+    {
+        var access = ReadRepoFile("prd-llmgw/Auth/TenantAccessContext.cs");
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var createStart = consoleProgram.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
+        var deleteStart = consoleProgram.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
+        var shadowStart = consoleProgram.IndexOf("// 影子比对", deleteStart, StringComparison.Ordinal);
+
+        Assert.Contains("public const string ServiceKeyWrite = \"service-key:write\"", access);
+        Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite", access);
+        Assert.DoesNotContain("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ConfigWrite", access);
+        Assert.Contains("options.AddPolicy(\"ServiceKeyWrite\"", consoleProgram);
+        Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[createStart..deleteStart]);
+        Assert.Contains("RequireAuthorization(\"ServiceKeyWrite\")", consoleProgram[deleteStart..shadowStart]);
     }
 
     [Fact]
@@ -2102,6 +2194,23 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ModelResolver_AvailablePoolsFailClosedBeforeMapFallbackForExternalTenants()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var methodStart = resolver.IndexOf("public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync", StringComparison.Ordinal);
+        var mapFallback = resolver.IndexOf("var appCaller = await _db.LLMAppCallers", methodStart, StringComparison.Ordinal);
+        var externalTenantGuard = resolver.IndexOf(
+            "if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))",
+            methodStart,
+            StringComparison.Ordinal);
+
+        Assert.True(methodStart >= 0 && mapFallback > methodStart, "找不到 available-pools MAP fallback");
+        Assert.True(
+            externalTenantGuard > methodStart && externalTenantGuard < mapFallback,
+            "外部租户必须在读取 MAP LLMAppCallers/ModelGroups 前 fail closed");
+    }
+
+    [Fact]
     public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()
     {
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
@@ -2222,6 +2331,65 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleOnlyStartup_BackfillsLegacyGatewayDocumentsBeforeTenantFiltering()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var backfillCall = console.IndexOf(
+            "await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);",
+            StringComparison.Ordinal);
+        var firstTenantFilteredEndpoint = console.IndexOf(
+            "lifecycleRuns.Find(TenantAccess.Filter(http))",
+            StringComparison.Ordinal);
+
+        Assert.True(backfillCall >= 0, "console-only 启动必须执行 internal tenant 历史回填");
+        Assert.True(
+            firstTenantFilteredEndpoint > backfillCall,
+            "TenantAccess.Filter 生效前必须完成历史 TenantId 回填");
+        foreach (var collection in new[]
+                 {
+                     "llmrequestlogs",
+                     "llmshadow_comparisons",
+                     "llmgw_operation_audits",
+                     "llmgw_login_audits",
+                     "llmgw_lifecycle_runs",
+                     "llmgw_app_callers",
+                     "llmgw_model_pools",
+                     "llmgw_platforms",
+                     "llmgw_models",
+                     "llmgw_model_exchanges",
+                     "llmgw_service_keys",
+                 })
+        {
+            Assert.Contains($"\"{collection}\"", console);
+        }
+        Assert.Contains("Filter.Exists(\"TenantId\", false)", console);
+        Assert.Contains("Filter.Eq(\"TenantId\", BsonNull.Value)", console);
+        Assert.Contains("Update.Set(\"TenantId\", tenantId)", console);
+    }
+
+    [Fact]
+    public void ConsoleDefaultPoolSwitch_ClearsOnlyCurrentTenantGatewayPools()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var endpointStart = console.IndexOf(
+            "app.MapPut(\"/gw/pools/{id}/default\"",
+            StringComparison.Ordinal);
+        var endpointEnd = console.IndexOf(
+            "app.MapPut(\"/gw/pools/{id}/claim\"",
+            endpointStart,
+            StringComparison.Ordinal);
+        Assert.True(endpointStart >= 0, "找不到默认模型池切换端点");
+        Assert.True(endpointEnd > endpointStart, "默认模型池切换端点边界无效");
+        var endpoint = console[endpointStart..endpointEnd];
+
+        Assert.Contains(
+            "targetAuthority == \"llm_gateway\" ? TenantAccess.Filter(http, others) : others",
+            endpoint);
+        Assert.Contains("targetPools.UpdateManyAsync(scopedOthers", endpoint);
+        Assert.DoesNotContain("targetPools.UpdateManyAsync(others", endpoint);
+    }
+
+    [Fact]
     public void ModelLabAndArena_PinSelectedModelThroughGateway()
     {
         var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
@@ -2256,7 +2424,7 @@ public class GatewayDataDomainGuardTests
         var httpClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
         var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
 
-        Assert.Contains("idx_llmgw_logs_time_caller_type_transport", initializer);
+        Assert.Contains("idx_llmgw_logs_tenant_time_caller_type_transport", initializer);
         Assert.Contains("ttl_llmgw_logs_started", initializer);
         Assert.Contains("uniq_llmgw_budget_month", initializer);
         Assert.Contains("uniq_llmgw_execution_request", initializer);

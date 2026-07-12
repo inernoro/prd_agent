@@ -9,7 +9,6 @@ namespace PrdAgent.LlmGw.Models;
 [BsonIgnoreExtraElements]
 public class LlmGwUser
 {
-    [BsonId]
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string Username { get; set; } = string.Empty;
@@ -35,6 +34,14 @@ public class LlmGwUser
     public bool PasswordChangedByUser { get; set; }
 
     public string[] Scopes { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// 服务端维护的租户目录，只用于登录后定位候选 membership；权限权威仍是
+    /// llmgw_memberships，客户端不能写入或覆盖该列表。
+    /// </summary>
+    public List<string> TenantIds { get; set; } = new();
+
+    public string? DefaultTenantId { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

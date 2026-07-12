@@ -221,7 +221,7 @@ public class GatewayKeyGateContractTests
         try
         {
             var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
-            using var lease = registry.Register("demo.app::chat", "cancel-me");
+            using var lease = registry.Register(GatewayTenantDefaults.InternalTenantId, "demo.app::chat", "cancel-me");
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-me/cancel");
             request.Headers.Add("X-Gateway-Key", GatewayKey);
             request.Headers.Add("X-Gateway-App-Caller", "demo.app::chat");
@@ -245,7 +245,7 @@ public class GatewayKeyGateContractTests
         try
         {
             var registry = app.Services.GetRequiredService<GatewayCancellationRegistry>();
-            using var lease = registry.Register("caller-b::chat", "shared-request-id");
+            using var lease = registry.Register(GatewayTenantDefaults.InternalTenantId, "caller-b::chat", "shared-request-id");
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/shared-request-id/cancel");
             request.Headers.Add("X-Gateway-Key", GatewayKey);
             request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
@@ -435,7 +435,6 @@ public class GatewayKeyGateContractTests
                 }),
             };
             request.Headers.Add("X-Gateway-Key", "scoped-test-key");
-            request.Headers.Add("X-Gateway-Source", "external");
 
             var response = await app.GetTestClient().SendAsync(request);
 
@@ -1075,8 +1074,10 @@ public class GatewayKeyGateContractTests
     [Fact]
     public async Task OpenAiImagesCompatibleEndpoint_AcceptsBearerGatewayKey()
     {
-        var gateway = new EchoingGateway();
-        await using var app = BuildHostWithGateway(gateway);
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
         await app.StartAsync();
         try
         {
@@ -1091,7 +1092,8 @@ public class GatewayKeyGateContractTests
                     background = "transparent",
                 }),
             };
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "scoped-test-key");
+            req.Headers.Add("X-Gateway-Source", "external");
 
             var resp = await client.SendAsync(req);
             var body = await resp.Content.ReadAsStringAsync();
@@ -1103,9 +1105,83 @@ public class GatewayKeyGateContractTests
             gateway.LastRawRequest.ModelType.ShouldBe("generation");
             gateway.LastRawRequest.ExpectedModel.ShouldBe("image-picked");
             gateway.LastRawRequest.Context.ShouldNotBeNull();
+            gateway.LastRawRequest.Context!.TenantId.ShouldBe("tenant-test");
+            gateway.LastResolveTenantId.ShouldBe("tenant-test");
             var dropped = gateway.LastRawRequest.Context!.DroppedParameters;
             dropped.ShouldNotBeNull();
             dropped!.ShouldContain("background");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ClientStream_UsesGovernedTenantWhenBodyContextIsMissing()
+    {
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/client-stream")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "external.client-stream::chat",
+                    ModelType = "chat",
+                    SystemPrompt = string.Empty,
+                    Messages = Array.Empty<object>(),
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastCreateClientTenantId.ShouldBe("tenant-test");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ResolveAndPools_UseVerifiedScopedKeyTenant()
+    {
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
+        await app.StartAsync();
+        try
+        {
+            var resolve = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/resolve")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "external.resolve::chat",
+                    ModelType = "chat",
+                }),
+            };
+            resolve.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            var resolveResponse = await app.GetTestClient().SendAsync(resolve);
+
+            resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastResolveTenantId.ShouldBe("tenant-test");
+
+            var pools = new HttpRequestMessage(
+                HttpMethod.Get,
+                "/gw/v1/pools?appCallerCode=external.resolve%3A%3Achat&modelType=chat");
+            pools.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            var poolsResponse = await app.GetTestClient().SendAsync(pools);
+
+            poolsResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastPoolsTenantId.ShouldBe("tenant-test");
         }
         finally
         {
@@ -2130,14 +2206,16 @@ public class GatewayKeyGateContractTests
     private static WebApplication BuildHostWithGateway(
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
-        IGatewayScopedKeyAuthorizer? keyAuthorizer = null)
+        IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
+        ILLMRequestContextAccessor? contextAccessor = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton(gateway);
-        builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        builder.Services.AddSingleton<ILLMRequestContextAccessor>(
+            contextAccessor ?? new PrdAgent.Core.Services.LLMRequestContextAccessor());
         builder.Services.AddSingleton<GatewayCancellationRegistry>();
         if (readinessProbe != null)
             builder.Services.AddSingleton(readinessProbe);
@@ -2193,7 +2271,8 @@ public class GatewayKeyGateContractTests
                 allowed ? 200 : 403,
                 allowed ? string.Empty : "GATEWAY_KEY_SCOPE_DENIED",
                 allowed ? "allowed" : "scope denied",
-                "capturing-key"));
+                "capturing-key",
+                "tenant-test"));
         }
     }
 
@@ -2304,8 +2383,15 @@ public class GatewayKeyGateContractTests
 
     private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
     {
+        private readonly ILLMRequestContextAccessor? _contextAccessor;
+
+        public EchoingGateway(ILLMRequestContextAccessor? contextAccessor = null) => _contextAccessor = contextAccessor;
+
         public GatewayRequest? LastRequest { get; private set; }
         public GatewayRawRequest? LastRawRequest { get; private set; }
+        public string? LastResolveTenantId { get; private set; }
+        public string? LastCreateClientTenantId { get; private set; }
+        public string? LastPoolsTenantId { get; private set; }
         public string? LastResolveExpectedModel { get; private set; }
         public string? LastResolvePinnedPlatformId { get; private set; }
         public string? LastResolvePinnedModelId { get; private set; }
@@ -2424,14 +2510,44 @@ public class GatewayKeyGateContractTests
 
         public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
         {
+            LastResolveTenantId = _contextAccessor?.Current?.TenantId;
             LastResolveExpectedModel = expectedModel;
             LastResolvePinnedPlatformId = pinnedPlatformId;
             LastResolvePinnedModelId = pinnedModelId;
             return Task.FromResult(Resolve(expectedModel));
         }
 
-        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+        {
+            LastPoolsTenantId = _contextAccessor?.Current?.TenantId;
+            return Task.FromResult(new List<AvailableModelPool>());
+        }
 
-        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null) => throw new NotSupportedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+        {
+            LastCreateClientTenantId = _contextAccessor?.Current?.TenantId;
+            return new EchoingLlmClient();
+        }
+
+        private sealed class EchoingLlmClient : ILLMClient
+        {
+            public string Provider => "test";
+
+            public IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
+                string systemPrompt,
+                List<LLMMessage> messages,
+                CancellationToken cancellationToken = default)
+                => StreamGenerateAsync(systemPrompt, messages, false, cancellationToken);
+
+            public async IAsyncEnumerable<LLMStreamChunk> StreamGenerateAsync(
+                string systemPrompt,
+                List<LLMMessage> messages,
+                bool enablePromptCache,
+                [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            {
+                await Task.Yield();
+                yield return new LLMStreamChunk { Type = "done" };
+            }
+        }
     }
 }

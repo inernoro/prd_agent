@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -16,17 +17,24 @@ public class ModelResolver : IModelResolver
     private readonly LlmGatewayDataContext? _gatewayDb;
     private readonly IConfiguration _config;
     private readonly ILogger<ModelResolver> _logger;
+    private readonly ILLMRequestContextAccessor? _requestContext;
+    private readonly string _internalTenantId;
 
     public ModelResolver(
         MongoDbContext db,
         IConfiguration config,
         ILogger<ModelResolver> logger,
-        LlmGatewayDataContext? gatewayDb = null)
+        LlmGatewayDataContext? gatewayDb = null,
+        ILLMRequestContextAccessor? requestContext = null)
     {
         _db = db;
         _gatewayDb = gatewayDb;
         _config = config;
         _logger = logger;
+        _requestContext = requestContext;
+        _internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
     }
 
     /// <inheritdoc />
@@ -49,7 +57,8 @@ public class ModelResolver : IModelResolver
         var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
 
-        var gatewayConfigRequired = DisableMapConfigFallbackForRegisteredAppCallers();
+        var gatewayConfigRequired = !string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal)
+                                    || DisableMapConfigFallbackForRegisteredAppCallers();
         var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
         if (gatewayRegistry.TrafficRejected)
         {
@@ -530,6 +539,8 @@ public class ModelResolver : IModelResolver
         }
         if (result.Count > 0)
             return result;
+        if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))
+            return result;
         if (DisableMapConfigFallbackForRegisteredAppCallers())
             return result;
 
@@ -994,8 +1005,10 @@ public class ModelResolver : IModelResolver
         {
             var records = _gatewayDb.Context.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
             var record = await records
-                .Find(x => x.AppCallerCode == appCallerCode
-                           && x.RequestType == modelType,
+                .Find(Builders<GatewayAppCallerRecord>.Filter.And(
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, modelType)),
                     new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
@@ -1058,7 +1071,10 @@ public class ModelResolver : IModelResolver
 
         var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
         return await gatewayPools
-            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
+            .Find(Builders<ModelGroup>.Filter.And(
+                Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
+                Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType),
+                Builders<ModelGroup>.Filter.Eq(g => g.IsDefaultForType, true)))
             .SortBy(g => g.Priority)
             .ToListAsync(ct);
     }
@@ -1073,7 +1089,10 @@ public class ModelResolver : IModelResolver
         {
             var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
             var gatewayPool = await gatewayPools
-                .Find(g => g.Id == modelPoolId && g.ModelType == modelType)
+                .Find(Builders<ModelGroup>.Filter.And(
+                    Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
+                    Builders<ModelGroup>.Filter.Eq(g => g.Id, modelPoolId),
+                    Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType)))
                 .FirstOrDefaultAsync(ct);
             if (gatewayPool is not null)
             {
@@ -1105,7 +1124,10 @@ public class ModelResolver : IModelResolver
         {
             var gatewayPlatforms = _gatewayDb.Context.Database.GetCollection<LLMPlatform>("llmgw_platforms");
             var gatewayPlatform = await gatewayPlatforms
-                .Find(p => p.Id == platformId && (!enabledOnly || p.Enabled))
+                .Find(Builders<LLMPlatform>.Filter.And(
+                    Builders<LLMPlatform>.Filter.Eq("TenantId", CurrentTenantId),
+                    Builders<LLMPlatform>.Filter.Eq(p => p.Id, platformId),
+                    enabledOnly ? Builders<LLMPlatform>.Filter.Eq(p => p.Enabled, true) : Builders<LLMPlatform>.Filter.Empty))
                 .FirstOrDefaultAsync(ct);
             if (gatewayPlatform is not null)
             {
@@ -1134,9 +1156,13 @@ public class ModelResolver : IModelResolver
         {
             var gatewayModels = _gatewayDb.Context.Database.GetCollection<LLMModel>("llmgw_models");
             var gatewayModel = await gatewayModels
-                .Find(m => m.Enabled
-                    && m.PlatformId == platformId
-                    && (m.ModelName == modelId || m.Id == modelId))
+                .Find(Builders<LLMModel>.Filter.And(
+                    Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+                    Builders<LLMModel>.Filter.Eq(m => m.Enabled, true),
+                    Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
+                    Builders<LLMModel>.Filter.Or(
+                        Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
+                        Builders<LLMModel>.Filter.Eq(m => m.Id, modelId))))
                 .FirstOrDefaultAsync(ct);
             if (gatewayModel is not null)
             {
@@ -1207,7 +1233,9 @@ public class ModelResolver : IModelResolver
             return null;
 
         var gatewayExchanges = _gatewayDb.Context.Database.GetCollection<ModelExchange>("llmgw_model_exchanges");
-        var exchange = await gatewayExchanges.Find(filter).FirstOrDefaultAsync(ct);
+        var exchange = await gatewayExchanges.Find(Builders<ModelExchange>.Filter.And(
+            Builders<ModelExchange>.Filter.Eq("TenantId", CurrentTenantId),
+            filter)).FirstOrDefaultAsync(ct);
         if (exchange is not null)
         {
             _logger.LogDebug(
@@ -1216,6 +1244,9 @@ public class ModelResolver : IModelResolver
         }
         return exchange;
     }
+
+    private string CurrentTenantId
+        => _requestContext?.Current?.TenantId is { Length: > 0 } tenantId ? tenantId : _internalTenantId;
 
     private async Task<AvailableModelPool> MapToAvailablePoolAsync(
         ModelGroup group,

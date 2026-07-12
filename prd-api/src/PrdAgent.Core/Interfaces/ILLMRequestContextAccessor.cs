@@ -36,7 +36,10 @@ public record LlmRequestContext(
     /// <summary>
     /// MAP 业务运行 ID。用于把 GW 请求日志反查到 chat/image/video/asr 等业务 run。
     /// </summary>
-    string? RunId = null);
+    string? RunId = null,
+    /// <summary>由服务端会话或 service key 解析，禁止相信请求自报值。</summary>
+    string? TenantId = null,
+    string? TeamId = null);
 
 public interface ILLMRequestContextAccessor
 {
