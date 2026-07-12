@@ -47,6 +47,7 @@ jobs:
       admin: ${{ steps.filter.outputs.admin }}
       llmgw: ${{ steps.filter.outputs.llmgw }}
       llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
+      llmgw_serve: ${{ steps.filter.outputs.llmgw_serve }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,10 +65,13 @@ jobs:
               - 'prd-admin/**'
               - '.github/workflows/branch-image.yml'
             llmgw:
-              - 'prd-llmgw/**'
+              - 'llmgw/console-api/**'
               - '.github/workflows/branch-image.yml'
             llmgw_web:
-              - 'prd-llmgw-web/**'
+              - 'llmgw/web/**'
+              - '.github/workflows/branch-image.yml'
+            llmgw_serve:
+              - 'llmgw/serving/**'
               - '.github/workflows/branch-image.yml'
 
   api-image:
@@ -170,10 +174,9 @@ jobs:
           cache-from: type=gha,scope=branch-prd-admin
           cache-to: type=gha,mode=max,scope=branch-prd-admin
 
-  # 独立 LLM 网关后端 llmgw 镜像（占位：prd-llmgw 项目拆出后构建独立镜像，tag 规则同 api）。
-  # 仅当 prd-llmgw/ 真实存在 Dockerfile 时才构建，避免对尚未落地的项目硬失败。
+  # 独立 LLM Gateway 控制台 API 镜像。
   llmgw-image:
-    name: Build prd-llmgw image
+    name: Build LLM Gateway console API image
     needs: changes
     if: ${{ needs.changes.outputs.llmgw == 'true' || needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
@@ -184,16 +187,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check llmgw project exists
+      - name: Validate console API project
         id: probe
         shell: bash
         run: |
-          if [ -f ./prd-llmgw/Dockerfile ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "prd-llmgw/Dockerfile 不存在，跳过 llmgw 镜像构建（项目尚未拆出，占位配置）。"
-          fi
+          test -f ./llmgw/console-api/Dockerfile
+          echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Setup Docker Buildx
         if: ${{ steps.probe.outputs.present == 'true' }}
@@ -227,8 +226,8 @@ jobs:
         if: ${{ steps.probe.outputs.present == 'true' }}
         uses: docker/build-push-action@v5
         with:
-          context: ./prd-llmgw
-          file: ./prd-llmgw/Dockerfile
+          context: ./llmgw/console-api
+          file: ./llmgw/console-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -238,12 +237,12 @@ jobs:
           provenance: false
           sbom: false
           platforms: linux/amd64
-          cache-from: type=gha,scope=branch-prd-llmgw
-          cache-to: type=gha,mode=max,scope=branch-prd-llmgw
+          cache-from: type=gha,scope=branch-llmgw-console-api
+          cache-to: type=gha,mode=max,scope=branch-llmgw-console-api
 
-  # 独立 LLM 网关前端站 llmgw-web 镜像（占位：prd-llmgw-web 项目拆出后构建，tag 规则同 admin）。
+  # 独立 LLM Gateway Web 控制台镜像。
   llmgw-web-image:
-    name: Build prd-llmgw-web image
+    name: Build LLM Gateway web image
     needs: changes
     if: ${{ needs.changes.outputs.llmgw_web == 'true' || needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
@@ -254,16 +253,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check llmgw-web project exists
+      - name: Validate web project
         id: probe
         shell: bash
         run: |
-          if [ -f ./prd-llmgw-web/Dockerfile ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "prd-llmgw-web/Dockerfile 不存在，跳过 llmgw-web 镜像构建（项目尚未拆出，占位配置）。"
-          fi
+          test -f ./llmgw/web/Dockerfile
+          echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Setup Docker Buildx
         if: ${{ steps.probe.outputs.present == 'true' }}
@@ -291,23 +286,22 @@ jobs:
         if: ${{ steps.probe.outputs.present == 'true' }}
         uses: docker/build-push-action@v5
         with:
-          context: ./prd-llmgw-web
-          file: ./prd-llmgw-web/Dockerfile
+          context: ./llmgw/web
+          file: ./llmgw/web/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
           platforms: linux/amd64
-          cache-from: type=gha,scope=branch-prd-llmgw-web
-          cache-to: type=gha,mode=max,scope=branch-prd-llmgw-web
+          cache-from: type=gha,scope=branch-llmgw-web
+          cache-to: type=gha,mode=max,scope=branch-llmgw-web
 
-  # 独立 LLM 网关承载服务镜像 llmgw-serve（PrdAgent.LlmGateway）。源码在 prd-api/ 下，
-  # 故触发条件同 api（path-filter api == true 或 main）。镜像 tag 规则同 api。
+  # 独立 LLM Gateway serving 镜像；实现位于 llmgw/serving，并复用 prd-api Core/Infrastructure。
   llmgw-serve-image:
-    name: Build prd-llmgw-serve image
+    name: Build LLM Gateway serving image
     needs: changes
-    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.api == 'true' || needs.changes.outputs.llmgw_serve == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -343,8 +337,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./prd-api
-          file: ./prd-api/Dockerfile.llmgw-serve
+          context: .
+          file: ./llmgw/serving/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -354,5 +348,5 @@ jobs:
           provenance: false
           sbom: false
           platforms: linux/amd64
-          cache-from: type=gha,scope=branch-prd-llmgw-serve
-          cache-to: type=gha,mode=max,scope=branch-prd-llmgw-serve
+          cache-from: type=gha,scope=branch-llmgw-serving
+          cache-to: type=gha,mode=max,scope=branch-llmgw-serving

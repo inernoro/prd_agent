@@ -6,7 +6,7 @@
 
 ## 0. 禁止任何 Emoji（最高优先级，先于一切其他规则）
 
-**本系统任何项目（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`cds/`、`doc/`、`changelogs/`、提交信息、PR 描述、UI 渲染输出、聊天回复）一律不允许出现 emoji 字符。**
+**本系统任何项目（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`llmgw/`、`cds/`、`doc/`、`changelogs/`、提交信息、PR 描述、UI 渲染输出、聊天回复）一律不允许出现 emoji 字符。**
 
 适用范围：
 - 代码字面量（任何 `'<emoji>'` / `"<emoji>"` / 模板字符串里的 emoji）—— 一律 reject
@@ -34,6 +34,7 @@ prd_agent/
 ├── prd-admin/        # React 18 管理后台 (Vite)    → prd-admin/AGENTS.md
 ├── prd-desktop/      # Tauri 2.0 桌面客户端        → prd-desktop/AGENTS.md
 ├── prd-video/        # Remotion 视频合成
+├── llmgw/            # LLM Gateway 产品根目录          → llmgw/AGENTS.md
 ├── changelogs/       # 更新记录碎片（每 PR 一个文件，发版时合并）
 ├── doc/              # 编号文档 (spec/design/plan/rule/guide/report)
 └── scripts/          # 构建/部署脚本
@@ -51,7 +52,7 @@ docker compose -f docker-compose.dev.yml up -d --build
 .\quick.ps1 all       # Server + desktop + admin
 ```
 
-各模块构建命令见子目录 AGENTS.md（`prd-api/`、`prd-admin/`、`prd-desktop/`）。
+各模块构建命令见子目录 AGENTS.md（`prd-api/`、`prd-admin/`、`prd-desktop/`、`llmgw/`）。
 
 ### Video (prd-video/) — Remotion 4.0
 
@@ -65,7 +66,7 @@ cd prd-video && pnpm install && pnpm start
 
 ### 1. 前端包管理器：pnpm Only
 
-所有前端项目（`prd-admin`、`prd-desktop`、`prd-video`）统一使用 **pnpm**，禁止 npm / yarn。
+所有前端项目（`prd-admin`、`prd-desktop`、`prd-video`、`llmgw/web`）统一使用 **pnpm**，禁止 npm / yarn。
 Lockfile 仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` 或 `yarn.lock`。
 
 ### 2. C# 静态分析
@@ -85,7 +86,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 4. 更新记录维护（Changelog Fragments）
 
-对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `changelogs/` 目录创建碎片文件，**禁止直接编辑 `CHANGELOG.md`**。
+对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`llmgw/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `changelogs/` 目录创建碎片文件，**禁止直接编辑 `CHANGELOG.md`**。
 
 #### 碎片文件规则
 

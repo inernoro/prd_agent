@@ -36,6 +36,7 @@ const ALLOW_LIST: Record<string, string> = {
   // ── 移动端专用 ──
   '/profile': '移动端个人资料',
   '/notifications': '移动端通知',
+  '/daily-post': '米多早报（首页副页面，从首页推广行进入，不参与可定制导航）',
 
   // ── 已废弃 / Redirect ──
   '/prd-agent': 'Web 端已下线，重定向到首页',

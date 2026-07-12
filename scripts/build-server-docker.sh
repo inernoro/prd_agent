@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 API_DIR="$REPO_ROOT/prd-api"
 OUTPUT_DIR="$API_DIR/output"
 
-cd "$API_DIR"
+cd "$REPO_ROOT"
 
 echo "Building backend code using Docker..."
 echo "Output directory: $OUTPUT_DIR"
@@ -19,7 +19,7 @@ rm -rf "$OUTPUT_DIR"
 
 # 使用 Docker 构建并输出产物（BuildKit 必须启用，否则 Dockerfile 里的 cache mount 不生效 → NuGet 每次重下）
 DOCKER_BUILDKIT=1 docker build \
-  -f Dockerfile.build \
+  -f prd-api/Dockerfile.build \
   -t prdagent-build:local \
   --target build \
   --output "$OUTPUT_DIR" \

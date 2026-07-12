@@ -78,7 +78,7 @@
 - `shadow-start` 已在生产机 `root@map.ebcone.net` 成功部署到 commit `55579a29abc84e4ffb0fc1874d333a0d1178159b`，四个镜像 `api / llmgw / llmgw-serve / llmgw-web` 同 commit，`LLMGW_MODE=shadow`，allowlist 为空，`ShadowFullSamplePercent=1`。
 - 生产备份点：Mongo 归档 `/root/backups/llmgw-prod-before-shadow-deploy-20260707T102958+0800`；host nginx 反代配置备份 `/root/backups/llmgw-host-nginx-20260707T104906+0800`。
 - 生产 GW serving 证据：`https://map.ebcone.net/gw/v1/healthz` 返回 commit `55579a29abc84e4ffb0fc1874d333a0d1178159b`；post-deploy serving probe PASS；D-layer smoke 10/10 PASS。
-- 生产 GW 控制台入口：`https://map.ebcone.net/llmgw/`、`https://map.ebcone.net/llmgw/logs` 已经通过 host nginx 反代到 `prd-llmgw-web`，浏览器检查 root 已渲染，登录 API `POST /gw/auth/login` 返回 JSON 信封而不是主站 HTML。
+- 生产 GW 控制台入口：`https://map.ebcone.net/llmgw/`、`https://map.ebcone.net/llmgw/logs` 已经通过 host nginx 反代到 `llmgw/web`，浏览器检查 root 已渲染，登录 API `POST /gw/auth/login` 返回 JSON 信封而不是主站 HTML。
 - 同 commit 文本 shadow 证据：`scripts/llmgw-map-shadow-seed.py --include-tutorial-email-send` 成功，`send=1`、`stream=2`、`critical=0`、`httpFail=0`；coverage 证据为生产 `.llmgw-release-evidence/20260707T025032Z_manual_text-shadow-coverage.json`。
 - 仍然禁止进入 `canary-video-asr` 或全量 `LLMGW_MODE=http`：最新 upstream readiness / provider audit 仍失败，`video-agent.videogen::video-gen` 无可用 video-gen 模型，ASR 近期失败仍包含 `Invalid X-Api-Key` / no available channels / stream 502。必须补可用视频渠道和有效 ASR 凭据后，重新产生 `raw` allMatch 且 `httpFail=0` 的真实样本。
 

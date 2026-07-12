@@ -68,7 +68,7 @@
 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/IModelResolver.cs` | 保留 GW-owned 模型池解析契约 |
 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` | 保留 GW registry 优先和 MAP fallback 退场门 |
 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` | 拆审：只保留协议路由、精确模型、参数策略、provider attempts 与日志链路相关改动 |
-| `prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs` | 拆审：只保留四类协议入口、IR 转换、governance、route matrix 和兼容响应 |
+| `llmgw/serving/GatewayHttpEndpoints.cs` | 拆审：只保留四类协议入口、IR 转换、governance、route matrix 和兼容响应 |
 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/Transformers/GeminiNativeTransformer.cs` | 保留 Gemini tools/function call 往返转换 |
 | `prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs` | 保留日志字段扩展 |
 | `prd-api/src/PrdAgent.Core/Interfaces/ILlmRequestLogWriter.cs` | 保留日志写入契约扩展 |
@@ -103,32 +103,32 @@
 
 | 文件 | 处理 |
 |---|---|
-| `prd-llmgw/Program.cs` | 必须拆审：配置权威、appCaller、模型池、日志、审计、runtime gates 可按区域拆 commit |
-| `prd-llmgw/Models/Dtos.cs` | 保留控制台 DTO |
-| `prd-llmgw/Models/LlmRequestLogDoc.cs` | 保留日志文档映射 |
-| `prd-llmgw/Mongo/BsonValueHelpers.cs` | 保留 Bson helper |
-| `prd-llmgw/Security/GwApiKeyCrypto.cs` | 保留 GW-owned key 加密健康与轮换支撑 |
-| `prd-llmgw-web/src/App.tsx` | 保留新页面路由 |
-| `prd-llmgw-web/src/components/ConsoleLayout.tsx` | 保留导航 |
-| `prd-llmgw-web/src/components/LogsView.tsx` | 保留日志筛选和入口上下文 |
-| `prd-llmgw-web/src/components/GenerationDetailsDrawer.tsx` | 保留 router trace、attempts、成本和参数展示 |
-| `prd-llmgw-web/src/lib/api.ts` | 保留控制台 API client |
-| `prd-llmgw-web/src/lib/types.ts` | 保留类型 |
-| `prd-llmgw-web/src/lib/logsHelpers.ts` | 保留展示 helper |
-| `prd-llmgw-web/src/pages/AppCallersPage.tsx` | 保留 appCaller governance |
-| `prd-llmgw-web/src/pages/ModelPoolsPage.tsx` | 必须拆审：GW-owned 池、成员、能力、价格和批量导入 |
-| `prd-llmgw-web/src/pages/ModelsPage.tsx` | 保留模型能力维护 |
-| `prd-llmgw-web/src/pages/PlatformsPage.tsx` | 保留平台密钥治理 |
-| `prd-llmgw-web/src/pages/ExchangesPage.tsx` | 保留 Exchange 观测和密钥治理 |
-| `prd-llmgw-web/src/pages/AuditsPage.tsx` | 保留操作审计 |
-| `prd-llmgw-web/src/pages/OverviewPage.tsx` | 保留 runtime gate 和配置权威状态卡 |
+| `llmgw/console-api/Program.cs` | 必须拆审：配置权威、appCaller、模型池、日志、审计、runtime gates 可按区域拆 commit |
+| `llmgw/console-api/Models/Dtos.cs` | 保留控制台 DTO |
+| `llmgw/console-api/Models/LlmRequestLogDoc.cs` | 保留日志文档映射 |
+| `llmgw/console-api/Mongo/BsonValueHelpers.cs` | 保留 Bson helper |
+| `llmgw/console-api/Security/GwApiKeyCrypto.cs` | 保留 GW-owned key 加密健康与轮换支撑 |
+| `llmgw/web/src/App.tsx` | 保留新页面路由 |
+| `llmgw/web/src/components/ConsoleLayout.tsx` | 保留导航 |
+| `llmgw/web/src/components/LogsView.tsx` | 保留日志筛选和入口上下文 |
+| `llmgw/web/src/components/GenerationDetailsDrawer.tsx` | 保留 router trace、attempts、成本和参数展示 |
+| `llmgw/web/src/lib/api.ts` | 保留控制台 API client |
+| `llmgw/web/src/lib/types.ts` | 保留类型 |
+| `llmgw/web/src/lib/logsHelpers.ts` | 保留展示 helper |
+| `llmgw/web/src/pages/AppCallersPage.tsx` | 保留 appCaller governance |
+| `llmgw/web/src/pages/ModelPoolsPage.tsx` | 必须拆审：GW-owned 池、成员、能力、价格和批量导入 |
+| `llmgw/web/src/pages/ModelsPage.tsx` | 保留模型能力维护 |
+| `llmgw/web/src/pages/PlatformsPage.tsx` | 保留平台密钥治理 |
+| `llmgw/web/src/pages/ExchangesPage.tsx` | 保留 Exchange 观测和密钥治理 |
+| `llmgw/web/src/pages/AuditsPage.tsx` | 保留操作审计 |
+| `llmgw/web/src/pages/OverviewPage.tsx` | 保留 runtime gate 和配置权威状态卡 |
 
 验证：
 
 | 检查 | 命令或证据 |
 |---|---|
-| 控制台后端编译 | `dotnet build prd-llmgw/prd-llmgw.csproj --no-restore` |
-| 控制台前端构建 | `cd prd-llmgw-web && pnpm build` |
+| 控制台后端编译 | `dotnet build llmgw/console-api/prd-llmgw.csproj --no-restore` |
+| 控制台前端构建 | `cd llmgw/web && pnpm build` |
 | API 静态守卫 | `GatewayDataDomainGuardTests` 的 PR-C 子集 |
 | 页面验收 | `/logs`、`/app-callers`、`/model-pools`、`/models`、`/platforms`、`/exchanges`、`/audits`、`/` |
 
@@ -191,7 +191,7 @@
 | 3 | 从 staging 分支切出 PR-B API 核心分支 | 只包含 API 协议路由和后端测试 |
 | 4 | 跑 PR-B 后端验证 | `dotnet build` 和相关测试通过 |
 | 5 | 从 staging 分支切出 PR-C 控制台分支 | 只包含 GW console API/web |
-| 6 | 跑 PR-C 控制台验证 | `prd-llmgw` build 和 `prd-llmgw-web` build 通过 |
+| 6 | 跑 PR-C 控制台验证 | `llmgw/console-api` build 和 `llmgw/web` build 通过 |
 | 7 | 从 staging 分支切出 PR-D 发布 gate 分支 | 只包含 workflow、scripts、compose |
 | 8 | 跑 PR-D 发布脚本自测 | release gate、readiness、rollback dry-run 通过 |
 

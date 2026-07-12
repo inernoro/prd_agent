@@ -1,4 +1,5 @@
-import { AS_COLOR } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { useDataTheme } from '@/hooks/useDataTheme';
 
 /**
  * 移动端段控（iOS Segmented Control）—— 滑动 pill。
@@ -20,6 +21,8 @@ export interface MobileSegmentedProps {
 }
 
 export function MobileSegmented({ items, activeKey, onChange, className, style }: MobileSegmentedProps) {
+  const C = useAppStoreColors();
+  const light = useDataTheme() === 'light';
   const idx = Math.max(0, items.findIndex((i) => i.key === activeKey));
   const pct = 100 / items.length;
 
@@ -29,7 +32,7 @@ export function MobileSegmented({ items, activeKey, onChange, className, style }
       style={{
         display: 'flex',
         position: 'relative',
-        background: 'rgba(118,118,128,0.22)',
+        background: light ? 'rgba(120,120,128,0.14)' : 'rgba(118,118,128,0.22)',
         borderRadius: 11,
         padding: 2,
         ...style,
@@ -44,8 +47,8 @@ export function MobileSegmented({ items, activeKey, onChange, className, style }
           left: 2,
           width: `calc(${pct}% - 2px)`,
           borderRadius: 9,
-          background: 'rgba(99,99,102,0.9)',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
+          background: light ? '#ffffff' : 'rgba(99,99,102,0.9)',
+          boxShadow: light ? '0 1px 4px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.4)',
           transform: `translateX(calc(${idx * 100}% + ${idx * 2}px))`,
           transition: 'transform 0.32s cubic-bezier(0.32,0.72,0,1)',
           zIndex: 1,
@@ -68,7 +71,7 @@ export function MobileSegmented({ items, activeKey, onChange, className, style }
               borderRadius: 9,
               fontSize: 14,
               fontWeight: 600,
-              color: on ? AS_COLOR.label : AS_COLOR.labelSecondary,
+              color: on ? C.label : C.labelSecondary,
               transition: 'color 0.25s ease',
             }}
           >

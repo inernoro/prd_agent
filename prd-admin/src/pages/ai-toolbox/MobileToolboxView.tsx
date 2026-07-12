@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Plus } from 'lucide-react';
 import { useToolboxStore, BUILTIN_TOOLS, type ToolboxCategory } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services';
-import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { accentFor, iconFor } from '@/lib/agentAccent';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { MobileSegmented } from '@/components/mobile/MobileSegmented';
@@ -37,6 +39,8 @@ const OWNERSHIP_CHIPS: { key: ToolboxCategory; label: string }[] = [
 
 export function MobileToolboxView() {
   const navigate = useNavigate();
+  const C = useAppStoreColors();
+  const light = useDataTheme() === 'light';
   const {
     items,
     category,
@@ -100,27 +104,27 @@ export function MobileToolboxView() {
 
   return (
     <div
-      className="h-full min-h-0 overflow-auto"
-      style={{ background: AS_COLOR.bg, fontFamily: AS_FONT_FAMILY }}
+      className="h-full min-h-0 overflow-auto no-scrollbar"
+      style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}
     >
       <div style={{ paddingBottom: 120 }}>
         {/* 大标题 */}
-        <div style={{ padding: '6px 16px 0', fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1 }}>
+        <div style={{ padding: '6px 16px 0', fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, color: C.label }}>
           发现
         </div>
 
         {/* 搜索 */}
         <div
           className="flex items-center gap-2"
-          style={{ margin: '12px 16px', background: 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
+          style={{ margin: '12px 16px', background: light ? 'rgba(120,120,128,0.12)' : 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
         >
-          <Search size={18} style={{ color: AS_COLOR.labelTertiary }} />
+          <Search size={18} style={{ color: C.labelTertiary }} />
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索智能体、工具"
             className="flex-1 bg-transparent outline-none"
-            style={{ fontSize: 16, color: AS_COLOR.label }}
+            style={{ fontSize: 16, color: C.label }}
           />
         </div>
 
@@ -147,9 +151,9 @@ export function MobileToolboxView() {
                   borderRadius: 18,
                   fontSize: 13,
                   fontWeight: 600,
-                  border: `1px solid ${on ? '#fff' : AS_COLOR.hairline}`,
-                  background: on ? '#fff' : AS_COLOR.surface,
-                  color: on ? '#000' : AS_COLOR.labelSecondary,
+                  border: `1px solid ${on ? C.label : C.hairline}`,
+                  background: on ? C.label : C.surface,
+                  color: on ? C.bg : C.labelSecondary,
                 }}
               >
                 {c.label}
@@ -166,9 +170,9 @@ export function MobileToolboxView() {
                 borderRadius: 18,
                 fontSize: 13,
                 fontWeight: 600,
-                border: `1px solid ${AS_COLOR.blue}`,
-                background: 'rgba(10,132,255,0.16)',
-                color: AS_COLOR.blue,
+                border: `1px solid ${C.blue}`,
+                background: light ? 'rgba(0,122,255,0.10)' : 'rgba(10,132,255,0.16)',
+                color: C.blue,
               }}
             >
               #{activeTagFilter} ×
@@ -219,6 +223,7 @@ export function MobileToolboxView() {
 /* ─────────── 智能体大卡（2 列，渐变铺满） ─────────── */
 
 function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
+  const light = useDataTheme() === 'light';
   const accent = accentFor(item.agentKey);
   const Icon = iconFor(item.icon);
   const pcOnly = item.routePath ? resolveMobileCompat(item.routePath)?.level === 'pc-only' : false;
@@ -234,7 +239,7 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         padding: 16,
         color: '#fff',
         background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
-        boxShadow: '0 8px 22px -10px rgba(0,0,0,0.6)',
+        boxShadow: light ? '0 8px 22px -12px rgba(20,21,26,0.35)' : '0 8px 22px -10px rgba(0,0,0,0.6)',
       }}
     >
       {pcOnly && (
@@ -284,18 +289,19 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
 /* ─────────── 空状态 ─────────── */
 
 function EmptyState({ hasFilter, onCreate }: { hasFilter: boolean; onCreate: () => void }) {
+  const C = useAppStoreColors();
   return (
     <div className="flex flex-col items-center justify-center text-center" style={{ padding: '70px 32px' }}>
       <div
         className="flex items-center justify-center"
-        style={{ width: 64, height: 64, borderRadius: 18, background: AS_COLOR.surface, marginBottom: 16 }}
+        style={{ width: 64, height: 64, borderRadius: 18, background: C.surface, marginBottom: 16 }}
       >
-        <Plus size={28} style={{ color: AS_COLOR.labelSecondary }} />
+        <Plus size={28} style={{ color: C.labelSecondary }} />
       </div>
-      <div style={{ fontSize: 17, fontWeight: 600, color: AS_COLOR.label, marginBottom: 6 }}>
+      <div style={{ fontSize: 17, fontWeight: 600, color: C.label, marginBottom: 6 }}>
         {hasFilter ? '没有匹配的工具' : '还没有工具'}
       </div>
-      <div style={{ fontSize: 14, color: AS_COLOR.labelTertiary, lineHeight: 1.5, marginBottom: 18 }}>
+      <div style={{ fontSize: 14, color: C.labelTertiary, lineHeight: 1.5, marginBottom: 18 }}>
         {hasFilter ? '换个筛选条件或关键词试试' : '点下方按钮创建你的第一个智能体'}
       </div>
       {!hasFilter && (

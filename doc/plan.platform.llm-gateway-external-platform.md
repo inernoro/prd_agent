@@ -28,9 +28,9 @@
 
 每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Codex Review、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。Bugbot 自 2026-07-12 起因用户停止续费而不再作为门禁，统一记录为不适用，不触发、不等待。
 
-PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`prd-llmgw` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关测试，0 失败；真实 `prd-llmgw` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。GitHub CI、四个相关镜像、Codex Review、CDS Deploy 与直连预览验收通过，PR #1085 已 squash 合并为 `19a33c7f4461eae24861f8ad59123b0ec0679389`。
+PR-1 证据（2026-07-12）：`prd-api`、`PrdAgent.Api.Tests`、`llmgw/console-api` 编译通过；.NET 8 容器连接临时 Mongo 实跑 Gateway 相关测试，0 失败；真实 `llmgw/console-api` HTTP 流程验证 tenant B 对 tenant A 的 team/key 列表泄漏为 0，跨租户资源写入返回 404，viewer 对审计和组织写入返回 403，无 membership 的租户切换返回 403，membership 版本变化后旧 token 返回 401。GitHub CI、四个相关镜像、Codex Review、CDS Deploy 与直连预览验收通过，PR #1085 已 squash 合并为 `19a33c7f4461eae24861f8ad59123b0ec0679389`。
 
-PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`prd-llmgw`、`PrdAgent.LlmGateway` 与 `prd-llmgw-web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。最终提交 `b618d17f2` 的 GitHub CI 10 项成功、四镜像、CDS Deploy 和 smoke 3/3 通过，serving health 精确回显同 commit；独立控制台 Quickstart 深链返回 200，无法确认 serving origin 时的线上产物使用明确占位域名。Codex 自动复审因云端额度耗尽无法覆盖最终提交，按仓库 `human-verify` 完成正确性、错误处理、安全、边界、数据流与用户场景替代复审并修复发现的问题。PR #1086 已 squash 合并为 `f2550f2e298ec7621480facd77f33661de99d78c`；Bugbot 不适用。
+PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 存储；新增创建者、key prefix、可选 TeamId、来源 CIDR、有效期、每分钟限流与轮换关联。Developer 查询和撤销同时按 TenantId 与 CreatedByUserId 收口。serving 只从经过 trusted proxy 处理后的连接远端地址检查 CIDR；分钟窗口唯一索引包含 TenantId，首分钟并发 upsert 的 duplicate-key 竞争会转为非 upsert 原子递增。`llmgw/console-api`、`PrdAgent.LlmGateway` 与 `llmgw/web` 构建通过，Gateway 筛选测试 110 项、数据域守卫 55 项通过；本地真实登录浏览器已完成空列表、创建 key、一次性显示及桌面/移动 Quickstart 验收。最终提交 `b618d17f2` 的 GitHub CI 10 项成功、四镜像、CDS Deploy 和 smoke 3/3 通过，serving health 精确回显同 commit；独立控制台 Quickstart 深链返回 200，无法确认 serving origin 时的线上产物使用明确占位域名。Codex 自动复审因云端额度耗尽无法覆盖最终提交，按仓库 `human-verify` 完成正确性、错误处理、安全、边界、数据流与用户场景替代复审并修复发现的问题。PR #1086 已 squash 合并为 `f2550f2e298ec7621480facd77f33661de99d78c`；Bugbot 不适用。
 
 PR-3 证据（2026-07-12）：新增 `llmgw_prompt_policies` 不可变版本集合，唯一索引为 TenantId + AppCallerCode + RequestType + Version；控制台 GET/预览/保存/回滚全部先以服务端会话 TenantId 过滤 appCaller 和策略。实跑临时库完成无版本、预览、保存 v1、陈旧版本 409、禁用 v2、回滚新建 v3，操作审计不含前缀/后缀正文。serving 只在四协议统一后的 chat/vision `messages` 应用策略，合并顺序为前缀、请求 system、后缀；raw/非 chat/vision 回归保持原请求。日志向上游发送合并正文，但 `RequestBodyRedacted` 只保留策略标记，`SystemPromptText` 置空，仅写 id/version/hash/chars。PromptPolicy 定向行为 4/4、日志脱敏 1/1、数据域守卫 58/58 通过；GitHub 标准 .NET 8 CI、四镜像与 CDS Deploy 全绿，CDS smoke 3/3，serving health 精确回显提交 `1c7073fa51e5c01f1508572bd5d70650d07f490d`。自动 Codex Review 因额度耗尽未生成结果，已用人工对抗审查替代并修复禁用策略回退与索引方向漂移。PR #1087 已 squash 合并为 `6b98efd19da42b39e9eeab0c79fee0ab8538afad`；Bugbot 不适用。
 
@@ -40,7 +40,7 @@ PR-4 发布证据（2026-07-12）：最终提交 `5fba56b9552e161f16b74cb720b8be
 
 PR-5 精确计划（2026-07-12）：不再增加平台能力，只做有限验收收口。第一，修复生产治理验收脚本在 PR-1 后仍伪造无租户 claim JWT、Mongo 查询和清理缺少 TenantId 的漂移，改为通过真实控制台登录与 `/auth/context` 取得服务端租户。第二，用既有假上游合同覆盖 tenant-scoped key 的授权、越权、撤销和 GW Native、OpenAI、Claude、Gemini 四协议，不批量调用付费模型。第三，串联 PR-1 至 PR-4 的租户创建、密钥接入、PromptPolicy 元数据、Activity、费用可信度与桌面/移动证据，避免重复建设 full-http、模型池和发布 gate。第四，PR 分支在 CI、Codex Review 或替代人工复审、CDS、直连预览和完整测试租户清理全部通过后才能合并。
 
-PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。最终融合验收使用真实 `prd-llmgw`、真实 `PrdAgent.LlmGateway`、独立 Mongo 和本地假上游：从控制台创建测试租户与团队，保存 PromptPolicy v1，创建一次性 `gwk_*`，GW Native、OpenAI、Claude、Gemini 四协议各返回 200 并在 Activity 形成四条同租户日志；四次上游请求均按前缀、请求 system、后缀顺序应用策略，日志只保留 policy id/version/hash，未保存策略正文。切换回内部租户后，组织、key、appCaller、日志、usage 和策略审计均不可见；撤销 key 后 serving 返回 401。验收后逐集合检查测试 TenantId、租户、团队、membership 和用户引用均为 0。未增加付费调用。最终提交的 GitHub CI、四镜像和 CDS Deploy 全绿，独立预览首页、Quickstart 与 Activity 深链均返回 200。PR #1089 已 squash 合并为 `90559e64ed63594fa5cd43c922e9713ddb7622ed`。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代；Bugbot 不适用。
+PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。最终融合验收使用真实 `llmgw/console-api`、真实 `PrdAgent.LlmGateway`、独立 Mongo 和本地假上游：从控制台创建测试租户与团队，保存 PromptPolicy v1，创建一次性 `gwk_*`，GW Native、OpenAI、Claude、Gemini 四协议各返回 200 并在 Activity 形成四条同租户日志；四次上游请求均按前缀、请求 system、后缀顺序应用策略，日志只保留 policy id/version/hash，未保存策略正文。切换回内部租户后，组织、key、appCaller、日志、usage 和策略审计均不可见；撤销 key 后 serving 返回 401。验收后逐集合检查测试 TenantId、租户、团队、membership 和用户引用均为 0。未增加付费调用。最终提交的 GitHub CI、四镜像和 CDS Deploy 全绿，独立预览首页、Quickstart 与 Activity 深链均返回 200。PR #1089 已 squash 合并为 `90559e64ed63594fa5cd43c922e9713ddb7622ed`。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代；Bugbot 不适用。
 
 执行期间保持以下边界：
 
@@ -236,10 +236,10 @@ doc/plan.platform.llm-gateway-external-platform.md
 1. doc/plan.platform.llm-gateway-protocol-router.md
 2. doc/plan.llm-gateway.full-cutover.md
 3. doc/debt.llm-gateway.md
-4. prd-llmgw/Program.cs
-5. prd-llmgw-web/src/App.tsx
-6. prd-llmgw-web/src/components/ConsoleLayout.tsx
-7. prd-llmgw-web/src/pages/OverviewPage.tsx
+4. llmgw/console-api/Program.cs
+5. llmgw/web/src/App.tsx
+6. llmgw/web/src/components/ConsoleLayout.tsx
+7. llmgw/web/src/pages/OverviewPage.tsx
 
 当前生产已经 full-http。不要重做模型迁移、模型池或发布 gate。现有 gwk_* scoped service key 是基座，不是完整租户体系。你的目标是按 PR-1 到 PR-5 有限推进：租户/团队/用户/RBAC、tenant-scoped key 与网页 Quickstart、appCaller PromptPolicy、控制台 IA/图表/金额可信度、最终安全验收。
 

@@ -1,0 +1,99 @@
+// 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { AuthProvider, useAuth } from '@/lib/auth';
+import { ConsoleLayout } from '@/components/ConsoleLayout';
+import { LoginPage } from '@/pages/LoginPage';
+import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
+import { OverviewPage } from '@/pages/HomePage';
+import { GovernancePage } from '@/pages/OverviewPage';
+import { LogsPage } from '@/pages/LogsPage';
+import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
+import { AppCallersPage } from '@/pages/AppCallersPage';
+import { PlatformsPage } from '@/pages/PlatformsPage';
+import { ModelsPage } from '@/pages/ModelsPage';
+import { ExchangesPage } from '@/pages/ExchangesPage';
+import { AuditsPage } from '@/pages/AuditsPage';
+import { ShadowPage } from '@/pages/ShadowPage';
+import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
+import { QuickstartPage } from '@/pages/QuickstartPage';
+import { OrganizationPage } from '@/pages/OrganizationPage';
+import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
+import { SettingsPage } from '@/pages/SettingsPage';
+import { UsagePage } from '@/pages/UsagePage';
+import { LearningCenterPage } from '@/pages/LearningCenterPage';
+
+function getRouterBasename() {
+  if (typeof window === 'undefined') return undefined;
+  return window.location.pathname === '/llmgw' || window.location.pathname.startsWith('/llmgw/')
+    ? '/llmgw'
+    : undefined;
+}
+
+// 受保护路由守卫：未登录跳登录页；已登录但挂着「强制改密」标记则跳改密页（服务端策略门同样拦截，双保险）。
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { authed, mustChangePassword } = useAuth();
+  const location = useLocation();
+  if (!authed) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (mustChangePassword) return <Navigate to="/change-password" replace />;
+  return <>{children}</>;
+}
+
+// 改密页守卫：未登录跳登录；已登录且无需改密则不应停留在此页，回主页。
+function RequireChangePassword({ children }: { children: ReactNode }) {
+  const { authed, mustChangePassword } = useAuth();
+  if (!authed) return <Navigate to="/login" replace />;
+  if (!mustChangePassword) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function RequireInternalTenant({ children }: { children: ReactNode }) {
+  const { tenant } = useAuth();
+  return tenant?.isInternal ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter basename={getRouterBasename()}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/change-password"
+            element={
+              <RequireChangePassword>
+                <ChangePasswordPage />
+              </RequireChangePassword>
+            }
+          />
+          <Route
+            element={
+              <RequireAuth>
+                <ConsoleLayout />
+              </RequireAuth>
+            }
+          >
+            <Route path="/" element={<OverviewPage />} />
+            <Route path="/logs" element={<LogsPage />} />
+            <Route path="/app-callers" element={<AppCallersPage />} />
+            <Route path="/app-callers/:id/prompt-policy" element={<PromptPolicyPage />} />
+            <Route path="/pools" element={<ModelPoolsPage />} />
+            <Route path="/platforms" element={<PlatformsPage />} />
+            <Route path="/models" element={<ModelsPage />} />
+            <Route path="/exchanges" element={<ExchangesPage />} />
+            <Route path="/audits" element={<AuditsPage />} />
+            <Route path="/service-keys" element={<ServiceKeysPage />} />
+            <Route path="/quickstart" element={<QuickstartPage />} />
+            <Route path="/learn" element={<LearningCenterPage />} />
+            <Route path="/organization" element={<OrganizationPage />} />
+            <Route path="/shadow" element={<RequireInternalTenant><ShadowPage /></RequireInternalTenant>} />
+            <Route path="/governance" element={<RequireInternalTenant><GovernancePage /></RequireInternalTenant>} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/usage" element={<UsagePage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
