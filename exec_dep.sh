@@ -1219,7 +1219,9 @@ run_llmgw_post_deploy_verification_if_needed() {
   esac
 
   require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
-  if [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
+  if [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway post-deploy runtime gates: skipped for audited full-http maintenance release; serving probe and requested canaries remain required"
+  elif [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
     echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
     runtime_gate_expect_arg=""
     if [ -n "$expect_commit" ]; then

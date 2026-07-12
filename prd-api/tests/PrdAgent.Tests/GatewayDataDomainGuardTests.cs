@@ -784,6 +784,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
         Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);
+        Assert.Contains("[ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" = \"1\" ]", script);
+        Assert.Contains("skipped for audited full-http maintenance release", script);
         Assert.Contains("LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only", script);
         Assert.Contains("--allow-pending-http-full-ledger", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
