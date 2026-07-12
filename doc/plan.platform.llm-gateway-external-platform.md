@@ -23,8 +23,8 @@
 | PR-1 | 已合并；CI、Codex Review、CDS 与预览验收通过；Bugbot 因订阅停用记为不适用 | `codex/llmgw-tenant-rbac` / [PR #1085](https://github.com/inernoro/prd_agent/pull/1085) | tenant/team/user/membership/RBAC、服务端租户解析、全租户数据隔离与跨租户拒绝测试 |
 | PR-2 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-service-key-quickstart` / [PR #1086](https://github.com/inernoro/prd_agent/pull/1086) | tenant-scoped service key、自助接入、四协议 Quickstart；四协议各一次真实请求，其余假上游 |
 | PR-3 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-prompt-policy` / [PR #1087](https://github.com/inernoro/prd_agent/pull/1087) | PromptPolicy 版本、预览、审计及 chat/vision 注入合同 |
-| PR-4 | 本地实现与验收完成，待独立 PR 的 CI、Codex Review 和 CDS | `codex/llmgw-console-experience` | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
-| PR-5 | 待开始 | 待 PR-4 完成后创建 | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
+| PR-4 | 已合并；CI、CDS、直连预览和替代人工复审通过；Bugbot 不适用 | `codex/llmgw-console-experience` / [PR #1088](https://github.com/inernoro/prd_agent/pull/1088) | 控制台 IA、左侧导航、首页、Activity 图表与金额可信度，多视口双主题验收 |
+| PR-5 | 开发与本地合同验收中 | `codex/llmgw-final-platform-acceptance` | 跨租户安全、四协议、完整接入流程和迁移收口验收 |
 
 每个 PR 的固定流程：从最新 `main` 建独立分支 → 实现有限范围 → 本地静态、单元与行为测试 → 中文 commit → push → 创建独立 PR → 等待 CI、Codex Review、CDS → 直连预览域名验收 → 修复所有阻塞项 → 合并后再开始下一 PR。Bugbot 自 2026-07-12 起因用户停止续费而不再作为门禁，统一记录为不适用，不触发、不等待。
 
@@ -34,7 +34,13 @@ PR-2 证据（2026-07-12）：保留既有 `gwk_*`、一次性明文和 SHA-256 
 
 PR-3 证据（2026-07-12）：新增 `llmgw_prompt_policies` 不可变版本集合，唯一索引为 TenantId + AppCallerCode + RequestType + Version；控制台 GET/预览/保存/回滚全部先以服务端会话 TenantId 过滤 appCaller 和策略。实跑临时库完成无版本、预览、保存 v1、陈旧版本 409、禁用 v2、回滚新建 v3，操作审计不含前缀/后缀正文。serving 只在四协议统一后的 chat/vision `messages` 应用策略，合并顺序为前缀、请求 system、后缀；raw/非 chat/vision 回归保持原请求。日志向上游发送合并正文，但 `RequestBodyRedacted` 只保留策略标记，`SystemPromptText` 置空，仅写 id/version/hash/chars。PromptPolicy 定向行为 4/4、日志脱敏 1/1、数据域守卫 58/58 通过；GitHub 标准 .NET 8 CI、四镜像与 CDS Deploy 全绿，CDS smoke 3/3，serving health 精确回显提交 `1c7073fa51e5c01f1508572bd5d70650d07f490d`。自动 Codex Review 因额度耗尽未生成结果，已用人工对抗审查替代并修复禁用策略回退与索引方向漂移。PR #1087 已 squash 合并为 `6b98efd19da42b39e9eeab0c79fee0ab8538afad`；Bugbot 不适用。
 
-PR-4 本地证据（2026-07-12）：顶部收口为品牌、租户切换、requestId 搜索、文档和用户菜单，页面导航迁入工作区、路由、开发者、组织、治理、设置六组左侧栏；移动端使用可关闭抽屉。普通首页第一屏只呈现健康状态、四协议 Quickstart、最近请求与费用可信度，runtime gate、配置权威迁移和容器拓扑整体迁到 `/governance`。Activity 保留请求量图并增加状态分布图，费用汇总新增 `pricedRequests`、`unknownCostRequests`、`priceCoveragePercent` 与按原币种 `estimatedCosts`；只有 token 使用量对应价格快照完整的请求才计为 covered，只有明确 USD 快照进入 `EstimatedCostUsd`，没有 USD 样本时返回 null。临时 Mongo + 真实控制台后端验证四条日志中完整 USD 1.25、完整 CNY 8.00、无价格和仅输入价格两条均为 unknown，覆盖率 50%；部分 USD 估算未混入 USD 汇总，CNY 与 USD 未相加。租户列表由服务端 userId 与 TenantId membership 解析。浏览器验证桌面和移动无水平溢出、移动抽屉、深浅主题、两张 Activity 图、unknown 显示、requestId 全局搜索和筛选均通过，0 console warning/error。控制台构建、后端 0 warning/0 error、数据域守卫 61/61 通过；尚待独立 PR 的 CI、Codex Review、CDS 与直连预览。
+PR-4 本地证据（2026-07-12）：顶部收口为品牌、租户切换、requestId 搜索、文档和用户菜单，页面导航迁入工作区、路由、开发者、组织、治理、设置六组左侧栏；移动端使用可关闭抽屉。普通首页第一屏只呈现健康状态、四协议 Quickstart、最近请求与费用可信度，runtime gate、配置权威迁移和容器拓扑整体迁到 `/governance`。Activity 保留请求量图并增加状态分布图，费用汇总新增 `pricedRequests`、`unknownCostRequests`、`priceCoveragePercent` 与按原币种 `estimatedCosts`；只有 token 使用量对应价格快照完整的请求才计为 covered，只有明确 USD 快照进入 `EstimatedCostUsd`，没有 USD 样本时返回 null。临时 Mongo + 真实控制台后端验证四条日志中完整 USD 1.25、完整 CNY 8.00、无价格和仅输入价格两条均为 unknown，覆盖率 50%；部分 USD 估算未混入 USD 汇总，CNY 与 USD 未相加。租户列表由服务端 userId 与 TenantId membership 解析。浏览器验证桌面和移动无水平溢出、移动抽屉、深浅主题、两张 Activity 图、unknown 显示、requestId 全局搜索和筛选均通过，0 console warning/error。控制台构建、后端 0 warning/0 error、数据域守卫 61/61 通过。
+
+PR-4 发布证据（2026-07-12）：最终提交 `5fba56b9552e161f16b74cb720b8be2c17a09311` 的 GitHub CI、四镜像、CDS Deploy 与 smoke 3/3 全绿，serving health 精确回显同 commit，独立控制台和 serving 深链均返回 200。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代并修复 requestId 同路由刷新与部分价格快照覆盖率两个缺陷。PR #1088 已 squash 合并为 `3217c862a8da7ce9fe78eef086e5b4a7a7dfd2f7`；Bugbot 不适用。
+
+PR-5 精确计划（2026-07-12）：不再增加平台能力，只做有限验收收口。第一，修复生产治理验收脚本在 PR-1 后仍伪造无租户 claim JWT、Mongo 查询和清理缺少 TenantId 的漂移，改为通过真实控制台登录与 `/auth/context` 取得服务端租户。第二，用既有假上游合同覆盖 tenant-scoped key 的授权、越权、撤销和 GW Native、OpenAI、Claude、Gemini 四协议，不批量调用付费模型。第三，串联 PR-1 至 PR-4 的租户创建、密钥接入、PromptPolicy 元数据、Activity、费用可信度与桌面/移动证据，避免重复建设 full-http、模型池和发布 gate。第四，PR 分支在 CI、Codex Review 或替代人工复审、CDS、直连预览和完整测试租户清理全部通过后才能合并。
+
+PR-5 本地证据（进行中）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。生产/灰度执行、测试租户清理和独立 PR 门禁仍待完成。
 
 执行期间保持以下边界：
 
@@ -64,10 +70,10 @@ PR-4 本地证据（2026-07-12）：顶部收口为品牌、租户切换、reque
 | 用户与团队 | PR-1 已补齐 tenant/team/user/membership/RBAC；网页组织入口在 PR-2 接入自助流程 |
 | 外部开发者体验 | PR-2 已补齐网页版四协议 Quickstart、错误排查和 requestId 定位 |
 | appCaller 提示词策略 | PR-3 已补齐版本、预览、回滚、审计以及 chat/vision 应用 |
-| 首页可理解性 | PR-4 已在本地把普通用户首要任务前置，待独立发布门验证 |
-| 导航 | PR-4 已在本地落地左侧分组导航与移动抽屉，待独立发布门验证 |
-| 金额可信度 | PR-4 已在本地区分 estimated/unknown 并按原币种汇总，待独立发布门验证 |
-| 图表 | PR-4 已在本地完成请求量、状态分布、空态、窄屏与双主题验收，待独立发布门验证 |
+| 首页可理解性 | PR-4 已把普通用户首要任务前置并通过独立发布门验证 |
+| 导航 | PR-4 已落地左侧分组导航与移动抽屉并通过独立发布门验证 |
+| 金额可信度 | PR-4 已区分 estimated/unknown 并按原币种汇总，通过独立发布门验证 |
+| 图表 | PR-4 已完成请求量、状态分布、空态、窄屏与双主题验收 |
 
 ## 3. 产品与数据边界
 
