@@ -237,6 +237,7 @@ docs:
   rule.frontend.default-editable: 默认可编辑原则
   rule.frontend.frontend-component-reuse: 前端组件复用规则
   rule.platform.test-organization: 测试组织规范
+  rule.platform.production-release-safety: 生产发布表面健康与可追溯性规则
   rule.skill.system: 技能系统规则与创建指南
   rule.skill.trigger-disambiguation: 同族技能触发词去重规则
   rule.frontend.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
@@ -331,6 +332,7 @@ docs:
   debt.visual-agent.storyboard: 视觉分镜台 · 债务台账（OpenRouter 出图画幅/modalities 按能力派生 · 拆镜 SSE 流式 · 关键帧 ImageGenRun 取消）
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.platform.asset-storage: 资源存储（IAssetStorage 实现）债务台账
+  debt.platform.production-release: 生产发布安全债务台账
   debt.cds.agent.sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
   debt.cds.agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds.branch-isolation: CDS 多分支跨分支隔离 · 债务台账（DNS 串台 / BullMQ 抢 job）
@@ -368,6 +370,7 @@ docs:
 
   # ── 七、周报（降序：最新在前）──
   report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
+  report.2026-W28: 周报 2026-W28 (07-06 ~ 07-12)
   report.2026-W27: 周报 2026-W27 (06-29 ~ 07-05)
   report.2026-W26: 周报 2026-W26 (06-22 ~ 06-28)
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
