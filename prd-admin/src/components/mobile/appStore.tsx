@@ -3,6 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AS_COLOR, AS_TYPE, AS_SPACE, AS_SIZE, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
 /**
  * App Store Today tab（暗色）页面级复刻的基础组件集。
@@ -57,16 +58,17 @@ interface SectionHeaderProps {
 }
 
 export function AppStoreSectionHeader({ title, onShowAll, caption }: SectionHeaderProps) {
+  const C = useAppStoreColors();
   return (
     <div style={{ padding: `0 ${AS_SPACE.gutter}px`, marginBottom: AS_SPACE.titleGap, fontFamily: AS_FONT_FAMILY }}>
       <div className="flex items-end justify-between gap-3">
-        <h2 style={{ ...AS_TYPE.sectionTitle, color: AS_COLOR.label, margin: 0 }}>{title}</h2>
+        <h2 style={{ ...AS_TYPE.sectionTitle, color: C.label, margin: 0 }}>{title}</h2>
         {onShowAll && (
           <button
             type="button"
             onClick={onShowAll}
             className="inline-flex items-center gap-0.5 active:opacity-60 transition-opacity"
-            style={{ ...AS_TYPE.sectionAction, color: AS_COLOR.blue }}
+            style={{ ...AS_TYPE.sectionAction, color: C.blue }}
           >
             全部
             <ChevronRight size={18} strokeWidth={2.2} />
@@ -74,7 +76,7 @@ export function AppStoreSectionHeader({ title, onShowAll, caption }: SectionHead
         )}
       </div>
       {caption && (
-        <div style={{ ...AS_TYPE.itemSubtitle, color: AS_COLOR.labelSecondary, marginTop: 4 }}>
+        <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 4 }}>
           {caption}
         </div>
       )}
@@ -125,8 +127,9 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
 }
 
 function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
-  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : AS_COLOR.pillBg;
-  const fg = variant === 'onImage' ? AS_COLOR.label : AS_COLOR.blue;
+  const C = useAppStoreColors();
+  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : C.pillBg;
+  const fg = variant === 'onImage' ? C.label : C.blue;
   return (
     <span className="flex flex-col items-center gap-0.5 shrink-0" style={{ fontFamily: AS_FONT_FAMILY }}>
       <span
@@ -147,7 +150,7 @@ function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillBut
         {label}
       </span>
       {caption && (
-        <span style={{ ...AS_TYPE.caption, color: AS_COLOR.labelTertiary }}>{caption}</span>
+        <span style={{ ...AS_TYPE.caption, color: C.labelTertiary }}>{caption}</span>
       )}
     </span>
   );
@@ -716,6 +719,7 @@ export function AppStoreRankedList({ items, numbered = true }: RankedListProps) 
 }
 
 function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | null; isLast: boolean }) {
+  const C = useAppStoreColors();
   return (
     <button
       type="button"
@@ -732,7 +736,7 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
           style={{
             width: 22,
             ...AS_TYPE.itemTitle,
-            color: AS_COLOR.labelSecondary,
+            color: C.labelSecondary,
             fontWeight: 400,
           }}
         >
@@ -743,13 +747,13 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
       <div className="min-w-0 flex-1">
         <div
           className="truncate"
-          style={{ ...AS_TYPE.itemTitle, color: AS_COLOR.label }}
+          style={{ ...AS_TYPE.itemTitle, color: C.label }}
         >
           {item.title}
         </div>
         <div
           className="truncate"
-          style={{ ...AS_TYPE.itemSubtitle, color: AS_COLOR.labelSecondary, marginTop: 2 }}
+          style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}
         >
           {item.subtitle}
         </div>
@@ -764,7 +768,7 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
           className="absolute left-0 right-0 bottom-0"
           style={{
             height: 0.5,
-            background: AS_COLOR.separator,
+            background: C.separator,
             marginLeft: rank !== null ? AS_SPACE.listDividerInset + 22 + 12 : AS_SPACE.listDividerInset,
           }}
           aria-hidden

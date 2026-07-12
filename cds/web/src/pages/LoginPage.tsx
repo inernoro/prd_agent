@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Eye, EyeOff, Github, Loader2 } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Github, Loader2, Moon, Sun } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { CdsGem } from '@/components/brand/CdsGem';
@@ -246,6 +246,33 @@ const LINE_STATIONS = [
   { left: '45%', word: 'live', time: '2:00' },
 ];
 
+/*
+ * MobileLine — 「一条线」的手机形态:竖排三站时间轴 + 下落电流。
+ * 桌面横贯光路(TheLine)在 <lg 隐藏后,手机曾只剩一行灰字,整页显得空;
+ * 竖线把同一个视觉思想带进窄屏:结构、节奏、动效都还在,只是转了 90 度。
+ */
+const MOBILE_STATIONS = [
+  { word: 'push', time: '0:00', desc: '推送你的分支' },
+  { word: 'build', time: '0:40', desc: '构建镜像 · 启动容器' },
+  { word: 'live', time: '2:00', desc: '预览域名就绪' },
+];
+
+function MobileLine(): JSX.Element {
+  return (
+    <div className="cds-auth-line-m" aria-hidden>
+      <span className="cds-auth-line-m-beam" />
+      {MOBILE_STATIONS.map((s) => (
+        <div key={s.word} className="cds-auth-line-m-station">
+          <i />
+          <b>{s.word}</b>
+          <em>{s.time}</em>
+          <span>{s.desc}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TheLine(): JSX.Element {
   return (
     <div className="cds-auth-line" aria-hidden>
@@ -285,7 +312,7 @@ function AuthFormSkeleton(): JSX.Element {
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
-  const { theme } = useTheme();
+  const { theme, setTheme } = useTheme();
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
   // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
@@ -361,6 +388,15 @@ export function LoginPage(): JSX.Element {
           <CdsGem detail="simple" className="h-6 w-6" />
           <span>Cloud Dev Suite</span>
         </Link>
+        {/* 未登录页也能切主题:白天形态是刻意设计过的,不该藏到登录后才被发现。 */}
+        <button
+          type="button"
+          className="cds-auth-theme"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          aria-label={theme === 'dark' ? '切换到白天主题' : '切换到黑夜主题'}
+        >
+          {theme === 'dark' ? <Sun /> : <Moon />}
+        </button>
       </header>
 
       {/* 舞台:左侧用户故事,右侧终点站(登录卡),一条线横贯两者。 */}
@@ -382,9 +418,12 @@ export function LoginPage(): JSX.Element {
           <p className="cds-auth-story">
             构建、容器、日志、预览域名——大约两分钟，你推送的分支就是一套活的在线环境。登录，领取它。
           </p>
-          <p className="cds-auth-timeline-compact" aria-hidden>
-            push <span>·</span> build <span>·</span> live — ~2 min
-          </p>
+          <div className="cds-auth-proof" aria-hidden>
+            <span>构建隔离容器</span>
+            <span>独立预览域名</span>
+            <span>PR 状态回写</span>
+          </div>
+          <MobileLine />
         </div>
         <div className="cds-auth-card-wrap cds-page-enter">
           {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}

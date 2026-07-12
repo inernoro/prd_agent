@@ -46,6 +46,33 @@ export const AS_COLOR = {
   indigo: '#5E5CE6',
 } as const;
 
+/** iOS 浅色（Light Mode）对照色板 —— 与 AS_COLOR 同形状,配合 useAppStoreColors 切换 */
+export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
+  bg: '#f2f2f7',
+
+  label: '#1c1c1e',
+  labelSecondary: 'rgba(60, 60, 67, 0.60)',
+  labelTertiary: 'rgba(60, 60, 67, 0.30)',
+
+  separator: 'rgba(60, 60, 67, 0.29)',
+  hairline: 'rgba(0, 0, 0, 0.08)',
+
+  surface: 'rgba(0, 0, 0, 0.045)',
+  surfaceHover: 'rgba(0, 0, 0, 0.07)',
+
+  pillBg: 'rgba(120, 120, 128, 0.16)',
+
+  blue: '#007aff',
+  green: '#34c759',
+  orange: '#ff9500',
+  yellow: '#ffcc00',
+  red: '#ff3b30',
+  pink: '#ff2d55',
+  purple: '#af52de',
+  teal: '#32ade6',
+  indigo: '#5856d6',
+} as const;
+
 /* ───────────── 字号阶梯（严格的 9 档，不允许出现中间值） ───────────── */
 
 export const AS_TYPE = {

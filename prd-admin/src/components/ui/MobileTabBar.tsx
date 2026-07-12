@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import {
   Home,
   Compass,
@@ -92,6 +93,72 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  // 双主题（2026-07-12「底部没有白」修复）:跟随 <html data-theme>,浅色时整条 Tab 栏
+  // 与快速创建抽屉走白底墨字,不再永远压一条黑边在浅色页面底部。
+  const light = useDataTheme() === 'light';
+  const T = light
+    ? {
+        barBg: 'linear-gradient(0deg, rgba(255,255,255,0.98) 0%, rgba(250,250,251,0.94) 100%)',
+        barBorder: '1px solid rgba(20,21,26,0.08)',
+        barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(20,21,26,0.05) 50%, transparent 100%)',
+        iconActive: '#18191c',
+        iconIdle: 'rgba(24,25,28,0.38)',
+        labelActive: '#18191c',
+        labelIdle: 'rgba(24,25,28,0.36)',
+        centerBg: 'rgba(20,21,26,0.06)',
+        centerBgOpen: 'rgba(20,21,26,0.12)',
+        centerBorder: '1px solid rgba(20,21,26,0.10)',
+        centerShadow: 'none',
+        centerIcon: '#18191c',
+        sheetBg: 'linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(247,247,248,0.99) 100%)',
+        sheetBorder: '1px solid rgba(20,21,26,0.08)',
+        sheetShadow: '0 -18px 48px rgba(20,21,26,0.16)',
+        sheetGrip: 'rgba(20,21,26,0.16)',
+        sheetTitle: '#18191c',
+        sheetSub: 'rgba(24,25,28,0.45)',
+        sheetLabel: 'rgba(24,25,28,0.45)',
+        sheetItemBg: 'rgba(20,21,26,0.03)',
+        sheetItemBorder: '1px solid rgba(20,21,26,0.07)',
+        sheetItemDivider: '1px solid rgba(20,21,26,0.06)',
+        sheetItemTitle: '#18191c',
+        sheetItemDesc: 'rgba(24,25,28,0.45)',
+        sheetChevron: 'rgba(24,25,28,0.3)',
+        closeBg: 'rgba(20,21,26,0.05)',
+        closeBorder: '1px solid rgba(20,21,26,0.09)',
+        closeIcon: 'rgba(24,25,28,0.6)',
+        activePress: 'active:bg-black/[0.04]',
+      }
+    : {
+        barBg: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
+        barBorder: '1px solid rgba(255, 255, 255, 0.06)',
+        barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%)',
+        iconActive: 'rgba(255, 255, 255, 0.95)',
+        iconIdle: 'rgba(255, 255, 255, 0.35)',
+        labelActive: 'rgba(255, 255, 255, 0.88)',
+        labelIdle: 'rgba(255, 255, 255, 0.30)',
+        centerBg: 'rgba(255, 255, 255, 0.12)',
+        centerBgOpen: 'rgba(255, 255, 255, 0.18)',
+        centerBorder: '1px solid rgba(255, 255, 255, 0.15)',
+        centerShadow: '0 0 12px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+        centerIcon: 'rgba(255, 255, 255, 0.90)',
+        sheetBg: 'linear-gradient(180deg, rgba(33,34,43,0.99) 0%, rgba(20,21,28,0.99) 100%)',
+        sheetBorder: '1px solid rgba(255,255,255,0.08)',
+        sheetShadow: '0 -18px 48px rgba(0,0,0,0.45)',
+        sheetGrip: 'rgba(255,255,255,0.18)',
+        sheetTitle: 'rgba(255,255,255,0.94)',
+        sheetSub: 'rgba(255,255,255,0.45)',
+        sheetLabel: 'rgba(255,255,255,0.40)',
+        sheetItemBg: 'rgba(255,255,255,0.05)',
+        sheetItemBorder: '1px solid rgba(255,255,255,0.07)',
+        sheetItemDivider: '1px solid rgba(255,255,255,0.06)',
+        sheetItemTitle: 'rgba(255,255,255,0.92)',
+        sheetItemDesc: 'rgba(255,255,255,0.45)',
+        sheetChevron: 'rgba(255,255,255,0.30)',
+        closeBg: 'rgba(255,255,255,0.08)',
+        closeBorder: '1px solid rgba(255,255,255,0.10)',
+        closeIcon: 'rgba(255,255,255,0.75)',
+        activePress: 'active:bg-white/[0.06]',
+      };
 
   const handleActionSelect = useCallback((path: string) => {
     setMenuOpen(false);
@@ -152,10 +219,10 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         className="absolute left-0 right-0 bottom-0"
         style={{
           borderRadius: '24px 24px 0 0',
-          background: 'linear-gradient(180deg, rgba(33,34,43,0.99) 0%, rgba(20,21,28,0.99) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: T.sheetBg,
+          border: T.sheetBorder,
           borderBottom: 'none',
-          boxShadow: '0 -18px 48px rgba(0,0,0,0.45)',
+          boxShadow: T.sheetShadow,
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)',
           transform: menuOpen ? 'translateY(0)' : 'translateY(105%)',
           transition: menuOpen
@@ -165,16 +232,16 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
       >
         {/* 顶部拖拽指示条 */}
         <div className="flex justify-center pt-2.5 pb-1">
-          <div style={{ width: 36, height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.18)' }} />
+          <div style={{ width: 36, height: 4, borderRadius: 999, background: T.sheetGrip }} />
         </div>
 
         {/* 标题行 */}
         <div className="flex items-center justify-between px-5 pt-1 pb-1">
           <div>
-            <div className="text-[17px] font-bold" style={{ color: 'rgba(255,255,255,0.94)' }}>
+            <div className="text-[17px] font-bold" style={{ color: T.sheetTitle }}>
               快速创建
             </div>
-            <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            <div className="text-[12px] mt-0.5" style={{ color: T.sheetSub }}>
               选一种方式，开始今天的产出
             </div>
           </div>
@@ -186,22 +253,22 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
               width: 32,
               height: 32,
               borderRadius: 16,
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.10)',
+              background: T.closeBg,
+              border: T.closeBorder,
             }}
           >
-            <X size={16} style={{ color: 'rgba(255,255,255,0.75)' }} />
+            <X size={16} style={{ color: T.closeIcon }} />
           </button>
         </div>
 
         {/* 最近热门 */}
         <div className="px-5 mt-3" style={itemAnim(0)}>
-          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: T.sheetLabel }}>
             最近热门
           </div>
           <div
             className="rounded-2xl overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}
+            style={{ background: T.sheetItemBg, border: T.sheetItemBorder }}
           >
             {HOT_ACTIONS.map((action, i) => {
               const Icon = action.icon;
@@ -209,10 +276,10 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                 <button
                   key={action.key}
                   onClick={() => handleActionSelect(action.path)}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors active:bg-white/[0.06]"
+                  className={cn('w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors', T.activePress)}
                   style={{
                     minHeight: 'var(--mobile-min-touch, 44px)',
-                    borderBottom: i < HOT_ACTIONS.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                    borderBottom: i < HOT_ACTIONS.length - 1 ? T.sheetItemDivider : 'none',
                   }}
                 >
                   <div
@@ -229,7 +296,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[14px] font-semibold" style={{ color: 'rgba(255,255,255,0.92)' }}>
+                      <span className="text-[14px] font-semibold" style={{ color: T.sheetItemTitle }}>
                         {action.label}
                       </span>
                       <span
@@ -243,11 +310,11 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                         热门
                       </span>
                     </div>
-                    <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                    <div className="text-[11px] mt-0.5 truncate" style={{ color: T.sheetItemDesc }}>
                       {action.desc}
                     </div>
                   </div>
-                  <ChevronRight size={16} className="shrink-0" style={{ color: 'rgba(255,255,255,0.30)' }} />
+                  <ChevronRight size={16} className="shrink-0" style={{ color: T.sheetChevron }} />
                 </button>
               );
             })}
@@ -256,7 +323,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
 
         {/* 开始创作 */}
         <div className="px-5 mt-4" style={itemAnim(1)}>
-          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+          <div className="text-[11px] font-semibold tracking-wide mb-2" style={{ color: T.sheetLabel }}>
             开始创作
           </div>
           <div className="grid grid-cols-4 gap-2">
@@ -268,8 +335,8 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   onClick={() => handleActionSelect(action.path)}
                   className="flex flex-col items-center gap-1.5 py-3 rounded-2xl active:scale-95 transition-transform"
                   style={{
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.07)',
+                    background: T.sheetItemBg,
+                    border: T.sheetItemBorder,
                     minHeight: 'var(--mobile-min-touch, 44px)',
                   }}
                 >
@@ -286,7 +353,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   >
                     <Icon size={20} style={{ color: action.color }} />
                   </div>
-                  <span className="text-[11px] font-medium whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.78)' }}>
+                  <span className="text-[11px] font-medium whitespace-nowrap" style={{ color: T.sheetItemTitle }}>
                     {action.label}
                   </span>
                 </button>
@@ -314,8 +381,8 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         <div
           className="absolute inset-0"
           style={{
-            background: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            background: T.barBg,
+            borderTop: T.barBorder,
             backdropFilter: 'blur(48px) saturate(200%)',
             WebkitBackdropFilter: 'blur(48px) saturate(200%)',
           }}
@@ -323,9 +390,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         {/* 顶部高光线 */}
         <div
           className="absolute top-0 left-[12%] right-[12%] h-px"
-          style={{
-            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%)',
-          }}
+          style={{ background: T.barHighlight }}
         />
 
         {/* 5 Tabs */}
@@ -356,11 +421,9 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      background: menuOpen
-                        ? 'rgba(255, 255, 255, 0.18)'
-                        : 'rgba(255, 255, 255, 0.12)',
-                      boxShadow: '0 0 12px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      background: menuOpen ? T.centerBgOpen : T.centerBg,
+                      boxShadow: T.centerShadow,
+                      border: T.centerBorder,
                       transition: 'background 0.3s ease',
                     }}
                   >
@@ -368,7 +431,7 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                       size={22}
                       strokeWidth={2.5}
                       style={{
-                        color: 'rgba(255, 255, 255, 0.90)',
+                        color: T.centerIcon,
                         transform: `rotate(${menuOpen ? '45deg' : '0deg'})`,
                         transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
                       }}
@@ -390,15 +453,15 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   size={21}
                   strokeWidth={active ? 2.2 : 1.6}
                   style={{
-                    color: active ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.35)',
+                    color: active ? T.iconActive : T.iconIdle,
                     transition: 'color 0.2s ease',
-                    filter: active ? 'drop-shadow(0 0 4px rgba(255,255,255,0.15))' : 'none',
+                    filter: active && !light ? 'drop-shadow(0 0 4px rgba(255,255,255,0.15))' : 'none',
                   }}
                 />
                 <span
                   className={cn('text-[10px] leading-none', active ? 'font-semibold' : 'font-normal')}
                   style={{
-                    color: active ? 'rgba(255, 255, 255, 0.88)' : 'rgba(255, 255, 255, 0.30)',
+                    color: active ? T.labelActive : T.labelIdle,
                     transition: 'color 0.2s ease',
                   }}
                 >

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -28,6 +29,8 @@ function getNotificationTone(level?: string) {
  * 移动端系统通知页 — 展示全部通知，支持单条/一键处理。
  */
 export default function MobileNotificationsPage() {
+  const light = useDataTheme() === 'light';
+  const subtleBg = light ? 'rgba(20,21,26,0.06)' : 'rgba(255, 255, 255, 0.08)';
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +119,7 @@ export default function MobileNotificationsPage() {
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all active:scale-95"
-              style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+              style={{ background: subtleBg, color: 'var(--text-primary)' }}
               onClick={handleAll}
             >
               <CheckCircle2 size={14} />
@@ -174,9 +177,9 @@ export default function MobileNotificationsPage() {
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]"
                               style={{
-                                background: 'rgba(255,255,255,0.06)',
+                                background: light ? 'rgba(20,21,26,0.05)' : 'rgba(255,255,255,0.06)',
                                 color: 'var(--text-secondary)',
-                                border: '1px solid rgba(255,255,255,0.1)',
+                                border: `1px solid ${light ? 'rgba(20,21,26,0.10)' : 'rgba(255,255,255,0.1)'}`,
                               }}
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -194,7 +197,7 @@ export default function MobileNotificationsPage() {
                     <button
                       type="button"
                       className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-all active:scale-90"
-                      style={{ background: 'rgba(255,255,255,0.08)' }}
+                      style={{ background: subtleBg }}
                       onClick={(e) => { e.stopPropagation(); void handleOne(item.id); }}
                       disabled={isHandling}
                     >

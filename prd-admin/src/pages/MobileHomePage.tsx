@@ -1,775 +1,557 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+/**
+ * 移动端首页（<768px）—— 定稿方向（2026-07-12 用户确认）：
+ *
+ *  浅色（默认）＝「工作台式」骨架 + 琥珀数据头带
+ *    - 参照飞书/钉钉工作台：浅灰画布 #F2F3F7 托纯白卡，功能色只出现在图标块，
+ *      红点徽章原生位；挂载期把 <html data-theme="light"> 打开让壳层跟随。
+ *    - 参照 Stripe Dashboard：顶部一条 MAP 琥珀头带承载问候 + 一个关键大数字。
+ *
+ *  暗色（prefers-color-scheme: dark 跟随系统）＝「夜光式」形态
+ *    - 参照 Linear 2025：#08090A 近黑底、0.5px 发丝边、字重 400-510、
+ *      字距收紧；全页唯一亮色是 MAP 琥珀，当「手电筒」用（关键数字/live 点/徽章）。
+ *
+ *  结构（两形态同构）：头带或问候 → 继续上次 → 常用应用宫格 → 七日数据
+ *  → 我的动态 → 推荐智能体货架 → 页脚。全部真实数据（useMobileHomeData）。
+ */
+import type { ReactNode } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity,
   BookOpen,
   Bug,
   ChevronRight,
+  Feather,
   FileText,
+  FolderOpen,
+  GraduationCap,
   Image as ImageIcon,
-  MessageSquare,
+  Landmark,
+  Megaphone,
+  Moon,
+  Newspaper,
+  Share2,
+  Store,
+  Sun,
   type LucideIcon,
 } from 'lucide-react';
 import { accentFor, iconFor } from '@/lib/agentAccent';
 import { useAuthStore } from '@/stores/authStore';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
-import { getMobileFeed } from '@/services';
-import type { FeedItem } from '@/services/contracts/mobile';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
-import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import {
+  formatCompactNumber,
+  formatDateline,
+  formatRelativeTime,
+  greetingFor,
+  normalizeFeedTitle,
+  recentAgentMetaFor,
+  useMobileHomeData,
+} from '@/pages/mobile-home/shared';
 
-const AMBER = '#FF9F0A';
-const SURFACE = 'rgba(255,255,255,0.082)';
-const SURFACE_STRONG = 'rgba(255,255,255,0.118)';
-const HAIRLINE = 'rgba(255,255,255,0.105)';
-const HAIRLINE_SOFT = 'rgba(255,255,255,0.075)';
-const TEXT_SECONDARY = 'rgba(245,245,247,0.74)';
-const TEXT_TERTIARY = 'rgba(245,245,247,0.52)';
-const PANEL_SHADOW = '0 14px 34px rgba(0,0,0,0.24)';
+const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Segoe UI", sans-serif';
 
-interface HomeTool {
-  key: string;
-  title: string;
-  subtitle: string;
-  route: string;
-  Icon: LucideIcon;
-  accent: string;
+/* ───────────── 双形态皮肤 token（浅=工作台，暗=夜光） ───────────── */
+
+interface Skin {
+  dark: boolean;
+  canvas: string;
+  card: string;
+  cardBorder: string;
+  cardShadow: string;
+  text: string;
+  text2: string;
+  text3: string;
+  hairline: string;
+  amber: string;
+  /** 宫格图标块：浅色=功能色实底白字；暗色=中性块彩色线稿（Linear 纪律） */
+  tileBg: (tint: string) => string;
+  tileFg: (tint: string) => string;
+  tileBorder: string;
 }
 
-const PRIMARY_TOOLS: HomeTool[] = [
-  {
-    key: 'document-store',
-    title: '知识库',
-    subtitle: '文档沉淀与资料管理',
-    route: '/document-store',
-    Icon: BookOpen,
-    accent: '#FFB340',
-  },
-  {
-    key: 'report-agent',
-    title: '周报',
-    subtitle: '生成、整理与审阅周报',
-    route: '/report-agent',
-    Icon: FileText,
-    accent: '#7DD3FC',
-  },
-  {
-    key: 'visual-agent',
-    title: '生图',
-    subtitle: '文生图、图生图与配图',
-    route: '/visual-agent',
-    Icon: ImageIcon,
-    accent: '#A78BFA',
-  },
-  {
-    key: 'defect-agent',
-    title: '缺陷',
-    subtitle: '提交、跟踪与复盘问题',
-    route: '/defect-agent',
-    Icon: Bug,
-    accent: '#FB7185',
-  },
-];
-
-const HERO_CARDS = [
-  {
-    key: 'today-workbench',
-    title: '今日工作台',
-    subtitle: '知识沉淀 · 周报生成',
-    route: '/document-store',
-  },
-  {
-    key: 'visual-workbench',
-    title: '生图与资产',
-    subtitle: '配图生成 · 素材归档',
-    route: '/visual-agent',
-  },
-  {
-    key: 'defect-workbench',
-    title: '缺陷闭环',
-    subtitle: '问题记录 · 复盘追踪',
-    route: '/defect-agent',
-  },
-];
-
-const FEED_ICON: Record<string, { icon: LucideIcon; color: string; bg: string }> = {
-  'prd-session': { icon: MessageSquare, color: '#7DD3FC', bg: 'rgba(125,211,252,0.13)' },
-  'visual-workspace': { icon: ImageIcon, color: '#A78BFA', bg: 'rgba(167,139,250,0.13)' },
-  defect: { icon: Bug, color: '#FB7185', bg: 'rgba(251,113,133,0.13)' },
+const LIGHT_SKIN: Skin = {
+  dark: false,
+  canvas: '#f7f7f8',
+  card: '#ffffff',
+  cardBorder: '#e9eaee',
+  cardShadow: '0 1px 2px rgba(20,21,26,0.04)',
+  text: '#18191c',
+  text2: '#5f6167',
+  text3: '#9a9ca3',
+  hairline: '#f0f0f2',
+  amber: '#d97a08',
+  // 质感浅色(2026-07-12 二次纠偏):实底彩块读作 OA 老土,改 12% tint 底 + 彩色线稿
+  tileBg: (tint) => `${tint}1f`,
+  tileFg: (tint) => tint,
+  tileBorder: 'transparent',
 };
+
+const DARK_SKIN: Skin = {
+  dark: true,
+  canvas: '#08090a',
+  card: '#101113',
+  cardBorder: 'rgba(255,255,255,0.09)',
+  cardShadow: 'none',
+  text: '#f7f8f8',
+  text2: 'rgba(247,248,248,0.62)',
+  text3: 'rgba(247,248,248,0.42)',
+  hairline: 'rgba(255,255,255,0.07)',
+  amber: '#f5a623',
+  tileBg: () => '#16181b',
+  tileFg: (tint) => tint,
+  tileBorder: 'rgba(255,255,255,0.09)',
+};
+
+/* ───────────── 常用应用宫格（功能色注册） ───────────── */
+
+const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideIcon; tint: string }> = [
+  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, tint: '#ff9f0a' },
+  { key: 'report-agent', title: '周报', route: '/report-agent', Icon: FileText, tint: '#3370ff' },
+  { key: 'visual-agent', title: '生图', route: '/visual-agent', Icon: ImageIcon, tint: '#9b6cff' },
+  { key: 'defect-agent', title: '缺陷', route: '/defect-agent', Icon: Bug, tint: '#f54a45' },
+  { key: 'literary-agent', title: '文学创作', route: '/literary-agent', Icon: Feather, tint: '#34c759' },
+  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, tint: '#14b8c4' },
+  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, tint: '#c05b3c' },
+  { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, tint: '#5aa9ff' },
+];
+
+/** 沉淀与档案：历史与个人资产类入口（首页加长，2026-07-12 用户要求） */
+const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: string; Icon: LucideIcon; tint: string }> = [
+  { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, tint: '#a78bfa' },
+  { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, tint: '#34c759' },
+  { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, tint: '#5aa9ff' },
+  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, tint: '#14b8c4' },
+];
 
 export default function MobileHomePage() {
   const navigate = useNavigate();
-  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
-  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const data = useMobileHomeData();
+  const displayName = useAuthStore((s) => s.user?.displayName ?? '同事');
+  // 全局移动明暗偏好:浅色默认,右上角按钮可切换;data-theme 由 AppShell 统一落。
+  const themeMode = useMobileThemeStore((st) => st.mode);
+  const toggleTheme = useMobileThemeStore((st) => st.toggle);
+  const S = themeMode === 'dark' ? DARK_SKIN : LIGHT_SKIN;
+  const now = useMemo(() => new Date(), []);
+  const { weekday } = formatDateline(now);
 
-  useEffect(() => {
-    (async () => {
-      const feedRes = await getMobileFeed({ limit: 6 });
-      if (feedRes.success) {
-        setFeed(feedRes.data.items ?? []);
-      }
-    })();
-  }, []);
-
-  const recommendedAgents = useMemo(
-    () => BUILTIN_TOOLS
-      .filter((t) => t.kind === 'agent')
-      .filter((t) => resolveMobileCompat(t.routePath ?? '')?.level !== 'pc-only')
-      .filter((t) => !PRIMARY_TOOLS.some((tool) => tool.route === t.routePath))
-      .slice(0, 5),
-    [],
-  );
+  const headline = data.recentWork[0] ?? null;
+  const restRecent = data.recentWork.slice(1, 3);
 
   return (
     <div
-      className="h-full min-h-0 overflow-auto"
+      className="h-full min-h-0 overflow-auto no-scrollbar"
       style={{
         margin: '0 calc(var(--mobile-padding, 16px) * -1)',
-        background:
-          'radial-gradient(circle at 76% 0%, rgba(255,159,10,0.13), transparent 30%), linear-gradient(180deg, #18191f 0%, #10141a 46%, #0b0d11 100%)',
-        color: AS_COLOR.label,
-        fontFamily: AS_FONT_FAMILY,
+        background: S.dark
+          ? 'radial-gradient(70% 220px at 50% 0%, rgba(94,106,210,0.10), transparent 70%), #08090a'
+          : S.canvas,
+        color: S.text,
+        fontFamily: SANS,
+        overscrollBehavior: 'contain',
       }}
     >
-      <main style={{ padding: '4px 20px 112px' }}>
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 34,
-            lineHeight: 1.08,
-            fontWeight: 800,
-            letterSpacing: 0,
-          }}
-        >
-          今日
-        </h1>
+      <main style={{ padding: '0 12px 112px', maxWidth: 720, margin: '0 auto' }}>
+        {/* ── 头部：两形态同为安静问候行（橙色大色块已因「老土」撤下，
+              琥珀只留给数字与按钮做点睛） ── */}
+        <header style={{ padding: '14px 6px 4px' }}>
+          <div className="flex items-center justify-between" style={{ gap: 10 }}>
+            <span style={{ fontSize: S.dark ? 17 : 21, fontWeight: S.dark ? 510 : 700, letterSpacing: '-0.02em' }}>
+              {greetingFor(now)}，{displayName}
+            </span>
+            <span className="flex items-center" style={{ gap: 8, flex: 'none' }}>
+              <span style={{ fontSize: 12, color: S.text3 }}>
+                {now.getMonth() + 1}月{now.getDate()}日 {weekday}
+              </span>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={S.dark ? '切换到浅色' : '切换到暗色'}
+                className="flex items-center justify-center active:opacity-60"
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 9,
+                  border: `1px solid ${S.dark ? 'rgba(255,255,255,0.12)' : '#e9eaee'}`,
+                  background: S.card,
+                  color: S.text2,
+                }}
+              >
+                {S.dark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+            </span>
+          </div>
+        </header>
 
-        <HeroCarousel onNavigate={navigate} />
-
-        <QuickStartStrip items={PRIMARY_TOOLS.slice(0, 3)} onNavigate={navigate} />
-
-        <SectionTitle title="常用入口" />
-        <ToolGrid tools={PRIMARY_TOOLS} onNavigate={navigate} />
-
-        <SectionTitle title="我的动态" actionLabel="全部" onAction={() => navigate('/my-assets')} dense />
-        <MyActivityList feed={feed.slice(0, 4)} onNavigate={navigate} />
-
-        {recommendedAgents.length > 0 && (
-          <>
-            <SectionTitle title="推荐智能体" actionLabel="全部" onAction={() => navigate('/ai-toolbox')} />
-            <RecommendedAgentRow
-              cdnBase={cdnBase}
-              items={recommendedAgents}
-              onNavigate={(path) => navigate(path)}
-            />
-          </>
+        {/* ── 继续上次 ── */}
+        {headline && (
+          <Card S={S} title="继续上次">
+            <button
+              type="button"
+              onClick={() => navigate(headline.route)}
+              className="w-full flex items-center text-left active:opacity-70"
+              style={{ gap: 10, padding: '2px 0', color: S.text }}
+            >
+              <TileIcon S={S} Icon={recentAgentMetaFor(headline.agentKey).Icon} tint={recentAgentMetaFor(headline.agentKey).accent} size={40} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate" style={{ fontSize: 14.5, fontWeight: S.dark ? 510 : 600 }}>
+                  {headline.title || '未命名工作'}
+                </span>
+                <span className="block" style={{ marginTop: 2, fontSize: 11.5, color: S.text3 }}>
+                  {recentAgentMetaFor(headline.agentKey).label} · {formatRelativeTime(headline.lastActiveAt)}
+                </span>
+              </span>
+              <span
+                className="shrink-0"
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: S.dark ? '#101113' : S.amber,
+                  background: S.dark ? S.amber : 'rgba(232,137,12,0.12)',
+                  borderRadius: 8,
+                  padding: '5px 13px',
+                }}
+              >
+                继续
+              </span>
+            </button>
+            {restRecent.map((item) => {
+              const meta = recentAgentMetaFor(item.agentKey);
+              return (
+                <button
+                  key={`${item.route}-${item.lastActiveAt}`}
+                  type="button"
+                  onClick={() => navigate(item.route)}
+                  className="w-full flex items-center text-left active:opacity-70"
+                  style={{ gap: 8, padding: '9px 0 0', marginTop: 9, borderTop: `1px solid ${S.hairline}`, color: S.text }}
+                >
+                  <span aria-hidden style={{ width: 5, height: 5, borderRadius: 99, background: meta.accent, flex: 'none' }} />
+                  <span className="min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>
+                    {item.title || '未命名工作'}
+                  </span>
+                  <span style={{ fontSize: 11, color: S.text3, flex: 'none' }}>
+                    {meta.label} · {formatRelativeTime(item.lastActiveAt)}
+                  </span>
+                </button>
+              );
+            })}
+          </Card>
         )}
+
+        {/* ── 常用应用宫格 ── */}
+        <Card S={S} title="常用应用" action={{ label: '全部', onClick: () => navigate('/ai-toolbox') }}>
+          <div className="grid grid-cols-4" style={{ gap: '14px 6px', paddingTop: 2 }}>
+            {APP_GRID.map((app) => {
+              const Icon = app.Icon;
+              return (
+                <button
+                  key={app.key}
+                  type="button"
+                  onClick={() => navigate(app.route)}
+                  className="relative flex flex-col items-center transition-transform active:scale-[0.94]"
+                  style={{ gap: 6, color: S.text }}
+                >
+                  {app.key === 'changelog' && data.changelogUnread > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: -5,
+                        right: 6,
+                        zIndex: 1,
+                        minWidth: 16,
+                        padding: '0 4px',
+                        borderRadius: 99,
+                        background: '#f54a45',
+                        color: '#fff',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        lineHeight: '14px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {data.changelogUnread > 99 ? '99+' : data.changelogUnread}
+                    </span>
+                  )}
+                  <TileIcon S={S} Icon={Icon} tint={app.tint} size={42} />
+                  <span style={{ fontSize: 11, lineHeight: 1.2, color: S.dark ? S.text2 : S.text }}>{app.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* ── 七日数据 ── */}
+        <Card S={S} title="近 7 日数据">
+          <div className="grid grid-cols-4" style={{ paddingTop: 2 }}>
+            {[
+              { label: '会话', value: data.stats?.sessions ?? 0 },
+              { label: '消息', value: data.stats?.messages ?? 0 },
+              { label: '生图', value: data.stats?.imageGenerations ?? 0 },
+              { label: 'Token', value: data.stats?.totalTokens ?? 0, hot: true },
+            ].map((stat, idx) => (
+              <div
+                key={stat.label}
+                style={{
+                  textAlign: 'center',
+                  borderLeft: idx > 0 ? `1px solid ${S.hairline}` : undefined,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 18,
+                    fontWeight: S.dark ? 510 : 700,
+                    letterSpacing: '-0.01em',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: stat.hot ? S.amber : S.text,
+                  }}
+                >
+                  {data.loading ? '—' : formatCompactNumber(stat.value)}
+                </div>
+                <div style={{ marginTop: 2, fontSize: 10.5, color: S.text3 }}>{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* ── 我的动态 ── */}
+        <Card S={S} title="我的动态" action={{ label: '全部', onClick: () => navigate('/my-assets') }}>
+          {data.feed.length === 0 ? (
+            <div style={{ fontSize: 13, color: S.text2, padding: '2px 0' }}>
+              使用知识库、周报、生图或缺陷后，动态会出现在这里
+            </div>
+          ) : (
+            data.feed.slice(0, 8).map((item, idx) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => navigate(item.navigateTo)}
+                className="w-full flex items-center text-left active:opacity-70"
+                style={{
+                  gap: 9,
+                  padding: idx === 0 ? '2px 0 9px' : '9px 0',
+                  borderTop: idx > 0 ? `1px solid ${S.hairline}` : undefined,
+                  color: S.text,
+                }}
+              >
+                <span aria-hidden style={{ width: 6, height: 6, borderRadius: 99, background: feedTint(item.type), flex: 'none' }} />
+                <span className="min-w-0 flex-1 truncate" style={{ fontSize: 13.5 }}>
+                  {normalizeFeedTitle(item)}
+                </span>
+                <span style={{ fontSize: 11, color: S.text3, flex: 'none' }}>{formatRelativeTime(item.updatedAt)}</span>
+              </button>
+            ))
+          )}
+        </Card>
+
+        {/* ── 推荐智能体货架 ── */}
+        <RecommendedShelf S={S} onNavigate={(to) => navigate(to)} />
+
+        {/* ── 沉淀与档案 ── */}
+        <Card S={S} title="沉淀与档案">
+          {ARCHIVE_ROWS.map((row, idx) => {
+            const Icon = row.Icon;
+            return (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => navigate(row.route)}
+                className="w-full flex items-center text-left active:opacity-70"
+                style={{
+                  gap: 10,
+                  padding: idx === 0 ? '2px 0 10px' : '10px 0',
+                  borderTop: idx > 0 ? `1px solid ${S.hairline}` : undefined,
+                  color: S.text,
+                }}
+              >
+                <TileIcon S={S} Icon={Icon} tint={row.tint} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate" style={{ fontSize: 13.5, fontWeight: S.dark ? 510 : 600 }}>
+                    {row.title}
+                  </span>
+                  <span className="block truncate" style={{ marginTop: 1, fontSize: 11, color: S.text3 }}>
+                    {row.desc}
+                  </span>
+                </span>
+                <ChevronRight size={15} className="shrink-0" style={{ color: S.text3 }} />
+              </button>
+            );
+          })}
+        </Card>
+
+        {/* ── 页脚 ── */}
+        <footer style={{ marginTop: 26, textAlign: 'center', fontSize: 11, color: S.text3 }}>
+          MAP · 每个成员，都有一支 AI 团队
+        </footer>
       </main>
     </div>
   );
 }
 
-function HeroCarousel({ onNavigate }: { onNavigate: (to: string) => void }) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
+/** feed 类型 → 提示色（与宫格功能色同源） */
+function feedTint(type: string): string {
+  if (type === 'visual-workspace') return '#9b6cff';
+  if (type === 'defect') return '#f54a45';
+  return '#3370ff';
+}
 
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
+/* ───────────── 皮肤化基础件 ───────────── */
 
-    let frame = 0;
-    const updateActiveIndex = () => {
-      const firstCard = scroller.firstElementChild;
-      if (!(firstCard instanceof HTMLElement)) return;
-      const cardWidth = firstCard.getBoundingClientRect().width;
-      const gap = 12;
-      const nextIndex = Math.round(scroller.scrollLeft / (cardWidth + gap));
-      setActiveIndex(Math.max(0, Math.min(HERO_CARDS.length - 1, nextIndex)));
-    };
-    const handleScroll = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(updateActiveIndex);
-    };
-
-    updateActiveIndex();
-    scroller.addEventListener('scroll', handleScroll, { passive: true });
-    return () => {
-      cancelAnimationFrame(frame);
-      scroller.removeEventListener('scroll', handleScroll);
-    };
-  }, []);
-
+/** 白卡（浅）/ 发丝边暗卡（暗），带 13px 卡头 */
+function Card({
+  S,
+  title,
+  action,
+  children,
+}: {
+  S: Skin;
+  title: string;
+  action?: { label: string; onClick: () => void };
+  children: ReactNode;
+}) {
   return (
-    <section style={{ marginTop: 18 }}>
-      <div
-        ref={scrollerRef}
-        className="flex overflow-x-auto snap-x snap-mandatory"
-        style={{
-          gap: 12,
-          paddingBottom: 2,
-          scrollbarWidth: 'none',
-          WebkitOverflowScrolling: 'touch',
-          overscrollBehaviorX: 'contain',
-        }}
-        aria-label="今日首页推荐"
-      >
-        {HERO_CARDS.map((card) => (
+    <section
+      style={{
+        marginTop: 12,
+        background: S.card,
+        border: `${S.dark ? '0.5px' : '1px'} solid ${S.cardBorder}`,
+        borderRadius: 14,
+        padding: '12px 14px 13px',
+        boxShadow: S.cardShadow,
+      }}
+    >
+      <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: S.dark ? 510 : 700, color: S.dark ? S.text2 : S.text }}>{title}</span>
+        {action && (
           <button
-            key={card.key}
             type="button"
-            onClick={() => onNavigate(card.route)}
-            className="relative shrink-0 snap-start overflow-hidden text-left transition-transform active:scale-[0.985]"
-            style={{
-              width: 'calc(100vw - 76px)',
-              minWidth: 304,
-              maxWidth: 720,
-              aspectRatio: '1.68 / 1',
-              borderRadius: 18,
-              border: `1px solid ${HAIRLINE}`,
-              background:
-                'linear-gradient(135deg, rgba(31,32,39,0.98), rgba(17,19,24,0.98))',
-              boxShadow: PANEL_SHADOW,
-              color: '#fff',
-            }}
+            onClick={action.onClick}
+            className="inline-flex items-center active:opacity-60"
+            style={{ gap: 2, fontSize: 12, color: S.text3 }}
           >
-            <AmberWorkbenchArt />
-            <div
-              aria-hidden
-              className="absolute inset-0"
-              style={{
-                background:
-                  'linear-gradient(90deg, rgba(0,0,0,0.64) 0%, rgba(0,0,0,0.24) 46%, rgba(0,0,0,0.08) 100%)',
-              }}
-            />
-            <div
-              className="absolute left-0 top-0 h-full flex flex-col justify-end"
-              style={{ padding: 20, width: '54%' }}
-            >
-              <div
-                style={{
-                  fontSize: 25,
-                  lineHeight: 1.12,
-                  fontWeight: 800,
-                  letterSpacing: 0,
-                  color: '#FFD08A',
-                  textShadow: '0 2px 14px rgba(0,0,0,0.46)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {card.title}
-              </div>
-              <div
-                style={{
-                  width: 28,
-                  height: 3,
-                  borderRadius: 999,
-                  background: '#FFD08A',
-                  margin: '12px 0 10px',
-                }}
-              />
-              <div
-                style={{
-                  fontSize: 15,
-                  lineHeight: 1.35,
-                  color: 'rgba(255,255,255,0.84)',
-                  fontWeight: 600,
-                  letterSpacing: 0,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {card.subtitle}
-              </div>
-            </div>
+            {action.label}
+            <ChevronRight size={13} />
           </button>
-        ))}
+        )}
       </div>
-      <div className="flex items-center" style={{ gap: 7, marginTop: 9, paddingLeft: 48 }}>
-        {HERO_CARDS.map((card, index) => (
-          <span key={card.key} style={dotStyle(index === activeIndex)} />
-        ))}
-      </div>
+      {children}
     </section>
   );
 }
 
-function AmberWorkbenchArt() {
+/** 图标块：浅色=功能色实底白字（飞书语法）；暗色=中性块彩色线稿（Linear 语法） */
+function TileIcon({ S, Icon, tint, size }: { S: Skin; Icon: LucideIcon; tint: string; size: number }) {
   return (
-    <div className="absolute inset-0 overflow-hidden" aria-hidden>
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            'radial-gradient(circle at 76% 40%, rgba(255,159,10,0.48), transparent 24%), linear-gradient(135deg, #151820 0%, #22170c 56%, #0d1118 100%)',
-        }}
-      />
-      <div
-        className="absolute"
-        style={{
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: '44%',
-          background:
-            'linear-gradient(rgba(255,159,10,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,159,10,0.07) 1px, transparent 1px)',
-          backgroundSize: '38px 28px',
-          opacity: 0.46,
-          transform: 'perspective(420px) rotateX(58deg) translateY(18px) scale(1.28)',
-          transformOrigin: '50% 100%',
-        }}
-      />
-      <div
-        className="absolute"
-        style={{
-          right: 10,
-          top: 30,
-          width: '50%',
-          height: '66%',
-          borderRadius: 18,
-          border: '1px solid rgba(255,198,104,0.48)',
-          background:
-            'linear-gradient(135deg, rgba(255,178,66,0.20), rgba(255,159,10,0.055) 52%, rgba(255,255,255,0.05))',
-          boxShadow:
-            '0 0 32px rgba(255,159,10,0.22), inset 0 0 28px rgba(255,197,108,0.14)',
-          transform: 'perspective(440px) rotateY(-15deg) rotateX(7deg)',
-        }}
-      >
-        <span
-          className="absolute"
-          style={{
-            left: 16,
-            top: 14,
-            right: 20,
-            height: 24,
-            borderRadius: 8,
-            border: '1px solid rgba(255,211,132,0.28)',
-            color: 'rgba(255,225,155,0.62)',
-            fontSize: 8,
-            lineHeight: '23px',
-            textAlign: 'center',
-            fontWeight: 800,
-            letterSpacing: 0,
-          }}
-        >
-          AI WORKBENCH
-        </span>
-        <span
-          className="absolute"
-          style={{
-            left: 20,
-            right: 18,
-            bottom: 18,
-            height: 1,
-            background: 'linear-gradient(90deg, transparent, rgba(255,218,146,0.36), transparent)',
-          }}
-        />
-      </div>
-      <div
-        className="absolute"
-        style={{
-          right: 48,
-          top: 70,
-          width: 74,
-          height: 74,
-          borderRadius: '50%',
-          border: '2px solid rgba(255,220,150,0.48)',
-          boxShadow: '0 0 20px rgba(255,159,10,0.28), inset 0 0 16px rgba(255,159,10,0.12)',
-        }}
-      />
-      <div
-        className="absolute"
-        style={{
-          right: 65,
-          top: 87,
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          border: '1px solid rgba(255,255,255,0.42)',
-          boxShadow: 'inset 0 0 10px rgba(255,255,255,0.16)',
-        }}
-      />
-      <div
-        className="absolute"
-        style={{
-          right: 74,
-          top: 101,
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: '#FFD08A',
-          boxShadow: '0 0 14px rgba(255,159,10,0.52)',
-        }}
-      />
-      {Array.from({ length: 5 }).map((_, i) => (
-        <span
-          key={`trace-${i}`}
-          className="absolute"
-          style={{
-            right: 26 + i * 58,
-            bottom: 28 + (i % 2) * 54,
-            width: 50,
-            height: 2,
-            borderRadius: 999,
-            background: 'rgba(255,204,120,0.22)',
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function QuickStartStrip({
-  items,
-  onNavigate,
-}: {
-  items: HomeTool[];
-  onNavigate: (to: string) => void;
-}) {
-  return (
-    <div
-      className="grid grid-cols-3 overflow-hidden"
+    <span
+      className="shrink-0 flex items-center justify-center"
       style={{
-        marginTop: 14,
-        borderRadius: 16,
-        background: SURFACE_STRONG,
-        border: `1px solid ${HAIRLINE_SOFT}`,
-        boxShadow: PANEL_SHADOW,
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.26),
+        background: S.tileBg(tint),
+        border: S.dark ? `0.5px solid ${S.tileBorder}` : undefined,
       }}
     >
-      {items.map((item, index) => {
-        const Icon = item.Icon;
-        return (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => onNavigate(item.route)}
-            className="min-h-[54px] flex items-center gap-2 text-left transition-colors active:bg-white/10"
-            style={{
-              padding: '9px 10px',
-              color: '#fff',
-              borderRight: index < items.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
-            }}
-          >
-            <Icon size={22} strokeWidth={2.1} style={{ color: AMBER }} className="shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.1, letterSpacing: 0 }}>
-                {item.title}
-              </div>
-            </div>
-            <ChevronRight size={15} style={{ color: TEXT_TERTIARY }} className="shrink-0" />
-          </button>
-        );
-      })}
-    </div>
+      <Icon size={Math.round(size * 0.5)} strokeWidth={2} style={{ color: S.tileFg(tint) }} />
+    </span>
   );
 }
 
-function SectionTitle({
-  title,
-  actionLabel,
-  onAction,
-  dense = false,
-}: {
-  title: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  dense?: boolean;
-}) {
+/* ───────────── 推荐智能体货架 ───────────── */
+
+function RecommendedShelf({ S, onNavigate }: { S: Skin; onNavigate: (to: string) => void }) {
+  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const items = useMemo(
+    () =>
+      BUILTIN_TOOLS.filter((t) => t.kind === 'agent')
+        .filter((t) => resolveMobileCompat(t.routePath ?? '')?.level !== 'pc-only')
+        .filter((t) => !APP_GRID.some((entry) => entry.route === t.routePath))
+        .slice(0, 8),
+    [],
+  );
+  if (items.length === 0) return null;
+
   return (
-    <div
-      className="flex items-center justify-between"
-      style={{ marginTop: dense ? 22 : 24, marginBottom: dense ? 10 : 12 }}
-    >
-      <h2
-        style={{
-          margin: 0,
-          fontSize: 23,
-          lineHeight: 1.15,
-          fontWeight: 800,
-          letterSpacing: 0,
-          color: '#fff',
-        }}
-      >
-        {title}
-      </h2>
-      {actionLabel && onAction && (
+    <section style={{ marginTop: 12 }}>
+      <div className="flex items-center justify-between" style={{ padding: '0 4px 8px' }}>
+        <span style={{ fontSize: 13, fontWeight: S.dark ? 510 : 700, color: S.dark ? S.text2 : S.text }}>推荐智能体</span>
         <button
           type="button"
-          onClick={onAction}
-          className="min-h-[44px] inline-flex items-center gap-1 transition-opacity active:opacity-60"
-          style={{
-            color: TEXT_SECONDARY,
-            fontSize: 15,
-            fontWeight: 500,
-            letterSpacing: 0,
-          }}
+          onClick={() => onNavigate('/ai-toolbox')}
+          className="inline-flex items-center active:opacity-60"
+          style={{ gap: 2, fontSize: 12, color: S.text3 }}
         >
-          {actionLabel}
-          <ChevronRight size={17} />
+          全部
+          <ChevronRight size={13} />
         </button>
-      )}
-    </div>
-  );
-}
-
-function ToolGrid({
-  tools,
-  onNavigate,
-}: {
-  tools: HomeTool[];
-  onNavigate: (to: string) => void;
-}) {
-  return (
-    <div
-      className="grid grid-cols-4 overflow-hidden"
-      style={{
-        borderRadius: 16,
-        background: SURFACE,
-        border: `1px solid ${HAIRLINE_SOFT}`,
-      }}
-    >
-      {tools.map((tool, index) => {
-        const Icon = tool.Icon;
-        return (
-          <button
-            key={tool.key}
-            type="button"
-            onClick={() => onNavigate(tool.route)}
-            className="min-h-[78px] flex flex-col items-center justify-center transition-transform active:scale-[0.97]"
-            style={{
-              background: 'transparent',
-              borderRight: index < tools.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
-              color: '#fff',
-              padding: '9px 6px',
-            }}
-          >
-            <Icon size={25} strokeWidth={1.9} style={{ color: 'rgba(255,255,255,0.86)' }} />
-            <span
-              aria-hidden
-              style={{
-                width: 18,
-                height: 2,
-                borderRadius: 999,
-                background: tool.accent,
-                margin: '7px 0 6px',
-                boxShadow: `0 0 8px ${tool.accent}44`,
-              }}
-            />
-            <span style={{ fontSize: 13, lineHeight: 1.15, color: 'rgba(255,255,255,0.82)', letterSpacing: 0 }}>
-              {tool.title}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function MyActivityList({
-  feed,
-  onNavigate,
-}: {
-  feed: FeedItem[];
-  onNavigate: (to: string) => void;
-}) {
-  if (feed.length === 0) {
-    return (
+      </div>
       <div
-        className="flex items-center gap-3"
+        className="flex overflow-x-auto"
         style={{
-          minHeight: 76,
-          borderRadius: 16,
-          background: SURFACE,
-          border: `1px solid ${HAIRLINE_SOFT}`,
-          padding: '0 14px',
+          gap: 10,
+          margin: '0 -12px',
+          padding: '0 12px 4px',
+          scrollbarWidth: 'none',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehaviorX: 'contain',
         }}
       >
-        <div
-          className="shrink-0 flex items-center justify-center"
-          style={{ width: 42, height: 42, borderRadius: 12, background: 'rgba(255,159,10,0.12)' }}
-        >
-          <Activity size={19} style={{ color: AMBER }} />
-        </div>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', letterSpacing: 0 }}>
-            还没有我的动态
-          </div>
-          <div style={{ marginTop: 3, fontSize: 13, color: TEXT_SECONDARY, letterSpacing: 0 }}>
-            使用知识库、周报、生图或缺陷后会出现在这里
-          </div>
-        </div>
+        {items.map((item) => {
+          const Icon = iconFor(item.icon);
+          const accent = accentFor(item.agentKey);
+          const coverUrl = cdnBase ? buildDefaultCoverUrl(cdnBase, item.agentKey) : null;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onNavigate(item.routePath ?? `/ai-toolbox?item=${item.id}`)}
+              className="shrink-0 flex items-center text-left transition-transform active:scale-[0.985]"
+              style={{
+                width: 250,
+                gap: 10,
+                padding: '11px 12px',
+                borderRadius: 14,
+                background: S.card,
+                border: `${S.dark ? '0.5px' : '1px'} solid ${S.cardBorder}`,
+                boxShadow: S.cardShadow,
+                color: S.text,
+              }}
+            >
+              <span
+                className="shrink-0 flex items-center justify-center overflow-hidden"
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 11,
+                  background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
+                }}
+              >
+                {coverUrl ? (
+                  <img
+                    src={coverUrl}
+                    alt=""
+                    aria-hidden
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <Icon size={21} style={{ color: '#fff' }} />
+                )}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate" style={{ fontSize: 13.5, fontWeight: S.dark ? 510 : 600 }}>
+                  {item.name}
+                </span>
+                <span className="block truncate" style={{ marginTop: 2, fontSize: 11.5, color: S.text3 }}>
+                  {item.description}
+                </span>
+              </span>
+            </button>
+          );
+        })}
       </div>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        borderRadius: 18,
-        background: SURFACE,
-        border: `1px solid ${HAIRLINE_SOFT}`,
-        overflow: 'hidden',
-      }}
-    >
-      {feed.map((item, idx) => {
-        const meta = FEED_ICON[item.type] ?? { icon: MessageSquare, color: AMBER, bg: 'rgba(255,159,10,0.13)' };
-        const Icon = meta.icon;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onNavigate(item.navigateTo)}
-            className="w-full min-h-[62px] flex items-center text-left transition-colors active:bg-white/10"
-            style={{
-              display: 'flex',
-              gap: 10,
-              padding: '10px 13px',
-              color: '#fff',
-              borderBottom: idx < feed.length - 1 ? `1px solid ${HAIRLINE_SOFT}` : undefined,
-            }}
-          >
-            <div
-              className="shrink-0 flex items-center justify-center"
-              style={{ width: 38, height: 38, borderRadius: 11, background: meta.bg, border: `1px solid ${HAIRLINE_SOFT}` }}
-            >
-              <Icon size={18} strokeWidth={2.1} style={{ color: meta.color }} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div
-                className="truncate"
-                style={{ fontSize: 14, lineHeight: 1.2, fontWeight: 700, color: '#fff', letterSpacing: 0 }}
-              >
-                {normalizeFeedTitle(item)}
-              </div>
-              <div
-                className="truncate"
-                style={{ marginTop: 3, fontSize: 12, lineHeight: 1.2, color: TEXT_SECONDARY, letterSpacing: 0 }}
-              >
-                我 · {formatRelativeTime(item.updatedAt)}
-              </div>
-            </div>
-            <ChevronRight size={17} style={{ color: TEXT_TERTIARY }} className="shrink-0" />
-          </button>
-        );
-      })}
-    </div>
+    </section>
   );
-}
-
-function RecommendedAgentRow({
-  cdnBase,
-  items,
-  onNavigate,
-}: {
-  cdnBase: string;
-  items: typeof BUILTIN_TOOLS;
-  onNavigate: (to: string) => void;
-}) {
-  return (
-    <div
-      className="flex overflow-x-auto"
-      style={{
-        gap: 12,
-        margin: '0 -20px',
-        padding: '0 20px 4px',
-        scrollbarWidth: 'none',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      {items.map((item) => {
-        const Icon = iconFor(item.icon);
-        const accent = accentFor(item.agentKey);
-        const coverUrl = cdnBase ? buildDefaultCoverUrl(cdnBase, item.agentKey) : null;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onNavigate(item.routePath ?? `/ai-toolbox?item=${item.id}`)}
-            className="shrink-0 text-left transition-transform active:scale-[0.98]"
-            style={{
-              width: 148,
-              minHeight: 112,
-              borderRadius: 16,
-              background: SURFACE,
-              border: `1px solid ${HAIRLINE_SOFT}`,
-              padding: 12,
-              color: '#fff',
-            }}
-          >
-            <div
-              className="flex items-center justify-center overflow-hidden"
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: 12,
-                background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
-              }}
-            >
-              {coverUrl ? (
-                <img
-                  src={coverUrl}
-                  alt=""
-                  aria-hidden
-                  className="h-full w-full object-cover"
-                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                />
-              ) : (
-                <Icon size={21} style={{ color: '#fff' }} />
-              )}
-            </div>
-            <div
-              className="truncate"
-              style={{ marginTop: 10, fontSize: 15, fontWeight: 700, lineHeight: 1.2, letterSpacing: 0 }}
-            >
-              {item.name}
-            </div>
-            <div
-              className="line-clamp-2"
-              style={{
-                marginTop: 4,
-                fontSize: 12,
-                lineHeight: 1.35,
-                color: TEXT_SECONDARY,
-                letterSpacing: 0,
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {item.description}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function normalizeFeedTitle(item: FeedItem): string {
-  if (item.type === 'visual-workspace') return `生成了一张配图：${item.title}`;
-  if (item.type === 'defect') return `更新了缺陷：${item.title}`;
-  return `更新了知识内容：${item.title}`;
-}
-
-function formatRelativeTime(value: string): string {
-  const time = new Date(value).getTime();
-  if (!Number.isFinite(time)) return '刚刚';
-  const diff = Date.now() - time;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 60 * 60_000) return `${Math.max(1, Math.floor(diff / 60_000))} 分钟前`;
-  if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / (60 * 60_000))} 小时前`;
-  if (diff < 48 * 60 * 60_000) return '昨天';
-  return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
-}
-
-function dotStyle(active: boolean): CSSProperties {
-  return {
-    display: 'inline-block',
-    width: active ? 30 : 8,
-    height: 5,
-    borderRadius: 999,
-    background: active ? '#fff' : 'rgba(235,235,245,0.28)',
-  };
 }
