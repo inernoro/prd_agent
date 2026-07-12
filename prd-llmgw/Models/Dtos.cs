@@ -271,13 +271,24 @@ public sealed class LogsSummaryData
     public long InputTokens { get; set; }
     public long OutputTokens { get; set; }
     public long TotalTokens { get; set; }
-    public decimal EstimatedCostUsd { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+    public long PricedRequests { get; set; }
+    public long UnknownCostRequests { get; set; }
+    public decimal PriceCoveragePercent { get; set; }
+    public List<EstimatedCostBucket> EstimatedCosts { get; set; } = new();
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
     public List<LogsBucketItem> StatusDistribution { get; set; } = new();
     public List<LogsBucketItem> SourceSystemDistribution { get; set; } = new();
     public List<LogsBucketItem> IngressProtocolDistribution { get; set; } = new();
     public List<LogsBucketItem> ModelPolicyDistribution { get; set; } = new();
+}
+
+public sealed class EstimatedCostBucket
+{
+    public string Currency { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public long Requests { get; set; }
 }
 
 public sealed class LogsBucketItem

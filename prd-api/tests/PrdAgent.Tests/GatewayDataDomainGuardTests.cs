@@ -2388,6 +2388,66 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+
+        Assert.Contains(".Include(\"EstimatedCost\")", consoleProgram);
+        Assert.Contains(".Include(\"EstimatedCostCurrency\")", consoleProgram);
+        Assert.Contains("GroupBy(x => x.Currency!", consoleProgram);
+        Assert.Contains("UnknownCostRequests = docs.Count - pricedDocs.Count", consoleProgram);
+        Assert.Contains("EstimatedCostUsd = usdDocs.Count == 0 ? null", consoleProgram);
+        Assert.DoesNotContain("EstimatedCostUsd = docs.Sum", consoleProgram);
+        Assert.Contains("public decimal? EstimatedCostUsd", consoleDtos);
+        Assert.Contains("public List<EstimatedCostBucket> EstimatedCosts", consoleDtos);
+        Assert.Contains("estimatedCostUsd?: number | null", consoleTypes);
+        Assert.Contains("unknownCostRequests: number", consoleTypes);
+        Assert.Contains("priceCoveragePercent: number", consoleTypes);
+        Assert.Contains("按价格快照原币种分组，不做无汇率换算", logsView);
+    }
+
+    [Fact]
+    public void ExternalConsole_UsesSidebarAndKeepsOperationsOffHomePage()
+    {
+        var layout = ReadRepoFile("prd-llmgw-web/src/components/ConsoleLayout.tsx");
+        var home = ReadRepoFile("prd-llmgw-web/src/pages/HomePage.tsx");
+        var governance = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
+
+        foreach (var group in new[] { "工作区", "路由", "开发者", "组织", "治理", "设置" })
+            Assert.Contains($"label: '{group}'", layout);
+        Assert.Contains("<aside className={`lg-console-sidebar", layout);
+        Assert.Contains("className=\"lg-tenant-switcher\"", layout);
+        Assert.Contains("按 requestId 定位请求", layout);
+        Assert.Contains("健康状态", home);
+        Assert.Contains("Quickstart", home);
+        Assert.Contains("最近请求", home);
+        Assert.Contains("费用可信度", home);
+        Assert.DoesNotContain("RuntimeGatePanel", home);
+        Assert.DoesNotContain("TOPOLOGY", home);
+        Assert.Contains("RuntimeGatePanel", governance);
+        Assert.Contains("TOPOLOGY", governance);
+    }
+
+    [Fact]
+    public void TenantSwitcher_ResolvesMembershipsFromServerUserAndTenantIds()
+    {
+        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var endpointStart = consoleProgram.IndexOf("app.MapGet(\"/gw/auth/tenants\"", StringComparison.Ordinal);
+        var endpointEnd = consoleProgram.IndexOf("app.MapPost(\"/gw/auth/switch-tenant\"", endpointStart, StringComparison.Ordinal);
+        Assert.True(endpointStart >= 0 && endpointEnd > endpointStart);
+        var endpoint = consoleProgram[endpointStart..endpointEnd];
+
+        Assert.Contains("access.UserId", endpoint);
+        Assert.Contains("Filter.In(x => x.TenantId, authorizedTenantIds)", endpoint);
+        Assert.Contains("Filter.Eq(x => x.UserId, access.UserId)", endpoint);
+        Assert.DoesNotContain("[FromBody]", endpoint);
+        Assert.DoesNotContain("body.", endpoint);
+    }
+
+    [Fact]
     public void ConsoleOnlyStartup_BackfillsLegacyGatewayDocumentsBeforeTenantFiltering()
     {
         var console = ReadRepoFile("prd-llmgw/Program.cs");
