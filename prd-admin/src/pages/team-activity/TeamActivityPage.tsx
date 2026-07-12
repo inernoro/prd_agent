@@ -194,8 +194,10 @@ export default function TeamActivityPage() {
   }, [items]);
 
   return (
-    // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
-    <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
+    // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡。
+    // 高度约束只给 lg+：手机端单列堆叠靠页面自然滚动——曾因 h-full + 定高网格把三块统计压进一屏，
+    // 内容互相渗透重叠（2026-07-12 用户真机截图），mobile-first-density 场景下禁止再引入定高。
+    <div className="flex flex-col gap-4 lg:h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
       {/* 页头：视图切换用全项目统一的 TabBar（与「应用模型池管理」完全同款 surface-nav 顶栏 +
           滑块指示 + hover），时间范围筛选放 actions（保留悬浮密度预览/自定义刷选，比纯分段更强）。 */}
       <TabBar
@@ -208,10 +210,11 @@ export default function TeamActivityPage() {
         actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
       />
 
-      {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。 */}
+      {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。
+          手机端合并为一条横滚条（成员选择 + 模块 chips + 匿名开关同行，禁换行），sm 起恢复 wrap。 */}
       {view === 'feed' ? (
-        <div className="flex items-center gap-3 flex-wrap shrink-0">
-          <div className="w-52">
+        <div className="flex items-center gap-2 sm:gap-3 flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible shrink-0" style={{ overscrollBehavior: 'contain' }}>
+          <div className="w-40 sm:w-52 shrink-0">
             <UserSearchSelect
               value={filterUserId}
               onChange={setFilterUserId}
@@ -221,7 +224,7 @@ export default function TeamActivityPage() {
               uiSize="sm"
             />
           </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap">
             <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
             {modules.map((m) => (
               <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
@@ -231,7 +234,7 @@ export default function TeamActivityPage() {
             type="button"
             onClick={togglePrivacy}
             title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
-            className={`ml-auto inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
+            className={`ml-auto inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors shrink-0 whitespace-nowrap ${
               privacy
                 ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
                 : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
@@ -248,8 +251,9 @@ export default function TeamActivityPage() {
       ) : (
       // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度。
       // 窄屏单列纵向堆叠（手机三栏挤爆），lg 起恢复 264 / 1fr / 300 三栏。
+      // flex-1 只给 lg+：手机端网格若被 flex-1 定高，三行会被压缩到互相重叠（min-h-0 允许收缩到内容以下）。
       <div
-        className="flex-1 grid gap-4 grid-cols-1 lg:[grid-template-columns:264px_minmax(0,1fr)_300px]"
+        className="lg:flex-1 grid gap-4 grid-cols-1 lg:[grid-template-columns:264px_minmax(0,1fr)_300px]"
         style={{ minHeight: 0 }}
       >
         {/* 左栏：成员统计（窄屏自然高度堆叠，lg 起独立滚动） */}
@@ -270,7 +274,7 @@ export default function TeamActivityPage() {
         {/* 中栏：时间线主体 */}
         <GlassCard className="flex flex-col" style={{ minHeight: 0 }}>
         <div
-          className="flex-1 px-5 py-4"
+          className="flex-1 px-3 py-3 sm:px-5 sm:py-4"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {loading ? (
@@ -298,7 +302,7 @@ export default function TeamActivityPage() {
                 <div key={g.key} className="flex flex-col">
                   {/* 吸顶日期头：长流滚动时始终知道自己看到哪一天 */}
                   <div
-                    className="sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-5 px-5 backdrop-blur-md"
+                    className="sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-3 px-3 sm:-mx-5 sm:px-5 backdrop-blur-md"
                     style={{ background: 'rgba(16,17,19,0.72)' }}
                   >
                     <span className="text-[12px] font-semibold text-white/70">{dayLabelOf(g.key)}</span>

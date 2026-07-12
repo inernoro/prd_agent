@@ -600,7 +600,9 @@ export function TeamDashboard() {
   };
 
   return (
-    <div className="h-full min-h-0 flex gap-4">
+    // 手机端上下堆叠（周导航收成紧凑卡在顶部），lg 起恢复左右双栏——
+    // 曾因固定 280px 侧栏把手机端内容挤成 70px 竖条（2026-07-12 用户真机截图）。
+    <div className="h-full min-h-0 flex flex-col gap-3 lg:flex-row lg:gap-4">
       <WeekNavRail
         selectedYear={weekYear}
         selectedWeek={weekNumber}
@@ -613,7 +615,7 @@ export function TeamDashboard() {
         onSelectMember={handleSelectMember}
       />
       <div
-        className="flex-1 min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto pr-1"
+        className="flex-1 min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto lg:pr-1"
         style={{ overscrollBehavior: 'contain' }}
       >
       {memberDrawerVisible && selectedTeam && createPortal(
