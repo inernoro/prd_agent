@@ -29,7 +29,7 @@ src/
 │   └── logsHelpers.ts       列定义/格式化/协议色/deriveLifecycle 注册表
 ├── pages/
 │   ├── LoginPage.tsx        独立登录页
-│   └── LogsPage.tsx         观测主页（头部 + LogsView）
+│   └── LogsPage.tsx         请求记录页（LogsView）
 └── components/
     ├── ui.tsx               自包含 UI 原语（Button/Chip/Card/TabBar/Spinner）
     ├── MiniBarChart.tsx     极简柱状图（无 echarts）
