@@ -395,12 +395,16 @@ public class GatewayDataDomainGuardTests
     public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
     {
         var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         var serving = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayPromptPolicyApplier.cs");
         var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
 
         Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
         Assert.Contains("Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"AppCallerCode\").Ascending(\"RequestType\").Ascending(\"Version\")", console);
+        const string teamIndex = "Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"TeamId\").Ascending(\"UpdatedAt\")";
+        Assert.Contains(teamIndex, console);
+        Assert.Contains(teamIndex, initializer);
         Assert.Contains("fb.Eq(\"TenantId\", tenantId)", serving);
         Assert.Contains("requestType is not (\"chat\" or \"vision\")", serving);
         Assert.DoesNotContain("GatewayPromptPolicyApplier.ApplyAsync(services, request, ingress)", endpoints);

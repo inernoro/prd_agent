@@ -330,7 +330,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("AppCallerCode").Ascending("RequestType").Ascending("Version"),
                 new CreateIndexOptions { Name = "uniq_llmgw_prompt_policy_tenant_caller_type_version", Unique = true }),
             new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Descending("UpdatedAt"),
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("UpdatedAt"),
                 new CreateIndexOptions { Name = "idx_llmgw_prompt_policy_tenant_team_updated" }),
         }, cancellationToken: ct);
 
