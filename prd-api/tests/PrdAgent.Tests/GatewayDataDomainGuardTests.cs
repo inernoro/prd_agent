@@ -2244,6 +2244,43 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ConsoleOnlyStartup_BackfillsLegacyGatewayDocumentsBeforeTenantFiltering()
+    {
+        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var backfillCall = console.IndexOf(
+            "await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);",
+            StringComparison.Ordinal);
+        var firstTenantFilteredEndpoint = console.IndexOf(
+            "lifecycleRuns.Find(TenantAccess.Filter(http))",
+            StringComparison.Ordinal);
+
+        Assert.True(backfillCall >= 0, "console-only 启动必须执行 internal tenant 历史回填");
+        Assert.True(
+            firstTenantFilteredEndpoint > backfillCall,
+            "TenantAccess.Filter 生效前必须完成历史 TenantId 回填");
+        foreach (var collection in new[]
+                 {
+                     "llmrequestlogs",
+                     "llmshadow_comparisons",
+                     "llmgw_operation_audits",
+                     "llmgw_login_audits",
+                     "llmgw_lifecycle_runs",
+                     "llmgw_app_callers",
+                     "llmgw_model_pools",
+                     "llmgw_platforms",
+                     "llmgw_models",
+                     "llmgw_model_exchanges",
+                     "llmgw_service_keys",
+                 })
+        {
+            Assert.Contains($"\"{collection}\"", console);
+        }
+        Assert.Contains("Filter.Exists(\"TenantId\", false)", console);
+        Assert.Contains("Filter.Eq(\"TenantId\", BsonNull.Value)", console);
+        Assert.Contains("Update.Set(\"TenantId\", tenantId)", console);
+    }
+
+    [Fact]
     public void ModelLabAndArena_PinSelectedModelThroughGateway()
     {
         var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");

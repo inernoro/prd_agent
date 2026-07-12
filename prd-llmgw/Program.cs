@@ -188,6 +188,7 @@ var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
+await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
     tenants,
@@ -4718,6 +4719,47 @@ static TenantSessionDto ToTenantSession(LlmGwTenant tenant, LlmGwMembership memb
     Role = membership.Role,
     TeamIds = membership.TeamIds,
 };
+
+static async Task BackfillInternalTenantAsync(
+    IMongoDatabase database,
+    string tenantId,
+    CancellationToken ct)
+{
+    var collections = new[]
+    {
+        "llmgw_app_callers",
+        "llmgw_model_pools",
+        "llmgw_platforms",
+        "llmgw_models",
+        "llmgw_model_exchanges",
+        "llmgw_service_keys",
+        "llmrequestlogs",
+        "llmshadow_comparisons",
+        "llmgw_operation_audits",
+        "llmgw_login_audits",
+        "llmgw_lifecycle_runs",
+        "llmgw_app_caller_rate_windows",
+        "llmgw_budget_months",
+        "llmgw_budget_reservations",
+        "llmgw_request_executions",
+        "llmgw_multipart_objects",
+        "llmgw_provider_concurrency_slots",
+        "llmgw_runtime_settings",
+        "llmgw_asset_registry",
+    };
+    var missingTenant = Builders<BsonDocument>.Filter.Or(
+        Builders<BsonDocument>.Filter.Exists("TenantId", false),
+        Builders<BsonDocument>.Filter.Eq("TenantId", ""),
+        Builders<BsonDocument>.Filter.Eq("TenantId", BsonNull.Value));
+
+    foreach (var collectionName in collections)
+    {
+        await database.GetCollection<BsonDocument>(collectionName).UpdateManyAsync(
+            missingTenant,
+            Builders<BsonDocument>.Update.Set("TenantId", tenantId),
+            cancellationToken: ct);
+    }
+}
 
 static async Task EnsureInternalTenantAsync(
     IMongoCollection<LlmGwUser> users,
