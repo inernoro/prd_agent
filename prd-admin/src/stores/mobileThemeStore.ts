@@ -1,5 +1,6 @@
 /**
- * 移动端全局明暗偏好（2026-07-12 定稿）：浅色为默认，暗色可手动切换。
+ * 移动端全局明暗偏好（2026-07-12 定稿，同日用户改口：黑皮肤为默认）：
+ * 暗色默认，浅色可手动切换。
  *
  * 与桌面端主题体系（themeStore 的 colorDepth 深浅档位）互不干扰：
  * 本 store 只在移动端（<768px）生效，由 AppShell 把 mode 落到
@@ -22,12 +23,13 @@ interface MobileThemeState {
 export const useMobileThemeStore = create<MobileThemeState>()(
   persist(
     (set, get) => ({
-      mode: 'light',
+      mode: 'dark',
       setMode: (mode) => set({ mode }),
       toggle: () => set({ mode: get().mode === 'dark' ? 'light' : 'dark' }),
     }),
     {
-      name: 'map-mobile-theme',
+      // v2:默认从 light 改为 dark,换 key 让所有人回到新默认(旧 key 弃用)
+      name: 'map-mobile-theme-v2',
       storage: createJSONStorage(() => localStorage),
     },
   ),

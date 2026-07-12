@@ -22,10 +22,14 @@ import {
   ChevronRight,
   Feather,
   FileText,
+  FolderOpen,
+  GraduationCap,
   Image as ImageIcon,
+  Landmark,
   Megaphone,
   Moon,
   Newspaper,
+  Share2,
   Store,
   Sun,
   type LucideIcon,
@@ -111,6 +115,14 @@ const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideI
   { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, tint: '#14b8c4' },
   { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, tint: '#c05b3c' },
   { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, tint: '#5aa9ff' },
+];
+
+/** 沉淀与档案：历史与个人资产类入口（首页加长，2026-07-12 用户要求） */
+const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: string; Icon: LucideIcon; tint: string }> = [
+  { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, tint: '#a78bfa' },
+  { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, tint: '#34c759' },
+  { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, tint: '#5aa9ff' },
+  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, tint: '#14b8c4' },
 ];
 
 export default function MobileHomePage() {
@@ -309,7 +321,7 @@ export default function MobileHomePage() {
               使用知识库、周报、生图或缺陷后，动态会出现在这里
             </div>
           ) : (
-            data.feed.slice(0, 5).map((item, idx) => (
+            data.feed.slice(0, 8).map((item, idx) => (
               <button
                 key={item.id}
                 type="button"
@@ -334,6 +346,38 @@ export default function MobileHomePage() {
 
         {/* ── 推荐智能体货架 ── */}
         <RecommendedShelf S={S} onNavigate={(to) => navigate(to)} />
+
+        {/* ── 沉淀与档案 ── */}
+        <Card S={S} title="沉淀与档案">
+          {ARCHIVE_ROWS.map((row, idx) => {
+            const Icon = row.Icon;
+            return (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => navigate(row.route)}
+                className="w-full flex items-center text-left active:opacity-70"
+                style={{
+                  gap: 10,
+                  padding: idx === 0 ? '2px 0 10px' : '10px 0',
+                  borderTop: idx > 0 ? `1px solid ${S.hairline}` : undefined,
+                  color: S.text,
+                }}
+              >
+                <TileIcon S={S} Icon={Icon} tint={row.tint} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate" style={{ fontSize: 13.5, fontWeight: S.dark ? 510 : 600 }}>
+                    {row.title}
+                  </span>
+                  <span className="block truncate" style={{ marginTop: 1, fontSize: 11, color: S.text3 }}>
+                    {row.desc}
+                  </span>
+                </span>
+                <ChevronRight size={15} className="shrink-0" style={{ color: S.text3 }} />
+              </button>
+            );
+          })}
+        </Card>
 
         {/* ── 页脚 ── */}
         <footer style={{ marginTop: 26, textAlign: 'center', fontSize: 11, color: S.text3 }}>
@@ -422,7 +466,7 @@ function RecommendedShelf({ S, onNavigate }: { S: Skin; onNavigate: (to: string)
       BUILTIN_TOOLS.filter((t) => t.kind === 'agent')
         .filter((t) => resolveMobileCompat(t.routePath ?? '')?.level !== 'pc-only')
         .filter((t) => !APP_GRID.some((entry) => entry.route === t.routePath))
-        .slice(0, 6),
+        .slice(0, 8),
     [],
   );
   if (items.length === 0) return null;
