@@ -8,3 +8,5 @@
 | security | prd-api | inline multipart 文件绕过引用 rehydrate 时禁止清理未经 manifest 验证的 RefKey |
 | fix | prd-api | LLM 日志缺省租户跟随 LlmGateway InternalTenantId 配置，避免落入硬编码租户 |
 | fix | prd-api | shadow 证据、provider 并发和 legacy key 的缺省租户统一跟随 InternalTenantId 配置 |
+| fix | prd-api | raw 幂等指纹计算前覆盖服务端已验证 tenant/team，忽略客户端自报租户字段 |
+| fix | prd-api | raw 幂等指纹容忍反序列化后的空 inline 文件内容，避免混合 multipart 请求异常 |

@@ -555,13 +555,17 @@ public sealed class GatewayRequestExecutionStore
     {
         var multipartFiles = request.MultipartFiles?
             .OrderBy(x => x.Key, StringComparer.Ordinal)
-            .Select(x => new
+            .Select(x =>
             {
-                FieldName = x.Key,
-                x.Value.FileName,
-                x.Value.MimeType,
-                SizeBytes = x.Value.Content.LongLength,
-                Sha256 = Convert.ToHexString(SHA256.HashData(x.Value.Content)).ToLowerInvariant(),
+                var content = x.Value.Content ?? Array.Empty<byte>();
+                return new
+                {
+                    FieldName = x.Key,
+                    x.Value.FileName,
+                    x.Value.MimeType,
+                    SizeBytes = content.LongLength,
+                    Sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+                };
             })
             .ToArray();
         var multipartRefs = request.MultipartFileRefs?

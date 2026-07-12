@@ -316,6 +316,89 @@ public class GatewayMultipartHttpTests
     }
 
     [Fact]
+    public async Task ScopedRawEndpoint_IdempotencyIgnoresClientReportedTenantContext()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.Context.Database.GetCollection<GatewayRequestExecutionRecord>("llmgw_request_executions")
+            .Indexes.CreateOneAsync(new CreateIndexModel<GatewayRequestExecutionRecord>(
+                Builders<GatewayRequestExecutionRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestId)
+                    .Ascending(x => x.Operation),
+                new CreateIndexOptions { Unique = true }));
+        var bytes = Encoding.UTF8.GetBytes("tenant-a-owned-image");
+        const string key = "llmgw/multipart/tenant-a/idempotent-image.png";
+        var storage = new MemoryAssetStorage();
+        await storage.UploadToKeyAsync(key, bytes, "image/png", CancellationToken.None);
+        await scope.Context.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+            .InsertOneAsync(new GatewayMultipartObjectRecord
+            {
+                TenantId = "tenant-a",
+                RefKey = key,
+                Sha256 = Sha256Hex(bytes),
+                SizeBytes = bytes.LongLength,
+                Status = "uploaded",
+            });
+
+        await using var app = BuildHost(
+            storage,
+            new CapturingGateway(),
+            scope.Context,
+            new StaticTenantKeyAuthorizer("tenant-a"));
+        await app.StartAsync();
+        try
+        {
+            HttpRequestMessage CreateRequest(string clientTenantId)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
+                {
+                    Content = JsonContent.Create(new GatewayRawRequest
+                    {
+                        AppCallerCode = "tenant-a.app::vision",
+                        ModelType = "vision",
+                        IsMultipart = true,
+                        Context = new GatewayRequestContext
+                        {
+                            TenantId = clientTenantId,
+                            RequestId = "stable-idempotency-request",
+                        },
+                        MultipartFileRefs = new Dictionary<string, MultipartFileRef>
+                        {
+                            ["image"] = new()
+                            {
+                                RefKey = key,
+                                FileName = "image.png",
+                                MimeType = "image/png",
+                                SizeBytes = bytes.LongLength,
+                                Sha256 = Sha256Hex(bytes),
+                            },
+                        },
+                    }, options: PascalJson),
+                };
+                request.Headers.Add("X-Gateway-Key", "tenant-a-scoped-key");
+                return request;
+            }
+
+            using var firstRequest = CreateRequest("tenant-a");
+            var first = await app.GetTestClient().SendAsync(firstRequest);
+            using var retryRequest = CreateRequest("tenant-b-client-spoof");
+            var retry = await app.GetTestClient().SendAsync(retryRequest);
+
+            first.StatusCode.ShouldBe(HttpStatusCode.OK);
+            retry.StatusCode.ShouldBe(HttpStatusCode.OK);
+            storage.DownloadCount.ShouldBe(1);
+            storage.DeleteCount.ShouldBe(1);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task RawEndpoint_RejectsMultipartRefHashMismatch()
     {
         var bytes = Encoding.UTF8.GetBytes("real-bytes");
@@ -379,7 +462,11 @@ public class GatewayMultipartHttpTests
         builder.Services.AddSingleton<IAssetStorage>(storage);
         builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
-        if (data is not null) builder.Services.AddSingleton(data);
+        if (data is not null)
+        {
+            builder.Services.AddSingleton(data);
+            builder.Services.AddSingleton(new GatewayRequestExecutionStore(data));
+        }
         if (keyAuthorizer is not null) builder.Services.AddSingleton(keyAuthorizer);
 
         var app = builder.Build();

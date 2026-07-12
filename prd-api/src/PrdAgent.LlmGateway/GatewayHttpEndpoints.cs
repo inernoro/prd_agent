@@ -867,6 +867,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            request = ApplyVerifiedRawRequestContext(http, request, ingress);
             var executionStore = services.GetService<GatewayRequestExecutionStore>();
             GatewayExecutionBeginResult? execution = null;
             if (executionStore is not null)
@@ -2856,6 +2857,7 @@ public static class GatewayHttpEndpoints
         string requestId,
         string operation)
     {
+        request = ApplyVerifiedRawRequestContext(http, request, ingress);
         var store = services.GetService<GatewayRequestExecutionStore>();
         GatewayExecutionBeginResult? execution = null;
         if (store is not null)
@@ -4183,6 +4185,17 @@ public static class GatewayHttpEndpoints
                 IsHealthProbe = source?.IsHealthProbe,
             },
         };
+    }
+
+    private static GatewayRawRequest ApplyVerifiedRawRequestContext(
+        HttpContext http,
+        GatewayRawRequest request,
+        GatewayIngressRequest ingress)
+    {
+        ingress.Context ??= new GatewayRequestContext { RequestId = ingress.RequestId };
+        ingress.Context.TenantId = GetVerifiedTenantId(http);
+        ingress.Context.TeamId = GetVerifiedTeamId(http);
+        return ApplyIngressRouting(request, ingress);
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRawRequest request, string ingressProtocol, string sourceSystem)

@@ -307,6 +307,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void RawIdempotency_NormalizesVerifiedTenantContextBeforeFingerprinting()
+    {
+        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var nativeStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
+        var compatStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
+
+        Assert.True(nativeStart >= 0 && compatStart > nativeStart, "找不到 raw 幂等入口");
+        Assert.True(
+            endpoints.IndexOf("request = ApplyVerifiedRawRequestContext(http, request, ingress);", nativeStart, StringComparison.Ordinal)
+            < endpoints.IndexOf("GatewayRequestExecutionStore.Fingerprint(request)", nativeStart, StringComparison.Ordinal),
+            "native raw 必须在 fingerprint 前覆盖服务端 tenant/team");
+        Assert.True(
+            endpoints.IndexOf("request = ApplyVerifiedRawRequestContext(http, request, ingress);", compatStart, StringComparison.Ordinal)
+            < endpoints.IndexOf("GatewayRequestExecutionStore.Fingerprint(request)", compatStart, StringComparison.Ordinal),
+            "兼容 raw 必须在 fingerprint 前覆盖服务端 tenant/team");
+        Assert.Contains("ingress.Context.TenantId = GetVerifiedTenantId(http)", endpoints);
+        Assert.Contains("ingress.Context.TeamId = GetVerifiedTeamId(http)", endpoints);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
