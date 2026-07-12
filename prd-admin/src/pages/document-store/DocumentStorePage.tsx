@@ -4,6 +4,10 @@ import {
   Orbit,
   Plus,
   Upload,
+  FilePlus,
+  FileUp,
+  AudioLines,
+  Video,
   ArrowLeft,
   X,
   Rss,
@@ -111,6 +115,8 @@ import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
+import { createPortal } from 'react-dom';
+import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
@@ -797,13 +803,15 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
   onOpenLegacySyncPanel: () => void;
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
+  /** 进入时自动触发的新增动作（外层知识库列表「+」选库后带入；挂载时消费一次） */
+  initialAction?: 'doc' | 'record' | 'upload' | 'video';
 }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -1097,10 +1105,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
     let successCount = 0;
+    let firstUploadedId: string | null = null;
     for (const file of files) {
       const res = await uploadDocumentFile(storeId, file);
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
+        firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
         toast.error(`上传失败: ${file.name}`, res.error?.message);
@@ -1108,6 +1118,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     if (successCount > 0) {
       toast.success(`上传完成`, `${successCount} 个文件已存储`);
+      // 上传成功自动跳转到刚上传的文档（多文件跳第一个），不让用户自己去列表里找
+      if (firstUploadedId) setSelectedEntryId(firstUploadedId);
     }
     setUploading(false);
   }, [storeId]);
@@ -1320,6 +1332,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       mode: 'short-video',
     });
   }, []);
+
+  // 外层列表「+」选库进入后自动触发对应新增动作（消费一次；与库内 FAB 出一样的结果）
+  const initialActionConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!initialAction || initialActionConsumedRef.current || !store || loading) return;
+    initialActionConsumedRef.current = true;
+    if (initialAction === 'doc') void handleCreateDocument();
+    else if (initialAction === 'record') setShowRecorder(true);
+    else if (initialAction === 'upload') fileInputRef.current?.click();
+    else if (initialAction === 'video') handleOpenVideoParser();
+  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser]);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
@@ -2007,6 +2030,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
               if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
             }}
+            onEditNote={(noteId) => {
+              setSelectedEntryId(noteId);
+              setAutoEditEntryId(noteId);
+            }}
             onDone={() => {
               void loadEntries();
               setTimeout(() => { void loadEntries(); }, 1500);
@@ -2351,6 +2378,9 @@ export function DocumentStorePage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
   });
+  // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
+  const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
+  const [detailInitialAction, setDetailInitialAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
 
   // 深链 ?tab=xxx：清空详情视图 + 切到该 tab，
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
@@ -2684,9 +2714,11 @@ export function DocumentStorePage() {
       storeId={selectedStoreId}
       key={selectedStoreId}
       initialEntryId={pendingEntryId ?? undefined}
+      initialAction={detailInitialAction ?? undefined}
       onBack={() => {
         setSelectedStoreId(null);
         setPendingEntryId(null);
+        setDetailInitialAction(null);
         // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
         if (tab === 'mine') loadStores('mine', null);
         else if (tab === 'team') {
@@ -3593,6 +3625,139 @@ export function DocumentStorePage() {
           onClose={() => setShareTeamTarget(null)}
         />
       )}
+
+      {/* 外层「+」FAB：与库内 FAB 同款动作、出一样的结果，只多一步"归属到哪个知识库"。
+          新建知识库也归入同一入口（与工具栏按钮同源 setShowCreate，不再是两套按钮）。 */}
+      <CreatePaletteFab
+        actions={[
+          {
+            key: 'store', label: '新建知识库', icon: Library, hue: 'rgba(234,179,8,0.92)',
+            onClick: () => {
+              if (tab === 'team' && !teamScope.teamId) {
+                toast.error('请先选择团队空间', '新建的知识库会自动分享到所选团队空间');
+                return;
+              }
+              setShowCreate(true);
+            },
+          },
+          { key: 'doc', label: '写文章', icon: FilePlus, onClick: () => setStorePickerAction('doc') },
+          { key: 'audio', label: '录音转笔记', icon: AudioLines, hue: 'rgba(34,197,94,0.92)', onClick: () => setStorePickerAction('record') },
+          {
+            key: 'import-group', label: '上传与导入', icon: Upload, hue: 'rgba(14,165,233,0.92)',
+            children: [
+              { key: 'upload', label: '上传文件', icon: FileUp, onClick: () => setStorePickerAction('upload') },
+              { key: 'video', label: '解析短视频', icon: Video, hue: 'rgba(168,85,247,0.92)', onClick: () => setStorePickerAction('video') },
+            ],
+          },
+        ]}
+      />
+
+      {/* 选库弹窗：外层动作先选"归属到哪个知识库"，选中后进库自动触发 */}
+      {storePickerAction && (
+        <StorePickerDialog
+          actionLabel={{ doc: '写文章', record: '录音转笔记', upload: '上传文件', video: '解析短视频' }[storePickerAction]}
+          onPick={(storeId) => {
+            setDetailInitialAction(storePickerAction);
+            setStorePickerAction(null);
+            setSelectedStoreId(storeId);
+          }}
+          onCreateNew={() => {
+            setStorePickerAction(null);
+            setShowCreate(true);
+          }}
+          onClose={() => setStorePickerAction(null)}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * 选库弹窗：外层「+」动作的"归属到哪个知识库"一步。
+ * 只列我的库（可写），支持按名称过滤；没有库时引导先新建。
+ */
+function StorePickerDialog({ actionLabel, onPick, onCreateNew, onClose }: {
+  actionLabel: string;
+  onPick: (storeId: string) => void;
+  onCreateNew: () => void;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<DocumentStoreWithPreview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    void listDocumentStoresWithPreview(1, 500, { scope: 'mine', teamId: null }).then((res) => {
+      if (res.success) setItems(res.data.items);
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const filtered = q.trim()
+    ? items.filter(s => s.name.toLowerCase().includes(q.trim().toLowerCase()))
+    : items;
+
+  const dialog = (
+    <div
+      className="surface-backdrop fixed inset-0 z-[110] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div
+        className="surface-popover flex flex-col rounded-[16px]"
+        style={{ width: 'min(420px, 92vw)', maxHeight: '70vh' }}>
+        <div className="shrink-0 px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[14px] font-semibold text-token-primary">{actionLabel}：放进哪个知识库？</p>
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+              <X size={14} />
+            </button>
+          </div>
+          {items.length > 5 && (
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="按名称过滤…"
+              autoFocus
+              className="mt-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+            />
+          )}
+        </div>
+        <div className="flex-1 px-2 pb-2" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {loading ? (
+            <div className="flex items-center justify-center py-10"><MapSpinner size={15} /></div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <p className="text-[12px] text-token-muted">{items.length === 0 ? '还没有知识库' : '没有匹配的知识库'}</p>
+              {items.length === 0 && (
+                <Button variant="primary" size="sm" onClick={onCreateNew}><Plus size={13} /> 先新建一个</Button>
+              )}
+            </div>
+          ) : (
+            filtered.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => onPick(s.id)}
+                className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-white/6">
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <Library size={14} className="shrink-0 text-token-muted" />
+                  <span className="truncate text-[13px] text-token-primary">{s.name}</span>
+                </span>
+                <span className="shrink-0 text-[11px] tabular-nums text-token-muted">{s.documentCount} 篇</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(dialog, document.body);
 }

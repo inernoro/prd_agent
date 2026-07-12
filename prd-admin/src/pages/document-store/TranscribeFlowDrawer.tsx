@@ -7,6 +7,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { MarkdownViewer } from '@/components/file-preview';
 import { api } from '@/services/api';
 import { transcribeEntry, getAgentRun, uploadDocumentFile, listTranscribeStyles, restyleTranscribeRun } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
@@ -38,6 +39,8 @@ export type TranscribeFlowDrawerProps = {
   folders?: { id: string; title: string }[];
   /** 把转录笔记移动到目标文件夹（null = 库根目录） */
   onMoveNote?: (noteEntryId: string, folderId: string | null) => Promise<void>;
+  /** 「编辑笔记」：打开笔记并直接进入编辑态（摘要可改） */
+  onEditNote?: (noteEntryId: string) => void;
   onClose: () => void;
   /** 上传成功后回调（新 entry 注入父页面列表） */
   onEntryCreated?: (entry: DocumentEntry) => void;
@@ -64,6 +67,7 @@ export function TranscribeFlowDrawer({
   restyleRun,
   folders,
   onMoveNote,
+  onEditNote,
   onClose,
   onEntryCreated,
   onDone,
@@ -276,6 +280,30 @@ export function TranscribeFlowDrawer({
 
   const running = status === 'uploading' || status === 'running';
 
+  // ── 流式贴底滚动（业界标准 stick-to-bottom：贴底才自动滚，上滑即打断，回到底部恢复） ──
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [detached, setDetached] = useState(false);
+  const handleBodyScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    stickRef.current = nearBottom;
+    setDetached(!nearBottom);
+  }, []);
+  useEffect(() => {
+    if (!running || !stickRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [summaryText, phase, running]);
+  const jumpToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    stickRef.current = true;
+    setDetached(false);
+  }, []);
+
   const body = (
     <>
       {/* 阶段清单（Notion 式逐项点亮） */}
@@ -304,8 +332,10 @@ export function TranscribeFlowDrawer({
         ))}
       </div>
 
-      {/* 摘要流式生长区（产物即体验：等待期主视觉是摘要本身在长） */}
-      {summaryText && (
+      {/* 摘要流式生长区（产物即体验：等待期主视觉是摘要本身在长）。
+          完成后不在这里展示——完成态的摘要在下方操作区之后以 markdown 渲染（限高内滚），
+          保证「查看/换方式/归档」操作不被长摘要顶出屏幕（2026-07-13 用户反馈按钮太靠下）。 */}
+      {summaryText && status !== 'done' && (
         <div className="surface-inset rounded-[12px] p-3.5">
           <p className="mb-2 text-[11px] font-semibold text-token-muted">摘要</p>
           <div className="text-[13px] leading-relaxed text-token-primary">
@@ -435,6 +465,26 @@ export function TranscribeFlowDrawer({
           )}
         </div>
       )}
+
+      {/* 完成态摘要预览：markdown 渲染 + 限高内滚（不把上方操作区顶出屏幕）+ 可编辑 */}
+      {status === 'done' && summaryText && (
+        <div className="surface-inset rounded-[12px] p-3.5">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[11px] font-semibold text-token-muted">摘要（已保存到笔记）</p>
+            {outputEntryId && onEditNote && (
+              <button
+                onClick={() => { onEditNote(outputEntryId); onClose(); }}
+                className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors hover:bg-white/8"
+                style={{ color: 'var(--accent-primary, rgba(96,165,250,0.95))' }}>
+                编辑笔记
+              </button>
+            )}
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            <MarkdownViewer content={summaryText} />
+          </div>
+        </div>
+      )}
     </>
   );
 
@@ -504,10 +554,27 @@ export function TranscribeFlowDrawer({
           </div>
         )}
         <div className={`shrink-0 ${isMobile ? 'px-4 py-3' : 'surface-panel-header px-5 py-4'}`}>{header}</div>
-        <div
-          className={`flex-1 space-y-4 ${isMobile ? 'px-4 pb-2' : 'px-5 py-5'}`}
-          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          {body}
+        <div className="relative flex-1" style={{ minHeight: 0 }}>
+          <div
+            ref={scrollRef}
+            onScroll={handleBodyScroll}
+            className={`h-full space-y-4 ${isMobile ? 'px-4 pb-2' : 'px-5 py-5'}`}
+            style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {body}
+          </div>
+          {/* 流式期间用户上滑打断自动跟随 → 浮出「回到底部」，点它恢复跟随（stick-to-bottom 标准交互） */}
+          {detached && running && (
+            <button
+              onClick={jumpToBottom}
+              className="absolute bottom-3 left-1/2 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold"
+              style={{
+                background: 'rgba(59,130,246,0.92)',
+                color: '#fff',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+              }}>
+              <ChevronRight size={12} style={{ transform: 'rotate(90deg)' }} /> 回到底部
+            </button>
+          )}
         </div>
         <div
           className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 pt-4 pb-20'}`}
