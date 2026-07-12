@@ -211,7 +211,8 @@ export default function AppShell() {
   useEffect(() => {
     const root = document.documentElement;
     if (isMobile) {
-      const selfManaged = ['/daily-post', '/report-agent', '/weekly-poster'].some(
+      // 只列真正自己 set/remove data-theme 的页面(weekly-poster 无所有者,已移除 —— Codex P2 三轮)
+      const selfManaged = ['/daily-post', '/report-agent'].some(
         (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
       );
       if (selfManaged) {

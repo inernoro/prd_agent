@@ -47,13 +47,14 @@ export default function DailyPostPage() {
   const { dateText, weekday } = formatDateline(now);
 
   // 纸面语境：整个 AppShell（顶栏/底部 Tab）跟随进入白天 token。
+  // 卸载时不恢复进入前的旧值——旧值可能是壳层代管的移动偏好,盲目写回
+  // 会在「从本页登出」时把 light 泄漏到登录页(Codex P2)。直接清属性:
+  // 回到普通页时 AppShell 会按路由重申偏好,登出则保持无主题。
   useEffect(() => {
     const root = document.documentElement;
-    const prev = root.getAttribute('data-theme');
     root.setAttribute('data-theme', 'light');
     return () => {
-      if (prev) root.setAttribute('data-theme', prev);
-      else root.removeAttribute('data-theme');
+      root.removeAttribute('data-theme');
     };
   }, []);
 
