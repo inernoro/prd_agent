@@ -19,8 +19,10 @@ import { Play, Pause } from 'lucide-react';
 
 interface AudioWavePlayerProps {
   src: string;
-  /** 字幕 / 时间戳跟随高亮的回调（Wave 3 字幕跟随高亮使用） */
+  /** 字幕 / 时间戳跟随高亮的回调（转录跟读滚轮使用） */
   onTimeUpdate?: (currentSec: number) => void;
+  /** 注册跳播函数：父组件拿到 seek(sec) 后可实现「点歌词跳播」；跳播后若暂停会自动继续播 */
+  registerSeek?: (seek: (sec: number) => void) => void;
   className?: string;
 }
 
@@ -33,12 +35,37 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWavePlayerProps) {
+/**
+ * 声纹条高度（确定性伪随机，按 src 播种）：跨域音频拿不到真实 PCM 波形时，
+ * 渲染语音消息式的声纹条（微信/Telegram 语音条心智），进度按播放比例着色。
+ * 同一个文件每次打开形状一致（确定性），不是每帧乱跳的假动画。
+ */
+function seededBars(src: string, n: number): number[] {
+  let h = 2166136261;
+  for (let i = 0; i < src.length; i++) {
+    h ^= src.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h |= 0;
+    const r = ((h >>> 0) % 1000) / 1000;
+    // 正弦包络 + 随机扰动：形似语音的起伏，不是纯噪声
+    out.push(0.22 + 0.78 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
+  }
+  return out;
+}
+
+const BAR_COUNT = 48;
+
+export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '' }: AudioWavePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
   // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
   const onTimeUpdateRef = useRef(onTimeUpdate);
   useEffect(() => { onTimeUpdateRef.current = onTimeUpdate; }, [onTimeUpdate]);
+  const registerSeekRef = useRef(registerSeek);
+  useEffect(() => { registerSeekRef.current = registerSeek; }, [registerSeek]);
 
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -46,12 +73,15 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
   const [duration, setDuration] = useState(0);
   const [rateIdx, setRateIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // 是否解码出真实波形（同域音频）；跨域拿不到 PCM → 渲染声纹条兜底
+  const [decoded, setDecoded] = useState(false);
 
   // useEffect 仅依赖 src — 避免 onTimeUpdate 引用变化导致 ws 反复销毁重建
   useEffect(() => {
     if (!containerRef.current) return;
     setReady(false);
     setError(null);
+    setDecoded(false);
 
     // MediaElement 模式：让 wavesurfer 套在 HTMLAudioElement 上，不走 fetch+decode
     // 跨域音频用 audio 元素加载浏览器宽容（不需 CORS），核心目标是"永远能播"
@@ -78,6 +108,8 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
       setReady(true);
       setDuration(ws.getDuration());
     });
+    // 只有真实解码出 PCM（同域/CORS 通）才有波形；否则声纹条兜底
+    ws.on('decode', () => setDecoded(true));
     // metadata 加载完也算 ready（即使没解码出 PCM，时长能拿到就够用）
     audio.addEventListener('loadedmetadata', () => {
       setReady(true);
@@ -90,9 +122,13 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
     ws.on('play', () => setPlaying(true));
     ws.on('pause', () => setPlaying(false));
     ws.on('finish', () => setPlaying(false));
+    // 点歌词跳播：seek 到目标秒；暂停态下自动继续播（音乐 App 心智）
+    registerSeekRef.current?.((sec) => {
+      ws.setTime(sec);
+      if (!ws.isPlaying()) void ws.play();
+    });
     audio.addEventListener('error', () => {
       // audio 元素本身加载失败 → 完全 fallback 到原生
-      // eslint-disable-next-line no-console
       console.warn('[AudioWavePlayer] audio 加载失败，回退原生:', src);
       setError('audio load failed');
     });
@@ -129,25 +165,36 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
         border: '1px solid rgba(168,85,247,0.18)',
       }}
     >
-      {/* 波形容器 — MediaElement 模式下，跨域音频此处可能空白（仅有进度光标）
-          这是预期行为：等 CDN 配 CORS 后会自动有真实波形 */}
+      {/* 可视区：同域音频解码出真实波形走 wavesurfer；跨域拿不到 PCM 时渲染
+          语音消息式声纹条（确定性伪随机 + 播放进度着色 + 点按跳播），不再留白 */}
       <div className="relative mb-3">
-        <div ref={containerRef} className="w-full" />
-        {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex gap-1">
-              {[0, 1, 2, 3, 4].map((i) => (
+        <div ref={containerRef} className="w-full" style={decoded ? undefined : { height: 0, overflow: 'hidden' }} />
+        {!decoded && (
+          <div
+            className="flex h-[56px] w-full items-end gap-[2px]"
+            style={{ cursor: ready ? 'pointer' : 'default', alignItems: 'center' }}
+            onClick={(e) => {
+              if (!ready || duration <= 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+              wsRef.current?.setTime(ratio * duration);
+            }}
+            title={ready ? '点击跳到对应位置' : undefined}
+          >
+            {seededBars(src, BAR_COUNT).map((h, i) => {
+              const played = ready && duration > 0 && i / BAR_COUNT <= currentTime / duration;
+              return (
                 <span
                   key={i}
-                  className="w-1 rounded-full"
+                  className="min-w-0 flex-1 rounded-full transition-colors duration-150"
                   style={{
-                    background: 'rgba(168,85,247,0.5)',
-                    height: '24px',
-                    animation: `wave-pulse 1.2s ease-in-out ${i * 0.1}s infinite`,
+                    height: `${Math.round(h * 100)}%`,
+                    background: played ? 'rgba(216,180,254,0.95)' : 'rgba(168,85,247,0.30)',
+                    ...(ready ? {} : { animation: `wave-pulse 1.2s ease-in-out ${(i % 8) * 0.12}s infinite` }),
                   }}
                 />
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
       </div>

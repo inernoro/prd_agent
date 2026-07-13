@@ -748,6 +748,8 @@ append_ledger_entry() {
     --evidence-md "$stage_md" \
     --release-gate-json "$release_gate_json" \
     --shadow-evidence-commit "$shadow_evidence_commit" \
+    --maintenance-baseline-commit "$maintenance_from_commit" \
+    --maintenance-baseline-json "$maintenance_baseline_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \
@@ -1673,6 +1675,8 @@ if [ "$execute" = "1" ]; then
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
     --shadow-evidence-commit "$shadow_evidence_commit" \
+    --maintenance-baseline-commit "$maintenance_from_commit" \
+    --maintenance-baseline-json "$maintenance_baseline_json" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \

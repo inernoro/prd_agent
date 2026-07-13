@@ -2332,7 +2332,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// OpenRouter 应用归属：通过 HTTP-Referer + X-Title header 告诉 OpenRouter 本次调用来自哪个 AppCaller。
+    /// OpenRouter 应用归属：通过 HTTP-Referer + X-OpenRouter-Title header 告诉 OpenRouter 本次调用来自哪个 AppCaller。
     /// 仅在 ApiUrl 指向 openrouter.ai 时注入，避免污染其他严格校验 header/body 的上游（DeepSeek、通义、
     /// Claude 原生、各类中转站等）。body 不动，彻底规避未知字段导致 400 的风险。
     /// </summary>
@@ -2347,7 +2347,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         httpRequest.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
         if (!string.IsNullOrWhiteSpace(appCallerCode))
         {
-            httpRequest.Headers.TryAddWithoutValidation("X-Title", appCallerCode);
+            httpRequest.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
         }
     }
 

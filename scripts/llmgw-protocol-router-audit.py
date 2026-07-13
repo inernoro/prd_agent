@@ -128,7 +128,8 @@ def build_report() -> dict[str, Any]:
     compose = _read("docker-compose.yml")
     cds_compose = _read("cds-compose.yml")
     readiness = _read("scripts/llmgw-readiness-audit.py")
-    changelog = _read("changelogs/2026-07-09_llmgw-protocol-router.md")
+    protocol_router_changelog = _read("changelogs/2026-07-09_llmgw-protocol-router.md")
+    assembled_changelog = _read("CHANGELOG.md")
 
     checks: list[dict[str, Any]] = []
 
@@ -481,7 +482,7 @@ def build_report() -> dict[str, Any]:
     ))
 
     ok, detail = _contains_all(
-        readiness + "\n" + changelog,
+        readiness + "\n" + protocol_router_changelog + "\n" + assembled_changelog,
         [
             "config_authority_stage_backup_is_local_auditable_and_safe",
             "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
@@ -498,6 +499,7 @@ def build_report() -> dict[str, Any]:
         [
             "scripts/llmgw-readiness-audit.py",
             "changelogs/2026-07-09_llmgw-protocol-router.md",
+            "CHANGELOG.md",
         ],
     ))
 

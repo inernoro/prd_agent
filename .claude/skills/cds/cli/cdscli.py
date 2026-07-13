@@ -618,12 +618,16 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
     trigger_body: dict[str, Any] | None = None
     if getattr(args, "commit", None):
         trigger_body = {"commitSha": args.commit}
-    trigger = _request_stream_safe("POST", deploy_path, body=trigger_body, timeout=5)
+    trigger = _request_stream_safe("POST", deploy_path, body=trigger_body, timeout=args.timeout)
 
-    # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进 300s 轮询
+    # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进轮询。
+    # 例外(#755):仅仅是触发 SSE 流被 socket 读超时截断(error 以 timeout_ 开头)时,
+    # 服务端多半已经接受请求并进入 building —— 不 die,继续 fall through 到状态轮询,
+    # 与 cmd_deploy 的守卫保持一致,避免误报 FAIL timeout_5s。
     trigger_status = trigger.get("status")
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
-    if not trigger["triggered"] or trigger_http_error:
+    trigger_timed_out = (not trigger["triggered"]) and str(trigger.get("error") or "").startswith("timeout_")
+    if trigger_http_error or (not trigger["triggered"] and not trigger_timed_out):
         die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
@@ -637,6 +641,11 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
                     "partial": trigger.get("partial", False),
                 },
             })
+
+    if trigger_timed_out:
+        # #755:触发 SSE 被截断但服务端多半已接受,转入状态轮询而非误判失败
+        print(f"[branch deploy] 触发流被截断({trigger.get('error')}),服务端可能已进入 building,转入状态轮询",
+              file=sys.stderr)
 
     # 新版 CDS 在任何部署副作用前创建 DeploymentRun，并通过响应头返回 runId。
     # 一旦拿到 runId，CLI 只跟踪该账本，不再用 BranchEntry.status 猜测“本次”部署。
@@ -698,7 +707,7 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
                 },
             })
 
-    # 兼容旧版 CDS：响应头没有 runId 时才退回分支汇总状态轮询。
+    # Step 2: 兼容旧版 CDS：响应头没有 runId 时才退回分支汇总状态轮询。
     started_at = time.time()
     time.sleep(3)  # 状态更新延迟，按 skill 实战经验
     deadline = started_at + args.timeout

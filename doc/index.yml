@@ -193,6 +193,7 @@ docs:
   guide.prd-agent.operations: PRD Agent 全平台操作手册
   guide.cds.ai-auth: CDS + 后端 API 双层认证诊断指南
   guide.cds.github-webhook-events: CDS GitHub Webhook 订阅配置指南
+  guide.cds.github-app: CDS GitHub App 接入与部署 Runbook（新环境从建 App 到 push 自测，含 geole 踩坑排查）
   guide.cds.cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
   guide.cds.deploy-three-paths: CDS 三种部署方式指南
   guide.cds.tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）

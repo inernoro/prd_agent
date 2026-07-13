@@ -852,6 +852,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
         Assert.Contains("shadow_evidence_commit=\"$(python3 - \"$maintenance_baseline_json\"", stage);
         Assert.Contains("--shadow-evidence-commit \"$shadow_evidence_commit\"", stage);
+        Assert.Contains("--maintenance-baseline-commit \"$maintenance_from_commit\"", stage);
+        Assert.Contains("--maintenance-baseline-json \"$maintenance_baseline_json\"", stage);
         Assert.Contains("export LLMGW_GATE_SHADOW_RELEASE_COMMIT=\"$shadow_evidence_commit\"", stage);
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_COMMIT=\"$maintenance_from_commit\"", stage);
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_JSON=\"$maintenance_baseline_json\"", stage);
@@ -861,6 +863,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("[ \"$maintenance_release\" != \"1\" ]", deploy);
         Assert.Contains("LLMGW_POST_DEPLOY_EXPECT_COMMIT=\"$expect_commit\"", deploy);
         Assert.Contains("shadowEvidenceCommit", ledger);
+        Assert.Contains("maintenanceBaselineCommit", ledger);
+        Assert.Contains("maintenanceBaselineJson", ledger);
+        Assert.Contains("allow_skipped_runtime_gates=bool(maintenance_baseline_commit)", ledger);
         Assert.Contains("args.shadow_evidence_commit or args.commit", ledger);
         Assert.Contains("def maintenance_baseline(args: argparse.Namespace)", ledger);
         Assert.Contains("maintenance baseline is stale because a later negative event exists", ledger);
@@ -933,12 +938,18 @@ public class GatewayDataDomainGuardTests
                 },
                 runtimeGates = new
                 {
-                    required = true,
-                    ok = true,
-                    readyForHttpFull = true,
+                    required = false,
+                    ok = false,
+                    readyForHttpFull = false,
                     remainingRuntimeGates = Array.Empty<string>(),
                     allowedPendingRuntimeGates = Array.Empty<string>(),
                 },
+            });
+            var maintenanceBaseline = WriteJson("maintenance-baseline.json", new
+            {
+                verdict = "pass",
+                commit = shadowCommit,
+                shadowEvidenceCommit = shadowCommit,
             });
             var report = Path.Combine(tempDir, "stage.json");
 
@@ -956,6 +967,8 @@ public class GatewayDataDomainGuardTests
                     "--status", "success",
                     "--commit", releaseCommit,
                     "--shadow-evidence-commit", shadowCommit,
+                    "--maintenance-baseline-commit", shadowCommit,
+                    "--maintenance-baseline-json", maintenanceBaseline,
                     "--disable-map-config-fallback-for-active-app-callers", "true",
                     "--protocol-router-audit-json", protocolRouter,
                     "--prod-preflight-json", preflight,
@@ -972,6 +985,73 @@ public class GatewayDataDomainGuardTests
             Assert.True(process.ExitCode == 0, stderr + stdout);
             var reportJson = File.ReadAllText(report);
             Assert.Contains($"\"shadowEvidenceCommit\": \"{shadowCommit}\"", reportJson);
+            Assert.Contains($"\"maintenanceBaselineCommit\": \"{shadowCommit}\"", reportJson);
+            Assert.Contains($"\"maintenanceBaselineJson\": \"{maintenanceBaseline.Replace("\\", "\\\\")}\"", reportJson);
+
+            var ledger = Path.Combine(tempDir, "rollout.jsonl");
+            using var appendProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-rollout-ledger.py", "append",
+                    "--ledger", ledger,
+                    "--stage", "http-full",
+                    "--status", "success",
+                    "--commit", releaseCommit,
+                    "--evidence-json", report,
+                    "--shadow-evidence-commit", shadowCommit,
+                    "--maintenance-baseline-commit", shadowCommit,
+                    "--maintenance-baseline-json", maintenanceBaseline,
+                    "--disable-map-config-fallback-for-active-app-callers", "true",
+                    "--protocol-router-audit-json", protocolRouter,
+                    "--prod-preflight-json", preflight,
+                    "--serving-probe-json", serving,
+                    "--release-gate-json", releaseGate,
+                    "--release-gate-required", "1",
+                    "--smoke-required", "0",
+                }
+            })!;
+            var appendStdout = appendProcess.StandardOutput.ReadToEnd();
+            var appendStderr = appendProcess.StandardError.ReadToEnd();
+            appendProcess.WaitForExit();
+
+            Assert.True(appendProcess.ExitCode == 0, appendStderr + appendStdout);
+            Assert.Contains($"\"maintenanceBaselineCommit\": \"{shadowCommit}\"", File.ReadAllText(ledger));
+
+            var rejectedReport = Path.Combine(tempDir, "stage-without-maintenance-marker.json");
+            using var rejectedProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-rollout-ledger.py", "stage-report",
+                    "--json-out", rejectedReport,
+                    "--stage", "http-full",
+                    "--status", "success",
+                    "--commit", releaseCommit,
+                    "--shadow-evidence-commit", shadowCommit,
+                    "--disable-map-config-fallback-for-active-app-callers", "true",
+                    "--protocol-router-audit-json", protocolRouter,
+                    "--prod-preflight-json", preflight,
+                    "--serving-probe-json", serving,
+                    "--release-gate-json", releaseGate,
+                    "--release-gate-required", "1",
+                    "--smoke-required", "0",
+                }
+            })!;
+            var rejectedStdout = rejectedProcess.StandardOutput.ReadToEnd();
+            var rejectedStderr = rejectedProcess.StandardError.ReadToEnd();
+            rejectedProcess.WaitForExit();
+
+            Assert.NotEqual(0, rejectedProcess.ExitCode);
+            Assert.Contains("runtimeGates is not required+ok+ready", rejectedStderr + rejectedStdout);
 
             string WriteJson(string name, object value)
             {
@@ -1069,6 +1149,42 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);
         Assert.Contains("\"shadowChecks\"", releaseGate);
+    }
+
+    [Fact]
+    public void ProtocolRouterAudit_AcceptsAssembledChangelogWhenFragmentWasConsumed()
+    {
+        var root = LocateRepoRoot();
+        var report = Path.Combine(Path.GetTempPath(), $"llmgw-protocol-router-audit-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-protocol-router-audit.py",
+                    "--json-out", report,
+                }
+            })!;
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, stderr + stdout);
+            var reportJson = File.ReadAllText(report);
+            Assert.Contains("\"verdict\": \"pass\"", reportJson);
+            Assert.Contains("\"name\": \"readiness_and_changelog_capture_protocol_router_progress\"", reportJson);
+            Assert.Contains("\"CHANGELOG.md\"", reportJson);
+        }
+        finally
+        {
+            File.Delete(report);
+        }
     }
 
     [Fact]
