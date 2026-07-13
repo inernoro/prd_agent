@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, CalendarDays, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { TeamDashboardMember } from '@/services/contracts/reportAgent';
 import { useDataTheme } from '../hooks/useDataTheme';
@@ -167,6 +168,9 @@ export function WeekNavRail({
   // 跳转选择器状态
   const [jumpYear, setJumpYear] = useState<number>(selectedYear);
   const [jumpWeek, setJumpWeek] = useState<number>(selectedWeek);
+  // 手机端周树折叠态：默认收起，年/周下拉承担导航；点「周列表」展开限高树
+  const isMobile = useIsMobile();
+  const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
 
   // 锚点：max(当前选中周, 当前 ISO 周)，保证跳到未来周时列表也能覆盖
   const anchor = useMemo(() => {
@@ -291,18 +295,31 @@ export function WeekNavRail({
   };
 
   return (
+    // 手机端全宽紧凑卡：年/周下拉承担导航，周树默认收起（可展开）；lg 起恢复 280px 侧栏 + 常驻周树。
+    // 曾因固定 280px 宽把手机端团队内容挤成竖条（2026-07-12 用户真机截图），禁止再回定宽。
     <aside
-      className="flex-none flex flex-col min-h-0 surface rounded-2xl overflow-hidden"
-      style={{ width: 280, border: '1px solid var(--border-primary)' }}
+      className="flex-none flex flex-col min-h-0 surface rounded-2xl overflow-hidden w-full lg:w-[280px]"
+      style={{ border: '1px solid var(--border-primary)' }}
     >
       {/* 顶部：年/周选择器 */}
       <div
         className="shrink-0 px-3 py-3 flex flex-col gap-2"
-        style={{ borderBottom: '1px solid var(--border-primary)' }}
+        style={{ borderBottom: isMobile && !mobileTreeOpen ? 'none' : '1px solid var(--border-primary)' }}
       >
         <div className="flex items-center gap-1.5">
           <CalendarDays size={14} style={{ color: 'var(--text-muted)' }} />
           <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>周导航</span>
+          {isMobile ? (
+            <button
+              type="button"
+              onClick={() => setMobileTreeOpen((v) => !v)}
+              className="ml-auto inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-1 surface-inset"
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border-primary)' }}
+            >
+              周列表
+              {mobileTreeOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </button>
+          ) : null}
         </div>
         <div className="flex items-center gap-1.5">
           <select
@@ -332,9 +349,9 @@ export function WeekNavRail({
         </div>
       </div>
 
-      {/* 年/周两级列表 */}
+      {/* 年/周两级列表：手机端默认收起（年/周下拉已覆盖跳转），展开时限高内滚不吃整屏 */}
       <div
-        className="flex-1 min-h-0 overflow-y-auto px-2 py-2"
+        className={`${isMobile && !mobileTreeOpen ? 'hidden' : ''} flex-1 min-h-0 overflow-y-auto px-2 py-2 max-h-[320px] lg:max-h-none`}
         style={{ overscrollBehavior: 'contain' }}
       >
         {yearGroups.map((group) => {

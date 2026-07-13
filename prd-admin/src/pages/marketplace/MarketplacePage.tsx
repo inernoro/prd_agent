@@ -33,6 +33,7 @@ import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { useAuthStore } from '@/stores/authStore';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 type SortMode = 'hot' | 'new';
 type CardDensity = 'classic' | 'short' | 'micro';
@@ -151,6 +152,9 @@ export const MarketplacePage: React.FC = () => {
   const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
   const [cardDensity, setCardDensity] = useState<CardDensity>('short');
   const connectBtnRef = useRef<HTMLButtonElement>(null);
+  // 手机端密度（.claude/rules/mobile-first-density.md）：
+  // 搜索独占一行、密度切换隐藏、接入AI/上传收成紧凑图标、兼容 banner 隐藏
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!quickConnectOpen) return;
@@ -259,6 +263,20 @@ export const MarketplacePage: React.FC = () => {
   // 去掉"全部"，技能排第一
   const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
 
+  // 搜索框（桌面在工具条内、手机独占一行），只渲染其中一处，tour 锚点不重复
+  const searchField = (
+    <div className="relative">
+      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
+      <input
+        type="text"
+        placeholder="搜索配置名称..."
+        value={searchKeyword}
+        onChange={(e) => setSearchKeyword(e.target.value)}
+        className={SEARCH_FIELD_CLASS}
+      />
+    </div>
+  );
+
   return (
     <div
       className="marketplace-page relative min-h-full overflow-auto"
@@ -295,18 +313,11 @@ export const MarketplacePage: React.FC = () => {
 
             <div className="marketplace-toolbar-actions">
               <TipsEntryButton compact />
-              <div data-tour-id="marketplace-search" className="marketplace-search">
-                <div className="relative">
-                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
-                  <input
-                    type="text"
-                    placeholder="搜索配置名称..."
-                    value={searchKeyword}
-                    onChange={(e) => setSearchKeyword(e.target.value)}
-                    className={SEARCH_FIELD_CLASS}
-                  />
+              {!isMobile && (
+                <div data-tour-id="marketplace-search" className="marketplace-search">
+                  {searchField}
                 </div>
-              </div>
+              )}
 
               <div data-tour-id="marketplace-sort" className="marketplace-sort-group">
                 <button
@@ -329,38 +340,41 @@ export const MarketplacePage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="marketplace-density-group" aria-label="卡片密度">
-                <button
-                  type="button"
-                  onClick={() => setCardDensity('classic')}
-                  data-active={cardDensity === 'classic'}
-                  className="marketplace-density-pill"
-                  title="现版高度"
-                >
-                  <PanelTop size={13} />
-                  现版
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCardDensity('short')}
-                  data-active={cardDensity === 'short'}
-                  className="marketplace-density-pill"
-                  title="半高横向卡"
-                >
-                  <Rows3 size={13} />
-                  半高
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCardDensity('micro')}
-                  data-active={cardDensity === 'micro'}
-                  className="marketplace-density-pill"
-                  title="更矮横向卡"
-                >
-                  <Rows3 size={13} />
-                  迷你
-                </button>
-              </div>
+              {/* 密度切换手机端隐藏：单列布局下三档无差异，纯噪音 */}
+              {!isMobile && (
+                <div className="marketplace-density-group" aria-label="卡片密度">
+                  <button
+                    type="button"
+                    onClick={() => setCardDensity('classic')}
+                    data-active={cardDensity === 'classic'}
+                    className="marketplace-density-pill"
+                    title="现版高度"
+                  >
+                    <PanelTop size={13} />
+                    现版
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCardDensity('short')}
+                    data-active={cardDensity === 'short'}
+                    className="marketplace-density-pill"
+                    title="半高横向卡"
+                  >
+                    <Rows3 size={13} />
+                    半高
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCardDensity('micro')}
+                    data-active={cardDensity === 'micro'}
+                    className="marketplace-density-pill"
+                    title="更矮横向卡"
+                  >
+                    <Rows3 size={13} />
+                    迷你
+                  </button>
+                </div>
+              )}
 
               {/* 接入AI — 技能 tab 下才显示 */}
               {categoryFilter === 'skill' && (
@@ -377,9 +391,11 @@ export const MarketplacePage: React.FC = () => {
                   className="marketplace-nav-pill"
                   data-active={quickConnectOpen ? 'true' : 'false'}
                   title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
+                  aria-label="接入 AI"
                 >
                   <Zap size={13} />
-                  接入 AI
+                  {/* 手机端收成紧凑图标，入口仍可触达 */}
+                  {!isMobile && '接入 AI'}
                 </button>
               )}
 
@@ -388,12 +404,21 @@ export const MarketplacePage: React.FC = () => {
                 size="sm"
                 onClick={() => setUploadOpen(true)}
                 data-tour-id="marketplace-upload-skill-btn"
+                title="上传技能"
+                aria-label="上传技能"
               >
                 <UploadCloud size={13} />
-                上传技能
+                {!isMobile && '上传技能'}
               </Button>
             </div>
           </div>
+
+          {/* 手机端：搜索框独占一行（仍在同一块工具条内，不新增控制条） */}
+          {isMobile && (
+            <div data-tour-id="marketplace-search" className="marketplace-search-mobile">
+              {searchField}
+            </div>
+          )}
         </div>
 
         {/* ── Filter bar — 紧贴 toolbar ── */}
@@ -447,7 +472,8 @@ export const MarketplacePage: React.FC = () => {
       </div>
 
       {/* ── 兼容 Agent 提示（findmapskills 协议适用于所有支持工具调用的 Agent） ── */}
-      {categoryFilter === 'skill' && (
+      {/* 手机端隐藏：纯说明性文字条，「接入 AI」入口本身仍可触达 */}
+      {categoryFilter === 'skill' && !isMobile && (
         <div className="marketplace-compat-banner">
           <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
           <span className="marketplace-compat-agent">Claude Code</span>
