@@ -581,9 +581,8 @@ function warnIfDegraded(run: { degraded?: number }): void {
 
 function profileRunsOnGateway(profile: MdToPptProfileItem | null): boolean {
   if (!profile) return true;
-  const protocol = (profile.protocol ?? '').toLowerCase();
   const runtime = (profile.runtime ?? '').toLowerCase();
-  return protocol === 'openai-compatible' || runtime === 'openai-compatible' || runtime === 'openai';
+  return runtime !== 'codex' && runtime !== 'custom' && runtime !== 'cds-agent';
 }
 
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
@@ -2502,7 +2501,7 @@ export function MdToPptAgentPage() {
           <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
             <FileText size={13} className="text-purple-400" />
           </div>
-          <span className="text-sm font-semibold text-[var(--text-primary)]">PPT 创作工作台</span>
+          <span className="text-sm font-semibold text-[var(--text-primary)]">MD 转 PPT 控制台</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -2570,41 +2569,52 @@ export function MdToPptAgentPage() {
         </div>
       )}
 
-      {(connStatus !== 'connected' || runtimeIsGateway) && (
-        <div className={[
-          'shrink-0 flex items-center justify-between gap-3 px-4 py-1.5 border-b text-xs',
+      <div
+        className={[
+          'shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-b text-xs',
           runtimeIsGateway
             ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-300'
-            : 'bg-amber-500/8 border-amber-500/15 text-amber-300',
-        ].join(' ')}>
-          <div className="min-w-0 flex items-center gap-2">
-            {connStatus === 'checking' && !runtimeIsGateway ? <MapSpinner size={12} /> : <AlertCircle size={12} />}
-            <span className="truncate">
-              {runtimeIsGateway
-                ? '当前模型走 LLM Gateway 直出：不依赖 CDS Agent runtime，生成后会做页面片段校验。'
-                : connStatus === 'checking'
-                  ? '正在检查 CDS Agent 兼容路径连接状态...'
+            : connStatus === 'connected'
+              ? 'bg-sky-500/8 border-sky-500/15 text-sky-300'
+              : 'bg-amber-500/8 border-amber-500/15 text-amber-300',
+        ].join(' ')}
+      >
+        <div className="min-w-0 flex flex-wrap items-center gap-2">
+          {connStatus === 'checking' && !runtimeIsGateway ? <MapSpinner size={12} /> : <AlertCircle size={12} />}
+          <span className="font-semibold">{runtimeRouteLabel}</span>
+          <span className="text-current/80">·</span>
+          <span className="min-w-[220px] flex-1 leading-relaxed">
+            {runtimeIsGateway
+              ? '生产默认走 LLM Gateway 可运行路径，生成页会做 HTML 片段校验；用户创意输入仍保留在设计约束内。'
+              : connStatus === 'checking'
+                ? '当前模型使用 CDS Agent 兼容路径，正在检查连接状态。'
+                : connStatus === 'connected'
+                  ? '当前模型使用 CDS Agent 兼容路径，建议仅用于明确依赖 Agent runtime 的旧配置。'
                   : '当前模型需要 CDS Agent 兼容路径，但尚未检测到可用连接。'}
-            </span>
-          </div>
+          </span>
+        </div>
+        <div className="shrink-0 flex flex-wrap items-center gap-1.5 text-[10px]">
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">HTML 片段校验</span>
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">模板风格锁定</span>
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">创意方向可控</span>
           {!runtimeIsGateway && (
-            <div className="shrink-0 flex items-center gap-2">
+            <>
               <button
                 onClick={() => navigate('/infra-services')}
-                className="px-2 py-0.5 rounded border border-amber-400/25 text-amber-200 hover:bg-amber-400/10"
+                className="px-2 py-0.5 rounded border border-current/25 hover:bg-white/10"
               >
                 基础设施服务
               </button>
               <button
                 onClick={runConnectionCheck}
-                className="px-2 py-0.5 rounded border border-amber-400/20 text-amber-200/80 hover:bg-amber-400/10"
+                className="px-2 py-0.5 rounded border border-current/20 opacity-80 hover:bg-white/10"
               >
                 重新检测
               </button>
-            </div>
+            </>
           )}
         </div>
-      )}
+      </div>
 
       {/* Main: left chat + right artifact */}
       <div className="flex flex-1 min-h-0">

@@ -1771,9 +1771,16 @@ public class MdToPptController : ControllerBase
 
     internal static bool ShouldUseGatewayDirect(InfraAgentRuntimeProfile profile)
     {
-        return string.Equals(profile.Protocol, InfraAgentRuntimeProtocols.OpenAiCompatible, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(profile.Runtime, InfraAgentRuntimeProtocols.OpenAiCompatible, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(profile.Runtime, "openai", StringComparison.OrdinalIgnoreCase);
+        var runtime = string.IsNullOrWhiteSpace(profile.Runtime)
+            ? InfraAgentRuntimes.ClaudeSdk
+            : profile.Runtime.Trim();
+
+        // MD 转 PPT 的页级生成只需要模型调用，不需要文件系统/工具调用 runtime。
+        // 生产默认 profile 是 claude-sdk + anthropic，也应走 LLM Gateway 的可运行直出路径；
+        // 只有明确依赖 Agent runtime 语义的 codex/custom 保留 CDS Agent 兼容路径。
+        return !string.Equals(runtime, InfraAgentRuntimes.Codex, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(runtime, "cds-agent", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)

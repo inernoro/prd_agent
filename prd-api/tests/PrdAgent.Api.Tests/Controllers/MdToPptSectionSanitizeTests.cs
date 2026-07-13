@@ -119,13 +119,26 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void AnthropicProfile_KeepsCdsAgentCompatibilityPath()
+    public void AnthropicProfile_UsesGatewayDirect()
     {
         var profile = new InfraAgentRuntimeProfile
         {
             Runtime = InfraAgentRuntimes.ClaudeSdk,
             Protocol = InfraAgentRuntimeProtocols.Anthropic,
             Model = "claude-sonnet",
+        };
+
+        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void CustomRuntime_KeepsCdsAgentCompatibilityPath()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.Custom,
+            Protocol = InfraAgentRuntimeProtocols.Anthropic,
+            Model = "custom-agent-model",
         };
 
         Assert.False(MdToPptController.ShouldUseGatewayDirect(profile));
