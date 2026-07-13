@@ -30,6 +30,8 @@ interface Props {
   autoEnabled?: boolean | null;
   /** 自动同步周期（分钟，来自 store.peerSyncIntervalMinutes） */
   autoIntervalMinutes?: number | null;
+  /** 自动发送模式（默认 trigger） */
+  autoMode?: string | null;
   /** 最近一次同步的方向（非空表示已手动同步过一次，可开启自动同步） */
   peerSyncDirection?: string | null;
   /** 最近一次同步的对端名称 */
@@ -59,7 +61,7 @@ const ALIGN_OPTS: { key: PeerAlign; label: string; desc: string; danger: boolean
   { key: 'both', label: '同时对准', desc: '两边合并，各自新增都保留，不删任何一边', danger: false, icon: <ArrowLeftRight size={15} /> },
 ];
 
-export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, onOpenSend, autoEnabled, autoIntervalMinutes, peerSyncDirection, peerNodeName }: Props) {
+export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, onOpenSend, autoEnabled, autoIntervalMinutes, autoMode, peerSyncDirection, peerNodeName }: Props) {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<PeerSyncRun[]>([]);
   const [nodes, setNodes] = useState<PeerNode[]>([]);
@@ -72,18 +74,25 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   // 后台自动同步本地态（乐观更新）
   const [autoOn, setAutoOn] = useState(!!autoEnabled);
   const [autoInterval, setAutoInterval] = useState(autoIntervalMinutes && autoIntervalMinutes > 0 ? autoIntervalMinutes : 60);
+  const [autoSendMode, setAutoSendMode] = useState<'trigger' | 'scheduled'>(autoMode === 'scheduled' ? 'scheduled' : 'trigger');
   const [autoBusy, setAutoBusy] = useState(false);
   const mounted = useRef(true);
 
   // 已手动同步过一次（有方向或有 outgoing 台账）才允许开启自动同步——和后端同口径。
   const everSynced = !!peerSyncDirection || runs.some(r => r.origin === 'outgoing');
 
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    // React StrictMode 开发态会执行一次 setup -> cleanup -> setup；第二次 setup 必须恢复存活标记，
+    // 否则节点/运行记录虽已成功返回，load 仍会把响应当成卸载后的结果丢弃，面板永久停在「正在加载」。
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   // 跟随 props 更新：onAfterSync 重载 store 后 autoEnabled/autoIntervalMinutes 会变，
   // 弹窗常开时本地态需同步，否则 UI 与服务端不一致（Bugbot）。乐观更新成功后 prop==本地值，此处为 no-op。
   useEffect(() => { setAutoOn(!!autoEnabled); }, [autoEnabled]);
   useEffect(() => { if (autoIntervalMinutes && autoIntervalMinutes > 0) setAutoInterval(autoIntervalMinutes); }, [autoIntervalMinutes]);
+  useEffect(() => { setAutoSendMode(autoMode === 'scheduled' ? 'scheduled' : 'trigger'); }, [autoMode]);
 
   // runs 发号器：load 与 loadRuns 轮询都会 setRuns，只应用「最新一发」结果，防慢响应覆盖快响应
   // （学习规则：轮询/并发 fetch 需 stale-response 守卫）。
@@ -195,25 +204,29 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   };
 
   // 后台自动同步开关 / 改周期（乐观更新 + 失败回滚）。
-  const applyAuto = async (enabled: boolean, interval: number) => {
+  const applyAuto = async (enabled: boolean, interval: number, mode: 'trigger' | 'scheduled' = autoSendMode) => {
     if (resourceType !== 'document-store') return;
     if (enabled && !everSynced) { setError('请先手动同步一次（确定对端与方向）后，再开启后台自动同步'); return; }
     setAutoBusy(true);
     setError(null);
     const prevOn = autoOn;
     const prevInterval = autoInterval;
+    const prevMode = autoSendMode;
     setAutoOn(enabled);
     setAutoInterval(interval);
-    const res = await setAutoSync({ resourceType, itemId: storeId, enabled, intervalMinutes: interval });
+    setAutoSendMode(mode);
+    const res = await setAutoSync({ resourceType, itemId: storeId, enabled, intervalMinutes: interval, mode });
     if (!mounted.current) return;
     setAutoBusy(false);
     if (res.success && res.data) {
       setAutoOn(res.data.enabled);
       setAutoInterval(res.data.intervalMinutes);
+      setAutoSendMode(res.data.mode);
       onAfterSync?.();
     } else {
       setAutoOn(prevOn);
       setAutoInterval(prevInterval);
+      setAutoSendMode(prevMode);
       setError(res.error?.message || '设置自动同步失败');
     }
   };
@@ -270,41 +283,68 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                   </div>
 
                   {resourceType === 'document-store' && (
-                    <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border px-3 py-2" style={{ borderColor: autoDirectionNeedsConfirm ? 'rgba(245,158,11,0.32)' : 'rgba(148,163,184,0.14)', background: 'rgba(2,6,23,0.18)' }}>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm font-semibold">
-                          <Repeat size={14} style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }} />
-                          自动同步
-                          <span className="text-xs font-normal" style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }}>
-                            {autoDirectionNeedsConfirm ? '方向待确认' : autoOn ? '已开启' : '未开启'}
-                          </span>
+                    <div className="surface-inset mt-3 rounded-lg border border-token-subtle px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-semibold">
+                            <Repeat size={14} style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }} />
+                            自动发送
+                            <span className="text-xs font-normal" style={{ color: autoOn && !autoDirectionNeedsConfirm ? 'rgb(94,234,212)' : 'var(--text-muted)' }}>
+                              {autoDirectionNeedsConfirm ? '方向待确认' : autoOn ? '已开启' : '未开启'}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 truncate text-[11px]" style={{ color: autoDirectionNeedsConfirm ? 'rgb(252,211,77)' : 'var(--text-muted)' }}>
+                            {autoDirectionNeedsConfirm ? '最近只是接收了对端推送，尚未确认自动发送方向。' : routeText}
+                          </div>
                         </div>
-                        <div className="mt-0.5 truncate text-[11px]" style={{ color: autoDirectionNeedsConfirm ? 'rgb(252,211,77)' : 'var(--text-muted)' }}>
-                          {autoDirectionNeedsConfirm ? '最近只是接收了对端推送，尚未确认自动同步方向。' : routeText}
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={autoOn && !autoDirectionNeedsConfirm ? 'primary' : 'secondary'}
+                            onClick={() => applyAuto(!autoOn, autoInterval)}
+                            disabled={autoBusy || (!autoOn && (autoDirectionNeedsConfirm || !everSynced))}
+                            title={autoDirectionNeedsConfirm && !autoOn ? '请先手动选择发送或拉回方向' : !everSynced ? '请先手动同步一次' : autoOn ? '关闭自动发送' : '开启自动发送'}
+                          >
+                            {autoBusy ? <MapSpinner size={13} /> : <Repeat size={13} />}
+                            {autoOn ? '关闭' : '开启'}
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {autoOn && !autoDirectionNeedsConfirm && (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          disabled={autoBusy}
+                          onClick={() => applyAuto(autoOn, autoInterval, 'trigger')}
+                          className={`surface-row rounded-lg border px-3 py-2 text-left transition ${autoSendMode === 'trigger' ? 'border-token-accent' : 'border-token-subtle'}`}
+                        >
+                          <div className="text-xs font-semibold text-token-primary">内容变更时发送</div>
+                          <div className="mt-1 text-[11px] leading-4 text-token-muted">默认。检测到文件状态变化后合并短时间连续编辑，再发送一次。</div>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={autoBusy}
+                          onClick={() => applyAuto(autoOn, autoInterval, 'scheduled')}
+                          className={`surface-row rounded-lg border px-3 py-2 text-left transition ${autoSendMode === 'scheduled' ? 'border-token-accent' : 'border-token-subtle'}`}
+                        >
+                          <div className="text-xs font-semibold text-token-primary">定时检查并发送</div>
+                          <div className="mt-1 text-[11px] leading-4 text-token-muted">按固定周期检查；内容没有变化时不会访问对端。</div>
+                        </button>
+                      </div>
+                      {autoSendMode === 'scheduled' && (
+                        <div className="mt-3 flex items-center gap-2">
+                          <span className="text-[11px] text-token-muted">检查周期</span>
                           <select
                             value={autoInterval}
-                            onChange={e => applyAuto(true, Number(e.target.value))}
+                            onChange={e => applyAuto(autoOn, Number(e.target.value), 'scheduled')}
                             disabled={autoBusy}
                             className="prd-field h-8 rounded-lg px-2 text-xs outline-none"
-                            style={{ maxWidth: 130 }}
                           >
                             {AUTO_INTERVAL_OPTS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
                           </select>
-                        )}
-                        <Button
-                          size="sm"
-                          variant={autoOn && !autoDirectionNeedsConfirm ? 'primary' : 'secondary'}
-                          onClick={() => applyAuto(!autoOn, autoInterval)}
-                          disabled={autoBusy || (!autoOn && (autoDirectionNeedsConfirm || !everSynced))}
-                          title={autoDirectionNeedsConfirm && !autoOn ? '请先手动选择发送或拉回方向' : !everSynced ? '请先手动同步一次' : autoOn ? '关闭后台自动同步' : '开启后台自动同步'}
-                        >
-                          {autoBusy ? <MapSpinner size={13} /> : <Repeat size={13} />}
-                          {autoOn ? '关闭' : '开启'}
-                        </Button>
+                        </div>
+                      )}
+                      <div className="mt-2 text-[10.5px] leading-4 text-token-muted">
+                        防风暴：每库单任务、全局限流、稳定内容签名去重；对端刚推来的同一图片不会原路回送。
                       </div>
                     </div>
                   )}

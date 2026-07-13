@@ -14,6 +14,15 @@ public static class PeerSyncSchedule
     /// <summary>用户未指定周期时的默认值。</summary>
     public const int DefaultIntervalMinutes = 60;
 
+    /// <summary>变更触发模式的合并窗口。短时间连续保存只触发一轮，避免逐次编辑形成发送风暴。</summary>
+    public const int TriggerDebounceMinutes = 2;
+
+    public const string TriggerMode = "trigger";
+    public const string ScheduledMode = "scheduled";
+
+    public static string NormalizeMode(string? mode)
+        => string.Equals(mode, ScheduledMode, StringComparison.OrdinalIgnoreCase) ? ScheduledMode : TriggerMode;
+
     /// <summary>把用户填写的周期夹到 [MinIntervalMinutes, +∞)，null 回落默认值。</summary>
     public static int ClampInterval(int? minutes)
     {
@@ -52,8 +61,16 @@ public static class PeerSyncSchedule
         if (store.PeerSyncAutoLastAt == null)
             return true;
 
-        var interval = ClampInterval(store.PeerSyncIntervalMinutes);
-        return store.PeerSyncAutoLastAt.Value.AddMinutes(interval) <= utcNow;
+        var triggerMode = NormalizeMode(store.PeerSyncAutoMode) == TriggerMode;
+        var interval = triggerMode
+            ? TriggerDebounceMinutes
+            : ClampInterval(store.PeerSyncIntervalMinutes);
+        if (store.PeerSyncAutoLastAt.Value.AddMinutes(interval) > utcNow)
+            return false;
+
+        // 触发模式还要从知识库最近一次实际变更起等待完整合并窗口，避免用户连续保存时中途发送。
+        // 定时模式只遵循配置周期。
+        return !triggerMode || store.UpdatedAt.AddMinutes(TriggerDebounceMinutes) <= utcNow;
     }
 
     /// <summary>下一次自动同步的预计时间（UI 展示用）。未开启 / 无对端时为 null。</summary>
@@ -67,6 +84,14 @@ public static class PeerSyncSchedule
         if (store.PeerSyncAutoLastAt == null)
             return null; // 立即可同步
 
-        return store.PeerSyncAutoLastAt.Value.AddMinutes(ClampInterval(store.PeerSyncIntervalMinutes));
+        var triggerMode = NormalizeMode(store.PeerSyncAutoMode) == TriggerMode;
+        var interval = triggerMode ? TriggerDebounceMinutes : ClampInterval(store.PeerSyncIntervalMinutes);
+        var next = store.PeerSyncAutoLastAt.Value.AddMinutes(interval);
+        if (triggerMode)
+        {
+            var quietAt = store.UpdatedAt.AddMinutes(TriggerDebounceMinutes);
+            if (quietAt > next) next = quietAt;
+        }
+        return next;
     }
 }

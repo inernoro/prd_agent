@@ -41,6 +41,8 @@ export type DocumentStore = {
   peerSyncAutoEnabled?: boolean | null;
   /** 自动同步周期（分钟，下限 5） */
   peerSyncIntervalMinutes?: number | null;
+  /** 自动发送模式：trigger（内容变更触发，默认）/ scheduled（定时检查） */
+  peerSyncAutoMode?: 'trigger' | 'scheduled' | string | null;
   createdAt: string;
   updatedAt: string;
 };
