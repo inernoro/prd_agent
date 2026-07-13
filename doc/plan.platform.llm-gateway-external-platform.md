@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.5 | **日期**：2026-07-12 | **状态**：已完成
+> **版本**：v1.6 | **日期**：2026-07-14 | **状态**：已完成
 
 ## 1. 目标
 
@@ -41,6 +41,21 @@ PR-4 发布证据（2026-07-12）：最终提交 `5fba56b9552e161f16b74cb720b8be
 PR-5 精确计划（2026-07-12）：不再增加平台能力，只做有限验收收口。第一，修复生产治理验收脚本在 PR-1 后仍伪造无租户 claim JWT、Mongo 查询和清理缺少 TenantId 的漂移，改为通过真实控制台登录与 `/auth/context` 取得服务端租户。第二，用既有假上游合同覆盖 tenant-scoped key 的授权、越权、撤销和 GW Native、OpenAI、Claude、Gemini 四协议，不批量调用付费模型。第三，串联 PR-1 至 PR-4 的租户创建、密钥接入、PromptPolicy 元数据、Activity、费用可信度与桌面/移动证据，避免重复建设 full-http、模型池和发布 gate。第四，PR 分支在 CI、Codex Review 或替代人工复审、CDS、直连预览和完整测试租户清理全部通过后才能合并。
 
 PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。最终融合验收使用真实 `llmgw/console-api`、真实 `PrdAgent.LlmGateway`、独立 Mongo 和本地假上游：从控制台创建测试租户与团队，保存 PromptPolicy v1，创建一次性 `gwk_*`，GW Native、OpenAI、Claude、Gemini 四协议各返回 200 并在 Activity 形成四条同租户日志；四次上游请求均按前缀、请求 system、后缀顺序应用策略，日志只保留 policy id/version/hash，未保存策略正文。切换回内部租户后，组织、key、appCaller、日志、usage 和策略审计均不可见；撤销 key 后 serving 返回 401。验收后逐集合检查测试 TenantId、租户、团队、membership 和用户引用均为 0。未增加付费调用。最终提交的 GitHub CI、四镜像和 CDS Deploy 全绿，独立预览首页、Quickstart 与 Activity 深链均返回 200。PR #1089 已 squash 合并为 `90559e64ed63594fa5cd43c922e9713ddb7622ed`。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代；Bugbot 不适用。
+
+### 1.2 完成后产品化与生产硬化收口
+
+前序五个有限 PR 完成后，针对真实用户反馈和生产发布事故继续采用独立 PR 收口，没有重新打开模型迁移、模型池调度或 full-http 发布 gate。
+
+| 范围 | 状态 | 证据 |
+|---|---|---|
+| 控制台产品化与根目录收拢 | 已完成 | PR #1090 至 #1093 已独立完成双主题、请求记录中文化、自动 Gateway 地址与安全直测、租户首页、学习中心、模型池信息分层，以及根目录 `llmgw/` 原子收拢；详细证据继续由 `doc/plan.platform.llm-gateway.console-productization.md` 维护 |
+| OpenRouter App 归因 | 已完成 | PR #1108 将 OpenRouter 出站标题统一为 `G-${appCallerCode}`，内部 `AppCallerCode` 原值、日志与路由语义保持不变；定向假上游测试捕获 `HTTP-Referer=https://prd-agent.miduo.org` 和 `X-OpenRouter-Title=G-product-agent.marketing-consult::chat`，非 OpenRouter 上游不注入 |
+| 生产静态站恢复与防回归 | 已完成 | PR #1113 增加静态目录权限规范化、`index.html` 与实际入口资源完整性校验；生产恢复运行 `rel_624b31cda1c2046c` 成功，恢复前备份及 SHA256 校验保留于 `/root/backups/prdagent-static-recovery-rel_72243372921f35bb/`，恢复批次校验账本位于 `/root/backups/prdagent-static-recovery-rel_624b31cda1c2046c/SHA256SUMS` |
+| 维护发布账本门禁 | 已完成 | PR #1115 修复维护发布继承基线配置时的重复门禁；CDS 运行 `dr_510b99aa22f211e8b5537e75` 与 main 部署 `dr_5a4dc114d09b3fcc86677661` 成功 |
+| 公网与生产 Gateway 验收 | 已完成 | `https://map.ebcone.net/`、`/llmgw/`、`/gw/v1/healthz` 均返回 200；Gateway health 回显 commit `f6a0299b2845f125a28a160c8cace645f9b0e35f`，包含 OpenRouter 归因修复 |
+| 临时生产权限清理 | 已完成 | 临时控制台用户、membership、service key 与 token 均已停用或删除；临时 CDS 目标 `rt_c00f704bfee3` 已恢复原发布命令并设为禁用，常规生产目标保持启用；没有重置任何既有用户密码 |
+
+OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2026-07-13T14:09Z` 至 `14:10Z`，早于本次生产发布，且当前生产租户在相同时间窗没有对应 Gateway 日志，因此不能作为上线后回归证据。生产验收严格遵守一次真实 chat 上限：唯一真实请求实际路由到硅基流动，其余归因验证使用假上游和只读日志，没有追加第二次付费调用。后续首条自然命中 OpenRouter 的新请求应显示 `G-${appCallerCode}`；历史记录不会被改写。
 
 执行期间保持以下边界：
 
