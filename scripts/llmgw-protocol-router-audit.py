@@ -128,7 +128,12 @@ def build_report() -> dict[str, Any]:
     compose = _read("docker-compose.yml")
     cds_compose = _read("cds-compose.yml")
     readiness = _read("scripts/llmgw-readiness-audit.py")
-    changelog = _read("changelogs/2026-07-09_llmgw-protocol-router.md")
+    changelog = "\n".join(
+        [
+            _read("changelogs/2026-07-09_llmgw-protocol-router.md"),
+            _read("CHANGELOG.md"),
+        ]
+    )
 
     checks: list[dict[str, Any]] = []
 
@@ -498,6 +503,7 @@ def build_report() -> dict[str, Any]:
         [
             "scripts/llmgw-readiness-audit.py",
             "changelogs/2026-07-09_llmgw-protocol-router.md",
+            "CHANGELOG.md",
         ],
     ))
 

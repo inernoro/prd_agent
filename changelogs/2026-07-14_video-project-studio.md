@@ -5,3 +5,4 @@
 | feat | prd-api | 新增独立视频导出任务、项目参考素材透传及首尾帧控制 |
 | fix | prd-api | 修复音频开关未传入生成任务及分镜合成丢弃音轨的问题 |
 | test | prd-api | 新增 ffmpeg 音视频字幕真实合成测试及 Seedance 多参考图协议测试 |
+| fix | scripts | 修复协议路由发布审计未读取汇编后 Changelog 导致的假失败 |
