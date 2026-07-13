@@ -386,7 +386,10 @@ config_authority_json="${evidence_prefix}.config-authority.json"
 config_authority_md="${evidence_prefix}.config-authority.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
-maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
+maintenance_baseline_json=""
+if [ -n "$maintenance_from_commit" ]; then
+  maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
+fi
 shadow_evidence_commit="$commit"
 
 case "$stage" in

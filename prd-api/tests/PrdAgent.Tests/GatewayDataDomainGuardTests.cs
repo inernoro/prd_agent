@@ -851,6 +851,8 @@ public class GatewayDataDomainGuardTests
         var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
 
         Assert.Contains("--maintenance-from-commit", stage);
+        Assert.Contains("maintenance_baseline_json=\"\"", stage);
+        Assert.Contains("if [ -n \"$maintenance_from_commit\" ]; then\n  maintenance_baseline_json=\"${evidence_prefix}.maintenance-baseline.json\"", stage);
         Assert.Contains("llmgw-rollout-ledger.py maintenance-baseline", stage);
         Assert.Contains("--json-out \"$maintenance_baseline_json\"", stage);
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
