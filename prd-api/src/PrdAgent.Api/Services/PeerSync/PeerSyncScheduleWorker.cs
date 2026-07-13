@@ -10,12 +10,13 @@ namespace PrdAgent.Api.Services.PeerSync;
 ///
 /// 复用 IPeerSyncTransferService.SyncItemAsync（与手动同步同一条路径，SSOT）。每个开启了自动同步、
 /// 且到期的知识库，按它最近一次同步留下的对端 + 方向，自动跑 push/pull/both。
+/// trigger 模式按短合并窗口检测内容签名，scheduled 模式按用户周期检测；两者无内容变化都不访问对端。
 ///
 /// 防风暴五层（重点应对「共享 Mongo 多预览容器」场景，见 .claude/rules/cross-project-isolation.md）：
 ///   1) 每库 Mongo 租约：同一个库同一时刻只有一个容器能拿到租约去同步，杜绝 N 个容器各发一遍；
 ///   2) 全局并发上限 SemaphoreSlim：无论多少库到期，同时在途的对端 HTTP 不超过 MaxConcurrent；
 ///   3) 每轮批量上限 + 最久未同步优先：逐步排空，不搞惊群；
-///   4) 到期闸 + 周期下限：只捞到期的库，周期被 PeerSyncSchedule 夹到 ≥5 分钟；
+///   4) 到期闸 + 内容签名：连续编辑先合并，无变化不访问对端，周期模式下限 5 分钟；
 ///   5) 启动抖动 + 崩溃租约自动过期自愈：多容器不在同一秒齐刷，owner 崩了别的容器能接管。
 /// </summary>
 public sealed class PeerSyncScheduleWorker : BackgroundService
@@ -153,6 +154,19 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             }
             attempted = true; // 过了方向校验 = 本周期确实由我处理；node 缺失也推进 AutoLastAt，避免每分钟空打
 
+            var resource = registry.Resolve("document-store");
+            if (resource == null) return;
+
+            // 文件状态闸：正文、目录结构、标签、排序、分类和二进制附件源身份都会进入稳定签名。
+            // 签名与上次已确认值一致时不发 HTTP；附件签名沿用源头身份，不因两端 URL 本地化而来回重传。
+            var currentSignature = await resource.ComputeSignatureAsync(store.Id, ct);
+            if (string.IsNullOrWhiteSpace(currentSignature)) return;
+            if (string.Equals(currentSignature, store.PeerSyncLastContentSignature, StringComparison.Ordinal))
+            {
+                _logger.LogDebug("[PeerSyncScheduleWorker] store {StoreId} unchanged, skip peer request", storeId);
+                return;
+            }
+
             var node = await db.PeerNodes
                 .Find(n => n.RemoteNodeId == store.PeerSyncNodeId && n.Status == PeerNodeStatus.Connected)
                 .FirstOrDefaultAsync(ct);
@@ -171,9 +185,6 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
                 _logger.LogInformation("[PeerSyncScheduleWorker] store {StoreId} peer points to self ({NodeId}), skip", storeId, selfNodeId);
                 return;
             }
-
-            var resource = registry.Resolve("document-store");
-            if (resource == null) return;
 
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
             // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
