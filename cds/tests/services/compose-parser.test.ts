@@ -126,6 +126,29 @@ describe('resolveEnvTemplates', () => {
     expect(out.A).toBe('fallback');
   });
 
+  it('按 POSIX 语义展开冒号操作符', () => {
+    const out = resolveEnvTemplates(
+      {
+        defaultWhenEmpty: '${EMPTY:-fallback}',
+        assignDefault: '${ASSIGNED:=assigned}',
+        reuseAssigned: '${ASSIGNED}',
+        alternateWhenSet: '${SET_VALUE:+alternate}',
+        alternateWhenMissing: '${MISSING_VALUE:+alternate}',
+        requiredWhenSet: '${SET_VALUE:?required}',
+      },
+      { EMPTY: '', SET_VALUE: 'actual' },
+    );
+
+    expect(out).toEqual({
+      defaultWhenEmpty: 'fallback',
+      assignDefault: 'assigned',
+      reuseAssigned: 'assigned',
+      alternateWhenSet: 'alternate',
+      alternateWhenMissing: '',
+      requiredWhenSet: 'actual',
+    });
+  });
+
   it('未定义变量 fallback 到空字符串', () => {
     const out = resolveEnvTemplates({ A: 'x=${MISSING}!' }, {});
     expect(out.A).toBe('x=!');

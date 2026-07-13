@@ -117,15 +117,30 @@ env_upsert() {
   }
   awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$ENV_FILE" > "$tmp"
   if [ -n "$value" ]; then
-    printf 'export %s="%s"\n' "$key" "$value" >> "$tmp"
+    # #856：用单引号包裹并转义内部单引号（每个 ' 替换成 '\''），保证任意内容
+    # （尤其是含换行/$/反引号的多行 PEM 私钥，如 GitHub App private key）被 source
+    # 时原样保留，不会被 shell 解释（此前双引号写法会导致 `RSA: command not found`）。
+    local escaped="${value//\'/\'\\\'\'}"
+    printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp"
   fi
   mv -f "$tmp" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 }
 
+# #856 preflight：尽力检查 .cds.env 是否存在「未用单引号包裹的 PEM 私钥」行——
+# 这种值 source 时会被 shell 当命令执行而报错。仅告警，不阻断。
+lint_env_file() {
+  [ -f "$ENV_FILE" ] || return 0
+  if grep -E 'BEGIN [A-Z ]*PRIVATE KEY' "$ENV_FILE" 2>/dev/null \
+       | grep -qvE "^export [A-Za-z_][A-Za-z0-9_]*='"; then
+    printf "[warn] .cds.env 可能含未用单引号包裹的 PEM 私钥（source 时会报错，如 'RSA: command not found'）。建议用 env_upsert 重新写入该值。\n" >&2
+  fi
+}
+
 # Load the only env file the script recognises.
 load_env() {
   [ -f "$ENV_FILE" ] || return 0
+  lint_env_file   # #856：source 前先尽力告警未加单引号的 PEM 私钥
   set -a
   # shellcheck disable=SC1090
   . "$ENV_FILE"

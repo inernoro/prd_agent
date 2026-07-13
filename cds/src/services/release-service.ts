@@ -227,6 +227,18 @@ export class ReleaseService {
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
+    // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
+    // 部署并发跑互相打架。终态为 success/failed/rollback_success/rollback_failed；
+    // 其余（queued/prechecking/running/healthchecking/rollback_running）均视为在途。
+    const inFlightStatuses: ReleaseRun['status'][] = [
+      'queued', 'prechecking', 'running', 'healthchecking', 'rollback_running',
+    ];
+    const inFlight = this.stateService
+      .getReleaseRuns({ targetId: preflight.target.id })
+      .find((r) => inFlightStatuses.includes(r.status));
+    if (inFlight) {
+      throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起`);
+    }
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const run: ReleaseRun = {
       releaseId,

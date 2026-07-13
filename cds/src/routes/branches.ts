@@ -1436,8 +1436,13 @@ function resourceExternalPortRange(): { start: number; end: number } {
   return { start, end };
 }
 
-async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number): Promise<number> {
+async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number, excludePort?: number): Promise<number> {
   const used = await collectListeningPorts(shell);
+  // #805：更新已启用资源的公网策略时，旧 proxy 仍在监听，其端口会出现在 used 里，
+  // 导致「按当前端口复用」失败而重新分配新端口 → 现有连接被丢弃。把资源自己当前
+  // 占用的端口从 used 中排除，使 preferred 复用成立（旧 proxy 会在本次分配之后、
+  // 启动新 proxy 之前被 disableTcpResourceExternalAccess 拆除，不存在双重绑定）。
+  if (excludePort && excludePort >= 1 && excludePort <= 65535) used.delete(excludePort);
   const { start, end } = resourceExternalPortRange();
   if (preferred && preferred >= 1024 && preferred <= 65535 && !used.has(preferred)) return preferred;
   for (let port = start; port <= end; port += 1) {
@@ -3449,12 +3454,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`SQL 初始化文件路径非法: ${file}`);
     }
     const sql = fs.readFileSync(sqlPath, 'utf-8');
-    const infra = stateService.getInfraServicesForProject(projectId)
+    const runningSqlInfra = stateService.getInfraServicesForProject(projectId)
       .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
-      .sort((a, b) => a.id.localeCompare(b.id))[0];
-    if (!infra) {
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (runningSqlInfra.length === 0) {
       throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
     }
+    // 优先选部署 profile 的 depends_on 明确声明的那个 SQL 库（compose depends_on 里的 infra id/名）；
+    // 仅当没有任何依赖信息命中时，才退回按 id 字母序取首个（历史行为），避免多库项目初始化到错的库。
+    const dependsOnIds = new Set<string>();
+    for (const p of [
+      ...stateService.getBuildProfilesForProject(projectId),
+      ...(entry.extraProfiles ?? []),
+    ]) {
+      for (const dep of p.dependsOn ?? []) dependsOnIds.add(dep);
+    }
+    const infra = runningSqlInfra.find((svc) => dependsOnIds.has(svc.id) || dependsOnIds.has(svc.name))
+      ?? runningSqlInfra[0];
     logEvent({
       step: `database-init-sql-${infra.id}`,
       status: 'running',
@@ -7908,7 +7924,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const firewallChain = resourceExternalFirewallChain(input.projectId, input.branch.id, input.resourceId);
     const network = stateService.getProject(input.projectId)?.dockerNetwork || config.dockerNetwork;
     const listenPort = 15432;
-    const port = await allocateResourceExternalPort(shell, input.currentPolicy?.enabled ? input.currentPolicy.port : undefined);
+    // #805：把当前策略端口既作为 preferred、又从 used 里排除，保证更新策略时端口稳定复用。
+    const reusePort = input.currentPolicy?.enabled ? input.currentPolicy.port : undefined;
+    const port = await allocateResourceExternalPort(shell, reusePort, reusePort);
     await disableTcpResourceExternalAccess(input.currentPolicy);
     await ensureDockerNetwork(shell, network);
     const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
