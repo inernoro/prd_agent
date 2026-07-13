@@ -454,6 +454,24 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionStaticDist_RequiresEntryAssetsAndNormalizesPermissions()
+    {
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var validator = ReadRepoFile("scripts/validate-static-dist.sh");
+        var behaviorTest = ReadRepoFile("scripts/tests/validate-static-dist.test.sh");
+
+        Assert.Contains("[ ! -s deploy/web/dist/index.html ]", deploy);
+        Assert.Contains("scripts/validate-static-dist.sh --normalize deploy/web/dist", deploy);
+        Assert.Contains("find \"$static_root\" -type d -exec chmod 755 {} +", validator);
+        Assert.Contains("find \"$static_root\" -type f -exec chmod 644 {} +", validator);
+        Assert.Contains("index.html does not reference a local JavaScript entry asset", validator);
+        Assert.Contains("referenced entry asset is missing or empty", validator);
+        Assert.Contains("umask 077", behaviorTest);
+        Assert.Contains("expected missing index validation to fail", behaviorTest);
+        Assert.Contains("expected missing entry asset validation to fail", behaviorTest);
+    }
+
+    [Fact]
     public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -861,6 +879,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway maintenance release: audited baseline accepted", deploy);
         Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0\"", deploy);
         Assert.Contains("[ \"$maintenance_release\" != \"1\" ]", deploy);
+        Assert.Contains("{ [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ]; }", deploy);
+        Assert.Contains("config-authority inherited from audited full-http maintenance baseline", deploy);
         Assert.Contains("LLMGW_POST_DEPLOY_EXPECT_COMMIT=\"$expect_commit\"", deploy);
         Assert.Contains("shadowEvidenceCommit", ledger);
         Assert.Contains("maintenanceBaselineCommit", ledger);
@@ -1149,6 +1169,42 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--json-out", releaseGate);
         Assert.Contains("--report-md", releaseGate);
         Assert.Contains("\"shadowChecks\"", releaseGate);
+    }
+
+    [Fact]
+    public void ProtocolRouterAudit_AcceptsAssembledChangelogWhenFragmentWasConsumed()
+    {
+        var root = LocateRepoRoot();
+        var report = Path.Combine(Path.GetTempPath(), $"llmgw-protocol-router-audit-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-protocol-router-audit.py",
+                    "--json-out", report,
+                }
+            })!;
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, stderr + stdout);
+            var reportJson = File.ReadAllText(report);
+            Assert.Contains("\"verdict\": \"pass\"", reportJson);
+            Assert.Contains("\"name\": \"readiness_and_changelog_capture_protocol_router_progress\"", reportJson);
+            Assert.Contains("\"CHANGELOG.md\"", reportJson);
+        }
+        finally
+        {
+            File.Delete(report);
+        }
     }
 
     [Fact]

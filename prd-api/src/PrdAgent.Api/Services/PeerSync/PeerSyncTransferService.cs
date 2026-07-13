@@ -244,6 +244,14 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 : (created == 0 && updated == 0 && deleted == 0) ? PeerSyncRunStatus.Skipped
                 : PeerSyncRunStatus.Synced;
             await FinishRunAsync(runId, runStatus, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed, summary, itemStartedAt, ct);
+            if (itemOk && string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal))
+            {
+                var signature = await resource.ComputeSignatureAsync(itemId, ct);
+                if (!string.IsNullOrWhiteSpace(signature))
+                    await _db.DocumentStores.UpdateOneAsync(s => s.Id == itemId,
+                        Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastContentSignature, signature),
+                        cancellationToken: ct);
+            }
             result.Ok = itemOk;
             result.Created = created; result.Updated = updated; result.Skipped = skipped;
             result.Deleted = deleted; result.Failed = failed;

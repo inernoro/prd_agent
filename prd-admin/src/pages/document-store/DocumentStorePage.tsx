@@ -1585,6 +1585,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
               {syncBusy ? (isMobile ? '同步中' : '同步中…') : '同步'}
             </button>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowSendToPeerDetail(true)}
+              title="把当前知识库发送到已配对的 MAP 节点"
+            >
+              <Send size={13} /> 发送到
+            </Button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
             {!isMobile && <StoreSyncBadge
               storeId={store.id}
@@ -1927,6 +1935,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           storeName={store.name}
           autoEnabled={store.peerSyncAutoEnabled}
           autoIntervalMinutes={store.peerSyncIntervalMinutes}
+          autoMode={store.peerSyncAutoMode}
           peerSyncDirection={store.peerSyncDirection}
           peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}

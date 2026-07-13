@@ -89,8 +89,9 @@ export async function setAutoSync(params: {
   itemId: string;
   enabled: boolean;
   intervalMinutes?: number;
+  mode?: 'trigger' | 'scheduled';
 }) {
-  return await apiRequest<{ enabled: boolean; intervalMinutes: number; direction?: string | null; nodeName?: string | null }>(
+  return await apiRequest<{ enabled: boolean; intervalMinutes: number; mode: 'trigger' | 'scheduled'; direction?: string | null; nodeName?: string | null }>(
     api.peerSync.autoSync(),
     { method: 'POST', body: params },
   );

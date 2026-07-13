@@ -614,9 +614,9 @@ trap cleanup EXIT
 reuse_static_dist="$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)"
 case "$reuse_static_dist" in
   1|true|yes)
-    if [ ! -d deploy/web/dist ] || [ -z "$(find deploy/web/dist -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
-      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but deploy/web/dist is missing or empty." >&2
-      echo "       This option is only for backend/GW-only shadow deploys where an existing static site is already present." >&2
+    if [ ! -s deploy/web/dist/index.html ]; then
+      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but deploy/web/dist/index.html is missing or empty." >&2
+      echo "RECOVERY: restore a complete verified static artifact before retrying the backend/GW-only deployment." >&2
       exit 1
     fi
     echo "Static dist reuse enabled: keeping existing deploy/web/dist"
@@ -698,6 +698,12 @@ case "$reuse_static_dist" in
     echo "Static dist extracted to: deploy/web/dist"
     ;;
 esac
+
+if [ ! -x scripts/validate-static-dist.sh ]; then
+  echo "ERROR: missing executable scripts/validate-static-dist.sh" >&2
+  exit 1
+fi
+scripts/validate-static-dist.sh --normalize deploy/web/dist
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
@@ -1012,9 +1018,11 @@ run_llmgw_release_gate_if_needed() {
   fi
   args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
   require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
-  if [ "$mode" = "http" ] || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
+  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
     args="$args --require-config-authority"
     echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
+  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway release gate: config-authority inherited from audited full-http maintenance baseline"
   fi
   if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
     args="$args --json-out $LLMGW_GATE_JSON_OUT"

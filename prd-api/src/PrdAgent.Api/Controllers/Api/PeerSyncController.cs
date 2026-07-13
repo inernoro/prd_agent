@@ -420,6 +420,16 @@ public class PeerSyncController : ControllerBase
             await _transfer.RecordRunAsync(resource.ResourceType, outcome.TargetItemId, req.Bundle.Item?.Name ?? "",
                 receiverDirection, PeerSyncOrigin.Incoming, node, outcome, success, node.CreatedBy, "对端节点",
                 startedAt, ct);
+            // 接收成功后把当前稳定签名记为已确认，避免变更触发模式把刚收到的同一内容（尤其图片）
+            // 立即原路发送回去。DocumentStoreSyncResource 的附件签名使用源头身份，不受本地 URL 重写影响。
+            if (success && string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal))
+            {
+                var signature = await resource.ComputeSignatureAsync(outcome.TargetItemId, ct);
+                if (!string.IsNullOrWhiteSpace(signature))
+                    await _db.DocumentStores.UpdateOneAsync(s => s.Id == outcome.TargetItemId,
+                        Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastContentSignature, signature),
+                        cancellationToken: ct);
+            }
         }
         return Ok(ApiResponse<object>.Ok(outcome));
     }
@@ -632,16 +642,26 @@ public class PeerSyncController : ControllerBase
                 "请先手动选择发送或拉回方向后，再开启后台自动同步"));
 
         var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
+        var mode = PeerSyncSchedule.NormalizeMode(request.Mode);
+        string? signature = null;
+        // 只在「关 → 开」时建立当前内容基线。自动发送已开启时修改模式或周期，不能用当前签名
+        // 覆盖旧基线，否则尚未发送的本地变更会被误当作已确认而永久漏发。
+        if (request.Enabled && !store.PeerSyncAutoEnabled)
+            signature = await resource.ComputeSignatureAsync(request.ItemId, ct);
         await _db.DocumentStores.UpdateOneAsync(s => s.Id == request.ItemId,
             Builders<DocumentStore>.Update
                 .Set(s => s.PeerSyncAutoEnabled, request.Enabled)
-                .Set(s => s.PeerSyncIntervalMinutes, interval),
+                .Set(s => s.PeerSyncIntervalMinutes, interval)
+                .Set(s => s.PeerSyncAutoMode, mode)
+                .Set(s => s.PeerSyncLastContentSignature,
+                    request.Enabled && !store.PeerSyncAutoEnabled ? signature : store.PeerSyncLastContentSignature),
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             enabled = request.Enabled,
             intervalMinutes = interval,
+            mode,
             direction = store.PeerSyncDirection,
             nodeName = store.PeerSyncNodeName,
         }));
@@ -759,6 +779,8 @@ public class PeerSyncController : ControllerBase
         public bool Enabled { get; set; }
         /// <summary>同步周期（分钟）。null = 默认 60；服务端会夹到 [5, +∞)。</summary>
         public int? IntervalMinutes { get; set; }
+        /// <summary>trigger（内容变更触发，默认）/ scheduled（按周期检查）。</summary>
+        public string? Mode { get; set; }
     }
 
 }
