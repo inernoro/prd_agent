@@ -32,7 +32,7 @@ h1{margin:0 0 22px;font-size:clamp(44px,6vw,86px);line-height:.96;letter-spacing
   <div class="eyebrow">CDS Waiting Room</div>
   <h1>分支环境正在构建</h1>
   <p class="desc">CDS 正在同步分支、启动容器并等待服务健康检查通过。服务稳定后会自动进入真实页面。</p>
-  <div class="status"><span class="chip">后台同步 · 自动重试</span><span class="chip">页面每 3 秒刷新</span></div>
+  <div class="status"><span class="chip">后台同步 · 自动重试</span><span class="chip">持续检测服务恢复</span></div>
   <p class="tip" id="tip"><strong>CDS 小提示：</strong><span></span></p>
 </section></main>
 <script>
@@ -46,9 +46,30 @@ h1{margin:0 0 22px;font-size:clamp(44px,6vw,86px);line-height:.96;letter-spacing
   var target=document.querySelector('#tip span');
   var i=0;
   function tick(){ if(target) target.textContent=tips[i++%tips.length]; }
+  var originalUrl=window.location.href;
+  var retryTimer=0;
+  function scheduleProbe(delay){
+    window.clearTimeout(retryTimer);
+    retryTimer=window.setTimeout(probe,delay);
+  }
+  function probe(){
+    var probeUrl=new URL(originalUrl);
+    probeUrl.searchParams.set('__cds_wait_probe',String(Date.now()));
+    fetch(probeUrl.toString(),{
+      cache:'no-store',
+      credentials:'same-origin',
+      headers:{Accept:'text/html','X-CDS-Waiting-Probe':'1'}
+    }).then(function(response){
+      if(response.status<500){
+        window.location.reload();
+        return;
+      }
+      scheduleProbe(2000);
+    }).catch(function(){scheduleProbe(2000);});
+  }
   tick();
-  setInterval(tick,4200);
-  setTimeout(function(){ location.reload(); },3000);
+  window.setInterval(tick,4200);
+  scheduleProbe(400);
 }());
 </script>
 </body></html>"

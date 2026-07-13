@@ -840,6 +840,8 @@ describe('ProxyHandler — 故障与降级', () => {
     const r = await clientReq(fwdPort);
     expect(r.status).toBe(503);
     expect(String(r.headers['content-type'] ?? '').toLowerCase()).toContain('text/html');
+    expect(String(r.headers['cache-control'] ?? '')).toContain('no-store');
+    expect(r.headers['x-cds-preview-wait-code']).toBe('ROUTE_NOT_READY');
     expect(r.body).toContain('<script');
   });
 

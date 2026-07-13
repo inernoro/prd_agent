@@ -875,7 +875,14 @@ export class ProxyHandler {
     const isHtml = body.trimStart().startsWith('<');
     const contentType = isHtml ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
     try {
-      res.writeHead(status, { 'Content-Type': contentType });
+      res.writeHead(status, {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Retry-After': '2',
+        'X-CDS-Preview-Wait-Code': 'ROUTE_NOT_READY',
+      });
       res.end(body);
     } catch {
       // noop
