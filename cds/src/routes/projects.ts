@@ -38,6 +38,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
+import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
+import type { GitHubAppClient } from '../services/github-app-client.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -78,6 +80,8 @@ export interface ProjectsRouterDeps {
   shell: IShellExecutor;
   /** Root CDS config — unused in Part 2 but reserved for Part 3 when we derive per-project paths. */
   config?: CdsConfig;
+  /** GitHub App client for project-scoped installation tokens during private-repo clone. */
+  githubApp?: GitHubAppClient | null;
   /** Kept for backward compat with P1 callers; ignored. */
   legacyProjectName?: string;
 }
@@ -3263,20 +3267,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const repoPath = project.repoPath;
     const gitUrl = project.gitRepoUrl;
 
-    // P4 Part 18 (Phase E audit fix #1): if the URL points at github.com
-    // AND a GitHub Device Flow token is stored, inject the token into
-    // the clone URL so private repos work. The token is ephemerally
-    // inserted into the shell command only — never persisted back to
-    // state.json. If Device Flow isn't connected we try the bare URL,
-    // which works for public repos.
+    // Private GitHub repositories prefer the project's GitHub App
+    // installation token. Device Flow remains a compatibility fallback.
+    // Authentication is passed through git's ephemeral extraheader env,
+    // never embedded into the command, SSE output, or persisted URL.
     //
     // Also (audit fix #9): the displayed gitUrl in events is the
     // ORIGINAL user-supplied URL, but we DO redact any embedded
     // userinfo before logging so pasted credentials don't leak into
     // the SSE log or state.json.
     const displayUrl = _redactUrlUserInfo(gitUrl);
-    const deviceToken = stateService.getGithubDeviceAuth()?.token;
-    const cloneUrl = _injectGithubTokenIfPossible(gitUrl, deviceToken);
+    const gitAuth = await resolveGitAuthEnv({
+      repoRoot: repoPath,
+      config,
+      stateService,
+      githubApp: deps.githubApp,
+    });
 
     // UF-01 preflight: when the URL points at github.com but we have
     // no Device Flow token, warn the user up-front. For public repos
@@ -3286,7 +3292,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // and the user sees an english git error with no actionable hint.
     // We emit a 'progress' warning now and map the error below.
     const isGithubUrl = _isGithubHttpsUrl(gitUrl);
-    const needsAuthHint = isGithubUrl && !deviceToken;
+    const needsAuthHint = isGithubUrl && gitAuth.source === 'none';
 
     try {
       stateService.updateProject(project.id, {
@@ -3300,7 +3306,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       if (needsAuthHint) {
         sendEvent('progress', {
-          line: '警告：未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
+          line: '警告：未检测到该项目可用的 GitHub App 授权或 GitHub 登录。若这是私有仓库,请先在设置中授权该仓库后重试。',
         });
       }
 
@@ -3332,8 +3338,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // don't leak into the SSE stream.
       sendEvent('progress', { line: `$ git clone ${displayUrl} ${repoPath}` });
       const clone = await shell.exec(
-        `GIT_TERMINAL_PROMPT=0 git clone "${cloneUrl}" "${repoPath}"`,
-        {
+        `git clone "${displayUrl}" "${repoPath}"`,
+        mergeGitAuthEnv({
           timeout: 10 * 60 * 1000, // 10 minutes max; cancel any stuck clone
           onData: (chunk: string) => {
             // git often emits carriage-return progress updates for
@@ -3345,14 +3351,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
               if (trimmed) sendEvent('progress', { line: trimmed });
             }
           },
-        },
+        }, gitAuth),
       );
 
       if (clone.exitCode !== 0) {
         const rawErr = (combinedOutput(clone) || 'git clone failed').trim();
         // UF-01: translate "could not read Username" into a clear,
         // actionable Chinese message pointing the user at Device Flow.
-        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, !!deviceToken);
+        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, gitAuth.source !== 'none');
         stateService.updateProject(project.id, {
           cloneStatus: 'error',
           cloneError: errMsg,

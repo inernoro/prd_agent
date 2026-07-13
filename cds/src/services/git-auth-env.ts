@@ -4,7 +4,7 @@ import type { GitHubAppClient } from './github-app-client.js';
 
 export interface GitAuthEnvInput {
   repoRoot: string;
-  config: CdsConfig;
+  config?: CdsConfig;
   stateService: StateService;
   githubApp?: GitHubAppClient | null;
 }
