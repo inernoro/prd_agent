@@ -21,7 +21,7 @@
 import { Router } from 'express';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import type { AccessRequest, AgentKey } from '../types.js';
+import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 
 export interface AccessRequestsRouterDeps {
@@ -38,6 +38,7 @@ export interface AccessRequestsRouterDeps {
 const AUDIT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** 免密发起的防刷上限:同一项目最多这么多条待批申请。 */
 const MAX_PENDING_PER_PROJECT = 10;
+const BOOTSTRAP_PROJECT_ID = '__new_project__';
 
 function newRequestId(): string {
   return randomBytes(6).toString('hex');
@@ -102,6 +103,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
       id: newRequestId(),
+      kind: 'project',
       projectId: project.id,
       pollTokenHash: sha256(pollToken),
       agentName,
@@ -112,6 +114,44 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
       requestId: item.id, projectId: project.id, agentName, purpose, pendingCount: pendingCount(stateService),
+    });
+    res.status(201).json({ requestId: item.id, pollToken, status: 'pending' });
+  });
+
+  // 首次接入:免密申请一把一次性「只能创建项目」授权。批准后签发 create-only
+  // cdsg_ key；它创建首个项目后会由 projects 路由自动吊销并换成项目级 key。
+  router.post('/bootstrap-access-requests', (req, res) => {
+    if (stateService.countPendingAccessRequests(BOOTSTRAP_PROJECT_ID) >= MAX_PENDING_PER_PROJECT) {
+      res.status(429).json({
+        error: 'too_many_pending',
+        message: `已有 ${MAX_PENDING_PER_PROJECT} 条待批的新项目接入申请,请先在 CDS 右下角处理。`,
+      });
+      return;
+    }
+    const body = (req.body || {}) as { agentName?: string; purpose?: string };
+    const agentName = typeof body.agentName === 'string' && body.agentName.trim()
+      ? body.agentName.trim().slice(0, 100) : 'AI Agent';
+    const purpose = typeof body.purpose === 'string' && body.purpose.trim()
+      ? body.purpose.trim().slice(0, 500) : '申请一次性创建新项目权限。';
+    const pollToken = randomBytes(24).toString('base64url');
+    const item: AccessRequest = {
+      id: newRequestId(),
+      kind: 'bootstrap',
+      projectId: BOOTSTRAP_PROJECT_ID,
+      pollTokenHash: sha256(pollToken),
+      agentName,
+      purpose,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    stateService.addAccessRequest(item);
+    cdsEventsBus.publish('access-request.created', {
+      requestId: item.id,
+      projectId: item.projectId,
+      kind: item.kind,
+      agentName,
+      purpose,
+      pendingCount: pendingCount(stateService),
     });
     res.status(201).json({ requestId: item.id, pollToken, status: 'pending' });
   });
@@ -145,6 +185,37 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
     // approved
+    if (item.issuedKeyPlaintext && !item.deliveredAt) {
+      const authorizationKey = item.issuedKeyPlaintext;
+      stateService.updateAccessRequest(item.id, { issuedKeyPlaintext: undefined, deliveredAt: new Date().toISOString() });
+      res.json({ status: 'approved', authorizationKey });
+      return;
+    }
+    res.json({ status: 'approved', delivered: true });
+  });
+
+  router.get('/bootstrap-access-requests/:reqId', (req, res) => {
+    const item = stateService.getAccessRequest(req.params.reqId);
+    if (!item || item.kind !== 'bootstrap' || item.projectId !== BOOTSTRAP_PROJECT_ID) {
+      res.status(404).json({ error: 'request_not_found', message: `Access request '${req.params.reqId}' not found.` });
+      return;
+    }
+    const token = extractPollToken(req);
+    const tokenHash = token ? sha256(token) : '';
+    const matches = tokenHash.length === item.pollTokenHash.length
+      && timingSafeEqual(Buffer.from(tokenHash, 'hex'), Buffer.from(item.pollTokenHash, 'hex'));
+    if (!matches) {
+      res.status(403).json({ error: 'poll_token_invalid', message: '轮询票据无效。' });
+      return;
+    }
+    if (item.status === 'pending') {
+      res.json({ status: 'pending' });
+      return;
+    }
+    if (item.status === 'rejected') {
+      res.json({ status: 'rejected', rejectReason: item.rejectReason || null });
+      return;
+    }
     if (item.issuedKeyPlaintext && !item.deliveredAt) {
       const authorizationKey = item.issuedKeyPlaintext;
       stateService.updateAccessRequest(item.id, { issuedKeyPlaintext: undefined, deliveredAt: new Date().toISOString() });
@@ -209,13 +280,52 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(409).json({ error: 'already_decided', message: `Access request already ${item.status}.` });
       return;
     }
+    // bootstrap 申请签发一次性 create-only cdsg_；项目申请签发全权项目 cdsp_。
+    const now = new Date();
+    if (item.kind === 'bootstrap') {
+      const plaintext = `cdsg_${randomBytes(32).toString('base64url')}`;
+      const keyId = randomBytes(4).toString('hex');
+      const decidedBy = decider(req);
+      const keyEntry: GlobalAgentKey = {
+        id: keyId,
+        label: `一次性新项目接入 (申请 ${item.id} · ${item.agentName})`,
+        hash: sha256(plaintext),
+        scope: 'rw',
+        access: { canCreateProjects: true, projects: [] },
+        oneTime: true,
+        createdAt: now.toISOString(),
+        createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
+      };
+      try {
+        stateService.addGlobalAgentKey(keyEntry);
+        stateService.updateAccessRequest(item.id, {
+          status: 'approved',
+          decidedAt: now.toISOString(),
+          decidedBy,
+          issuedKeyId: keyId,
+          issuedKeyPlaintext: plaintext,
+        });
+      } catch (err) {
+        try { stateService.revokeGlobalAgentKey(keyId); } catch { /* best-effort */ }
+        res.status(500).json({ error: 'state_save_failed', message: (err as Error).message });
+        return;
+      }
+      cdsEventsBus.publish('access-request.decided', {
+        requestId: item.id,
+        projectId: item.projectId,
+        kind: item.kind,
+        status: 'approved',
+        pendingCount: pendingCount(stateService),
+      });
+      res.json({ approved: true, requestId: item.id });
+      return;
+    }
+
     const project = stateService.getProject(item.projectId);
     if (!project) {
       res.status(404).json({ error: 'project_not_found', message: `Project '${item.projectId}' no longer exists.` });
       return;
     }
-    // 授权密钥 = 全权项目 AgentKey(cdsp_*),与 POST /projects/:id/agent-keys 同格式。
-    const now = new Date();
     const slugHead = project.slug.slice(0, 12).toLowerCase();
     const suffix = randomBytes(32).toString('base64url');
     const plaintext = `cdsp_${slugHead}_${suffix}`;

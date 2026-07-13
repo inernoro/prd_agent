@@ -1070,6 +1070,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
+    [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
+    [/^GET \/bootstrap-access-requests\/[^/]+$/, '轮询新项目接入结果'],
     [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
     [/^POST \/access-requests\/[^/]+\/reject$/, '拒绝授权申请'],
     // 项目虚拟 cds-compose.yml
@@ -1210,6 +1212,8 @@ function broadcastAiPairing(event: string, data: unknown) {
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
+  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   return false;
 }
 

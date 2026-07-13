@@ -2657,6 +2657,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
+    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
+    // 已签发后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
+    // create-only key 未标 oneTime，保持原有可重复建项目行为。
+    if (callerAccess) {
+      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
+      if (callerKey?.oneTime && issuedProjectKey) {
+        stateService.revokeGlobalAgentKey(callerAccess.keyId);
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly

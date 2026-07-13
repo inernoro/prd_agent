@@ -12,11 +12,10 @@ cdscli — CDS 管理 CLI (MVP)
   cdscli <command> [subcommand] [args] [flags]
   cdscli --help
 
-环境变量 (从 shell profile 读取，CLI 不做加密):
-  CDS_HOST          必填。如 cds.miduo.org（https 自动前缀）
-  AI_ACCESS_KEY     bootstrap 静态密钥，与 CDS 服务端 process.env 一致
-  CDS_PROJECT_KEY   (可选) 项目级 cdsp_* 通行证，覆盖 AI_ACCESS_KEY
-  CDS_PROJECT_ID    (可选) 配 CDS_PROJECT_KEY 使用，用于默认项目作用域
+凭据来源（按优先级）:
+  1. 当前进程显式传入的 CDS_HOST / CDS_PROJECT_KEY / AI_ACCESS_KEY
+  2. 当前 git 项目的 .cds/credentials.json（cdscli connect 自动维护）
+  3. 旧版 shell 环境变量（仅兼容，不再由 CLI 默认写入）
   MAP_AI_USER       (可选) 后端 API 认证的 X-AI-Impersonate
 
 输出模式:
@@ -45,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.8.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.9.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -62,6 +61,107 @@ _GENERIC_WORKSPACE_SLUGS = {
 }
 _DNS_LABEL_MAX_LENGTH = 63
 _PREVIEW_SLUG_HASH_LENGTH = 8
+_LOCAL_CREDENTIALS_RELATIVE_PATH = os.path.join(".cds", "credentials.json")
+
+
+def _workspace_root(start: str | None = None) -> str:
+    """返回当前项目根目录；不在 git 仓库时退回当前目录。"""
+    cwd = os.path.abspath(start or os.getcwd())
+    candidate = cwd
+    while True:
+        if os.path.exists(os.path.join(candidate, ".git")):
+            return candidate
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            return cwd
+        candidate = parent
+
+
+def _credentials_path(start: str | None = None) -> str:
+    return os.path.join(_workspace_root(start), _LOCAL_CREDENTIALS_RELATIVE_PATH)
+
+
+def _exclude_local_path(root: str, marker: str) -> None:
+    """在本地 git exclude 中隐藏运行文件，不修改受版本控制的 .gitignore。"""
+    try:
+        exclude_path = subprocess.check_output(
+            ["git", "-C", root, "rev-parse", "--git-path", "info/exclude"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    if not os.path.isabs(exclude_path):
+        exclude_path = os.path.join(root, exclude_path)
+    os.makedirs(os.path.dirname(exclude_path), exist_ok=True)
+    existing = ""
+    try:
+        with open(exclude_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except FileNotFoundError:
+        pass
+    if marker not in {line.strip() for line in existing.splitlines()}:
+        with open(exclude_path, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write(marker + "\n")
+
+
+def _exclude_local_credentials(root: str) -> None:
+    _exclude_local_path(root, "/.cds/credentials.json")
+
+
+def _save_local_credentials(*, host: str, project_id: str | None = None,
+                            project_key: str | None = None,
+                            bootstrap_key: str | None = None) -> str:
+    """原子写入当前项目凭据；不打印密钥，不修改 shell profile。"""
+    root = _workspace_root()
+    target = _credentials_path(root)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    payload: dict[str, Any] = {
+        "version": 1,
+        "host": host.rstrip("/"),
+    }
+    if project_id:
+        payload["projectId"] = project_id
+    if project_key:
+        payload["projectKey"] = project_key
+    if bootstrap_key:
+        payload["bootstrapKey"] = bootstrap_key
+    tmp_path = target + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, target)
+    os.chmod(target, 0o600)
+    _exclude_local_credentials(root)
+    return target
+
+
+def _load_local_credentials() -> dict[str, Any]:
+    """读取当前项目凭据并注入当前 cdscli 进程，不影响父进程或系统环境。"""
+    path = _credentials_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    host = str(payload.get("host") or "").strip()
+    project_id = str(payload.get("projectId") or "").strip()
+    project_key = str(payload.get("projectKey") or "").strip()
+    bootstrap_key = str(payload.get("bootstrapKey") or "").strip()
+    if host:
+        os.environ.setdefault("CDS_HOST", host)
+    if project_id:
+        os.environ.setdefault("CDS_PROJECT_ID", project_id)
+    if project_key:
+        os.environ.setdefault("CDS_PROJECT_KEY", project_key)
+    elif bootstrap_key:
+        os.environ.setdefault("AI_ACCESS_KEY", bootstrap_key)
+    return payload
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────
@@ -441,22 +541,35 @@ def cmd_project_create(args: argparse.Namespace) -> None:
     # 后端会返回一把绑定到新项目的 cdsp_ scoped key(issuedProjectKey)。这把 key 明文
     # 只此一次,后续对该项目的部署/操作应切到它(create-only 全局 key 碰不到新项目)。
     issued = body.get("issuedProjectKey") if isinstance(body, dict) else None
+    saved_credentials_path: str | None = None
+    if proj and isinstance(issued, dict) and issued.get("plaintext"):
+        pid = str(proj.get("id") or "").strip()
+        if pid:
+            saved_credentials_path = _save_local_credentials(
+                host=_cds_base(),
+                project_id=pid,
+                project_key=str(issued["plaintext"]),
+            )
+            os.environ["CDS_PROJECT_ID"] = pid
+            os.environ["CDS_PROJECT_KEY"] = str(issued["plaintext"])
+            os.environ.pop("AI_ACCESS_KEY", None)
     if proj and _HUMAN:
         pid = proj.get("id", "?")
         slug = proj.get("slug", "?")
         print(f"[OK] 已创建项目 {slug} id={pid}")
         if proj.get("gitRepoUrl"):
             print(f"  git: {proj['gitRepoUrl']}")
-        if isinstance(issued, dict) and issued.get("plaintext"):
-            print("  [新项目 Agent Key] 明文只显示一次,请立即保存并用于后续该项目操作:")
-            print(f"    CDS_PROJECT_ID={pid}")
-            print(f"    CDS_PROJECT_KEY={issued['plaintext']}")
+        if saved_credentials_path:
+            print(f"  项目授权已安全保存到 {saved_credentials_path}，未输出密钥。")
         return
-    ok({"project": proj or body, "issuedProjectKey": issued},
+    safe_issued = None
+    if isinstance(issued, dict):
+        safe_issued = {k: v for k, v in issued.items() if k != "plaintext"}
+    ok({"project": proj or body, "issuedProjectKey": safe_issued,
+        "credentialsPath": saved_credentials_path},
        note=f"已创建项目 {(proj or {}).get('slug','?')} "
             f"id={(proj or {}).get('id','?')}"
-            + ("；已返回新项目 scoped key(issuedProjectKey.plaintext,只此一次)"
-               if isinstance(issued, dict) and issued.get("plaintext") else ""))
+            + ("；已切换到新项目授权" if saved_credentials_path else ""))
 
 
 def cmd_project_clone(args: argparse.Namespace) -> None:
@@ -2708,8 +2821,8 @@ def cmd_diagnose(args: argparse.Namespace) -> None:
 # ── NEW: init wizard, scan, smoke, help-me-check, deploy ──────────
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    """交互式 env 向导。写入 ~/.cdsrc 与 项目本地 .cds.env。"""
+def cmd_init_legacy(args: argparse.Namespace) -> None:
+    """旧版交互式 env 向导；仅在显式 --legacy-env 时使用。"""
     import subprocess
     print("=== CDS 初始化向导 ===\n", file=sys.stderr)
     cdsrc = os.path.expanduser("~/.cdsrc")
@@ -2752,7 +2865,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         if status != 200 and status != 201:
             die(f"配对请求失败 HTTP {status}", code=2)
         req_id = body.get("requestId") if isinstance(body, dict) else None
-        print(f"  ⏳ 请去 https://{host}/ Dashboard 右上角批准 AI 配对 (requestId={req_id})",
+        print(f"  请去 https://{host}/ Dashboard 右上角批准 AI 配对 (requestId={req_id})",
               file=sys.stderr)
         print("  等待最多 5 分钟…", file=sys.stderr)
         token = None
@@ -2807,6 +2920,181 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f'\n下一步: source {cdsrc} 然后 cdscli auth check', file=sys.stderr)
     ok({"host": host, "authMethod": choice, "projectId": pid or None,
         "cdsrcPath": cdsrc}, note="init 完成")
+
+
+def _restore_auth_env(previous: dict[str, str | None]) -> None:
+    for key, value in previous.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def cmd_connect(args: argparse.Namespace) -> None:
+    """免密发起页面授权，并把一次性结果保存为当前项目凭据。"""
+    raw_host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
+    if not raw_host:
+        die("--host 必填，例如 https://cds.miduo.org", code=1)
+    if not raw_host.startswith("http"):
+        raw_host = "https://" + raw_host
+    host = raw_host.rstrip("/")
+    project_id = str(getattr(args, "project", "") or "").strip()
+    new_project = bool(getattr(args, "new_project", False))
+    if bool(project_id) == new_project:
+        die("--project <项目 ID> 与 --new-project 必须二选一", code=1)
+    agent_name = str(getattr(args, "agent", "") or "Agent").strip()[:100] or "Agent"
+    timeout_seconds = max(10, int(getattr(args, "timeout", 300) or 300))
+    interval_seconds = max(1, int(getattr(args, "interval", 2) or 2))
+
+    previous = {
+        "CDS_HOST": os.environ.get("CDS_HOST"),
+        "CDS_PROJECT_ID": os.environ.get("CDS_PROJECT_ID"),
+        "CDS_PROJECT_KEY": os.environ.get("CDS_PROJECT_KEY"),
+        "AI_ACCESS_KEY": os.environ.get("AI_ACCESS_KEY"),
+    }
+    os.environ["CDS_HOST"] = host
+    os.environ.pop("CDS_PROJECT_ID", None)
+    os.environ.pop("CDS_PROJECT_KEY", None)
+    os.environ.pop("AI_ACCESS_KEY", None)
+
+    request_path = (
+        "/api/bootstrap-access-requests"
+        if new_project
+        else f"/api/projects/{urllib.parse.quote(project_id)}/access-requests"
+    )
+    purpose = (
+        "申请一次性创建项目权限；项目创建后自动切换到项目级授权。"
+        if new_project
+        else f"申请连接并操作项目 {project_id}。"
+    )
+    status, body, _ = _request(
+        "POST",
+        request_path,
+        body={"agentName": agent_name, "purpose": purpose},
+        timeout=10,
+    )
+    if status not in (200, 201) or not isinstance(body, dict):
+        _restore_auth_env(previous)
+        die(f"发起授权失败: HTTP {status} {body}", code=2)
+    request_id = str(body.get("requestId") or "")
+    poll_token = str(body.get("pollToken") or "")
+    if not request_id or not poll_token:
+        _restore_auth_env(previous)
+        die("授权响应缺少 requestId 或 pollToken", code=3)
+
+    approval_url = host + "/project-list"
+    print(f"已向 CDS 发起授权申请 {request_id}。", file=sys.stderr)
+    print(f"请在浏览器打开 {approval_url}，在右下角授权申请中点击批准。", file=sys.stderr)
+    print("等待批准，期间不需要复制任何密钥。", file=sys.stderr)
+
+    poll_path = (
+        f"/api/bootstrap-access-requests/{urllib.parse.quote(request_id)}"
+        if new_project
+        else f"/api/projects/{urllib.parse.quote(project_id)}/access-requests/{urllib.parse.quote(request_id)}"
+    )
+    deadline = time.monotonic() + timeout_seconds
+    last_progress_at = 0.0
+    authorization_key: str | None = None
+    while time.monotonic() < deadline:
+        poll_status, poll_body, _ = _request(
+            "GET",
+            poll_path,
+            timeout=10,
+            extra_headers={"X-Poll-Token": poll_token},
+        )
+        if poll_status != 200 or not isinstance(poll_body, dict):
+            _restore_auth_env(previous)
+            die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
+        state = str(poll_body.get("status") or "")
+        if state == "approved":
+            authorization_key = str(poll_body.get("authorizationKey") or "")
+            if not authorization_key:
+                _restore_auth_env(previous)
+                die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
+            break
+        if state == "rejected":
+            _restore_auth_env(previous)
+            reason = poll_body.get("rejectReason") or "用户拒绝"
+            die(f"授权未通过: {reason}", code=2)
+        now = time.monotonic()
+        if now - last_progress_at >= 10:
+            remaining = max(0, int(deadline - now))
+            print(f"仍在等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+            last_progress_at = now
+        time.sleep(interval_seconds)
+
+    if not authorization_key:
+        _restore_auth_env(previous)
+        die("等待授权超时，未保存任何凭据。", code=2)
+
+    if new_project:
+        credentials_path = _save_local_credentials(host=host, bootstrap_key=authorization_key)
+        os.environ["AI_ACCESS_KEY"] = authorization_key
+        os.environ.pop("CDS_PROJECT_KEY", None)
+        os.environ.pop("CDS_PROJECT_ID", None)
+        verification_path = "/api/projects"
+        auth_scope = "create-project-once"
+    else:
+        credentials_path = _save_local_credentials(
+            host=host,
+            project_id=project_id,
+            project_key=authorization_key,
+        )
+        os.environ["CDS_PROJECT_ID"] = project_id
+        os.environ["CDS_PROJECT_KEY"] = authorization_key
+        os.environ.pop("AI_ACCESS_KEY", None)
+        verification_path = f"/api/projects/{urllib.parse.quote(project_id)}"
+        auth_scope = "project"
+
+    verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
+    if not 200 <= verify_status < 300:
+        die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
+    ok({
+        "host": host,
+        "projectId": project_id or None,
+        "scope": auth_scope,
+        "credentialsPath": credentials_path,
+        "approvalUrl": approval_url,
+    }, note="CDS 接入完成；未修改 shell 配置或系统环境变量")
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    """默认走页面批准；显式 --legacy-env 才运行旧版环境变量向导。"""
+    if bool(getattr(args, "legacy_env", False)):
+        cmd_init_legacy(args)
+        return
+    if bool(getattr(args, "yes", False)):
+        host = os.environ.get("CDS_HOST", "").strip()
+        project_id = os.environ.get("CDS_PROJECT_ID", "").strip()
+        project_key = os.environ.get("CDS_PROJECT_KEY", "").strip()
+        bootstrap_key = os.environ.get("AI_ACCESS_KEY", "").strip()
+        if not host or not (project_key or bootstrap_key):
+            die("init --yes 需要当前进程提供 CDS_HOST 与项目 Key 或 bootstrap Key", code=1)
+        path = _save_local_credentials(
+            host=host,
+            project_id=project_id or None,
+            project_key=project_key or None,
+            bootstrap_key=None if project_key else bootstrap_key,
+        )
+        ok({"credentialsPath": path, "projectId": project_id or None},
+           note="已迁移到当前项目凭据；未修改 shell 配置")
+        return
+
+    current = os.environ.get("CDS_HOST", "")
+    print("=== CDS 安全接入向导 ===\n", file=sys.stderr)
+    host = input(f"CDS 地址 [{current or 'https://cds.miduo.org'}]: ").strip() or current
+    if not host:
+        die("CDS 地址不能为空", code=1)
+    project_id = input("已有项目请输入项目 ID；首次创建项目直接回车: ").strip()
+    connect_args = argparse.Namespace(
+        host=host,
+        project=project_id or None,
+        new_project=not bool(project_id),
+        agent="cdscli",
+        timeout=300,
+        interval=2,
+    )
+    cmd_connect(connect_args)
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -6905,11 +7193,11 @@ def cmd_update(args: argparse.Namespace) -> None:
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 整颗技能目录备份到 <root>.bak.<timestamp>（失败回滚用）
-      4. 解压 tar.gz，从里面的 .claude/skills/cds/ 同步到当前根
+      3. 整颗技能目录备份到当前项目 .cds/skill-backups（失败回滚用）
+      4. 解压 tar.gz，从里面的 skills/cds/ 同步到当前根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
-    不动：~/.cdsrc / 项目 .cds.env / 任何外部配置
+    不动：项目凭据 / shell profile / 系统环境变量
     """
     import tempfile
     import shutil
@@ -6920,7 +7208,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     cli_dir = os.path.dirname(cli_path)            # .../cds/cli
     skill_root = os.path.dirname(cli_dir)          # .../cds
     if os.path.basename(skill_root) != "cds":
-        die(f"cdscli.py 不在期望的 .claude/skills/cds/cli/ 位置（实际: {cli_path}）。"
+        die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
 
     # 1. 下载
@@ -6938,7 +7226,11 @@ def cmd_update(args: argparse.Namespace) -> None:
 
     # 2. 备份当前技能目录
     ts = time.strftime("%Y%m%d-%H%M%S")
-    bak_root = f"{skill_root}.bak.{ts}"
+    workspace_root = _workspace_root()
+    backup_base = os.path.join(workspace_root, ".cds", "skill-backups")
+    os.makedirs(backup_base, exist_ok=True)
+    _exclude_local_path(workspace_root, "/.cds/skill-backups/")
+    bak_root = os.path.join(backup_base, f"cds-{ts}")
     try:
         shutil.copytree(skill_root, bak_root)
     except Exception as e:
@@ -6956,14 +7248,18 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的 .claude/skills/cds/
+        # 4. 找到解压内的通用 skills/cds/；兼容旧包的 .claude/skills/cds/。
         src_cds_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
-            if root.endswith(os.path.join(".claude", "skills", "cds")):
+            if (
+                os.path.basename(root) == "cds"
+                and os.path.isfile(os.path.join(root, "SKILL.md"))
+                and os.path.isfile(os.path.join(root, "cli", "cdscli.py"))
+            ):
                 src_cds_dir = root
                 break
         if not src_cds_dir:
-            die("tar.gz 内找不到 .claude/skills/cds/ 结构。升级失败（已保留备份）。",
+            die("tar.gz 内找不到 skills/cds/ 结构。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
         # 5. 用内容同步：遍历 src 下所有路径，强制覆盖 dst
@@ -6996,8 +7292,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         "backupAt": bak_root,
         "filesReplaced": len(replaced_files),
         "sample": replaced_files[:8],
-    }, note=f"升级完成。备份在 {bak_root}。确认一切正常后可 rm -rf 该备份。"
-            f" 异常时回滚: rm -rf {skill_root} && mv {bak_root} {skill_root}")
+    }, note=f"升级完成。备份在 {bak_root}，该目录不会被 Agent 当作技能扫描。")
 
 
 def cmd_deploy(args: argparse.Namespace) -> None:
@@ -7747,9 +8042,20 @@ def _build_parser() -> argparse.ArgumentParser:
     dg.set_defaults(func=cmd_diagnose)
 
     # ── 新增：init / scan / smoke / help-me-check / deploy ──
-    ini = sub.add_parser("init", help="首次接入向导")
-    ini.add_argument("--yes", action="store_true", help="非交互模式（CI 用）")
+    ini = sub.add_parser("init", help="首次安全接入向导（默认页面批准，不写全局环境变量）")
+    ini.add_argument("--yes", action="store_true", help="把当前进程凭据迁移到项目本地配置（CI 用）")
+    ini.add_argument("--legacy-env", action="store_true", help="兼容旧版：写入 ~/.cdsrc")
     ini.set_defaults(func=cmd_init)
+
+    con = sub.add_parser("connect", help="免密发起页面授权并连接当前项目")
+    con.add_argument("--host", required=True, help="CDS 地址，例如 https://cds.miduo.org")
+    con_target = con.add_mutually_exclusive_group(required=True)
+    con_target.add_argument("--project", help="连接已有项目 ID")
+    con_target.add_argument("--new-project", action="store_true", help="申请一次性创建项目权限")
+    con.add_argument("--agent", default="Agent", help="审批盒中显示的 Agent 名称")
+    con.add_argument("--timeout", type=int, default=300, help="等待批准秒数（默认 300）")
+    con.add_argument("--interval", type=int, default=2, help="轮询间隔秒数（默认 2）")
+    con.set_defaults(func=cmd_connect)
 
     pf = sub.add_parser("preflight", help="接入前置检查：CDS_HOST 连通 / 认证 / reposBase 配置")
     pf.set_defaults(func=cmd_preflight)
@@ -7854,6 +8160,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
+    _load_local_credentials()
     parser = _build_parser()
     args = parser.parse_args(argv)
     _TRACE_ID = args.trace or secrets.token_hex(4)

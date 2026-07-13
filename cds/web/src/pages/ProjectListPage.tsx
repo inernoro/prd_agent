@@ -7,13 +7,13 @@ import {
   ArrowRight,
   Bell,
   Beaker,
+  Bot,
   Braces,
   CheckCircle2,
   ClipboardCheck,
   Code2,
   Copy,
   Database,
-  Download,
   ExternalLink,
   FileText,
   Gauge,
@@ -740,12 +740,8 @@ export function ProjectListPage(): JSX.Element {
                 </DropdownItem>
                 <DropdownDivider />
                 <DropdownItem onSelect={() => setSkillDownloadOpen(true)}>
-                  <Download className="h-4 w-4 shrink-0" />
-                  下载技能包
-                </DropdownItem>
-                <DropdownItem onSelect={() => setGlobalAgentKeyOpen(true)}>
-                  <KeyRound className="h-4 w-4 shrink-0" />
-                  全局 Agent Key
+                  <Bot className="h-4 w-4 shrink-0" />
+                  接入 Agent
                 </DropdownItem>
                 <DropdownItem onSelect={() => setPendingImportOpen(true)}>
                   <FileText className="h-4 w-4 shrink-0" />
@@ -867,12 +863,7 @@ export function ProjectListPage(): JSX.Element {
         <SkillDownloadDialog
           open={skillDownloadOpen}
           onOpenChange={setSkillDownloadOpen}
-          onOpenGlobalKey={() => {
-            // 接入引导里直接跳到全局 Key 管理:全新接入(没项目)只能靠 cdsg_
-            // 全局 key bootstrap 建第一个项目,别让新手回下拉里翻。
-            setSkillDownloadOpen(false);
-            setGlobalAgentKeyOpen(true);
-          }}
+          projects={projects.map((project) => ({ id: project.id, name: displayName(project), slug: project.slug }))}
         />
         <MonitoringDialog
           open={monitoringOpen}
