@@ -881,8 +881,18 @@ function singlePassResolve(
   if (value === null || value === undefined) return '';
   const s = typeof value === 'string' ? value : String(value);
   return s.replace(ENV_TEMPLATE_RE, (_match, name, op, operand) => {
-    const defaultVal = envTemplateDefault(op, operand);
-    return vars[name] ?? process.env[name] ?? defaultVal ?? '';
+    const currentValue = vars[name] ?? process.env[name];
+    const hasNonEmptyValue = currentValue !== undefined && currentValue !== '';
+    if (op === '-') return hasNonEmptyValue ? currentValue : (operand ?? '');
+    if (op === '=') {
+      if (hasNonEmptyValue) return currentValue;
+      const assignedValue = operand ?? '';
+      vars[name] = assignedValue;
+      return assignedValue;
+    }
+    if (op === '+') return hasNonEmptyValue ? (operand ?? '') : '';
+    if (op === '?') return hasNonEmptyValue ? currentValue : '';
+    return currentValue ?? '';
   });
 }
 
