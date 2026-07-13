@@ -298,6 +298,7 @@ public class VideoGenRunWorker : BackgroundService
                         .Set(x => x.CurrentPhase, "downloading")
                         .Set(x => x.PhaseProgress, 95),
                     cancellationToken: CancellationToken.None);
+
                 await PublishEventAsync(run.Id, "phase.changed", new { phase = "downloading", progress = 95 });
 
                 string finalUrl;
@@ -337,6 +338,7 @@ public class VideoGenRunWorker : BackgroundService
                         .Set(x => x.PhaseProgress, 100)
                         .Set(x => x.EndedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
+                await UpdateProjectAsync(run, VideoProjectStatus.Completed);
 
                 await PublishEventAsync(run.Id, "run.completed", new
                 {
@@ -379,6 +381,7 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.ErrorMessage, errorMessage)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
         await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = errorMessage });
     }
@@ -391,6 +394,8 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.Status, VideoGenRunStatus.Cancelled)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+
+        await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
         await PublishEventAsync(run.Id, "run.cancelled", new { });
         _logger.LogInformation("VideoGen 已取消: runId={RunId}", run.Id);
@@ -535,6 +540,8 @@ public class VideoGenRunWorker : BackgroundService
             x => x.Id == run.Id,
             update,
             cancellationToken: CancellationToken.None);
+
+        await SyncProjectStoryboardAsync(run, scenes, aiTitle);
 
         await PublishEventAsync(run.Id, "scenes.generated",
             new { count = scenes.Count, totalDuration });
@@ -705,6 +712,7 @@ public class VideoGenRunWorker : BackgroundService
                 x => x.Id == run.Id,
                 Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId),
                 cancellationToken: CancellationToken.None);
+            await UpdateProjectAsync(run, VideoProjectStatus.Rendering);
 
             // 轮询
             const int pollIntervalSec = 6;
@@ -971,6 +979,7 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.CurrentPhase, "completed")
                     .Set(x => x.PhaseProgress, 100),
                 cancellationToken: CancellationToken.None);
+            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
             await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
         }
         finally
@@ -1003,6 +1012,7 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.CurrentPhase, "export-failed")
                 .Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
+        await UpdateProjectAsync(run, VideoProjectStatus.Editing);
         await PublishEventAsync(run.Id, "export.error", new { message = trimmed });
     }
 
@@ -1014,5 +1024,64 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.CurrentPhase, phase)
                 .Set(x => x.PhaseProgress, progress),
             cancellationToken: CancellationToken.None);
+    }
+
+    private async Task UpdateProjectAsync(VideoGenRun run, string status)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProjectId)) return;
+        await _db.VideoProjects.UpdateOneAsync(
+            x => x.Id == run.ProjectId,
+            Builders<VideoProject>.Update
+                .Set(x => x.Status, status)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+    }
+
+    private async Task SyncProjectStoryboardAsync(
+        VideoGenRun run,
+        IReadOnlyList<VideoGenScene> scenes,
+        string? aiTitle)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProjectId)) return;
+        var project = await _db.VideoProjects.Find(x => x.Id == run.ProjectId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (project == null) return;
+
+        var clips = new List<VideoTimelineClip>();
+        double cursor = 0;
+        for (var index = 0; index < scenes.Count; index++)
+        {
+            var duration = scenes[index].Duration ?? run.DirectDuration ?? 5;
+            clips.Add(new VideoTimelineClip
+            {
+                SceneIndex = index,
+                StartSeconds = cursor,
+                DurationSeconds = duration,
+            });
+            cursor += duration;
+        }
+
+        var tracks = project.TimelineTracks.Count > 0
+            ? project.TimelineTracks
+            : new List<VideoTimelineTrack>();
+        var videoTrack = tracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
+        if (videoTrack == null)
+        {
+            videoTrack = new VideoTimelineTrack { Type = VideoTrackType.Video, Name = "视频" };
+            tracks.Insert(0, videoTrack);
+        }
+        videoTrack.Clips = clips;
+
+        var update = Builders<VideoProject>.Update
+            .Set(x => x.Status, VideoProjectStatus.Editing)
+            .Set(x => x.TimelineTracks, tracks)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(aiTitle))
+        {
+            var title = aiTitle.Trim();
+            update = update.Set(x => x.Title, title[..Math.Min(title.Length, 60)]);
+        }
+        await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId,
+            update, cancellationToken: CancellationToken.None);
     }
 }

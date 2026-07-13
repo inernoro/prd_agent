@@ -8,7 +8,7 @@ import type { ApiResponse } from '@/types/api';
  * 大模型（Veo / Kling / Wan / Sora）一段直出。
  */
 
-/** OpenRouter 视频模型 id（按秒价升序） */
+/** 视频模型能力由网关模型池控制，这里仅提供控制台推荐入口。 */
 export const OPENROUTER_VIDEO_MODELS = [
   { id: 'alibaba/wan-2.6', label: 'Wan 2.6（阿里，1080p/24fps，~$0.04/秒，最便宜）', defaultDuration: 5 },
   { id: 'alibaba/wan-2.7', label: 'Wan 2.7（阿里，最新版）', defaultDuration: 5 },
@@ -48,6 +48,73 @@ export type VideoModelTier = typeof VIDEO_MODEL_TIERS[number]['tier'];
 
 /** 视频生成模式 */
 export type VideoGenMode = 'direct' | 'storyboard';
+
+export type VideoProjectStatus = 'Draft' | 'Analyzing' | 'Editing' | 'Rendering' | 'Completed';
+export type VideoProjectAssetType = 'character' | 'scene' | 'prop' | 'audio';
+export type VideoTrackType = 'video' | 'subtitle' | 'voice' | 'music';
+
+export interface VideoProjectAsset {
+  id: string;
+  type: VideoProjectAssetType;
+  name: string;
+  url?: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface VideoTimelineClip {
+  id: string;
+  sceneIndex?: number;
+  startSeconds: number;
+  durationSeconds: number;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
+  assetUrl?: string;
+  text?: string;
+  transition?: string;
+}
+
+export interface VideoTimelineTrack {
+  id: string;
+  type: VideoTrackType;
+  name: string;
+  muted: boolean;
+  locked: boolean;
+  clips: VideoTimelineClip[];
+}
+
+export interface VideoProject {
+  id: string;
+  appKey: string;
+  ownerAdminId: string;
+  title: string;
+  status: VideoProjectStatus;
+  sourceMarkdown: string;
+  styleDescription?: string;
+  defaultVideoModel?: string;
+  defaultAspectRatio: string;
+  defaultResolution: string;
+  defaultDuration: number;
+  generateAudio: boolean;
+  latestRunId?: string;
+  assets: VideoProjectAsset[];
+  timelineTracks: VideoTimelineTrack[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VideoProjectInput {
+  title?: string;
+  sourceMarkdown?: string;
+  styleDescription?: string;
+  defaultVideoModel?: string;
+  defaultAspectRatio?: string;
+  defaultResolution?: string;
+  defaultDuration?: number;
+  generateAudio?: boolean;
+  assets?: VideoProjectAsset[];
+  timelineTracks?: VideoTimelineTrack[];
+}
 
 /** 单分镜状态 */
 export type SceneItemStatus = 'Draft' | 'Generating' | 'Rendering' | 'Done' | 'Error';
@@ -145,6 +212,8 @@ export interface VideoGenRunListItem {
 }
 
 export type CreateVideoGenRunContract = (input: {
+  /** 所属项目；项目是长期编辑聚合，run 仅代表一次后台任务。 */
+  projectId?: string;
   /** 创作模式：direct（默认）或 storyboard */
   mode?: VideoGenMode;
   /** direct 模式：视频描述 prompt（必填） */
@@ -192,6 +261,11 @@ export type RenderVideoScenesContract = (
   sceneIndexes?: number[],
 ) => Promise<ApiResponse<{ count: number }>>;
 
+export type ReorderVideoScenesContract = (
+  runId: string,
+  sceneIndexes: number[],
+) => Promise<ApiResponse<boolean>>;
+
 export type ActivateVideoSceneVersionContract = (
   runId: string,
   sceneIndex: number,
@@ -208,3 +282,8 @@ export type ListVideoGenRunsContract = (input?: {
 export type GetVideoGenRunContract = (runId: string) => Promise<ApiResponse<VideoGenRun>>;
 
 export type CancelVideoGenRunContract = (runId: string) => Promise<ApiResponse<boolean>>;
+
+export type ListVideoProjectsContract = () => Promise<ApiResponse<VideoProject[]>>;
+export type GetVideoProjectContract = (projectId: string) => Promise<ApiResponse<VideoProject>>;
+export type CreateVideoProjectContract = (input: VideoProjectInput) => Promise<ApiResponse<VideoProject>>;
+export type UpdateVideoProjectContract = (projectId: string, input: VideoProjectInput) => Promise<ApiResponse<VideoProject>>;

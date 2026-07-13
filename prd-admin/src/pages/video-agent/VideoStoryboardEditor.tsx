@@ -9,6 +9,7 @@ import {
   Download,
   Film,
   History,
+  GripVertical,
   Layers3,
   Maximize2,
   Pause,
@@ -30,6 +31,7 @@ import {
   getVideoGenStreamUrl,
   getVideoGenRunReal,
   regenerateVideoSceneReal,
+  reorderVideoScenesReal,
   renderVideoSceneReal,
   renderVideoScenesReal,
   updateVideoSceneReal,
@@ -245,6 +247,20 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     return true;
   }), [mutate, runId, selectedSceneIndex]);
 
+  const reorderScenes = useCallback((fromIndex: number, toIndex: number) => mutate('reorder-scenes', async () => {
+    if (!run || fromIndex === toIndex) return false;
+    const indexes = run.scenes.map((_, index) => index);
+    const [moved] = indexes.splice(fromIndex, 1);
+    indexes.splice(toIndex, 0, moved);
+    const response = await reorderVideoScenesReal(runId, indexes);
+    if (!response.success) {
+      toast.error('调整镜头顺序失败', response.error?.message);
+      return false;
+    }
+    setSelectedSceneIndex(toIndex);
+    return true;
+  }), [mutate, run, runId]);
+
   const togglePlayback = useCallback(() => {
     const player = videoRef.current;
     if (!player || !previewUrl) return;
@@ -452,6 +468,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           setSelectedSceneIndex(index);
           setPreviewMode('scene');
         }}
+        onReorder={reorderScenes}
+        disabled={run.status !== 'Editing' || Boolean(mutating)}
       />
 
       {batchDialogOpen && (
@@ -661,7 +679,10 @@ const Timeline: React.FC<{
   run: VideoGenRun;
   selectedSceneIndex: number;
   onSelect: (index: number) => void;
-}> = ({ run, selectedSceneIndex, onSelect }) => {
+  onReorder: (fromIndex: number, toIndex: number) => void;
+  disabled: boolean;
+}> = ({ run, selectedSceneIndex, onSelect, onReorder, disabled }) => {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const duration = Math.max(run.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0), 1);
   return (
     <section className="video-console__timeline" aria-label="视频时间线">
@@ -683,7 +704,23 @@ const Timeline: React.FC<{
                 className={`video-console__clip ${index === selectedSceneIndex ? 'is-active' : ''}`}
                 style={{ flexGrow: clipDuration }}
                 onClick={() => onSelect(index)}
+                draggable={!disabled}
+                onDragStart={() => setDragIndex(index)}
+                onDragOver={(event) => { if (!disabled) event.preventDefault(); }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (dragIndex !== null) onReorder(dragIndex, index);
+                  setDragIndex(null);
+                }}
+                onDragEnd={() => setDragIndex(null)}
+                onKeyDown={(event) => {
+                  if (disabled || !event.altKey) return;
+                  if (event.key === 'ArrowLeft' && index > 0) onReorder(index, index - 1);
+                  if (event.key === 'ArrowRight' && index < run.scenes.length - 1) onReorder(index, index + 1);
+                }}
+                title="拖动排序，或按 Alt 加左右方向键移动"
               >
+                <GripVertical className="video-console__clip-grip" size={12} />
                 {scene.videoUrl ? <video src={scene.videoUrl} muted preload="metadata" /> : <Film size={14} />}
                 <div><strong>{scene.topic || `镜头 ${index + 1}`}</strong><span>{clipDuration}s</span></div>
               </button>

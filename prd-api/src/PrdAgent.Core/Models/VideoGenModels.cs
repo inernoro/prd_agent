@@ -1,4 +1,92 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
+
+public static class VideoProjectStatus
+{
+    public const string Draft = "Draft";
+    public const string Analyzing = "Analyzing";
+    public const string Editing = "Editing";
+    public const string Rendering = "Rendering";
+    public const string Completed = "Completed";
+}
+
+public static class VideoProjectAssetType
+{
+    public const string Character = "character";
+    public const string Scene = "scene";
+    public const string Prop = "prop";
+    public const string Audio = "audio";
+}
+
+public static class VideoTrackType
+{
+    public const string Video = "video";
+    public const string Subtitle = "subtitle";
+    public const string Voice = "voice";
+    public const string Music = "music";
+}
+
+public class VideoProjectAsset
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Type { get; set; } = VideoProjectAssetType.Scene;
+    public string Name { get; set; } = string.Empty;
+    public string? Url { get; set; }
+    public string? Description { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class VideoTimelineClip
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public int? SceneIndex { get; set; }
+    public double StartSeconds { get; set; }
+    public double DurationSeconds { get; set; } = 5;
+    public double TrimStartSeconds { get; set; }
+    public double TrimEndSeconds { get; set; }
+    public string? AssetUrl { get; set; }
+    public string? Text { get; set; }
+    public string? Transition { get; set; }
+}
+
+public class VideoTimelineTrack
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Type { get; set; } = VideoTrackType.Video;
+    public string Name { get; set; } = "视频";
+    public bool Muted { get; set; }
+    public bool Locked { get; set; }
+    public List<VideoTimelineClip> Clips { get; set; } = new();
+}
+
+[BsonIgnoreExtraElements]
+public class VideoProject
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string Title { get; set; } = "未命名视频";
+    public string Status { get; set; } = VideoProjectStatus.Draft;
+    public string SourceMarkdown { get; set; } = string.Empty;
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string DefaultAspectRatio { get; set; } = "16:9";
+    public string DefaultResolution { get; set; } = "1080p";
+    public int DefaultDuration { get; set; } = 5;
+    public bool GenerateAudio { get; set; } = true;
+    public string? LatestRunId { get; set; }
+    public List<VideoProjectAsset> Assets { get; set; } = new();
+    public List<VideoTimelineTrack> TimelineTracks { get; set; } =
+    [
+        new() { Type = VideoTrackType.Video, Name = "视频" },
+        new() { Type = VideoTrackType.Subtitle, Name = "字幕" },
+        new() { Type = VideoTrackType.Voice, Name = "配音" },
+        new() { Type = VideoTrackType.Music, Name = "音乐" },
+    ];
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
 
 /// <summary>
 /// 视频生成模式
@@ -130,6 +218,7 @@ public class VideoGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
+    public string? ProjectId { get; set; }
     public string Status { get; set; } = VideoGenRunStatus.Queued;
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
@@ -212,6 +301,8 @@ public class VideoGenRun
 /// <summary>创建视频生成任务请求</summary>
 public class CreateVideoGenRunRequest
 {
+    /// <summary>所属视频项目 ID；设置后任务会继承项目的文学稿和默认参数。</summary>
+    public string? ProjectId { get; set; }
     /// <summary>模式：direct / storyboard（默认 direct）</summary>
     public string? Mode { get; set; }
 
@@ -236,6 +327,34 @@ public class CreateVideoGenRunRequest
     public string? DirectFirstFrameUrl { get; set; }
 }
 
+public class CreateVideoProjectRequest
+{
+    public string? Title { get; set; }
+    public string? SourceMarkdown { get; set; }
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string? DefaultAspectRatio { get; set; }
+    public string? DefaultResolution { get; set; }
+    public int? DefaultDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
+    public List<VideoProjectAsset>? Assets { get; set; }
+    public List<VideoTimelineTrack>? TimelineTracks { get; set; }
+}
+
+public class UpdateVideoProjectRequest
+{
+    public string? Title { get; set; }
+    public string? SourceMarkdown { get; set; }
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string? DefaultAspectRatio { get; set; }
+    public string? DefaultResolution { get; set; }
+    public int? DefaultDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
+    public List<VideoProjectAsset>? Assets { get; set; }
+    public List<VideoTimelineTrack>? TimelineTracks { get; set; }
+}
+
 /// <summary>更新分镜请求（storyboard 模式编辑）</summary>
 public class UpdateVideoSceneRequest
 {
@@ -251,4 +370,9 @@ public class UpdateVideoSceneRequest
 public class BatchRenderVideoScenesRequest
 {
     public List<int>? SceneIndexes { get; set; }
+}
+
+public class ReorderVideoScenesRequest
+{
+    public List<int> SceneIndexes { get; set; } = new();
 }

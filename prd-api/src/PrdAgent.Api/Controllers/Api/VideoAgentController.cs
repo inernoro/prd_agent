@@ -51,6 +51,46 @@ public class VideoAgentController : ControllerBase
 
     private string GetAdminId() => this.GetRequiredUserId();
 
+    [HttpGet("projects")]
+    public async Task<IActionResult> ListProjects(CancellationToken ct)
+    {
+        var projects = await _videoGenService.ListProjectsAsync(GetAdminId(), AppKey, ct);
+        return Ok(ApiResponse<List<VideoProject>>.Ok(projects));
+    }
+
+    [HttpPost("projects")]
+    public async Task<IActionResult> CreateProject([FromBody] CreateVideoProjectRequest request, CancellationToken ct)
+    {
+        var project = await _videoGenService.CreateProjectAsync(AppKey, GetAdminId(), request, ct);
+        return Ok(ApiResponse<VideoProject>.Ok(project));
+    }
+
+    [HttpGet("projects/{projectId}")]
+    public async Task<IActionResult> GetProject(string projectId, CancellationToken ct)
+    {
+        var project = await _videoGenService.GetProjectAsync(projectId, GetAdminId(), AppKey, ct);
+        return project == null
+            ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频项目不存在"))
+            : Ok(ApiResponse<VideoProject>.Ok(project));
+    }
+
+    [HttpPut("projects/{projectId}")]
+    public async Task<IActionResult> UpdateProject(
+        string projectId,
+        [FromBody] UpdateVideoProjectRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var project = await _videoGenService.UpdateProjectAsync(projectId, GetAdminId(), request, AppKey, ct);
+            return Ok(ApiResponse<VideoProject>.Ok(project));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
     /// <summary>
     /// 直出视频（绕过 Worker，直接同步走 Gateway + OpenRouter）
     /// 用于诊断 Worker 热重载问题时的快速验证通道。
@@ -210,6 +250,22 @@ public class VideoAgentController : ControllerBase
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    [HttpPost("runs/{runId}/scenes/reorder")]
+    public async Task<IActionResult> ReorderScenes(
+        string runId,
+        [FromBody] ReorderVideoScenesRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 

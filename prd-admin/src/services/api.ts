@@ -1120,6 +1120,11 @@ export const api = {
 
   // ============ Video Agent 视频创作 ============
   videoAgent: {
+    projects: {
+      list: () => '/api/video-agent/projects',
+      create: () => '/api/video-agent/projects',
+      byId: (projectId: string) => `/api/video-agent/projects/${projectId}`,
+    },
     // 视频生成 API（OpenRouter 直出 + storyboard 拆分镜两种模式）
     runs: {
       list: () => '/api/video-agent/runs',
@@ -1134,6 +1139,7 @@ export const api = {
       regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,
       render: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/render`,
       renderBatch: (runId: string) => `/api/video-agent/runs/${runId}/scenes/render-batch`,
+      reorder: (runId: string) => `/api/video-agent/runs/${runId}/scenes/reorder`,
       activateVersion: (runId: string, sceneIndex: number, versionId: string) =>
         `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/versions/${versionId}/activate`,
     },

@@ -8,6 +8,11 @@ namespace PrdAgent.Core.Interfaces;
 /// </summary>
 public interface IVideoGenService
 {
+    Task<VideoProject> CreateProjectAsync(string appKey, string ownerAdminId, CreateVideoProjectRequest request, CancellationToken ct = default);
+    Task<VideoProject?> GetProjectAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+    Task<List<VideoProject>> ListProjectsAsync(string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+    Task<VideoProject> UpdateProjectAsync(string projectId, string ownerAdminId, UpdateVideoProjectRequest request, string? appKey = null, CancellationToken ct = default);
+
     /// <summary>
     /// 创建视频生成任务（插入 MongoDB，Worker 自动拾取）
     /// </summary>
@@ -46,6 +51,9 @@ public interface IVideoGenService
 
     /// <summary>批量标记未完成分镜为 Rendering，worker 会按顺序生成</summary>
     Task<int> RenderScenesAsync(string runId, string ownerAdminId, IReadOnlyCollection<int>? sceneIndexes = null, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>按给定的旧索引排列镜头，并同步项目视频轨。</summary>
+    Task ReorderScenesAsync(string runId, string ownerAdminId, IReadOnlyList<int> sceneIndexes, string? appKey = null, CancellationToken ct = default);
 
     /// <summary>选择一个历史生成版本作为当前分镜产物</summary>
     Task ActivateSceneVersionAsync(string runId, string ownerAdminId, int sceneIndex, string versionId, string? appKey = null, CancellationToken ct = default);

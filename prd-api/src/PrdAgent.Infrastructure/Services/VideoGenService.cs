@@ -29,30 +29,123 @@ public class VideoGenService : IVideoGenService
         _logger = logger;
     }
 
+    public async Task<VideoProject> CreateProjectAsync(
+        string appKey,
+        string ownerAdminId,
+        CreateVideoProjectRequest request,
+        CancellationToken ct = default)
+    {
+        var source = (request?.SourceMarkdown ?? string.Empty).Trim();
+        if (source.Length > 100_000) source = source[..100_000];
+        var project = new VideoProject
+        {
+            AppKey = appKey,
+            OwnerAdminId = ownerAdminId,
+            Title = NormalizeTitle(request?.Title, source),
+            SourceMarkdown = source,
+            StyleDescription = NormalizeOptional(request?.StyleDescription),
+            DefaultVideoModel = NormalizeOptional(request?.DefaultVideoModel),
+            DefaultAspectRatio = NormalizeAspectRatio(request?.DefaultAspectRatio),
+            DefaultResolution = NormalizeResolution(request?.DefaultResolution, "1080p"),
+            DefaultDuration = NormalizeDuration(request?.DefaultDuration),
+            GenerateAudio = request?.GenerateAudio ?? true,
+            Assets = request?.Assets ?? new List<VideoProjectAsset>(),
+        };
+        if (request?.TimelineTracks?.Count > 0) project.TimelineTracks = request.TimelineTracks;
+        await _db.VideoProjects.InsertOneAsync(project, cancellationToken: ct);
+        return project;
+    }
+
+    public async Task<VideoProject?> GetProjectAsync(
+        string projectId,
+        string ownerAdminId,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var fb = Builders<VideoProject>.Filter;
+        var filter = fb.Eq(x => x.Id, projectId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+        return await _db.VideoProjects.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<List<VideoProject>> ListProjectsAsync(
+        string ownerAdminId,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var fb = Builders<VideoProject>.Filter;
+        var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+        return await _db.VideoProjects.Find(filter)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(100)
+            .ToListAsync(ct);
+    }
+
+    public async Task<VideoProject> UpdateProjectAsync(
+        string projectId,
+        string ownerAdminId,
+        UpdateVideoProjectRequest request,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var project = await GetProjectAsync(projectId, ownerAdminId, appKey, ct)
+                      ?? throw new KeyNotFoundException("视频项目不存在");
+        var updates = new List<UpdateDefinition<VideoProject>>
+        {
+            Builders<VideoProject>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+        };
+        if (request.Title != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Title, NormalizeTitle(request.Title, project.SourceMarkdown)));
+        if (request.SourceMarkdown != null)
+        {
+            var source = request.SourceMarkdown.Trim();
+            updates.Add(Builders<VideoProject>.Update.Set(x => x.SourceMarkdown, source[..Math.Min(source.Length, 100_000)]));
+        }
+        if (request.StyleDescription != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.StyleDescription, NormalizeOptional(request.StyleDescription)));
+        if (request.DefaultVideoModel != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultVideoModel, NormalizeOptional(request.DefaultVideoModel)));
+        if (request.DefaultAspectRatio != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultAspectRatio, NormalizeAspectRatio(request.DefaultAspectRatio)));
+        if (request.DefaultResolution != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultResolution, NormalizeResolution(request.DefaultResolution, project.DefaultResolution)));
+        if (request.DefaultDuration.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultDuration, NormalizeDuration(request.DefaultDuration)));
+        if (request.GenerateAudio.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.GenerateAudio, request.GenerateAudio.Value));
+        if (request.Assets != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Assets, request.Assets));
+        if (request.TimelineTracks != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.TimelineTracks, request.TimelineTracks));
+
+        await _db.VideoProjects.UpdateOneAsync(x => x.Id == projectId && x.OwnerAdminId == ownerAdminId,
+            Builders<VideoProject>.Update.Combine(updates), cancellationToken: ct);
+        return await GetProjectAsync(projectId, ownerAdminId, appKey, ct)
+               ?? throw new KeyNotFoundException("视频项目不存在");
+    }
+
     public async Task<string> CreateRunAsync(string appKey, string ownerAdminId, CreateVideoGenRunRequest request, CancellationToken ct = default)
     {
+        VideoProject? project = null;
+        if (!string.IsNullOrWhiteSpace(request?.ProjectId))
+        {
+            project = await GetProjectAsync(request.ProjectId.Trim(), ownerAdminId, appKey, ct)
+                      ?? throw new ArgumentException("所属视频项目不存在或无权访问");
+        }
         var mode = (request?.Mode ?? VideoGenMode.Direct).Trim().ToLowerInvariant();
         if (mode is not (VideoGenMode.Direct or VideoGenMode.Storyboard)) mode = VideoGenMode.Direct;
 
-        var duration = request?.DirectDuration ?? 5;
+        var duration = request?.DirectDuration ?? project?.DefaultDuration ?? 5;
         if (duration < 1 || duration > 60) duration = 5;
 
-        var aspect = (request?.DirectAspectRatio ?? "16:9").Trim();
+        var aspect = (request?.DirectAspectRatio ?? project?.DefaultAspectRatio ?? "16:9").Trim();
         if (aspect is not ("16:9" or "9:16" or "1:1" or "4:3" or "3:4" or "21:9" or "9:21")) aspect = "16:9";
 
-        var resolution = (request?.DirectResolution ?? "720p").Trim();
+        var resolution = (request?.DirectResolution ?? project?.DefaultResolution ?? "720p").Trim();
         if (resolution is not ("480p" or "720p" or "1080p" or "1K" or "2K" or "4K")) resolution = "720p";
 
         // 不再硬编码 alibaba/wan-2.6 默认：未指定时留空，由 AppCaller 对应的视频池(visual-agent / video-agent)
         // 解析各自的默认模型。否则会以 Wan 当 expectedModel 搜遍所有 VideoGen 池命中含 Wan 的池，
         // 绕过 visual-agent 池配置（即便用的是 visual app caller）（Codex review）。
-        var modelRaw = (request?.DirectVideoModel ?? string.Empty).Trim();
+        var modelRaw = (request?.DirectVideoModel ?? project?.DefaultVideoModel ?? string.Empty).Trim();
         var model = string.IsNullOrWhiteSpace(modelRaw) ? null : modelRaw;
 
         if (mode == VideoGenMode.Storyboard)
         {
             // 高级创作：拆分镜路径
-            var article = (request?.ArticleMarkdown ?? string.Empty).Trim();
+            var article = (request?.ArticleMarkdown ?? project?.SourceMarkdown ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(article))
                 throw new ArgumentException("高级创作（storyboard）需要文章/PRD 文本");
             if (article.Length > 100_000)
@@ -61,14 +154,17 @@ public class VideoGenService : IVideoGenService
             var run = new VideoGenRun
             {
                 AppKey = appKey,
+                ProjectId = project?.Id,
                 OwnerAdminId = ownerAdminId,
                 Status = VideoGenRunStatus.Queued,
                 Mode = VideoGenMode.Storyboard,
                 ArticleMarkdown = article,
-                StyleDescription = string.IsNullOrWhiteSpace(request?.StyleDescription) ? null : request!.StyleDescription!.Trim(),
+                StyleDescription = string.IsNullOrWhiteSpace(request?.StyleDescription)
+                    ? project?.StyleDescription
+                    : request!.StyleDescription!.Trim(),
                 ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
                     ? request!.ArticleTitle!.Trim()
-                    : (article.Length > 60 ? article[..60] + "…" : article),
+                    : project?.Title ?? (article.Length > 60 ? article[..60] + "…" : article),
                 DirectVideoModel = model,
                 DirectAspectRatio = aspect,
                 DirectResolution = resolution,
@@ -78,6 +174,14 @@ public class VideoGenService : IVideoGenService
                 CreatedAt = DateTime.UtcNow,
             };
             await _db.VideoGenRuns.InsertOneAsync(run, cancellationToken: ct);
+            if (project != null)
+            {
+                await _db.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+                    Builders<VideoProject>.Update
+                        .Set(x => x.LatestRunId, run.Id)
+                        .Set(x => x.Status, VideoProjectStatus.Analyzing)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+            }
             _logger.LogInformation("VideoGen storyboard Run 已创建: runId={RunId}, articleLen={Len}",
                 run.Id, article.Length);
             return run.Id;
@@ -104,6 +208,7 @@ public class VideoGenService : IVideoGenService
         var directRun = new VideoGenRun
         {
             AppKey = appKey,
+            ProjectId = project?.Id,
             OwnerAdminId = ownerAdminId,
             Status = VideoGenRunStatus.Queued,
             Mode = VideoGenMode.Direct,
@@ -123,6 +228,14 @@ public class VideoGenService : IVideoGenService
         };
 
         await _db.VideoGenRuns.InsertOneAsync(directRun, cancellationToken: ct);
+        if (project != null)
+        {
+            await _db.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+                Builders<VideoProject>.Update
+                    .Set(x => x.LatestRunId, directRun.Id)
+                    .Set(x => x.Status, VideoProjectStatus.Rendering)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        }
         _logger.LogInformation("VideoGen direct Run 已创建: runId={RunId}, model={Model}, duration={Duration}s",
             directRun.Id, model, duration);
         return directRun.Id;
@@ -229,6 +342,64 @@ public class VideoGenService : IVideoGenService
             cancellationToken: ct);
         await PublishEventAsync(runId, "scenes.render.queued", new { count });
         return count;
+    }
+
+    public async Task ReorderScenesAsync(
+        string runId,
+        string ownerAdminId,
+        IReadOnlyList<int> sceneIndexes,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+            throw new InvalidOperationException("仅在编辑阶段可调整镜头顺序");
+        var expected = Enumerable.Range(0, run.Scenes.Count).ToHashSet();
+        if (sceneIndexes.Count != run.Scenes.Count || !expected.SetEquals(sceneIndexes))
+            throw new ArgumentException("镜头顺序必须包含每个镜头且不能重复");
+
+        var reordered = sceneIndexes.Select(index => run.Scenes[index]).ToList();
+        for (var index = 0; index < reordered.Count; index++) reordered[index].Index = index;
+        var runUpdates = new List<UpdateDefinition<VideoGenRun>>
+        {
+            Builders<VideoGenRun>.Update.Set(x => x.Scenes, reordered),
+        };
+        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(runUpdates);
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update.Combine(runUpdates), cancellationToken: ct);
+
+        if (!string.IsNullOrWhiteSpace(run.ProjectId))
+        {
+            var project = await _db.VideoProjects.Find(x => x.Id == run.ProjectId).FirstOrDefaultAsync(ct);
+            if (project != null)
+            {
+                var videoTrack = project.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
+                if (videoTrack != null)
+                {
+                    double cursor = 0;
+                    videoTrack.Clips = reordered.Select((scene, index) =>
+                    {
+                        var duration = scene.Duration ?? run.DirectDuration ?? 5;
+                        var clip = new VideoTimelineClip
+                        {
+                            SceneIndex = index,
+                            StartSeconds = cursor,
+                            DurationSeconds = duration,
+                            AssetUrl = scene.VideoUrl,
+                        };
+                        cursor += duration;
+                        return clip;
+                    }).ToList();
+                    await _db.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+                        Builders<VideoProject>.Update
+                            .Set(x => x.TimelineTracks, project.TimelineTracks)
+                            .Set(x => x.Status, VideoProjectStatus.Editing)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+                }
+            }
+        }
+        await PublishEventAsync(runId, "scenes.reordered", new { sceneIndexes });
     }
 
     public async Task ActivateSceneVersionAsync(
@@ -379,5 +550,34 @@ public class VideoGenService : IVideoGenService
         updates.Add(Builders<VideoGenRun>.Update.Set(x => x.VideoAssetUrl, (string?)null));
         updates.Add(Builders<VideoGenRun>.Update.Set(x => x.ExportedAt, (DateTime?)null));
         updates.Add(Builders<VideoGenRun>.Update.Set(x => x.EndedAt, (DateTime?)null));
+    }
+
+    private static string NormalizeTitle(string? title, string source)
+    {
+        var value = (title ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(value)) return value[..Math.Min(value.Length, 120)];
+        if (string.IsNullOrWhiteSpace(source)) return "未命名视频";
+        var firstLine = source.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim().TrimStart('#').Trim();
+        return string.IsNullOrWhiteSpace(firstLine)
+            ? "未命名视频"
+            : firstLine[..Math.Min(firstLine.Length, 60)];
+    }
+
+    private static string? NormalizeOptional(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static int NormalizeDuration(int? duration)
+        => duration is >= 1 and <= 60 ? duration.Value : 5;
+
+    private static string NormalizeAspectRatio(string? aspectRatio)
+    {
+        var value = (aspectRatio ?? "16:9").Trim();
+        return value is "16:9" or "9:16" or "1:1" or "4:3" or "3:4" or "21:9" or "9:21" ? value : "16:9";
+    }
+
+    private static string NormalizeResolution(string? resolution, string fallback)
+    {
+        var value = (resolution ?? fallback).Trim();
+        return value is "480p" or "720p" or "1080p" or "1K" or "2K" or "4K" ? value : fallback;
     }
 }
