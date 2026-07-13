@@ -105,22 +105,22 @@ def build_report() -> dict[str, Any]:
     brief = _read("assets/prototypes/llmgw-architecture-drawing-brief.md")
     html = _read("assets/prototypes/llmgw-architecture-map.html")
     request = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs")
-    endpoints = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    endpoints = _read("llmgw/serving/GatewayHttpEndpoints.cs")
     gateway_core = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs")
     resolver = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs")
-    console = _read("prd-llmgw/Program.cs")
-    console_app = _read("prd-llmgw-web/src/App.tsx")
-    console_layout = _read("prd-llmgw-web/src/components/ConsoleLayout.tsx")
-    logs_view = _read("prd-llmgw-web/src/components/LogsView.tsx")
-    details_drawer = _read("prd-llmgw-web/src/components/GenerationDetailsDrawer.tsx")
-    overview_page = _read("prd-llmgw-web/src/pages/OverviewPage.tsx")
-    app_callers_page = _read("prd-llmgw-web/src/pages/AppCallersPage.tsx")
-    shadow_page = _read("prd-llmgw-web/src/pages/ShadowPage.tsx")
-    pools_page = _read("prd-llmgw-web/src/pages/ModelPoolsPage.tsx")
-    models_page = _read("prd-llmgw-web/src/pages/ModelsPage.tsx")
-    platforms_page = _read("prd-llmgw-web/src/pages/PlatformsPage.tsx")
-    exchanges_page = _read("prd-llmgw-web/src/pages/ExchangesPage.tsx")
-    audits_page = _read("prd-llmgw-web/src/pages/AuditsPage.tsx")
+    console = _read("llmgw/console-api/Program.cs")
+    console_app = _read("llmgw/web/src/App.tsx")
+    console_layout = _read("llmgw/web/src/components/ConsoleLayout.tsx")
+    logs_view = _read("llmgw/web/src/components/LogsView.tsx")
+    details_drawer = _read("llmgw/web/src/components/GenerationDetailsDrawer.tsx")
+    overview_page = _read("llmgw/web/src/pages/OverviewPage.tsx")
+    app_callers_page = _read("llmgw/web/src/pages/AppCallersPage.tsx")
+    shadow_page = _read("llmgw/web/src/pages/ShadowPage.tsx")
+    pools_page = _read("llmgw/web/src/pages/ModelPoolsPage.tsx")
+    models_page = _read("llmgw/web/src/pages/ModelsPage.tsx")
+    platforms_page = _read("llmgw/web/src/pages/PlatformsPage.tsx")
+    exchanges_page = _read("llmgw/web/src/pages/ExchangesPage.tsx")
+    audits_page = _read("llmgw/web/src/pages/AuditsPage.tsx")
     prod_stage = _read("scripts/llmgw-prod-stage.sh")
     rollout_ledger = _read("scripts/llmgw-rollout-ledger.py")
     protocol_canary = _read("scripts/llmgw-protocol-canary.py")
@@ -236,7 +236,7 @@ def build_report() -> dict[str, Any]:
         "four_protocol_families_enter_serving_and_set_ingress_protocol",
         ok,
         detail,
-        ["prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs"],
+        ["llmgw/serving/GatewayHttpEndpoints.cs"],
     ))
 
     governance_count = endpoints.count("RecordAndCheckAppCallerGovernanceAsync")
@@ -269,7 +269,7 @@ def build_report() -> dict[str, Any]:
         ok and governance_count >= 9 and no_static_runtime_gate,
         f"{detail}; governanceCallCount={governance_count}; noStaticRuntimeGate={no_static_runtime_gate}",
         [
-            "prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs",
+            "llmgw/serving/GatewayHttpEndpoints.cs",
             "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs",
         ],
     ))
@@ -376,7 +376,7 @@ def build_report() -> dict[str, Any]:
         "console_exposes_gw_owned_config_authority_and_appcaller_governance",
         ok,
         detail,
-        ["prd-llmgw/Program.cs"],
+        ["llmgw/console-api/Program.cs"],
     ))
 
     ok, detail = _contains_all(
@@ -477,7 +477,7 @@ def build_report() -> dict[str, Any]:
         "console_surfaces_activity_router_appcallers_pools_models_platforms_exchanges_audits",
         ok,
         detail,
-        ["prd-llmgw-web/src/**"],
+        ["llmgw/web/src/**"],
     ))
 
     ok, detail = _contains_all(

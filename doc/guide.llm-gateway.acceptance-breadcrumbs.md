@@ -9,7 +9,7 @@
 ## 1. 管理摘要 + 怎么用
 
 「LLM 网关从 MAP 剥离」改动面横跨多屏：管理后台的 LLM 日志观测（生命周期 chip / 黑洞记录 / 应用聚合 /
-COS 占位还原 / 生图显示）、模型池健康告警、独立观测前端 prd-llmgw-web、CDS 拓扑命名子域 host 边、以及
+COS 占位还原 / 生图显示）、模型池健康告警、独立观测前端 llmgw/web、CDS 拓扑命名子域 host 边、以及
 serving 影子比对读端点。本文档把每一屏拆成**自动化工具（Playwright 无头浏览器）可直接消费的「面包屑清单」**：
 逐屏给出「导航点击路径 → 截图点 → 预期」三元组，外加测试覆盖矩阵摘要、例外/边界清单、压测计划。
 
@@ -32,11 +32,11 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 |----|------|------|------|----------|----------|
 | A | prd-admin | `/logs` | `logs.read` | 请求日志（短标签「日志」） | navRegistry.tsx L657-667 |
 | B | prd-admin | `/mds`（`?tab=pools`） | `mds.read` | 模型中心（短标签「模型」） | navRegistry.tsx L765-777 |
-| C | prd-llmgw-web | `/login` → `/` | 独立账号体系（非 prd-admin 权限） | LLM 网关观测台 | prd-llmgw-web/src/App.tsx |
+| C | llmgw/web | `/login` → `/` | 独立账号体系（非 prd-admin 权限） | LLM 网关观测台 | llmgw/web/src/App.tsx |
 | D | cds/web | `/`（BranchTopologyPage） | CDS 鉴权 | 分支拓扑 | cds/web/src/pages/BranchTopologyPage.tsx |
-| E | serving API | `GET /gw/v1/shadow-comparisons` | `X-Gateway-Key`（M2M） | 影子比对读端点 | prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs L170-192 |
+| E | serving API | `GET /gw/v1/shadow-comparisons` | `X-Gateway-Key`（M2M） | 影子比对读端点 | llmgw/serving/GatewayHttpEndpoints.cs L170-192 |
 
-> 入口待确认提示：prd-llmgw-web（面 C）是**完全独立部署**的 mini-app（自带路由 + 账号，端口 8100，独立
+> 入口待确认提示：llmgw/web（面 C）是**完全独立部署**的 mini-app（自带路由 + 账号，端口 8100，独立
 > Dockerfile/nginx），**未注册进 prd-admin 导航**，因此其访问入口取决于部署后的独立域名，见面 C 备注。
 > 面 D 的 `<slug>-llmgw` host 边在 CDS 前端代码里**没有硬编码 llmgw 标签**（拓扑按 branch 配置渲染通用
 > service/host 节点），该边是否出现取决于该分支是否实际部署了 serving 容器，见面 D 备注。
@@ -163,13 +163,13 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
   - 预期（双主题）：点击后目标池可见并选中；闭环到「告警能跳到现场」。
 - **双主题**：B1-B3 暗/亮各一张。
 
-### 面 C：独立观测前端 prd-llmgw-web（登录 → 日志页）
+### 面 C：独立观测前端 llmgw/web（登录 → 日志页）
 
-- **应用**：`prd-llmgw-web`（完全独立 mini-app，端口 8100，独立 Dockerfile/nginx，**未注册进 prd-admin 导航**）。
-  来源：`prd-llmgw-web/src/App.tsx`、`pages/LoginPage.tsx`、`pages/LogsPage.tsx`、`README.md`。
+- **应用**：`llmgw/web`（完全独立 mini-app，端口 8100，独立 Dockerfile/nginx，**未注册进 prd-admin 导航**）。
+  来源：`llmgw/web/src/App.tsx`、`pages/LoginPage.tsx`、`pages/LogsPage.tsx`、`README.md`。
 - **入口待确认**：该 app 独立部署，访问地址 = 其独立部署域名（非 prd-admin 域名）。自动化执行前先确认部署域名；
   若未部署，标注「面 C 入口待确认 / 独立部署，本轮跳过」，不要编造路由。
-- **进入面包屑**（直接打开 prd-llmgw-web 站点根，非 prd-admin）：
+- **进入面包屑**（直接打开 llmgw/web 站点根，非 prd-admin）：
   1. 打开站点 → 未鉴权自动重定向到 `/login`（App.tsx RequireAuth）。
      `waitForSelector` 命中标题「LLM 网关观测台」（LoginPage.tsx）+ 副标题「请登录以查看请求日志」。
   2. 在用户名输入框（`input[placeholder="用户名"]`）输入账号 → 密码框（`input[placeholder="密码"][type="password"]`）输入密码。
@@ -198,7 +198,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 ### 面 E：shadow 读端点取证（curl 步骤 + 预期 JSON 形状）
 
 - **端点**：`GET /gw/v1/shadow-comparisons`，鉴权头 `X-Gateway-Key`（M2M 共享密钥，非 JWT）。
-  来源：`prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs` L170-192；记录模型 `LlmShadowComparison.cs`。
+  来源：`llmgw/serving/GatewayHttpEndpoints.cs` L170-192；记录模型 `LlmShadowComparison.cs`。
 - **取证步骤**（非 UI，Playwright 可用 `request`/`fetch` 或 shell curl）：
   ```bash
   curl -sS "$SERVING_BASE/gw/v1/shadow-comparisons?n=20" \
@@ -236,13 +236,13 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 ## 6. 自动化执行建议（Playwright）
 
 1. **登录**：面 A/B/D 共用 prd-admin 登录（USERNAME `input[placeholder="admin"]` + PASSWORD + 点「登录」）；
-   面 C 走 prd-llmgw-web 独立登录（用户名/密码占位框 + 「登 录」）；面 E 用 `X-Gateway-Key` 直发 HTTP，不走 UI。
+   面 C 走 llmgw/web 独立登录（用户名/密码占位框 + 「登 录」）；面 E 用 `X-Gateway-Key` 直发 HTTP，不走 UI。
 2. **按面包屑点击进入**：严格用 `click` 沿菜单/tab/行进入目标屏，**禁止 `page.goto` 地址栏直达**（模拟真实用户路径）。
    命令面板（Cmd+K）输入文案选中是允许的「点击」方式。
 3. **waitForSelector 真实产物**：每个截图点先等到**产物本身**出现再截——真实日志行 / 生命周期 chip 文案 /
    还原后正文 / 真实 `<img>` / 聚合表行 / 健康总览主体 / 拓扑 `-llmgw` 边 / JSON summary 字段。
    绝不在 spinner、「加载中…」、「正在聚合…」、「还原中…」状态下截图当产物。
-4. **双主题各截一张**：每个截图点切换暗/亮主题各取一张（prd-admin 全局主题控件 / CDS 右上角主题切换按钮 / prd-llmgw-web theme.css）。
+4. **双主题各截一张**：每个截图点切换暗/亮主题各取一张（prd-admin 全局主题控件 / CDS 右上角主题切换按钮 / llmgw/web theme.css）。
 5. **断言预期文案 / 元素存在**：截图同时 `expect(locator).toBeVisible()` 断言关键文案（如「记录降级」「已还原」「健康总览」
    「LLM 网关观测台」「点击定位」）或 JSON 字段，让证据可机器校验。
 6. **闭环判据**（`closed-loop-acceptance.md`）：还原 / 生图 / 比对类必须截到「产物真的出现」；超时只记录超时现象，

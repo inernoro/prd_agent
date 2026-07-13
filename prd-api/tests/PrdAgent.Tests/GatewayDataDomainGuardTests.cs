@@ -25,7 +25,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void Serving_RuntimeData_UsesGatewayContext_WhileResolverKeepsOptionalMapFallbackContext()
     {
-        var program = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
+        var program = ReadRepoFile("llmgw/serving/Program.cs");
 
         Assert.Contains("builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));", program);
         Assert.Contains("builder.Services.AddSingleton(new LlmGatewayDataContext(gatewayMongoConn, gatewayDb));", program);
@@ -56,8 +56,8 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ShadowReadEndpoints_UseGatewayDatabase()
     {
-        var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var servingEndpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var smoke = ReadRepoFile("scripts/gw-smoke.py");
 
         Assert.Contains("services.GetService<LlmGatewayDataContext>()?.Context", servingEndpoints);
@@ -138,8 +138,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
         Assert.Contains("gw-pool-without-usable-member", consoleProgram);
         Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
-        Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
-        Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
         Assert.Contains("activeAppCallerMapFallbackCutoverPrerequisitesReady", consoleProgram);
         Assert.Contains("http-full 阶段会开启运行态 fail-closed 开关", consoleProgram);
@@ -148,17 +148,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
-        Assert.Contains("默认 GW 模型池必须至少包含一个可解析、非 unavailable 的成员", consoleProgram);
+        Assert.Contains("默认模型池必须至少包含一个可用成员", consoleProgram);
         Assert.Contains("body.IsDefaultForType == true", consoleProgram);
         Assert.Contains("targetAuthority == \"llm_gateway\"", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
-        Assert.Contains("默认 GW 模型池必须保留至少一个可解析、非 unavailable 的成员", consoleProgram);
+        Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
+        Assert.Contains("TenantAccess.Filter(http, logFilter)", consoleProgram);
+        Assert.Contains("fb.Eq(\"ModelPoolId\", modelPoolId.Trim())", consoleProgram);
         Assert.Contains("action: \"pool.models.bulk_import\"", consoleProgram);
         Assert.Contains("action: wasExisting ? \"pool.model.update\" : \"pool.model.add\"", consoleProgram);
         Assert.Contains("action: \"pool.model.remove\"", consoleProgram);
         Assert.Contains("ValidateBulkActiveGatewayAppCallerConfigAsync", consoleProgram);
-        var logsTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var logsTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         Assert.Contains("runId?: string", logsTypes);
         Assert.Contains("requestId?: string", logsTypes);
         Assert.Contains("sessionId?: string", logsTypes);
@@ -166,12 +168,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("lastObservedSessionId?: string | null", logsTypes);
         Assert.Contains("lastObservedRunId?: string | null", logsTypes);
         Assert.Contains("observedIngressProtocols?: string[]", logsTypes);
-        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
         Assert.Contains("runId: filterRunId.trim() || undefined", logsView);
         Assert.Contains("requestId: filterRequestId.trim() || undefined", logsView);
         Assert.Contains("sessionId: filterSessionId.trim() || undefined", logsView);
         Assert.Contains("initialQueryValue('requestId')", logsView);
-        var appCallersPage = ReadRepoFile("prd-llmgw-web/src/pages/AppCallersPage.tsx");
+        var appCallersPage = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("logsHref('requestId', item.lastObservedRequestId)", appCallersPage);
         Assert.Contains("logsHref('sessionId', item.lastObservedSessionId)", appCallersPage);
         Assert.Contains("logsHref('runId', item.lastObservedRunId)", appCallersPage);
@@ -182,11 +184,11 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void Console_ExposesProtocolCoverageFromGatewayLogsAndRegistry()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
-        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
-        var webApi = ReadRepoFile("prd-llmgw-web/src/lib/api.ts");
-        var webTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
-        var overviewPage = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var consoleDtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var overviewPage = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
         var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
         var protocolCanary = ReadRepoFile("scripts/llmgw-protocol-canary.py");
 
@@ -246,7 +248,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ConsoleWriteOperations_AreAuditedToGatewayDatabase()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("var operationAudits = gatewayDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\");", consoleProgram);
         Assert.Contains("WriteOperationAuditAsync", consoleProgram);
@@ -271,8 +273,8 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void TenantBoundaryPropagation_PreservesVerifiedTenantAndInternalLogFallback()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
 
         Assert.Contains("GetMetadata<IAllowAnonymous>()", consoleProgram);
@@ -295,7 +297,7 @@ public class GatewayDataDomainGuardTests
         var apiProgram = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
         var shadow = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ShadowLlmGateway.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
 
         Assert.Contains("configuration?[\"LlmGateway:InternalTenantId\"]", shadow);
         Assert.DoesNotContain("?? GatewayTenantDefaults.InternalTenantId", shadow);
@@ -309,7 +311,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void RawIdempotency_NormalizesVerifiedTenantContextBeforeFingerprinting()
     {
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var nativeStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/raw\"", StringComparison.Ordinal);
         var compatStart = endpoints.IndexOf("private static async Task ExecuteRawWithIdempotencyAsync", StringComparison.Ordinal);
 
@@ -329,7 +331,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void TeamRename_MapsTenantScopedUniqueNameCollisionToConflict()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var updateStart = consoleProgram.IndexOf("app.MapPut(\"/gw/teams/{id}\"", StringComparison.Ordinal);
         var memberStart = consoleProgram.IndexOf("app.MapPost(\"/gw/members\"", updateStart, StringComparison.Ordinal);
         var updateBlock = consoleProgram[updateStart..memberStart];
@@ -343,8 +345,8 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ServiceKeyWrites_HaveDedicatedDeveloperPermissionWithoutConfigWrite()
     {
-        var access = ReadRepoFile("prd-llmgw/Auth/TenantAccessContext.cs");
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var listStart = consoleProgram.IndexOf("app.MapGet(\"/gw/service-keys\"", StringComparison.Ordinal);
         var createStart = consoleProgram.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
         var deleteStart = consoleProgram.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
@@ -365,8 +367,8 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ServingCidrGate_ConsumesOnlyTheProxyAppendedRightmostHop()
     {
-        var servingProgram = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/Program.cs");
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
 
         Assert.Contains("options.ForwardLimit = 1", servingProgram);
         Assert.Contains("options.KnownNetworks.Clear()", servingProgram);
@@ -381,22 +383,23 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void NativeQuickstart_UsesTheSameSourceSystemInHeaderAndBody()
     {
-        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
 
         Assert.Contains("X-Gateway-Source: external", quickstart);
         Assert.Contains("\"sourceSystem\": \"external\"", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
-        Assert.Contains("https://gateway.example.com", quickstart);
+        Assert.Contains("return new URL(window.location.href).origin", quickstart);
+        Assert.DoesNotContain("gateway.example.com", quickstart);
     }
 
     [Fact]
     public void FinalPlatformAcceptance_UsesAuthenticatedTenantContextAndFourPublicProtocols()
     {
         var acceptance = ReadRepoFile("scripts/llmgw-prod-governance-acceptance.sh");
-        var quickstart = ReadRepoFile("prd-llmgw-web/src/pages/QuickstartPage.tsx");
-        var home = ReadRepoFile("prd-llmgw-web/src/pages/HomePage.tsx");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var home = ReadRepoFile("llmgw/web/src/pages/HomePage.tsx");
 
         Assert.Contains("$console_base/auth/login", acceptance);
         Assert.Contains("$console_base/auth/context", acceptance);
@@ -417,12 +420,90 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionReleaseSafety_IsPersistedAsRuleDebtAndAgentTrigger()
+    {
+        var rule = ReadRepoFile("doc/rule.platform.production-release-safety.md");
+        var debt = ReadRepoFile("doc/debt.platform.production-release.md");
+        var agentRule = ReadRepoFile(".claude/rules/production-release-safety.md");
+        var codexRule = ReadRepoFile(".Codex/rules/production-release-safety.md");
+        var agents = ReadRepoFile("AGENTS.md");
+        var hotfixSkill = ReadRepoFile(".claude/skills/production-hotfix-release/SKILL.md");
+        var cdsDeploySkill = ReadRepoFile(".claude/skills/cds-deploy-pipeline/SKILL.md");
+        var smokeSkill = ReadRepoFile(".claude/skills/smoke-test/SKILL.md");
+        var acceptanceSkill = ReadRepoFile(".claude/skills/acceptance-checklist/SKILL.md");
+        var handoffSkill = ReadRepoFile(".claude/skills/task-handoff-checklist/SKILL.md");
+
+        Assert.Contains("公网 HTML 与入口资源是完成门", codexRule);
+        Assert.Contains("doc/rule.platform.production-release-safety.md", agentRule);
+        Assert.Contains("production-release-safety.md", agents);
+        Assert.Contains("`GET /` 返回 200", rule);
+        Assert.Contains("`umask 077`", rule);
+        Assert.Contains("`./exec_dep.sh release` 的兼容合同是部署 latest", rule);
+        Assert.Contains("自动恢复 previous", rule);
+        Assert.Contains("首次把目录设置为 `700` 的具体进程无法从现有证据中确定", rule);
+        Assert.Contains("2026-07-12-atomic-static-release", debt);
+        Assert.Contains("2026-07-12-public-surface-smoke", debt);
+        Assert.Contains("2026-07-12-release-command-compatibility", debt);
+        Assert.Contains("2026-07-12-release-forensic-ledger", debt);
+        foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill, handoffSkill })
+            Assert.Contains("doc/rule.platform.production-release-safety.md", skill);
+        Assert.Contains("API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`", smokeSkill);
+        Assert.Contains("实际入口 JS/CSS", hotfixSkill);
+        Assert.Contains("previous/回滚验证", acceptanceSkill);
+        Assert.Contains("不能写完成", handoffSkill);
+    }
+
+    [Fact]
+    public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var home = ReadRepoFile("llmgw/web/src/pages/HomePage.tsx");
+        var learning = ReadRepoFile("llmgw/web/src/pages/LearningCenterPage.tsx");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+
+        const string overviewSignature = "app.MapGet(\"/gw/overview\", async (HttpContext http, string? from, string? to) =>";
+        var overviewStart = console.IndexOf(overviewSignature, StringComparison.Ordinal);
+        var overviewEnd = console.IndexOf("app.MapGet(\"/gw/protocol-coverage\"", overviewStart, StringComparison.Ordinal);
+        Assert.True(overviewStart >= 0 && overviewEnd > overviewStart, "找不到租户首页聚合端点");
+        var overview = console[overviewStart..overviewEnd];
+
+        Assert.Contains(overviewSignature, overview);
+        Assert.Contains("TenantAccess.Filter(http, fb.And(", overview);
+        Assert.Contains("serviceKeys.Find(TenantAccess.Filter(http))", overview);
+        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
+        Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
+        Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
+        Assert.Contains("RequireAuthorization(\"UsageRead\")", overview);
+        Assert.DoesNotContain("string? tenantId", overview);
+        Assert.DoesNotContain("EstimatedCostUsd = 0", overview);
+        Assert.Contains("public sealed class TenantOverviewData", dtos);
+        Assert.Contains("public sealed class ServiceKeyOverview", dtos);
+        Assert.Contains("TenantOverviewData", webTypes);
+        Assert.Contains("getTenantOverview", webApi);
+        Assert.Contains("getTenantOverview({ from: from.toISOString(), to: to.toISOString() })", home);
+        Assert.Contains("CNY 与 USD 不做无汇率相加", home);
+        Assert.Contains("无请求时不显示 0%", home);
+
+        Assert.Contains("path=\"/learn\"", app);
+        Assert.Contains("to: '/learn', label: '学习中心'", layout);
+        Assert.Contains("to=\"/learn\"", layout);
+        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "模型池", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
+        {
+            Assert.Contains(concept, learning);
+        }
+    }
+
+    [Fact]
     public void PromptPolicy_IsTenantScopedChatVisionOnlyAndLogsMetadataWithoutPolicyBody()
     {
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
-        var serving = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayPromptPolicyApplier.cs");
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var serving = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
 
         Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
@@ -703,6 +784,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
         Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);
+        Assert.Contains("[ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" = \"1\" ]", script);
+        Assert.Contains("skipped for audited full-http maintenance release", script);
         Assert.Contains("LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only", script);
         Assert.Contains("--allow-pending-http-full-ledger", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);
@@ -906,9 +989,9 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void AppCallerRouteObservations_DoNotUseOnlyTheLastRequest()
     {
-        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var request = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("ObservedModelPolicies", request);
         Assert.Contains("ObservedModelPoolIds", request);
@@ -933,8 +1016,8 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ShadowComparisonReadEndpoints_CanFilterByKind()
     {
-        var servingEndpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var servingEndpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var releaseGate = ReadRepoFile("scripts/llmgw-release-gate.py");
 
         Assert.Contains("string? kind", servingEndpoints);
@@ -952,9 +1035,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("double? sinceHours", consoleProgram);
         Assert.Contains("fb.Eq(\"Kind\", kind.Trim())", consoleProgram);
         Assert.Contains("fb.Eq(\"ReleaseCommit\", normalizedReleaseCommit)", consoleProgram);
-        Assert.Contains("FirstComparedAt", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
-        Assert.Contains("CoverageHours", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
-        Assert.Contains("ReleaseCommit", ReadRepoFile("prd-llmgw/Models/Dtos.cs"));
+        Assert.Contains("FirstComparedAt", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("CoverageHours", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("ReleaseCommit", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("query_items[\"kind\"] = kind", releaseGate);
         Assert.Contains("query_items[\"releaseCommit\"] = normalized_release_commit", releaseGate);
         Assert.Contains("query_items[\"sinceHours\"] = f\"{since_hours:g}\"", releaseGate);
@@ -991,13 +1074,13 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ConsoleRuntimeGateEvidenceLinks_CanDeepLinkToFilteredEvidence()
     {
-        var overview = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
-        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
-        var shadowPage = ReadRepoFile("prd-llmgw-web/src/pages/ShadowPage.tsx");
-        var auditsPage = ReadRepoFile("prd-llmgw-web/src/pages/AuditsPage.tsx");
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
-        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
-        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
+        var overview = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var shadowPage = ReadRepoFile("llmgw/web/src/pages/ShadowPage.tsx");
+        var auditsPage = ReadRepoFile("llmgw/web/src/pages/AuditsPage.tsx");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var consoleDtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
 
         Assert.Contains("public List<RuntimeGateLink> Links { get; set; } = new();", consoleDtos);
@@ -1026,7 +1109,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("initialQueryValue('releaseCommit')", logsView);
         Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
-        Assert.Contains("placeholder=\"Release commit\"", logsView);
+        Assert.Contains("placeholder=\"发布提交\"", logsView);
         Assert.Contains("setFilterReleaseCommit('')", logsView);
 
         Assert.Contains("useSearchParams", shadowPage);
@@ -1059,7 +1142,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ConsoleRuntimeGate_MaintenanceReleaseRetainsOnlyQualifiedPriorShadowEvidence()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("retainedShadowMatchesPreviousFullHttp", consoleProgram);
         Assert.Contains("ReadSuccessfulHttpFullRolloutCommits", consoleProgram);
@@ -1083,6 +1166,33 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("exec_dep.sh", wrapper);
         Assert.Contains("exec \"$script_dir/exec_dep.sh\" \"$@\"", wrapper);
+    }
+
+    [Fact]
+    public void ReportAgentChatBootstrap_UsesIsolatedDedicatedPoolByDefault()
+    {
+        var shell = ReadRepoFile("scripts/llmgw-prod-chat-pool-bootstrap.sh");
+        var script = ReadRepoFile("scripts/llmgw-prod-chat-pool-bootstrap.js");
+
+        Assert.Contains("LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL:-1", shell);
+        Assert.Contains("LLMGW_CHAT_BOOTSTRAP_POOL_CODE:-report-agent-weekly", shell);
+        Assert.Contains("const nextModels = isolatePool ? [modelItem]", script);
+        Assert.Contains("ModelGroupIds: isolatePool ? [pool._id]", script);
+        Assert.Contains("isolated bootstrap refuses pool with Code=", script);
+        Assert.Contains("IsDefaultForType: false", script);
+        Assert.Contains("const gatewayDb = db.getSiblingDB(gatewayDbName)", script);
+        Assert.Contains("GW authority caller must resolve exactly once", script);
+        Assert.Contains("isolated GW authority bootstrap requires caller binding", script);
+        Assert.Contains("tenantSource: callerTenantId ? \"caller\" : \"server-internal-default\"", script);
+        Assert.Contains("otherGatewayReferences.length > 0", script);
+        Assert.Contains("ModelPolicy: \"pool\"", script);
+        Assert.Contains("TenantId: tenantId", script);
+        Assert.Contains("GW authority post-write verification failed", script);
+        Assert.Contains("backup_collection \"$gateway_db\" llmgw_model_pools", shell);
+        Assert.Contains("--collection \"$backup_collection_name\" --archive --gzip", shell);
+        Assert.Contains("SHA256SUMS", shell);
+        Assert.DoesNotContain("LLMGW_CHAT_BOOTSTRAP_TENANT_ID", shell + script);
+        Assert.DoesNotContain("const defaultPool = db.model_groups.findOne", script);
     }
 
     [Fact]
@@ -1272,7 +1382,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("append_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
         Assert.Contains("report_parser.add_argument(\"--protocol-canary-json\", default=\"\")", ledger);
         Assert.Contains("protocol canary evidence", ledger);
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         Assert.Contains("latestProtocolCanaryRequired", consoleProgram);
         Assert.Contains("latestHasProtocolCanaryJson", consoleProgram);
         Assert.Contains("missing.Add(\"protocolCanaryRequired\")", consoleProgram);
@@ -1458,12 +1568,21 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("PRD_AGENT_PROD_GITHUB_TOKEN", workflow);
+        Assert.Contains("RUNNER_ADMIN_TOKEN_CONFIGURED", workflow);
+        Assert.Contains("args+=(--allow-api-unavailable)", workflow);
+        Assert.Contains("timeout-minutes: 30", workflow);
         Assert.Contains("rollout_evidence_run_id", workflow);
         Assert.Contains("actions: read", workflow);
         Assert.Contains("logs:read access", workflow);
         Assert.Contains("fetch-depth: 0", workflow);
         Assert.Contains("actions/download-artifact@v4", workflow);
         Assert.Contains("Restore previous rollout evidence", workflow);
+        Assert.Contains("Restore trusted production maintenance evidence", workflow);
+        Assert.Contains("PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence", workflow);
+        Assert.DoesNotContain("production_evidence_source:", workflow);
+        Assert.Contains("scripts/llmgw-prod-evidence-restore.py", workflow);
+        Assert.Contains("--require-owner-uid 0", workflow);
+        Assert.Contains("production-evidence-baseline-audit.json", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
@@ -1478,6 +1597,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--sample-percent \"$sample_percent\"", workflow);
         Assert.Contains("--min-observation-hours \"$min_observation_hours\"", workflow);
         Assert.Contains("--main-ref \"$main_ref\"", workflow);
+        Assert.Contains("maintenance_from_commit", workflow);
+        Assert.Contains("INPUT_MAINTENANCE_FROM_COMMIT", workflow);
+        Assert.Contains("args+=(--maintenance-from-commit \"$maintenance_from_commit\")", workflow);
+        Assert.Contains("maintenance_from_commit is only valid for stage http-full", workflow);
+        Assert.Contains("Audit recorded maintenance release", workflow);
+        Assert.Contains("scripts/llmgw-rollout-ledger.py maintenance-baseline", workflow);
         Assert.Contains("--evidence-dir \".llmgw-release-evidence\"", workflow);
         Assert.Contains("--allow-out-of-order-reason \"$allow_out_of_order_reason\"", workflow);
         Assert.Contains("scripts/llmgw-prod-tree-precheck.py", workflow);
@@ -1501,6 +1626,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("treePrecheckExecutable", readiness);
         Assert.Contains("treePrecheckDestructive", readiness);
         Assert.Contains("Restore previous rollout evidence", readiness);
+        Assert.Contains("Restore trusted production maintenance evidence", readiness);
+
+        var runnerPrecheck = ReadRepoFile("scripts/llmgw-prod-runner-precheck.py");
+        Assert.Contains("--allow-api-unavailable", runnerPrecheck);
+        Assert.Contains("deferred-to-stage-job", runnerPrecheck);
+        Assert.Contains("runner_job_handshake", runnerPrecheck);
+
+        var evidenceRestore = ReadRepoFile("scripts/llmgw-prod-evidence-restore.py");
+        Assert.Contains("Restore the minimum trusted rollout evidence", evidenceRestore);
+        Assert.Contains("trusted evidence must not be a symlink", evidenceRestore);
+        Assert.Contains("trusted evidence escapes source root", evidenceRestore);
+        Assert.Contains("trusted evidence is world-writable", evidenceRestore);
+        Assert.Contains("missing successful http-full baseline", evidenceRestore);
+        Assert.Contains("LLM Gateway production evidence restore self-test: PASS", evidenceRestore);
 
         Assert.Contains("LLM Gateway production release tree precheck", treePrecheck);
         Assert.Contains("CRITICAL_PATHS", treePrecheck);
@@ -1785,8 +1924,8 @@ public class GatewayDataDomainGuardTests
         var cdsCompose = ReadRepoFile("cds-compose.yml");
         var deploy = ReadRepoFile("exec_dep.sh");
         var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
-        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
-        var readiness = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayServingReadinessProbe.cs");
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var readiness = ReadRepoFile("llmgw/serving/GatewayServingReadinessProbe.cs");
         var nginx = ReadRepoFile("deploy/nginx/conf.d/branches/_standalone.conf");
         var imageNginx = ReadRepoFile("deploy/nginx/nginx.conf");
         var providerAudit = ReadRepoFile("scripts/llmgw-prod-provider-config-audit.py");
@@ -1798,7 +1937,7 @@ public class GatewayDataDomainGuardTests
         var cdsConsoleStart = cdsCompose.LastIndexOf("\n  llmgw:\n", StringComparison.Ordinal);
         Assert.True(cdsConsoleStart >= 0 && cdsServingStart > cdsConsoleStart, "CDS llmgw service block missing");
         var cdsConsole = cdsCompose[cdsConsoleStart..cdsServingStart];
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("PRD_AGENT_COMPOSE_PROJECT_NAME", deploy);
         Assert.Contains("COMPOSE_PROJECT_NAME", deploy);
@@ -1858,7 +1997,7 @@ public class GatewayDataDomainGuardTests
     public void ShadowCoverageReport_RendersExplicitCoverageCellsWithoutLeakingKey()
     {
         var script = ReadRepoFile("scripts/llmgw-shadow-coverage-report.py");
-        var endpoint = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
 
         Assert.Contains("LLM Gateway shadow coverage", script);
         Assert.Contains("/shadow-comparisons", script);
@@ -2384,10 +2523,10 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ConsoleLogsSummary_ExposesProtocolRouterDistributions()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
-        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
-        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
-        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var consoleDtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
 
         foreach (var field in new[] { "SourceSystem", "IngressProtocol", "ModelPolicy" })
         {
@@ -2401,13 +2540,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<DistributionStrip label=\"Ingress\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"入口协议\"", logsView);
         Assert.Contains("items={summary?.ingressProtocolDistribution}", logsView);
         Assert.Contains("onSelect={setFilterIngressProtocol}", logsView);
-        Assert.Contains("<DistributionStrip label=\"Policy\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"路由策略\"", logsView);
         Assert.Contains("items={summary?.modelPolicyDistribution}", logsView);
         Assert.Contains("onSelect={setFilterModelPolicy}", logsView);
-        Assert.Contains("<DistributionStrip label=\"Source\"", logsView);
+        Assert.Contains("<DistributionStrip label=\"来源系统\"", logsView);
         Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
         Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
     }
@@ -2415,10 +2554,10 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
-        var consoleDtos = ReadRepoFile("prd-llmgw/Models/Dtos.cs");
-        var consoleTypes = ReadRepoFile("prd-llmgw-web/src/lib/types.ts");
-        var logsView = ReadRepoFile("prd-llmgw-web/src/components/LogsView.tsx");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var consoleDtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var consoleTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
 
         Assert.Contains(".Include(\"EstimatedCost\")", consoleProgram);
         Assert.Contains(".Include(\"EstimatedCostCurrency\")", consoleProgram);
@@ -2440,9 +2579,9 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ExternalConsole_UsesSidebarAndKeepsOperationsOffHomePage()
     {
-        var layout = ReadRepoFile("prd-llmgw-web/src/components/ConsoleLayout.tsx");
-        var home = ReadRepoFile("prd-llmgw-web/src/pages/HomePage.tsx");
-        var governance = ReadRepoFile("prd-llmgw-web/src/pages/OverviewPage.tsx");
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var home = ReadRepoFile("llmgw/web/src/pages/HomePage.tsx");
+        var governance = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
 
         foreach (var group in new[] { "工作区", "路由", "开发者", "组织", "治理", "设置" })
             Assert.Contains($"label: '{group}'", layout);
@@ -2462,7 +2601,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void TenantSwitcher_ResolvesMembershipsFromServerUserAndTenantIds()
     {
-        var consoleProgram = ReadRepoFile("prd-llmgw/Program.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var endpointStart = consoleProgram.IndexOf("app.MapGet(\"/gw/auth/tenants\"", StringComparison.Ordinal);
         var endpointEnd = consoleProgram.IndexOf("app.MapPost(\"/gw/auth/switch-tenant\"", endpointStart, StringComparison.Ordinal);
         Assert.True(endpointStart >= 0 && endpointEnd > endpointStart);
@@ -2476,9 +2615,59 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void Console_InternalOperationsVisibility_ComesFromServerTenantContext()
+    {
+        var tenantModel = ReadRepoFile("llmgw/console-api/Models/LlmGwTenantModels.cs");
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+
+        Assert.Contains("public bool IsInternal { get; set; }", tenantModel);
+        Assert.Contains("bool IsInternalTenant", access);
+        Assert.Contains("tenant.IsInternal", access);
+        Assert.Contains("IsInternal = access.IsInternalTenant", consoleProgram);
+        Assert.Contains("IsInternal = tenant.IsInternal", consoleProgram);
+        Assert.Contains("function RequireInternalTenant", app);
+        Assert.Contains("tenant?.isInternal ?", app);
+        Assert.Contains("internalOnly: true", layout);
+        Assert.DoesNotContain("TenantId", app);
+    }
+
+    [Fact]
+    public void Console_Productization_UsesRealOriginSafeTestAndGuidedEmptyStates()
+    {
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var serviceKeys = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var theme = ReadRepoFile("llmgw/web/src/lib/theme.ts");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
+
+        Assert.Contains("return new URL(window.location.href).origin", quickstart);
+        Assert.Contains("/gw/v1/route-self-test", quickstart);
+        Assert.Contains("upstreamCalled === false", quickstart);
+        Assert.Contains("payload?.UpstreamCalled", quickstart);
+        Assert.Contains("credentials: 'omit'", quickstart);
+        Assert.DoesNotContain("gateway.example.com", quickstart);
+        Assert.DoesNotContain("localStorage", quickstart);
+        Assert.DoesNotContain("sessionStorage", quickstart);
+        Assert.Contains("invoke, route:read", serviceKeys);
+        Assert.Contains("gw-native, openai-compatible, claude-compatible, gemini-compatible", serviceKeys);
+        Assert.Contains("平台内部服务使用部署级内部身份", serviceKeys);
+        Assert.Contains("创建第一把密钥", serviceKeys);
+        Assert.Contains("去快速接入", logs);
+        Assert.Contains("查看示例说明", logs);
+        Assert.Contains("跟随系统", ReadRepoFile("llmgw/web/src/pages/SettingsPage.tsx"));
+        Assert.Contains("prefers-color-scheme: light", theme);
+        Assert.Contains("WithMethods(HttpMethods.Get)", servingProgram);
+        Assert.Contains("WithHeaders(\"Authorization\", \"X-Gateway-Source\", \"X-Gateway-App-Caller\")", servingProgram);
+        Assert.Contains("app.UseCors(BrowserDryRunCors)", servingProgram);
+    }
+
+    [Fact]
     public void ConsoleOnlyStartup_BackfillsLegacyGatewayDocumentsBeforeTenantFiltering()
     {
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var backfillCall = console.IndexOf(
             "await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);",
             StringComparison.Ordinal);
@@ -2515,7 +2704,7 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void ConsoleDefaultPoolSwitch_ClearsOnlyCurrentTenantGatewayPools()
     {
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var endpointStart = console.IndexOf(
             "app.MapPut(\"/gw/pools/{id}/default\"",
             StringComparison.Ordinal);
@@ -2562,10 +2751,10 @@ public class GatewayDataDomainGuardTests
     public void GatewayProductionHardening_HasExecutableLifecycleBudgetKeyCancelAndIdempotencyGuards()
     {
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
-        var runtime = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayRuntimeGovernance.cs");
+        var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
         var concurrency = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayProviderConcurrencyCoordinator.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
-        var endpoints = ReadRepoFile("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var httpClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
         var stage = ReadRepoFile("scripts/llmgw-prod-stage.sh");
 
@@ -2662,7 +2851,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("collecting missing serving probe evidence without upstream model calls", stage);
         Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", stage);
 
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
         Assert.Contains("ValidateBudgetConfiguration", console);
         Assert.Contains("配置月预算时必须同时配置大于 0 的单次预算预占", console);
         Assert.Contains("单次预算预占不能超过月预算", console);
@@ -2674,7 +2863,7 @@ public class GatewayDataDomainGuardTests
         var script = ReadRepoFile("scripts/llmgw-final-acceptance.py");
         var seed = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
         var compose = ReadRepoFile("docker-compose.yml");
-        var console = ReadRepoFile("prd-llmgw/Program.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("CELLS = (\"text\", \"stream\", \"image\", \"vision\", \"asr\", \"video\")", script);
         Assert.Contains("automatic full rerun is forbidden", script);
@@ -2696,6 +2885,32 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}", compose);
         Assert.Contains("LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}", compose);
         Assert.Contains("MapGet(\"/gw/lifecycle/status\"", console);
+    }
+
+    [Fact]
+    public void GatewayProductBoundary_UsesRootLlmGwPathsWithoutLegacyDirectories()
+    {
+        var root = LocateRepoRoot();
+        Assert.True(Directory.Exists(Path.Combine(root, "llmgw", "console-api")));
+        Assert.True(Directory.Exists(Path.Combine(root, "llmgw", "web")));
+        Assert.True(Directory.Exists(Path.Combine(root, "llmgw", "serving")));
+        Assert.True(Directory.Exists(Path.Combine(root, "llmgw", "deploy")));
+        Assert.True(Directory.Exists(Path.Combine(root, "llmgw", "docs")));
+        Assert.False(Directory.Exists(Path.Combine(root, "prd-llmgw")));
+        Assert.False(Directory.Exists(Path.Combine(root, "prd-llmgw-web")));
+        Assert.False(Directory.Exists(Path.Combine(root, "prd-api", "src", "PrdAgent.LlmGateway")));
+
+        var solution = ReadRepoFile("prd-api/PrdAgent.sln");
+        var workflow = ReadRepoFile(".github/workflows/branch-image.yml");
+        var devCompose = ReadRepoFile("docker-compose.dev.yml");
+        Assert.Contains("..\\llmgw\\serving\\PrdAgent.LlmGateway.csproj", solution);
+        Assert.Contains("llmgw/console-api/**", workflow);
+        Assert.Contains("llmgw/web/**", workflow);
+        Assert.Contains("llmgw/serving/**", workflow);
+        Assert.Contains("context: .", workflow);
+        Assert.Contains("file: ./llmgw/serving/Dockerfile", workflow);
+        Assert.Contains("context: ./llmgw/console-api", devCompose);
+        Assert.Contains("context: ./llmgw/web", devCompose);
     }
 
     private static string ReadRepoFile(string relativePath)

@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -189,6 +190,8 @@ function MasonryCard({
 
 export default function PortfolioShowcasePage() {
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；直达无历史时兜底回首页
+  const goBack = useSmartBack('/');
   const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState('');
   const [items, setItems] = useState<SubmissionItem[]>([]);
@@ -340,7 +343,7 @@ export default function PortfolioShowcasePage() {
           <button
             type="button"
             data-tour-id="showcase-back"
-            onClick={() => navigate('/')}
+            onClick={goBack}
             className="w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               background: 'rgba(255,255,255,0.08)',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import {
   ChevronLeft, Sparkles, Loader2, Upload, ClipboardPaste, FileText, X, Settings2, ChevronDown, ChevronUp, BookOpen,
 } from 'lucide-react';
@@ -29,6 +30,8 @@ const SAMPLE_TEXT = `演讲智能体 v1 — 把长文档转成可上台讲的思
 
 export default function SpeechAgentCreatePage() {
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack('/speech-agent');
   const [sourceText, setSourceText] = useState('');
   const [sourceFileName, setSourceFileName] = useState<string | null>(null);
   const [audience, setAudience] = useState(AUDIENCES[0]);
@@ -188,7 +191,8 @@ export default function SpeechAgentCreatePage() {
             depth,
           });
       if (res.success && res.data) {
-        navigate(`/speech-agent/${res.data.deck.id}?autoStart=1`);
+        // replace：创建页完成使命后不留在 history，返回时直接回到进入创建页前的页面
+        navigate(`/speech-agent/${res.data.deck.id}?autoStart=1`, { replace: true });
       } else {
         setError(res.error?.message ?? '创建失败');
       }
@@ -204,7 +208,7 @@ export default function SpeechAgentCreatePage() {
       <header className="shrink-0 px-6 py-4 border-b border-white/10 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => navigate('/speech-agent')}
+          onClick={goBack}
           className="p-1.5 rounded-md hover:bg-white/10 text-white/70"
           aria-label="返回"
         >
@@ -362,7 +366,7 @@ export default function SpeechAgentCreatePage() {
           <div className="flex items-center justify-end gap-3 pt-1">
             <button
               type="button"
-              onClick={() => navigate('/speech-agent')}
+              onClick={goBack}
               className="px-4 py-2 rounded-lg text-sm text-white/70 hover:bg-white/10"
             >
               取消

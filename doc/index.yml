@@ -237,6 +237,7 @@ docs:
   rule.frontend.default-editable: 默认可编辑原则
   rule.frontend.frontend-component-reuse: 前端组件复用规则
   rule.platform.test-organization: 测试组织规范
+  rule.platform.production-release-safety: 生产发布表面健康与可追溯性规则
   rule.skill.system: 技能系统规则与创建指南
   rule.skill.trigger-disambiguation: 同族技能触发词去重规则
   rule.frontend.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
@@ -255,6 +256,7 @@ docs:
   # ── 五、计划与方案 ──
   plan.daily-tips.scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
   plan.report-agent.impl: 周报 Agent 实施进度追踪
+  plan.report-agent.model-governance: Report Agent 模型质量治理
   plan.defect-agent.unified-management: 统一缺陷管理平台实施计划
   plan.product-agent.pa.competitive-improvements: PA Agent 竞品调研与改进方案
   plan.knowledge-base.multi-document: PRD Agent 多文档系统设计方案
@@ -281,6 +283,7 @@ docs:
   plan.platform.llm-gateway-production-hardening: LLM Gateway 生产事实、隐性风险与架构修正 · 计划
   plan.platform.llm-gateway-known-availability-closeout: LLM Gateway 已知可用性收口计划（三个有限 PR、一次生产部署、一次性验收）
   plan.platform.llm-gateway-external-platform: LLM Gateway 外部平台化与控制台体验收口 · 计划
+  plan.platform.llm-gateway.console-productization: LLM Gateway 控制台产品化与独立目录收拢 · 计划
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
   plan.visual-agent.merge-image-ref-resolver: 合并计划书：三入口守门员统一
@@ -312,6 +315,8 @@ docs:
   debt.cds.removed-branch-pages: CDS 过期分支预览页(合并/放弃分流) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.defect-agent.mobile-share: 缺陷管理 手机截图分享提交 · 债务台账（iOS 无 share_target / PWA 安装引导 / 双面板未合并）
+  debt.frontend.mobile-light-theme: 移动端全局浅色主题 · 债务台账（硬编码暗色页面清理 / 主题竞态收敛）
+  debt.frontend.navigation-history: 前端导航历史（返回上一页）· 债务台账（教程跨页 push / NavigationBridge / cds-agent 整页跳转 / 长尾硬编码返回）
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.cds.executor-watchdog: CDS executor 卡死看门狗 · 债务台账（cluster-only，#228/#233 评审冲突）
@@ -327,6 +332,7 @@ docs:
   debt.visual-agent.storyboard: 视觉分镜台 · 债务台账（OpenRouter 出图画幅/modalities 按能力派生 · 拆镜 SSE 流式 · 关键帧 ImageGenRun 取消）
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.platform.asset-storage: 资源存储（IAssetStorage 实现）债务台账
+  debt.platform.production-release: 生产发布安全债务台账
   debt.cds.agent.sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
   debt.cds.agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds.branch-isolation: CDS 多分支跨分支隔离 · 债务台账（DNS 串台 / BullMQ 抢 job）
@@ -364,6 +370,7 @@ docs:
 
   # ── 七、周报（降序：最新在前）──
   report.gw-test-matrix: AI 大模型网关测试矩阵全量报告（A 解析 153 + B 协议 91 + C 跨进程 18 cell，自动生成）
+  report.2026-W28: 周报 2026-W28 (07-06 ~ 07-12)
   report.2026-W27: 周报 2026-W27 (06-29 ~ 07-05)
   report.2026-W26: 周报 2026-W26 (06-22 ~ 06-28)
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)

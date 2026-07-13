@@ -115,7 +115,7 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (dotnet run)"
       command: >-
-        cd /repo/prd-llmgw &&
+        cd /repo/llmgw/console-api &&
         rm -rf bin obj &&
         dotnet restore &&
         dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
@@ -140,7 +140,7 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (dotnet run)"
       command: >-
-        cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+        cd /repo/llmgw/serving &&
         rm -rf bin obj &&
         dotnet restore &&
         dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
@@ -261,7 +261,7 @@ services:
     ports:
       - "8090"
     command: >-
-      cd /repo/prd-llmgw &&
+      cd /repo/llmgw/console-api &&
       rm -rf bin obj &&
       dotnet restore &&
       dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8090
@@ -279,7 +279,7 @@ services:
       ApiKeyCrypto__LegacySecrets: "${ApiKeyCrypto__LegacySecrets}"
       # JWT 签名密钥：**bare `${LLMGW_JWT_SECRET}` 不带 fallback**（Codex P1）。虽然 llmgw 不再单独发布
       # CDS Web 预览，llmgw-web 仍会经容器网络访问 /gw/*；若回落仓库可见 fallback，任何缺该 env 的
-      # 预览/fork 都能自签 token 读日志。未注入时由 prd-llmgw 生产守卫 fail-closed。
+      # 预览/fork 都能自签 token 读日志。未注入时由 llmgw/console-api 生产守卫 fail-closed。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
       # 控制台账号长期权威是 llm_gateway.llmgw_console_users。未设置 bootstrap 口令时内置 admin/admin
@@ -303,7 +303,7 @@ services:
     ports:
       - "8091"
     command: >-
-      cd /repo/prd-api/src/PrdAgent.LlmGateway &&
+      cd /repo/llmgw/serving &&
       rm -rf bin obj &&
       dotnet restore &&
       dotnet run --no-launch-profile -c Release --urls http://0.0.0.0:8091
@@ -339,10 +339,10 @@ services:
   # （同 admin：branch-<slug> → branch-main），镜像 tag 公式 sha-${CDS_COMMIT_SHA} 与 branch-image.yml SSOT。
   llmgw-web:
     image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
-    # 容器内 nginx 监听 80（见 prd-llmgw-web/nginx.conf listen 80）。标准 ports 供 extractContainerPort 读取。
+    # 容器内 nginx 监听 80（见 llmgw/web/nginx.conf listen 80）。标准 ports 供 extractContainerPort 读取。
     ports:
       - "80"
-    # 本 commit 未构建 llmgw-web（CI 路径过滤只在 prd-llmgw-web/** 变更时构建）时按顺序回退：
+    # 本 commit 未构建 llmgw-web（CI 路径过滤只在 llmgw/web/** 变更时构建）时按顺序回退：
     #   ① 本分支该组件最近一次构建（branch-<slug>）② 退到固定主分支镜像（branch-main）
     # 基础级 fallbackImage：无 express deployMode 的裸预构建站点也逐级回退（resolveEffectiveProfile 消费）。
     fallbackImage:

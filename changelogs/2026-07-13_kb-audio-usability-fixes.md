@@ -4,3 +4,4 @@
 | fix | prd-admin | 移动端 markdown 编辑改单栏（原双栏 live 被挤成两条窄柱无法编辑） |
 | feat | prd-admin | 音频播放器声纹化：跨域拿不到真实波形时渲染语音条式声纹（确定性伪随机+进度着色+点按跳播），去掉顶部大图标与文件名块 |
 | feat | prd-admin | 转录笔记/字幕/再加工产物顶部新增「来源文件」chip，一键跳回源音频/源文档 |
+| fix | prd-api | restyle 权限改为按笔记可写判定（协作者可整理别人发起的转录）；latest-run 端点支持 status/requireOutput 过滤，修复一次整理失败后面板永远打不开 |

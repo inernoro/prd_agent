@@ -1,12 +1,12 @@
 ---
 name: acceptance-checklist
-version: 1.0.0
+version: 1.0.1
 description: Generates a step-by-step user acceptance test (UAT) checklist that a real human executes by hand, with expected results and failure playbooks at every checkpoint. Covers CLI + Web UI scenarios, supports cold-start injection, and is checkbox-driven so the operator can mark progress. Trigger words: "/uat", "验收清单", "真人验收", "acceptance test", "让我验收".
 ---
 
 # 真人验收清单
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/uat`、"验收清单"、"真人验收"、"acceptance test"、"让我验收"
+> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/uat`、"验收清单"、"真人验收"、"acceptance test"、"让我验收"
 
 给**即将亲手操作系统的真人**用的结构化打勾清单。不是代码审查，不是 curl 冒烟——是"按这张表操作，每一步都告诉我应该看到什么、看不到时按哪个键排错"。
 
@@ -96,6 +96,8 @@ UAT 生成进度：
 | 部署 / deploy | 检查构建产物、最新提交哈希 |
 | 数据库 / db / mongo / redis | 连接探活 |
 | LLM / 模型 | `curl /api/llm-health` 或等效探活端点 |
+
+若场景命中“生产发布、热修、nginx、静态站、页面 500/502”，必须先读 `doc/rule.platform.production-release-safety.md`，并在 Phase 2 中加入：公网 GET 主页面、解析实际入口 JS/CSS、检查资源状态码/MIME/非空内容、确认 API 健康，以及失败后的 previous/回滚验证。只检查容器或 API 不得判定 UAT 通过。
 
 **原因**：真人经常在"上次失败的残留状态"上测试，测出来的是假阳性。冷启动是 GSD 社区总结的"最容易省略、最致命"的一步。
 
@@ -293,6 +295,8 @@ Phase 4 (Web)：浏览器看到状态变化
               ↓
               PR
 ```
+
+正式环境最小发布使用 `production-hotfix-release`；该技能完成部署后仍应回到本技能执行公网最终入口验收。
 
 ### 不是替代而是组合
 

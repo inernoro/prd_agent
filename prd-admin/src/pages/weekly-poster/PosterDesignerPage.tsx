@@ -221,7 +221,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLastSavedAt(new Date());
     lastSavedSignatureRef.current = buildPosterSignature(res.data);
     saveDraftId(res.data.id);
-    if (!embedded && updateUrl) setSearchParams({ id: res.data.id });
+    if (!embedded && updateUrl) setSearchParams({ id: res.data.id }, { replace: true });
   }, [embedded, setSearchParams]);
 
   useEffect(() => {
@@ -493,7 +493,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const handleCreated = async (created: WeeklyPoster) => {
     saveDraftId(created.id);
     await refreshList(created.id);
-    if (!embedded) setSearchParams({ id: created.id });
+    if (!embedded) setSearchParams({ id: created.id }, { replace: true });
   };
 
   const handleAddPage = useCallback(() => {

@@ -739,10 +739,21 @@ export async function startAutoLink(storeId: string) {
   );
 }
 
-/** 查询某 entry 最近一次 Agent Run（按 kind 过滤） */
-export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess' | 'transcribe') {
+/**
+ * 查询某 entry 最近一次 Agent Run（按 kind 过滤）。
+ * opts.status/requireOutput：查「最近一条完成且有产物」的 run —— restyle 失败 run 与
+ * 原转录同 kind，不过滤会拿到失败 run 导致整理面板打不开（Codex P2）。
+ */
+export async function getLatestAgentRun(
+  entryId: string,
+  kind: 'subtitle' | 'reprocess' | 'transcribe',
+  opts?: { status?: 'done' | 'failed' | 'running' | 'queued'; requireOutput?: boolean },
+) {
+  const params = new URLSearchParams({ kind });
+  if (opts?.status) params.set('status', opts.status);
+  if (opts?.requireOutput) params.set('requireOutput', 'true');
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
-    `${api.documentStore.entries.latestAgentRun(entryId)}?kind=${kind}`,
+    `${api.documentStore.entries.latestAgentRun(entryId)}?${params.toString()}`,
     { method: 'GET' },
   );
 }

@@ -1,1 +1,0 @@
-| fix | cds | 堵住带作用域全局 Key 的三类深层绕过（Codex P1）：detect-runtime/validate-runtime 克隆探针收敛为仅管理员/全权 Key（assertUnscopedAdmin）；branches cleanup-stopped/cleanup-damaged-containers 跨项目清扫加作用域门卫（assertScopedSweep，带作用域 Key 必须锁定授权项目）；server 层对 create-only Key 加默认拒绝兜底（仅允许建项目 + 只读，堵死一切未审计写路由） |

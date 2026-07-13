@@ -74,12 +74,76 @@ def _write_report(path: str, report: dict[str, Any]) -> None:
         handle.write(_json_dumps(report))
 
 
+def _api_unavailable_report(
+    generated_at: str,
+    labels: list[str],
+    checks: list[dict[str, Any]],
+    detail: str,
+) -> dict[str, Any]:
+    checks.append(
+        {
+            "name": "runner_api",
+            "ok": True,
+            "status": "unverified",
+            "detail": detail,
+        }
+    )
+    checks.append(
+        {
+            "name": "runner_job_handshake",
+            "ok": True,
+            "status": "required",
+            "detail": "runner API unavailable; the labeled stage job is the authoritative online handshake",
+        }
+    )
+    return {
+        "generatedAt": generated_at,
+        "verdict": "pass",
+        "labels": labels,
+        "availability": "deferred-to-stage-job",
+        "checks": checks,
+    }
+
+
+def _self_test() -> int:
+    failures: list[str] = []
+    try:
+        if _parse_labels('["self-hosted","prd-agent-prod"]') != ["self-hosted", "prd-agent-prod"]:
+            failures.append("labels parser changed")
+    except ValueError as exc:
+        failures.append(f"labels parser failed: {exc}")
+    report = _api_unavailable_report(
+        "test",
+        ["self-hosted", "prd-agent-prod"],
+        [],
+        "GitHub runner API returned HTTP 403; dedicated runner-read token is not configured",
+    )
+    if report.get("verdict") != "pass" or report.get("availability") != "deferred-to-stage-job":
+        failures.append("API-unavailable report must defer to stage job")
+    if failures:
+        print("LLM Gateway production runner precheck self-test: FAIL")
+        for failure in failures:
+            print(f"- {failure}")
+        return 1
+    print("LLM Gateway production runner precheck self-test: PASS")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway production runner precheck")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--labels-json", required=True)
     parser.add_argument("--json-out", default="")
+    parser.add_argument(
+        "--allow-api-unavailable",
+        action="store_true",
+        help="when no dedicated runner-read token exists, defer availability to the labeled stage job",
+    )
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+
+    if args.self_test:
+        return _self_test()
 
     generated_at = datetime.now(timezone.utc).isoformat()
     checks: list[dict[str, Any]] = []
@@ -128,6 +192,16 @@ def main() -> int:
 
     token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
     if not token:
+        if args.allow_api_unavailable:
+            report = _api_unavailable_report(
+                generated_at,
+                labels,
+                checks,
+                "runner-read token is not configured",
+            )
+            _write_report(args.json_out, report)
+            print(_json_dumps(report))
+            return 0
         checks.append({"name": "github_token", "ok": False, "detail": "missing GITHUB_TOKEN"})
         report = {"generatedAt": generated_at, "verdict": "fail", "labels": labels, "checks": checks}
         _write_report(args.json_out, report)
@@ -137,6 +211,16 @@ def main() -> int:
     try:
         runners = _fetch_repo_runners(repo, token)
     except urllib.error.HTTPError as exc:
+        if args.allow_api_unavailable and exc.code in {401, 403}:
+            report = _api_unavailable_report(
+                generated_at,
+                labels,
+                checks,
+                f"GitHub runner API returned HTTP {exc.code}; dedicated runner-read token is not configured",
+            )
+            _write_report(args.json_out, report)
+            print(_json_dumps(report))
+            return 0
         checks.append({"name": "runner_api", "ok": False, "detail": f"GitHub runner API returned HTTP {exc.code}"})
         report = {"generatedAt": generated_at, "verdict": "fail", "labels": labels, "checks": checks}
         _write_report(args.json_out, report)

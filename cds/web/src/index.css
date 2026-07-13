@@ -1866,12 +1866,26 @@
     height: 100%;
   }
 
+  /*
+   * 双光源:主光(橙,压在光路区域)+ 反光(冷蓝,右上极弱)。
+   * 单光源在大屏上四角容易读作"一片平黑";一束 5% 的冷反光给画布纵深,
+   * 强度都压在阈下,不与"一条线"抢注意力。
+   */
   .cds-auth-backdrop {
     position: absolute;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(56rem 30rem at 38% 66%, hsl(var(--primary) / 0.07), transparent 70%),
+      radial-gradient(56rem 30rem at 38% 66%, hsl(var(--primary) / 0.08), transparent 70%),
+      radial-gradient(40rem 24rem at 82% 6%, hsl(215 65% 62% / 0.05), transparent 70%),
+      radial-gradient(130% 110% at 50% 40%, transparent 40%, hsl(var(--surface-base) / 0.9) 100%);
+  }
+
+  /* 白天:反光换成暖金,冷蓝压在暖纸上会显脏。 */
+  [data-theme='light'] .cds-auth-backdrop {
+    background:
+      radial-gradient(56rem 30rem at 38% 66%, hsl(var(--primary) / 0.06), transparent 70%),
+      radial-gradient(40rem 24rem at 82% 6%, hsl(35 85% 58% / 0.08), transparent 70%),
       radial-gradient(130% 110% at 50% 40%, transparent 40%, hsl(var(--surface-base) / 0.9) 100%);
   }
 
@@ -1892,6 +1906,31 @@
     font-weight: 600;
     letter-spacing: -0.01em;
     color: hsl(var(--foreground));
+  }
+
+  /* 未登录页的主题切换:36px 容器 + 20px icon(比例 >=55%,见 cds/CLAUDE.md 规则 1)。 */
+  .cds-auth-theme {
+    margin-left: auto;
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border: 1px solid hsl(var(--hairline));
+    border-radius: 10px;
+    background-color: hsl(var(--surface-raised) / 0.6);
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+
+  .cds-auth-theme:hover {
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--hairline-strong));
+  }
+
+  .cds-auth-theme svg {
+    width: 20px;
+    height: 20px;
   }
 
   /*
@@ -1967,23 +2006,140 @@
     color: hsl(var(--muted-foreground));
   }
 
-  /* 手机端的线:一行 mono 时间轴文字(桌面隐藏,由 TheLine 承担)。 */
-  .cds-auth-timeline-compact {
+  /* 产品事实 chips:三条真实能力,给文案区信息密度与"企业后台"的可信感。 */
+  .cds-auth-proof {
     margin-top: 1.5rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.75rem;
-    letter-spacing: 0.04em;
-    color: hsl(var(--muted-foreground) / 0.8);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  .cds-auth-timeline-compact span {
-    color: hsl(var(--primary));
-    padding: 0 0.25rem;
+  .cds-auth-proof span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid hsl(var(--hairline));
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    background-color: hsl(var(--surface-raised) / 0.5);
+  }
+
+  .cds-auth-proof span::before {
+    content: '';
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background-color: hsl(var(--primary) / 0.85);
+  }
+
+  /*
+   * 手机端的线(竖排):同一条部署光路转 90 度。
+   * 左侧 1px 竖轨 + 下落电流 + 三个站点行(word / time / desc)。
+   * 桌面(lg+)隐藏,由横贯的 TheLine 承担。
+   */
+  .cds-auth-line-m {
+    position: relative;
+    margin-top: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding-left: 1.25rem;
+  }
+
+  .cds-auth-line-m::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 2px;
+    bottom: 2px;
+    width: 1px;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      hsl(var(--foreground) / 0.18) 12%,
+      hsl(var(--foreground) / 0.18) 88%,
+      transparent
+    );
+  }
+
+  .cds-auth-line-m-beam {
+    position: absolute;
+    left: 4px;
+    top: 0;
+    width: 1px;
+    height: 56px;
+    background: linear-gradient(180deg, transparent, hsl(var(--primary) / 0.95), transparent);
+    box-shadow: 0 0 10px 0 hsl(var(--primary) / 0.35);
+    opacity: 0;
+    animation: cds-auth-beam-m 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
+  }
+
+  @keyframes cds-auth-beam-m {
+    0% { top: -12%; opacity: 0; }
+    8% { opacity: 1; }
+    76% { opacity: 1; }
+    88% { top: 92%; opacity: 0; }
+    100% { top: 92%; opacity: 0; }
+  }
+
+  .cds-auth-line-m-station {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+    min-width: 0;
+  }
+
+  .cds-auth-line-m-station i {
+    position: absolute;
+    left: -1.25rem;
+    top: 0.15em;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--foreground) / 0.35);
+    background-color: hsl(var(--surface-base));
+  }
+
+  .cds-auth-line-m-station b {
+    min-width: 2.9rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: hsl(var(--foreground) / 0.78);
+  }
+
+  .cds-auth-line-m-station em {
+    min-width: 2rem;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.6875rem;
+    color: hsl(var(--muted-foreground) / 0.75);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cds-auth-line-m-station span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
   }
 
   @media (min-width: 1024px) {
-    .cds-auth-timeline-compact {
+    .cds-auth-line-m {
       display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-auth-line-m-beam {
+      animation: none;
+      opacity: 1;
+      top: 30%;
     }
   }
 

@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import {
   Palette,
   Bell,
@@ -47,6 +48,8 @@ const MENU_ITEMS: MenuItem[] = [
  * 管理功能（权限/资源/数据/导航顺序）保留在左上角抽屉导航中。
  */
 export default function MobileProfilePage() {
+  const subtleBg = useDataTheme() === 'light' ? 'rgba(20,21,26,0.06)' : 'rgba(255,255,255,0.08)';
+  const subtleDivider = useDataTheme() === 'light' ? 'rgba(20,21,26,0.06)' : 'rgba(255,255,255,0.04)';
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -87,7 +90,7 @@ export default function MobileProfilePage() {
           ) : (
             <div
               className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-semibold"
-              style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+              style={{ background: subtleBg, color: 'var(--text-primary)' }}
             >
               {(user?.displayName || user?.username || '?')[0]}
             </div>
@@ -122,7 +125,7 @@ export default function MobileProfilePage() {
                   key={it.id}
                   onClick={() => it.routePath && navigate(it.routePath)}
                   className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-all active:bg-white/[0.03]"
-                  style={{ borderBottom: i < infra.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}
+                  style={{ borderBottom: i < infra.length - 1 ? `1px solid ${subtleDivider}` : 'none' }}
                 >
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
@@ -157,7 +160,7 @@ export default function MobileProfilePage() {
                 onClick={() => item.path ? navigate(item.path) : item.action?.()}
                 className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-all active:bg-white/[0.03]"
                 style={{
-                  borderBottom: i < MENU_ITEMS.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                  borderBottom: i < MENU_ITEMS.length - 1 ? `1px solid ${subtleDivider}` : 'none',
                 }}
               >
                 <div

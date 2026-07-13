@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Trash2, Link2, AlertTriangle, MessageSquare, ListTree, ClipboardList } from 'lucide-react';
@@ -39,6 +40,8 @@ const fromDateInput = (v: string) => (v ? v : undefined);
 export function TaskDetailPage() {
   const navigate = useNavigate();
   const { projectId = '', taskId = '' } = useParams();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回项目任务 tab
+  const goBack = useSmartBack(`/pm-agent/p/${projectId}?tab=tasks`);
   const [searchParams] = useSearchParams();
   const isNew = taskId === 'new';
 
@@ -242,7 +245,7 @@ export function TaskDetailPage() {
     <div className="h-screen min-h-0 flex flex-col" style={{ background: 'var(--bg-primary)' }}>
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-        <button onClick={() => navigate(`/pm-agent/p/${projectId}?tab=tasks`)} className="flex items-center justify-center w-8 h-8 rounded-lg border hover:opacity-70 shrink-0"
+        <button onClick={goBack} className="flex items-center justify-center w-8 h-8 rounded-lg border hover:opacity-70 shrink-0"
           style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }} title="返回项目">
           <ArrowLeft size={16} />
         </button>

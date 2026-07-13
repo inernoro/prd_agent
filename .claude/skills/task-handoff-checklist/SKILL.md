@@ -1,12 +1,12 @@
 ---
 name: task-handoff-checklist
-version: 1.0.0
+version: 1.0.1
 description: 开发任务完成后自动扫描变更，从导航、文档、规则、工作流、测试、风险、代码质量、后续事项八个维度生成结构化交接报告，让验收者零追问即可核对。触发词："交接"、"验收"、"handoff"、"/handoff"。
 ---
 
 # 任务交接清单
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/handoff`、"交接"、"验收"、"handoff"
+> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/handoff`、"交接"、"验收"、"handoff"
 
 AI 完成开发后，自动扫描变更，生成结构化交接报告。验收者不用追问就知道：改了哪里、测什么、沉淀了什么、有什么坑。
 
@@ -47,6 +47,8 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 ### Phase 2: 逐维度生成报告
 
 按 8 个维度逐项扫描。每个维度的详细扫描命令 → 见 [reference/scan-commands.md](reference/scan-commands.md)
+
+若变更命中生产发布、nginx、静态产物或 workflow，必须完整读取 `doc/rule.platform.production-release-safety.md` 和 `doc/debt.platform.production-release.md`。交接报告必须分别列出公网主页面、实际入口资源、API、专项服务、回滚点和发布证据账本；缺任一项时只能写“未验收/仍 open”，不能写完成。
 
 ## 交接报告模板
 
@@ -225,6 +227,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
               ├─ 测试建议 → /smoke {模块}
               ├─ 质量问题 → fix unused imports
               ├─ 深入验证 → /verify
+              ├─ 页面验收 → /uat
+              ├─ 正式热修 → /hotfix-prod
               └─ 周末收尾 → /weekly
 ```
 

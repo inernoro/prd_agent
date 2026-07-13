@@ -7,6 +7,7 @@
  *   - markdown：阅读排版。图片/PDF/其它文件：内联预览或下载。
  * 编辑：富文本编辑器（图片上传/粘贴/拖拽 + 附件上传），保存为 text/html。
  */
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Trash2, RefreshCw, GitBranch, Save, X, Tags, Layers, FolderOpen, Eye, Code as CodeIcon } from 'lucide-react';
@@ -95,7 +96,8 @@ export function KnowledgeDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
-  const back = () => navigate(`/product-agent/p/${productId}?tab=knowledge`);
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回产品知识库 tab
+  const back = useSmartBack(`/product-agent/p/${productId}?tab=knowledge`);
   const openEntry = (id: string) => { if (id !== entryId) navigate(`/product-agent/p/${productId}/knowledge/${id}`); };
 
   // 拖拽：文档移入文件夹 / 移回根目录

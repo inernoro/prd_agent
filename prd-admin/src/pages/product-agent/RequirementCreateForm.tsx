@@ -1,5 +1,5 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { FileText, Mic, MicOff, Save, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
@@ -173,7 +173,6 @@ export function RequirementCreateForm({
   customers: Customer[];
   onCreated: (newId: string) => void;
 }) {
-  const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
@@ -318,10 +317,8 @@ export function RequirementCreateForm({
     else setMessage(res.error?.message ?? '创建需求失败');
   };
 
-  const cancel = () => {
-    if (window.history.length > 1) navigate(-1);
-    else navigate('/product-agent');
-  };
+  // 智能返回：window.history.length 含跨站条目不可靠，改用路由 idx 判定
+  const cancel = useSmartBack('/product-agent');
 
   return (
     <div className="flex flex-col gap-0 w-full rounded-lg border border-white/10 bg-[#0f1014] overflow-hidden">

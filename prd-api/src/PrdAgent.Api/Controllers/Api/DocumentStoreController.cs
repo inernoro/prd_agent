@@ -3023,8 +3023,10 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> RestyleTranscribeRun(string runId, [FromBody] TranscribeStyleRequest request)
     {
         var userId = GetUserId();
+        // 不按 run 归属人过滤：团队库里原转录可能是别人发起的，协作者的整理权限
+        // 以「对产物笔记可写」为准（下方 LoadWritableEntryAsync 校验），而非历史 run 的所有权（Codex P2）
         var prior = await _db.DocumentStoreAgentRuns
-            .Find(r => r.Id == runId && r.UserId == userId && r.Kind == DocumentStoreAgentRunKind.Transcribe)
+            .Find(r => r.Id == runId && r.Kind == DocumentStoreAgentRunKind.Transcribe)
             .FirstOrDefaultAsync();
         if (prior == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录任务不存在"));
@@ -3706,15 +3708,38 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>获取某个 entry 的最近一次 agent run（某 kind，用于打开按钮时判断是否已生成过）</summary>
     [HttpGet("entries/{entryId}/agent-runs/latest")]
-    public async Task<IActionResult> GetLatestAgentRun(string entryId, [FromQuery] string kind)
+    public async Task<IActionResult> GetLatestAgentRun(
+        string entryId,
+        [FromQuery] string kind,
+        [FromQuery] string? status = null,
+        [FromQuery] bool requireOutput = false)
     {
-        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
+        // writable 而非 owner-only：团队库协作者能转录/编辑笔记，也必须能查最近 run
+        // 来发起「换个整理方式」（Codex P2：restyle 协作者被 404）
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, GetUserId());
         if (err != null) return err;
         if (string.IsNullOrEmpty(kind))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "kind 不能为空"));
 
+        // status/requireOutput 过滤：restyle 失败的 run 与原转录同 SourceEntryId+kind，
+        // 只按 CreatedAt 取最新会拿到失败 run，导致明明有完成的笔记却再也打不开
+        // 整理面板（Codex P2）。查「最近一条完成且有产物」的 run 用 status=done&requireOutput=true。
+        var filters = new List<FilterDefinition<DocumentStoreAgentRun>>
+        {
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+        };
+        if (!string.IsNullOrWhiteSpace(status))
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, status.Trim().ToLowerInvariant()));
+        if (requireOutput)
+        {
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Ne(r => r.OutputEntryId, null),
+                Builders<DocumentStoreAgentRun>.Filter.Ne(r => r.OutputEntryId, "")));
+        }
+
         var run = await _db.DocumentStoreAgentRuns
-            .Find(r => r.SourceEntryId == entryId && r.Kind == kind)
+            .Find(Builders<DocumentStoreAgentRun>.Filter.And(filters))
             .SortByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync();
         return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));

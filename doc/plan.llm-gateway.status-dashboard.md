@@ -96,8 +96,8 @@
 
 ### B1 已实现（腿 B 第一刀落地）
 网关控制台不再只有日志。新增（只读、密钥只回 hasKey）：
-- 后端 `prd-llmgw`：`GET /gw/pools`（模型池 + 每模型健康 chip）、`/gw/platforms`、`/gw/models`、`/gw/shadow-comparisons`，复用 logs 同款 JWT（LogsRead）+ BsonDocument 安全映射。
-- 前端 `prd-llmgw-web`：`ConsoleLayout` 顶部导航（日志/模型池/平台/影子）+ 三个只读页。
+- 后端 `llmgw/console-api`：`GET /gw/pools`（模型池 + 每模型健康 chip）、`/gw/platforms`、`/gw/models`、`/gw/shadow-comparisons`，复用 logs 同款 JWT（LogsRead）+ BsonDocument 安全映射。
+- 前端 `llmgw/web`：`ConsoleLayout` 顶部导航（日志/模型池/平台/影子）+ 三个只读页。
 
 ### B2 已落地（腿 B 第二刀：可配置 + 全面概览，2026-07-02 第二批）
 直击「无法配置」「只有一个日志」：
@@ -105,7 +105,7 @@
   - `PUT /gw/platforms/{id}/enabled` 平台启用/停用；`PUT /gw/models/{id}/enabled` 模型启用/停用；`PUT /gw/pools/{id}/default` 模型池设默认（同 ModelType 互斥，先清同类再置本池）。
   - 新 `ConfigWrite` 授权策略（与 LogsRead 同门槛：已登录且非 mcp 首登态；独立命名便于将来收紧成读/写角色）。**不碰密钥、不删数据**——密钥轮换/增删平台等重写留后续（有现网 blast radius，需二次确认+审计）。
   - 前端：平台页每行「启用/停用」按钮 + toast；模型池卡「设为默认」按钮 + 同类型互斥即时反映。
-- **全面概览页（`prd-llmgw-web` 新首页 `/`）**：一屏聚合 ① 配置计数（平台启用/总、池数/默认池、模型启用/总、影子样本+一致率）② **容器拓扑**（7 容器各标职责/出口，治「多只脚」认知落差）③ 快速入口。日志页移到 `/logs`，导航加「概览」。
+- **全面概览页（`llmgw/web` 新首页 `/`）**：一屏聚合 ① 配置计数（平台启用/总、池数/默认池、模型启用/总、影子样本+一致率）② **容器拓扑**（7 容器各标职责/出口，治「多只脚」认知落差）③ 快速入口。日志页移到 `/logs`，导航加「概览」。
 - **下一刀**：密钥轮换 / 增删平台/模型 / 调度权重编辑（重写操作，需现网知情 + 二次确认 + 审计日志）。
 
 ### A1 调研结论（几乎完工，剩小尾巴）
@@ -113,7 +113,7 @@ GatewayTransport 后端打标**已在早前分支合入**（`LlmRequestLog.Gatew
 
 ### A1 已完成（transport 可见性收尾）
 - MAP 侧 `LlmLogsController` 两处列表投影补 `x.GatewayTransport`（detail 早已带）。
-- 网关控制台：`prd-llmgw` list DTO + MapListItem 读 `GatewayTransport`；`prd-llmgw-web` LogsView 的模型列加**传输通道 chip**（inproc/http/shadow/direct，历史 null 不显示）。
+- 网关控制台：`llmgw/console-api` list DTO + MapListItem 读 `GatewayTransport`；`llmgw/web` LogsView 的模型列加**传输通道 chip**（inproc/http/shadow/direct，历史 null 不显示）。
 - 意义：翻 http 前后排障能一眼看出「这条走了哪条路」，L1 硬 blocker 的可见性缺口补齐。prd-admin 日志页加同款列是**字段已在 API、trivial 的后续小改**。
 
 ### A2 已定论（非死码，gated，不删不硬收）
@@ -165,7 +165,7 @@ python3 .claude/skills/cds/cli/cdscli.py env set --scope prd-agent --key LlmGate
 - serving 密钥自检真机日志：`[ServingKeyIntegrity] OK：可解密全部真实平台密文（2 个启用平台，跳过 1 个 dev-stub）`。
 - B1 配置面真机验证（2026-07-02，登录后 curl）：`/gw/pools`=20 池、`/gw/models`=12、`/gw/platforms`=2；**密钥防泄漏断言通过**——`/gw/platforms` 与 `/gw/models` 响应体不含 apiKey/Encrypted、只含 `hasKey`；无 token → 401。控制台导航「日志 / 模型池 / 平台 / 影子比对」四页可切。
 - **像素级视觉验收**：本轮受沙箱↔代理↔headless chromium 限制未截到图（`ERR_CONNECTION_CLOSED`，环境限制非应用问题）；已按 `real-visual-acceptance.md` 立规，后续在浏览器可达预览的环境（`/验收` harness）补像素取证。
-- **B2 可写配置面 + 概览页（2026-07-02 第二批）**：`prd-llmgw` 新增 3 个 `ConfigWrite` PUT 端点（platforms/models enabled、pools default）；`prd-llmgw-web` 新增概览首页（拓扑 + 计数）+ 平台/模型池就地切换按钮。后端无本地 SDK，走 CDS 远端编译验证（`cds-first-verification`）；前端 `pnpm tsc --noEmit` 通过。
+- **B2 可写配置面 + 概览页（2026-07-02 第二批）**：`llmgw/console-api` 新增 3 个 `ConfigWrite` PUT 端点（platforms/models enabled、pools default）；`llmgw/web` 新增概览首页（拓扑 + 计数）+ 平台/模型池就地切换按钮。后端无本地 SDK，走 CDS 远端编译验证（`cds-first-verification`）；前端 `pnpm tsc --noEmit` 通过。
 - **CDS Mongo Console 数据操作（痛点「cds 无法操作」，2026-07-02 定稿为结构化写入）**：初版让自由命令行 `/data/mongo/command` 执行写，被 Cursor Bugbot 连续挑出 12 轮 mongosh `--eval` 注入绕过（多语句/逗号操作符/模板串 `${}`/计算成员 `["m"]()`…）与误判——根因是「正则消毒任意 JS 文本」本质不收敛。用户 2026-07-02 拍板改为**结构化写入**：① 命令行**恢复只读**（find/findOne/countDocuments/distinct，保留多重防注入：单语句/抹字面量扫描/禁模板串·箭头·计算成员调用/写调用计数=0/明文 verb 白名单）；② 写操作走已有的 `/data/mongo/write` 结构化端点（固定 `action`=insertOne/updateMany/deleteMany + JSON 参数，服务端**不 eval 用户文本**，需 `data-write` 权限 + 资源名确认）；③ 前端 `BranchDetailDrawer` 新增「结构化写入」面板（action 下拉 + collection + document/filter/update JSON + 资源名确认）。`resource-db-access.test.ts` 20 tests 全绿（读通过 / 各类写与注入变体一律 400）。**激活**：属 CDS 平台代码，需合 main → 生产 CDS 自更新才在生产面板生效。
 - A1（transport 可见性）：代码已部署（healthz=本轮 commit）、前后端 tsc 干净、DTO 以 `Never` 忽略策略序列化故 `transport` 字段必然出现（历史日志值为 null → 前端 chip 隐藏，属预期）。**本轮未能登录控制台做字段活取证**——见下「已知问题」。
 

@@ -25,7 +25,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import SystemLogsTab from '@/pages/system-logs/SystemLogsTab';
 
 function codeBoxStyle(): React.CSSProperties {
@@ -886,6 +886,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 } = {}) {
   const { isMobile } = useBreakpoint();
   const [searchParams, setSearchParams] = useSearchParams();
+  // 站内跳转走 SPA navigate：整页刷新会重置路由历史序号，破坏返回手势
+  const navigate = useNavigate();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
   const setTab = (next: 'llm' | 'system') => {
@@ -1528,7 +1530,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = '/mds?tab=models';
+                                  navigate('/mds?tab=models');
                                 }}
                               >
                                 <Zap size={10} />
@@ -1545,7 +1547,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 style={requestTypeChipStyle(b.tone)}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = '/mds?tab=pools';
+                                  navigate('/mds?tab=pools');
                                 }}
                               >
                                 {b.icon}
@@ -1566,7 +1568,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = '/mds?tab=pools';
+                                  navigate('/mds?tab=pools');
                                 }}
                               >
                                 <Layers size={10} />
@@ -1583,7 +1585,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 style={requestTypeChipStyle(b.tone)}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = '/mds?tab=apps';
+                                  navigate('/mds?tab=apps');
                                 }}
                               >
                                 {b.icon}

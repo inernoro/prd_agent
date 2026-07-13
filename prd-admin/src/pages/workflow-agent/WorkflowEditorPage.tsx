@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -1344,6 +1345,8 @@ interface NodeOutput {
 export function WorkflowEditorPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack('/workflow-agent');
 
   // 数据
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
@@ -2081,7 +2084,7 @@ export function WorkflowEditorPage() {
             <Button
               variant="ghost"
               size="xs"
-              onClick={() => navigate('/workflow-agent')}
+              onClick={goBack}
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               返回

@@ -1014,7 +1014,7 @@ function findRelativeMount(volumes?: string[]): { hostPath: string; containerPat
  */
 function isAppServiceCandidate(entry: ComposeServiceEntry): boolean {
   if (hasRelativeVolumeMount(entry.volumes)) return true;
-  // 预构建镜像站点(prd-llmgw-web 这类纯 nginx 前端):无源码 mount、无 build:,只有 image +
+  // 预构建镜像站点(llmgw/web 这类纯 nginx 前端):无源码 mount、无 build:,只有 image +
   // cds.prebuilt-image label,由 CI 出镜像、CDS docker-PULL。若不识别为 app 会被丢弃(既非 app
   // 也非 infra,无端口/无 build 直接 continue),命名子域永不发布。判定:image + 真值 prebuilt-image
   // label + (cds.subdomain 或 cds.path-prefix) → 是一个有对外路由的预构建 app 站点。

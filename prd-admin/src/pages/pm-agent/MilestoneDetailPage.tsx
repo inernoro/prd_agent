@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -44,6 +45,8 @@ function krProgress(kr: { type: string; startValue: number; targetValue: number;
 export function MilestoneDetailPage() {
   const navigate = useNavigate();
   const { projectId = '', milestoneId = '' } = useParams();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回项目里程碑 tab
+  const goBack = useSmartBack(`/pm-agent/p/${projectId}?tab=milestones`);
   const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [project, setProject] = useState<PmProject | null>(null);
   const [milestone, setMilestone] = useState<PmMilestone | null>(null);
@@ -149,7 +152,7 @@ export function MilestoneDetailPage() {
     <div className="h-full min-h-0 flex flex-col gap-3 p-4 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 头部 */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap">
-        <Button variant="ghost" size="sm" onClick={() => navigate(`/pm-agent/p/${projectId}?tab=milestones`)}><ArrowLeft size={14} />返回</Button>
+        <Button variant="ghost" size="sm" onClick={goBack}><ArrowLeft size={14} />返回</Button>
         <MilestoneIcon size={16} style={{ color: '#A855F7' }} />
         {editingTitle && canManage ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
