@@ -22,4 +22,11 @@ describe('widget bridge polling gate', () => {
     const script = buildWidgetScript('branch-a', 'branch/a');
     expect(script).toContain('var BRIDGE_ENABLED=true;');
   });
+
+  it('keeps the preview widget above mobile bottom navigation by default', () => {
+    const script = buildWidgetScript('branch-a', 'branch/a');
+    expect(script).toContain('function defaultWidgetBottom(){');
+    expect(script).toContain('return window.innerWidth<=640?88:12;');
+    expect(script).toContain('var pos={x:12,y:defaultWidgetBottom()};');
+  });
 });
