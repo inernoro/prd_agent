@@ -7,6 +7,7 @@ import {
   Columns2,
   ChevronRight,
   Clock3,
+  CircleStop,
   Download,
   Film,
   History,
@@ -28,9 +29,12 @@ import { toast } from '@/lib/toast';
 import { connectSse } from '@/lib/useSseStream';
 import {
   activateVideoSceneVersionReal,
+  cancelVideoGenRunReal,
   exportVideoGenRunReal,
   getVideoGenStreamUrl,
   getVideoGenRunReal,
+  getVideoProjectReal,
+  listVideoModelsReal,
   regenerateVideoSceneReal,
   reorderVideoScenesReal,
   renderVideoSceneReal,
@@ -38,11 +42,14 @@ import {
   updateVideoSceneReal,
 } from '@/services/real/videoAgent';
 import {
-  OPENROUTER_VIDEO_MODELS,
   type SceneItemStatus,
   type VideoGenRun,
   type VideoGenScene,
   type VideoGenSceneVersion,
+  type VideoModelOption,
+  type VideoProject,
+  type VideoProjectAsset,
+  type VideoTimelineTrack,
 } from '@/services/contracts/videoAgent';
 import './videoConsole.css';
 
@@ -81,6 +88,8 @@ const PHASE_LABELS: Record<string, string> = {
 
 export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ runId, onBack }) => {
   const [run, setRun] = useState<VideoGenRun | null>(null);
+  const [models, setModels] = useState<VideoModelOption[]>([]);
+  const [project, setProject] = useState<VideoProject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(0);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('shots');
@@ -141,6 +150,19 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     void loadRun();
     return () => stopPolling();
   }, [loadRun, stopPolling]);
+
+  useEffect(() => {
+    void listVideoModelsReal().then((response) => {
+      if (response.success) setModels(response.data);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!run?.projectId) { setProject(null); return; }
+    void getVideoProjectReal(run.projectId).then((response) => {
+      if (response.success) setProject(response.data);
+    });
+  }, [run?.projectId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -242,6 +264,16 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     return true;
   }), [mutate, runId]);
 
+  const cancelRun = useCallback(() => mutate('cancel-run', async () => {
+    const response = await cancelVideoGenRunReal(runId);
+    if (!response.success) {
+      toast.error('停止任务失败', response.error?.message);
+      return false;
+    }
+    toast.success('已请求停止后台任务');
+    return true;
+  }), [mutate, runId]);
+
   const activateVersion = useCallback((version: VideoGenSceneVersion) => mutate('activate-version', async () => {
     const response = await activateVideoSceneVersionReal(runId, selectedSceneIndex, version.id);
     if (!response.success) {
@@ -333,6 +365,11 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         </div>
 
         <div className="video-console__actions">
+          {['Queued', 'Scripting', 'Rendering'].includes(run.status) && (
+            <Button size="sm" variant="secondary" onClick={cancelRun} disabled={mutating === 'cancel-run'}>
+              {mutating === 'cancel-run' ? <MapSpinner size={14} /> : <CircleStop size={14} />} 停止任务
+            </Button>
+          )}
           {pendingScenes.length > 0 && run.status === 'Editing' && (
             <Button size="sm" variant="secondary" onClick={() => setBatchDialogOpen(true)}>
               <Layers3 size={14} /> 批量生成
@@ -490,6 +527,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           scene={selectedScene}
           sceneIndex={selectedSceneIndex}
           mutating={mutating}
+          models={models}
+          assets={project?.assets ?? []}
           onUpdate={(patch) => mutate('save-scene', async () => {
             const success = await updateScene(patch);
             if (success) toast.success('镜头参数已保存');
@@ -502,6 +541,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
       <Timeline
         run={run}
+        tracks={project?.timelineTracks ?? []}
         selectedSceneIndex={selectedSceneIndex}
         onSelect={(index) => {
           setSelectedSceneIndex(index);
@@ -515,6 +555,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         <BatchRenderDialog
           pendingScenes={pendingScenes}
           defaultDuration={run.directDuration ?? 5}
+          defaultModel={run.directVideoModel}
+          models={models}
           submitting={mutating === 'render-batch'}
           onClose={() => setBatchDialogOpen(false)}
           onConfirm={renderBatch}
@@ -596,14 +638,20 @@ const Inspector: React.FC<{
   scene: VideoGenScene | null;
   sceneIndex: number;
   mutating: string | null;
+  models: VideoModelOption[];
+  assets: VideoProjectAsset[];
   onUpdate: (patch: Parameters<typeof updateVideoSceneReal>[2]) => void;
   onRender: () => void;
   onRegenerate: () => void;
-}> = ({ run, scene, sceneIndex, mutating, onUpdate, onRender, onRegenerate }) => {
+}> = ({ run, scene, sceneIndex, mutating, models, assets, onUpdate, onRender, onRegenerate }) => {
   const [prompt, setPrompt] = useState(scene?.prompt ?? '');
   const [topic, setTopic] = useState(scene?.topic ?? '');
+  const [firstFrameUrl, setFirstFrameUrl] = useState(scene?.firstFrameUrl ?? '');
+  const [lastFrameUrl, setLastFrameUrl] = useState(scene?.lastFrameUrl ?? '');
   useEffect(() => { setPrompt(scene?.prompt ?? ''); }, [scene?.prompt, sceneIndex]);
   useEffect(() => { setTopic(scene?.topic ?? ''); }, [scene?.topic, sceneIndex]);
+  useEffect(() => { setFirstFrameUrl(scene?.firstFrameUrl ?? ''); }, [scene?.firstFrameUrl, sceneIndex]);
+  useEffect(() => { setLastFrameUrl(scene?.lastFrameUrl ?? ''); }, [scene?.lastFrameUrl, sceneIndex]);
 
   if (!scene) {
     return <aside className="video-console__inspector"><EmptyLibrary /></aside>;
@@ -611,6 +659,9 @@ const Inspector: React.FC<{
 
   const working = scene.status === 'Rendering' || scene.status === 'Generating';
   const editable = (run.status === 'Editing' || run.status === 'Completed') && !working;
+  const selectedModelId = scene.model ?? run.directVideoModel ?? '';
+  const selectedModel = models.find((model) => model.id === selectedModelId);
+  const frameAssets = assets.filter((asset) => asset.type !== 'audio' && asset.url);
   return (
     <aside className="video-console__inspector" aria-label="镜头属性">
       <div className="video-console__panel-title">
@@ -661,26 +712,42 @@ const Inspector: React.FC<{
         <label className="video-console__field">
           <span>视频模型</span>
           <select
-            value={scene.model ?? run.directVideoModel ?? ''}
+            value={selectedModelId}
             disabled={!editable}
             onChange={(event) => onUpdate({ model: event.target.value })}
           >
             <option value="">模型池自动选择</option>
-            {OPENROUTER_VIDEO_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+            {models.map((model) => <option key={model.id} value={model.id} disabled={model.healthStatus === 'Unavailable'}>{model.name}{model.healthStatus === 'Degraded' ? '（降级）' : ''}</option>)}
           </select>
         </label>
+
+        {selectedModel?.supportsFirstFrame && (
+          <label className="video-console__field">
+            <span>首帧参考</span>
+            <input list={`video-first-frame-${sceneIndex}`} value={firstFrameUrl} disabled={!editable} placeholder="选择项目素材或输入公开图片 URL" onChange={(event) => setFirstFrameUrl(event.target.value)} onBlur={() => { if (firstFrameUrl.trim() !== (scene.firstFrameUrl ?? '')) onUpdate({ firstFrameUrl: firstFrameUrl.trim() }); }} />
+            <datalist id={`video-first-frame-${sceneIndex}`}>{frameAssets.map((asset) => <option key={asset.id} value={asset.url}>{asset.name}</option>)}</datalist>
+          </label>
+        )}
+        {selectedModel?.supportsLastFrame && (
+          <label className="video-console__field">
+            <span>尾帧参考</span>
+            <input list={`video-last-frame-${sceneIndex}`} value={lastFrameUrl} disabled={!editable} placeholder="选择项目素材或输入公开图片 URL" onChange={(event) => setLastFrameUrl(event.target.value)} onBlur={() => { if (lastFrameUrl.trim() !== (scene.lastFrameUrl ?? '')) onUpdate({ lastFrameUrl: lastFrameUrl.trim() }); }} />
+            <datalist id={`video-last-frame-${sceneIndex}`}>{frameAssets.map((asset) => <option key={asset.id} value={asset.url}>{asset.name}</option>)}</datalist>
+          </label>
+        )}
+        {selectedModel?.supportsReferenceAssets && frameAssets.length > 0 && <div className="video-console__field-note">本镜会使用项目中的 {Math.min(frameAssets.length, 9)} 张角色、场景与道具参考图。</div>}
 
         <div className="video-console__field-grid">
           <label className="video-console__field">
             <span>时长</span>
             <select value={scene.duration ?? run.directDuration ?? 5} disabled={!editable} onChange={(event) => onUpdate({ duration: Number(event.target.value) })}>
-              {DURATIONS.map((duration) => <option key={duration} value={duration}>{duration} 秒</option>)}
+              {(selectedModel?.durations.length ? selectedModel.durations : DURATIONS).map((duration) => <option key={duration} value={duration}>{duration} 秒</option>)}
             </select>
           </label>
           <label className="video-console__field">
             <span>分辨率</span>
             <select value={scene.resolution ?? run.directResolution ?? '720p'} disabled={!editable} onChange={(event) => onUpdate({ resolution: event.target.value })}>
-              {RESOLUTIONS.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}
+              {(selectedModel?.resolutions.length ? selectedModel.resolutions : RESOLUTIONS).map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}
             </select>
           </label>
         </div>
@@ -688,7 +755,7 @@ const Inspector: React.FC<{
         <div className="video-console__field">
           <span>画幅</span>
           <div className="video-console__aspect-grid">
-            {ASPECT_RATIOS.map((ratio) => (
+            {(selectedModel?.aspectRatios.length ? selectedModel.aspectRatios : ASPECT_RATIOS).map((ratio) => (
               <button
                 key={ratio}
                 className={(scene.aspectRatio ?? run.directAspectRatio ?? '16:9') === ratio ? 'is-active' : ''}
@@ -720,11 +787,12 @@ const Inspector: React.FC<{
 
 const Timeline: React.FC<{
   run: VideoGenRun;
+  tracks: VideoTimelineTrack[];
   selectedSceneIndex: number;
   onSelect: (index: number) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   disabled: boolean;
-}> = ({ run, selectedSceneIndex, onSelect, onReorder, disabled }) => {
+}> = ({ run, tracks, selectedSceneIndex, onSelect, onReorder, disabled }) => {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const duration = Math.max(run.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0), 1);
   return (
@@ -771,10 +839,11 @@ const Timeline: React.FC<{
           })}
         </div>
       </div>
-      <div className="video-console__track-row video-console__track-row--empty">
-        <span className="video-console__track-label">音频</span>
-        <div>音频轨道将在下一阶段接入</div>
-      </div>
+      {(['subtitle', 'voice', 'music'] as const).map((type) => {
+        const track = tracks.find((item) => item.type === type);
+        const label = type === 'subtitle' ? '字幕' : type === 'voice' ? '配音' : '音乐';
+        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux">{track?.clips.map((clip, index) => <div key={clip.id}><strong>{type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`}</strong><span>{clip.startSeconds.toFixed(1)}s · {clip.durationSeconds.toFixed(1)}s</span></div>)}{!track?.clips.length && <span>未添加{label}片段</span>}</div></div>;
+      })}
     </section>
   );
 };
@@ -795,10 +864,12 @@ const ProgressBar: React.FC<{ progress: number }> = ({ progress }) => (
 const BatchRenderDialog: React.FC<{
   pendingScenes: VideoGenScene[];
   defaultDuration: number;
+  defaultModel?: string;
+  models: VideoModelOption[];
   submitting: boolean;
   onClose: () => void;
   onConfirm: () => void;
-}> = ({ pendingScenes, defaultDuration, submitting, onClose, onConfirm }) => {
+}> = ({ pendingScenes, defaultDuration, defaultModel, models, submitting, onClose, onConfirm }) => {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const submittingRef = useRef(submitting);
@@ -829,6 +900,12 @@ const BatchRenderDialog: React.FC<{
   }, [onClose]);
 
   const duration = pendingScenes.reduce((sum, scene) => sum + (scene.duration ?? defaultDuration), 0);
+  const estimatedCost = pendingScenes.reduce<number | null>((sum, scene) => {
+    if (sum == null) return null;
+    const option = models.find((model) => model.id === (scene.model ?? defaultModel));
+    return option?.pricePerCall == null ? null : sum + option.pricePerCall;
+  }, 0);
+  const priceCurrency = models.find((model) => model.id === (pendingScenes[0]?.model ?? defaultModel))?.priceCurrency ?? 'CNY';
   const modal = (
     <div className="video-console__modal-backdrop" onClick={() => !submitting && onClose()}>
       <div
@@ -849,6 +926,7 @@ const BatchRenderDialog: React.FC<{
           <dl>
             <div><dt>待生成镜头</dt><dd>{pendingScenes.length} 个</dd></div>
             <div><dt>预计视频时长</dt><dd>{duration} 秒</dd></div>
+            <div><dt>预计生成费用</dt><dd>{estimatedCost == null ? '模型池未配置价格' : `${priceCurrency} ${estimatedCost.toFixed(2)}`}</dd></div>
             <div><dt>执行方式</dt><dd>服务器顺序生成</dd></div>
           </dl>
           <div className="video-console__modal-note">

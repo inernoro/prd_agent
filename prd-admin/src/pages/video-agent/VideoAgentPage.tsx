@@ -5,6 +5,7 @@ import {
   createVideoGenRunReal,
   createVideoProjectReal,
   listVideoGenRunsReal,
+  listVideoModelsReal,
   listVideoProjectsReal,
   updateVideoProjectReal,
 } from '@/services/real/videoAgent';
@@ -12,6 +13,7 @@ import type {
   VideoGenRunListItem,
   VideoProject,
   VideoProjectInput,
+  VideoModelOption,
 } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
 import { VideoProjectStudio } from './VideoProjectStudio';
@@ -22,6 +24,7 @@ const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
 export const VideoAgentPage: React.FC = () => {
   const [projects, setProjects] = useState<VideoProject[]>([]);
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
+  const [models, setModels] = useState<VideoModelOption[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
     try { return sessionStorage.getItem(SELECTED_PROJECT_KEY); } catch { return null; }
   });
@@ -31,9 +34,10 @@ export const VideoAgentPage: React.FC = () => {
 
   const loadWorkspace = useCallback(async () => {
     try {
-      const [projectResponse, runResponse] = await Promise.all([
+      const [projectResponse, runResponse, modelResponse] = await Promise.all([
         listVideoProjectsReal(),
         listVideoGenRunsReal({ limit: 50 }),
+        listVideoModelsReal(),
       ]);
       if (projectResponse.success) {
         setProjects(projectResponse.data);
@@ -43,6 +47,7 @@ export const VideoAgentPage: React.FC = () => {
         });
       }
       if (runResponse.success) setRuns(runResponse.data.items);
+      if (modelResponse.success) setModels(modelResponse.data);
     } catch (error) {
       toast.error('加载视频制作台失败', error instanceof Error ? error.message : '网络错误');
     } finally {
@@ -151,10 +156,11 @@ export const VideoAgentPage: React.FC = () => {
       projects={projects}
       project={selectedProject}
       runs={runs}
+      models={models}
       busy={busy}
       onSelectProject={(project) => {
         setSelectedProjectId(project.id);
-        if (project.latestRunId) setActiveRunId(project.latestRunId);
+        setActiveRunId(null);
       }}
       onNewProject={() => {
         setSelectedProjectId(null);

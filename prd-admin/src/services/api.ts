@@ -1120,10 +1120,12 @@ export const api = {
 
   // ============ Video Agent 视频创作 ============
   videoAgent: {
+    models: () => '/api/video-agent/models',
     projects: {
       list: () => '/api/video-agent/projects',
       create: () => '/api/video-agent/projects',
       byId: (projectId: string) => `/api/video-agent/projects/${projectId}`,
+      exports: (projectId: string) => `/api/video-agent/projects/${projectId}/exports`,
     },
     // 视频生成 API（OpenRouter 直出 + storyboard 拆分镜两种模式）
     runs: {

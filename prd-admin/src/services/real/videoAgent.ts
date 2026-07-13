@@ -15,8 +15,13 @@ import type {
   VideoGenRunListItem,
   VideoProject,
   VideoProjectInput,
+  VideoModelOption,
+  VideoExportTask,
   ReorderVideoScenesContract,
 } from '@/services/contracts/videoAgent';
+
+export const listVideoModelsReal = async () =>
+  apiRequest<VideoModelOption[]>(api.videoAgent.models(), { method: 'GET' });
 
 export const listVideoProjectsReal = async () =>
   apiRequest<VideoProject[]>(api.videoAgent.projects.list(), { method: 'GET' });
@@ -29,6 +34,9 @@ export const createVideoProjectReal = async (input: VideoProjectInput) =>
 
 export const updateVideoProjectReal = async (projectId: string, input: VideoProjectInput) =>
   apiRequest<VideoProject>(api.videoAgent.projects.byId(projectId), { method: 'PUT', body: input });
+
+export const listVideoProjectExportsReal = async (projectId: string) =>
+  apiRequest<VideoExportTask[]>(api.videoAgent.projects.exports(projectId), { method: 'GET' });
 
 export const createVideoGenRunReal: CreateVideoGenRunContract = async (input) => {
   return await apiRequest<{ runId: string }>(api.videoAgent.runs.create(), {
@@ -131,5 +139,5 @@ export const activateVideoSceneVersionReal: ActivateVideoSceneVersionContract = 
 };
 
 export const exportVideoGenRunReal: ExportVideoGenRunContract = async (runId) => {
-  return await apiRequest<boolean>(api.videoAgent.runs.export(runId), { method: 'POST' });
+  return await apiRequest<VideoExportTask>(api.videoAgent.runs.export(runId), { method: 'POST' });
 };

@@ -3,8 +3,7 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 视频生成领域服务接口（纯 OpenRouter 直出模式）
-/// 2026-04-27 重构：原本支持 Remotion 拆分镜路径，现已简化为只调 OpenRouter 视频大模型。
+/// 视频项目、生成任务、镜头版本、时间线与导出任务的领域服务接口。
 /// </summary>
 public interface IVideoGenService
 {
@@ -59,5 +58,8 @@ public interface IVideoGenService
     Task ActivateSceneVersionAsync(string runId, string ownerAdminId, int sceneIndex, string versionId, string? appKey = null, CancellationToken ct = default);
 
     /// <summary>请求把全部已完成分镜合成为完整视频</summary>
-    Task RequestExportAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+    Task<VideoExportTask> RequestExportAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>列出项目的导出任务。</summary>
+    Task<List<VideoExportTask>> ListExportTasksAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 }

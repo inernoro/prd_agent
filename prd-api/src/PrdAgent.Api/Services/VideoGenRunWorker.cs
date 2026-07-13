@@ -1,5 +1,9 @@
 using System.Text.Json.Nodes;
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Globalization;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -11,13 +15,12 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 namespace PrdAgent.Api.Services;
 
 /// <summary>
-/// 视频生成后台执行器（纯 OpenRouter 直出模式）
+/// 视频生成与项目导出后台执行器。
 ///
 /// 架构：用户提交 prompt → Worker 调 OpenRouter Veo/Kling/Wan/Sora → 拿到视频 URL →
 /// 用 API Key 鉴权下载视频二进制 → 上传到 COS → 把 COS 公开 URL 写回 Run.VideoAssetUrl
 ///
-/// 历史：原本支持 Remotion 拆分镜路径（文章→脚本→分镜→Remotion 渲染→拼接），但 docker dev 模式下
-/// Remotion + Chromium 部署反复踩坑，2026-04-27 决定彻底砍掉，只保留 OpenRouter 直出。
+/// storyboard 模式先经 LLM 拆镜，再逐镜调用模型池，并由 ffmpeg 按项目时间线合成音视频和字幕。
 /// </summary>
 public class VideoGenRunWorker : BackgroundService
 {
@@ -85,7 +88,36 @@ public class VideoGenRunWorker : BackgroundService
                     continue;
                 }
 
-                // 路径 4: 全部分镜已完成后，合成为完整 MP4
+                // 路径 4: 独立导出任务，全部分镜已完成后合成为完整 MP4
+                var exportTask = await ClaimExportTaskAsync(stoppingToken);
+                if (exportTask != null)
+                {
+                    var taskRun = await _db.VideoGenRuns.Find(x => x.Id == exportTask.RunId)
+                        .FirstOrDefaultAsync(stoppingToken);
+                    if (taskRun == null)
+                    {
+                        await _db.VideoExportTasks.UpdateOneAsync(
+                            x => x.Id == exportTask.Id,
+                            Builders<VideoExportTask>.Update
+                                .Set(x => x.Status, VideoExportTaskStatus.Failed)
+                                .Set(x => x.ErrorMessage, "关联的视频生成任务不存在")
+                                .Set(x => x.EndedAt, DateTime.UtcNow),
+                            cancellationToken: CancellationToken.None);
+                        continue;
+                    }
+                    try
+                    {
+                        await ProcessExportAsync(taskRun, exportTask);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGen 独立导出异常: runId={RunId}, taskId={TaskId}", taskRun.Id, exportTask.Id);
+                        await FailExportAsync(taskRun, ex.Message, exportTask.Id);
+                    }
+                    continue;
+                }
+
+                // 兼容升级前仍由 ExportRequested 标记的导出任务
                 var exportRun = await ClaimExportRunAsync(stoppingToken);
                 if (exportRun != null)
                 {
@@ -195,6 +227,11 @@ public class VideoGenRunWorker : BackgroundService
             await FailRunAsync(run, "EMPTY_PROMPT", "directPrompt 为空，无法生成视频");
             return;
         }
+        var directProject = await GetRunProjectAsync(run);
+        prompt = AppendAssetConstraints(prompt, directProject);
+        var directReferences = await SupportsReferenceAssetsAsync(run.DirectVideoModel)
+            ? GetReferenceImageUrls(directProject)
+            : [];
 
         var submitReq = new OpenRouterVideoSubmitRequest
         {
@@ -202,10 +239,11 @@ public class VideoGenRunWorker : BackgroundService
             Model = run.DirectVideoModel, // 用户偏好（可空）；由模型池决定最终选择
             Prompt = prompt,
             FirstFrameImageUrl = run.DirectFirstFrameUrl, // 设置则走图生视频（视觉分镜台「动起来」）
+            ReferenceImageUrls = directReferences,
             AspectRatio = run.DirectAspectRatio,
             Resolution = run.DirectResolution,
             DurationSeconds = run.DirectDuration,
-            GenerateAudio = true,
+            GenerateAudio = run.GenerateAudio,
             UserId = run.OwnerAdminId,
             RequestId = run.Id
         };
@@ -474,9 +512,11 @@ public class VideoGenRunWorker : BackgroundService
             ForceFullShadowSample: run.ForceFullShadowSample
         ));
 
+        var storyboardProject = await GetRunProjectAsync(run);
         var userPrompt = string.IsNullOrWhiteSpace(run.StyleDescription)
             ? run.ArticleMarkdown
             : $"风格要求：{run.StyleDescription}\n\n文章内容：\n{run.ArticleMarkdown}";
+        userPrompt = AppendAssetConstraints(userPrompt, storyboardProject);
 
         var requestBody = new System.Text.Json.Nodes.JsonObject
         {
@@ -675,15 +715,22 @@ public class VideoGenRunWorker : BackgroundService
 
         try
         {
+            var sceneProject = await GetRunProjectAsync(run);
+            var sceneModel = scene.Model ?? run.DirectVideoModel;
             var submitReq = new OpenRouterVideoSubmitRequest
             {
                 AppCallerCode = appCallerCode,
-                Model = scene.Model ?? run.DirectVideoModel,
-                Prompt = scene.Prompt,
+                Model = sceneModel,
+                Prompt = AppendAssetConstraints(scene.Prompt, sceneProject),
+                FirstFrameImageUrl = scene.FirstFrameUrl,
+                LastFrameImageUrl = scene.LastFrameUrl,
+                ReferenceImageUrls = await SupportsReferenceAssetsAsync(sceneModel)
+                    ? GetReferenceImageUrls(sceneProject)
+                    : [],
                 AspectRatio = scene.AspectRatio ?? run.DirectAspectRatio,
                 Resolution = scene.Resolution ?? run.DirectResolution,
                 DurationSeconds = scene.Duration ?? run.DirectDuration,
-                GenerateAudio = false, // 单镜不出音频，最终 concat 时再统一处理
+                GenerateAudio = run.GenerateAudio,
                 UserId = run.OwnerAdminId,
                 RequestId = $"{run.Id}_scene_{sceneIdx}",
             };
@@ -746,6 +793,8 @@ public class VideoGenRunWorker : BackgroundService
                         Model = submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel,
                         Prompt = scene.Prompt,
                         Duration = scene.Duration ?? run.DirectDuration,
+                        FirstFrameUrl = scene.FirstFrameUrl,
+                        LastFrameUrl = scene.LastFrameUrl,
                         Cost = status.Cost,
                     };
 
@@ -889,13 +938,62 @@ public class VideoGenRunWorker : BackgroundService
             ct);
     }
 
-    private async Task ProcessExportAsync(VideoGenRun run)
+    private async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
-        if (run.CancelRequested) { await CancelRunAsync(run); return; }
-        var sceneUrls = run.Scenes.Select(scene => scene.VideoUrl).ToList();
-        if (sceneUrls.Count == 0 || sceneUrls.Any(string.IsNullOrWhiteSpace))
+        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued);
+        return await _db.VideoExportTasks.FindOneAndUpdateAsync(
+            filter,
+            Builders<VideoExportTask>.Update
+                .Set(x => x.Status, VideoExportTaskStatus.Processing)
+                .Set(x => x.CurrentPhase, "export-preparing")
+                .Set(x => x.Progress, 5)
+                .Set(x => x.StartedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After },
+            ct);
+    }
+
+    private async Task ProcessExportAsync(VideoGenRun run, VideoExportTask? exportTask = null)
+    {
+        if (run.CancelRequested)
         {
-            await FailExportAsync(run, "存在尚未生成的视频分镜");
+            await CancelRunAsync(run);
+            if (exportTask != null)
+            {
+                await _db.VideoExportTasks.UpdateOneAsync(
+                    x => x.Id == exportTask.Id,
+                    Builders<VideoExportTask>.Update
+                        .Set(x => x.Status, VideoExportTaskStatus.Cancelled)
+                        .Set(x => x.CurrentPhase, "cancelled")
+                        .Set(x => x.EndedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+            }
+            return;
+        }
+        var project = string.IsNullOrWhiteSpace(run.ProjectId)
+            ? null
+            : await _db.VideoProjects.Find(x => x.Id == run.ProjectId).FirstOrDefaultAsync(CancellationToken.None);
+        var videoTrack = project?.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
+        if (videoTrack?.Muted == true)
+        {
+            await FailExportAsync(run, "视频轨已静音，无法导出可播放视频", exportTask?.Id);
+            return;
+        }
+        var timelineClips = videoTrack?.Clips
+            .Where(clip => clip.SceneIndex.HasValue && clip.SceneIndex.Value >= 0 && clip.SceneIndex.Value < run.Scenes.Count)
+            .ToList() ?? [];
+        if (timelineClips.Count == 0)
+        {
+            timelineClips = run.Scenes.Select((scene, index) => new VideoTimelineClip
+            {
+                SceneIndex = index,
+                StartSeconds = run.Scenes.Take(index).Sum(item => item.Duration ?? run.DirectDuration ?? 5),
+                DurationSeconds = scene.Duration ?? run.DirectDuration ?? 5,
+            }).ToList();
+        }
+        var selectedScenes = timelineClips.Select(clip => (Clip: clip, Scene: run.Scenes[clip.SceneIndex!.Value])).ToList();
+        if (selectedScenes.Count == 0 || selectedScenes.Any(item => string.IsNullOrWhiteSpace(item.Scene.VideoUrl)))
+        {
+            await FailExportAsync(run, "存在尚未生成的视频分镜", exportTask?.Id);
             return;
         }
 
@@ -906,25 +1004,61 @@ public class VideoGenRunWorker : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient();
-            var inputFiles = new List<string>();
+            using var externalHttpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            {
+                Timeout = TimeSpan.FromMinutes(3),
+            };
+            var videoInputs = new List<VideoExportClipSource>();
 
-            for (var index = 0; index < sceneUrls.Count; index++)
+            for (var index = 0; index < selectedScenes.Count; index++)
             {
                 var inputFile = Path.Combine(tempDir, $"scene-{index:D3}.mp4");
-                using var response = await httpClient.GetAsync(
-                    sceneUrls[index]!, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
-                response.EnsureSuccessStatusCode();
-                await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
-                await using var target = File.Create(inputFile);
-                await source.CopyToAsync(target, CancellationToken.None);
-                inputFiles.Add(inputFile);
+                await DownloadToFileAsync(httpClient, selectedScenes[index].Scene.VideoUrl!, inputFile, 1024L * 1024 * 1024);
+                var probe = await ProbeMediaAsync(inputFile);
+                var timelineClip = selectedScenes[index].Clip;
+                videoInputs.Add(new VideoExportClipSource(
+                    inputFile,
+                    probe.DurationSeconds > 0 ? probe.DurationSeconds : timelineClip.DurationSeconds,
+                    probe.HasAudio,
+                    timelineClip.TrimStartSeconds,
+                    timelineClip.TrimEndSeconds,
+                    timelineClip.Transition));
 
-                var progress = 10 + (int)Math.Round((index + 1d) / sceneUrls.Count * 30d);
-                await UpdateExportProgressAsync(run.Id, "export-downloading", progress);
+                var progress = 10 + (int)Math.Round((index + 1d) / selectedScenes.Count * 25d);
+                await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-downloading", progress);
             }
 
+            var audioInputs = new List<VideoExportAudioSource>();
+            var audioTimelineClips = project?.TimelineTracks
+                .Where(track => !track.Muted && track.Type is VideoTrackType.Voice or VideoTrackType.Music)
+                .SelectMany(track => track.Clips.Select(clip => (TrackType: track.Type, Clip: clip)))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Clip.AssetUrl))
+                .ToList() ?? [];
+            for (var index = 0; index < audioTimelineClips.Count; index++)
+            {
+                var item = audioTimelineClips[index];
+                await EnsurePublicHttpsUrlAsync(item.Clip.AssetUrl!);
+                var inputFile = Path.Combine(tempDir, $"audio-{index:D3}.bin");
+                await DownloadToFileAsync(externalHttpClient, item.Clip.AssetUrl!, inputFile, 100L * 1024 * 1024);
+                var probe = await ProbeMediaAsync(inputFile);
+                if (!probe.HasAudio) throw new InvalidOperationException($"音频轨素材 {index + 1} 不包含可识别音轨");
+                audioInputs.Add(new VideoExportAudioSource(
+                    inputFile,
+                    item.Clip.StartSeconds,
+                    item.Clip.DurationSeconds > 0 ? item.Clip.DurationSeconds : probe.DurationSeconds,
+                    item.Clip.TrimStartSeconds,
+                    item.Clip.TrimEndSeconds,
+                    item.TrackType == VideoTrackType.Music ? 0.35 : 1));
+            }
+
+            var subtitleFile = await WriteSubtitleFileAsync(project, tempDir);
             var outputFile = Path.Combine(tempDir, "export.mp4");
-            var args = VideoExportCommandBuilder.Build(inputFiles, outputFile, run.DirectAspectRatio);
+            var args = VideoExportCommandBuilder.Build(
+                videoInputs,
+                audioInputs,
+                subtitleFile,
+                outputFile,
+                run.DirectAspectRatio);
             var startInfo = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
@@ -935,7 +1069,7 @@ public class VideoGenRunWorker : BackgroundService
             };
             foreach (var arg in args) startInfo.ArgumentList.Add(arg);
 
-            await UpdateExportProgressAsync(run.Id, "export-composing", 50);
+            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-composing", 50);
             using var process = Process.Start(startInfo)
                                 ?? throw new InvalidOperationException("ffmpeg 进程启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
@@ -956,7 +1090,7 @@ public class VideoGenRunWorker : BackgroundService
                 throw new InvalidOperationException($"ffmpeg 合成失败 (exit={process.ExitCode}): {detail}");
             }
 
-            await UpdateExportProgressAsync(run.Id, "export-uploading", 90);
+            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-uploading", 90);
             var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
             RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(
@@ -979,6 +1113,19 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.CurrentPhase, "completed")
                     .Set(x => x.PhaseProgress, 100),
                 cancellationToken: CancellationToken.None);
+            if (exportTask != null)
+            {
+                await _db.VideoExportTasks.UpdateOneAsync(
+                    x => x.Id == exportTask.Id,
+                    Builders<VideoExportTask>.Update
+                        .Set(x => x.Status, VideoExportTaskStatus.Completed)
+                        .Set(x => x.CurrentPhase, "completed")
+                        .Set(x => x.Progress, 100)
+                        .Set(x => x.OutputUrl, stored.Url)
+                        .Set(x => x.ErrorMessage, (string?)null)
+                        .Set(x => x.EndedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+            }
             await UpdateProjectAsync(run, VideoProjectStatus.Completed);
             await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
         }
@@ -989,7 +1136,123 @@ public class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private async Task UpdateExportProgressAsync(string runId, string phase, int progress)
+    private static async Task DownloadToFileAsync(HttpClient client, string url, string targetPath, long maxBytes)
+    {
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+        var contentLength = response.Content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > maxBytes)
+            throw new InvalidOperationException($"媒体文件超过大小限制：{contentLength.Value} bytes");
+        await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var target = File.Create(targetPath);
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, CancellationToken.None);
+            if (read == 0) break;
+            total += read;
+            if (total > maxBytes) throw new InvalidOperationException("媒体文件超过大小限制");
+            await target.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
+        }
+    }
+
+    private static async Task<MediaProbeResult> ProbeMediaAsync(string filePath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "ffprobe",
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-v", "error", "-show_entries", "format=duration", "-show_entries", "stream=codec_type",
+                     "-of", "json", filePath,
+                 })
+            startInfo.ArgumentList.Add(arg);
+        using var process = Process.Start(startInfo)
+                            ?? throw new InvalidOperationException("ffprobe 进程启动失败");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync(CancellationToken.None);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"ffprobe 读取媒体失败: {stderr}");
+        var json = JsonNode.Parse(stdout) as JsonObject
+                   ?? throw new InvalidOperationException("ffprobe 返回了无效 JSON");
+        var durationText = json["format"]?["duration"]?.ToString().Trim('"');
+        _ = double.TryParse(durationText, NumberStyles.Float, CultureInfo.InvariantCulture, out var duration);
+        var hasAudio = json["streams"] is JsonArray streams && streams
+            .OfType<JsonObject>()
+            .Any(stream => string.Equals(stream["codec_type"]?.ToString(), "audio", StringComparison.OrdinalIgnoreCase));
+        return new MediaProbeResult(duration, hasAudio);
+    }
+
+    private static async Task<string?> WriteSubtitleFileAsync(VideoProject? project, string tempDir)
+    {
+        var track = project?.TimelineTracks.FirstOrDefault(item =>
+            item.Type == VideoTrackType.Subtitle && !item.Muted);
+        var clips = track?.Clips
+            .Where(clip => !string.IsNullOrWhiteSpace(clip.Text) && clip.DurationSeconds > 0)
+            .OrderBy(clip => clip.StartSeconds)
+            .ToList();
+        if (clips == null || clips.Count == 0) return null;
+        var content = new StringBuilder();
+        for (var index = 0; index < clips.Count; index++)
+        {
+            var clip = clips[index];
+            content.AppendLine((index + 1).ToString(CultureInfo.InvariantCulture));
+            content.Append(FormatSrtTime(clip.StartSeconds));
+            content.Append(" --> ");
+            content.AppendLine(FormatSrtTime(clip.StartSeconds + clip.DurationSeconds));
+            content.AppendLine(clip.Text!.Trim().Replace("\r\n", "\n").Replace('\r', '\n'));
+            content.AppendLine();
+        }
+        var path = Path.Combine(tempDir, "subtitles.srt");
+        await File.WriteAllTextAsync(path, content.ToString(), new UTF8Encoding(false), CancellationToken.None);
+        return path;
+    }
+
+    private static string FormatSrtTime(double seconds)
+    {
+        var value = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return $"{(int)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00},{value.Milliseconds:000}";
+    }
+
+    private static async Task EnsurePublicHttpsUrlAsync(string rawUrl)
+    {
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException("音频素材必须使用公开 HTTPS URL");
+        IPAddress[] addresses;
+        try { addresses = await Dns.GetHostAddressesAsync(uri.DnsSafeHost); }
+        catch (Exception ex) { throw new InvalidOperationException("音频素材域名无法解析", ex); }
+        if (addresses.Length == 0 || addresses.Any(IsPrivateAddress))
+            throw new InvalidOperationException("音频素材 URL 不允许指向本机或内网地址");
+    }
+
+    private static bool IsPrivateAddress(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address) || address.IsIPv6LinkLocal || address.IsIPv6SiteLocal)
+            return true;
+        if (address.AddressFamily == AddressFamily.InterNetworkV6 && address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        if (address.AddressFamily != AddressFamily.InterNetwork) return false;
+        var bytes = address.GetAddressBytes();
+        return bytes[0] is 0 or 10 or 127 ||
+               (bytes[0] == 100 && bytes[1] is >= 64 and <= 127) ||
+               (bytes[0] == 169 && bytes[1] == 254) ||
+               (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+               (bytes[0] == 192 && bytes[1] == 168) ||
+               bytes[0] >= 224;
+    }
+
+    private sealed record MediaProbeResult(double DurationSeconds, bool HasAudio);
+
+    private async Task UpdateExportProgressAsync(string runId, string? exportTaskId, string phase, int progress)
     {
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == runId,
@@ -997,10 +1260,19 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.CurrentPhase, phase)
                 .Set(x => x.PhaseProgress, progress),
             cancellationToken: CancellationToken.None);
-        await PublishEventAsync(runId, "export.progress", new { phase, progress });
+        if (!string.IsNullOrWhiteSpace(exportTaskId))
+        {
+            await _db.VideoExportTasks.UpdateOneAsync(
+                x => x.Id == exportTaskId,
+                Builders<VideoExportTask>.Update
+                    .Set(x => x.CurrentPhase, phase)
+                    .Set(x => x.Progress, progress),
+                cancellationToken: CancellationToken.None);
+        }
+        await PublishEventAsync(runId, "export.progress", new { taskId = exportTaskId, phase, progress });
     }
 
-    private async Task FailExportAsync(VideoGenRun run, string errorMessage)
+    private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
     {
         var trimmed = errorMessage.Length > 1200 ? errorMessage[..1200] : errorMessage;
         await _db.VideoGenRuns.UpdateOneAsync(
@@ -1012,6 +1284,18 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.CurrentPhase, "export-failed")
                 .Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
+        if (!string.IsNullOrWhiteSpace(exportTaskId))
+        {
+            await _db.VideoExportTasks.UpdateOneAsync(
+                x => x.Id == exportTaskId,
+                Builders<VideoExportTask>.Update
+                    .Set(x => x.Status, VideoExportTaskStatus.Failed)
+                    .Set(x => x.CurrentPhase, "export-failed")
+                    .Set(x => x.Progress, 0)
+                    .Set(x => x.ErrorMessage, trimmed)
+                    .Set(x => x.EndedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
         await UpdateProjectAsync(run, VideoProjectStatus.Editing);
         await PublishEventAsync(run.Id, "export.error", new { message = trimmed });
     }
@@ -1083,5 +1367,44 @@ public class VideoGenRunWorker : BackgroundService
         }
         await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId,
             update, cancellationToken: CancellationToken.None);
+    }
+
+    private async Task<VideoProject?> GetRunProjectAsync(VideoGenRun run)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProjectId)) return null;
+        return await _db.VideoProjects.Find(project => project.Id == run.ProjectId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+    }
+
+    private async Task<bool> SupportsReferenceAssetsAsync(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        if (model.Contains("seedance-2", StringComparison.OrdinalIgnoreCase)) return true;
+        var config = await _db.LLMModels.Find(item => item.Id == model || item.ModelName == model)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        return config?.ModelName.Contains("seedance-2", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static List<string> GetReferenceImageUrls(VideoProject? project)
+        => project?.Assets
+            .Where(asset => asset.Type is VideoProjectAssetType.Character or VideoProjectAssetType.Scene or VideoProjectAssetType.Prop)
+            .Select(asset => asset.Url)
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Select(url => url!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(9)
+            .ToList() ?? [];
+
+    private static string AppendAssetConstraints(string prompt, VideoProject? project)
+    {
+        var assets = project?.Assets
+            .Where(asset => asset.Type is VideoProjectAssetType.Character or VideoProjectAssetType.Scene or VideoProjectAssetType.Prop)
+            .Take(20)
+            .ToList();
+        if (assets == null || assets.Count == 0) return prompt;
+        var manifest = string.Join("\n", assets.Select(asset =>
+            $"- {asset.Type}: {asset.Name}" +
+            (string.IsNullOrWhiteSpace(asset.Description) ? string.Empty : $"；{asset.Description}")));
+        return $"{prompt}\n\n项目一致性约束：以下角色、场景和道具在所有镜头中必须保持外观、服装、色彩和比例一致。\n{manifest}";
     }
 }

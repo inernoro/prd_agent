@@ -1,11 +1,7 @@
 import type { ApiResponse } from '@/types/api';
 
 /**
- * 视频生成（纯 OpenRouter 直出模式）
- *
- * 2026-04-27 重构：原本支持 Remotion 拆分镜路径（VideoGenScene、SceneItemStatus、
- * RenderMode、UpdateVideoScene 等），现已彻底砍掉。视频生成只走 OpenRouter 视频
- * 大模型（Veo / Kling / Wan / Sora）一段直出。
+ * 视频项目制作契约：文学稿拆镜、镜头版本、模型池生成、多轨时间线和独立导出任务。
  */
 
 /** 视频模型能力由网关模型池控制，这里仅提供控制台推荐入口。 */
@@ -97,10 +93,42 @@ export interface VideoProject {
   defaultDuration: number;
   generateAudio: boolean;
   latestRunId?: string;
+  latestExportTaskId?: string;
   assets: VideoProjectAsset[];
   timelineTracks: VideoTimelineTrack[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VideoModelOption {
+  id: string;
+  name: string;
+  healthStatus: 'Healthy' | 'Degraded' | 'Unavailable';
+  supportsAudio: boolean;
+  supportsFirstFrame: boolean;
+  supportsLastFrame: boolean;
+  supportsReferenceAssets: boolean;
+  aspectRatios: string[];
+  resolutions: string[];
+  durations: number[];
+  pricePerCall?: number;
+  priceCurrency?: string;
+}
+
+export interface VideoExportTask {
+  id: string;
+  appKey: string;
+  ownerAdminId: string;
+  projectId: string;
+  runId: string;
+  status: 'Queued' | 'Processing' | 'Completed' | 'Failed' | 'Cancelled';
+  currentPhase: string;
+  progress: number;
+  outputUrl?: string;
+  errorMessage?: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
 }
 
 export interface VideoProjectInput {
@@ -126,6 +154,8 @@ export interface VideoGenSceneVersion {
   model?: string;
   prompt: string;
   duration?: number;
+  firstFrameUrl?: string;
+  lastFrameUrl?: string;
   cost?: number;
   createdAt: string;
 }
@@ -141,6 +171,8 @@ export interface VideoGenScene {
   duration?: number;
   aspectRatio?: string;
   resolution?: string;
+  firstFrameUrl?: string;
+  lastFrameUrl?: string;
   jobId?: string;
   cost?: number;
   videoUrl?: string;
@@ -152,6 +184,7 @@ export interface VideoGenScene {
 export interface VideoGenRun {
   id: string;
   appKey: string;
+  projectId?: string;
   status: string;
   /** 创作模式 */
   mode: VideoGenMode;
@@ -166,6 +199,7 @@ export interface VideoGenRun {
   directAspectRatio?: string;
   directResolution?: string;
   directDuration?: number;
+  generateAudio: boolean;
   // 调用结果
   directVideoJobId?: string;
   directVideoCost?: number;
@@ -232,6 +266,7 @@ export type CreateVideoGenRunContract = (input: {
   directResolution?: '480p' | '720p' | '1080p';
   /** 时长（秒） */
   directDuration?: number;
+  generateAudio?: boolean;
   /** 图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video（视觉分镜台「动起来」用） */
   directFirstFrameUrl?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
@@ -247,6 +282,8 @@ export type UpdateVideoSceneContract = (
     duration?: number;
     aspectRatio?: string;
     resolution?: string;
+    firstFrameUrl?: string;
+    lastFrameUrl?: string;
   }
 ) => Promise<ApiResponse<boolean>>;
 
@@ -272,7 +309,7 @@ export type ActivateVideoSceneVersionContract = (
   versionId: string,
 ) => Promise<ApiResponse<boolean>>;
 
-export type ExportVideoGenRunContract = (runId: string) => Promise<ApiResponse<boolean>>;
+export type ExportVideoGenRunContract = (runId: string) => Promise<ApiResponse<VideoExportTask>>;
 
 export type ListVideoGenRunsContract = (input?: {
   limit?: number;

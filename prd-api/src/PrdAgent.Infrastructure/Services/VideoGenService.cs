@@ -7,8 +7,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 视频生成领域服务实现（纯 OpenRouter 直出模式）
-/// 2026-04-27 重构：原本支持 Remotion 拆分镜路径，现已简化为只调 OpenRouter 视频大模型。
+/// 视频项目与生成任务领域服务实现。项目保存长期编辑状态，Run 表示一次生成，导出任务独立排队。
 /// </summary>
 public class VideoGenService : IVideoGenService
 {
@@ -49,9 +48,9 @@ public class VideoGenService : IVideoGenService
             DefaultResolution = NormalizeResolution(request?.DefaultResolution, "1080p"),
             DefaultDuration = NormalizeDuration(request?.DefaultDuration),
             GenerateAudio = request?.GenerateAudio ?? true,
-            Assets = request?.Assets ?? new List<VideoProjectAsset>(),
+            Assets = NormalizeAssets(request?.Assets),
+            TimelineTracks = NormalizeTimelineTracks(request?.TimelineTracks),
         };
-        if (request?.TimelineTracks?.Count > 0) project.TimelineTracks = request.TimelineTracks;
         await _db.VideoProjects.InsertOneAsync(project, cancellationToken: ct);
         return project;
     }
@@ -107,8 +106,8 @@ public class VideoGenService : IVideoGenService
         if (request.DefaultResolution != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultResolution, NormalizeResolution(request.DefaultResolution, project.DefaultResolution)));
         if (request.DefaultDuration.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultDuration, NormalizeDuration(request.DefaultDuration)));
         if (request.GenerateAudio.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.GenerateAudio, request.GenerateAudio.Value));
-        if (request.Assets != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Assets, request.Assets));
-        if (request.TimelineTracks != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.TimelineTracks, request.TimelineTracks));
+        if (request.Assets != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Assets, NormalizeAssets(request.Assets)));
+        if (request.TimelineTracks != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.TimelineTracks, NormalizeTimelineTracks(request.TimelineTracks)));
 
         await _db.VideoProjects.UpdateOneAsync(x => x.Id == projectId && x.OwnerAdminId == ownerAdminId,
             Builders<VideoProject>.Update.Combine(updates), cancellationToken: ct);
@@ -169,6 +168,7 @@ public class VideoGenService : IVideoGenService
                 DirectAspectRatio = aspect,
                 DirectResolution = resolution,
                 DirectDuration = duration,
+                GenerateAudio = request?.GenerateAudio ?? project?.GenerateAudio ?? true,
                 CurrentPhase = "queued",
                 ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
                 CreatedAt = DateTime.UtcNow,
@@ -220,6 +220,7 @@ public class VideoGenService : IVideoGenService
             DirectAspectRatio = aspect,
             DirectResolution = resolution,
             DirectDuration = duration,
+            GenerateAudio = request?.GenerateAudio ?? project?.GenerateAudio ?? true,
             DirectFirstFrameUrl = string.IsNullOrWhiteSpace(request?.DirectFirstFrameUrl) ? null : request!.DirectFirstFrameUrl!.Trim(),
             TotalDurationSeconds = duration,
             CurrentPhase = "queued",
@@ -257,6 +258,8 @@ public class VideoGenService : IVideoGenService
         if (request.Duration.HasValue && request.Duration.Value > 0) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Duration", request.Duration));
         if (request.AspectRatio != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.AspectRatio", string.IsNullOrWhiteSpace(request.AspectRatio) ? null : request.AspectRatio.Trim()));
         if (request.Resolution != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Resolution", string.IsNullOrWhiteSpace(request.Resolution) ? null : request.Resolution.Trim()));
+        if (request.FirstFrameUrl != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.FirstFrameUrl", LimitOptional(request.FirstFrameUrl, 2_000)));
+        if (request.LastFrameUrl != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.LastFrameUrl", LimitOptional(request.LastFrameUrl, 2_000)));
         if (updates.Count == 0) return;
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
 
@@ -437,7 +440,7 @@ public class VideoGenService : IVideoGenService
         await PublishEventAsync(runId, "scene.version.activated", new { sceneIndex, versionId });
     }
 
-    public async Task RequestExportAsync(
+    public async Task<VideoExportTask> RequestExportAsync(
         string runId,
         string ownerAdminId,
         string? appKey = null,
@@ -452,16 +455,59 @@ public class VideoGenService : IVideoGenService
         if (run.Scenes.Count == 0 || run.Scenes.Any(scene => scene.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(scene.VideoUrl)))
             throw new InvalidOperationException("所有分镜生成完成后才能导出完整视频");
 
+        var existing = await _db.VideoExportTasks.Find(task =>
+                task.RunId == runId && task.OwnerAdminId == ownerAdminId &&
+                (task.Status == VideoExportTaskStatus.Queued || task.Status == VideoExportTaskStatus.Processing))
+            .FirstOrDefaultAsync(ct);
+        if (existing != null) return existing;
+
+        var task = new VideoExportTask
+        {
+            AppKey = run.AppKey,
+            OwnerAdminId = ownerAdminId,
+            ProjectId = run.ProjectId ?? string.Empty,
+            RunId = run.Id,
+            Progress = 1,
+        };
+        await _db.VideoExportTasks.InsertOneAsync(task, cancellationToken: ct);
+
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == runId,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Rendering)
-                .Set(x => x.ExportRequested, true)
+                .Set(x => x.ExportRequested, false)
+                .Set(x => x.LatestExportTaskId, task.Id)
                 .Set(x => x.ExportErrorMessage, (string?)null)
                 .Set(x => x.CurrentPhase, "export-queued")
                 .Set(x => x.PhaseProgress, 1),
             cancellationToken: ct);
-        await PublishEventAsync(runId, "export.queued", new { sceneCount = run.Scenes.Count });
+        if (!string.IsNullOrWhiteSpace(run.ProjectId))
+        {
+            await _db.VideoProjects.UpdateOneAsync(
+                x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId,
+                Builders<VideoProject>.Update
+                    .Set(x => x.LatestExportTaskId, task.Id)
+                    .Set(x => x.Status, VideoProjectStatus.Rendering)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        await PublishEventAsync(runId, "export.queued", new { taskId = task.Id, sceneCount = run.Scenes.Count });
+        return task;
+    }
+
+    public async Task<List<VideoExportTask>> ListExportTasksAsync(
+        string projectId,
+        string ownerAdminId,
+        string? appKey = null,
+        CancellationToken ct = default)
+    {
+        var fb = Builders<VideoExportTask>.Filter;
+        var filter = fb.Eq(x => x.ProjectId, projectId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+        return await _db.VideoExportTasks.Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(50)
+            .ToListAsync(ct);
     }
 
     public async Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
@@ -579,5 +625,69 @@ public class VideoGenService : IVideoGenService
     {
         var value = (resolution ?? fallback).Trim();
         return value is "480p" or "720p" or "1080p" or "1K" or "2K" or "4K" ? value : fallback;
+    }
+
+    private static List<VideoProjectAsset> NormalizeAssets(IReadOnlyCollection<VideoProjectAsset>? assets)
+    {
+        return (assets ?? [])
+            .Take(100)
+            .Select(asset => new VideoProjectAsset
+            {
+                Id = string.IsNullOrWhiteSpace(asset.Id) ? Guid.NewGuid().ToString("N") : asset.Id.Trim(),
+                Type = asset.Type is VideoProjectAssetType.Character or VideoProjectAssetType.Scene or VideoProjectAssetType.Prop or VideoProjectAssetType.Audio
+                    ? asset.Type
+                    : VideoProjectAssetType.Scene,
+                Name = (asset.Name ?? string.Empty).Trim()[..Math.Min((asset.Name ?? string.Empty).Trim().Length, 120)],
+                Url = LimitOptional(asset.Url, 2_000),
+                Description = LimitOptional(asset.Description, 1_000),
+                CreatedAt = asset.CreatedAt == default ? DateTime.UtcNow : asset.CreatedAt,
+            })
+            .Where(asset => !string.IsNullOrWhiteSpace(asset.Name))
+            .ToList();
+    }
+
+    private static List<VideoTimelineTrack> NormalizeTimelineTracks(IReadOnlyCollection<VideoTimelineTrack>? tracks)
+    {
+        var source = tracks ?? [];
+        var definitions = new[]
+        {
+            (Type: VideoTrackType.Video, Name: "视频"),
+            (Type: VideoTrackType.Subtitle, Name: "字幕"),
+            (Type: VideoTrackType.Voice, Name: "配音"),
+            (Type: VideoTrackType.Music, Name: "音乐"),
+        };
+        return definitions.Select(definition =>
+        {
+            var input = source.FirstOrDefault(track => track.Type == definition.Type);
+            return new VideoTimelineTrack
+            {
+                Id = string.IsNullOrWhiteSpace(input?.Id) ? Guid.NewGuid().ToString("N") : input.Id.Trim(),
+                Type = definition.Type,
+                Name = definition.Name,
+                Muted = input?.Muted ?? false,
+                Locked = input?.Locked ?? false,
+                Clips = (input?.Clips ?? [])
+                    .Take(500)
+                    .Select(clip => new VideoTimelineClip
+                    {
+                        Id = string.IsNullOrWhiteSpace(clip.Id) ? Guid.NewGuid().ToString("N") : clip.Id.Trim(),
+                        SceneIndex = clip.SceneIndex is >= 0 ? clip.SceneIndex : null,
+                        StartSeconds = Math.Clamp(clip.StartSeconds, 0, 86_400),
+                        DurationSeconds = Math.Clamp(clip.DurationSeconds, 0.1, 3_600),
+                        TrimStartSeconds = Math.Clamp(clip.TrimStartSeconds, 0, 3_600),
+                        TrimEndSeconds = Math.Clamp(clip.TrimEndSeconds, 0, 3_600),
+                        AssetUrl = LimitOptional(clip.AssetUrl, 2_000),
+                        Text = LimitOptional(clip.Text, 2_000),
+                        Transition = clip.Transition == "fade" ? "fade" : null,
+                    })
+                    .ToList(),
+            };
+        }).ToList();
+    }
+
+    private static string? LimitOptional(string? value, int maxLength)
+    {
+        var normalized = NormalizeOptional(value);
+        return normalized == null ? null : normalized[..Math.Min(normalized.Length, maxLength)];
     }
 }

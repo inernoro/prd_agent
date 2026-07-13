@@ -30,5 +30,16 @@ public class VideoProjectModelTests
         run.Id.ShouldNotBe(project.Id);
         run.ProjectId.ShouldBe(project.Id);
         project.LatestRunId.ShouldBeNull();
+        run.GenerateAudio.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ExportTask_ShouldHaveIndependentIdentityAndProgress()
+    {
+        var task = new VideoExportTask { ProjectId = "project", RunId = "run" };
+
+        task.Id.Length.ShouldBe(32);
+        task.Status.ShouldBe(VideoExportTaskStatus.Queued);
+        task.CurrentPhase.ShouldBe("queued");
     }
 }

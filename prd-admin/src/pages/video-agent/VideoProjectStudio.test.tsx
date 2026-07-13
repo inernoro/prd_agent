@@ -9,6 +9,18 @@ describe('VideoProjectStudio', () => {
         projects={[]}
         project={null}
         runs={[]}
+        models={[{
+          id: 'doubao-seedance-1-5-pro-251215',
+          name: 'Seedance 1.5 Pro',
+          healthStatus: 'Healthy',
+          supportsAudio: true,
+          supportsFirstFrame: true,
+          supportsLastFrame: true,
+          supportsReferenceAssets: false,
+          aspectRatios: ['16:9', '9:16'],
+          resolutions: ['720p', '1080p'],
+          durations: [5, 10],
+        }]}
         busy={false}
         onSelectProject={vi.fn()}
         onNewProject={vi.fn()}
@@ -23,6 +35,8 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('分析并拆镜');
     expect(html).toContain('项目控制器');
     expect(html).toContain('多轨时间线');
+    expect(html).toContain('Seedance 1.5 Pro');
+    expect(html).toContain('添加字幕片段');
     expect(html).toContain('视频</span>');
     expect(html).toContain('字幕</span>');
     expect(html).toContain('配音</span>');

@@ -27,6 +27,15 @@ public static class VideoTrackType
     public const string Music = "music";
 }
 
+public static class VideoExportTaskStatus
+{
+    public const string Queued = "Queued";
+    public const string Processing = "Processing";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+    public const string Cancelled = "Cancelled";
+}
+
 public class VideoProjectAsset
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -76,6 +85,7 @@ public class VideoProject
     public int DefaultDuration { get; set; } = 5;
     public bool GenerateAudio { get; set; } = true;
     public string? LatestRunId { get; set; }
+    public string? LatestExportTaskId { get; set; }
     public List<VideoProjectAsset> Assets { get; set; } = new();
     public List<VideoTimelineTrack> TimelineTracks { get; set; } =
     [
@@ -178,6 +188,9 @@ public class VideoGenScene
     /// <summary>本镜分辨率（留空 = 跟随 Run）</summary>
     public string? Resolution { get; set; }
 
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
+
     /// <summary>本镜 OpenRouter jobId</summary>
     public string? JobId { get; set; }
 
@@ -203,6 +216,8 @@ public class VideoGenSceneVersion
     public string? Model { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public int? Duration { get; set; }
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
     public double? Cost { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -244,6 +259,7 @@ public class VideoGenRun
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
+    public bool GenerateAudio { get; set; } = true;
 
     /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video。</summary>
     public string? DirectFirstFrameUrl { get; set; }
@@ -258,6 +274,9 @@ public class VideoGenRun
 
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
+
+    /// <summary>最近一次独立导出任务 ID。</summary>
+    public string? LatestExportTaskId { get; set; }
 
     /// <summary>用户已请求把全部分镜合成为完整视频</summary>
     public bool ExportRequested { get; set; }
@@ -298,6 +317,40 @@ public class VideoGenRun
     public bool ForceFullShadowSample { get; set; }
 }
 
+[BsonIgnoreExtraElements]
+public class VideoExportTask
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    public string CurrentPhase { get; set; } = "queued";
+    public int Progress { get; set; }
+    public string? OutputUrl { get; set; }
+    public string? ErrorMessage { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? StartedAt { get; set; }
+    public DateTime? EndedAt { get; set; }
+}
+
+public class VideoModelOption
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string HealthStatus { get; set; } = "Healthy";
+    public bool SupportsAudio { get; set; }
+    public bool SupportsFirstFrame { get; set; }
+    public bool SupportsLastFrame { get; set; }
+    public bool SupportsReferenceAssets { get; set; }
+    public List<string> AspectRatios { get; set; } = new();
+    public List<string> Resolutions { get; set; } = new();
+    public List<int> Durations { get; set; } = new();
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+}
+
 /// <summary>创建视频生成任务请求</summary>
 public class CreateVideoGenRunRequest
 {
@@ -322,6 +375,7 @@ public class CreateVideoGenRunRequest
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
 
     /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video（视觉分镜台「动起来」用）。</summary>
     public string? DirectFirstFrameUrl { get; set; }
@@ -364,6 +418,8 @@ public class UpdateVideoSceneRequest
     public int? Duration { get; set; }
     public string? AspectRatio { get; set; }
     public string? Resolution { get; set; }
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
 }
 
 /// <summary>批量渲染分镜请求；不传 indexes 时渲染所有未完成或失败分镜</summary>
