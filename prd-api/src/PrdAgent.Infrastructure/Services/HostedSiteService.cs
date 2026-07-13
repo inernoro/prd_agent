@@ -702,8 +702,7 @@ public class HostedSiteService : IHostedSiteService
                     .Find(m => m.TeamId == group.TeamId && m.UserId == userId)
                     .FirstOrDefaultAsync(ct);
                 var myLabels = member?.Labels ?? new List<string>();
-                var myGroupRole = WebPageGroupAccess.ResolveGroupRole(role, group, userId, myLabels);
-                if (myGroupRole != WebHostingRoles.Owner && myGroupRole != WebHostingRoles.Editor)
+                if (!WebPageGroupAccess.CanWriteToGroup(role, group, userId, myLabels))
                     throw new UnauthorizedAccessException("你在该受限分组没有编辑权，无法将网页复制进去");
             }
         }

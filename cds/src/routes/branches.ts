@@ -25,6 +25,7 @@ import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
+import { selectSqlInitInfra } from '../services/database-init-selection.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -3440,12 +3441,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function runDatabaseSqlInit(params: {
     entry: BranchEntry;
+    profile: BuildProfile;
     init: DatabaseInitRecommendation;
     scanDir: string;
     projectId: string;
     logEvent: (ev: OperationLogEvent) => void;
   }): Promise<void> {
-    const { entry, init, scanDir, projectId, logEvent } = params;
+    const { entry, profile, init, scanDir, projectId, logEvent } = params;
     const file = init.files.find((f) => f === 'schema.sql' || f === 'init.sql') || init.files[0];
     if (!file) throw new Error('未找到 SQL 初始化文件');
     const sqlPath = path.resolve(scanDir, file);
@@ -3454,23 +3456,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`SQL 初始化文件路径非法: ${file}`);
     }
     const sql = fs.readFileSync(sqlPath, 'utf-8');
-    const runningSqlInfra = stateService.getInfraServicesForProject(projectId)
-      .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
-      .sort((a, b) => a.id.localeCompare(b.id));
-    if (runningSqlInfra.length === 0) {
-      throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
-    }
-    // 优先选部署 profile 的 depends_on 明确声明的那个 SQL 库（compose depends_on 里的 infra id/名）；
-    // 仅当没有任何依赖信息命中时，才退回按 id 字母序取首个（历史行为），避免多库项目初始化到错的库。
-    const dependsOnIds = new Set<string>();
-    for (const p of [
-      ...stateService.getBuildProfilesForProject(projectId),
-      ...(entry.extraProfiles ?? []),
-    ]) {
-      for (const dep of p.dependsOn ?? []) dependsOnIds.add(dep);
-    }
-    const infra = runningSqlInfra.find((svc) => dependsOnIds.has(svc.id) || dependsOnIds.has(svc.name))
-      ?? runningSqlInfra[0];
+    const sqlInfra = stateService.getInfraServicesForProject(projectId).filter(isSqlInitInfra);
+    const infra = selectSqlInitInfra(sqlInfra, profile);
     logEvent({
       step: `database-init-sql-${infra.id}`,
       status: 'running',
@@ -3574,7 +3561,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (init.kind === 'sql') {
         try {
-          await runDatabaseSqlInit({ entry, init, scanDir: target.scanDir, projectId, logEvent });
+          await runDatabaseSqlInit({
+            entry,
+            profile: target.profile,
+            init,
+            scanDir: target.scanDir,
+            projectId,
+            logEvent,
+          });
         } catch (err) {
           logEvent({
             step: `database-init-sql-${target.label}`,

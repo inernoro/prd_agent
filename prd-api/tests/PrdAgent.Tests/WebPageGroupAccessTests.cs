@@ -161,6 +161,52 @@ public class WebPageGroupAccessTests
         Assert.Equal(WebHostingRoles.Viewer, role);
     }
 
+    // ── 写入口统一门禁：复制/移动/新建到分组必须共用 ──
+
+    [Theory]
+    [InlineData(WebHostingRoles.Owner, true)]
+    [InlineData(WebHostingRoles.Editor, true)]
+    [InlineData(WebHostingRoles.Viewer, false)]
+    public void InheritGroup_WritePermission_FollowsSpaceRole(string spaceRole, bool expected)
+    {
+        Assert.Equal(expected, WebPageGroupAccess.CanWriteToGroup(spaceRole, Inherit(), "u1", null));
+    }
+
+    [Fact]
+    public void RestrictedGroup_SpaceEditorWithoutGrant_CannotWrite()
+    {
+        Assert.False(WebPageGroupAccess.CanWriteToGroup(
+            WebHostingRoles.Editor,
+            Restricted(UserRule("someone-else", WebHostingRoles.Editor)),
+            "u1",
+            null));
+    }
+
+    [Fact]
+    public void RestrictedGroup_UserOrLabelEditorGrant_CanWrite()
+    {
+        var group = Restricted(
+            UserRule("u1", WebHostingRoles.Editor),
+            LabelRule("运营组", WebHostingRoles.Editor));
+
+        Assert.True(WebPageGroupAccess.CanWriteToGroup(WebHostingRoles.Viewer, group, "u1", null));
+        Assert.True(WebPageGroupAccess.CanWriteToGroup(
+            WebHostingRoles.Viewer,
+            Restricted(LabelRule("运营组", WebHostingRoles.Editor)),
+            "u2",
+            new[] { "运营组" }));
+    }
+
+    [Fact]
+    public void RestrictedGroup_ViewerGrant_CannotWrite()
+    {
+        Assert.False(WebPageGroupAccess.CanWriteToGroup(
+            WebHostingRoles.Editor,
+            Restricted(UserRule("u1", WebHostingRoles.Viewer)),
+            "u1",
+            null));
+    }
+
     [Fact]
     public void SiteInRestrictedGroup_GroupEditorGrant_UpgradesSpaceViewer()
     {

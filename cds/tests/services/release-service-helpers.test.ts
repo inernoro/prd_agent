@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
-import type { ReleaseTarget } from '../../src/types.js';
-import { buildReleaseCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
+import type { ReleaseRun, ReleaseTarget } from '../../src/types.js';
+import { buildReleaseCommand, buildScriptCheckCommand, extractReleaseScriptPaths, findInFlightReleaseRun, isDefaultScriptChain, isLocalProdReleaseCommand, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -26,7 +26,47 @@ function target(appPath = '/opt/prd agent'): ReleaseTarget {
   };
 }
 
+function releaseRun(status: ReleaseRun['status'], targetId = 'target-prod'): ReleaseRun {
+  return {
+    releaseId: `release-${status}`,
+    projectId: 'prd-agent',
+    branchId: 'branch-main',
+    commitSha: 'abc123',
+    artifact: { type: 'branch-preview', commitSha: 'abc123' },
+    targetId,
+    planId: 'plan-ssh',
+    status,
+    startedAt: '2026-07-14T00:00:00.000Z',
+    logs: [],
+    seq: 0,
+  };
+}
+
 describe('release service script preflight helpers', () => {
+  it.each<ReleaseRun['status']>([
+    'queued',
+    'prechecking',
+    'running',
+    'healthchecking',
+    'rollback_running',
+  ])('treats %s as an in-flight release status', (status) => {
+    const run = releaseRun(status);
+    expect(findInFlightReleaseRun([run], 'target-prod')).toBe(run);
+  });
+
+  it.each<ReleaseRun['status']>([
+    'success',
+    'failed',
+    'rollback_success',
+    'rollback_failed',
+  ])('treats %s as a terminal release status', (status) => {
+    expect(findInFlightReleaseRun([releaseRun(status)], 'target-prod')).toBeUndefined();
+  });
+
+  it('ignores in-flight runs from a different release target', () => {
+    expect(findInFlightReleaseRun([releaseRun('running', 'target-other')], 'target-prod')).toBeUndefined();
+  });
+
   it('extracts unique shell scripts from the site publish command', () => {
     expect(extractReleaseScriptPaths('./fast.sh && ./exec_dep.sh && ./fast.sh')).toEqual([
       './fast.sh',

@@ -53,6 +53,18 @@ public static class WebPageGroupAccess
     }
 
     /// <summary>
+    /// 用户是否可以向指定分组写入内容。inherit 分组沿用空间角色；restricted 分组必须
+    /// 解析到 owner/editor。所有“新建、移动、复制到分组”的写入口应复用本方法，避免
+    /// 只校验团队 editor 却漏掉受限分组授权。
+    /// </summary>
+    public static bool CanWriteToGroup(
+        string? spaceRole, WebPageGroup group, string userId, IReadOnlyCollection<string>? myLabels)
+    {
+        var effectiveRole = ResolveGroupRole(spaceRole, group, userId, myLabels);
+        return effectiveRole == WebHostingRoles.Owner || effectiveRole == WebHostingRoles.Editor;
+    }
+
+    /// <summary>
     /// 解析用户对「挂在某分组下的站点」的有效角色。
     /// 站点可能同时共享给多个团队，而分组只属于其中一个团队（group.TeamId）：
     /// - 分组所属团队那一路的角色被分组规则裁剪/升格

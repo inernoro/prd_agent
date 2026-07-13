@@ -5,7 +5,7 @@
  * another project. Release targets can execute SSH commands through saved
  * RemoteHost private keys, so missing project guards here are high impact.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -70,8 +70,8 @@ describe('release control plane project-scope isolation', () => {
       updatedAt: now,
       isEnabled: true,
       ssh: {
-        host: `${projectId}.example.test`,
-        port: 22,
+        host: '127.0.0.1',
+        port: 1,
         user: 'deploy',
         privateKeyRef,
         appPath: '/srv/app',
@@ -161,8 +161,8 @@ describe('release control plane project-scope isolation', () => {
   });
 
   afterEach(async () => {
-    await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await flushAllJsonStateStores();
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
@@ -170,6 +170,43 @@ describe('release control plane project-scope isolation', () => {
     const res = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
     expect(res.status).toBe(200);
     expect(res.body.targets.map((target: ReleaseTarget) => target.id)).toEqual(['target-a']);
+  });
+
+  it('returns only RemoteHosts referenced by release targets in the project key scope', async () => {
+    const res = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
+    expect(res.status).toBe(200);
+    expect(res.body.remoteHosts.map((host: { id: string }) => host.id)).toEqual(['proj-a-host-key']);
+  });
+
+  it('keeps all RemoteHosts visible to system callers without project scope', async () => {
+    const res = await request(server, 'GET', '/api/releases/targets');
+    expect(res.status).toBe(200);
+    expect(res.body.remoteHosts.map((host: { id: string }) => host.id).sort()).toEqual([
+      'proj-a-host-key',
+      'proj-b-host-key',
+    ]);
+  });
+
+  it('refuses an admin caller overwriting another project target through a reused id', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', undefined, {
+      id: 'target-b',
+      projectId: 'proj-a',
+      name: 'A collision target',
+      host: 'proj-a.example.test',
+      port: 22,
+      user: 'deploy',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/app',
+      deployCommand: 'echo overwritten',
+      healthcheckUrl: 'https://proj-a.example.test/healthz',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已属于其他项目');
+    expect(stateService.getReleaseTarget('target-b')).toMatchObject({
+      projectId: 'proj-b',
+      ssh: { deployCommand: './deploy.sh' },
+    });
   });
 
   it('refuses Project A key creating a Project B SSH release target', async () => {
@@ -365,5 +402,8 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.run.rollbackOf).toBe('run-a-current');
     expect(res.body.run.rollbackTargetReleaseId).toBe('run-a-previous');
     expect(res.body.run.commitSha).toBe('branch-a-previous');
+    await vi.waitFor(() => {
+      expect(stateService.getReleaseRun(res.body.run.releaseId)?.status).toBe('rollback_failed');
+    }, { timeout: 2_000, interval: 20 });
   });
 });

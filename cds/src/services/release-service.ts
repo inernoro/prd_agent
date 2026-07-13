@@ -58,6 +58,23 @@ export interface ReleaseHealthProbe {
   message?: string;
 }
 
+export const IN_FLIGHT_RELEASE_STATUSES: ReadonlySet<ReleaseRun['status']> = new Set([
+  'queued',
+  'prechecking',
+  'running',
+  'healthchecking',
+  'rollback_running',
+]);
+
+export function findInFlightReleaseRun(
+  runs: readonly ReleaseRun[],
+  targetId: string,
+): ReleaseRun | undefined {
+  return runs.find((run) => (
+    run.targetId === targetId && IN_FLIGHT_RELEASE_STATUSES.has(run.status)
+  ));
+}
+
 export class ReleaseService {
   constructor(private readonly stateService: StateService) {}
 
@@ -230,12 +247,10 @@ export class ReleaseService {
     // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
     // 部署并发跑互相打架。终态为 success/failed/rollback_success/rollback_failed；
     // 其余（queued/prechecking/running/healthchecking/rollback_running）均视为在途。
-    const inFlightStatuses: ReleaseRun['status'][] = [
-      'queued', 'prechecking', 'running', 'healthchecking', 'rollback_running',
-    ];
-    const inFlight = this.stateService
-      .getReleaseRuns({ targetId: preflight.target.id })
-      .find((r) => inFlightStatuses.includes(r.status));
+    const inFlight = findInFlightReleaseRun(
+      this.stateService.getReleaseRuns({ targetId: preflight.target.id }),
+      preflight.target.id,
+    );
     if (inFlight) {
       throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起`);
     }
