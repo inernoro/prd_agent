@@ -32,6 +32,11 @@ on:
         required: true
         default: false
         type: boolean
+      reuse_existing_static_dist:
+        description: "Reuse the production static site for gateway-only stages. Disable for a paired API and web release."
+        required: true
+        default: true
+        type: boolean
       repo:
         description: "GitHub owner/repo passed to fast.sh and exec_dep.sh."
         required: false
@@ -168,6 +173,7 @@ jobs:
       INPUT_STAGE: ${{ github.event.inputs.stage || '' }}
       INPUT_COMMIT: ${{ github.event.inputs.commit || '' }}
       INPUT_EXECUTE: ${{ github.event.inputs.execute || 'false' }}
+      INPUT_REUSE_EXISTING_STATIC_DIST: ${{ github.event.inputs.reuse_existing_static_dist || 'true' }}
       INPUT_REPO: ${{ github.event.inputs.repo || 'inernoro/prd_agent' }}
       INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
@@ -215,14 +221,14 @@ jobs:
 
           test -f "$env_source"
           test "$(stat -c '%u' "$env_source")" = "0"
-          test -d "$dist_source"
-          test ! -e .env
-          test ! -e deploy/web/dist
+          test "$(readlink -f "$env_source")" = "$PRD_AGENT_DOTENV_FILE"
 
-          ln -s "$env_source" .env
-          ln -s "$dist_source" deploy/web/dist
-          test "$(readlink -f .env)" = "$PRD_AGENT_DOTENV_FILE"
-          test -n "$(find deploy/web/dist -mindepth 1 -maxdepth 1 -print -quit)"
+          if [ "$INPUT_REUSE_EXISTING_STATIC_DIST" = "true" ]; then
+            test -d "$dist_source"
+            mkdir -p deploy/web/dist
+            cp -a "$dist_source/." deploy/web/dist/
+            test -n "$(find deploy/web/dist -mindepth 1 -maxdepth 1 -print -quit)"
+          fi
 
       - name: Restore previous rollout evidence
         if: ${{ github.event.inputs.rollout_evidence_run_id != '' }}
@@ -264,6 +270,7 @@ jobs:
           stage="$(printf '%s' "$INPUT_STAGE" | xargs)"
           commit="$(printf '%s' "$INPUT_COMMIT" | xargs)"
           execute="$(printf '%s' "$INPUT_EXECUTE" | xargs)"
+          reuse_existing_static_dist="$(printf '%s' "$INPUT_REUSE_EXISTING_STATIC_DIST" | xargs)"
           repo="$(printf '%s' "$INPUT_REPO" | xargs)"
           map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
           gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
@@ -343,6 +350,11 @@ jobs:
           export PRD_AGENT_BASE="$map_base"
           export LLMGW_GATE_BASE="$gw_base"
           export LLMGW_CONSOLE_BASE="$console_base"
+          if [ "$reuse_existing_static_dist" = "true" ]; then
+            export PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1
+          else
+            export PRD_AGENT_REUSE_EXISTING_STATIC_DIST=0
+          fi
           export LLMGW_STAGE_EVIDENCE_DIR=".llmgw-release-evidence"
           export LLMGW_GATE_SMOKE_ROUTE_MATRIX="$route_matrix"
           export LLMGW_GATE_SMOKE_ROUTE_APP_CALLER="$route_app_caller"

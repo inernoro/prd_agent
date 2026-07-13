@@ -589,6 +589,24 @@ else
   exit 1
 fi
 
+compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+compose_run() {
+  if [ -f "$compose_dotenv_file" ]; then
+    if [ "$COMPOSE" = "docker-compose" ]; then
+      docker-compose --env-file "$compose_dotenv_file" "$@"
+    else
+      docker compose --env-file "$compose_dotenv_file" "$@"
+    fi
+    return
+  fi
+
+  if [ "$COMPOSE" = "docker-compose" ]; then
+    docker-compose "$@"
+  else
+    docker compose "$@"
+  fi
+}
+
 # 生产 Compose identity 必须与 release worktree 目录名无关。否则从
 # prd_agent_release_<sha> 执行时会创建另一套 project，审计脚本也会找错 Mongo。
 compose_project_name="${PRD_AGENT_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-prd_agent}}"
@@ -1250,7 +1268,12 @@ else
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
   pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-30}"
   if command -v timeout >/dev/null 2>&1; then
-    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+    if [ -f "$compose_dotenv_file" ]; then
+      pull_command="$COMPOSE --env-file $compose_dotenv_file"
+    else
+      pull_command="$COMPOSE"
+    fi
+    if ! timeout "$pull_timeout_seconds" $pull_command pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
       if [ "$TAG" = "latest" ]; then
         echo "WARN: release image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local images" >&2
       else
@@ -1258,7 +1281,7 @@ else
         exit 1
       fi
     fi
-  elif ! $COMPOSE pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+  elif ! compose_run pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
     if [ "$TAG" = "latest" ]; then
       echo "WARN: release image pull failed; continuing with existing local images" >&2
     else
@@ -1277,9 +1300,9 @@ refresh_gateway_after_compose() {
     return 0
   fi
 
-  if $COMPOSE config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
+  if compose_run config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
     echo "Refreshing gateway service to pick up recreated upstream container IPs..."
-    $COMPOSE up -d --no-deps --force-recreate "$gateway_service"
+    compose_run up -d --no-deps --force-recreate "$gateway_service"
   else
     echo "Gateway refresh skipped: service '$gateway_service' not found in compose"
   fi
@@ -1294,7 +1317,7 @@ wait_for_llmgw_serving_readiness() {
 
   services=""
   for service in llmgw-serve llmgw-serve-b; do
-    if $COMPOSE config --services 2>/dev/null | grep -Fxq "$service"; then
+    if compose_run config --services 2>/dev/null | grep -Fxq "$service"; then
       services="$services $service"
     fi
   done
@@ -1310,7 +1333,7 @@ wait_for_llmgw_serving_readiness() {
     all_ready=1
     states=""
     for service in $services; do
-      container_id="$($COMPOSE ps -q "$service" 2>/dev/null | head -n 1)"
+      container_id="$(compose_run ps -q "$service" 2>/dev/null | head -n 1)"
       if [ -z "$container_id" ]; then
         state="missing"
         all_ready=0
@@ -1323,7 +1346,7 @@ wait_for_llmgw_serving_readiness() {
         fi
         if [ "$health" = "unhealthy" ] || [ "$running" = "false" ]; then
           echo "ERROR: serving service $service cannot become ready ($state)" >&2
-          $COMPOSE ps >&2 || true
+          compose_run ps >&2 || true
           exit 1
         fi
       fi
@@ -1336,7 +1359,7 @@ wait_for_llmgw_serving_readiness() {
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       echo "ERROR: serving readiness timeout after ${timeout_seconds}s:$states" >&2
-      $COMPOSE ps >&2 || true
+      compose_run ps >&2 || true
       exit 1
     fi
     sleep 2
@@ -1350,7 +1373,7 @@ else
   docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
   echo "Starting compose (force recreate to ensure new image is used)..."
-  $COMPOSE up -d --force-recreate
+  compose_run up -d --force-recreate
 
   wait_for_llmgw_serving_readiness
 

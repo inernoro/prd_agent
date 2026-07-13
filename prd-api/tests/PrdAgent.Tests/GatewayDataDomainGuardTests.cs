@@ -615,6 +615,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("read_dotenv_value", script);
+        Assert.Contains("compose_dotenv_file=\"${PRD_AGENT_DOTENV_FILE:-.env}\"", script);
+        Assert.Contains("docker compose --env-file \"$compose_dotenv_file\"", script);
+        Assert.Contains("docker-compose --env-file \"$compose_dotenv_file\"", script);
+        Assert.Contains("compose_run up -d --force-recreate", script);
         Assert.Contains("config_value LLMGW_MODE LlmGateway__Mode", script);
         Assert.Contains("config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist", script);
         Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent", script);
@@ -1662,9 +1666,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRODUCTION_RUNTIME_SOURCE: /root/inernoro/prd_agent", workflow);
         Assert.Contains("PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence", workflow);
         Assert.Contains("PRD_AGENT_DOTENV_FILE: /root/inernoro/prd_agent/.env", workflow);
-        Assert.Contains("ln -s \"$env_source\" .env", workflow);
-        Assert.Contains("ln -s \"$dist_source\" deploy/web/dist", workflow);
         Assert.Contains("stat -c '%u' \"$env_source\"", workflow);
+        Assert.Contains("reuse_existing_static_dist", workflow);
+        Assert.Contains("INPUT_REUSE_EXISTING_STATIC_DIST", workflow);
+        Assert.Contains("cp -a \"$dist_source/.\" deploy/web/dist/", workflow);
+        Assert.Contains("export PRD_AGENT_REUSE_EXISTING_STATIC_DIST=0", workflow);
         Assert.DoesNotContain("production_evidence_source:", workflow);
         Assert.Contains("scripts/llmgw-prod-evidence-restore.py", workflow);
         Assert.Contains("--require-owner-uid 0", workflow);
