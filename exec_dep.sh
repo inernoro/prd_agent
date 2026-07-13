@@ -1012,9 +1012,11 @@ run_llmgw_release_gate_if_needed() {
   fi
   args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
   require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
-  if [ "$mode" = "http" ] || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
+  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
     args="$args --require-config-authority"
     echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
+  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway release gate: config-authority inherited from audited full-http maintenance baseline"
   fi
   if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
     args="$args --json-out $LLMGW_GATE_JSON_OUT"
