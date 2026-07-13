@@ -6,3 +6,4 @@
 | fix | prd-api | 修复音频开关未传入生成任务及分镜合成丢弃音轨的问题 |
 | test | prd-api | 新增 ffmpeg 音视频字幕真实合成测试及 Seedance 多参考图协议测试 |
 | fix | scripts | 修复协议路由发布审计未读取汇编后 Changelog 导致的假失败 |
+| fix | ci | 修复正式发布干净检出无法读取生产环境配置和静态产物的问题 |

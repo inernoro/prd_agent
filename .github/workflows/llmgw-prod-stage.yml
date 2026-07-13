@@ -196,13 +196,33 @@ jobs:
       LLMGW_CONSOLE_USER: ${{ secrets.LLMGW_PROD_CONSOLE_USER }}
       LLMGW_CONSOLE_PASSWORD: ${{ secrets.LLMGW_PROD_CONSOLE_PASSWORD }}
       GITHUB_TOKEN: ${{ secrets.PRD_AGENT_PROD_GITHUB_TOKEN || github.token }}
+      PRODUCTION_RUNTIME_SOURCE: /root/inernoro/prd_agent
       PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence
+      PRD_AGENT_DOTENV_FILE: /root/inernoro/prd_agent/.env
 
     steps:
       - name: Checkout release scripts
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Prepare production runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_source="$PRODUCTION_RUNTIME_SOURCE/.env"
+          dist_source="$PRODUCTION_RUNTIME_SOURCE/deploy/web/dist"
+
+          test -f "$env_source"
+          test "$(stat -c '%u' "$env_source")" = "0"
+          test -d "$dist_source"
+          test ! -e .env
+          test ! -e deploy/web/dist
+
+          ln -s "$env_source" .env
+          ln -s "$dist_source" deploy/web/dist
+          test "$(readlink -f .env)" = "$PRD_AGENT_DOTENV_FILE"
+          test -n "$(find deploy/web/dist -mindepth 1 -maxdepth 1 -print -quit)"
 
       - name: Restore previous rollout evidence
         if: ${{ github.event.inputs.rollout_evidence_run_id != '' }}

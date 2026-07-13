@@ -1658,7 +1658,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("actions/download-artifact@v4", workflow);
         Assert.Contains("Restore previous rollout evidence", workflow);
         Assert.Contains("Restore trusted production maintenance evidence", workflow);
+        Assert.Contains("Prepare production runtime inputs", workflow);
+        Assert.Contains("PRODUCTION_RUNTIME_SOURCE: /root/inernoro/prd_agent", workflow);
         Assert.Contains("PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence", workflow);
+        Assert.Contains("PRD_AGENT_DOTENV_FILE: /root/inernoro/prd_agent/.env", workflow);
+        Assert.Contains("ln -s \"$env_source\" .env", workflow);
+        Assert.Contains("ln -s \"$dist_source\" deploy/web/dist", workflow);
+        Assert.Contains("stat -c '%u' \"$env_source\"", workflow);
         Assert.DoesNotContain("production_evidence_source:", workflow);
         Assert.Contains("scripts/llmgw-prod-evidence-restore.py", workflow);
         Assert.Contains("--require-owner-uid 0", workflow);
