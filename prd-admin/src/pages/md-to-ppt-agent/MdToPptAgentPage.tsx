@@ -2792,8 +2792,8 @@ export function MdToPptAgentPage() {
           {/* ─── Input area（composer-shell 卡片式，借鉴 open-design：
                 输入区是一张完整卡片——附件 chips 在卡内顶部、textarea 无边框透明、
                 底部工具行（+ 菜单 / 快捷键提示 / 实底发送主按钮），focus-within 高亮整卡。
-                底部额外留白避免被 CDS 预览挂件（左下角 fixed 条）遮挡。 */}
-          <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
+                移动端额外让出底部导航和系统安全区，避免主操作被遮挡。 */}
+          <div className="shrink-0 border-t border-white/8 px-3 pt-3 pb-[calc(86px+env(safe-area-inset-bottom))] md:pb-[34px]">
             <div
               data-testid="composer-shell"
               /* 禁止在这层加 transform（如 -translate-y）：transform 会创建新 stacking context，
