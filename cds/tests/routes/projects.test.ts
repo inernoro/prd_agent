@@ -1288,6 +1288,50 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(cloneCommand).not.toContain('github-app-installation-token');
     });
 
+    it('fills a runnable command for a standard build-only Compose service', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Compose Build App',
+        gitRepoUrl: 'https://github.com/example/compose-build-app.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'Dockerfile'), 'FROM node:20-alpine\nCMD ["node", "server.js"]\n');
+        fs.writeFileSync(path.join(repoPath, 'package.json'), JSON.stringify({
+          name: 'compose-build-app',
+          scripts: { start: 'node server.js' },
+        }));
+        fs.writeFileSync(path.join(repoPath, 'package-lock.json'), '{}');
+        fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), [
+          'services:',
+          '  app:',
+          '    build: .',
+          '    ports:',
+          '      - "4302:4302"',
+        ].join('\n'));
+        return { stdout: 'Cloning into compose-build-app\n', stderr: '', exitCode: 0 };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+
+      expect(clone.status).toBe(200);
+      const profile = stateService.getBuildProfilesForProject(pid)[0];
+      expect(profile.dockerImage).toBe('node:20-slim');
+      expect(profile.command).toBe('npm ci && npm start');
+      expect(profile.containerPort).toBe(4302);
+      expect(profile.workDir).toBe('.');
+      expect(clone.events.some((event) =>
+        event.event === 'progress' && String(event.data.line).includes('项目清单自动补全'),
+      )).toBe(true);
+    });
+
     it('auto-detects the cloned stack and creates a default build profile', async () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));

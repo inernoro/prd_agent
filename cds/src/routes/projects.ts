@@ -1108,11 +1108,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
 
+    const repoRoot = nodePath.resolve(project.repoPath || nodePath.dirname(composePath));
+    const composeRoot = nodePath.dirname(nodePath.resolve(composePath));
+
+    function inferRunnableComposeProfile(candidate: BuildProfile): BuildProfile {
+      const hasCommand = Boolean(candidate.command?.trim());
+      const hasSyntheticImage = candidate.dockerImage.startsWith('cds-build-');
+      if (hasCommand && !hasSyntheticImage) return candidate;
+
+      const sourceRoot = nodePath.resolve(composeRoot, candidate.workDir || '.');
+      const isInsideRepo = sourceRoot === repoRoot || sourceRoot.startsWith(`${repoRoot}${nodePath.sep}`);
+      if (!isInsideRepo) {
+        sendEvent('progress', { line: `[profile] ${candidate.id} 的构建目录超出项目范围，保留 Compose 原配置` });
+        return candidate;
+      }
+
+      const detection = detectStack(sourceRoot, { preferManifest: true });
+      if (detection.stack === 'unknown' || detection.stack === 'dockerfile') return candidate;
+
+      const command = hasCommand ? candidate.command : composeAutoCommand(detection);
+      const dockerImage = hasSyntheticImage ? detection.dockerImage : candidate.dockerImage;
+      const cacheMounts = candidate.cacheMounts?.length
+        ? candidate.cacheMounts
+        : defaultCacheMountsFor(dockerImage);
+      sendEvent('progress', {
+        line: `[profile] ${candidate.id} 未声明完整启动配置，已从 ${detection.stack} 项目清单自动补全`,
+      });
+      return {
+        ...candidate,
+        dockerImage,
+        command: command || candidate.command,
+        ...(cacheMounts ? { cacheMounts } : {}),
+      };
+    }
+
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
     for (const candidate of parsed.buildProfiles) {
+      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
       const scoped: BuildProfile = {
-        ...(candidate as BuildProfile),
+        ...runnableCandidate,
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
       };
