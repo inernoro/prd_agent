@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Check,
+  Columns2,
   ChevronRight,
   Clock3,
   Download,
@@ -50,7 +51,7 @@ export interface VideoStoryboardEditorProps {
   onBack?: () => void;
 }
 
-type PreviewMode = 'scene' | 'export';
+type PreviewMode = 'scene' | 'compare' | 'export';
 type LibraryTab = 'shots' | 'versions';
 
 const DURATIONS = [5, 8, 10, 12, 15];
@@ -84,6 +85,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(0);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('shots');
   const [previewMode, setPreviewMode] = useState<PreviewMode>('scene');
+  const [compareVersionIds, setCompareVersionIds] = useState<string[]>([]);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -171,6 +173,9 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const previewUrl = previewMode === 'export'
     ? run?.videoAssetUrl
     : selectedScene?.videoUrl;
+  const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
+
+  useEffect(() => { setCompareVersionIds([]); }, [selectedSceneIndex]);
 
   const mutate = useCallback(async (key: string, action: () => Promise<boolean>) => {
     if (mutating) return;
@@ -246,6 +251,14 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     setPreviewMode('scene');
     return true;
   }), [mutate, runId, selectedSceneIndex]);
+
+  const toggleCompareVersion = useCallback((version: VideoGenSceneVersion) => {
+    setCompareVersionIds((current) => {
+      if (current.includes(version.id)) return current.filter((id) => id !== version.id);
+      return [...current.slice(-1), version.id];
+    });
+    setPreviewMode('compare');
+  }, []);
 
   const reorderScenes = useCallback((fromIndex: number, toIndex: number) => mutate('reorder-scenes', async () => {
     if (!run || fromIndex === toIndex) return false;
@@ -382,6 +395,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 scene={selectedScene}
                 mutating={mutating === 'activate-version'}
                 onActivate={activateVersion}
+                selectedIds={compareVersionIds}
+                onCompare={toggleCompareVersion}
               />
             )}
           </div>
@@ -392,6 +407,13 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <div className="video-console__segmented" role="group" aria-label="预览模式">
               <button className={previewMode === 'scene' ? 'is-active' : ''} onClick={() => setPreviewMode('scene')}>当前镜头</button>
               <button
+                className={previewMode === 'compare' ? 'is-active' : ''}
+                onClick={() => setPreviewMode('compare')}
+                disabled={(selectedScene?.versions.length ?? 0) < 2}
+              >
+                版本比较
+              </button>
+              <button
                 className={previewMode === 'export' ? 'is-active' : ''}
                 onClick={() => setPreviewMode('export')}
                 disabled={!run.videoAssetUrl && run.status !== 'Rendering'}
@@ -399,11 +421,28 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 完整成片
               </button>
             </div>
-            <span>{previewMode === 'scene' ? selectedScene?.topic : '最终导出'}</span>
+            <span>{previewMode === 'scene' ? selectedScene?.topic : previewMode === 'compare' ? '版本并排比较' : '最终导出'}</span>
           </div>
 
           <div className="video-console__viewer">
-            {previewUrl ? (
+            {previewMode === 'compare' ? (
+              compareVersions.length === 2 ? (
+                <div className="video-console__compare-grid">
+                  {compareVersions.map((version, index) => (
+                    <div key={version.id}>
+                      <video src={version.videoUrl} controls playsInline />
+                      <span>版本 {selectedScene ? selectedScene.versions.findIndex((item) => item.id === version.id) + 1 : index + 1} · {version.model || '模型池自动选择'}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="video-console__viewer-empty">
+                  <Columns2 size={30} />
+                  <strong>选择两个版本进行比较</strong>
+                  <span>在左侧版本页选择两个生成结果，播放器会保持相同画幅并排展示。</span>
+                </div>
+              )
+            ) : previewUrl ? (
               <video
                 key={previewUrl}
                 ref={videoRef}
@@ -436,7 +475,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           </div>
 
           <div className="video-console__transport">
-            <button onClick={togglePlayback} disabled={!previewUrl} aria-label={isPlaying ? '暂停' : '播放'}>
+            <button onClick={togglePlayback} disabled={!previewUrl || previewMode === 'compare'} aria-label={isPlaying ? '暂停' : '播放'}>
               {isPlaying ? <Pause size={16} /> : <Play size={16} />}
             </button>
             <span>{formatTime(playhead)}</span>
@@ -519,7 +558,9 @@ const VersionLibrary: React.FC<{
   scene: VideoGenScene | null;
   mutating: boolean;
   onActivate: (version: VideoGenSceneVersion) => void;
-}> = ({ scene, mutating, onActivate }) => {
+  selectedIds: string[];
+  onCompare: (version: VideoGenSceneVersion) => void;
+}> = ({ scene, mutating, onActivate, selectedIds, onCompare }) => {
   const versions = scene?.versions ?? [];
   if (versions.length === 0) {
     return (
@@ -531,20 +572,22 @@ const VersionLibrary: React.FC<{
     );
   }
   return <>{[...versions].reverse().map((version, index) => (
-    <button
+    <div
       key={version.id}
-      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''}`}
-      onClick={() => onActivate(version)}
-      disabled={mutating}
+      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''} ${selectedIds.includes(version.id) ? 'is-compare' : ''}`}
     >
-      <video src={version.videoUrl} muted preload="metadata" />
-      <div>
-        <strong>版本 {versions.length - index}</strong>
-        <span>{version.model || '模型池自动选择'}</span>
-        <span>{new Date(version.createdAt).toLocaleString('zh-CN')}</span>
-      </div>
-      {scene?.activeVersionId === version.id && <Check size={14} />}
-    </button>
+      <button className="video-console__version-select" onClick={() => onCompare(version)} disabled={mutating} title="加入版本比较">
+        <video src={version.videoUrl} muted preload="metadata" />
+        <div>
+          <strong>版本 {versions.length - index}</strong>
+          <span>{version.model || '模型池自动选择'}</span>
+          <span>{new Date(version.createdAt).toLocaleString('zh-CN')}</span>
+        </div>
+      </button>
+      <button className="video-console__version-use" onClick={() => onActivate(version)} disabled={mutating} title="采用这个版本">
+        {scene?.activeVersionId === version.id ? <Check size={14} /> : <Film size={13} />}
+      </button>
+    </div>
   ))}</>;
 };
 
