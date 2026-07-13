@@ -1427,6 +1427,86 @@
   }
 }
 
+/* 手机端密度（.claude/rules/mobile-first-density.md）：
+   工具条压成「标题+操作」一行（操作区可横滚，不挤压别人）+ 搜索独占一行；
+   分类 tab 与技能标签合并为同一条横滚控制条，不再竖向堆叠、不换行。 */
+@media (max-width: 767px) {
+  .marketplace-toolbar-content {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .marketplace-title-group,
+  .marketplace-toolbar-actions {
+    width: auto;
+  }
+
+  .marketplace-toolbar-actions {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* flex-end + overflow 会让左侧溢出项不可滚动：改 flex-start，
+       用首子项 margin-left:auto 在放得下时保持右对齐 */
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .marketplace-toolbar-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .marketplace-toolbar-actions > * {
+    flex-shrink: 0;
+  }
+
+  .marketplace-toolbar-actions > :first-child {
+    margin-left: auto;
+  }
+
+  .marketplace-nav-pill {
+    padding: 0 9px;
+  }
+
+  .marketplace-search-mobile {
+    padding: 2px 0 8px;
+  }
+
+  .marketplace-filter-content {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .marketplace-filter-content::-webkit-scrollbar {
+    display: none;
+  }
+
+  .marketplace-category-tabs {
+    flex: 0 0 auto;
+    overflow-x: visible;
+  }
+
+  .marketplace-tags-row {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    padding-left: 10px;
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .marketplace-tags-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
 @media (max-width: 760px) {
   .open-api-start-heading,
   .open-api-start-layout,
