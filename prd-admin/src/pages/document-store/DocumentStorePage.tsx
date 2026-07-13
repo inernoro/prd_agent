@@ -2086,7 +2086,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
             </span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
             <div
               className="h-full rounded-full transition-all duration-200"
               style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
@@ -3775,7 +3775,7 @@ function StorePickerDialog({ actionLabel, onPick, onCreateNew, onClose }: {
               placeholder="按名称过滤…"
               autoFocus
               className="mt-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
             />
           )}
         </div>

@@ -721,7 +721,7 @@ function TranscribeHeroCard({
               title={s.description}
               className="cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
               style={{
-                background: 'var(--bg-elevated, rgba(255,255,255,0.06))',
+                background: 'var(--bg-elevated)',
                 color: 'var(--text-secondary)',
                 border: '1px solid var(--border-faint)',
               }}>
@@ -763,7 +763,7 @@ function TranscribeHeroCard({
               onClick={onRestyle}
               className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
               style={{
-                background: 'var(--bg-elevated, rgba(255,255,255,0.06))',
+                background: 'var(--bg-elevated)',
                 color: 'var(--text-secondary)',
                 border: '1px solid var(--border-faint)',
               }}>

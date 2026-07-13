@@ -337,7 +337,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
           disabled={state === 'requesting'}
           aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
           className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
-          style={{ background: 'var(--bg-elevated, rgba(255,255,255,0.08))', color: 'var(--text-primary)' }}>
+          style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
           {state === 'paused' ? <Play size={18} /> : <Pause size={18} />}
         </button>
         <button

@@ -99,6 +99,19 @@ export function TranscribeFlowDrawer({
   const [archivedTo, setArchivedTo] = useState<string | null>(null);
   // 上传进度（大录音文件不再"卡住没反馈"）
   const [uploadPercent, setUploadPercent] = useState(0);
+  // 结果区双页签：整理结果（markdown）/ 转录原文（run.transcriptText，2026-07-13 用户确认交互）
+  const [summaryView, setSummaryView] = useState<'summary' | 'raw'>('summary');
+  const [rawTranscript, setRawTranscript] = useState<string | null>(null);
+  const rawFetchedRef = useRef(false);
+
+  // 完成后取转录原文（run 上带 transcriptText；老 run 没存则显示指引）
+  useEffect(() => {
+    if (status !== 'done' || !runId || rawFetchedRef.current) return;
+    rawFetchedRef.current = true;
+    void getAgentRun(runId).then((res) => {
+      if (res.success) setRawTranscript(res.data?.transcriptText ?? '');
+    });
+  }, [status, runId]);
 
   const streamUrl = useMemo(
     () => (runId ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0` : ''),
@@ -342,7 +355,7 @@ export function TranscribeFlowDrawer({
             <span>正在上传录音</span>
             <span className="tabular-nums">{uploadPercent}%</span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
             <div
               className="h-full rounded-full transition-all duration-200"
               style={{ width: `${uploadPercent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
@@ -369,7 +382,9 @@ export function TranscribeFlowDrawer({
       )}
 
       {/* 失败信息 */}
-      {status === 'failed' && errorMessage && (
+      {/* 失败信息：不限定 status —— restyle 请求失败时 status 仍是 done，
+          只设 errorMessage；若只在 failed 态渲染，用户会看到按钮停转却无任何解释（Codex P2） */}
+      {errorMessage && (
         <div
           className="rounded-[10px] p-3 text-[12px]"
           style={{
@@ -418,7 +433,7 @@ export function TranscribeFlowDrawer({
                   className="cursor-pointer rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors"
                   style={active
                     ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,197,253,0.98)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
-                    : { background: 'var(--bg-elevated, rgba(255,255,255,0.06))', color: 'var(--text-muted)' }}>
+                    : { background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
                   {s.label}
                 </button>
               );
@@ -431,7 +446,7 @@ export function TranscribeFlowDrawer({
               rows={3}
               placeholder="描述你想要的整理方式，例如：按时间线整理成流水记录，标注每件事的相关人。"
               className="mb-2 w-full resize-none rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
             />
           )}
           <input
@@ -439,7 +454,7 @@ export function TranscribeFlowDrawer({
             onChange={(e) => setStyleContext(e.target.value)}
             placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
             className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-            style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}
+            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
           />
           <Button
             variant="secondary"
@@ -472,7 +487,7 @@ export function TranscribeFlowDrawer({
                   .finally(() => setArchiving(false));
               }}
               className="w-full cursor-pointer rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-              style={{ background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-faint)' }}>
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
               <option value="">选择文件夹…</option>
               <option value="__root__">库根目录</option>
               {folders!.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}
@@ -485,11 +500,24 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 完成态摘要预览：markdown 渲染 + 限高内滚（不把上方操作区顶出屏幕）+ 可编辑 */}
+      {/* 完成态结果预览：双页签「整理结果 / 转录原文」+ markdown 渲染 + 限高内滚 + 可编辑。
+          原始转录必须可见——整理是加工品，原文是底稿，两者都留（2026-07-13 用户确认交互） */}
       {status === 'done' && summaryText && (
         <div className="surface-inset rounded-[12px] p-3.5">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-[11px] font-semibold text-token-muted">摘要（已保存到笔记）</p>
+            <div className="flex items-center gap-1">
+              {([['summary', '整理结果'], ['raw', '转录原文']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setSummaryView(key)}
+                  className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors"
+                  style={summaryView === key
+                    ? { background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }
+                    : { color: 'var(--text-muted)' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
             {outputEntryId && onEditNote && (
               <button
                 onClick={() => { onEditNote(outputEntryId); onClose(); }}
@@ -500,7 +528,17 @@ export function TranscribeFlowDrawer({
             )}
           </div>
           <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-            <MarkdownViewer content={summaryText} />
+            {summaryView === 'summary' ? (
+              <MarkdownViewer content={summaryText} />
+            ) : rawTranscript === null ? (
+              <div className="flex items-center gap-2 py-3 text-[12px] text-token-muted"><MapSpinner size={12} /> 正在读取转录原文…</div>
+            ) : rawTranscript ? (
+              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-token-primary">{rawTranscript}</p>
+            ) : (
+              <p className="py-2 text-[12px] text-token-muted">
+                本次任务未单独保存转录原文（旧版本生成）。完整原文在转录笔记的「转录全文」小节，点上方「查看转录笔记」查看。
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -596,7 +634,7 @@ export function TranscribeFlowDrawer({
           )}
         </div>
         <div
-          className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 pt-4 pb-20'}`}
+          className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 pt-4 pb-5'}`}
           style={{ borderTop: '1px solid var(--border-faint)' }}>
           {footer}
         </div>
