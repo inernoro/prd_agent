@@ -242,6 +242,17 @@ export function TipsDrawer() {
     [items, dismissed, location.pathname, location.search],
   );
 
+  // 本页教程是否「挡路」（Codex P2，2026-07-13）：自动开讲改为每设备一生一次后，
+  // 没走完的教程会让 pageGuideHere 恒为真；若更新提醒仍无条件给它让路，会被永久压制。
+  // 收窄为两种情况才让路：1) 教程尚未自动弹过（本次进页即将开讲）；2) 本 session 刚开讲过
+  // （Spotlight 可能还在跑，不叠加打断）。已弹过且非本 session → 不再挡更新教程/提醒。
+  const isPageGuideBlocking = useCallback(() => {
+    const sid = pageGuideHere?.sourceId;
+    if (!sid) return false;
+    if (!readIdSet('local', AUTO_STARTED_GUIDES_FOREVER_KEY).has(sid)) return true;
+    return readIdSet('session', AUTO_STARTED_GUIDES_KEY).has(sid);
+  }, [pageGuideHere]);
+
   // ── 本页相关教程子集 ──────────────────────────────────
   // 与 TipsEntryButton 共用 filterPageTips(SSOT):只展示属于本页的教程,
   // 彻底消除「开 A 页弹 B 页教程」。带 location.search 让 query-scoped tip 按 tab 精确匹配(Codex P2)。
@@ -266,7 +277,7 @@ export function TipsDrawer() {
   useEffect(() => {
     if (visualAuditMode) return;
     if (!loaded) return;
-    if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
+    if (isPageGuideBlocking()) return; // 本页教程即将开讲/刚开讲 → 不抢着展开抽屉(避免叠加);已弹过的不再挡路
     // 本页有未学会的「轻微提醒更新」且其精确目标页正是当前页 → 由下面的 Spotlight 气泡 effect 独占
     // 自动弹,抽屉不抢(避免双弹)。必须带精确路由判断:filterPageTips 会把 reminder 前缀匹配到子路由
     // (/visual-agent/:id),但 reminder 只在精确列表页弹;不判精确路由的话,子路由上的周更新教程抽屉会被
@@ -286,10 +297,10 @@ export function TipsDrawer() {
       setHiddenByUser(false);
     }
     setExpanded(true); // 保持「本页教程」语义(showAllPages 默认 false),绝不自动切「全部教程」
-    // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
+    // isPageGuideBlocking 必须进 deps:否则首屏若落在「有教程页」early-return 后,
     // 切到「有更新页」时本 effect 不再 fire,更新提醒整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pageTips, pageGuideHere, location.pathname, visualAuditMode]);
+  }, [loaded, pageTips, isPageGuideBlocking, location.pathname, visualAuditMode]);
 
   // ── 轻微提醒更新:进入页面自动「悬浮气泡」弹一次,看过即不再显示 ──────────────
   // 用户诉求(2026-06-11):刚上线的小功能(如视觉创作首页可粘贴图片),用一个轻量悬浮气泡
@@ -303,7 +314,7 @@ export function TipsDrawer() {
   useEffect(() => {
     if (visualAuditMode) return;
     if (!loaded) return;
-    if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
+    if (isPageGuideBlocking()) return; // 本页教程即将开讲/刚开讲 → 先让 Spotlight,不抢;已弹过的不再挡路
     const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
     if (!reminder || !reminder.sourceId) return;
     // 只在「精确目标页」弹/标记学会(Codex P2):reminder 是非 page-guide,filterPageTips 会把它
@@ -333,7 +344,7 @@ export function TipsDrawer() {
     void trackTip(reminder.id, 'clicked');
     writeSpotlightPayload(reminder); // 在 [data-tour-id=...] 位置弹单步气泡
     void markLearned(reminder.id);   // 看过即标记学会 → 之后永不再弹(取消/知道了都一样)
-  }, [loaded, pageTips, pageGuideHere, markLearned, location.pathname, visualAuditMode]);
+  }, [loaded, pageTips, isPageGuideBlocking, markLearned, location.pathname, visualAuditMode]);
 
   // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
   // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
