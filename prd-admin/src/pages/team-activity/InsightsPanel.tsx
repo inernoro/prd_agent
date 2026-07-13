@@ -53,11 +53,6 @@ const STATUS_LABEL: Record<string, string> = {
 
 // 移动端单图视图切换：同一份体验信号的不同可视化模式（桌面端走四图仪表盘，不用切换器）
 type HeroView = 'heatmap' | 'trend' | 'board';
-const HERO_VIEWS: { key: HeroView; label: string; icon: LucideIcon }[] = [
-  { key: 'heatmap', label: '热力图', icon: LayoutGrid },
-  { key: 'trend', label: '趋势爆点', icon: TrendingUp },
-  { key: 'board', label: '声道看板', icon: Megaphone },
-];
 
 /**
  * 仪表盘单图全屏包装：给趋势爆点 / 声道看板等格子加「全屏」按钮（热力图自带全屏，故不包它）。
@@ -543,18 +538,19 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   );
 
   // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入入口 + 子切换器。
-  // compact=true（桌面格内/移动单图）时给热力图挂全屏按钮，格里小、全屏看大。
-  const renderMapTile = () =>
+  // mobile=true（移动单图）不注入 headerExtra：AI 分析 + 子切换器已合并进单条横滚控制条（见 renderMobileSingle），
+  // 地图卡头保持单行，避免手机端控制条堆叠（mobile-first-density）。
+  const renderMapTile = (mobile = false) =>
     mapMode === 'heatmap' ? (
       <ExperienceMap
         data={mapData}
         loading={loading}
         onSelectTarget={handleSelectTarget}
         onRequestFullscreen={() => setFullscreenOpen(true)}
-        headerExtra={mapHeaderExtra}
+        headerExtra={mobile ? undefined : mapHeaderExtra}
       />
     ) : (
-      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapHeaderExtra} />
+      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mobile ? undefined : mapHeaderExtra} />
     );
 
   // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
@@ -631,36 +627,46 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   };
 
   // 移动端：四图不适合小屏，改单图视图切换器 + 单图展示（满宽满铺，嵌套卡 GlassCard 自动去 chrome）。
-  const renderMobileSingle = () => (
-    <div className="flex flex-col gap-2 lg:hidden">
-      <div className="-mx-1 px-1 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
-          {HERO_VIEWS.map((v) => {
-            const VIcon = v.icon;
-            const active = heroView === v.key;
-            return (
-              <button
-                key={v.key}
-                type="button"
-                onClick={() => setHeroView(v.key)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] whitespace-nowrap shrink-0 transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
-              >
-                <VIcon size={12} />
-                {v.label}
-              </button>
-            );
-          })}
+  // 控制条收纳（mobile-first-density）：视图切换 + 站点地图子模式 + AI 用户分析 全部合并进**一条**横滚条，
+  // 地图卡头不再注入 headerExtra（桌面才注入）——手机端进内容前只有这一条控制条。
+  const renderMobileSingle = () => {
+    const mobileViews: { key: string; label: string; icon: LucideIcon; active: boolean; onClick: () => void }[] = [
+      { key: 'heatmap', label: '热力图', icon: LayoutGrid, active: heroView === 'heatmap' && mapMode === 'heatmap', onClick: () => { setHeroView('heatmap'); setMapMode('heatmap'); } },
+      { key: 'sitemap', label: '站点地图', icon: Network, active: heroView === 'heatmap' && mapMode === 'sitemap', onClick: () => { setHeroView('heatmap'); setMapMode('sitemap'); } },
+      { key: 'trend', label: '趋势爆点', icon: TrendingUp, active: heroView === 'trend', onClick: () => setHeroView('trend') },
+      { key: 'board', label: '声道看板', icon: Megaphone, active: heroView === 'board', onClick: () => setHeroView('board') },
+    ];
+    return (
+      <div className="flex flex-col gap-2 lg:hidden">
+        <div className="-mx-1 px-1 flex items-center gap-2 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+          <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 shrink-0">
+            {mobileViews.map((v) => {
+              const VIcon = v.icon;
+              return (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={v.onClick}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] whitespace-nowrap shrink-0 transition-colors cursor-pointer ${v.active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+                >
+                  <VIcon size={12} />
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+          {aiAnalysisHeaderBtn}
+        </div>
+        <div key={`${heroView}-${mapMode}`} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+          {heroView === 'heatmap'
+            ? renderMapTile(true)
+            : heroView === 'trend'
+              ? renderTrendTile(false)
+              : renderBoardTile()}
         </div>
       </div>
-      <div key={`${heroView}-${mapMode}`} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
-        {heroView === 'heatmap'
-          ? renderMapTile()
-          : heroView === 'trend'
-            ? renderTrendTile(false)
-            : renderBoardTile()}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderHeroView = () => (
     <>

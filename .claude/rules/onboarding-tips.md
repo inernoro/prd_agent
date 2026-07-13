@@ -1,6 +1,6 @@
 # 页面新手指引（小技巧）维护规则
 
-> 每个大型智能体页面都有自己的**本页完整新手指引**（约 6-15 步 Tour，能从列表「贯通」进编辑器走完整生命周期）。入口是右上角常驻、带文字标签的 pill；用户进入任一有教程且**没走完**的页面会**自动开讲**，走完最后一步才算过——强制人人过一遍。本规则保证：页面 UI 变了，指引和锚点必须同步更新，不留断点。
+> 每个大型智能体页面都有自己的**本页完整新手指引**（约 6-15 步 Tour，能从列表「贯通」进编辑器走完整生命周期）。入口是右上角常驻、带文字标签的 pill；用户进入任一有教程的页面会**自动开讲一次**（每台设备每条教程一生只自动弹一次，2026-07-12 起废除"没走完就反复弹"）。本规则保证：页面 UI 变了，指引和锚点必须同步更新，不留断点。
 
 ---
 
@@ -8,7 +8,7 @@
 
 - **入口位置**：右上角常驻 pill（文字「本页教程 / 新手指引」），始终可见、不可贴边隐藏。**禁止**改回右下角匿名图标（用户原话：像个小广告，没人点）。
 - **移动端例外（2026-06-22 用户要求）**：手机端（`<768px`）**隐藏** TabBar/PageHeader 内嵌的教程 pill，把顶部空间让给页面操作（控制条过载治理）。教程入口改由「我的 → 学习中心」（`/learning-center`）承载；新人未走完的本页 `*-page-guide` 仍由 `SpotlightOverlay` 自动开讲（不依赖 pill）。即"桌面常驻 pill、手机收进学习中心 + 自动开讲"。
-- **强制自动开讲**：`TipsDrawer` 有一个 effect——进入任意路由，若存在 `actionUrl` 匹配当前页、且 `sourceId` 以 `-page-guide` 结尾的 tip 还在 `tips` 里（后端已过滤掉「已学会」的 → 还在 = 没走完），就用 `writeSpotlightPayload` 自动开讲一次。本 session 每条只自动弹一次（`sessionStorage` 的 `tipsAutoStartedGuides`），跨 session 未走完会再弹，直到 `SpotlightOverlay` 末步「完成」`markLearned`。**新增页面教程时务必用 `*-page-guide` 后缀的 sourceId，否则不会自动开讲。**
+- **自动开讲只此一次（2026-07-12 改，用户反馈「教程有点烦人，不要反复弹出」）**：`TipsDrawer` 有一个 effect——进入任意路由，若存在 `actionUrl` 匹配当前页、且 `sourceId` 以 `-page-guide` 结尾的 tip 还在 `tips` 里（后端已过滤掉「已学会」的），就用 `writeSpotlightPayload` 自动开讲。**每条教程每台设备一生只自动开讲一次**（`localStorage` 的 `tipsAutoStartedGuidesForever`，弹过即记，走没走完都不再自动弹）——废除旧的「每个新 session 重弹直到走完最后一步」强制机制。没走完的教程入口 pill 仍保持强调态，学习中心可随时重看；`sessionStorage` 的 `tipsAutoStartedGuides` 仍同步写一份，仅供「更新提醒不紧跟整套教程弹」的同 session 判断（§5.9.3 约束 1）。更新教程抽屉自动展开同理：`tipsBookAutoOpenedIds` 也改 localStorage，每条每台设备只自动展开一次。**新增页面教程时务必用 `*-page-guide` 后缀的 sourceId，否则不会自动开讲。**
 - **全局唯一挂载**：`<TipsDrawer/>` 与 `<SpotlightOverlay/>` 挂在 **App 根**（`src/app/App.tsx`，Router 内、Routes 外），跨任意路由（含 shell→全屏编辑器）**不卸载**。这样本页教程的 `NavigateTo` / 自动点击「新建」进编辑器的步骤不会因路由切换丢 state。**禁止**再在 `AppShell` 或某个页面里单独挂这两个组件（会重复实例 + 跨页丢 state）。
 
 ## 一、SSOT 与触发范围
@@ -61,7 +61,7 @@
 把整套教程系统做了一次统一,以下为**现行行为**,与上面旧描述冲突处以本节为准:
 
 ### 5.1 三类 tip（优先级,治「只是更新却重弹新手」）
-- **新手教程 onboarding**：`tier=basic` + `*-page-guide`。每人一次（学会写 `Version=int.MaxValue`,永不再弹）。进页未走完自动开讲一次/session。**计入头像掌握度**。
+- **新手教程 onboarding**：`tier=basic` + `*-page-guide`。每人一次（学会写 `Version=int.MaxValue`,永不再弹）。进页自动开讲**每设备一生一次**（2026-07-12 起,不再按 session 重弹）。**计入头像掌握度**。
 - **更新教程 update**：`tier=advanced` + `sourceId=*-update-YYYYwNN`。发布窗口=本周（`StartAt/EndAt`）；学会写真实 Version,功能再更新升 Version → 再次提醒；**绝不动 `*-page-guide`,不重弹新手整套**。由 `tutorial-daily-maintain` 技能定时起草。
 - **快捷任务 task**：其余带 `Steps` 的 seed（如 `defect-full-flow`）。
 - 后端 `CategoryOf()` 按 sourceId 后缀分类;`GET /api/daily-tips/progress` 返回目录 + 掌握度（onboarding 计分母）。

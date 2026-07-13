@@ -181,9 +181,10 @@ export function TeamManager() {
   };
 
   return (
-    <div className="flex gap-4 h-full min-h-0">
+    // 手机端上下堆叠（团队列表在上、成员详情在下），lg 起恢复左右双栏——固定 280px 列表曾把手机端右栏挤成竖条
+    <div className="flex flex-col lg:flex-row gap-4 lg:h-full min-h-0">
       {/* Left: Team list */}
-      <div className="w-[280px] flex flex-col gap-3">
+      <div className="w-full lg:w-[280px] shrink-0 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>团队列表</div>
           <Button variant="primary" size="sm" onClick={handleCreateTeam}>
