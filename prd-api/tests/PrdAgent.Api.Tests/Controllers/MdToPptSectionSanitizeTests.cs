@@ -1,4 +1,5 @@
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -102,5 +103,58 @@ public class MdToPptSectionSanitizeTests
         // 展示代码片段的合法页（1-2 处属性字样在正文中）低于阈值，不误伤
         var codePage = "<section><h2>示例</h2><pre>用法：写 class=\"card\" 即可</pre></section>";
         Assert.False(MdToPptController.LooksCorruptedSection(codePage));
+    }
+
+    [Fact]
+    public void OpenAiCompatibleProfile_UsesGatewayDirect()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
+            Model = "qwen-max",
+        };
+
+        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void AnthropicProfile_KeepsCdsAgentCompatibilityPath()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Protocol = InfraAgentRuntimeProtocols.Anthropic,
+            Model = "claude-sonnet",
+        };
+
+        Assert.False(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void RunnableSlideFragment_RejectsFullHtmlAndScript()
+    {
+        Assert.False(MdToPptController.IsRunnableSlideFragment("<html><body><section>x</section></body></html>", anchored: false));
+        Assert.False(MdToPptController.IsRunnableSlideFragment("<section><script>alert(1)</script></section>", anchored: false));
+        Assert.True(MdToPptController.IsRunnableSlideFragment("<section><div class=\"pp-root\"><h2>标题</h2></div></section>", anchored: false));
+    }
+
+    [Fact]
+    public void GatewayPageRequest_PinsExpectedModelAndKeepsStream()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
+            Model = "qwen-max",
+            TimeoutSeconds = 120,
+        };
+
+        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1");
+
+        Assert.True(request.Stream);
+        Assert.Equal("qwen-max", request.ExpectedModel);
+        Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
+        Assert.Equal("req1", request.Context?.RequestId);
+        Assert.Equal("u1", request.Context?.UserId);
     }
 }

@@ -563,9 +563,9 @@ function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): 
   const degraded = run.degraded ?? 0;
   if (degraded > 0) {
     const tp = run.total || 0;
-    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因页面生成失败` +
       '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
-      '或检查 CDS Agent 运行状态后整体重新生成。';
+      '或切换模型运行配置后整体重新生成。';
   }
   return 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。';
 }
@@ -573,10 +573,17 @@ function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): 
 function warnIfDegraded(run: { degraded?: number }): void {
   if ((run.degraded ?? 0) > 0) {
     toast.warning(
-      `有 ${run.degraded} 页未走 Agent 设计`,
-      'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+      `有 ${run.degraded} 页未完成设计生成`,
+      '部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
     );
   }
+}
+
+function profileRunsOnGateway(profile: MdToPptProfileItem | null): boolean {
+  if (!profile) return true;
+  const protocol = (profile.protocol ?? '').toLowerCase();
+  const runtime = (profile.runtime ?? '').toLowerCase();
+  return protocol === 'openai-compatible' || runtime === 'openai-compatible' || runtime === 'openai';
 }
 
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
@@ -957,8 +964,8 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 export function MdToPptAgentPage() {
   const navigate = useNavigate();
 
-  // ─── CDS 连接门禁：PPT 生成完全依赖 CDS Agent，未连接整页禁用并引导去授权。
-  // 'checking' 期间显示加载，'disconnected' 走 blocked 早返回（不挂载任何生成 UI）。
+  // ─── CDS 连接状态：openai-compatible 配置优先走 LLM Gateway 直出；
+  // 这里只作为 CDS Agent 兼容路径的状态提示，不再整页禁用。
   const [connStatus, setConnStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
 
   // ─── Session lazy-load: run BEFORE any other useState so saveSession
@@ -966,8 +973,8 @@ export function MdToPptAgentPage() {
   const [savedSession] = useState<SessionState | null>(loadSession);
 
   // ─── Global settings (收进设置区，不占对话空间）
-  // 引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出），无引擎/模型选择；
-  // 模型由 Agent 运行配置决定，经 SSE model 事件回显（ai-model-visibility）。
+  // 引擎由运行配置决定：openai-compatible 走 LLM Gateway 直出，anthropic/CDS 配置走 CDS Agent 兼容。
+  // 实际模型经 SSE model 事件回显（ai-model-visibility）。
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
   // 自定义模板（上传参考图 → 视觉模型提取风格规范，生成时优先于官方主题）
   const [templateId, setTemplateId] = useState<string | null>(savedSession?.templateId ?? null);
@@ -1016,7 +1023,7 @@ export function MdToPptAgentPage() {
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
   // 模型池直选（2026-06-11 用户提案：池里配过的 baseUrl/key 不再手抄；
-  // 无池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求）
+  // 选中哪个就把哪个运行配置交给后端，由后端按 protocol 选择 Gateway 直出或 CDS 兼容路径。
   const [poolModels, setPoolModels] = useState<MdToPptPoolModelItem[]>([]);
   const [poolQuery, setPoolQuery] = useState('');
   const [poolBusyId, setPoolBusyId] = useState<string | null>(null);
@@ -1034,6 +1041,8 @@ export function MdToPptAgentPage() {
       ?? profiles[0]
       ?? null;
   }, [profiles, selectedProfileId]);
+  const runtimeIsGateway = profileRunsOnGateway(effectiveProfile);
+  const runtimeRouteLabel = runtimeIsGateway ? 'LLM Gateway 直出' : 'CDS Agent 兼容';
 
   // ─── 换模板确认（2026-06-11 诉求 8）：有产物时切模板 = AI 整体重绘约 1 分钟，
   //     误触代价大，必须先确认再执行
@@ -1271,7 +1280,7 @@ export function MdToPptAgentPage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // ─── CDS 连接门禁：进入页面即检测，未连接整页禁用（item 1）
+  // ─── CDS 连接状态：进入页面即检测，给兼容路径提示使用。
   // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
   const connCheckSeqRef = useRef(0);
   const runConnectionCheck = useCallback(() => {
@@ -1781,7 +1790,7 @@ export function MdToPptAgentPage() {
                 : m
             )
           );
-          // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完（产物即体验）
+          // 预热运行环境：Gateway 直出配置后端会静默跳过，CDS 兼容配置才会创建预热会话。
           prewarmMdToPpt(selectedProfileId);
           finish();
         },
@@ -1872,7 +1881,7 @@ export function MdToPptAgentPage() {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === genMsg.id
-                ? { ...m, content: `设计系统已确定，${Math.min(4, f.total)} 路子智能体开始并行绘制 ${f.total} 页...` }
+                ? { ...m, content: `设计系统已确定，${Math.min(4, f.total)} 路页面生成器开始并行绘制 ${f.total} 页...` }
                 : m
             )
           );
@@ -1929,8 +1938,8 @@ export function MdToPptAgentPage() {
           const totalPg = result.total ?? pageCount ?? 0;
           if (degraded > 0) {
             toast.warning(
-              `有 ${degraded} 页未走 Agent 设计`,
-              'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+              `有 ${degraded} 页未完成设计生成`,
+              '部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
             );
           }
           setMessages((prev) =>
@@ -1940,9 +1949,9 @@ export function MdToPptAgentPage() {
                     ...m,
                     content:
                       degraded > 0
-                        ? `PPT 已生成${totalPg ? `，共 ${totalPg} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+                        ? `PPT 已生成${totalPg ? `，共 ${totalPg} 页` : ''}，但其中 ${degraded} 页因页面生成失败` +
                           '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
-                          '或检查 CDS Agent 运行状态后整体重新生成。'
+                          '或切换模型运行配置后整体重新生成。'
                         : `PPT 已生成${pageCount ? `，共 ${pageCount} 页` : ''}` +
                           (titleSample ? `（${titleSample} 等）` : '') +
                           '！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」；' +
@@ -2485,57 +2494,6 @@ export function MdToPptAgentPage() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  // ─── CDS 未连接门禁（item 1）：整页禁用，仅保留标题 + 引导卡，不挂载任何生成 UI
-  if (connStatus !== 'connected') {
-    return (
-      <div className="flex flex-col h-full min-h-0">
-        {/* Header（与正常态一致，保留页面身份） */}
-        <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-white/8">
-          <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
-            <FileText size={13} className="text-purple-400" />
-          </div>
-          <span className="text-sm font-semibold text-[var(--text-primary)]">PPT 创作工作台</span>
-        </div>
-
-        {connStatus === 'checking' ? (
-          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-[var(--text-tertiary)]">
-            <MapSpinner size={18} />
-            <span className="text-xs">正在检查 CDS Agent 连接...</span>
-          </div>
-        ) : (
-          <div className="flex-1 min-h-0 flex items-center justify-center p-6">
-            <div className="max-w-md w-full flex flex-col items-center text-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-8 py-10">
-              <div className="w-12 h-12 rounded-xl bg-amber-500/15 flex items-center justify-center">
-                <AlertCircle size={22} className="text-amber-400" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <h2 className="text-base font-semibold text-[var(--text-primary)]">未连接 CDS Agent，无法生成 PPT</h2>
-                <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
-                  PPT 创作完全依赖 CDS Agent 运行环境来生成带版式与配色的设计稿。当前没有可用的 CDS
-                  连接，若强行生成只会退化成裸标题 + 要点列表，因此本页已禁用。请先在「基础设施服务」完成
-                  CDS 授权连接，再回来创作。
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/infra-services')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-purple-500/85 text-white hover:bg-purple-500 transition-colors"
-              >
-                前往连接 CDS Agent
-                <ChevronRight size={13} />
-              </button>
-              <button
-                onClick={runConnectionCheck}
-                className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] underline"
-              >
-                已完成连接？点此重新检测
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
@@ -2609,6 +2567,42 @@ export function MdToPptAgentPage() {
           <a href={publishedUrl} target="_blank" rel="noreferrer" className="underline hover:text-green-300">
             {publishedUrl}
           </a>
+        </div>
+      )}
+
+      {(connStatus !== 'connected' || runtimeIsGateway) && (
+        <div className={[
+          'shrink-0 flex items-center justify-between gap-3 px-4 py-1.5 border-b text-xs',
+          runtimeIsGateway
+            ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-300'
+            : 'bg-amber-500/8 border-amber-500/15 text-amber-300',
+        ].join(' ')}>
+          <div className="min-w-0 flex items-center gap-2">
+            {connStatus === 'checking' && !runtimeIsGateway ? <MapSpinner size={12} /> : <AlertCircle size={12} />}
+            <span className="truncate">
+              {runtimeIsGateway
+                ? '当前模型走 LLM Gateway 直出：不依赖 CDS Agent runtime，生成后会做页面片段校验。'
+                : connStatus === 'checking'
+                  ? '正在检查 CDS Agent 兼容路径连接状态...'
+                  : '当前模型需要 CDS Agent 兼容路径，但尚未检测到可用连接。'}
+            </span>
+          </div>
+          {!runtimeIsGateway && (
+            <div className="shrink-0 flex items-center gap-2">
+              <button
+                onClick={() => navigate('/infra-services')}
+                className="px-2 py-0.5 rounded border border-amber-400/25 text-amber-200 hover:bg-amber-400/10"
+              >
+                基础设施服务
+              </button>
+              <button
+                onClick={runConnectionCheck}
+                className="px-2 py-0.5 rounded border border-amber-400/20 text-amber-200/80 hover:bg-amber-400/10"
+              >
+                重新检测
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -3443,7 +3437,7 @@ export function MdToPptAgentPage() {
                       className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
                       style={{ outline: 'none', boxShadow: 'none', minHeight: 64 }}
                     />
-                    {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给子智能体 */}
+                    {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给页面生成器 */}
                     <input
                       type="text"
                       value={slide.design ?? ''}
@@ -3455,7 +3449,7 @@ export function MdToPptAgentPage() {
                         })
                       }
                       placeholder="设计意图：版式 / 视觉装置 / 排字..."
-                      title="本页设计意图（版式/视觉装置/排字/强调），生成时子智能体优先遵循"
+                      title="本页设计意图（版式/视觉装置/排字/强调），生成时页面生成器优先遵循"
                       data-testid={'outline-design-' + i}
                       className="mt-1.5 w-full text-[10px] italic bg-transparent text-purple-300/75 placeholder-[var(--text-tertiary)] border border-transparent focus:border-purple-500/30 rounded-md px-2 py-1 outline-none"
                     />
@@ -3592,7 +3586,7 @@ export function MdToPptAgentPage() {
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
             const stageText = pagesMode
               ? doneCount === 0
-                ? `${pagesTotal} 路子智能体并行绘制中（每页独立设计）...`
+                ? `${pagesTotal} 路页面生成器并行绘制中（每页独立设计）...`
                 : doneCount < pagesTotal
                   ? `已完成 ${doneCount} / ${pagesTotal} 页（并行绘制中，可点亮起的页卡先看）...`
                   : '全部页面完成，正在拼装 deck...'
@@ -3601,7 +3595,7 @@ export function MdToPptAgentPage() {
                   ? '模型深度思考中（推理模型先想后写，思考过程见下方）...'
                   : agentPrepared
                     ? '模型已就绪，正在构思整体设计与版式...'
-                    : '正在连接 CDS Agent 环境...'
+                    : `正在连接${runtimeRouteLabel}...`
                 : doneCount > 0 || building
                   ? building
                     ? `正在绘制第 ${doneCount + 1} 页${expectedPages ? `（共约 ${expectedPages} 页）` : ''}...`
@@ -3645,6 +3639,27 @@ export function MdToPptAgentPage() {
                     />
                   </div>
                 )}
+
+                <div className="shrink-0 flex flex-wrap items-center gap-1.5">
+                  {[
+                    modelInfo?.platform ?? runtimeRouteLabel,
+                    frameAnchored ? '成品模板锁定' : '统一设计系统',
+                    '创意方向可控',
+                    'HTML 片段校验',
+                  ].map((label) => (
+                    <span
+                      key={label}
+                      className="px-2 py-0.5 rounded border border-white/8 bg-white/[0.03] text-[10px] text-[var(--text-tertiary)]"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                  {diagLines.length > 0 && (
+                    <span className="px-2 py-0.5 rounded border border-purple-400/20 bg-purple-400/8 text-[10px] text-purple-200">
+                      {diagLines.slice(-1)[0].stage}
+                    </span>
+                  )}
+                </div>
 
                 {/* 主视觉：实况渲染的真实幻灯页（无脚本静态铺版，新页完成才更新，不闪烁） */}
                 <div
@@ -3857,11 +3872,11 @@ export function MdToPptAgentPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {/* 模型 chip：只读展示本次生成实际使用的模型（CDS Agent 运行配置决定） */}
+                  {/* 模型 chip：只读展示本次生成实际使用的模型与运行路径 */}
                   {modelInfo && (
                     <span
                       data-testid="model-chip"
-                      title="本次生成使用的模型（由 CDS Agent 运行配置决定）"
+                      title="本次生成使用的模型与运行路径"
                       className="px-2 py-1 rounded-md text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] border border-white/8 max-w-[200px] truncate"
                     >
                       {modelInfo.model} · {modelInfo.platform}

@@ -28,9 +28,8 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
 ///
-/// 生成引擎：仅 CDS Agent（2026-06-10 用户拍板移除 MAP 直出，PPT 生成完全走
-/// CDS Agent 会话；toolPolicy=deny-all 避免工具循环）。大纲规划仍走 ILlmGateway
-/// （快速 JSON 往返，非 PPT 产物本体）。
+/// 生成引擎：优先走 LLM Gateway 直出页面片段；仅对 anthropic/CDS Agent 运行配置保留
+/// CDS Agent 兼容路径。大纲规划同样走 ILlmGateway。
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
@@ -930,6 +929,7 @@ public class MdToPptController : ControllerBase
             name = p.Name,
             model = p.Model,
             runtime = p.Runtime,
+            protocol = p.Protocol,
             isDefault = p.IsDefault,
             isEffectiveDefault = def != null && def.Id == p.Id,
             owned = p.CreatedByUserId == userId,
@@ -1014,6 +1014,7 @@ public class MdToPptController : ControllerBase
                 name = view.Name,
                 model = view.Model,
                 runtime = view.Runtime,
+                protocol = view.Protocol,
                 isDefault = view.IsDefault,
                 isEffectiveDefault = false,
                 owned = true,
@@ -1040,9 +1041,10 @@ public class MdToPptController : ControllerBase
         }
 
         var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
         var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, requestedProfileId);
         if (profile == null) return Ok(new { sessionId = (string?)null, reason = "no_profile" });
+        if (ShouldUseGatewayDirect(profile)) return Ok(new { sessionId = (string?)null, reason = "gateway_direct" });
+        if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
 
         try
         {
@@ -1112,8 +1114,8 @@ public class MdToPptController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>
-    /// 当前是否存在可用的 active CDS 连接。PPT 生成完全依赖 CDS Agent，
-    /// 前端用它在未连接时整页禁用（给引导而非让用户撞到「全页降级成裸要点」的兜底）。
+    /// 当前是否存在可用的 active CDS 连接。openai-compatible 配置优先走 LLM Gateway 直出；
+    /// 前端只把它作为 CDS Agent 兼容路径的状态提示。
     /// </summary>
     [HttpGet("connection-status")]
     public async Task<IActionResult> ConnectionStatus()
@@ -1378,7 +1380,12 @@ public class MdToPptController : ControllerBase
             "## 本次风格\n" + tone + "\n\n" +
             "## 设计自由（重要，反「套模板」）\n" +
             "组件类是工具箱不是模板——为本页内容定制独特版式：可自由用内联 style 排布、混搭或完全不用组件类；" +
-            "但所有颜色必须取自 CSS 变量、字体必须符合本风格。目标是「这一页像为内容量身设计的」，不是把内容塞进固定骨架。\n\n" +
+            "但所有颜色必须取自 CSS 变量、字体必须符合本风格。用户给出的创意方向、比喻、场景、行业感可以影响视觉装置与叙事方式，" +
+            "但不能改掉整份 deck 的色板、字体和页面秩序。目标是「这一页像为内容量身设计的」，不是把内容塞进固定骨架。\n\n" +
+            "## 全局一致性契约\n" +
+            "- 与其他页面共用同一套色板、字体、圆角、线条粗细、页脚/页码气质；禁止每页临时发明一套新风格\n" +
+            "- 每页允许有不同版式，但必须看得出属于同一份控制台级专业演示\n" +
+            "- 自定义创意只作为视觉表达，不得牺牲可读性、信息密度和代码正确性\n\n" +
             "## 内容要求\n" +
             "信息充实：结构化正文（卡片/数据/对比/列表至少一种）+ 至少一个视觉装置（光晕/强调条/大数字/独特大字编排）。" +
             "绝不允许一句话居中、四周大片空白。\n\n" +
@@ -1391,6 +1398,7 @@ public class MdToPptController : ControllerBase
             "## 输出（最高优先级）\n" +
             $"只输出本页（第 {index + 1}/{total} 页）一个完整的 <section>...</section> HTML 片段：" +
             "首字符是 <，末字符是 >；不含 <html>/<head>/<style>/<script>，不含 markdown 围栏与任何解释；" +
+            "所有标签必须闭合，禁止占位符、问号空容器、未结束属性；" +
             "禁止任何 emoji；禁止对文字使用 color:transparent + background-clip:text；禁止调用工具。";
     }
 
@@ -1445,7 +1453,8 @@ public class MdToPptController : ControllerBase
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
             "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；范本里的页脚（如页码、栏目名）原样保留位置\n" +
             "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置，必须用本页真实或代表性的数值与标签填满（数字来自要点、缺数据就给合理示意值），严禁留空容器、占位问号、或只有标题没有内容的空装置\n" +
-            $"8. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
+            "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
+            $"9. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
     }
@@ -1760,6 +1769,166 @@ public class MdToPptController : ControllerBase
                $"<h2 class=\"title-md\">{enc(page.Title)}</h2><ul>{lis}</ul></section>";
     }
 
+    internal static bool ShouldUseGatewayDirect(InfraAgentRuntimeProfile profile)
+    {
+        return string.Equals(profile.Protocol, InfraAgentRuntimeProtocols.OpenAiCompatible, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(profile.Runtime, InfraAgentRuntimeProtocols.OpenAiCompatible, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(profile.Runtime, "openai", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)
+        => ShouldUseGatewayDirect(profile) ? "LLM Gateway" : "CDS Agent";
+
+    internal static GatewayRequest BuildGatewayPageRequest(
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string appCallerCode,
+        string? requestId = null,
+        string? userId = null,
+        string? title = null)
+    {
+        return new GatewayRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = string.IsNullOrWhiteSpace(profile.Model) ? null : profile.Model.Trim(),
+            Stream = true,
+            IncludeThinking = false,
+            TimeoutSeconds = Math.Clamp(profile.TimeoutSeconds > 0 ? profile.TimeoutSeconds : 180, 60, 300),
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user",   ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.48,
+                ["max_tokens"] = 6144,
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                UserId = userId,
+                SourceSystem = "map",
+                IngressProtocol = "gw-native",
+                AppCallerTitle = title,
+                ModelPolicy = "pinned",
+                ParameterPolicy = "md-to-ppt-page",
+            },
+        };
+    }
+
+    internal static bool IsRunnableSlideFragment(string fragment, bool anchored)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return false;
+        var trimmed = fragment.Trim();
+        if (trimmed.StartsWith("```", StringComparison.Ordinal)) return false;
+        if (trimmed.Contains("<script", StringComparison.OrdinalIgnoreCase)) return false;
+        if (trimmed.Contains("<html", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<head", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<body", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<style", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (LooksCorruptedSection(trimmed)) return false;
+        if (anchored)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<div\\b[^>]*class\\s*=\\s*\"[^\"]*\\bslide\\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return false;
+        }
+        else if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<section\\b[\\s\\S]*</section>\\s*$",
+                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            return false;
+        }
+
+        return System.Text.RegularExpressions.Regex.Matches(trimmed, "<").Count >= 2;
+    }
+
+    private static string NormalizeGeneratedSlideFragment(string? text, bool anchored)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var fragment = anchored
+            ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty
+            : ExtractSection(text);
+        return IsRunnableSlideFragment(fragment, anchored) ? fragment : string.Empty;
+    }
+
+    private async Task<(string? text, string? error)> RunGatewayPageOnceAsync(
+        string userId,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title)
+    {
+        try
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: null,
+                SessionId: null,
+                UserId: userId,
+                ViewRole: null,
+                DocumentChars: userPrompt.Length,
+                DocumentHash: null,
+                SystemPromptRedacted: "[MdToPpt-Page]",
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+
+            var request = BuildGatewayPageRequest(
+                profile,
+                systemPrompt,
+                userPrompt,
+                AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                requestId,
+                userId,
+                title);
+
+            var fullText = new StringBuilder();
+            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                    continue;
+                }
+
+                if (chunk.Type == GatewayChunkType.Error)
+                {
+                    return (null, chunk.Error ?? "LLM Gateway 页面生成失败");
+                }
+            }
+
+            var raw = fullText.ToString();
+            return string.IsNullOrWhiteSpace(raw) ? (null, "LLM Gateway 未返回页面 HTML") : (raw, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt-Page] gateway page generation failed: {Msg}", ex.Message);
+            return (null, ex.Message);
+        }
+    }
+
+    private async Task<(string? text, string? error)> RunPageOnceAsync(
+        string userId,
+        InfraConnection? connection,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title,
+        InfraAgentSessionView? presession)
+    {
+        if (ShouldUseGatewayDirect(profile))
+            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title);
+
+        if (connection == null)
+            return (null, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+
+        return await RunAgentOnceAsync(userId, connection, profile, systemPrompt, userPrompt, title, presession);
+    }
+
     /// <summary>单次 agent 会话往返：创建/复用 → 发送 → 轮询至 done，返回最终文本（页级子任务用）</summary>
     private async Task<(string? text, string? error)> RunAgentOnceAsync(
         string userId,
@@ -1856,13 +2025,6 @@ public class MdToPptController : ControllerBase
             finally { sseLock.Release(); }
         }
 
-        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        if (connection == null)
-        {
-            await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
-            await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
-            return;
-        }
         var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
         if (profile == null)
         {
@@ -1870,7 +2032,15 @@ public class MdToPptController : ControllerBase
             await EmitAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
             return;
         }
-        await EmitAsync("model", new { model = profile.Model, platform = "CDS Agent" });
+        var platform = GenerationPlatformLabel(profile);
+        var connection = ShouldUseGatewayDirect(profile) ? null : await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (!ShouldUseGatewayDirect(profile) && connection == null)
+        {
+            await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+            await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
+            return;
+        }
+        await EmitAsync("model", new { model = profile.Model, platform });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
@@ -1887,8 +2057,15 @@ public class MdToPptController : ControllerBase
             (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
         }
         await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name });
-        await EmitAsync("diag", new { stage = "pages_start", total, parallel = 4 });
-        _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total}", userId, total);
+        await EmitAsync("diag", new
+        {
+            stage = "design_contract",
+            total,
+            parallel = 4,
+            route = ShouldUseGatewayDirect(profile) ? "gateway-direct" : "cds-agent",
+            quality = "style-consistency-and-html-validation"
+        });
+        _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total} platform={Platform}", userId, total, platform);
 
         // 心跳：并行期间 SSE 不断流
         var clientGone = false;
@@ -1915,8 +2092,10 @@ public class MdToPptController : ControllerBase
         });
 
         var sections = new string[total];
-        var gate = new SemaphoreSlim(4, 4); // 并行度：4 路子智能体
-        var presession = await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
+        var gate = new SemaphoreSlim(4, 4); // 并行度：4 路页面生成
+        var presession = ShouldUseGatewayDirect(profile)
+            ? null
+            : await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
         var doneCount = 0;
         // 退化为「范本/裸要点」兜底页：按页打标（每页一个槽位，写两次仍是 true，幂等），
         // 避免用共享计数器在「retry 兜底后 EmitAsync 又抛 → 外层 catch 再加一次」时重复计数（Bugbot Medium）
@@ -1944,21 +2123,17 @@ public class MdToPptController : ControllerBase
                         sys = BuildPageSystemPrompt(req.Theme, i, total);
                         usr = BuildPageUserPrompt(req, i, total);
                     }
-                    var (text, err) = await RunAgentOnceAsync(
+                    var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
-                    var section = text != null
-                        ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
-                        : string.Empty;
+                    var section = NormalizeGeneratedSlideFragment(text, anchor != null);
                     if (string.IsNullOrEmpty(section))
                     {
                         // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
                         if (err == null || text != null)
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid block, retrying", i);
-                        var (text2, _) = await RunAgentOnceAsync(
+                        var (text2, _) = await RunPageOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
-                        section = text2 != null
-                            ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
-                            : string.Empty;
+                        section = NormalizeGeneratedSlideFragment(text2, anchor != null);
                         if (string.IsNullOrEmpty(section))
                         {
                             fallbackFlags[i] = true;
@@ -1997,7 +2172,7 @@ public class MdToPptController : ControllerBase
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
-            await PersistRunDoneAsync(run, html, profile.Model, "CDS Agent", fallbackCount, total);
+            await PersistRunDoneAsync(run, html, profile.Model, platform, fallbackCount, total);
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
         catch (Exception ex)
@@ -2031,12 +2206,21 @@ public class MdToPptController : ControllerBase
         }
         if (blocks.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > blocks.Count) return false;
 
-        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        var profile = connection == null ? null : await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
-        if (connection == null || profile == null) return false; // 回落整篇路径（它有自己的错误提示）
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
+        if (profile == null) return false; // 回落整篇路径（它有自己的错误提示）
+        var connection = ShouldUseGatewayDirect(profile) ? null : await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (!ShouldUseGatewayDirect(profile) && connection == null) return false; // 回落整篇路径（它有自己的错误提示）
 
-        await WriteEventAsync("model", new { model = profile.Model, platform = "CDS Agent" });
-        await WriteDiagAsync(new { stage = "page_patch_start", page = oneBasedIndex, total = blocks.Count });
+        var platform = GenerationPlatformLabel(profile);
+        await WriteEventAsync("model", new { model = profile.Model, platform });
+        await WriteDiagAsync(new
+        {
+            stage = "page_patch_start",
+            page = oneBasedIndex,
+            total = blocks.Count,
+            route = ShouldUseGatewayDirect(profile) ? "gateway-direct" : "cds-agent",
+            quality = "style-consistency-and-html-validation"
+        });
         _logger.LogInformation("[MdToPpt-PagePatch] start userId={UserId} page={Page}/{Total}", userId, oneBasedIndex, blocks.Count);
 
         // 心跳：单页重画 1-3 分钟，SSE 不能断流（Cloudflare 100s 缓冲）
@@ -2074,17 +2258,13 @@ public class MdToPptController : ControllerBase
                 "硬约束：未被修改要求点名的信息内容必须逐字保留（数字、名称、要点一字不差）；" +
                 "重新设计排版时严格遵守画布与版面硬约束。";
 
-            var (text, err) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
-            var section = text != null
-                ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
-                : string.Empty;
+            var (text, err) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
+            var section = NormalizeGeneratedSlideFragment(text, patchAnchor != null);
             if (string.IsNullOrEmpty(section))
             {
                 _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
-                var (text2, err2) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
-                section = text2 != null
-                    ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
-                    : string.Empty;
+                var (text2, err2) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
+                section = NormalizeGeneratedSlideFragment(text2, patchAnchor != null);
                 if (string.IsNullOrEmpty(section))
                 {
                     var msg = err2 ?? err ?? "单页重绘失败，请重试";
@@ -2095,7 +2275,7 @@ public class MdToPptController : ControllerBase
             }
 
             var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
-            await PersistRunDoneAsync(run, newHtml, profile.Model, "CDS Agent");
+            await PersistRunDoneAsync(run, newHtml, profile.Model, platform);
             await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
             _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);
