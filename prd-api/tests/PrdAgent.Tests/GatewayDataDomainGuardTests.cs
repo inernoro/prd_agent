@@ -454,6 +454,24 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionStaticDist_RequiresEntryAssetsAndNormalizesPermissions()
+    {
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var validator = ReadRepoFile("scripts/validate-static-dist.sh");
+        var behaviorTest = ReadRepoFile("scripts/tests/validate-static-dist.test.sh");
+
+        Assert.Contains("[ ! -s deploy/web/dist/index.html ]", deploy);
+        Assert.Contains("scripts/validate-static-dist.sh --normalize deploy/web/dist", deploy);
+        Assert.Contains("find \"$static_root\" -type d -exec chmod 755 {} +", validator);
+        Assert.Contains("find \"$static_root\" -type f -exec chmod 644 {} +", validator);
+        Assert.Contains("index.html does not reference a local JavaScript entry asset", validator);
+        Assert.Contains("referenced entry asset is missing or empty", validator);
+        Assert.Contains("umask 077", behaviorTest);
+        Assert.Contains("expected missing index validation to fail", behaviorTest);
+        Assert.Contains("expected missing entry asset validation to fail", behaviorTest);
+    }
+
+    [Fact]
     public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
