@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
@@ -79,10 +80,15 @@ export default function DefectAgentPage() {
     });
   }, [querySubmitAction, searchParams, setSearchParams, setShowSubmitPanel]);
 
-  const handleDetailClose = useCallback(() => {
-    if (!queryDefectId) return;
-    setSearchParams(clearDefectDeepLinkParams(searchParams), { replace: true });
-  }, [queryDefectId, searchParams, setSearchParams]);
+  // 列表 -> 缺陷详情（移动端全屏面板）必须进浏览器历史：右滑/浏览器返回 = 关详情回列表。
+  // ?defectId= 是详情态的 SSOT（onRestore 交给下方既有的 queryDefectId 深链 effect 处理，
+  // 它支持按 id / defectNo 查找并对不在列表里的缺陷做异步拉取）。
+  useHistoryBackedView({
+    param: 'defectId',
+    value: selectedDefectId,
+    onExit: () => setSelectedDefectId(null),
+    onRestore: () => true,
+  });
 
   // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
   const visibleDefectIds = useMemo(() => {
@@ -109,12 +115,29 @@ export default function DefectAgentPage() {
     void loadAll();
   }, [filter, loadAll, queryDefectId, setFilter]);
 
+  // 详情关闭后 URL 弹栈是异步的：在 ?defectId 还没消失的一瞬，本恢复 effect 会看到
+  // 「query 有值 + selectedDefectId 为空」而把详情重新打开。consumedRef 记录已消费的
+  // query 值，详情关闭时不再用同一个值重开；query 清空后复位。
+  const consumedDeepLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!queryDefectId) consumedDeepLinkRef.current = null;
+  }, [queryDefectId]);
+
   useEffect(() => {
     if (!queryDefectId || loading) return;
+    if (!selectedDefectId && consumedDeepLinkRef.current === queryDefectId) return;
     const target = defects.find((d) => d.id === queryDefectId || d.defectNo === queryDefectId);
     if (target) {
+      consumedDeepLinkRef.current = queryDefectId;
       if (selectedDefectId !== target.id) {
         setSelectedDefectId(target.id);
+      }
+      // 规范化深链参数：legacy ?id= / defectNo 形式统一改写成 ?defectId={id}（replace 不加历史），
+      // 让 useHistoryBackedView 的 param 成为唯一 SSOT，避免关闭详情后残留 legacy 参数触发重开
+      if (searchParams.get('defectId') !== target.id) {
+        const next = clearDefectDeepLinkParams(new URLSearchParams(window.location.search));
+        next.set('defectId', target.id);
+        setSearchParams(next, { replace: true });
       }
       setViewMode('list');
       directLoadRef.current = null;
@@ -131,8 +154,15 @@ export default function DefectAgentPage() {
 
       if (res.success && res.data?.defect) {
         const defect = res.data.defect;
+        consumedDeepLinkRef.current = queryDefectId;
         addDefectToList(defect);
         setSelectedDefectId(defect.id);
+        // 同上：legacy 深链参数规范化为 ?defectId={id}
+        if (new URLSearchParams(window.location.search).get('defectId') !== defect.id) {
+          const next = clearDefectDeepLinkParams(new URLSearchParams(window.location.search));
+          next.set('defectId', defect.id);
+          setSearchParams(next, { replace: true });
+        }
         setViewMode('list');
       } else {
         toast.error(res.error?.message || '缺陷详情加载失败');
@@ -147,6 +177,8 @@ export default function DefectAgentPage() {
     defects,
     loading,
     queryDefectId,
+    searchParams,
+    setSearchParams,
     selectedDefectId,
     setSelectedDefectId,
     setViewMode,
@@ -470,8 +502,8 @@ export default function DefectAgentPage() {
         </Surface>
       )}
 
-      {/* Detail Modal */}
-      {selectedDefectId && <DefectDetailPanel onClose={handleDetailClose} />}
+      {/* Detail Modal：关闭时 useHistoryBackedView 负责弹栈/清理 ?defectId，不再需要 onClose 手动清参 */}
+      {selectedDefectId && <DefectDetailPanel />}
 
       {/* Submit Panel (slide-over) */}
       {showSubmitPanel && <DefectSubmitPanel />}

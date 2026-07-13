@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -29,6 +30,8 @@ import { viewTeamWeekShare, type TeamWeekShareViewData } from '@/services';
 export default function ReportTeamShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；分享链接直达无历史时兜底回首页
+  const goBack = useSmartBack('/');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const [data, setData] = useState<TeamWeekShareViewData | null>(null);
@@ -251,7 +254,7 @@ export default function ReportTeamShareViewPage() {
     <div style={pageStyles.successRoot}>
       <div style={pageStyles.topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button type="button" onClick={() => navigate('/')} style={pageStyles.backBtn}>
+          <button type="button" onClick={goBack} style={pageStyles.backBtn}>
             <ArrowLeft size={14} />
           </button>
           <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />

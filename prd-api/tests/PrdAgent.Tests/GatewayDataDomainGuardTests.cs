@@ -420,6 +420,40 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionReleaseSafety_IsPersistedAsRuleDebtAndAgentTrigger()
+    {
+        var rule = ReadRepoFile("doc/rule.platform.production-release-safety.md");
+        var debt = ReadRepoFile("doc/debt.platform.production-release.md");
+        var agentRule = ReadRepoFile(".claude/rules/production-release-safety.md");
+        var codexRule = ReadRepoFile(".Codex/rules/production-release-safety.md");
+        var agents = ReadRepoFile("AGENTS.md");
+        var hotfixSkill = ReadRepoFile(".claude/skills/production-hotfix-release/SKILL.md");
+        var cdsDeploySkill = ReadRepoFile(".claude/skills/cds-deploy-pipeline/SKILL.md");
+        var smokeSkill = ReadRepoFile(".claude/skills/smoke-test/SKILL.md");
+        var acceptanceSkill = ReadRepoFile(".claude/skills/acceptance-checklist/SKILL.md");
+        var handoffSkill = ReadRepoFile(".claude/skills/task-handoff-checklist/SKILL.md");
+
+        Assert.Contains("公网 HTML 与入口资源是完成门", codexRule);
+        Assert.Contains("doc/rule.platform.production-release-safety.md", agentRule);
+        Assert.Contains("production-release-safety.md", agents);
+        Assert.Contains("`GET /` 返回 200", rule);
+        Assert.Contains("`umask 077`", rule);
+        Assert.Contains("`./exec_dep.sh release` 的兼容合同是部署 latest", rule);
+        Assert.Contains("自动恢复 previous", rule);
+        Assert.Contains("首次把目录设置为 `700` 的具体进程无法从现有证据中确定", rule);
+        Assert.Contains("2026-07-12-atomic-static-release", debt);
+        Assert.Contains("2026-07-12-public-surface-smoke", debt);
+        Assert.Contains("2026-07-12-release-command-compatibility", debt);
+        Assert.Contains("2026-07-12-release-forensic-ledger", debt);
+        foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill, handoffSkill })
+            Assert.Contains("doc/rule.platform.production-release-safety.md", skill);
+        Assert.Contains("API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`", smokeSkill);
+        Assert.Contains("实际入口 JS/CSS", hotfixSkill);
+        Assert.Contains("previous/回滚验证", acceptanceSkill);
+        Assert.Contains("不能写完成", handoffSkill);
+    }
+
+    [Fact]
     public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -750,6 +784,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
         Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);
+        Assert.Contains("[ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" = \"1\" ]", script);
+        Assert.Contains("skipped for audited full-http maintenance release", script);
         Assert.Contains("LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only", script);
         Assert.Contains("--allow-pending-http-full-ledger", script);
         Assert.Contains("LLMGW_GATE_SERVING_PROBE_SAMPLES", script);

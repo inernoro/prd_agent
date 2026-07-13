@@ -118,7 +118,8 @@ export function LibraryShareViewPage() {
   }, [token]);
 
   const setShareViewMode = useCallback((mode: LibraryShareViewMode) => {
-    setSearchParams(withLibraryShareViewMode(searchParams, mode));
+    // 视图模式切换用 replace，避免每次切换都往 history 堆条目
+    setSearchParams(withLibraryShareViewMode(searchParams, mode), { replace: true });
   }, [searchParams, setSearchParams]);
 
   // DocumentEntry 字段是 DocBrowserEntry 的超集，可直接传入

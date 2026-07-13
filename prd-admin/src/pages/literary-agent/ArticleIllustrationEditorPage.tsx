@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -63,7 +64,6 @@ import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentCon
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
-import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import { StreamingText, MapCursor } from '@/components/streaming';
@@ -412,7 +412,8 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
 );
 
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回文学创作
+  const goBack = useSmartBack('/literary-agent');
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
@@ -2515,7 +2516,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <button
                 type="button"
                 data-tour-id="literary-editor-back"
-                onClick={() => navigate(-1)}
+                onClick={goBack}
                 className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
                 style={{ color: 'var(--text-muted)' }}
                 title="返回"

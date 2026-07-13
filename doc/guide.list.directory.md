@@ -607,6 +607,9 @@
 - [测试组织规范](rule.platform.test-organization) `rule.platform.test-organization`
   > 单元测试与集成测试的组织与命名规范
 
+- [生产发布表面健康与可追溯性规则](rule.platform.production-release-safety) `rule.platform.production-release-safety`
+  > 以公网 HTML 和实际入口资源为完成门，约束静态站原子切换、旧命令兼容、错误收敛和发布证据追溯
+
 - [技能系统规则与创建指南](rule.skill.system) `rule.skill.system`
   > Claude Code Skill 的创建、注册与管理规范
 
@@ -819,6 +822,8 @@
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [缺陷管理 手机截图分享提交 · 债务台账](debt.defect-agent.mobile-share) `debt.defect-agent.mobile-share`
 - [移动端全局浅色主题 · 债务台账](debt.frontend.mobile-light-theme) `debt.frontend.mobile-light-theme`
+- [前端导航历史（返回上一页）· 债务台账](debt.frontend.navigation-history) `debt.frontend.navigation-history`
+  > useSmartBack 已落地 + 主要污染源已修；边界：教程跨页 push、NavigationBridge push、cds-agent 整页跳转、长尾页面硬编码返回待走到哪修到哪
   > 首版已落地（share_target + VLM 追加填充 + 移动全屏面板）；边界：iOS 无 share_target、需先装 PWA、冷启重登录、全局弹窗未接填充
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
 - [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
@@ -844,6 +849,9 @@
 
 - [资源存储（IAssetStorage 实现）债务台账](debt.platform.asset-storage) `debt.platform.asset-storage`
   > IAssetStorage 实现层的已知边界与后续优化债务
+
+- [生产发布安全 · 债务台账](debt.platform.production-release) `debt.platform.production-release`
+  > 记录原子静态切换、公网表面 smoke、旧发布命令兼容和权限变化追溯四项未偿债务
 
 - [Claude SDK 执行器 / Python sidecar 债务台账](debt.cds.agent.sdk-executor) `debt.cds.agent.sdk-executor`
   > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
@@ -984,6 +992,9 @@
 
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
+- [周报 2026-W28 (07-06 ~ 07-12)](report.2026-W28) `report.2026-W28`
+  > 2026 年第 28 周工作总结（599 commits / 61 PRs，网关产品化周 + 移动端系统级双皮肤定稿：LLM 网关从物理剥离跃迁成独立中台产品 协议路由四刀拆分(#1039~#1042)+生产深度就绪/serving 主备/发布护栏/运行时 Gate 顺序(#1045/#1047/#1061/#1063)+控制台产品化 P0/P1 租户首页+学习中心(#1090/#1091)+租户隔离 RBAC 基座+租户密钥自助接入+四协议 Quickstart(#1086)+版本化提示词策略治理(#1087)+模型池心智重构(#1092)+外部平台对接(#1084)、移动端系统级双皮肤 硬编码棘轮 CI fail+规则固化(#1094)+移动首页定稿+知识库/视觉创作移动端重设计(#1030/#1071/#1072/#1073)、CDS 托管交付体系 不可变版本存储+托管构建+回滚+流式部署解释(#1064)+设置 Tab 化(#1065)、知识库录音转录全链路 ASR+AI 摘要(#1005)+公开分享图谱、手机截图直达提交缺陷+VLM 自动填充(#1075)、SSO 自动建用户(#1037)；ops 首次登顶 24% 产品化上线运维密度，近月最高强度周）
+
 - [周报 2026-W27 (06-29 ~ 07-05)](report.2026-W27) `report.2026-W27`
   > 2026 年第 27 周工作总结（356 commits / 44 PRs，剥离落地周 + 视觉归一周：LLM 网关从 MAP 物理剥离 跨进程 serving+shadow 影子比对+CDS 命名子域+双出口面板+真实观测控制台 llmgw/web 可登录可观测可配置+Mongo Console 受控写(#965/#971~#985 八连)、首页/登录页/CDS 品牌视觉语言归一 首页工作台重构继续上次+极光氛围+落地页性能+CDS 宝石六芒标+布局架构归一+日报报纸版 HTML、米多星球 SSO 登录+禁用密码登录、知识星球 3D 星系视觉艺术升级 v2 深空穹顶+星云+热核着色、CDS 稳定性 分支级网络隔离+docker 网络跨路径回收+不可变生产发布、新增邮件模板智能体+用户通知推送订阅 Bark 协议+涌现探索器流式生长节点+快捷指令短视频解析；fix 占比 43% 大功能落地+密集收口）
 
@@ -1081,6 +1092,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
+| 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-external-platform` | LLM Gateway 外部平台化与控制台体验收口 · 计划 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway-known-availability-closeout` | LLM Gateway 已知可用性收口 · 计划 |
