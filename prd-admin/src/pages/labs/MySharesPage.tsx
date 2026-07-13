@@ -5,6 +5,7 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { listMyShares } from '@/services';
 import type { MyShareItem } from '@/services';
 import { toast } from '@/lib/toast';
@@ -95,7 +96,7 @@ export default function MySharesPage() {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
   return (
-    <div className="flex flex-col gap-5 h-full min-h-0 p-6 overflow-y-auto">
+    <div className="flex flex-col gap-4 sm:gap-5 h-full min-h-0 p-3 sm:p-6 overflow-y-auto">
       <PageHeader
         title="我的分享"
         description={
@@ -108,10 +109,10 @@ export default function MySharesPage() {
 
       {/* 分类概览 */}
       {byType.length > 0 && (
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-x-visible">
           <button
             onClick={() => setFilter('')}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition"
+            className="shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition"
             style={{
               background: filter === '' ? 'var(--accent-primary)' : 'var(--bg-card)',
               color: filter === '' ? '#fff' : 'var(--text-primary)',
@@ -127,7 +128,7 @@ export default function MySharesPage() {
               <button
                 key={t.targetType}
                 onClick={() => setFilter(active ? '' : t.targetType)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5"
+                className="shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5"
                 style={{
                   background: active ? meta.color : meta.bg,
                   color: active ? '#fff' : meta.color,
@@ -140,7 +141,7 @@ export default function MySharesPage() {
           })}
           <button
             onClick={() => setShowRevoked((v) => !v)}
-            className="ml-auto px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
+            className="ml-auto shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
             style={{
               background: 'var(--bg-card)',
               color: showRevoked ? 'var(--text-primary)' : 'var(--text-muted)',
@@ -191,7 +192,7 @@ export default function MySharesPage() {
             return (
               <GlassCard
                 key={itemKey}
-                className="p-4"
+                className="p-3 sm:p-4"
                 style={
                   s.isRevoked
                     ? { opacity: 0.55, borderColor: 'rgba(239, 68, 68, 0.3)' }
@@ -305,15 +306,25 @@ function UrlRow({
   onCopy: (url: string) => void;
   recommended?: boolean;
 }) {
+  // 手机端密度（.claude/rules/mobile-first-density.md）：去卡中卡边框、降 padding、
+  // label 与 URL 上下堆叠（label 不再占 180px 固定宽）。桌面维持原布局零回归。
+  const isMobile = useIsMobile();
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+      className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 px-2 py-1.5 sm:px-3 sm:py-2 rounded text-xs"
       style={{
         background: 'var(--bg-sunken)',
-        border: recommended ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid transparent',
+        border: isMobile
+          ? 'none'
+          : recommended
+          ? '1px solid rgba(34, 197, 94, 0.3)'
+          : '1px solid transparent',
       }}
     >
-      <span style={{ color: 'var(--text-muted)', minWidth: 180 }}>
+      <span
+        className="w-full sm:w-auto"
+        style={{ color: 'var(--text-muted)', minWidth: isMobile ? undefined : 180 }}
+      >
         {label}
         {recommended && <Badge variant="success" className="ml-1.5">推荐</Badge>}
       </span>

@@ -485,7 +485,11 @@ export function buildWidgetScript(
   document.body.appendChild(root);
 
   // ── Drag support ──
-  var pos={x:12,y:12};
+  function defaultWidgetBottom(){
+    return window.innerWidth<=640?88:12;
+  }
+
+  var pos={x:12,y:defaultWidgetBottom()};
   var dragState=null;
 
   function onMouseDown(e){

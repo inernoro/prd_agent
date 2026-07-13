@@ -226,11 +226,13 @@ export function ExperienceMap({
         className="overflow-hidden h-full flex flex-col"
         style={fullscreen ? { padding: 0, height: '100%', minHeight: 0 } : { padding: 0, minHeight: 0 }}
       >
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
-          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+        {/* 卡头：手机端单行横滚（mobile-first-density：控制条不换行不堆叠），sm 起恢复左右两端布局。
+            实时扫描中 chip 与图例手机端隐藏——小屏寸土寸金，颜色语义由块色自明。 */}
+        <div className="flex flex-row items-center gap-2 overflow-x-auto sm:overflow-visible sm:justify-between px-3 sm:px-4 pt-3 pb-2 shrink-0" style={{ overscrollBehavior: 'contain' }}>
+          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 shrink-0 sm:min-w-0 sm:flex-wrap">
             <span className="whitespace-nowrap">体验全景热力图</span>
             <span
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0"
               style={{ background: 'rgba(45,212,191,0.12)', color: '#5eead4', border: '1px solid rgba(45,212,191,0.32)' }}
             >
               <span className="relative inline-flex h-2 w-2">
@@ -243,7 +245,7 @@ export function ExperienceMap({
               {mode === 'all' ? '每块=端点 · 面积=访问量 · 颜色=健康' : '只看病灶 · 面积=问题严重度 · 点击下钻'}
             </span>
           </span>
-          <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-wrap min-w-0">
+          <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-nowrap shrink-0 sm:shrink sm:flex-wrap sm:min-w-0">
             <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
               <button
                 type="button"
@@ -262,13 +264,13 @@ export function ExperienceMap({
             </div>
             {headerExtra ? <span className="shrink-0">{headerExtra}</span> : null}
             <span className="hidden sm:inline w-px h-3.5 bg-white/10" />
-            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+            <span className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
             </span>
-            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+            <span className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: SLOW }} />等待过久
             </span>
-            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+            <span className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: 'hsl(196 36% 36%)' }} />健康
             </span>
             {fullscreen ? (

@@ -1116,6 +1116,58 @@ export default function ChangelogPage() {
     }
   }, [activeTotal, historySubtab]);
 
+  const anyLoading = loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes;
+
+  // 类型筛选 chips：桌面渲染在 header 筛选行；手机端并入「更新记录」顶部的单条横滚控制条
+  // （mobile-first-density：进内容前 ≤1 条控制条）
+  const typeChipButtons = availableTypes.map((t) => {
+    const meta = getTypeBadge(t);
+    const active = typeFilter === t;
+    const Icon = meta.icon;
+    const count = typeCounts[t] ?? 0;
+    const hotRank = hotTypeRanking.indexOf(t);
+    const hotClass = hotRank === 0 ? ' clg-chip-hot1' : hotRank === 1 || hotRank === 2 ? ' clg-chip-hot2' : '';
+    return (
+      <button
+        key={t}
+        type="button"
+        onClick={(e) => {
+          setTypeFilter(active ? null : t);
+          if (!active) burstParticles(e.clientX, e.clientY, meta.color);
+        }}
+        title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
+        className={`clg-chip ${isMobile ? 'h-7 pl-2 pr-2.5 text-[12px]' : 'h-8 pl-2.5 pr-3 text-[13px]'} shrink-0 rounded-lg font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
+        style={{
+          background: meta.bg,
+          border: `1px solid ${meta.border}`,
+          color: meta.color,
+          lineHeight: '1',
+          boxShadow: active ? `0 0 0 2px ${meta.border}` : undefined,
+          filter: active ? 'brightness(1.15)' : undefined,
+        }}
+      >
+        <Icon size={13} />
+        {meta.label}
+        {count > 0 && (
+          isMobile ? (
+            <span className="ml-0.5 tabular-nums opacity-85">
+              {count}
+            </span>
+          ) : hotRank === 0 ? (
+            <span className="clg-badge clg-badge-hot">
+              <Flame size={9} strokeWidth={2.5} />
+              {count}
+            </span>
+          ) : (
+            <span className="clg-badge" style={{ background: meta.color }}>
+              {count}
+            </span>
+          )
+        )}
+      </button>
+    );
+  });
+
   return (
     <WeeklyReportSourcesProvider>
     <div className={`${isMobile ? 'gap-3' : 'gap-5'} flex flex-col h-full min-h-0`}>
@@ -1129,40 +1181,40 @@ export default function ChangelogPage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         variant="gold"
-        actions={activeTab === 'weekly_reports' ? <WeeklyReportSourceChips /> : undefined}
+        actions={
+          activeTab === 'weekly_reports' ? (
+            <WeeklyReportSourceChips />
+          ) : isMobile && activeTab === 'update_center' ? (
+            // 手机端：状态/刷新行压缩成 TabBar 行内图标（绿点 = 实时连接已建立），省一条控制条
+            <button
+              type="button"
+              data-tour-id="changelog-status"
+              onClick={handleRefresh}
+              disabled={anyLoading}
+              className="relative h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50"
+              style={{
+                border: '1px solid var(--border-secondary)',
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-card)',
+              }}
+              title={`${sourceLabel?.text ?? '本地仓库'} · ${liveConnected ? (justUpdatedAt != null ? '已更新' : '实时同步') : '缓存数据'}${fetchedAtRelative ? ` · 更新于 ${fetchedAtRelative}` : ` · 每 ${refreshIntervalHours} 小时自动刷新`} · 点击刷新`}
+              aria-label="刷新"
+            >
+              {anyLoading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
+              {liveConnected && (
+                <span className="absolute top-0 right-0 h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
+              )}
+            </button>
+          ) : undefined
+        }
       />
       <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
       <div ref={scrollRootRef} className={`${isMobile ? 'gap-3 pr-0' : 'gap-5 pr-1'} clg-scroll flex flex-col flex-1 min-h-0 overflow-y-auto`}
         style={{ overscrollBehavior: 'contain' }}>
-      {/* ── Header ───────────────────────────────────────── */}
-      {isMobile && (
-        <div data-tour-id="changelog-status" className="flex items-center justify-between gap-3 px-1">
-          <div className="min-w-0">
-            <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
-              {sourceLabel?.text ?? '本地仓库'} · {liveConnected ? (justUpdatedAt != null ? '已更新' : '实时同步') : '缓存数据'}
-            </div>
-            <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              {fetchedAtRelative ? `更新于 ${fetchedAtRelative}` : `每 ${refreshIntervalHours} 小时自动刷新`}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes}
-            className="h-8 w-8 shrink-0 rounded-full inline-flex items-center justify-center transition-colors disabled:opacity-50"
-            style={{
-              border: '1px solid rgba(255, 255, 255, 0.10)',
-              color: 'var(--text-secondary)',
-              background: 'rgba(255, 255, 255, 0.035)',
-            }}
-            title="刷新"
-          >
-            {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes) ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
-          </button>
-        </div>
-      )}
+      {/* ── Header（桌面专属；手机端状态/刷新已并入 TabBar，类型筛选并入更新记录控制条） ── */}
+      {!isMobile && (
       <header
         style={glassPanel}
         className={`${isMobile ? 'rounded-[16px] px-2 py-2 gap-2' : 'rounded-2xl px-6 py-5 gap-3'} flex flex-col`}
@@ -1255,60 +1307,14 @@ export default function ChangelogPage() {
 
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
-          <div data-tour-id={isMobile ? 'changelog-type-filter' : 'changelog-filter'} className={isMobile ? 'flex items-center gap-2 overflow-x-auto pt-0 -mx-1 px-1' : 'flex flex-wrap items-center gap-2 pt-1'}>
-            <div className={`${isMobile ? 'hidden' : 'inline-flex'} items-center gap-1.5 text-[13px] font-medium`} style={{ color: 'var(--text-secondary)' }}>
+          <div data-tour-id="changelog-filter" className="flex flex-wrap items-center gap-2 pt-1">
+            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选
             </div>
             
-            <div className={isMobile ? 'flex flex-nowrap gap-2 overflow-x-auto pb-1 min-w-full' : 'flex flex-wrap ml-1'} style={isMobile ? { scrollbarWidth: 'none' } : { gap: '12px 10px', paddingTop: '6px' }}>
-              {availableTypes.map((t) => {
-                const meta = getTypeBadge(t);
-                const active = typeFilter === t;
-                const Icon = meta.icon;
-                const count = typeCounts[t] ?? 0;
-                const hotRank = hotTypeRanking.indexOf(t);
-                const hotClass = hotRank === 0 ? ' clg-chip-hot1' : hotRank === 1 || hotRank === 2 ? ' clg-chip-hot2' : '';
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={(e) => {
-                      setTypeFilter(active ? null : t);
-                      if (!active) burstParticles(e.clientX, e.clientY, meta.color);
-                    }}
-                    title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
-                    className={`clg-chip ${isMobile ? 'h-7 pl-2 pr-2.5 text-[12px]' : 'h-8 pl-2.5 pr-3 text-[13px]'} shrink-0 rounded-lg font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
-                    style={{
-                      background: meta.bg,
-                      border: `1px solid ${meta.border}`,
-                      color: meta.color,
-                      lineHeight: '1',
-                      boxShadow: active ? `0 0 0 2px ${meta.border}` : undefined,
-                      filter: active ? 'brightness(1.15)' : undefined,
-                    }}
-                  >
-                    <Icon size={13} />
-                    {meta.label}
-                    {count > 0 && (
-                      isMobile ? (
-                        <span className="ml-0.5 tabular-nums opacity-85">
-                          {count}
-                        </span>
-                      ) : hotRank === 0 ? (
-                        <span className="clg-badge clg-badge-hot">
-                          <Flame size={9} strokeWidth={2.5} />
-                          {count}
-                        </span>
-                      ) : (
-                        <span className="clg-badge" style={{ background: meta.color }}>
-                          {count}
-                        </span>
-                      )
-                    )}
-                  </button>
-                );
-              })}
+            <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
+              {typeChipButtons}
             </div>
             
             {typeFilter && (
@@ -1338,6 +1344,7 @@ export default function ChangelogPage() {
           </div>
         )}
       </header>
+      )}
 
       {/* 数据源不可用提示 */}
       {currentWeek && !currentWeek.dataSourceAvailable && (
@@ -1368,30 +1375,33 @@ export default function ChangelogPage() {
       )}
 
       {/* ── 更新区：已发布流水 / 未发布碎片 / GitHub 提交 ───────────────────── */}
-      <section style={glassPanel} className={`${isMobile ? 'rounded-[18px] px-3 py-4' : 'rounded-2xl p-5'}`}>
-        <div className={`${isMobile ? 'flex flex-col gap-3 mb-3' : 'flex flex-wrap items-center justify-between gap-3 mb-4'}`}>
-          <div className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-4 flex-wrap'}`}>
-            <div className="flex items-center justify-between gap-3">
-              <h2 className={`${isMobile ? 'text-[17px]' : 'text-[18px]'} font-semibold tracking-wide`} style={{ color: 'var(--text-primary)' }}>
-              更新记录
-              </h2>
-              {isMobile && (
-                <span
-                  className={`clg-sweep h-7 px-2.5 rounded-full inline-flex items-center gap-1 text-[11px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
-                  style={{
-                    color: 'var(--text-secondary)',
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                  title={`${activeSummaryLabel}总数量`}
-                >
-                  <AnimatedNumber value={activeTotal} />
-                  {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
-                </span>
-              )}
-            </div>
-            <div className={`${isMobile ? '-mx-1 flex gap-1 overflow-x-auto px-1 pb-1' : 'contents'}`} style={isMobile ? { scrollbarWidth: 'none' } : undefined}>
+      {/* 手机端去卡中卡：section 不再套玻璃卡壳，列表满铺；控制条合并为单条横滚（计数 + 子 tab + 类型筛选 + AI 总结） */}
+      <section style={isMobile ? undefined : glassPanel} className={isMobile ? '' : 'rounded-2xl p-5'}>
+        <div className={`${isMobile ? 'flex items-center gap-2 mb-3' : 'flex flex-wrap items-center justify-between gap-3 mb-4'}`}>
+          <div className={`${isMobile ? 'contents' : 'flex items-center gap-4 flex-wrap'}`}>
+            {!isMobile && (
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-[18px] font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                更新记录
+                </h2>
+              </div>
+            )}
+            {isMobile && (
+              <span
+                className={`clg-sweep h-7 px-2 shrink-0 rounded-full inline-flex items-center gap-1 text-[11px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
+                style={{
+                  color: 'var(--text-secondary)',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+                title={`${activeSummaryLabel}总数量`}
+              >
+                <AnimatedNumber value={activeTotal} />
+                {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
+              </span>
+            )}
+            <div className={`${isMobile ? 'flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto' : 'contents'}`} style={isMobile ? { scrollbarWidth: 'none' } : undefined}>
             {([
               { key: 'releases', label: '已发布', icon: <Calendar size={13} /> },
               { key: 'fragments', label: '未发布', icon: <FileText size={13} /> },
@@ -1458,9 +1468,33 @@ export default function ChangelogPage() {
                 </button>
               );
             })}
+            {isMobile && availableTypes.length > 0 && (
+              <>
+                <span aria-hidden className="mx-0.5 h-4 w-px shrink-0" style={{ background: 'var(--border-secondary)' }} />
+                <div data-tour-id="changelog-type-filter" className="flex shrink-0 items-center gap-1.5">
+                  {typeChipButtons}
+                  {typeFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setTypeFilter(null)}
+                      className="h-7 w-7 shrink-0 rounded-lg inline-flex items-center justify-center transition-colors"
+                      style={{
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-secondary)',
+                        color: 'var(--text-secondary)',
+                      }}
+                      title="清除类型筛选"
+                      aria-label="清除类型筛选"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
             </div>
           </div>
-          <div className={`${isMobile ? 'flex items-center justify-between gap-2' : 'flex items-center gap-3 flex-wrap justify-end'}`}>
+          <div className={`${isMobile ? 'contents' : 'flex items-center gap-3 flex-wrap justify-end'}`}>
             {!isMobile && <span
               className={`clg-sweep h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
               style={{
@@ -1503,17 +1537,13 @@ export default function ChangelogPage() {
                 </span>
               )}
             </span>}
-            {isMobile && (
-              <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {activeSummaryLabel} · {historySubtab === 'github_logs' ? '最近一周' : historySubtab === 'github_pending_review' ? '待处理' : '按时间排序'}
-              </span>
-            )}
             {historySubtab !== 'hotfix' && (
             <button
               type="button"
               onClick={() => { void summarizeCurrentTab(); }}
               disabled={activeSummaryStatus === 'loading'}
-              className={`${isMobile ? 'h-7 px-2.5 rounded-full text-[11px]' : 'h-8 px-3 rounded-lg text-[12px]'} inline-flex shrink-0 items-center gap-1.5 font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' || isMobile ? '' : ' clg-ai-shimmer'}`}
+              aria-label="AI 总结"
+              className={`${isMobile ? 'h-8 w-8 rounded-full justify-center' : 'h-8 px-3 rounded-lg text-[12px] gap-1.5'} inline-flex shrink-0 items-center font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' || isMobile ? '' : ' clg-ai-shimmer'}`}
               style={{
                 background: activeSummaryStatus === 'loading'
                   ? 'rgba(99, 102, 241, 0.10)'
@@ -1525,7 +1555,7 @@ export default function ChangelogPage() {
               title="总结当前页签的更新内容"
             >
               {activeSummaryStatus === 'loading' ? <MapSpinner size={12} /> : <Wand2 size={13} />}
-              {activeSummaryStatus === 'loading' ? '总结中' : 'AI 总结'}
+              {!isMobile && (activeSummaryStatus === 'loading' ? '总结中' : 'AI 总结')}
             </button>
             )}
           </div>
@@ -1533,7 +1563,7 @@ export default function ChangelogPage() {
 
         {(activeSummaryStatus !== 'idle' || activeSummary) && (
           <div
-            className="mb-4 rounded-2xl px-4 py-4"
+            className={isMobile ? 'mb-3 rounded-xl px-3 py-3' : 'mb-4 rounded-2xl px-4 py-4'}
             style={{
               background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(14, 165, 233, 0.06))',
               border: '1px solid rgba(99, 102, 241, 0.18)',
