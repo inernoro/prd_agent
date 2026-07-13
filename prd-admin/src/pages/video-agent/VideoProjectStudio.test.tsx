@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { VideoProjectStudio } from './VideoProjectStudio';
 
 describe('VideoProjectStudio', () => {
-  it('opens on the usable project console instead of the legacy task list', () => {
+  it('opens on a focused literary creation flow instead of an editor console', () => {
     const html = renderToStaticMarkup(
       <VideoProjectStudio
         projects={[]}
@@ -32,15 +32,17 @@ describe('VideoProjectStudio', () => {
 
     expect(html).toContain('data-testid="video-project-studio"');
     expect(html).toContain('aria-label="文学稿内容"');
-    expect(html).toContain('分析并拆镜');
-    expect(html).toContain('项目控制器');
-    expect(html).toContain('多轨时间线');
+    expect(html).toContain('文学创作转视频');
+    expect(html).toContain('把一个故事变成一组镜头');
+    expect(html).toContain('AI 拆成分镜');
     expect(html).toContain('Seedance 1.5 Pro');
-    expect(html).toContain('添加字幕片段');
-    expect(html).toContain('视频</span>');
-    expect(html).toContain('字幕</span>');
-    expect(html).toContain('配音</span>');
-    expect(html).toContain('音乐</span>');
+    expect(html).toContain('文稿</span>');
+    expect(html).toContain('参考</span>');
+    expect(html).toContain('设置</span>');
+    expect(html).not.toContain('项目控制器');
+    expect(html).not.toContain('多轨时间线');
+    expect(html).not.toContain('镜头控制器');
+    expect(html).not.toContain('添加字幕片段');
     expect(html).not.toContain('高级创作（拆分镜）');
     expect(html).not.toContain('共 36 个任务');
   });

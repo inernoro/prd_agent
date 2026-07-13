@@ -10,14 +10,17 @@ import {
   CircleStop,
   Download,
   Film,
-  History,
   GripVertical,
+  History,
+  Image as ImageIcon,
   Layers3,
   Maximize2,
+  PanelRightOpen,
   Pause,
   Play,
   RefreshCw,
   Save,
+  Scissors,
   SlidersHorizontal,
   Sparkles,
   WandSparkles,
@@ -59,7 +62,6 @@ export interface VideoStoryboardEditorProps {
 }
 
 type PreviewMode = 'scene' | 'compare' | 'export';
-type LibraryTab = 'shots' | 'versions';
 
 const DURATIONS = [5, 8, 10, 12, 15];
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'];
@@ -92,9 +94,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [project, setProject] = useState<VideoProject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(0);
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>('shots');
   const [previewMode, setPreviewMode] = useState<PreviewMode>('scene');
   const [compareVersionIds, setCompareVersionIds] = useState<string[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [promptDraft, setPromptDraft] = useState('');
+  const [topicDraft, setTopicDraft] = useState('');
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -177,6 +182,10 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }, [runId, startPolling]);
 
   const selectedScene = run?.scenes[selectedSceneIndex] ?? null;
+  const selectedSceneWorking = selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
+  const selectedSceneEditable = Boolean(selectedScene)
+    && (run?.status === 'Editing' || run?.status === 'Completed')
+    && !selectedSceneWorking;
   const pendingScenes = useMemo(
     () => run?.scenes.filter((scene) => scene.status === 'Draft' || scene.status === 'Error') ?? [],
     [run],
@@ -198,6 +207,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
 
   useEffect(() => { setCompareVersionIds([]); }, [selectedSceneIndex]);
+  useEffect(() => { setPromptDraft(selectedScene?.prompt ?? ''); }, [selectedScene?.prompt, selectedSceneIndex]);
+  useEffect(() => { setTopicDraft(selectedScene?.topic ?? ''); }, [selectedScene?.topic, selectedSceneIndex]);
 
   const mutate = useCallback(async (key: string, action: () => Promise<boolean>) => {
     if (mutating) return;
@@ -223,7 +234,20 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     return true;
   }, [runId, selectedScene, selectedSceneIndex]);
 
+  const saveScenePatch = useCallback((patch: Parameters<typeof updateVideoSceneReal>[2]) => mutate('save-scene', async () => {
+    const success = await updateScene(patch);
+    if (success) toast.success('镜头参数已保存');
+    return success;
+  }), [mutate, updateScene]);
+
   const renderScene = useCallback(() => mutate('render-scene', async () => {
+    if (!selectedScene) return false;
+    const nextPrompt = promptDraft.trim();
+    if (!nextPrompt) return false;
+    if (nextPrompt !== selectedScene.prompt) {
+      const saved = await updateScene({ prompt: nextPrompt });
+      if (!saved) return false;
+    }
     const response = await renderVideoSceneReal(runId, selectedSceneIndex);
     if (!response.success) {
       toast.error('提交生成失败', response.error?.message);
@@ -231,7 +255,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     }
     toast.success('镜头已进入生成队列');
     return true;
-  }), [mutate, runId, selectedSceneIndex]);
+  }), [mutate, promptDraft, runId, selectedScene, selectedSceneIndex, updateScene]);
 
   const regenerateScene = useCallback(() => mutate('regenerate-scene', async () => {
     const response = await regenerateVideoSceneReal(runId, selectedSceneIndex);
@@ -286,10 +310,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   const toggleCompareVersion = useCallback((version: VideoGenSceneVersion) => {
     setCompareVersionIds((current) => {
-      if (current.includes(version.id)) return current.filter((id) => id !== version.id);
-      return [...current.slice(-1), version.id];
+      const next = current.includes(version.id)
+        ? current.filter((id) => id !== version.id)
+        : [...current.slice(-1), version.id];
+      setPreviewMode(next.length === 2 ? 'compare' : 'scene');
+      return next;
     });
-    setPreviewMode('compare');
   }, []);
 
   const reorderScenes = useCallback((fromIndex: number, toIndex: number) => mutate('reorder-scenes', async () => {
@@ -342,29 +368,27 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }
 
   return (
-    <div className="video-console" aria-label="视频制作控制台" data-testid="video-console">
-      <header className="video-console__header">
-        <div className="video-console__project">
+    <div className={`video-console video-workbench ${editMode ? 'is-editing' : ''}`} aria-label="视频制作控制台" data-testid="video-console">
+      <header className="video-workbench__header">
+        <div className="video-workbench__project">
           {onBack && (
-            <button className="video-console__icon-button" onClick={onBack} aria-label="返回作品列表" title="返回作品列表">
+            <button className="video-workbench__icon-button" onClick={onBack} aria-label="返回作品列表" title="返回作品列表">
               <ArrowLeft size={17} />
             </button>
           )}
           <div className="min-w-0">
-            <div className="video-console__title">{run.articleTitle || '未命名视频项目'}</div>
-            <div className="video-console__meta">
-              {run.scenes.length} 个镜头 · {totalDuration} 秒 · 已产生费用 ${totalCost.toFixed(3)}
-            </div>
+            <div className="video-workbench__title">{run.articleTitle || '未命名视频项目'}</div>
+            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · ${totalCost.toFixed(3)}</div>
           </div>
         </div>
 
-        <div className="video-console__phase" aria-live="polite">
+        <div className="video-workbench__phase" aria-live="polite">
           {run.status === 'Rendering' && <MapSpinner size={14} />}
           <span>{PHASE_LABELS[run.currentPhase] || run.currentPhase}</span>
           {run.status === 'Rendering' && <span>{run.phaseProgress}%</span>}
         </div>
 
-        <div className="video-console__actions">
+        <div className="video-workbench__actions">
           {['Queued', 'Scripting', 'Rendering'].includes(run.status) && (
             <Button size="sm" variant="secondary" onClick={cancelRun} disabled={mutating === 'cancel-run'}>
               {mutating === 'cancel-run' ? <MapSpinner size={14} /> : <CircleStop size={14} />} 停止任务
@@ -375,18 +399,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <Layers3 size={14} /> 批量生成
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={exportRun}
-            disabled={!allScenesReady || run.status !== 'Editing' || mutating === 'export'}
-            title={allScenesReady ? '合成并导出完整视频' : '所有镜头就绪后可导出'}
-          >
-            {mutating === 'export' ? <MapSpinner size={14} /> : <Film size={14} />}
-            导出成片
-          </Button>
+          <button className={`video-workbench__mode-button ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><PanelRightOpen size={15} /> 镜头设置</button>
+          <button className={`video-workbench__mode-button ${editMode ? 'is-active' : ''}`} onClick={() => setEditMode((value) => !value)} disabled={!allScenesReady} title={allScenesReady ? '打开成片剪辑' : '所有镜头生成后可进入剪辑'}><Scissors size={15} /> {editMode ? '退出剪辑' : '剪辑成片'}</button>
+          {editMode && (
+            <Button size="sm" variant="primary" onClick={exportRun} disabled={run.status !== 'Editing' || mutating === 'export'}>
+              {mutating === 'export' ? <MapSpinner size={14} /> : <Film size={14} />} 导出
+            </Button>
+          )}
           {run.videoAssetUrl && (
-            <a className="video-console__download" href={run.videoAssetUrl} target="_blank" rel="noreferrer">
+            <a className="video-workbench__download" href={run.videoAssetUrl} target="_blank" rel="noreferrer">
               <Download size={14} /> 下载
             </a>
           )}
@@ -401,52 +422,33 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         </div>
       )}
 
-      <main className="video-console__workspace" data-testid="video-console-workspace">
-        <aside className="video-console__library" aria-label="镜头与版本">
-          <div className="video-console__tabs" role="tablist">
-            <button className={libraryTab === 'shots' ? 'is-active' : ''} onClick={() => setLibraryTab('shots')}>
-              <Film size={14} /> 镜头
-            </button>
-            <button className={libraryTab === 'versions' ? 'is-active' : ''} onClick={() => setLibraryTab('versions')}>
-              <History size={14} /> 版本
-            </button>
-          </div>
-          <div className="video-console__library-scroll">
-            {libraryTab === 'shots' ? (
-              run.scenes.length > 0 ? run.scenes.map((scene, index) => (
-                <SceneLibraryItem
-                  key={scene.index}
-                  scene={scene}
-                  index={index}
-                  active={index === selectedSceneIndex && previewMode === 'scene'}
-                  onClick={() => {
-                    setSelectedSceneIndex(index);
-                    setPreviewMode('scene');
-                  }}
-                />
-              )) : (
-                <EmptyLibrary />
-              )
-            ) : (
-              <VersionLibrary
-                scene={selectedScene}
-                mutating={mutating === 'activate-version'}
-                onActivate={activateVersion}
-                selectedIds={compareVersionIds}
-                onCompare={toggleCompareVersion}
+      <main className={`video-workbench__workspace ${settingsOpen ? 'has-inspector' : ''}`} data-testid="video-console-workspace">
+        <aside className="video-workbench__filmstrip" aria-label="分镜胶片带">
+          <div className="video-workbench__filmstrip-heading"><Film size={14} /><span>镜头</span><strong>{run.scenes.length}</strong></div>
+          <div className="video-workbench__filmstrip-scroll">
+            {run.scenes.length > 0 ? run.scenes.map((scene, index) => (
+              <SceneLibraryItem
+                key={scene.index}
+                scene={scene}
+                index={index}
+                active={index === selectedSceneIndex && previewMode === 'scene'}
+                onClick={() => {
+                  setSelectedSceneIndex(index);
+                  setPreviewMode('scene');
+                }}
               />
-            )}
+            )) : <EmptyLibrary />}
           </div>
         </aside>
 
-        <section className="video-console__viewer-column" aria-label="视频预览">
-          <div className="video-console__viewer-toolbar">
+        <section className="video-workbench__creative" aria-label="视频预览与生成">
+          <div className="video-workbench__viewer-toolbar">
             <div className="video-console__segmented" role="group" aria-label="预览模式">
               <button className={previewMode === 'scene' ? 'is-active' : ''} onClick={() => setPreviewMode('scene')}>当前镜头</button>
               <button
                 className={previewMode === 'compare' ? 'is-active' : ''}
                 onClick={() => setPreviewMode('compare')}
-                disabled={(selectedScene?.versions.length ?? 0) < 2}
+                disabled={compareVersions.length !== 2}
               >
                 版本比较
               </button>
@@ -461,7 +463,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <span>{previewMode === 'scene' ? selectedScene?.topic : previewMode === 'compare' ? '版本并排比较' : '最终导出'}</span>
           </div>
 
-          <div className="video-console__viewer">
+          <div className="video-workbench__viewer">
             {previewMode === 'compare' ? (
               compareVersions.length === 2 ? (
                 <div className="video-console__compare-grid">
@@ -476,7 +478,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 <div className="video-console__viewer-empty">
                   <Columns2 size={30} />
                   <strong>选择两个版本进行比较</strong>
-                  <span>在左侧版本页选择两个生成结果，播放器会保持相同画幅并排展示。</span>
+                  <span>在下方版本带选择两个生成结果。</span>
                 </div>
               )
             ) : previewUrl ? (
@@ -500,18 +502,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <div className="video-console__viewer-empty">
                 <WandSparkles size={32} />
                 <strong>{selectedScene ? '这个镜头还没有视频' : '还没有可预览镜头'}</strong>
-                <span>{selectedScene ? '确认右侧提示词和参数后，提交本镜生成。' : '返回列表重新创建分镜项目。'}</span>
-                {selectedScene && run.status === 'Editing' && (
-                  <Button size="sm" variant="primary" onClick={renderScene} disabled={Boolean(mutating)}>
-                    {mutating === 'render-scene' ? <MapSpinner size={14} /> : <Sparkles size={14} />}
-                    生成本镜
-                  </Button>
-                )}
+                <span>{selectedScene ? '在下方描述镜头动作，然后生成。' : '返回作品页重新创建分镜项目。'}</span>
               </div>
             )}
           </div>
 
-          <div className="video-console__transport">
+          <div className="video-workbench__transport">
             <button onClick={togglePlayback} disabled={!previewUrl || previewMode === 'compare'} aria-label={isPlaying ? '暂停' : '播放'}>
               {isPlaying ? <Pause size={16} /> : <Play size={16} />}
             </button>
@@ -520,36 +516,88 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <span>{formatTime(videoRef.current?.duration || selectedScene?.duration || 0)}</span>
             <button aria-label="适应画布" title="适应画布"><Maximize2 size={15} /></button>
           </div>
+
+          {selectedScene && (
+            <section className="video-workbench__composer" aria-label="镜头生成">
+              <input
+                className="video-workbench__topic-input"
+                value={topicDraft}
+                onChange={(event) => setTopicDraft(event.target.value)}
+                onBlur={() => {
+                  const next = topicDraft.trim();
+                  if (next && next !== selectedScene.topic) void saveScenePatch({ topic: next });
+                }}
+                disabled={!selectedSceneEditable}
+                aria-label="镜头名称"
+              />
+              <textarea
+                value={promptDraft}
+                onChange={(event) => setPromptDraft(event.target.value)}
+                placeholder="描述人物动作、镜头运动和环境变化"
+                disabled={!selectedSceneEditable}
+                aria-label="生成提示词"
+              />
+              {(project?.assets.length ?? 0) > 0 && (
+                <div className="video-workbench__reference-row">
+                  {project?.assets.filter((asset) => asset.type !== 'audio').slice(0, 9).map((asset) => (
+                    <span key={asset.id}>{asset.url ? <img src={asset.url} alt="" /> : <ImageIcon size={13} />}{asset.name}</span>
+                  ))}
+                </div>
+              )}
+              <div className="video-workbench__composer-actions">
+                <div>
+                  <button onClick={regenerateScene} disabled={!selectedSceneEditable || Boolean(mutating)}>{mutating === 'regenerate-scene' ? <MapSpinner size={13} /> : <RefreshCw size={13} />} AI 改写</button>
+                  <button onClick={() => void saveScenePatch({ prompt: promptDraft.trim() })} disabled={!selectedSceneEditable || !promptDraft.trim() || promptDraft.trim() === selectedScene.prompt}><Save size={13} /> 保存</button>
+                  <button onClick={() => setSettingsOpen(true)}><SlidersHorizontal size={13} /> 参数</button>
+                </div>
+                <Button variant="primary" onClick={renderScene} disabled={!selectedSceneEditable || Boolean(mutating) || !promptDraft.trim()}>
+                  {mutating === 'render-scene' || selectedSceneWorking ? <MapSpinner size={14} /> : <Sparkles size={14} />}
+                  {selectedScene.videoUrl ? '生成新版本' : '生成这个镜头'}
+                </Button>
+              </div>
+            </section>
+          )}
+
+          <section className="video-workbench__versions" aria-label="生成版本">
+            <div className="video-workbench__versions-heading"><div><strong>生成版本</strong><span>{selectedScene?.versions.length ?? 0}</span></div><small>{compareVersionIds.length}/2 已选比较</small></div>
+            <div className="video-workbench__version-strip">
+              <VersionLibrary
+                scene={selectedScene}
+                mutating={mutating === 'activate-version'}
+                onActivate={activateVersion}
+                selectedIds={compareVersionIds}
+                onCompare={toggleCompareVersion}
+              />
+            </div>
+          </section>
         </section>
 
-        <Inspector
-          run={run}
-          scene={selectedScene}
-          sceneIndex={selectedSceneIndex}
-          mutating={mutating}
-          models={models}
-          assets={project?.assets ?? []}
-          onUpdate={(patch) => mutate('save-scene', async () => {
-            const success = await updateScene(patch);
-            if (success) toast.success('镜头参数已保存');
-            return success;
-          })}
-          onRender={renderScene}
-          onRegenerate={regenerateScene}
-        />
+        {settingsOpen && (
+          <Inspector
+            run={run}
+            scene={selectedScene}
+            sceneIndex={selectedSceneIndex}
+            models={models}
+            assets={project?.assets ?? []}
+            onClose={() => setSettingsOpen(false)}
+            onUpdate={saveScenePatch}
+          />
+        )}
       </main>
 
-      <Timeline
-        run={run}
-        tracks={project?.timelineTracks ?? []}
-        selectedSceneIndex={selectedSceneIndex}
-        onSelect={(index) => {
-          setSelectedSceneIndex(index);
-          setPreviewMode('scene');
-        }}
-        onReorder={reorderScenes}
-        disabled={run.status !== 'Editing' || Boolean(mutating)}
-      />
+      {editMode && (
+        <Timeline
+          run={run}
+          tracks={project?.timelineTracks ?? []}
+          selectedSceneIndex={selectedSceneIndex}
+          onSelect={(index) => {
+            setSelectedSceneIndex(index);
+            setPreviewMode('scene');
+          }}
+          onReorder={reorderScenes}
+          disabled={run.status !== 'Editing' || Boolean(mutating)}
+        />
+      )}
 
       {batchDialogOpen && (
         <BatchRenderDialog
@@ -637,19 +685,13 @@ const Inspector: React.FC<{
   run: VideoGenRun;
   scene: VideoGenScene | null;
   sceneIndex: number;
-  mutating: string | null;
   models: VideoModelOption[];
   assets: VideoProjectAsset[];
+  onClose: () => void;
   onUpdate: (patch: Parameters<typeof updateVideoSceneReal>[2]) => void;
-  onRender: () => void;
-  onRegenerate: () => void;
-}> = ({ run, scene, sceneIndex, mutating, models, assets, onUpdate, onRender, onRegenerate }) => {
-  const [prompt, setPrompt] = useState(scene?.prompt ?? '');
-  const [topic, setTopic] = useState(scene?.topic ?? '');
+}> = ({ run, scene, sceneIndex, models, assets, onClose, onUpdate }) => {
   const [firstFrameUrl, setFirstFrameUrl] = useState(scene?.firstFrameUrl ?? '');
   const [lastFrameUrl, setLastFrameUrl] = useState(scene?.lastFrameUrl ?? '');
-  useEffect(() => { setPrompt(scene?.prompt ?? ''); }, [scene?.prompt, sceneIndex]);
-  useEffect(() => { setTopic(scene?.topic ?? ''); }, [scene?.topic, sceneIndex]);
   useEffect(() => { setFirstFrameUrl(scene?.firstFrameUrl ?? ''); }, [scene?.firstFrameUrl, sceneIndex]);
   useEffect(() => { setLastFrameUrl(scene?.lastFrameUrl ?? ''); }, [scene?.lastFrameUrl, sceneIndex]);
 
@@ -666,49 +708,9 @@ const Inspector: React.FC<{
     <aside className="video-console__inspector" aria-label="镜头属性">
       <div className="video-console__panel-title">
         <div><SlidersHorizontal size={15} /> 镜头控制器</div>
-        <span>SHOT {String(sceneIndex + 1).padStart(2, '0')}</span>
+        <div><span>SHOT {String(sceneIndex + 1).padStart(2, '0')}</span><button onClick={onClose} aria-label="关闭镜头设置"><X size={15} /></button></div>
       </div>
       <div className="video-console__inspector-scroll">
-        <label className="video-console__field">
-          <span>镜头名称</span>
-          <input
-            value={topic}
-            disabled={!editable}
-            onChange={(event) => setTopic(event.target.value)}
-            onBlur={() => {
-              const trimmed = topic.trim();
-              if (trimmed && trimmed !== scene.topic) onUpdate({ topic: trimmed });
-            }}
-          />
-        </label>
-
-        <label className="video-console__field">
-          <span>生成提示词</span>
-          <textarea
-            value={prompt}
-            disabled={!editable}
-            rows={8}
-            onChange={(event) => setPrompt(event.target.value)}
-            onBlur={() => {
-              const trimmed = prompt.trim();
-              if (trimmed && trimmed !== scene.prompt) onUpdate({ prompt: trimmed });
-            }}
-          />
-        </label>
-
-        <div className="video-console__prompt-actions">
-          <button onClick={onRegenerate} disabled={!editable || Boolean(mutating)}>
-            {mutating === 'regenerate-scene' ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
-            AI 改写
-          </button>
-          <button
-            onClick={() => onUpdate({ prompt: prompt.trim() })}
-            disabled={!editable || !prompt.trim() || prompt.trim() === scene.prompt}
-          >
-            <Save size={13} /> 保存
-          </button>
-        </div>
-
         <label className="video-console__field">
           <span>视频模型</span>
           <select
@@ -775,12 +777,6 @@ const Inspector: React.FC<{
         </div>
       </div>
 
-      <div className="video-console__inspector-action">
-        <Button variant="primary" onClick={onRender} disabled={!editable || Boolean(mutating) || !prompt.trim()}>
-          {mutating === 'render-scene' || working ? <MapSpinner size={14} /> : <Sparkles size={14} />}
-          {scene.videoUrl ? '生成新版本' : '生成本镜'}
-        </Button>
-      </div>
     </aside>
   );
 };
