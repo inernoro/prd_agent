@@ -1156,6 +1156,42 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProtocolRouterAudit_AcceptsAssembledChangelogWhenFragmentWasConsumed()
+    {
+        var root = LocateRepoRoot();
+        var report = Path.Combine(Path.GetTempPath(), $"llmgw-protocol-router-audit-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "python3",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "scripts/llmgw-protocol-router-audit.py",
+                    "--json-out", report,
+                }
+            })!;
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, stderr + stdout);
+            var reportJson = File.ReadAllText(report);
+            Assert.Contains("\"verdict\": \"pass\"", reportJson);
+            Assert.Contains("\"name\": \"readiness_and_changelog_capture_protocol_router_progress\"", reportJson);
+            Assert.Contains("\"CHANGELOG.md\"", reportJson);
+        }
+        finally
+        {
+            File.Delete(report);
+        }
+    }
+
+    [Fact]
     public void ConsoleRuntimeGateEvidenceLinks_CanDeepLinkToFilteredEvidence()
     {
         var overview = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
