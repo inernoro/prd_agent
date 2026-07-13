@@ -977,7 +977,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=library-tag-filter], [data-tour-id=library-tabs]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
                         new() { Selector = "[data-tour-id=library-sort], [data-tour-id=library-tabs]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
-                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 7 步：进库后点右下角「+」新增", Body = "点卡片「打开」进入空间，右下角有一颗悬浮「+」，点开像调色盘一样展开：写文章、录音转笔记、上传文件、解析短视频都从这里进；也支持直接拖文件进页面上传。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 7 步：进库后点右下角「+」新增", Body = "点卡片「打开」进入空间，右下角有一颗悬浮「+」，点开是一列新增菜单：写文章、录音转笔记（支持现场录音）、新建文件夹；上传文件、解析短视频、从网页托管导入收在「上传与导入」分组里，点分组展开、再点收起；也支持直接拖文件进页面上传。" },
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
                     },
                 }),

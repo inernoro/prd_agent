@@ -2983,10 +2983,10 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>
     /// 发起录音转录全链路任务（音视频 → ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档）。
-    /// 移动端 Notion 式录音流程的后端入口。
+    /// 移动端 Notion 式录音流程的后端入口。可选指定整理方式（styleKey/styleContext/customPrompt）。
     /// </summary>
     [HttpPost("entries/{entryId}/transcribe")]
-    public async Task<IActionResult> TranscribeEntry(string entryId)
+    public async Task<IActionResult> TranscribeEntry(string entryId, [FromBody] TranscribeStyleRequest? request = null)
     {
         // team writable：能上传录音的协作者必须能转录，否则 FAB「录音转笔记」流程
         // 在共享库里上传成功后立刻 404（Codex P2）
@@ -2999,13 +2999,91 @@ public class DocumentStoreController : ControllerBase
         if (!ct.StartsWith("audio/") && !ct.StartsWith("video/"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频文件转录"));
 
-        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Transcribe);
+        var styleErr = ValidateTranscribeStyle(request);
+        if (styleErr != null) return styleErr;
+
+        return await QueueMediaAgentRunAsync(entry, store!, DocumentStoreAgentRunKind.Transcribe, request);
+    }
+
+    /// <summary>录音转笔记可用的「整理方式」列表（SSOT：TranscribeStyleRegistry，前端禁止硬编码）。</summary>
+    [HttpGet("transcribe-styles")]
+    public IActionResult ListTranscribeStyles()
+    {
+        var items = TranscribeStyleRegistry.All
+            .Select(s => new { key = s.Key, label = s.Label, description = s.Description })
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 换个整理方式：对已完成的转录 run 按新风格重生成摘要（免重跑 ASR），
+    /// 原地更新原转录笔记的「摘要」小节（走版本快照，可从历史撤销）。返回新的 runId 供 SSE 订阅。
+    /// </summary>
+    [HttpPost("agent-runs/{runId}/restyle")]
+    public async Task<IActionResult> RestyleTranscribeRun(string runId, [FromBody] TranscribeStyleRequest request)
+    {
+        var userId = GetUserId();
+        // 不按 run 归属人过滤：团队库里原转录可能是别人发起的，协作者的整理权限
+        // 以「对产物笔记可写」为准（下方 LoadWritableEntryAsync 校验），而非历史 run 的所有权（Codex P2）
+        var prior = await _db.DocumentStoreAgentRuns
+            .Find(r => r.Id == runId && r.Kind == DocumentStoreAgentRunKind.Transcribe)
+            .FirstOrDefaultAsync();
+        if (prior == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录任务不存在"));
+        if (prior.Status != DocumentStoreRunStatus.Done || string.IsNullOrEmpty(prior.OutputEntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "转录尚未完成，无法重新整理"));
+
+        var styleErr = ValidateTranscribeStyle(request, requireStyle: true);
+        if (styleErr != null) return styleErr;
+
+        // 笔记 entry 的写权限（协作者也可整理，与转录发起对称）
+        var (_, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
+        if (err != null) return err;
+
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = prior.SourceEntryId,
+            StoreId = prior.StoreId,
+            UserId = userId,
+            OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+            RestyleOfRunId = prior.Id,
+            TemplateKey = request.StyleKey?.Trim().ToLowerInvariant(),
+            CustomPrompt = string.IsNullOrWhiteSpace(request.CustomPrompt) ? null : request.CustomPrompt.Trim(),
+            StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
+            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation(
+            "[doc-store-agent] transcribe restyle queued: {RunId} prior={PriorId} style={Style}",
+            run.Id, prior.Id, run.TemplateKey ?? "general");
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
+    }
+
+    /// <summary>整理方式参数校验：styleKey 必须在注册表内；custom 必须带 customPrompt。</summary>
+    private IActionResult? ValidateTranscribeStyle(TranscribeStyleRequest? request, bool requireStyle = false)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.StyleKey))
+            return requireStyle
+                ? BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "styleKey 不能为空"))
+                : null;
+        var style = TranscribeStyleRegistry.Find(request.StyleKey);
+        if (style == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知整理方式: {request.StyleKey}"));
+        if (style.Key == TranscribeStyleRegistry.CustomKey && string.IsNullOrWhiteSpace(request.CustomPrompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义整理方式需要提供 customPrompt"));
+        return null;
     }
 
     /// <summary>
     /// 字幕生成 / 录音转录共用的排队逻辑（去重 + 定向消费认领 + 新建）。
+    /// style 仅对 transcribe 生效：写到新建 run 的 TemplateKey/CustomPrompt/StyleContext。
     /// </summary>
-    private async Task<IActionResult> QueueMediaAgentRunAsync(DocumentEntry entry, DocumentStore store, string kind)
+    private async Task<IActionResult> QueueMediaAgentRunAsync(
+        DocumentEntry entry, DocumentStore store, string kind, TranscribeStyleRequest? style = null)
     {
         var entryId = entry.Id;
         var userId = GetUserId();
@@ -3015,6 +3093,17 @@ public class DocumentStoreController : ControllerBase
         // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
         // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+
+        // 归一化本次请求的整理方式：仅当在途 run 的风格与本次完全一致才复用，否则新建。
+        // 否则「后台跑默认转录时点会议纪要快捷键」会复用默认 run，笔记出错风格（Codex P2）。
+        // 字幕任务无风格（三者皆 null），既有字幕 run 也是 null → 相等，去重不受影响。
+        var reqTemplateKey = style?.StyleKey?.Trim().ToLowerInvariant();
+        var reqCustomPrompt = string.IsNullOrWhiteSpace(style?.CustomPrompt) ? null : style!.CustomPrompt!.Trim();
+        var reqStyleContext = string.IsNullOrWhiteSpace(style?.StyleContext) ? null : style!.StyleContext!.Trim();
+        var styleMatch = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
         // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
@@ -3026,6 +3115,9 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+                // restyle run 是「换个整理方式」专用任务，不能被普通转录请求认领/复用
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
+                styleMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
@@ -3044,6 +3136,8 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
+                styleMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
@@ -3063,6 +3157,9 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
+            TemplateKey = reqTemplateKey,
+            CustomPrompt = reqCustomPrompt,
+            StyleContext = reqStyleContext,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
         await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
@@ -3624,15 +3721,38 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>获取某个 entry 的最近一次 agent run（某 kind，用于打开按钮时判断是否已生成过）</summary>
     [HttpGet("entries/{entryId}/agent-runs/latest")]
-    public async Task<IActionResult> GetLatestAgentRun(string entryId, [FromQuery] string kind)
+    public async Task<IActionResult> GetLatestAgentRun(
+        string entryId,
+        [FromQuery] string kind,
+        [FromQuery] string? status = null,
+        [FromQuery] bool requireOutput = false)
     {
-        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
+        // writable 而非 owner-only：团队库协作者能转录/编辑笔记，也必须能查最近 run
+        // 来发起「换个整理方式」（Codex P2：restyle 协作者被 404）
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, GetUserId());
         if (err != null) return err;
         if (string.IsNullOrEmpty(kind))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "kind 不能为空"));
 
+        // status/requireOutput 过滤：restyle 失败的 run 与原转录同 SourceEntryId+kind，
+        // 只按 CreatedAt 取最新会拿到失败 run，导致明明有完成的笔记却再也打不开
+        // 整理面板（Codex P2）。查「最近一条完成且有产物」的 run 用 status=done&requireOutput=true。
+        var filters = new List<FilterDefinition<DocumentStoreAgentRun>>
+        {
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, kind),
+        };
+        if (!string.IsNullOrWhiteSpace(status))
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, status.Trim().ToLowerInvariant()));
+        if (requireOutput)
+        {
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Ne(r => r.OutputEntryId, null),
+                Builders<DocumentStoreAgentRun>.Filter.Ne(r => r.OutputEntryId, "")));
+        }
+
         var run = await _db.DocumentStoreAgentRuns
-            .Find(r => r.SourceEntryId == entryId && r.Kind == kind)
+            .Find(Builders<DocumentStoreAgentRun>.Filter.And(filters))
             .SortByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync();
         return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
@@ -5417,6 +5537,18 @@ public class UpdateSubscriptionRequest
 
     /// <summary>新的同步间隔（分钟，null 表示不修改）</summary>
     public int? SyncIntervalMinutes { get; set; }
+}
+
+public class TranscribeStyleRequest
+{
+    /// <summary>整理方式 key（general/meeting/interview/todo/custom，SSOT：TranscribeStyleRegistry）</summary>
+    public string? StyleKey { get; set; }
+
+    /// <summary>补充背景（可选，如"参会人：张三、李四"），仅帮助理解，不参与编造</summary>
+    public string? StyleContext { get; set; }
+
+    /// <summary>自定义整理要求（styleKey == custom 时必填）</summary>
+    public string? CustomPrompt { get; set; }
 }
 
 public class ReprocessRequest

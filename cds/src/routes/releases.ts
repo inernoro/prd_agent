@@ -21,10 +21,19 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const projectId = resolveReadableProjectId(req, res);
     if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
+    const targets = deps.stateService.getReleaseTargets(projectId);
+    // RemoteHost 无 projectId 归属（系统级资源）。项目级调用方只能看到本项目发布目标
+    // 实际引用（ssh.privateKeyRef）的主机——与 rejectPrivateKeyRefMismatch 同款归属口径，
+    // 避免泄露其他项目的 SSH 主机。无项目语境（系统级调用）时才返回全部。
+    const referencedHostIds = projectId
+      ? new Set(targets.map((t) => t.ssh?.privateKeyRef).filter((ref): ref is string => !!ref))
+      : null;
     res.json({
-      targets: deps.stateService.getReleaseTargets(projectId),
+      targets,
       plans: deps.stateService.getReleasePlans(projectId),
-      remoteHosts: deps.stateService.getRemoteHosts().map((host) => ({
+      remoteHosts: deps.stateService.getRemoteHosts()
+        .filter((host) => referencedHostIds === null || referencedHostIds.has(host.id))
+        .map((host) => ({
         id: host.id,
         name: host.name,
         host: host.host,

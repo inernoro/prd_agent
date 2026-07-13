@@ -236,6 +236,9 @@ describe('missingEnvTemplates(从 container.ts 迁来的 SSOT)', () => {
     expect(missingEnvTemplates({ A: '${MISSING_XYZ_123}' })).toEqual(['MISSING_XYZ_123']);
     expect(missingEnvTemplates({ A: '${B}', B: 'x' })).toEqual([]);
     expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:-default}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:=default}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:+alternate}' })).toEqual([]);
+    expect(missingEnvTemplates({ A: '${MISSING_XYZ_123:?required}' })).toEqual(['MISSING_XYZ_123']);
     expect(missingEnvTemplates({ A: 'no-template' })).toEqual([]);
   });
 });

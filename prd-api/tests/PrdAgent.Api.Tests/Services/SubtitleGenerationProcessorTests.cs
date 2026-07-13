@@ -51,6 +51,9 @@ public class SubtitleGenerationProcessorTests
             documentService: Mock.Of<IDocumentService>(),
             httpClientFactory: Mock.Of<IHttpClientFactory>(),
             llmCtx: new LLMRequestContextAccessor(),
+            // 本用例只走 ASR 分发，不触及「换个整理方式」写回路径；
+            // ContentReprocessApplyService 是具体类且携带多层依赖，此处置空即可
+            applyService: null!,
             logger: NullLogger<SubtitleGenerationProcessor>.Instance);
 
         var resolution = new ModelResolutionResult

@@ -9,7 +9,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -321,7 +321,7 @@ import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-sto
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow, History, AlertTriangle } from 'lucide-react';
-import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
+import { listInlineComments, createInlineComment, deleteInlineComment, listTranscribeStyles } from '@/services';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
@@ -435,10 +435,12 @@ export type DocBrowserProps = {
   onOpenSubscription?: (entryId: string) => void;
   /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
   onGenerateSubtitle?: (entryId: string) => void;
-  /** 点击"转录"时触发（仅 audio/video entries 显示）：ASR 转录 + AI 摘要全链路 */
-  onTranscribe?: (entryId: string) => void;
-  /** 「添加」菜单项：上传录音并自动转录（Notion 式录音流程入口）。 */
+  /** 点击"转录"时触发（仅 audio/video entries 显示）：ASR 转录 + AI 摘要全链路。styleKey 指定整理方式（空 = 智能摘要） */
+  onTranscribe?: (entryId: string, styleKey?: string) => void;
+  /** 「添加」菜单项：录音转笔记入口（Notion 式录音流程）。调用方决定打开录音面板或音频文件选择。 */
   onUploadAudio?: () => void;
+  /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
+  onRestyleTranscribe?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
   /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
@@ -643,59 +645,133 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
   return ct.startsWith('audio/') || ct.startsWith('video/');
 }
 
+// 整理方式列表的模块级缓存（SSOT 在后端注册表；同一 session 只拉一次）
+let transcribeStylesCache: { key: string; label: string; description: string }[] | null = null;
+
 /**
- * 录音转录入口卡（Notion 式）：音/视频条目正文顶部常驻。
- * 未转录 → 「开始转录」主按钮；已转录 → 「查看转录笔记」直达。
+ * 录音/上传音频的统一结果区（音频块下方常驻，2026-07-13 用户确认交互）：
+ * - 未转录 → 「开始转录」主按钮 + 整理方式快捷按钮（选哪种就按哪种风格直接开始）；
+ * - 已转录 → 历史产物 chips（转录笔记 / 字幕，点击跳转打开）+「换个整理方式」。
  */
 function TranscribeHeroCard({
   noteEntryId,
+  subtitleEntryId,
   onStart,
   onOpenNote,
+  onRestyle,
 }: {
   noteEntryId?: string;
-  onStart?: () => void;
-  onOpenNote: (noteEntryId: string) => void;
+  subtitleEntryId?: string;
+  /** 发起转录；styleKey 为空走默认智能摘要 */
+  onStart?: (styleKey?: string) => void;
+  onOpenNote: (entryId: string) => void;
+  /** 换个整理方式（免重跑转录，打开整理面板） */
+  onRestyle?: () => void;
 }) {
+  const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>(transcribeStylesCache ?? []);
+  useEffect(() => {
+    // 只有能发起转录时才需要风格列表（分享只读视图不拉）
+    if (!onStart || noteEntryId || transcribeStylesCache) return;
+    void listTranscribeStyles().then((res) => {
+      if (res.success) {
+        transcribeStylesCache = res.data.items;
+        setStyles(res.data.items);
+      }
+    });
+  }, [onStart, noteEntryId]);
+
+  const quickStyles = styles.filter(s => s.key !== 'custom' && s.key !== 'general');
+
   return (
     <div
-      className="surface-inset mb-4 flex items-center justify-between gap-3 rounded-[14px] px-4 py-3.5"
+      className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
       data-tour-id="doc-transcribe-hero">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
-          <AudioLines size={16} />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
+            <AudioLines size={16} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-token-primary">
+              {noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
+            </p>
+            <p className="truncate text-[11px] text-token-muted">
+              {noteEntryId ? '点下方产物直达；也可以换个方式重新整理' : 'AI 将转录这段音频并按所选方式整理'}
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-token-primary">
-            {noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
-          </p>
-          <p className="truncate text-[11px] text-token-muted">
-            {noteEntryId ? '摘要与转录全文已保存为新文档' : 'AI 将转录这段音频并生成结构化摘要'}
-          </p>
-        </div>
+        {!noteEntryId && onStart && (
+          <button
+            onClick={() => onStart()}
+            className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
+            style={{ background: 'rgba(59,130,246,0.9)', color: '#fff' }}>
+            开始转录
+          </button>
+        )}
       </div>
-      {noteEntryId ? (
-        <button
-          onClick={() => onOpenNote(noteEntryId)}
-          className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-[9px] px-3 py-1.5 text-[12px] font-semibold transition-colors"
-          style={{
-            background: 'rgba(34,197,94,0.1)',
-            border: '1px solid rgba(34,197,94,0.22)',
-            color: 'rgba(74,222,128,0.95)',
-          }}>
-          查看笔记
-          <ChevronRight size={13} />
-        </button>
-      ) : onStart ? (
-        <button
-          onClick={onStart}
-          className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-          style={{
-            background: 'rgba(59,130,246,0.9)',
-            color: '#fff',
-          }}>
-          开始转录
-        </button>
-      ) : null}
+
+      {/* 未转录：整理方式快捷按钮（点哪个就按那种风格直接开始，少一步选择） */}
+      {!noteEntryId && onStart && quickStyles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-token-muted">或按方式直接开始：</span>
+          {quickStyles.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => onStart(s.key)}
+              title={s.description}
+              className="cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
+              style={{
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-faint)',
+              }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 已转录：历史产物 chips + 换个整理方式 */}
+      {(noteEntryId || subtitleEntryId) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {noteEntryId && (
+            <button
+              onClick={() => onOpenNote(noteEntryId)}
+              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
+              style={{
+                background: 'rgba(34,197,94,0.1)',
+                border: '1px solid rgba(34,197,94,0.22)',
+                color: 'rgba(74,222,128,0.95)',
+              }}>
+              <BookOpen size={11} /> 转录笔记 <ChevronRight size={11} />
+            </button>
+          )}
+          {subtitleEntryId && (
+            <button
+              onClick={() => onOpenNote(subtitleEntryId)}
+              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
+              style={{
+                background: 'rgba(168,85,247,0.1)',
+                border: '1px solid rgba(168,85,247,0.22)',
+                color: 'rgba(216,180,254,0.95)',
+              }}>
+              <Sparkles size={11} /> 字幕 <ChevronRight size={11} />
+            </button>
+          )}
+          {noteEntryId && onRestyle && (
+            <button
+              onClick={onRestyle}
+              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
+              style={{
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-faint)',
+              }}>
+              <Wand2 size={11} /> 换个整理方式
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1642,6 +1718,7 @@ export function DocBrowser({
   onGenerateSubtitle,
   onTranscribe,
   onUploadAudio,
+  onRestyleTranscribe,
   onReprocess,
   onShareEntry,
   autoEditEntryId,
@@ -1669,6 +1746,8 @@ export function DocBrowser({
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
+  // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
+  const [transcriptNoteMd, setTranscriptNoteMd] = useState<string | null>(null);
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);
@@ -2629,6 +2708,20 @@ export function DocBrowser({
     }
   }, [selectedEntryId, loadEntryContent, selectedEntryData]);
 
+  // 音频条目 + 已生成转录笔记 → 懒加载笔记 markdown 喂给歌词滚轮跟读播放器
+  const audioNoteId = selectedEntryData && !selectedEntryData.isFolder
+    && (selectedEntryData.contentType ?? '').toLowerCase().startsWith('audio/')
+    ? selectedEntryData.metadata?.transcribe_entry_id
+    : undefined;
+  useEffect(() => {
+    if (!audioNoteId) { setTranscriptNoteMd(null); return; }
+    let stale = false;
+    loadContent(audioNoteId)
+      .then((p) => { if (!stale) setTranscriptNoteMd(p?.text ?? null); })
+      .catch(() => { if (!stale) setTranscriptNoteMd(null); });
+    return () => { stale = true; };
+  }, [audioNoteId, loadContent]);
+
   // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
   useEffect(() => {
     if (!autoEditEntryId || selectedEntryId !== autoEditEntryId || contentLoading) return;
@@ -3564,14 +3657,41 @@ export function DocBrowser({
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
+                {/* 生成产物（转录笔记/字幕/再加工）→ 来源文件快速跳转：
+                    从笔记一键回到源音频/源文档（2026-07-13 用户确认交互） */}
+                {!contentLoading && !editMode && selectedEntryData && (() => {
+                  const srcId = selectedEntryData.metadata?.source_entry_id;
+                  if (!srcId) return null;
+                  const srcEntry = entries.find(e => e.id === srcId);
+                  if (!srcEntry) return null;
+                  const isAudioSrc = (srcEntry.contentType ?? '').toLowerCase().startsWith('audio/');
+                  return (
+                    <button
+                      onClick={() => handleSelectEntry(srcId)}
+                      className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover:bg-white/8"
+                      style={{
+                        background: 'rgba(168,85,247,0.08)',
+                        border: '1px solid rgba(168,85,247,0.22)',
+                        color: 'rgba(216,180,254,0.95)',
+                      }}
+                      title="打开来源文件">
+                      {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
+                      <span className="truncate">来源文件：{srcEntry.title}</span>
+                      <ChevronRight size={12} className="shrink-0" />
+                    </button>
+                  );
+                })()}
+
                 {/* 录音转录入口卡（Notion 式）：音/视频条目正文顶部常驻——
                     未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
                   && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
                   <TranscribeHeroCard
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
-                    onStart={onTranscribe ? () => onTranscribe(selectedEntryData.id) : undefined}
+                    subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
+                    onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
                   />
                 )}
                 {contentLoading ? (
@@ -3589,7 +3709,9 @@ export function DocBrowser({
                               value={editContent}
                               onChange={(v) => setEditContent(v ?? '')}
                               height="100%"
-                              preview="live"
+                              // 移动端屏幕放不下双栏 live（源码+预览各挤成一条窄柱，没法编辑，
+                              // 2026-07-13 用户截图反馈）→ 单栏编辑，预览走保存后的阅读态
+                              preview={isMobile ? 'edit' : 'live'}
                               visibleDragbar={false}
                             />
                           </Suspense>
@@ -3640,6 +3762,7 @@ export function DocBrowser({
                   <FilePreview
                     entry={selectedEntryData}
                     preview={preview}
+                    transcriptNoteMd={transcriptNoteMd}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
@@ -3859,15 +3982,24 @@ export function DocBrowser({
       </div>
       </ReaderColumnFrame>
 
-      {/* 库内唯一「新增」入口：右下角调色盘 FAB（有任一写回调才渲染；只读调用方自动无 FAB） */}
+      {/* 库内唯一「新增」入口：右下角竖排 FAB 菜单（有任一写回调才渲染；只读调用方自动无 FAB）。
+          上传/导入类动作归入「上传与导入」分组，点分组展开子项、再点收起（2026-07-12 用户确认）。 */}
       {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
         <CreatePaletteFab
           actions={[
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
-            ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: Upload, onClick: onUploadFile }] : []),
-            ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
-            ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+            ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{
+              key: 'import-group',
+              label: '上传与导入',
+              icon: Upload,
+              hue: 'rgba(14,165,233,0.92)',
+              children: [
+                ...(onUploadFile ? [{ key: 'upload', label: '上传文件', icon: FileUp, onClick: onUploadFile }] : []),
+                ...(onOpenVideoParser ? [{ key: 'video', label: '解析短视频', icon: Video, onClick: onOpenVideoParser, hue: 'rgba(168,85,247,0.92)' }] : []),
+                ...(onImportFromHosting ? [{ key: 'hosting', label: '从网页托管导入', icon: Globe, onClick: onImportFromHosting }] : []),
+              ],
+            }] : []),
             ...(onCreateFolder ? [{ key: 'folder', label: '新建文件夹', icon: FolderPlus, onClick: () => setCreatingFolder(true), hue: 'rgba(234,179,8,0.92)' }] : []),
           ]}
         />

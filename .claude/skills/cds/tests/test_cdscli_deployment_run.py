@@ -110,6 +110,45 @@ def test_branch_deploy_surfaces_structured_run_failure(monkeypatch):
     assert payload["data"]["failure"]["owner"] == "code"
 
 
+def test_branch_deploy_timeout_without_run_id_falls_back_to_branch_status(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cdscli, "_check_blocking_pending_import", lambda _branch_id: None)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
+
+    def fake_stream(method, path, body=None, timeout=15, extra_headers=None):
+        captured.update(method=method, path=path, timeout=timeout)
+        return {
+            "triggered": False,
+            "status": None,
+            "body": None,
+            "partial": False,
+            "error": "timeout_30s",
+            "errorType": "TimeoutError",
+            "headers": {},
+        }
+
+    monkeypatch.setattr(cdscli, "_request_stream_safe", fake_stream)
+    monkeypatch.setattr(cdscli, "_call", lambda *args, **kwargs: {
+        "branches": [{
+            "id": "branch-1",
+            "status": "running",
+            "services": {},
+        }]
+    })
+
+    code, payload = call_main(["branch", "deploy", "branch-1", "--timeout", "30"])
+
+    assert code == 0
+    assert captured == {
+        "method": "POST",
+        "path": "/api/branches/branch-1/deploy",
+        "timeout": 30,
+    }
+    assert payload["data"]["stage"] == "deployed"
+    assert payload["data"]["triggerPartial"] is False
+
+
 def test_deployment_run_list_builds_scoped_query(monkeypatch):
     captured: dict[str, object] = {}
 

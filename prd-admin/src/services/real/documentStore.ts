@@ -144,6 +144,55 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 }
 
 /**
+ * 带进度回调的上传（XHR：fetch 拿不到 upload progress 事件）。
+ * onProgress 收 0-100 整数百分比；大文件上传不再"卡住没反馈"（2026-07-13 用户反馈）。
+ */
+export async function uploadDocumentFileWithProgress(
+  storeId: string,
+  file: File,
+  onProgress: (percent: number) => void,
+): Promise<import('@/types/api').ApiResponse<{
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  attachmentId: string;
+  documentId?: string;
+  fileUrl: string;
+}>> {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return await new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', api.documentStore.entries.upload(storeId));
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+    };
+    xhr.onload = () => {
+      onProgress(100);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+          return;
+        } catch { /* fallthrough */ }
+      }
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'UPLOAD_FAILED', message: xhr.responseText || `HTTP ${xhr.status}` },
+      });
+    };
+    xhr.onerror = () => resolve({
+      success: false,
+      data: null as never,
+      error: { code: 'UPLOAD_FAILED', message: '网络错误，上传中断（文件仍在本机，可重试）' },
+    });
+    xhr.send(formData);
+  });
+}
+
+/**
  * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
  * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
@@ -524,11 +573,36 @@ export async function generateSubtitle(entryId: string) {
   );
 }
 
+/** 录音转笔记的整理方式参数（SSOT：后端 TranscribeStyleRegistry） */
+export type TranscribeStyleParams = {
+  styleKey?: string;
+  /** 补充背景（如"参会人：张三、李四"），仅帮助 AI 理解 */
+  styleContext?: string;
+  /** styleKey === 'custom' 时的自定义整理要求 */
+  customPrompt?: string;
+};
+
 /** 发起录音转录全链路任务（ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档） */
-export async function transcribeEntry(entryId: string) {
+export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(
     api.documentStore.entries.transcribe(entryId),
-    { method: 'POST' },
+    { method: 'POST', body: style ?? {} },
+  );
+}
+
+/** 录音转笔记可用的「整理方式」列表 */
+export async function listTranscribeStyles() {
+  return await apiRequest<{ items: { key: string; label: string; description: string }[] }>(
+    api.documentStore.stores.transcribeStyles(),
+    { method: 'GET' },
+  );
+}
+
+/** 换个整理方式：对已完成的转录 run 按新风格重生成摘要（免重跑 ASR），原地更新笔记摘要节 */
+export async function restyleTranscribeRun(runId: string, style: TranscribeStyleParams) {
+  return await apiRequest<{ runId: string; status: string; reused: boolean }>(
+    api.documentStore.stores.transcribeRestyle(runId),
+    { method: 'POST', body: style },
   );
 }
 
@@ -665,10 +739,21 @@ export async function startAutoLink(storeId: string) {
   );
 }
 
-/** 查询某 entry 最近一次 Agent Run（按 kind 过滤） */
-export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess' | 'transcribe') {
+/**
+ * 查询某 entry 最近一次 Agent Run（按 kind 过滤）。
+ * opts.status/requireOutput：查「最近一条完成且有产物」的 run —— restyle 失败 run 与
+ * 原转录同 kind，不过滤会拿到失败 run 导致整理面板打不开（Codex P2）。
+ */
+export async function getLatestAgentRun(
+  entryId: string,
+  kind: 'subtitle' | 'reprocess' | 'transcribe',
+  opts?: { status?: 'done' | 'failed' | 'running' | 'queued'; requireOutput?: boolean },
+) {
+  const params = new URLSearchParams({ kind });
+  if (opts?.status) params.set('status', opts.status);
+  if (opts?.requireOutput) params.set('requireOutput', 'true');
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
-    `${api.documentStore.entries.latestAgentRun(entryId)}?kind=${kind}`,
+    `${api.documentStore.entries.latestAgentRun(entryId)}?${params.toString()}`,
     { method: 'GET' },
   );
 }

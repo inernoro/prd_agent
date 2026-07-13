@@ -1297,6 +1297,9 @@ DEEP_DAILY_MIN_SHOTS = 12
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 THIN_CELL_PAT = re.compile(r"^(同上|见上文|参见上文|略|省略|按常规|常规|待定|TBD|todo)$", re.I)
+# #809：「同上第N条」是对前面某条已连图证据的合法复用（明确指向具体一条），
+# 在证据连线检查里应豁免「0 证据」拒收（区别于裸「同上」——后者仍由 THIN_CELL_PAT 判为占位薄单元）。
+DITTO_REF_PAT = re.compile(r"同上第\s*\d+\s*条")
 
 
 def _target_declares_daily_scope(target):
@@ -1767,6 +1770,10 @@ def validate_inputs(a, body, manifest, cfg=None):
         img_refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", tail)
         case_refs = re.findall(r"用例\s*[0-9]+", tail)
         if not img_refs and not case_refs:
+            # #809：明确引用「同上第N条」= 复用前面某条已连图证据，不算 0 证据断链，豁免拒收。
+            # 注意仅豁免带序号的「同上第N条」；裸「同上」不在此豁免（由 THIN_CELL_PAT 判占位）。
+            if DITTO_REF_PAT.search(tail):
+                continue
             errs.append(f"[断链] 已落地诉求 0 证据连线（需引用「图XX」或「用例N」）：{ls[:70]}")
             continue
         for r0 in img_refs:

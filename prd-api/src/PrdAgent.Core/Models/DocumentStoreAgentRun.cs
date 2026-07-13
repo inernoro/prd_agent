@@ -45,11 +45,23 @@ public class DocumentStoreAgentRun
     /// <summary>生成成功后对应的新 entry ID（字幕/再加工产物）</summary>
     public string? OutputEntryId { get; set; }
 
-    /// <summary>再加工模板 key（summary/minutes/blog/custom）</summary>
+    /// <summary>再加工模板 key（summary/minutes/blog/custom）；转录任务复用为整理方式 key（general/meeting/interview/todo/custom）</summary>
     public string? TemplateKey { get; set; }
 
-    /// <summary>再加工自定义提示词（templateKey == custom 时）</summary>
+    /// <summary>再加工自定义提示词（templateKey == custom 时）；转录任务复用为自定义整理要求</summary>
     public string? CustomPrompt { get; set; }
+
+    /// <summary>转录整理的补充背景（可选，如"参会人：张三、李四"），仅用于帮助 AI 理解，不参与编造</summary>
+    public string? StyleContext { get; set; }
+
+    /// <summary>转录完成后的纯文本全文（供「换个整理方式」免重跑 ASR 复用）</summary>
+    public string? TranscriptText { get; set; }
+
+    /// <summary>
+    /// 「换个整理方式」任务：指向被重新整理的原转录 run。
+    /// 非空时 Worker 跳过 ASR，直接用原 run 的转录文本按新风格重生成摘要，并更新原笔记 entry。
+    /// </summary>
+    public string? RestyleOfRunId { get; set; }
 
     /// <summary>再加工流式写入的累计文本（断线续传兜底；多轮模式下为最近一条 assistant 消息的内容）</summary>
     public string? GeneratedText { get; set; }
