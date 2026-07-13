@@ -2976,7 +2976,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
         "POST",
         request_path,
         body={"agentName": agent_name, "purpose": purpose},
-        timeout=10,
+        # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
+        # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
+        timeout=30,
     )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)

@@ -42,11 +42,11 @@ def run_command(argv: list[str]) -> tuple[int, str]:
 
 def test_connect_existing_project_saves_local_credential_without_printing_secret(workspace, monkeypatch):
     secret = "cdsp_demo_secret-never-print"
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, int]] = []
 
     def fake_request(method, path, body=None, timeout=15, extra_headers=None,
                      fatal_network_errors=True):
-        calls.append((method, path))
+        calls.append((method, path, timeout))
         if method == "POST":
             return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
         if path.endswith("/req1"):
@@ -75,9 +75,9 @@ def test_connect_existing_project_saves_local_credential_without_printing_secret
     exclude = (workspace / ".git" / "info" / "exclude").read_text()
     assert "/.cds/credentials.json" in exclude
     assert calls == [
-        ("POST", "/api/projects/proj-a/access-requests"),
-        ("GET", "/api/projects/proj-a/access-requests/req1"),
-        ("GET", "/api/projects/proj-a"),
+        ("POST", "/api/projects/proj-a/access-requests", 30),
+        ("GET", "/api/projects/proj-a/access-requests/req1", 10),
+        ("GET", "/api/projects/proj-a", 10),
     ]
 
 
