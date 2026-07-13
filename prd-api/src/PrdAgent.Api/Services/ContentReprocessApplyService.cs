@@ -158,6 +158,16 @@ public class ContentReprocessApplyService
         return new ApplyResult("new", newEntry.Id, null, FinalBody: content);
     }
 
+    /// <summary>
+    /// 把一段 markdown 写回指定 entry（资产归一 + 内容寻址共享保护 + 版本快照 + 元数据同步）。
+    /// 供转录「换个整理方式」等 Worker 场景复用，与 AI 再加工 replace 同一条写回路径。
+    /// </summary>
+    public Task SaveContentAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
+        => SaveContentToEntryAsync(entry, content, actorId, db);
+
+    /// <summary>读取 entry 完整正文（优先 DocumentId 的 RawContent，退回 ContentIndex）。</summary>
+    public Task<string> LoadContentAsync(DocumentEntry entry) => LoadEntryContentAsync(entry);
+
     private async Task<string> LoadEntryContentAsync(DocumentEntry entry)
     {
         if (!string.IsNullOrEmpty(entry.DocumentId))

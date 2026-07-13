@@ -1947,6 +1947,7 @@ export {
   updateDocumentEntryReal as updateDocumentEntry,
   deleteDocumentEntryReal as deleteDocumentEntry,
   uploadDocumentFile,
+  uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
   addSubscription,
@@ -1970,6 +1971,8 @@ export {
   getAgentRun,
   getLatestAgentRun,
   transcribeEntry,
+  listTranscribeStyles,
+  restyleTranscribeRun,
   // 批次 C：浏览事件埋点
   logEntryView,
   leaveEntryView,

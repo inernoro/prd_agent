@@ -1,35 +1,48 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus } from 'lucide-react';
+import { ChevronDown, Plus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
 /**
- * 库内唯一「新增」入口：右下角悬浮「+」，点击后调色盘式扇形展开动作项。
- * 设计依据（用户 2026-07-10 确认）：
- * - 新增入口只有一个，用户心智 = 「想加东西就点右下角」；
- * - 展开像调色盘：动作沿左上四分之一圆弧散开，带文字标签，点空白/ESC 收起；
- * - 取代原侧栏小「+」菜单与顶栏「上传文档」按钮（两处已下线）。
+ * 库内唯一「新增」入口：右下角悬浮「+」，点击后竖排展开动作菜单（speed-dial）。
+ *
+ * 设计沿革：
+ * - 2026-07-10 首版为「调色盘」弧形展开，动作沿左上四分之一圆弧散开；
+ * - 2026-07-12 用户反馈弧形布局在移动端互相遮挡（6 项时相邻按钮弦距约 37px，
+ *   小于按钮本身 44px，标签压住相邻图标），且动作太多没有归类。
+ *   改为竖排菜单 + 分组：上传类动作收进「上传与导入」分组，点分组展开子项、
+ *   再点收起；竖排固定行距，物理上不可能遮挡。
+ * - 新增入口仍只有一个，用户心智 = 「想加东西就点右下角」；点空白/ESC 收起。
  */
 export type PaletteAction = {
   key: string;
   label: string;
   icon: LucideIcon;
-  onClick: () => void;
+  /** 叶子动作：点击后收起菜单并执行。分组项（有 children）忽略此字段 */
+  onClick?: () => void;
   /** 可选强调色（图标底色），默认走 accent 蓝 */
   hue?: string;
+  /** 分组：点击展开/收起子动作（再次点击可收起） */
+  children?: PaletteAction[];
 };
 
 export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  // 关闭时重置分组展开态，下次打开回到干净的一级菜单
+  useEffect(() => {
+    if (!open) setExpandedGroup(null);
   }, [open]);
 
   if (actions.length === 0) return null;
@@ -39,8 +52,76 @@ export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
     ? 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 56px) + 16px)'
     : '24px';
   const right = isMobile ? '16px' : '24px';
-  const radius = isMobile ? 118 : 148;
-  const n = actions.length;
+
+  const fireLeaf = (a: PaletteAction) => {
+    setOpen(false);
+    a.onClick?.();
+  };
+
+  const renderRow = (a: PaletteAction, opts: { child?: boolean; index: number }) => {
+    const Icon = a.icon;
+    const isGroup = !!a.children?.length;
+    const expanded = expandedGroup === a.key;
+    const size = opts.child ? 38 : 44;
+    return (
+      <motion.button
+        key={a.key}
+        layout
+        className="flex cursor-pointer items-center justify-end gap-2"
+        initial={{ opacity: 0, y: 10, scale: 0.9 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 6, scale: 0.9, transition: { duration: 0.12 } }}
+        transition={{ type: 'spring', stiffness: 460, damping: 30, delay: opts.index * 0.025 }}
+        aria-expanded={isGroup ? expanded : undefined}
+        onClick={() => {
+          if (isGroup) setExpandedGroup(prev => (prev === a.key ? null : a.key));
+          else fireLeaf(a);
+        }}
+      >
+        <span
+          className="flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold"
+          style={{
+            background: 'var(--bg-card, rgba(20,20,24,0.92))',
+            border: '1px solid var(--border-faint)',
+            color: expanded ? 'var(--text-muted)' : 'var(--text-primary)',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+          }}>
+          {a.label}
+          {isGroup && (
+            <motion.span
+              className="flex items-center"
+              animate={{ rotate: expanded ? 180 : 0 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 24 }}>
+              <ChevronDown size={12} />
+            </motion.span>
+          )}
+        </span>
+        <span
+          className="flex flex-shrink-0 items-center justify-center rounded-full"
+          style={{
+            height: size,
+            width: size,
+            // 子项与一级项的图标圆心对齐同一竖线（相对 44px 基准居中缩进）
+            marginRight: (44 - size) / 2,
+            background: a.hue ?? 'rgba(59,130,246,0.92)',
+            color: '#fff',
+            opacity: isGroup && expanded ? 0.85 : 1,
+            boxShadow: '0 6px 18px rgba(0,0,0,0.4)',
+          }}>
+          <Icon size={opts.child ? 16 : 18} />
+        </span>
+      </motion.button>
+    );
+  };
+
+  // 展开分组时，把子项行插到分组行之后（同一竖列，layout 动画让其余行平滑让位）
+  const rows: Array<{ action: PaletteAction; child?: boolean }> = [];
+  actions.forEach((a) => {
+    rows.push({ action: a });
+    if (a.children?.length && expandedGroup === a.key) {
+      a.children.forEach(c => rows.push({ action: c, child: true }));
+    }
+  });
 
   const fab = (
     <>
@@ -60,53 +141,36 @@ export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
       </AnimatePresence>
 
       <div className="fixed z-[60]" style={{ bottom, right }}>
-        {/* 调色盘动作项：沿左上四分之一圆弧展开（0=正上方 → n-1=正左方） */}
+        {/* 竖排动作菜单：固定行距，永不遮挡；超长时列内滚动 */}
         <AnimatePresence>
-          {open && actions.map((a, i) => {
-            const angle = n === 1 ? Math.PI / 4 : (Math.PI / 2) * (i / (n - 1));
-            const dx = -radius * Math.sin(angle);
-            const dy = -radius * Math.cos(angle);
-            const Icon = a.icon;
-            return (
-              <motion.button
-                key={a.key}
-                className="absolute flex cursor-pointer items-center gap-2"
-                style={{ right: 4, bottom: 4, transformOrigin: 'center' }}
-                initial={{ x: 0, y: 0, opacity: 0, scale: 0.4 }}
-                animate={{ x: dx, y: dy, opacity: 1, scale: 1 }}
-                exit={{ x: 0, y: 0, opacity: 0, scale: 0.4 }}
-                transition={{ type: 'spring', stiffness: 420, damping: 26, delay: i * 0.03 }}
-                onClick={() => { setOpen(false); a.onClick(); }}
-              >
-                <span
-                  className="whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold"
-                  style={{
-                    background: 'var(--bg-card, rgba(20,20,24,0.92))',
-                    border: '1px solid var(--border-faint)',
-                    color: 'var(--text-primary)',
-                    boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
-                  }}>
-                  {a.label}
-                </span>
-                <span
-                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
-                  style={{
-                    background: a.hue ?? 'rgba(59,130,246,0.92)',
-                    color: '#fff',
-                    boxShadow: '0 6px 18px rgba(0,0,0,0.4)',
-                  }}>
-                  <Icon size={18} />
-                </span>
-              </motion.button>
-            );
-          })}
+          {open && (
+            <motion.div
+              className="absolute flex flex-col items-end gap-2.5"
+              style={{
+                bottom: 68,
+                right: 6,
+                maxHeight: 'calc(100vh - 200px)',
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                // 图标阴影不被滚动容器裁掉
+                padding: '8px 2px 2px 8px',
+              }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            >
+              <AnimatePresence mode="popLayout">
+                {rows.map((r, i) => renderRow(r.action, { child: r.child, index: i }))}
+              </AnimatePresence>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         {/* 主按钮：展开时「+」旋转 45 度变关闭 */}
         <motion.button
           data-tour-id="doc-create-fab"
           aria-label={open ? '收起新增菜单' : '新增内容'}
-          title="新增：写文章 / 录音转笔记 / 上传文件…"
+          title="新增：写文章 / 录音转笔记 / 上传与导入…"
           className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full"
           style={{
             background: 'linear-gradient(135deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))',
