@@ -14,6 +14,30 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewaySerializationSecurityTests
 {
     [Fact]
+    public void GatewayIngressRequest_ToGatewayRequest_PreservesVerifiedTenantContext()
+    {
+        var ingress = new GatewayIngressRequest
+        {
+            RequestId = "request-1",
+            IngressProtocol = "openai-compatible",
+            AppCallerCode = "external.chat",
+            RequestType = "chat",
+            Context = new GatewayRequestContext
+            {
+                TenantId = "tenant-a",
+                TeamId = "team-a",
+                RequestId = "request-1",
+            },
+        };
+
+        var request = ingress.ToGatewayRequest(stream: false);
+
+        request.Context.ShouldNotBeNull();
+        request.Context.TenantId.ShouldBe("tenant-a");
+        request.Context.TeamId.ShouldBe("team-a");
+    }
+
+    [Fact]
     public void GatewayModelResolution_Serialized_MustNotLeakApiKey()
     {
         const string secret = "SECRET-must-not-cross";

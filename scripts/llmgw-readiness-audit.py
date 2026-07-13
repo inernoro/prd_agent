@@ -357,11 +357,19 @@ def _static_checks() -> list[dict]:
             "LLMGW_PROD_GATE_BASE",
             "LLMGW_PROD_GATE_KEY",
             "PRD_AGENT_PROD_GITHUB_TOKEN",
+            "RUNNER_ADMIN_TOKEN_CONFIGURED",
+            "args+=(--allow-api-unavailable)",
+            "timeout-minutes: 30",
             "rollout_evidence_run_id",
             "actions: read",
             "logs:read access",
             "actions/download-artifact@v4",
             "Restore previous rollout evidence",
+            "Restore trusted production maintenance evidence",
+            "PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence",
+            "scripts/llmgw-prod-evidence-restore.py",
+            "--require-owner-uid 0",
+            "production-evidence-baseline-audit.json",
             "llmgw-prod-stage-{0}",
             "default branch",
             "scripts/llmgw-prod-stage.sh",
@@ -382,6 +390,12 @@ def _static_checks() -> list[dict]:
             "--sample-percent \"$sample_percent\"",
             "--min-observation-hours \"$min_observation_hours\"",
             "--main-ref \"$main_ref\"",
+            "maintenance_from_commit",
+            "INPUT_MAINTENANCE_FROM_COMMIT",
+            "args+=(--maintenance-from-commit \"$maintenance_from_commit\")",
+            "maintenance_from_commit is only valid for stage http-full",
+            "Audit recorded maintenance release",
+            "scripts/llmgw-rollout-ledger.py maintenance-baseline",
             "--evidence-dir \".llmgw-release-evidence\"",
             "--allow-out-of-order-reason \"$allow_out_of_order_reason\"",
             "allow_missing_map_logs",
@@ -561,29 +575,47 @@ def _static_checks() -> list[dict]:
         chat_bootstrap + "\n" + chat_bootstrap_js,
         [
             "LLMGW_CHAT_BOOTSTRAP_DRY_RUN:-1",
-            "mongodump --db \"$mongo_db\" --archive",
+            "backup_collection \"$mongo_db\" model_groups",
             "llmgw-disk-space-guard.sh",
             "LLMGW_CHAT_BOOTSTRAP_MIN_FREE_MB:-6144",
             "llmgw-prod-before-chat-pool-bootstrap",
             "LLMGW_CHAT_BOOTSTRAP_MODEL_NAME",
             "LLMGW_CHAT_BOOTSTRAP_PLATFORM_ID",
             "LLMGW_CHAT_BOOTSTRAP_POOL_ID",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_CODE",
+            "LLMGW_CHAT_BOOTSTRAP_POOL_NAME",
+            "LLMGW_CHAT_BOOTSTRAP_ISOLATE_POOL",
             "LLMGW_CHAT_BOOTSTRAP_TARGET_CALLERS",
             "LLMGW_CHAT_BOOTSTRAP_BIND_CALLERS",
             "deepseek-ai/DeepSeek-V4-Flash",
             "report-agent.generate::chat",
             "enabled LLMModel not found",
             "target chat pool missing or not chat",
+            "poolWillBeCreated",
+            "isolated bootstrap refuses pool with Code=",
+            "const nextModels = isolatePool ? [modelItem]",
+            "ModelGroupIds: isolatePool ? [pool._id]",
             "ModelGroupIds",
             "ModelGroupId",
+            "db.getSiblingDB(gatewayDbName)",
+            "GW authority caller must resolve exactly once",
+            "isolated GW authority bootstrap requires caller binding",
+            "otherGatewayReferences.length > 0",
+            "ModelPolicy: \"pool\"",
+            "TenantId: tenantId",
+            "GW authority post-write verification failed",
+            "backup_collection \"$gateway_db\" llmgw_model_pools",
+            "--collection \"$backup_collection_name\" --archive --gzip",
+            "SHA256SUMS",
         ],
     )
     chat_bootstrap_executable = bool(chat_bootstrap_path.exists() and (chat_bootstrap_path.stat().st_mode & stat.S_IXUSR))
     chat_bootstrap_destructive = any(item in chat_bootstrap + chat_bootstrap_js for item in ["dropDatabase", "deleteMany", "remove(", "docker volume rm", "down -v"])
+    chat_bootstrap_accepts_tenant_input = "LLMGW_CHAT_BOOTSTRAP_TENANT_ID" in chat_bootstrap + chat_bootstrap_js
     checks.append(_check(
         "prod_chat_pool_bootstrap_is_backed_up_and_dry_run_first",
-        ok and chat_bootstrap_executable and not chat_bootstrap_destructive,
-        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}",
+        ok and chat_bootstrap_executable and not chat_bootstrap_destructive and not chat_bootstrap_accepts_tenant_input,
+        f"{detail}; executable={chat_bootstrap_executable}; destructive={chat_bootstrap_destructive}; acceptsTenantInput={chat_bootstrap_accepts_tenant_input}",
     ))
 
     ok, detail = _contains_all(
@@ -1457,7 +1489,7 @@ def _static_checks() -> list[dict]:
         f"{detail}; DirectTransportMarkerBaseline={direct_transport_empty}",
     ))
 
-    gateway_src = _read("prd-api/src/PrdAgent.LlmGateway/GatewayHttpEndpoints.cs")
+    gateway_src = _read("llmgw/serving/GatewayHttpEndpoints.cs")
     multipart_tests = _read("prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayMultipartHttpTests.cs")
     no_unsupported = "MULTIPART_HTTP_UNSUPPORTED" not in "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")

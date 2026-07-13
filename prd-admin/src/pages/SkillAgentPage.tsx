@@ -1,5 +1,6 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useSseStream } from '@/lib/useSseStream';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -55,13 +56,14 @@ interface ChatMessage {
 // ━━━ Page Component ━━━━━━━━
 
 export default function SkillAgentPage() {
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回首页
+  const goBack = useSmartBack('/');
   const [activeTab, setActiveTab] = useState<TabKey>('create');
 
   return (
     <div className="h-full flex flex-col bg-token-nested">
       {/* ━━━ Top Header ━━━ */}
-      <Header activeTab={activeTab} onTabChange={setActiveTab} onBack={() => navigate(-1)} />
+      <Header activeTab={activeTab} onTabChange={setActiveTab} onBack={goBack} />
 
       {/* ━━━ Tab Content ━━━ */}
       {activeTab === 'create' && <CreateTab />}
@@ -684,6 +686,18 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   }, []);
 
   useEffect(() => { loadSkills(); loadDrafts(); }, [loadSkills, loadDrafts]);
+
+  // 列表 -> 技能详情是全屏切换，必须进浏览器历史：右滑/浏览器返回 = 关详情回列表
+  useHistoryBackedView({
+    param: 'skill',
+    value: selectedSkill?.skillKey ?? null,
+    onExit: () => { setSelectedSkill(null); loadSkills(); },
+    onRestore: (key) => {
+      const hit = skills.find((s) => s.skillKey === key);
+      if (!hit) return false;
+      setSelectedSkill(hit);
+    },
+  });
 
   const handleDelete = async (skillKey: string) => {
     setDeleting(skillKey);

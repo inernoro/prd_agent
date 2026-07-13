@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Sparkles } from 'lucide-react';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
@@ -765,6 +766,31 @@ export function WorkflowListPage() {
     setSelectedExecution(null);
     setViewMode('execution-list');
   }
+
+  // 列表 -> 执行历史 -> 执行详情是全屏切换链，必须逐级进浏览器历史：
+  // 右滑/浏览器返回 = 详情回历史列表、再回工作流列表。
+  // 刷新恢复依赖 store 里的 selectedWorkflow/selectedExecution（内存态），
+  // 恢复不了时 hook 会清掉 param 回落列表。
+  useHistoryBackedView({
+    param: 'panel',
+    value:
+      viewMode === 'execution-list' ? 'executions'
+      : viewMode === 'execution-detail' ? 'execution-detail'
+      : null,
+    onExit: () => setViewMode('list'),
+    onRestore: (v) => {
+      const store = useWorkflowStore.getState();
+      if (v === 'executions') {
+        if (!store.selectedWorkflow) return false;
+        setViewMode('execution-list');
+      } else if (v === 'execution-detail') {
+        if (!store.selectedExecution) return false;
+        setViewMode('execution-detail');
+      } else {
+        return false;
+      }
+    },
+  });
 
   function closeTemplatePicker() {
     setTemplateOpen(false);

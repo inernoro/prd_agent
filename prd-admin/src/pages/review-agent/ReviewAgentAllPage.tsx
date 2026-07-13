@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, List, Trophy } from 'lucide-react';
@@ -37,6 +38,8 @@ interface Submitter {
 
 export function ReviewAgentAllPage() {
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回评审首页
+  const goBack = useSmartBack('/review-agent');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const viewParam = (searchParams.get('view') as ViewMode) || 'list';
@@ -102,7 +105,7 @@ export function ReviewAgentAllPage() {
         <div className="max-w-5xl mx-auto px-4 py-6">
           {/* 返回按钮 */}
           <button
-            onClick={() => navigate(-1)}
+            onClick={goBack}
             className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 mb-5 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />

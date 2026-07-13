@@ -126,9 +126,16 @@
 .cdsh-eyebrow .cdsh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cdsh-accent); box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); animation: cdsh-breathe 2.4s ease-in-out infinite; }
 @keyframes cdsh-breathe { 0%,100% { box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); } 50% { box-shadow: 0 0 0 6px hsl(24 100% 60% / 0); } }
 .cdsh-h1 { margin: 26px 0 0; font-weight: 800; letter-spacing: -0.035em; line-height: 0.97; font-size: clamp(48px, 6vw, 86px); }
+/* 中文主标:笔画密,字距回正、行高略松,尺寸略收避免撑破单行。 */
+.cdsh-h1-cn { letter-spacing: -0.015em; line-height: 1.06; font-size: clamp(44px, 5.6vw, 78px); }
+/* 英文副标:同一次幕布里第二句台词,尺寸退一档,流光保留。 */
+.cdsh-h1-sub { margin-top: 14px; font-weight: 700; letter-spacing: -0.01em; font-size: clamp(19px, 2vw, 26px); }
 .cdsh-line { display: block; overflow: hidden; }
 .cdsh-line > span { display: block; transform: translateY(105%); animation: cdsh-lineup .9s cubic-bezier(.2,.8,.2,1) forwards; }
 .cdsh-line:nth-child(2) > span { animation-delay: .12s; }
+/* hero 台词在开机帷幕(约 0.5s)裂开后进场。 */
+.cdsh-hero .cdsh-h1 .cdsh-line > span { animation-delay: .55s; }
+.cdsh-hero .cdsh-h1-sub > span { animation-delay: .72s; }
 @keyframes cdsh-lineup { to { transform: none; } }
 .cdsh-sheen { background: linear-gradient(100deg, #9a9aa4 0%, #9a9aa4 32%, #fff7ee 50%, #9a9aa4 68%, #9a9aa4 100%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: cdsh-sheen 8s ease-in-out infinite; }
 @keyframes cdsh-sheen { 0% { background-position: 120% 0; } 42% { background-position: -120% 0; } 100% { background-position: -120% 0; } }
@@ -1321,6 +1328,80 @@
   .cdsh-brand b { display: none; }
   .cdsh-btn-primary { padding: 9px 14px; }
 }
+/* ==================================================================
+   开机帷幕(boot veil):进场即「通电」。中线一束橙光 0.08s 划出,
+   0.5s 时画布从中线向上下裂开(CRT 开机的倒放),1.2s 内彻底让位。
+   ================================================================== */
+.cdsh-boot { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.cdsh-boot-top,
+.cdsh-boot-bottom { position: absolute; left: 0; right: 0; height: 50.5%; background: #0c0a11; }
+.cdsh-boot-top { top: 0; animation: cdsh-boot-up .62s cubic-bezier(.72,0,.22,1) .5s forwards; }
+.cdsh-boot-bottom { bottom: 0; animation: cdsh-boot-down .62s cubic-bezier(.72,0,.22,1) .5s forwards; }
+@keyframes cdsh-boot-up { to { transform: translateY(-101%); } }
+@keyframes cdsh-boot-down { to { transform: translateY(101%); } }
+.cdsh-boot-beam {
+  position: absolute; left: 6%; right: 6%; top: 50%; height: 2px; z-index: 1;
+  transform: scaleX(0); transform-origin: 50% 50%;
+  background: linear-gradient(90deg, transparent, hsl(24 100% 62% / 0.95), transparent);
+  box-shadow: 0 0 26px 3px hsl(24 100% 60% / 0.5);
+  animation:
+    cdsh-boot-beam-in .42s cubic-bezier(.2,.8,.2,1) .08s forwards,
+    cdsh-boot-beam-out .5s ease .66s forwards;
+}
+@keyframes cdsh-boot-beam-in { to { transform: scaleX(1); } }
+@keyframes cdsh-boot-beam-out { to { opacity: 0; } }
+
+/* ==================================================================
+   BranchGenesis:hero 右侧的「分支诞生」git 图。
+   main 主干拉出 → 三个 commit 落点 → 橙色分支 fork → 电流沿分支
+   注入下方环境板(cdsh-board 在 1.9s 接棒 rise)。
+   ================================================================== */
+.cdsh-stage { position: relative; }
+.cdsh-genesis { position: relative; height: 96px; margin: 0 6px -6px; }
+.cdsh-genesis svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.cdsh-gen-main {
+  fill: none; stroke: var(--cdsh-wire); stroke-width: 1.5;
+  stroke-dasharray: 560; stroke-dashoffset: 560;
+  animation: cdsh-gen-draw .8s cubic-bezier(.3,0,.35,1) .7s forwards;
+}
+.cdsh-gen-fork {
+  fill: none; stroke: var(--cdsh-accent); stroke-opacity: .8; stroke-width: 1.5;
+  stroke-dasharray: 480; stroke-dashoffset: 480;
+  animation: cdsh-gen-draw .7s cubic-bezier(.3,0,.35,1) 1.55s forwards;
+  filter: drop-shadow(0 0 6px hsl(24 100% 60% / 0.35));
+}
+@keyframes cdsh-gen-draw { to { stroke-dashoffset: 0; } }
+.cdsh-gen-commit {
+  fill: var(--cdsh-bg); stroke: rgba(255, 255, 255, 0.55); stroke-width: 1.2;
+  opacity: 0; transform-box: fill-box; transform-origin: center;
+  animation: cdsh-gen-pop .4s cubic-bezier(.2,.9,.3,1.35) forwards;
+}
+@keyframes cdsh-gen-pop { from { opacity: 0; transform: scale(.2); } to { opacity: 1; transform: none; } }
+.cdsh-gen-dock {
+  fill: var(--cdsh-accent); opacity: 0;
+  animation: cdsh-gen-dock-in .5s ease 2.15s forwards;
+  filter: drop-shadow(0 0 7px hsl(24 100% 60% / 0.8));
+}
+@keyframes cdsh-gen-dock-in { to { opacity: 1; } }
+.cdsh-gen-beam {
+  fill: #ffd9b0; opacity: 0;
+  animation: cdsh-gen-beam-fade 3.2s linear 2.3s infinite;
+  filter: drop-shadow(0 0 8px hsl(24 100% 60% / 0.9));
+}
+@keyframes cdsh-gen-beam-fade { 0% { opacity: 0; } 6% { opacity: 1; } 86% { opacity: 1; } 94% { opacity: 0; } 100% { opacity: 0; } }
+.cdsh-gen-main-label {
+  position: absolute; left: 8px; top: 0;
+  font-size: 10.5px; color: var(--cdsh-faint);
+  opacity: 0; animation: cdsh-riseup .5s ease 1.05s forwards;
+}
+.cdsh-gen-label {
+  position: absolute; left: 46%; top: 58%;
+  font-size: 11px; color: var(--cdsh-muted);
+  border: 1px solid var(--cdsh-line); border-radius: 6px; padding: 2px 8px;
+  background: var(--cdsh-panel);
+  opacity: 0; animation: cdsh-riseup .5s cubic-bezier(.2,.75,.2,1) 1.9s forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Reduced-motion users: settle the one-shot ENTRANCE animations instantly
      (rise-in, headline line reveal, node/preview pop) so nothing slides in. The
@@ -1330,7 +1411,17 @@
   .cdsh-line > span,
   .cdsh-node,
   .cdsh-preview,
+  .cdsh-gen-main,
+  .cdsh-gen-fork,
+  .cdsh-gen-commit,
+  .cdsh-gen-dock,
+  .cdsh-gen-main-label,
+  .cdsh-gen-label,
   .cdsh-access-sculpture .cdsh-access-node { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+
+  /* 开机帷幕与流动电流:reduced-motion 直接不演。 */
+  .cdsh-boot { display: none; }
+  .cdsh-gen-beam { display: none; }
 
   /* Continuous/looping motion must also stop for reduced-motion users
      (not just entrances). SVG <animateMotion> packets can't be disabled via

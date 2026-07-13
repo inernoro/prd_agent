@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
@@ -152,6 +153,27 @@ export function ReportMainView() {
     setSelectedReportId(id);
     setShowReportEditor(true);
   }, [setSelectedReportId, setShowReportEditor]);
+
+  // 列表 -> 周报编辑器是全屏切换，必须进浏览器历史：右滑/浏览器返回 = 关编辑器回列表。
+  // 新建（editingReportId 为 null）用哨兵值 'new' 承载。
+  useHistoryBackedView({
+    param: 'report',
+    value: showReportEditor ? (editingReportId ?? 'new') : null,
+    onExit: () => {
+      setShowReportEditor(false);
+      setEditingReportId(null);
+      void loadReports();
+    },
+    onRestore: (v) => {
+      if (v === 'new') {
+        setEditingReportId(null);
+      } else {
+        setEditingReportId(v);
+        setSelectedReportId(v);
+      }
+      setShowReportEditor(true);
+    },
+  });
 
   // 兼容旧入口：外部派发的 'report-agent:open-daily-log' 事件改为切到顶级「日常记录」Tab
   useEffect(() => {

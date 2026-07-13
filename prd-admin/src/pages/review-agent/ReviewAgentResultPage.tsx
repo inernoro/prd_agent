@@ -1,3 +1,4 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw, Megaphone, History, Upload, Clock as ClockIcon } from 'lucide-react';
@@ -168,6 +169,8 @@ function RawOutputDebug({ result }: { result: ReviewResult }) {
 export function ReviewAgentResultPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack('/review-agent');
 
   const [submission, setSubmission] = useState<ReviewSubmission | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -474,7 +477,7 @@ export function ReviewAgentResultPage() {
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* 返回导航 */}
       <button
-        onClick={() => navigate('/review-agent')}
+        onClick={goBack}
         className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 mb-6 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />

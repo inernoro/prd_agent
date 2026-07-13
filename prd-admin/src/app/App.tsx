@@ -111,6 +111,7 @@ const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage
 
 // 移动端入口
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
+const DailyPostPage = lazy(() => import('@/pages/mobile-home/DailyPostPage'));
 const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
 const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
 
@@ -368,6 +369,8 @@ export default function App() {
 
         {/* 移动端专属路由 */}
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
+        {/* 米多早报：首页的报纸版副页面（移动优先，宽屏收栏宽居中） */}
+        <Route path="daily-post" element={<RequirePermission perm="access"><DailyPostPage /></RequirePermission>} />
         <Route path="notifications" element={<RequirePermission perm="access"><MobileNotificationsPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>

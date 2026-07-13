@@ -18,20 +18,20 @@ AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用
     实测能发现真实异常（visual-agent/generation 44%、document-store/asr 0%、video-agent/asr 38%）。
 - **前端观测接线**（7fddd26a + c4746e20，已部署）：日志页「应用」tab + 正文一键还原 + 生图缩略图渲染。
 - **生图统一入口**（039e3397）：`ImageGenRequestBuilder` 收口「模型配置→请求体」转换，加新生图模型不再连锁全系统。
-- **独立网关进程 prd-llmgw**（444e987a，镜像已构建绿）：自包含 ASP.NET 服务，**不引用任何 prd-api 项目**，
+- **独立网关进程 llmgw/console-api**（444e987a，镜像已构建绿）：自包含 ASP.NET 服务，**不引用任何 prd-api 项目**，
   共享同一 Mongo 直接读 `llmrequestlogs` 做观测，独立 JWT 账号体系（独立 `LlmGwJwt` 密钥 + 种子账号）。
   端点 `/gw/healthz` + `/gw/auth/login` + `/gw/logs(/meta|/timeseries|/sessions|/:id)`，与独立前端
-  `prd-llmgw-web` 的 `/gw` 契约对齐。CI `llmgw-image` / `llmgw-web-image` 独立构建，编译失败不波及 api 主镜像。
+  `llmgw/web` 的 `/gw` 契约对齐。CI `llmgw-image` / `llmgw-web-image` 独立构建，编译失败不波及 api 主镜像。
 - **部署管线**：docker-compose（exec_dep 路径）+ cds-compose（预览路径，dev 源码 + express 预构建两模式）+
   `_standalone.conf` `/gw` 反代 + branch-image.yml CI 任务，全部就位。
 
 ## 波2 serving 跨进程：已实现 + 编译验证（runtime 待审批）
 
-- **serving 网关 SERVER（2a，已落地）**：`prd-api/src/PrdAgent.LlmGateway` 已从 scaffold 升级为可运行
+- **serving 网关 SERVER（2a，已落地）**：`llmgw/serving` 已从 scaffold 升级为可运行
   ASP.NET 服务（`Program.cs`），DI 进程内承载现有 `LlmGateway`+`ModelResolver`（复刻 MAP 13 项注册），
   HTTP 暴露 `/gw/v1/{healthz,resolve,send,stream(SSE),raw,pools,client-stream}`，`X-Gateway-Key` 共享密钥门。
   **已移除 Api→LlmGateway ProjectReference**，serving 编译错误不再阻塞 api 主镜像（CI 已证 api-image 与
-  llmgw-serve-image 互不影响）。镜像 `prdagent-llmgw-serve` CI 构建绿。Dockerfile.llmgw-serve（8091）。
+  llmgw-serve-image 互不影响）。镜像 `prdagent-llmgw-serve` CI 构建绿。`llmgw/serving/Dockerfile`（8091）。
 - **MAP 客户端 + flag（2b，已落地）**：`HttpLlmGatewayClient : ILlmGateway(Infra)+ILlmGateway(Core)` 代理 6 方法
   到 `/gw/v1/*`；`HttpLlmClient : ILLMClient` 代理 CreateClient 流式到 `/gw/v1/client-stream`。
   `Api/Program.cs` 加 `LlmGateway__Mode=inproc|http`（默认 inproc），http 时 DI 换 HttpLlmGatewayClient，
@@ -83,7 +83,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 - **harness 修复**：预览走 Cloudflare，默认 `Python-urllib` UA 被 CF 按浏览器签名拦（error 1010 / 403）→
   `gw-smoke.py` 补浏览器 UA 头。
 - **已知小边界**：healthz 回显 commit=`fa467956d`（镜像 GIT_COMMIT build-arg 取到较旧分支提交，非 serving 代码本身
-  问题，端点行为为 merge 树最新）；后续可在 Dockerfile.llmgw-serve 把 GIT_COMMIT 钉到 github.sha 修正标签。
+  问题，端点行为为 merge 树最新）；后续可在 `llmgw/serving/Dockerfile` 把 GIT_COMMIT 钉到 github.sha 修正标签。
 
 ## 待用户（1 次手动，外部门禁）
 
@@ -173,7 +173,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 - `ApiKey` 在 `GatewayModelResolution` 上是 `[JsonIgnore]` → 过 HTTP 线恒为 null；serving 端 `/gw/v1/raw` 按同模型
   重解析补回 ApiKey 再发（compute-then-send，杜绝跨进程「选A给B」+ 密钥不外泄）。`CrossProcessServingSelfTest`
   断言 ApiKey 恒 null。
-- 独立观测前端 `prd-llmgw` 用**独立 `LlmGwJwt__Secret`**（与 MAP 主 JWT 解耦），独立账号体系。
+- 独立观测前端 `llmgw/console-api` 用**独立 `LlmGwJwt__Secret`**（与 MAP 主 JWT 解耦），独立账号体系。
 
 ## 跨项目隔离影响（对照 `.claude/rules/cross-project-isolation.md`）
 
@@ -254,7 +254,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
   `LLMGW_ADMIN_PASSWORD` / `LLMGW_JWT_SECRET` 均改为 `${VAR:?...}` 必填（删除已知默认值），避免默认部署把
   `/gw/*` 用众所周知的 key 暴露。`LLMGW_JWT_SECRET` 尤其关键——console 的 `/gw/*` 是 bearer 鉴权，只校验
   签名/issuer/有效期，回落到仓库 dev 密钥则任何人可自签 token 读 `/gw/logs`（无需 admin 密码）。除 compose
-  必填外，`prd-llmgw/Program.cs` 启动时再做一层防御：`IsProduction()` 下若 JWT 密钥/admin 密码缺失或等于
+  必填外，`llmgw/console-api/Program.cs` 启动时再做一层防御：`IsProduction()` 下若 JWT 密钥/admin 密码缺失或等于
   仓库 dev 占位值，直接抛异常拒绝启动。CDS 预览走 cds-compose + 显式 env 不受影响；`exec_dep`/生产 `.env`
   必须设这三个变量。
 - **http 模式 multipart raw 跨进程未接通（波3，已 fail-fast 防误发）**（Codex P1，PR #965）：`MultipartFiles`
@@ -269,10 +269,10 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
   「完整生命周期未能可靠记录」，既非成功也非「未发出」。修复：① StartAsync 失败路径**返回 null**（不再返回占位
   行 id），使后续 MarkDone/MarkError no-op，blackhole 记录作为独立不可变标记留存，不被覆盖也不反向误标；
   ② 移除 `LlmRequestLogBackground` 里 `Status != "blackhole"` 的兜底过滤（logId 不再复用，按主键直接更新）；
-  ③ 前端标签「未发出」→「记录降级」（prd-admin + prd-llmgw-web），如实反映「请求可能已成功，只是这条日志没落库」。
+  ③ 前端标签「未发出」→「记录降级」（prd-admin + llmgw/web），如实反映「请求可能已成功，只是这条日志没落库」。
 - **http 模式默认 OFF**：本轮只交付「可切」，未在生产把 `LlmGateway__Mode` 翻成 http（需审批后真人逐字段
   影子比对通过才翻）。影子双发比对工具未做（计划：同请求 inproc+http 双发，diff 关键字段）。
-- **prd-llmgw-web CDS 预览已落地**：预构建 nginx 镜像使用独立 `llmgw-web` 命名子域，同源反代 `/gw/*` 到内网 `llmgw:8090`；两个后端不再单独展示为 Web。
-- **两个 LlmGateway 进程职责**：`prd-llmgw`（顶层，自包含观测控制台 + 登录，不引用 Infra）与
-  `prd-api/src/PrdAgent.LlmGateway`（serving 引擎，引用 Infra 持有实现）。职责不同、刻意分离，不归并。
+- **llmgw/web CDS 预览已落地**：预构建 nginx 镜像使用独立 `llmgw-web` 命名子域，同源反代 `/gw/*` 到内网 `llmgw:8090`；两个后端不再单独展示为 Web。
+- **两个 LlmGateway 进程职责**：`llmgw/console-api`（顶层，自包含观测控制台 + 登录，不引用 Infra）与
+  `llmgw/serving`（serving 引擎，引用 Infra 持有实现）。职责不同、刻意分离，不归并。
 - 计费、数据库分离、调度算法重写：本轮明确不做（用户「计费暂缓」「数据库暂不分离避免表撕裂」）。

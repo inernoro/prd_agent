@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import {
   ReactFlow,
   Background,
@@ -961,6 +962,14 @@ export function EmergenceExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  // 树列表 -> 全屏画布是页面级切换，必须进浏览器历史：
+  // 右滑/浏览器返回 = 关画布回列表；?tree= 深链/刷新可直达画布
+  useHistoryBackedView({
+    param: 'tree',
+    value: selectedTreeId,
+    onExit: () => setSelectedTreeId(null),
+    onRestore: (id) => { setSelectedTreeId(id); },
+  });
   const [trees, setTrees] = useState<Array<{ id: string; title: string; description?: string; nodeCount: number; updatedAt: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showIntro, setShowIntro] = useState<boolean>(() => {

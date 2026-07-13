@@ -165,6 +165,10 @@ def _body_for_protocol(protocol: str, max_tokens: int, prompt: str) -> tuple[str
             },
             "Context": {
                 "UserId": "llmgw-protocol-canary",
+                "SourceSystem": "canary",
+                "IngressProtocol": "gw-native",
+                "AppCallerTitle": "LLM Gateway protocol canary",
+                "ModelPolicy": "auto",
             },
         }
     if protocol == "openai-compatible":
@@ -381,6 +385,15 @@ def _write_markdown(path: str, report: dict[str, Any]) -> None:
 
 
 def _self_test() -> int:
+    _, native_body = _body_for_protocol("gw-native", max_tokens=8, prompt="Reply with OK.")
+    native_headers = _headers_for_protocol("gw-native", "self-test")
+    native_context = native_body.get("Context") or {}
+    if native_context.get("SourceSystem") != native_headers.get("X-Gateway-Source"):
+        print("LLM Gateway protocol canary self-test: FAIL gw-native source mismatch", file=sys.stderr)
+        return 1
+    if native_context.get("IngressProtocol") != "gw-native":
+        print("LLM Gateway protocol canary self-test: FAIL gw-native ingress protocol", file=sys.stderr)
+        return 1
     with tempfile.TemporaryDirectory(prefix="llmgw-protocol-canary-self-test-") as tmp:
         reusable_path = os.path.join(tmp, "protocol-canary.json")
         with open(reusable_path, "w", encoding="utf-8") as fh:

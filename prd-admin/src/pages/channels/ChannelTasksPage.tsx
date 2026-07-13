@@ -1,5 +1,6 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -52,7 +53,8 @@ const statusColors: Record<string, string> = {
 };
 
 export default function ChannelTasksPage() {
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回渠道页
+  const goBack = useSmartBack('/open-platform/channels');
   const [searchParams, setSearchParams] = useSearchParams();
   const initialChannelType = searchParams.get('channelType') || '';
   const initialStatus = searchParams.get('status') || '';
@@ -108,7 +110,8 @@ export default function ChannelTasksPage() {
     const params = new URLSearchParams();
     if (channelTypeFilter) params.set('channelType', channelTypeFilter);
     if (statusFilter) params.set('status', statusFilter);
-    setSearchParams(params);
+    // 筛选联动 URL 用 replace：effect 内自动写 URL，push 会把每次筛选都堆进 history
+    setSearchParams(params, { replace: true });
   }, [page, search, channelTypeFilter, statusFilter]);
 
   const handleViewDetail = (task: ChannelTask) => {
@@ -158,7 +161,7 @@ export default function ChannelTasksPage() {
         icon={<Clock size={16} />}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/open-platform/channels')}>
+            <Button variant="ghost" size="sm" onClick={goBack}>
               <ArrowLeft size={14} />
               返回
             </Button>

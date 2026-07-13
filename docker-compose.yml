@@ -4,7 +4,7 @@ services:
     container_name: prdagent-gateway
     ports:
       - "5500:80"
-      # 网关前端控制台 prd-llmgw-web 走 _standalone.conf 的独立 server 块（listen 8081，
+      # 网关前端控制台 llmgw/web 走 _standalone.conf 的独立 server 块（listen 8081，
       # /gw-api/ 反代到 llmgw:8090）。不发布 8081 主机就到不了该 listener，控制台打不开。
       - "8081:8081"
     volumes:
@@ -263,7 +263,7 @@ services:
       - prdagent-network
     restart: unless-stopped
 
-  # 独立 LLM 网关服务 llmgw —— 独立 prd-llmgw 镜像（自包含 ASP.NET 服务，监听 8090）。
+  # 独立 LLM 网关服务 llmgw —— 独立 llmgw/console-api 镜像（自包含 ASP.NET 服务，监听 8090）。
   # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
   # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
   llmgw:
@@ -301,8 +301,8 @@ services:
       - prdagent-network
     restart: unless-stopped
 
-  # 独立 LLM 网关前端静态站 llmgw-web —— 独立 prd-llmgw-web 镜像（nginx 托管构建产物，监听 80）。
-  # SPA 回退 + /gw 反代到 llmgw:8090（见 prd-llmgw-web/nginx.conf）。
+  # 独立 LLM 网关前端静态站 llmgw-web —— 独立 llmgw/web 镜像（nginx 托管构建产物，监听 80）。
+  # SPA 回退 + /gw 反代到 llmgw:8090（见 llmgw/web/nginx.conf）。
   llmgw-web:
     image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
     container_name: prdagent-llmgw-web

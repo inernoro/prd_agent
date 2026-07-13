@@ -1,5 +1,5 @@
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -49,7 +49,8 @@ const channelIcons: Record<string, React.ReactNode> = {
 };
 
 export default function IdentityMappingsPage() {
-  const navigate = useNavigate();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回渠道页
+  const goBack = useSmartBack('/open-platform/channels');
   const [mappings, setMappings] = useState<ChannelIdentityMapping[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -137,7 +138,7 @@ export default function IdentityMappingsPage() {
         icon={<UserCheck size={16} />}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/open-platform/channels')}>
+            <Button variant="ghost" size="sm" onClick={goBack}>
               <ArrowLeft size={14} />
               返回
             </Button>

@@ -28,6 +28,10 @@ public class LlmRequestLog
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
+    /// <summary>服务端解析的租户边界；所有查询和费用聚合必须以此为首要过滤条件。</summary>
+    public string TenantId { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
+
     // 关联/定位
     public string RequestId { get; set; } = string.Empty;
     /// <summary>
@@ -117,6 +121,12 @@ public class LlmRequestLog
     /// 入口/Provider 参数策略：default-drop / strict-require。
     /// </summary>
     public string? ParameterPolicy { get; set; }
+
+    /// <summary>提示词策略只记录不可逆元数据，禁止保存策略正文。</summary>
+    public string? PromptPolicyId { get; set; }
+    public int? PromptPolicyVersion { get; set; }
+    public string? PromptPolicyHash { get; set; }
+    public int? PromptPolicyChars { get; set; }
 
     /// <summary>
     /// 入口适配器或 Provider adapter 丢弃的参数名。

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -108,6 +109,29 @@ public class ShadowLlmGatewayTests
 
         var cmp = await writer.WaitForRecordAsync();
         cmp.ReleaseCommit.ShouldBe("abcdef1234");
+    }
+
+    [Fact]
+    public async Task ShadowComparison_UsesConfiguredInternalTenantWithoutContextScope()
+    {
+        var writer = new CapturingWriter();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:InternalTenantId"] = "tenant-configured-internal",
+            })
+            .Build();
+        var shadow = new ShadowLlmGateway(
+            new FakeGateway(Res("m1", "openai", "openai")),
+            new FakeGateway(Res("m1", "openai", "openai")),
+            NullLogger<ShadowLlmGateway>.Instance,
+            writer,
+            configuration: configuration);
+
+        await shadow.ResolveModelAsync("demo.app::chat", "chat");
+
+        var comparison = await writer.WaitForRecordAsync();
+        comparison.TenantId.ShouldBe("tenant-configured-internal");
     }
 
     // ② stream：inproc chunk 原样透传给 caller；流末做一次 resolve 比对（chat 主链路覆盖）

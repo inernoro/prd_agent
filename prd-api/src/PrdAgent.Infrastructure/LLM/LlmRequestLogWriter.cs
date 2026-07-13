@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.LLM;
@@ -18,16 +20,26 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     private readonly ILogger<LlmRequestLogWriter> _logger;
     private readonly IAppSettingsService _settingsService;
     private readonly IAssetStorage _assetStorage;
+    private readonly string _internalTenantId;
 
     /// <summary>JSON 中字符串值超过此长度时，上传 COS 存储引用</summary>
     private const int CosTextThreshold = 1024;
 
-    public LlmRequestLogWriter(MongoDbContext db, ILogger<LlmRequestLogWriter> logger, LlmRequestLogBackground _, IAppSettingsService settingsService, IAssetStorage assetStorage)
+    public LlmRequestLogWriter(
+        MongoDbContext db,
+        ILogger<LlmRequestLogWriter> logger,
+        LlmRequestLogBackground _,
+        IAppSettingsService settingsService,
+        IAssetStorage assetStorage,
+        IConfiguration configuration)
     {
         _db = db;
         _logger = logger;
         _settingsService = settingsService;
         _assetStorage = assetStorage;
+        _internalTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
     }
 
     public async Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
@@ -51,6 +63,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             var log = new LlmRequestLog
             {
                 Id = Guid.NewGuid().ToString(),
+                TenantId = ResolveTenantId(start.TenantId),
+                TeamId = start.TeamId,
                 RequestId = start.RequestId,
                 ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
@@ -77,6 +91,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ModelPolicy = string.IsNullOrWhiteSpace(start.ModelPolicy) ? null : start.ModelPolicy,
                 ModelPoolId = string.IsNullOrWhiteSpace(start.ModelPoolId) ? null : start.ModelPoolId,
                 ParameterPolicy = string.IsNullOrWhiteSpace(start.ParameterPolicy) ? null : start.ParameterPolicy,
+                PromptPolicyId = string.IsNullOrWhiteSpace(start.PromptPolicyId) ? null : start.PromptPolicyId,
+                PromptPolicyVersion = start.PromptPolicyVersion,
+                PromptPolicyHash = string.IsNullOrWhiteSpace(start.PromptPolicyHash) ? null : start.PromptPolicyHash,
+                PromptPolicyChars = start.PromptPolicyChars,
                 DroppedParameters = start.DroppedParameters?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList(),
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
@@ -150,6 +168,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 var fallbackLog = new LlmRequestLog
                 {
                     Id = Guid.NewGuid().ToString(),
+                    TenantId = ResolveTenantId(start.TenantId),
+                    TeamId = start.TeamId,
                     RequestId = start.RequestId,
                     ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,
@@ -187,6 +207,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
             }
         }
     }
+
+    private string ResolveTenantId(string? tenantId)
+        => string.IsNullOrWhiteSpace(tenantId)
+            ? _internalTenantId
+            : tenantId.Trim();
 
     public void MarkFirstByte(string logId, DateTime at)
     {
