@@ -5,6 +5,7 @@
 | feat | prd-api | 新增独立视频导出任务、项目参考素材透传及首尾帧控制 |
 | fix | prd-api | 修复音频开关未传入生成任务及分镜合成丢弃音轨的问题 |
 | test | prd-api | 新增 ffmpeg 音视频字幕真实合成测试及 Seedance 多参考图协议测试 |
+| fix | ci | 为后端真实视频合成测试安装 ffmpeg 和 ffprobe 运行依赖 |
 | fix | scripts | 修复协议路由发布审计未读取汇编后 Changelog 导致的假失败 |
 | fix | ci | 修复正式发布干净检出无法读取生产环境配置和静态产物的问题 |
 | fix | ops | 让生产 Compose 显式使用正式环境文件并支持配对发布新静态产物 |
