@@ -42,7 +42,47 @@ interface VideoProjectStudioProps {
 }
 
 const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
-const FALLBACK_COVER = '/icon/backups/agent/video-agent.png';
+
+const ACTIVE_RUN_STATUSES = new Set(['Queued', 'Scripting', 'Editing', 'Rendering']);
+
+const STATUS_LABELS: Record<string, string> = {
+  Draft: '草稿',
+  Analyzing: '拆镜中',
+  Editing: '待编辑',
+  Queued: '排队中',
+  Scripting: '拆镜中',
+  Rendering: '生成中',
+  Completed: '已完成',
+};
+
+const statusLabel = (status: string) => STATUS_LABELS[status] ?? '处理中';
+
+const runSubtitle = (run: VideoGenRunListItem) => {
+  if (run.status === 'Queued') return '等待开始生成';
+  if (run.status === 'Scripting') return '正在拆分镜头';
+  if (run.status === 'Completed' && run.scenesCount === 0) return '视频已生成';
+  if (run.scenesCount === 0) return '镜头准备中';
+  return `${run.scenesReady}/${run.scenesCount} 镜头`;
+};
+
+interface ProjectCoverProps {
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  status: string;
+}
+
+const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, mediaType = 'image', status }) => (
+  <span className="video-create-project-cover">
+    <span className="video-create-project-placeholder"><Film size={24} /><span>视频作品</span></span>
+    {mediaUrl && mediaType === 'video' && (
+      <video src={mediaUrl} muted preload="metadata" onError={(event) => { event.currentTarget.hidden = true; }} />
+    )}
+    {mediaUrl && mediaType === 'image' && (
+      <img src={mediaUrl} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />
+    )}
+    <i>{statusLabel(status)}</i>
+  </span>
+);
 
 const createTimelineTracks = (): VideoTimelineTrack[] => [
   { id: crypto.randomUUID().replaceAll('-', ''), type: 'video', name: '视频', muted: false, locked: false, clips: [] },
@@ -118,7 +158,10 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const availableAspectRatios = selectedModel?.aspectRatios.length ? selectedModel.aspectRatios : ['16:9'];
   const availableDurations = selectedModel?.durations.length ? selectedModel.durations : [5];
   const availableResolutions = selectedModel?.resolutions.length ? selectedModel.resolutions : ['720p'];
-  const recentRuns = runs.slice(0, 6);
+  const recentRuns = runs
+    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status) || (run.status === 'Completed' && Boolean(run.videoAssetUrl)))
+    .slice(0, 6);
+  const recentWorkCount = projects.length + recentRuns.length;
 
   const readFile = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) return;
@@ -152,7 +195,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setAssetDescription('');
   };
 
-  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url || FALLBACK_COVER;
+  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
 
   return (
     <div className="video-create-page" data-testid="video-project-studio">
@@ -267,21 +310,21 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           )}
         </section>
 
-        {(projects.length > 0 || recentRuns.length > 0) && (
+        {recentWorkCount > 0 && (
           <section className="video-create-library" aria-label="最近作品">
-            <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{projects.length} 个项目</span></div>
+            <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
             <div className="video-create-project-grid">
               {projects.slice(0, 6).map((item) => (
                 <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
-                  <span className="video-create-project-cover"><img src={coverForProject(item)} alt="" /><i>{item.status}</i></span>
+                  <ProjectCover mediaUrl={coverForProject(item)} status={item.status} />
                   <span className="video-create-project-copy"><strong>{item.title}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
                   <ArrowUpRight size={15} />
                 </button>
               ))}
               {recentRuns.slice(0, Math.max(0, 6 - projects.length)).map((run) => (
                 <button key={run.id} onClick={() => onOpenRun(run.id)}>
-                  <span className="video-create-project-cover">{run.videoAssetUrl ? <video src={run.videoAssetUrl} muted preload="metadata" /> : <img src={FALLBACK_COVER} alt="" />}<i>{run.status}</i></span>
-                  <span className="video-create-project-copy"><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 28)}</strong><small>{run.scenesReady}/{run.scenesCount} 镜头</small></span>
+                  <ProjectCover mediaUrl={run.videoAssetUrl} mediaType="video" status={run.status} />
+                  <span className="video-create-project-copy"><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 28)}</strong><small>{runSubtitle(run)}</small></span>
                   <ArrowUpRight size={15} />
                 </button>
               ))}
