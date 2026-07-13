@@ -205,7 +205,8 @@ def _auth_headers() -> dict[str, str]:
 
 
 def _request(method: str, path: str, body: Any = None, timeout: int = 15,
-             extra_headers: dict[str, str] | None = None) -> tuple[int, Any, dict[str, str]]:
+             extra_headers: dict[str, str] | None = None,
+             fatal_network_errors: bool = True) -> tuple[int, Any, dict[str, str]]:
     """Low-level HTTP: returns (status, parsed_json_or_text, headers).
 
     每个请求都带 X-CdsCli-Version 头，服务端如响应 X-Cds-Cli-Latest 就
@@ -245,8 +246,12 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
         _maybe_warn_version_drift(dict(e.headers or {}))
         return e.code, parsed, dict(e.headers or {})
     except urllib.error.URLError as e:
+        if not fatal_network_errors:
+            return 0, {"error": "network_error", "message": str(e.reason)}, {}
         die(f"网络错误: {e.reason} (host={url})", code=1)
-    except TimeoutError:
+    except (TimeoutError, socket.timeout):
+        if not fatal_network_errors:
+            return 0, {"error": "timeout", "message": f"timeout={timeout}s"}, {}
         die(f"请求超时: {method} {url} (timeout={timeout}s)", code=1)
 
 
@@ -3001,7 +3006,16 @@ def cmd_connect(args: argparse.Namespace) -> None:
             poll_path,
             timeout=10,
             extra_headers={"X-Poll-Token": poll_token},
+            fatal_network_errors=False,
         )
+        if poll_status == 0:
+            now = time.monotonic()
+            if now - last_progress_at >= 10:
+                remaining = max(0, int(deadline - now))
+                print(f"网络短暂波动，继续等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+                last_progress_at = now
+            time.sleep(interval_seconds)
+            continue
         if poll_status != 200 or not isinstance(poll_body, dict):
             _restore_auth_env(previous)
             die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)

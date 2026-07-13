@@ -44,7 +44,8 @@ def test_connect_existing_project_saves_local_credential_without_printing_secret
     secret = "cdsp_demo_secret-never-print"
     calls: list[tuple[str, str]] = []
 
-    def fake_request(method, path, body=None, timeout=15, extra_headers=None):
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
         calls.append((method, path))
         if method == "POST":
             return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
@@ -83,7 +84,8 @@ def test_connect_existing_project_saves_local_credential_without_printing_secret
 def test_connect_new_project_uses_bootstrap_request(workspace, monkeypatch):
     secret = "cdsg_bootstrap-secret"
 
-    def fake_request(method, path, body=None, timeout=15, extra_headers=None):
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
         if method == "POST":
             assert path == "/api/bootstrap-access-requests"
             return 201, {"requestId": "req2", "pollToken": "poll2"}, {}
@@ -106,7 +108,8 @@ def test_connect_new_project_uses_bootstrap_request(workspace, monkeypatch):
 
 
 def test_rejected_connect_does_not_write_credentials(workspace, monkeypatch):
-    def fake_request(method, path, body=None, timeout=15, extra_headers=None):
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
         if method == "POST":
             return 201, {"requestId": "req3", "pollToken": "poll3"}, {}
         return 200, {"status": "rejected", "rejectReason": "测试拒绝"}, {}
@@ -120,6 +123,38 @@ def test_rejected_connect_does_not_write_credentials(workspace, monkeypatch):
     assert code == 2
     assert "测试拒绝" in output
     assert not (workspace / ".cds" / "credentials.json").exists()
+
+
+def test_connect_keeps_waiting_after_transient_poll_timeout(workspace, monkeypatch):
+    secret = "cdsp_after-timeout"
+    poll_count = 0
+
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        nonlocal poll_count
+        if method == "POST":
+            return 201, {"requestId": "req-timeout", "pollToken": "poll-timeout"}, {}
+        if path.endswith("/req-timeout"):
+            assert fatal_network_errors is False
+            poll_count += 1
+            if poll_count == 1:
+                return 0, {"error": "timeout", "message": "timeout=10s"}, {}
+            return 200, {"status": "approved", "authorizationKey": secret}, {}
+        return 200, {"id": "proj-a"}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--project", "proj-a",
+        "--agent", "Codex", "--interval", "1",
+    ])
+
+    assert code == 0
+    assert poll_count == 2
+    assert secret not in output
+    saved = json.loads((workspace / ".cds" / "credentials.json").read_text())
+    assert saved["projectKey"] == secret
 
 
 def test_project_create_switches_from_bootstrap_to_project_key(workspace, monkeypatch):
