@@ -3094,6 +3094,17 @@ public class DocumentStoreController : ControllerBase
         // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
 
+        // 归一化本次请求的整理方式：仅当在途 run 的风格与本次完全一致才复用，否则新建。
+        // 否则「后台跑默认转录时点会议纪要快捷键」会复用默认 run，笔记出错风格（Codex P2）。
+        // 字幕任务无风格（三者皆 null），既有字幕 run 也是 null → 相等，去重不受影响。
+        var reqTemplateKey = style?.StyleKey?.Trim().ToLowerInvariant();
+        var reqCustomPrompt = string.IsNullOrWhiteSpace(style?.CustomPrompt) ? null : style!.CustomPrompt!.Trim();
+        var reqStyleContext = string.IsNullOrWhiteSpace(style?.StyleContext) ? null : style!.StyleContext!.Trim();
+        var styleMatch = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
+
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
         // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
         // 可能抢走它（owner/status 已变），UpdateOne ModifiedCount=0 却仍被当作复用返回，
@@ -3106,6 +3117,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
                 // restyle run 是「换个整理方式」专用任务，不能被普通转录请求认领/复用
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
+                styleMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
@@ -3125,6 +3137,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
+                styleMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
@@ -3144,9 +3157,9 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
-            TemplateKey = style?.StyleKey?.Trim().ToLowerInvariant(),
-            CustomPrompt = string.IsNullOrWhiteSpace(style?.CustomPrompt) ? null : style!.CustomPrompt!.Trim(),
-            StyleContext = string.IsNullOrWhiteSpace(style?.StyleContext) ? null : style!.StyleContext!.Trim(),
+            TemplateKey = reqTemplateKey,
+            CustomPrompt = reqCustomPrompt,
+            StyleContext = reqStyleContext,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
         await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
