@@ -8,3 +8,4 @@
 | fix | prd-admin | 双皮肤棘轮回绿：本轮新增的 10 处 rgba 白透明硬编码全部换 token（--bg-elevated/--bg-input/--bg-tertiary） |
 | feat | prd-admin | 转录完成结果区双页签「整理结果 / 转录原文」（原文来自 run.transcriptText，老任务给指引）；restyle 失败提示可见（不再静默）；抽屉底部留白修复 |
 | fix | prd-api | 修复 PrdAgent.Api.Tests 因处理器新构造参数导致的编译失败 |
+| fix | prd-admin | 外层「+」选库弹窗按当前 tab 作用域列库：团队 tab 列可写团队库（原只列个人库，团队 tab 新增流程放不进团队库）|

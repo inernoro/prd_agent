@@ -3704,6 +3704,9 @@ export function DocumentStorePage() {
       {storePickerAction && (
         <StorePickerDialog
           actionLabel={{ doc: '写文章', record: '录音转笔记', upload: '上传文件', video: '解析短视频' }[storePickerAction]}
+          // 团队 tab 下列团队库、我的 tab 下列个人库——否则团队 tab 用外层「+」只能落到个人库（Codex P2）
+          scope={tab === 'team' ? 'team' : 'mine'}
+          teamId={tab === 'team' ? teamScope.teamId : null}
           onPick={(storeId) => {
             setDetailInitialAction(storePickerAction);
             setStorePickerAction(null);
@@ -3722,10 +3725,12 @@ export function DocumentStorePage() {
 
 /**
  * 选库弹窗：外层「+」动作的"归属到哪个知识库"一步。
- * 只列我的库（可写），支持按名称过滤；没有库时引导先新建。
+ * 按当前 tab 作用域列可写库（个人 / 团队），支持按名称过滤；没有库时引导先新建。
  */
-function StorePickerDialog({ actionLabel, onPick, onCreateNew, onClose }: {
+function StorePickerDialog({ actionLabel, scope, teamId, onPick, onCreateNew, onClose }: {
   actionLabel: string;
+  scope: 'mine' | 'team';
+  teamId: string | null;
   onPick: (storeId: string) => void;
   onCreateNew: () => void;
   onClose: () => void;
@@ -3735,11 +3740,11 @@ function StorePickerDialog({ actionLabel, onPick, onCreateNew, onClose }: {
   const [q, setQ] = useState('');
 
   useEffect(() => {
-    void listDocumentStoresWithPreview(1, 500, { scope: 'mine', teamId: null }).then((res) => {
+    void listDocumentStoresWithPreview(1, 500, { scope, teamId }).then((res) => {
       if (res.success) setItems(res.data.items);
       setLoading(false);
     });
-  }, []);
+  }, [scope, teamId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
