@@ -14,6 +14,13 @@ namespace PrdAgent.Api.Services;
 /// 被更换，跨项目穿透导致本系统 6 个平台 key 全部不可解密，模型池调用
 /// 静默 401 约两小时无任何告警。本 Worker 把这类故障从「用户报障」
 /// 提前到「启动即知」：LogError + 全局站内通知（幂等，恢复后自动标记已处理）。
+///
+/// 2026-07-14 加固：admin_notifications 被所有 CDS 分支预览容器 + 生产共享同一个
+/// Mongo 库，全局告警行只有一行。此前每个分支预览容器都会写这行，任何跑着旧构建
+/// （缺 IsStub 过滤）或注入了异钥的分支都会把误报「复活」成看似全局的事故——正是本告警
+/// 反复出现的根因。现改为：只有权威部署（非分支预览，见 <see cref="DeploymentAuthority"/>）
+/// 才写共享库（全局告警行 + 密文自动重加密）；分支预览容器只做只读自检 + 本地日志，
+/// 绝不碰共享库。告警文案带上来源标签（host@sha·branch）便于溯源。
 /// </summary>
 public class PlatformKeyIntegrityWorker : BackgroundService
 {
@@ -86,7 +93,12 @@ public class PlatformKeyIntegrityWorker : BackgroundService
         var unreadable = new List<string>();       // 真实平台/模型/中继解不出 —— 需告警 + 站内信
         var stubUnreadable = new List<string>();   // dev-stub 解不出 —— 预期噪音，不告警
         var rotated = 0;
-        var canRotate = ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
+
+        // 只有权威部署（非 CDS 分支预览）才写共享库：管理全局告警行 + 自动重加密密文。
+        // 分支预览容器的密文自动重加密尤其危险——若本分支注入的 primary secret 与生产不同，
+        // 重加密会把共享库里的存量密文改成本分支的密钥，直接打哑生产（跨项目隔离通道 2）。
+        var isAuthoritative = DeploymentAuthority.IsAuthoritativeDeployment(_configuration);
+        var canRotate = isAuthoritative && ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
 
         void MarkUnreadable(string label, string? name)
         {
@@ -186,6 +198,19 @@ public class PlatformKeyIntegrityWorker : BackgroundService
                 "[PlatformKeyIntegrity] 已跳过 {Count} 个 dev-stub（密文为占位、预期解不出，非故障）：{Names}",
                 stubUnreadable.Count, string.Join("、", stubUnreadable));
 
+        var source = DeploymentAuthority.DescribeSource(_configuration);
+
+        // 非权威部署（CDS 分支预览）：只读自检，出问题也只在容器日志留痕，绝不写共享库的全局告警行，
+        // 避免旧构建/异钥分支把误报复活成看似全局的事故。
+        if (!isAuthoritative)
+        {
+            if (unreadable.Count > 0)
+                _logger.LogWarning(
+                    "[PlatformKeyIntegrity] 非权威部署（CDS 分支预览 {Source}）检测到 {Count} 个 API key 无法解密：{Names}。仅本地记录，不写全局告警（多为本分支注入的密钥与共享库存量密文不匹配，属预期）",
+                    source, unreadable.Count, string.Join("、", unreadable));
+            return;
+        }
+
         var existing = await db.AdminNotifications
             .Find(n => n.Key == NotificationKey && n.Status == "open")
             .FirstOrDefaultAsync(ct);
@@ -210,15 +235,15 @@ public class PlatformKeyIntegrityWorker : BackgroundService
 
         var names = string.Join("、", unreadable);
         var message =
-            $"以下模型相关 API key 用当前 ApiKeyCrypto:Secret 钥匙环解密为空：{names}。" +
+            $"以下模型相关 API key 用当前 ApiKeyCrypto:Secret 钥匙环解密为空：{names}（来源：{source}）。" +
             "所有依赖这些平台的模型池调用将以空凭据请求上游（401）。" +
             "典型原因：部署环境的数据加密密钥被轮换，或存量密文来自另一套历史密钥。" +
             "修复：配置 ApiKeyCrypto__LegacySecrets 后重启触发自动迁移，" +
             "或在模型平台重新保存各平台 API key。";
 
         _logger.LogError(
-            "[PlatformKeyIntegrity] {Count} 个模型相关 API key 无法解密：{Names}。环境数据加密密钥与存量密文不匹配，模型池调用将全部失败",
-            unreadable.Count, names);
+            "[PlatformKeyIntegrity] 权威部署 {Source} 检测到 {Count} 个模型相关 API key 无法解密：{Names}。环境数据加密密钥与存量密文不匹配，模型池调用将全部失败",
+            source, unreadable.Count, names);
 
         var now = DateTime.UtcNow;
         if (existing != null)
