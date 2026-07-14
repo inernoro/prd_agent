@@ -2829,21 +2829,19 @@
   }
 }
 
-/* ── 分支卡片浅色模式对比增强（2026-07-14）────────────────────────────────
-   白卡（--surface-raised: 100%）在近白页面（--background: 95%）上、配 84% 的
-   发丝边框，几乎糊在一起。浅色模式改用更实的 hairline-strong 边框 + 轻投影把
-   卡片「抬」起来（参考 Linear / GitHub 的浅色卡片对比）。深色模式保持不变。
-   规则不入 @layer（无层规则优先级高于所有 @layer，稳过 Tailwind 的 border 工具类）；
-   只作用于非异常卡（.cds-branch-card 仅打在非 error 卡上），异常卡的红边不受影响。 */
-[data-theme='light'] .cds-branch-card {
-  border-color: hsl(var(--hairline-strong));
+/* ── 分支卡片浅色模式对比增强（2026-07-14，含 Codex P2「勿吞状态样式」修复）──
+   白卡（--surface-raised: 100%）在近白页面上、配发丝边框几乎糊在一起。给普通卡加
+   「更实的边缘 + 轻投影」把卡片抬起来(参考 Linear / GitHub 浅色卡片):整套增强只用
+   一条 box-shadow(inset ring 当更实的边 + 外投影当抬升),不碰 border-color(角色/异常
+   卡的彩色边框因此不受影响)。
+   Codex P2 修复要点:本项目 Tailwind 输出**不带 @layer**(全扁平),故靠层级让状态
+   utility 覆盖行不通——本规则选择器 (0,2,0) 会盖过 `shadow-[...]`/`ring-*` (0,1,0)。
+   因此用 :not() 把「带 box-shadow 的状态卡」显式排除掉:AI 活跃(ring+发光)、选中、
+   忙碌——这些卡不吃本投影,保留各自的状态阴影/光环。角色卡(main 等)只改 border/bg
+   不带 box-shadow,可安全叠加本 ring。深色模式完全不变,不改任何全局 token(零外溢)。 */
+[data-theme='light'] .cds-branch-card:not(.cds-ai-active-card):not(.cds-card-selected):not(.cds-branch-card-busy) {
   box-shadow:
+    inset 0 0 0 1px hsl(var(--hairline-strong)),
     0 1px 2px hsl(24 20% 15% / 0.06),
     0 6px 16px -8px hsl(24 20% 15% / 0.12);
-}
-[data-theme='light'] .cds-branch-card:hover {
-  border-color: hsl(24 14% 54%);
-  box-shadow:
-    0 2px 4px hsl(24 20% 15% / 0.08),
-    0 12px 26px -10px hsl(24 20% 15% / 0.18);
 }

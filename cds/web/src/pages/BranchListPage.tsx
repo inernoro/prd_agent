@@ -5440,29 +5440,36 @@ const BranchCard = memo(function BranchCard({
                   +{foldedAppCount}
                 </button>
                 {portsPopoverOpen ? (
+                  // 外层从 +N 底边(top-full,0 间距)起,用透明 pt-1.5 把可见面板往下推 6px:
+                  // 视觉上仍有 6px 间隙,但这 6px 属于 wrapper 子树、被 hover 覆盖 —— 鼠标从
+                  // +N 移到端口时不再跨越「空隙」触发 wrapper 的 onMouseLeave(Codex P2 悬停桥)。
                   <div
-                    className="absolute left-0 top-[calc(100%+6px)] z-[140] flex max-w-[min(320px,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
-                    role="menu"
-                    aria-label="全部服务端口"
+                    className="absolute left-0 top-full z-[140] pt-1.5"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    {appResources.map((resource) => (
-                      <button
-                        key={resource.id}
-                        type="button"
-                        role="menuitem"
-                        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                        title={`${resource.displayName}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setPortsPopoverOpen(false);
-                          onResourcePanel?.(resource);
-                        }}
-                      >
-                        <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
-                        {typeof resource.port === 'number' ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
-                      </button>
-                    ))}
+                    <div
+                      className="flex max-w-[min(320px,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+                      role="menu"
+                      aria-label="全部服务端口"
+                    >
+                      {appResources.map((resource) => (
+                        <button
+                          key={resource.id}
+                          type="button"
+                          role="menuitem"
+                          className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                          title={`${resource.displayName}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPortsPopoverOpen(false);
+                            onResourcePanel?.(resource);
+                          }}
+                        >
+                          <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                          {typeof resource.port === 'number' ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </span>
