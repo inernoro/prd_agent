@@ -5,3 +5,4 @@
 | fix | llmgw | 并发首次发现 appCaller 时只允许权威团队请求进入上游 |
 | test | llmgw | 新增双租户双团队固定矩阵、用户安全版本、scoped key 生命周期、补偿故障注入与并发归属测试 |
 | ci | llmgw | 为服务端 CI 提供带健康检查的 MongoDB，使租户隔离行为测试不再因缺少依赖失败 |
+| test | prd-api | Mongo ID 约束允许独立网关新集合使用严格字符串序列化，同时继续禁止 ObjectId 生成器 |
