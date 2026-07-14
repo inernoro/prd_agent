@@ -153,6 +153,13 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
+    public void RunnableAnchoredSlide_AcceptsOfficialHtmlPptSectionRoot()
+    {
+        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>标题</h1></section>";
+        Assert.True(MdToPptController.IsRunnableSlideFragment(slide, anchored: true));
+    }
+
+    [Fact]
     public void GatewayPageRequest_PinsExpectedModelAndKeepsStream()
     {
         var profile = new InfraAgentRuntimeProfile

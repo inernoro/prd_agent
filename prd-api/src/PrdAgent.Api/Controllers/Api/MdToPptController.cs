@@ -1854,7 +1854,7 @@ public class MdToPptController : ControllerBase
         if (LooksCorruptedSection(trimmed)) return false;
         if (anchored)
         {
-            if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<div\\b[^>]*class\\s*=\\s*\"[^\"]*\\bslide\\b",
+            if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<(div|section|article)\\b[^>]*class\\s*=\\s*\"[^\"]*\\bslide\\b",
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return false;
         }

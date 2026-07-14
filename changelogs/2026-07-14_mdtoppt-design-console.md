@@ -10,3 +10,4 @@
 | polish | prd-admin | MD 转 PPT 移动端和聊天气泡展示正在生成的页码、完成页数和当前阶段 |
 | polish | prd-api | MD 转 PPT 生成提示词接入 GitHub html-ppt 官方技能契约，强化模板化布局、主题 token、data-title 与隐藏 notes 规则 |
 | fix | prd-api | 修复知识库创意发布兜底 HTML 模板的 C# raw string 花括号编译错误 |
+| fix | prd-api | 修复 MD 转 PPT 锚定模式误拒绝官方 html-ppt 的 section slide 根节点导致整本降级的问题 |
