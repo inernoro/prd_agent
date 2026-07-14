@@ -19,7 +19,7 @@
 | **手机·底座1** 补 4 缺失原语 + token | 90 | 已部署 | 无 | 已被 MobileHomePage 消费,随首页 `/` 一并双主题验收 | tsc+lint 绿 |
 | **手机·底座2** 玻璃 TabBar 激活色 | 85 | 已部署 | 无 | 预览验收;chrome 收尾(Fab/OverflowMenu/CompatGate/Segmented)未做 | 金→蓝 tsc+lint 绿 |
 | **手机·页面** MobileAssetsPage(P0 白底浮暗卡) | 90 | 已部署 | 无 | 预览域名浅色下开"资产"页验收(卡片/tab/占位不再隐形) | tsc+lint+ratchet 绿;预览见文末 |
-| **手机·页面** MobileHomePage 重构 Today(主入口) | 90 | 已部署 | 无 | 预览域名 `/` 双主题验收(整页 App Store Today 观感) | tsc+lint+ratchet 绿;预览见文末 |
+| **手机·页面** MobileHomePage(主入口) | 90 | 已部署 | 无 | 预览域名 `/` 双主题验收。**布局已二次定稿(2026-07-15)**:从 App Store Today 商店范式改「摘要」仪表盘(用户拍板方向 A):去页内大标题/日期、去海报轮播、智能体降级紧凑货架,排序=继续上次→常用→近7日→动态→档案 | tsc+lint+ratchet 绿;浅色 mockup 自检图 |
 | **手机·页面** MobileToolboxView 魔数收敛 | 0 | 未开始 | 无 | 字号 28/16/12/10→AS_TYPE;shared.ts accent→AS_COLOR iOS 色 | 待办 |
 | **手机·页面** MobileProfilePage 双皮肤补全 | 90 | 已部署 | 无 | 预览域名 `/profile` 双主题验收 | tsc+lint+ratchet 绿 |
 | **手机·页面** MobileNotificationsPage | 90 | 已部署 | 无 | 预览域名 `/notifications` 双主题验收 | tsc+lint+ratchet 绿 |
