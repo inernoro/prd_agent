@@ -305,6 +305,29 @@ const QUICK_STARTS = [
   },
 ];
 
+const MOBILE_CREATION_MODES = [
+  {
+    label: 'PPT',
+    desc: '完整演示文稿',
+    prompt: '帮我生成一份结构完整、视觉精致的 PPT，共 8 页，内容要有清晰故事线和可直接演示的页面。',
+  },
+  {
+    label: '发布会',
+    desc: '强视觉表达',
+    prompt: '帮我做一份产品发布会 PPT，共 8 页，面向客户，强调产品价值、核心亮点、应用场景和行动号召。',
+  },
+  {
+    label: '教程',
+    desc: '步骤化讲解',
+    prompt: '把我的内容整理成教程型 PPT，共 10 页，包含学习目标、步骤拆解、示例、检查点和总结。',
+  },
+  {
+    label: '文案',
+    desc: '传播型叙事',
+    prompt: '把我的素材整理成适合传播的文案型 PPT，共 6 页，突出标题、卖点、证明材料和结尾行动。',
+  },
+];
+
 // 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
 function estimatePages(content: string): number {
   const len = content.trim().length;
@@ -1278,6 +1301,7 @@ export function MdToPptAgentPage() {
   const presentIframeRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const mobileInputRef = useRef<HTMLTextAreaElement>(null);
 
   // ─── CDS 连接状态：进入页面即检测，给兼容路径提示使用。
   // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
@@ -2496,7 +2520,7 @@ export function MdToPptAgentPage() {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/8">
+      <div className="hidden md:flex shrink-0 items-center justify-between px-4 py-2.5 border-b border-white/8">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
             <FileText size={13} className="text-purple-400" />
@@ -2557,10 +2581,17 @@ export function MdToPptAgentPage() {
         onChange={(e) => void handleTemplateFile(e)}
         className="hidden"
       />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".md,.txt,.markdown,.pdf,.doc,.docx"
+        onChange={(e) => void handleFileChange(e)}
+        className="hidden"
+      />
 
       {/* Published URL banner */}
       {publishedUrl && (
-        <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 bg-green-500/8 border-b border-green-500/15 text-xs text-green-400">
+        <div className="hidden md:flex shrink-0 items-center gap-2 px-4 py-1.5 bg-green-500/8 border-b border-green-500/15 text-xs text-green-400">
           <Globe size={12} />
           <span>已发布：</span>
           <a href={publishedUrl} target="_blank" rel="noreferrer" className="underline hover:text-green-300">
@@ -2571,7 +2602,7 @@ export function MdToPptAgentPage() {
 
       <div
         className={[
-          'shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-b text-xs',
+          'hidden md:flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2 border-b text-xs',
           runtimeIsGateway
             ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-300'
             : connStatus === 'connected'
@@ -2616,8 +2647,234 @@ export function MdToPptAgentPage() {
         </div>
       </div>
 
+      {/* Mobile: single-column creation desk */}
+      <div
+        className="md:hidden flex-1 min-h-0 overflow-y-auto bg-[#131419] px-4 pt-4 pb-[calc(94px+env(safe-area-inset-bottom))]"
+        style={{ overscrollBehavior: 'contain' }}
+        data-testid="md-to-ppt-mobile-desk"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/20 bg-emerald-400/8 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                {runtimeRouteLabel}
+              </div>
+              <h1 className="mt-3 text-2xl font-semibold leading-tight text-white">MD 转 PPT</h1>
+              <p className="mt-1 text-xs leading-relaxed text-white/48">
+                写想法、引知识库、加附件，先出大纲，再生成可编辑演示稿。
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {generatedHtml && !isStreaming && (
+                <button
+                  onClick={() => void handlePublish()}
+                  disabled={isPublishing}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-400/25 bg-blue-400/10 text-blue-200 disabled:opacity-50"
+                  title="发布为网页"
+                >
+                  {isPublishing ? <MapSpinner size={14} /> : <Globe size={15} />}
+                </button>
+              )}
+              <button
+                onClick={openHistory}
+                disabled={isStreaming}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                title="历史"
+              >
+                <History size={15} />
+              </button>
+              <button
+                onClick={handleReset}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65"
+                title="新建"
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
+          </div>
+
+          {publishedUrl && (
+            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-emerald-100/80">
+              <div className="font-semibold text-emerald-100">已发布为网页</div>
+              <a href={publishedUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate underline decoration-emerald-200/40">
+                {publishedUrl}
+              </a>
+            </div>
+          )}
+
+          <div className="overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            <div className="flex min-w-max gap-2">
+              {MOBILE_CREATION_MODES.map((mode) => (
+                <button
+                  key={mode.label}
+                  onClick={() => {
+                    setInput(mode.prompt);
+                    mobileInputRef.current?.focus();
+                  }}
+                  className="w-[126px] rounded-lg border border-white/10 bg-white/[0.045] px-3 py-2 text-left hover:border-purple-300/35 hover:bg-purple-400/10"
+                >
+                  <div className="text-sm font-semibold text-white/90">{mode.label}</div>
+                  <div className="mt-1 text-[11px] text-white/42">{mode.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/12 bg-[#1d1e24] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
+            {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {pendingAttachments.map((a, i) => (
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-white/10 bg-white/6 px-2 py-1 text-[10px] text-white/65">
+                    <Upload size={10} />
+                    <span className="max-w-[180px] truncate">{a.name}</span>
+                    <button onClick={() => removeAttachment(i)}><X size={10} /></button>
+                  </span>
+                ))}
+                {pendingKbRefs.map((r, i) => (
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-blue-100/80">
+                    <BookOpen size={10} />
+                    <span className="max-w-[180px] truncate">{r.entryTitle}</span>
+                    <button onClick={() => removeKbRef(i)}><X size={10} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={mobileInputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              disabled={isProcessing}
+              rows={7}
+              placeholder="描述你的创意，或先引用知识库。比如：把这份产品资料做成 8 页发布会 PPT，视觉要高级，内容要能直接讲。"
+              className="min-h-[172px] w-full resize-none bg-transparent text-[15px] leading-7 text-white outline-none placeholder:text-white/32 disabled:opacity-50"
+              style={{ overscrollBehavior: 'contain' }}
+            />
+            <div className="mt-2 flex items-center gap-2 border-t border-white/8 pt-3">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing}
+                className="flex h-10 w-10 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                title="添加文件"
+              >
+                <Plus size={18} />
+              </button>
+              <button
+                onClick={() => setShowKbPicker(true)}
+                disabled={isProcessing}
+                className="flex h-10 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-sm font-medium text-white/72 disabled:opacity-40"
+              >
+                <BookOpen size={15} />
+                知识库
+              </button>
+              {profiles.length > 0 && (
+                <button
+                  onClick={() => {
+                    setShowModelPicker((v) => !v);
+                    if (!poolLoadedRef.current) {
+                      poolLoadedRef.current = true;
+                      void getMdToPptPoolModels().then(setPoolModels);
+                    }
+                  }}
+                  disabled={isProcessing}
+                  className="min-w-0 flex h-10 flex-1 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 text-[11px] font-mono text-white/58 disabled:opacity-40"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
+                  <span className="truncate">{(effectiveProfile?.model ?? '默认模型').split('/').pop()}</span>
+                </button>
+              )}
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isProcessing}
+                className="flex h-10 items-center gap-2 rounded-md bg-purple-500 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isProcessing ? <MapSpinner size={15} /> : <Send size={15} />}
+                发送
+              </button>
+            </div>
+          </div>
+
+          {showModelPicker && profiles.length > 0 && (
+            <div className="rounded-lg border border-white/10 bg-[#1a1b21] p-2">
+              <div className="px-1 pb-2 text-[11px] font-semibold text-white/48">选择后续生成模型</div>
+              <div className="max-h-[240px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {profiles.map((p) => {
+                  const active = effectiveProfile?.id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProfileId(p.id);
+                        setShowModelPicker(false);
+                        if (outlineDraft) prewarmMdToPpt(p.id);
+                      }}
+                      className={[
+                        'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left',
+                        active ? 'bg-purple-400/12 text-purple-100' : 'text-white/65',
+                      ].join(' ')}
+                    >
+                      <span className={['h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-purple-300' : 'bg-white/25'].join(' ')} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-mono">{p.model}</span>
+                        <span className="block truncate text-[10px] text-white/36">{p.name}{p.isEffectiveDefault ? ' · 默认' : ''}</span>
+                      </span>
+                      {active && <Check size={13} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {messages.length === 0 && !generatedHtml && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-white/54">创意起点</div>
+              {QUICK_STARTS.map((q) => (
+                <button
+                  key={q.label}
+                  onClick={() => {
+                    setInput(q.text);
+                    mobileInputRef.current?.focus();
+                  }}
+                  className="w-full rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2.5 text-left"
+                >
+                  <div className="text-sm font-semibold text-white/86">{q.label}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">{q.text}</div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {(messages.length > 0 || generatedHtml || isStreaming) && (
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-white/86">
+                    {generatedHtml ? '演示稿已生成' : isStreaming ? '正在生成' : '对话进行中'}
+                  </div>
+                  <div className="mt-1 text-xs text-white/42">
+                    {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、下载或发布为网页' : '继续输入即可调整方向'}
+                  </div>
+                </div>
+                {isStreaming && (
+                  <button onClick={handleAbort} className="rounded-md border border-red-400/25 px-2.5 py-1.5 text-xs text-red-200">
+                    中止
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Main: left chat + right artifact */}
-      <div className="flex flex-1 min-h-0">
+      <div className="hidden md:flex flex-1 min-h-0">
 
         {/* ─── Left: Chat panel（宽度可拖拽，右缘手柄） ───────────────────── */}
         <div
@@ -3055,14 +3312,6 @@ export function MdToPptAgentPage() {
             </div>
           </div>
 
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".md,.txt,.markdown,.pdf,.doc,.docx"
-            onChange={(e) => void handleFileChange(e)}
-            className="hidden"
-          />
         </div>
 
         {/* ─── Right: Artifact panel ──────────────────────────────────────── */}

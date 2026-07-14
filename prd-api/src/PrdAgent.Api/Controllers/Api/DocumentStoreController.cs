@@ -43,6 +43,7 @@ public class DocumentStoreController : ControllerBase
     private readonly DocStoreServices.MentionService _mentions;
     private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly IShortLinkService _shortLinks;
+    private readonly IHostedSiteService _hostedSites;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
@@ -72,6 +73,7 @@ public class DocumentStoreController : ControllerBase
         DocStoreServices.DocumentVersionService versions,
         IAdminPermissionService adminPermissions,
         IShortLinkService shortLinks,
+        IHostedSiteService hostedSites,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IConfiguration config,
@@ -91,6 +93,7 @@ public class DocumentStoreController : ControllerBase
         _versions = versions;
         _adminPermissions = adminPermissions;
         _shortLinks = shortLinks;
+        _hostedSites = hostedSites;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _config = config;
@@ -1824,6 +1827,108 @@ public class DocumentStoreController : ControllerBase
             contentType = entry.ContentType,
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
+        }));
+    }
+
+    /// <summary>把知识库条目一键生成海报/教程/文案 HTML，并发布到网页托管。</summary>
+    [HttpPost("entries/{entryId}/creative-publish")]
+    public async Task<IActionResult> CreativePublishEntry(string entryId, [FromBody] CreativePublishEntryRequest? request)
+    {
+        request ??= new CreativePublishEntryRequest();
+        var userId = GetUserId();
+        var (entry, store, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || store is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不能生成托管页面"));
+
+        var kind = NormalizeCreativePublishKind(request.Kind);
+        if (kind == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "创作类型仅支持 poster、tutorial、copy-html、page"));
+
+        var source = await ResolveEntryTextAsync(entry);
+        if (string.IsNullOrWhiteSpace(source.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该知识暂未提取到可生成的文本内容"));
+
+        var title = source.Title ?? entry.Title;
+        var requestId = Guid.NewGuid().ToString("N");
+        var userPrompt = BuildCreativePublishPrompt(kind, title, store.Name, source.Content, request.Instruction);
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: source.Content.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DocumentStore-CreativePublish]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.CreativePublish.HtmlGenerate));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.CreativePublish.HtmlGenerate,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = CreativePublishSystemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.55,
+                ["max_tokens"] = 12000,
+            },
+            Context = new GatewayRequestContext
+            {
+                UserId = userId,
+                QuestionText = $"[creative-publish:{kind}] {title[..Math.Min(title.Length, 120)]}",
+            },
+        };
+
+        var fullText = new System.Text.StringBuilder();
+        await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+        {
+            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            {
+                fullText.Append(chunk.Content);
+                continue;
+            }
+
+            if (chunk.Type == GatewayChunkType.Error)
+            {
+                var message = chunk.Error ?? chunk.Content ?? "页面生成失败";
+                return StatusCode(502, ApiResponse<object>.Fail("LLM_GATEWAY_ERROR", message));
+            }
+        }
+
+        var html = NormalizeCreativeHtml(fullText.ToString(), title, kind);
+        if (string.IsNullOrWhiteSpace(html))
+            return StatusCode(502, ApiResponse<object>.Fail("LLM_EMPTY_RESPONSE", "页面生成结果为空"));
+
+        var kindLabel = CreativePublishKindLabel(kind);
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId,
+            html,
+            $"{title} - {kindLabel}",
+            $"由知识库「{store.Name}」条目「{title}」一键生成",
+            "document-store-creative",
+            entry.Id,
+            new List<string> { "知识库", kindLabel, store.Name },
+            "知识库创作发布",
+            CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteId = site.Id,
+            siteUrl = site.SiteUrl,
+            title = site.Title,
+            kind,
+            kindLabel,
+            htmlLength = html.Length,
         }));
     }
 
@@ -4407,6 +4512,120 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>构造单篇文档正文 payload（公开库 / 分享 token 两条路径共用）</summary>
+    private const string CreativePublishSystemPrompt =
+        "你是资深移动网页视觉设计师和内容编辑。请只输出完整可运行的 HTML 文档，不要输出 Markdown 代码围栏或解释。"
+        + "页面必须包含 doctype、html、head、meta viewport、style、body。"
+        + "禁止使用 emoji。不要依赖外部 JS 框架。CSS 写在 style 内，移动端优先，桌面端自适应。"
+        + "视觉要精致、信息密度清晰、标题层级明确、按钮和标签有可读状态。";
+
+    private static string? NormalizeCreativePublishKind(string? kind)
+    {
+        var value = (kind ?? "poster").Trim().ToLowerInvariant();
+        return value switch
+        {
+            "poster" or "tutorial" or "copy-html" or "page" => value,
+            _ => null,
+        };
+    }
+
+    private static string CreativePublishKindLabel(string kind) => kind switch
+    {
+        "poster" => "海报",
+        "tutorial" => "教程",
+        "copy-html" => "文案 HTML",
+        _ => "网页",
+    };
+
+    private static string BuildCreativePublishPrompt(
+        string kind,
+        string title,
+        string storeName,
+        string content,
+        string? instruction)
+    {
+        var typeInstruction = kind switch
+        {
+            "poster" => "生成一页适合手机分享的竖版海报 HTML：强标题、三到五个核心卖点、关键数据、行动按钮，首屏必须完整好看。",
+            "tutorial" => "生成教程型 HTML：按步骤组织，包含前置条件、步骤、检查点、常见问题，移动端阅读舒适。",
+            "copy-html" => "生成文案型 HTML：提炼目标受众、价值主张、痛点、方案、案例和行动号召，适合直接发布为营销文案页。",
+            _ => "生成通用网页 HTML：结构化呈现知识内容，适合发布和分享。",
+        };
+        var trimmed = content.Trim();
+        if (trimmed.Length > 18000) trimmed = trimmed[..18000];
+
+        return
+            $"知识库：{storeName}\n"
+            + $"知识标题：{title}\n"
+            + $"创作类型：{kind}（{CreativePublishKindLabel(kind)}）\n"
+            + $"类型要求：{typeInstruction}\n"
+            + (string.IsNullOrWhiteSpace(instruction) ? string.Empty : $"用户补充要求：{instruction.Trim()}\n")
+            + "\n请基于以下知识内容生成完整 HTML。不要编造与原文冲突的事实；可以重组表达、提炼标题、补足版式文案。\n\n"
+            + trimmed;
+    }
+
+    private static string NormalizeCreativeHtml(string raw, string title, string kind)
+    {
+        var html = (raw ?? string.Empty).Trim();
+        html = Regex.Replace(html, "^```(?:html)?\\s*", string.Empty, RegexOptions.IgnoreCase);
+        html = Regex.Replace(html, "\\s*```$", string.Empty).Trim();
+
+        var docMatch = Regex.Match(html, "<!doctype[\\s\\S]*</html>", RegexOptions.IgnoreCase);
+        if (docMatch.Success) return docMatch.Value.Trim();
+
+        var htmlMatch = Regex.Match(html, "<html[\\s\\S]*</html>", RegexOptions.IgnoreCase);
+        if (htmlMatch.Success)
+        {
+            var document = htmlMatch.Value.Trim();
+            return document.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
+                ? document
+                : "<!DOCTYPE html>\n" + document;
+        }
+
+        var body = html.Length == 0
+            ? $"<main><h1>{System.Net.WebUtility.HtmlEncode(title)}</h1><p>页面生成失败，请返回知识库重新生成。</p></main>"
+            : html;
+        return $"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{System.Net.WebUtility.HtmlEncode(title)} - {CreativePublishKindLabel(kind)}</title>
+  <style>
+    :root {{ color-scheme: light; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }}
+    body {{ margin: 0; background: #f7f8fb; color: #111827; }}
+    main {{ max-width: 880px; margin: 0 auto; padding: 32px 20px 48px; }}
+    h1 {{ font-size: clamp(28px, 7vw, 52px); line-height: 1.06; margin: 0 0 20px; }}
+    p, li {{ font-size: 16px; line-height: 1.8; }}
+    section, article {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 22px; box-shadow: 0 18px 45px rgba(15, 23, 42, .08); }}
+  </style>
+</head>
+<body>
+  <main>
+    {body}
+  </main>
+</body>
+</html>
+""";
+    }
+
+    private async Task<(string? Title, string? Content)> ResolveEntryTextAsync(DocumentEntry entry)
+    {
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
+        }
+        return (title ?? entry.Title, content);
+    }
+
     private async Task<object> BuildEntryContentPayloadAsync(DocumentEntry entry)
     {
         string? content = null;
@@ -5553,6 +5772,15 @@ public class UpdateEntryContentRequest
     public List<DocumentStoreInlineAssetRequest>? Assets { get; set; }
     /// <summary>可选资产域；不传由知识库统一归到 assets/img</summary>
     public string? AssetDomain { get; set; }
+}
+
+public class CreativePublishEntryRequest
+{
+    /// <summary>poster / tutorial / copy-html / page</summary>
+    public string? Kind { get; set; } = "poster";
+
+    /// <summary>用户额外创意要求。</summary>
+    public string? Instruction { get; set; }
 }
 
 public class DocumentStoreInlineAssetRequest

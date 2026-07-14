@@ -257,6 +257,17 @@ export async function updateDocumentContent(entryId: string, content: string, co
   );
 }
 
+/** 基于知识库条目生成海报/教程/文案 HTML，并发布到网页托管 */
+export async function publishDocumentEntryCreative(
+  entryId: string,
+  input: import('@/services/contracts/documentStore').KnowledgeCreativePublishInput,
+) {
+  return await apiRequest<import('@/services/contracts/documentStore').KnowledgeCreativePublishResult>(
+    api.documentStore.entries.creativePublish(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
 // ───────────────────────── 知识库版本控制 ─────────────────────────
 
 export type DocumentEntryVersionMeta = {
