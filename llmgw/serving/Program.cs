@@ -50,8 +50,15 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 const string BrowserDryRunCors = "llmgw-browser-dry-run";
 builder.Services.AddCors(options => options.AddPolicy(BrowserDryRunCors, policy =>
     policy.AllowAnyOrigin()
-        .WithMethods(HttpMethods.Get)
-        .WithHeaders("Authorization", "X-Gateway-Source", "X-Gateway-App-Caller")));
+        .WithMethods(HttpMethods.Get, HttpMethods.Post)
+        .WithHeaders(
+            "Authorization",
+            "Content-Type",
+            "X-Gateway-Source",
+            "X-Gateway-App-Caller",
+            "X-Gateway-Dry-Run",
+            "X-Request-Id")
+        .WithExposedHeaders("X-Request-Id", "X-Gateway-Upstream-Called")));
 
 // IHttpClientFactory（LlmGateway 发 HTTP 用）
 builder.Services.AddHttpClient();

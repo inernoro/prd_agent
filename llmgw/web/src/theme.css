@@ -1660,6 +1660,71 @@ a:focus-visible {
   color: var(--err);
 }
 
+.lg-test-result a {
+  display: inline-block;
+  margin-left: 8px;
+  color: inherit;
+  font-weight: 650;
+}
+
+.lg-quickstart-actions,
+.lg-quickstart-secret {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-quickstart-actions > div,
+.lg-quickstart-secret > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lg-quickstart-actions strong,
+.lg-quickstart-secret strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.lg-quickstart-actions small,
+.lg-quickstart-secret small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lg-quickstart-secret {
+  grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1.3fr) auto;
+  margin-top: 10px;
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--border-subtle));
+  background: var(--ok-bg);
+}
+
+.lg-quickstart-secret code {
+  min-width: 0;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.lg-snippet-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 8px;
+  overflow-x: auto;
+}
+
 .lg-service-key-empty {
   flex: 1;
   min-height: 360px;
@@ -1914,6 +1979,11 @@ a:focus-visible {
   }
 
   .lg-safe-test-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-quickstart-actions,
+  .lg-quickstart-secret {
     grid-template-columns: minmax(0, 1fr);
   }
 

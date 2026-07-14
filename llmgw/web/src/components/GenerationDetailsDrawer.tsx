@@ -432,6 +432,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 4, color: 'var(--text-primary)' }}>Request metadata</div>
                 <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerTitle ?? detail.appCallerCode} />
                 <Row k="App caller code" v={detail.appCallerCode} mono />
+                <Row k="Team" v={detail.teamId} mono />
                 <Row k="Client code" v={detail.clientCode} mono />
                 <Row k="Environment" v={detail.environment} />
                 <Row k="Service key" v={detail.serviceKeyId} mono copy />

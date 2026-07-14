@@ -125,6 +125,15 @@ public static class GatewayHttpEndpoints
                 }
                 context.Items["llmgw.key.authorization"] = authorization;
                 context.Items["llmgw.key.authorization.inputs"] = authorizationInputs;
+
+                // Quickstart dry-run 必须走真实协议 URL 和 scoped key 鉴权，但在模型解析、预算预占
+                // 与上游发送之前结束。成功的 dry-run 仍写入带工作负载身份的租户日志，便于从
+                // requestId 直接验收完整接入边界。
+                if (IsQuickstartDryRun(context)
+                    && await TryHandleQuickstartDryRunAsync(context, authorization, authorizationInputs, path, jsonOpts))
+                {
+                    return;
+                }
             }
 
             var budgetCoordinator = context.RequestServices.GetService<GatewayBudgetCoordinator>();
@@ -1353,6 +1362,277 @@ public static class GatewayHttpEndpoints
         return !string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? auth["Bearer ".Length..].Trim()
             : null;
+    }
+
+    private static bool IsQuickstartDryRun(HttpContext context)
+        => string.Equals(
+            context.Request.Headers["X-Gateway-Dry-Run"].FirstOrDefault()?.Trim(),
+            "quickstart",
+            StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<bool> TryHandleQuickstartDryRunAsync(
+        HttpContext http,
+        GatewayKeyAuthorization authorization,
+        GatewayAuthorizationInputs inputs,
+        string path,
+        JsonSerializerOptions jsonOpts)
+    {
+        if (http.Request.Method != HttpMethods.Post || !IsQuickstartDryRunPath(path))
+            return false;
+
+        var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+        if (body is null)
+        {
+            await WriteQuickstartDryRunErrorAsync(http, authorization, inputs, path, "INVALID_JSON", "请求体必须是合法 JSON object", 400, jsonOpts);
+            return true;
+        }
+
+        var requestType = ResolveQuickstartDryRunRequestType(path, body);
+        if (requestType is null)
+        {
+            await WriteQuickstartDryRunErrorAsync(http, authorization, inputs, path, "INVALID_DRY_RUN_BODY", "请求体不符合所选协议的非流式 chat 或 vision 形状", 400, jsonOpts);
+            return true;
+        }
+
+        var data = http.RequestServices.GetService<LlmGatewayDataContext>();
+        if (data is null)
+        {
+            await WriteQuickstartDryRunResponseAsync(http, "QUICKSTART_LOG_STORE_UNAVAILABLE", "Gateway 日志存储不可用", 503, jsonOpts);
+            return true;
+        }
+
+        var callerFilter = Builders<GatewayAppCallerRecord>.Filter.And(
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, authorization.TenantId),
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, inputs.AppCallerCode.Trim()),
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType));
+        var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+        GatewayAppCallerRecord? caller;
+        try
+        {
+            caller = await callers.Find(callerFilter, new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+                .FirstOrDefaultAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?
+                .CreateLogger("GatewayQuickstartDryRun")
+                .LogWarning(ex, "读取 Quickstart appCaller 失败。RequestId={RequestId}", TrackGatewayRequestId(http));
+            await WriteQuickstartDryRunResponseAsync(http, "QUICKSTART_GOVERNANCE_UNAVAILABLE", "appCaller 治理存储不可用", 503, jsonOpts);
+            return true;
+        }
+
+        if (caller is null)
+        {
+            await WriteQuickstartDryRunErrorAsync(http, authorization, inputs, path, "APP_CALLER_NOT_FOUND", "请先在 Quickstart 创建 appCaller", 404, jsonOpts);
+            return true;
+        }
+        if (!string.IsNullOrWhiteSpace(authorization.TeamId)
+            && !string.Equals(caller.TeamId, authorization.TeamId, StringComparison.Ordinal))
+        {
+            await WriteQuickstartDryRunErrorAsync(http, authorization, inputs, path, "APP_CALLER_TEAM_MISMATCH", "service key 与 appCaller 不属于同一团队", 403, jsonOpts);
+            return true;
+        }
+        if (!GatewayAppCallerPolicy.AllowsTraffic(caller.Status))
+        {
+            await WriteQuickstartDryRunErrorAsync(http, authorization, inputs, path, "APP_CALLER_DISABLED", "appCaller 当前状态不允许调用", 403, jsonOpts);
+            return true;
+        }
+
+        var requestId = TrackGatewayRequestId(http);
+        var now = DateTime.UtcNow;
+        try
+        {
+            await data.Database.GetCollection<BsonDocument>("llmrequestlogs").InsertOneAsync(
+                new BsonDocument
+                {
+                    { "_id", Guid.NewGuid().ToString() },
+                    { "TenantId", authorization.TenantId },
+                    { "TeamId", string.IsNullOrWhiteSpace(authorization.TeamId) ? BsonNull.Value : authorization.TeamId },
+                    { "ServiceKeyId", authorization.KeyId },
+                    { "ClientCode", string.IsNullOrWhiteSpace(authorization.ClientCode) ? BsonNull.Value : authorization.ClientCode },
+                    { "Environment", string.IsNullOrWhiteSpace(authorization.Environment) ? BsonNull.Value : authorization.Environment },
+                    { "ServiceKeyPrefix", string.IsNullOrWhiteSpace(authorization.KeyPrefixSnapshot) ? BsonNull.Value : authorization.KeyPrefixSnapshot },
+                    { "RequestId", requestId },
+                    { "RequestType", requestType },
+                    { "AppCallerCode", inputs.AppCallerCode },
+                    { "AppCallerTitle", string.IsNullOrWhiteSpace(caller.Title) ? BsonNull.Value : caller.Title },
+                    { "SourceSystem", inputs.SourceSystem },
+                    { "IngressProtocol", inputs.IngressProtocol },
+                    { "Provider", "gateway-dry-run" },
+                    { "Model", "not-called" },
+                    { "Path", path },
+                    { "HttpMethod", http.Request.Method },
+                    { "GatewayTransport", GatewayTransports.Http },
+                    { "ModelPolicy", "auto" },
+                    { "ParameterPolicy", "default-drop" },
+                    { "ResolutionReason", "quickstart-dry-run-no-upstream" },
+                    { "RequestBodyRedacted", "{\"dryRun\":true,\"upstreamCalled\":false}" },
+                    { "Status", "succeeded" },
+                    { "StatusCode", 200 },
+                    { "StartedAt", now },
+                    { "EndedAt", now },
+                    { "DurationMs", 0L },
+                },
+                cancellationToken: CancellationToken.None);
+            http.Items[LlmRequestLogContextItems.LifecycleStarted] = true;
+        }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?
+                .CreateLogger("GatewayQuickstartDryRun")
+                .LogWarning(ex, "写入 Quickstart dry-run 日志失败。RequestId={RequestId}", requestId);
+            await WriteQuickstartDryRunResponseAsync(http, "QUICKSTART_LOG_WRITE_FAILED", "dry-run 未能写入可审计日志，请稍后重试", 503, jsonOpts, requestId);
+            return true;
+        }
+
+        // 请求日志是验收权威；appCaller 的观察计数只是派生统计。日志成功后再尽力更新统计，
+        // 避免日志存储失败时先递增 TotalSeen，制造“有调用但查不到请求记录”的漂移。
+        try
+        {
+            var observedProtocol = NormalizeIngressProtocol(inputs.IngressProtocol);
+            await callers.UpdateOneAsync(
+                callerFilter,
+                Builders<GatewayAppCallerRecord>.Update
+                    .Set(x => x.IngressProtocol, observedProtocol)
+                    .AddToSet(x => x.ObservedIngressProtocols, observedProtocol)
+                    .Set(x => x.LastObservedRequestId, requestId)
+                    .Set(x => x.LastObservedModelPolicy, "auto")
+                    .Set(x => x.LastObservedParameterPolicy, "default-drop")
+                    .Set(x => x.LastSeenAt, now)
+                    .Set(x => x.UpdatedAt, now)
+                    .Inc(x => x.TotalSeen, 1),
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?
+                .CreateLogger("GatewayQuickstartDryRun")
+                .LogWarning(ex, "Quickstart 日志已写入，但更新 appCaller 观察统计失败。RequestId={RequestId}", requestId);
+        }
+
+        http.Response.Headers["X-Request-Id"] = requestId;
+        http.Response.Headers["X-Gateway-Upstream-Called"] = "false";
+        http.Response.StatusCode = StatusCodes.Status200OK;
+        http.Response.ContentType = "application/json";
+        await http.Response.WriteAsync(BuildQuickstartDryRunSuccess(path, requestId, jsonOpts));
+        return true;
+    }
+
+    private static bool IsQuickstartDryRunPath(string path)
+        => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase)
+              && path.EndsWith(":generateContent", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ResolveQuickstartDryRunRequestType(string path, JsonObject body)
+    {
+        if (path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestType = ReadString(body, "ModelType") ?? ReadString(body, "modelType");
+            return requestType is "chat" or "vision" && (body["RequestBody"] ?? body["requestBody"]) is JsonObject
+                ? requestType
+                : null;
+        }
+        if (path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+            return body["messages"] is JsonArray && !ReadBool(body, "stream")
+                ? ContainsOpenAiImageInput(body) ? ModelTypes.Vision : ModelTypes.Chat
+                : null;
+        if (path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase))
+        {
+            if (body["messages"] is not JsonArray || ReadBool(body, "stream")) return null;
+            return ContainsOpenAiImageInput(ConvertClaudeMessagesToOpenAiBody(body)) ? ModelTypes.Vision : ModelTypes.Chat;
+        }
+        if (path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith(":generateContent", StringComparison.OrdinalIgnoreCase))
+        {
+            if (body["contents"] is not JsonArray) return null;
+            return ContainsOpenAiImageInput(ConvertGeminiGenerateContentToOpenAiBody(body)) ? ModelTypes.Vision : ModelTypes.Chat;
+        }
+        return null;
+    }
+
+    private static async Task WriteQuickstartDryRunErrorAsync(
+        HttpContext http,
+        GatewayKeyAuthorization authorization,
+        GatewayAuthorizationInputs inputs,
+        string path,
+        string code,
+        string message,
+        int statusCode,
+        JsonSerializerOptions jsonOpts)
+    {
+        await WriteRejectedGatewayRequestLogAsync(http, authorization, inputs, path, CancellationToken.None, statusCode, code);
+        await WriteQuickstartDryRunResponseAsync(http, code, message, statusCode, jsonOpts);
+    }
+
+    private static async Task WriteQuickstartDryRunResponseAsync(
+        HttpContext http,
+        string code,
+        string message,
+        int statusCode,
+        JsonSerializerOptions jsonOpts,
+        string? requestId = null)
+    {
+        requestId ??= TrackGatewayRequestId(http);
+        http.Response.Headers["X-Request-Id"] = requestId;
+        http.Response.Headers["X-Gateway-Upstream-Called"] = "false";
+        http.Response.StatusCode = statusCode;
+        http.Response.ContentType = "application/json";
+        await http.Response.WriteAsync(JsonSerializer.Serialize(new
+        {
+            error = new { code, message },
+            gateway = new { requestId, dryRun = true, upstreamCalled = false },
+        }, jsonOpts));
+    }
+
+    private static string BuildQuickstartDryRunSuccess(string path, string requestId, JsonSerializerOptions jsonOpts)
+    {
+        var gateway = new { requestId, dryRun = true, upstreamCalled = false };
+        if (path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                id = requestId,
+                @object = "chat.completion",
+                created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                model = "dry-run",
+                choices = new[] { new { index = 0, message = new { role = "assistant", content = "Gateway dry-run passed" }, finish_reason = "stop" } },
+                usage = new { prompt_tokens = 0, completion_tokens = 0, total_tokens = 0 },
+                gateway,
+            }, SnakeJson);
+        }
+        if (path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                id = requestId,
+                type = "message",
+                role = "assistant",
+                model = "dry-run",
+                content = new[] { new { type = "text", text = "Gateway dry-run passed" } },
+                stop_reason = "end_turn",
+                usage = new { input_tokens = 0, output_tokens = 0 },
+                gateway,
+            }, SnakeJson);
+        }
+        if (path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                candidates = new[] { new { content = new { role = "model", parts = new[] { new { text = "Gateway dry-run passed" } } }, finishReason = "STOP" } },
+                usageMetadata = new { promptTokenCount = 0, candidatesTokenCount = 0, totalTokenCount = 0 },
+                gateway,
+            }, jsonOpts);
+        }
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            requestId,
+            mode = "dry-run",
+            upstreamCalled = false,
+            content = "Gateway dry-run passed",
+        }, jsonOpts);
     }
 
     private static string GetVerifiedTenantId(HttpContext context)

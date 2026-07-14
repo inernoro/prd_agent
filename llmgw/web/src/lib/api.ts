@@ -31,6 +31,7 @@ import type {
   ModelsData,
   GatewayAppCallersData,
   GatewayAppCaller,
+  CreateGatewayAppCallerRequest,
   UpdateGatewayAppCallerRequest,
   BulkUpdateGatewayAppCallersRequest,
   BulkUpdateGatewayAppCallersResult,
@@ -323,6 +324,9 @@ export function getGatewayAppCallers(params?: {
 }
 export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
   return apiRequest<GatewayAppCaller>(`/app-callers/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function createGatewayAppCaller(req: CreateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
+  return apiRequest<GatewayAppCaller>('/app-callers', { method: 'POST', body: req });
 }
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
