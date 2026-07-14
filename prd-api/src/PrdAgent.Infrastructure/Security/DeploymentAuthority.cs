@@ -58,13 +58,15 @@ public static class DeploymentAuthority
         return string.IsNullOrWhiteSpace(branch) ? label : $"{label}·{branch!.Trim()}";
     }
 
+    // 只从 IConfiguration 读——prd-api 的 host builder 默认 AddEnvironmentVariables，
+    // 容器注入的 CDS_PROJECT_ID / GIT_COMMIT 等 OS 环境变量已在 IConfiguration 里。
+    // 不再额外探 Environment.GetEnvironmentVariable：那是冗余的（生产行为不变），
+    // 且会泄漏进程环境导致单测受 CI runner 的 GITHUB_SHA 等 ambient env 干扰、非确定。
     private static string? ReadFirst(IConfiguration configuration, params string[] keys)
     {
         foreach (var key in keys)
         {
             var value = configuration[key];
-            if (string.IsNullOrWhiteSpace(value))
-                value = Environment.GetEnvironmentVariable(key);
             if (!string.IsNullOrWhiteSpace(value))
                 return value;
         }
