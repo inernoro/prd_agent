@@ -384,8 +384,8 @@
     "darkHex": 0
   },
   "/components/ui/MobileTabBar.tsx": {
-    "whiteAlpha": 31,
-    "darkHex": 5
+    "whiteAlpha": 28,
+    "darkHex": 3
   },
   "/components/ui/Toast.tsx": {
     "whiteAlpha": 1,
@@ -938,14 +938,6 @@
   "/pages/mobile-home/DailyPostPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1
-  },
-  "/pages/MobileNotificationsPage.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 0
-  },
-  "/pages/MobileProfilePage.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0
   },
   "/pages/model-manage/DataTransferDialog.tsx": {
     "whiteAlpha": 11,

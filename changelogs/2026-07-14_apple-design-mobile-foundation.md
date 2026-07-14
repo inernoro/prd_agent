@@ -8,3 +8,5 @@
 | fix | prd-admin | AppStoreAppIcon 圆角从固定 12px 改按尺寸等比(iOS superellipse ≈22.4%),避免大尺寸图标显方 |
 | feat | prd-admin | AppStoreAppIcon 实装 iOS squircle 连续圆角(SVG mask 超椭圆 n=4.5 + filter:drop-shadow 令阴影跟随形状),取代 CSS 圆弧圆角,更接近苹果 app icon;border-radius 保留作 mask 不支持兜底 |
 | fix | prd-admin | MobileTabBar 底座2:激活态从白/黑字+金色下划线改 iOS systemBlue(icon/label/指示条统一走 AS_COLOR.blue),贴近 iOS tab bar;明暗双皮肤对象结构保留不动 |
+| fix | prd-admin | MobileProfilePage 接入 App Store 设计系统:纯黑/白卡双皮肤(C.card)、菜单与平台能力配色改 iOS 系统色、角色徽章/退出按钮硬编码色改 AS_COLOR、SF 字体;硬编码清零 |
+| fix | prd-admin | MobileNotificationsPage 接入 App Store 设计系统:notificationTone 四档改 iOS 语义色轻底、已处理卡改 C.card、var 令牌改 C.*、SF 字体;硬编码清零 |
