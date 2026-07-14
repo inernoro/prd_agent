@@ -4022,8 +4022,15 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     {
         return Json(ApiEnvelope<object>.Fail("INVALID_KEY_PURPOSE", "purpose 仅支持 runtime、release-gate、canary、external-platform"), jsonOptions, 400);
     }
-    if (string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) && purpose == "external-platform"
-        || !string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) && purpose != "external-platform")
+    var isMapSource = string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase);
+    if (!tenant.IsInternalTenant && (isMapSource || purpose != "external-platform"))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INTERNAL_KEY_PURPOSE_FORBIDDEN",
+            "外部租户只能创建 external-platform key；MAP runtime、release-gate 与 canary 仅属于 internal tenant"), jsonOptions, 403);
+    }
+    if (isMapSource && purpose == "external-platform"
+        || !isMapSource && purpose != "external-platform")
     {
         return Json(ApiEnvelope<object>.Fail("KEY_PURPOSE_SOURCE_MISMATCH", "MAP key 使用 runtime、release-gate 或 canary；外部平台 key 使用 external-platform"), jsonOptions, 400);
     }

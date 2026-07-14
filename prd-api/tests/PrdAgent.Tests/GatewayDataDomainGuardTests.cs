@@ -2957,6 +2957,7 @@ public class GatewayDataDomainGuardTests
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var webNginx = ReadRepoFile("llmgw/web/nginx.conf");
 
         var createStart = console.IndexOf("app.MapPost(\"/gw/app-callers\"", StringComparison.Ordinal);
         var createEnd = console.IndexOf("RequireAuthorization(\"AppCallerWrite\")", createStart, StringComparison.Ordinal);
@@ -2992,6 +2993,28 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ingressProtocols: [selectedProtocol.ingressProtocol]", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);
+        Assert.Contains("location ^~ /gw/v1/", webNginx);
+        Assert.Contains("location ^~ /v1/", webNginx);
+        Assert.Contains("location ^~ /v1beta/", webNginx);
+        Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
+        Assert.Contains("client_max_body_size 30m;", webNginx);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+    }
+
+    [Fact]
+    public void ExternalTenant_CannotMasqueradeAsMapServiceKeyPurpose()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var createStart = console.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
+        var deleteStart = console.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
+        var createEndpoint = console[createStart..deleteStart];
+
+        Assert.Contains("!tenant.IsInternalTenant && (isMapSource || purpose != \"external-platform\")", createEndpoint);
+        Assert.Contains("INTERNAL_KEY_PURPOSE_FORBIDDEN", createEndpoint);
+        Assert.Contains("const isInternalTenant = tenant?.isInternal === true", page);
+        Assert.Contains("外部租户身份由服务端固定，不能伪装为 MAP", page);
+        Assert.Contains("isInternalTenant ? <div", page);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.19 | **日期**：2026-07-15 | **状态**：PR-10 索引兼容修复完成，远程门禁重跑中
+> **版本**：v1.20 | **日期**：2026-07-15 | **状态**：PR-10 真实 Quickstart 缺陷已修复，本地门禁通过，远程复验中
 
 ## 1. 目标
 
@@ -96,6 +96,8 @@ PR-9 完成证据（2026-07-15）：新增 tenant-scoped `llmgw_model_pool_types
 PR-10 精确计划（2026-07-15）：第一，在请求完成时从既有价格字段生成不可逆 `PriceSnapshotHash`，从供应商响应头提取 `ProviderRequestId`；估算字段仍按请求时快照复算，任一价格或 token 缺失继续保持 unknown。第二，新增 tenant-scoped 供应商账单导入与对账记录，逐请求通过 `TenantId + provider + ProviderRequestId` 关联，供应商仅提供汇总账单时按明确时间窗和 ServiceKeyId 记录 window 粒度；原始 estimated 与 provider actual 不互相覆盖。相同币种才直接计算 delta，不同币种只有同时提供 `FxSnapshotId` 与明确汇率才换算，否则状态为 `fx-unavailable` 且 delta 为 null。第三，在现有 `clientCode + environment` 上增加单值 key purpose，固定为 `runtime`、`release-gate`、`canary`、`external-platform`；同一把 key 不能跨用途或环境，控制台展示 MAP 测试/正式三个用途以及每个外部平台的独立 key 覆盖缺口，轮换继承原用途。第四，legacy shared key 仅允许 `sourceSystem=map`，每次调用按 internal TenantId、appCaller、协议和来源形成清单；tenant-scoped 收口策略保存截止时间、允许清单、后继 scoped key 与状态，过期或 revoked 后返回 401，外部来源始终拒绝。生产撤销仍必须在双 key 观测达标后由人工显式执行，本 PR 只交付能力、假数据和隔离环境验收，不改生产 key、Secret 或任何用户密码。
 
 PR-10 本地证据（2026-07-15）：请求日志新增不可逆价格快照哈希和仅来自供应商响应头的请求 ID；tenant-scoped 对账记录支持 request/window 两种粒度，外部导入体不接受 TenantId，查询、唯一索引、团队范围、审计和汇总均由服务端租户上下文约束。供应商 actual 与内部 estimated 分栏保存，不相互覆盖；未知估算保持 null，相同币种才计算 delta，跨币种无 `FxSnapshotId` 与汇率时返回 `fx-unavailable`。逐请求重复账单、同 request ID 不同外部记录、重叠窗口、已逐请求对账后再覆盖窗口、已存在窗口后再导入逐请求均返回受控 409；汇总使用全量 Mongo 聚合，不受详情 500 条上限影响，非数值 actual 不会被折算为 0。密钥用途固定为四类，来源与用途不匹配、跨用途或跨环境轮换均拒绝；Quickstart 只签发 `external-platform`。legacy shared key 只对 internal MAP 生效，外部租户 403，过期或撤销 401；每把后继 scoped key 都必须分别达到观测阈值才能人工撤销，撤销状态不可恢复。隔离 Mongo 与真实 Console HTTP 已验证恶意 body 自报 tenantId 不改变归属、相同 provider request id 可被两个租户各自隔离对账、内部租户不可读取外部记录、unknown 不显示 0、CNY 与 USD 无汇率不相加、幂等重试与冲突、双粒度防重复、用途边界和每后继观测门。完整解决方案构建 0 error，Web TypeScript 与生产构建通过；Api.Tests 1604 通过、4 个既有显式跳过，PrdAgent.Tests 658 通过，合计 2262 通过、0 失败。首轮 GitHub CI 与相关镜像全绿，CDS 在共享存量库正确发现旧四字段索引与新增 `Purpose` 五字段索引同名冲突并阻断启动；修复改为新增版本化索引名，保留旧索引。隔离库先创建旧索引后，Console 与 Serving 均成功启动且两个索引并存，两个 health 端点返回 200；随后完整构建和 2262 项回归再次通过。所有上游场景使用假数据或隔离数据库，未调用付费模型，未修改生产 key、Secret、账号或密码。第二轮远程 CI、CDS 与直连预览证据待修复提交后补齐。
+
+PR-10 真实接入复验补充（2026-07-15）：第二轮 GitHub CI 与 CDS run `dr_f747e9671cbafd21b138428b` 已通过，五个服务均运行目标 commit。使用唯一临时外部租户从移动端依次完成登录、创建团队、一键生成 appCaller 与 `external-platform` key，并对网页展示的同源 `/v1/chat/completions` 地址执行零费用 dry-run；该真实用户路径发现 llmgw-web 内层 nginx 只代理 Console `/gw/*`，兼容协议 POST 被 SPA 静态层返回 405。修复为在 SPA fallback 前把 `/gw/v1/*`、`/v1/*`、`/v1beta/*`、`/gemini/v1beta/*` 明确代理到 `llmgw-serve:8091`。同轮还发现外部租户页面展示 MAP runtime/release-gate/canary 覆盖，且可自报 `sourceSystem=map`；服务端现以会话中的 `IsInternalTenant` 强制拒绝外部租户创建 MAP 内部用途 key，前端对外部租户固定显示 `external` 与 `external-platform` 并隐藏 MAP 覆盖。Nginx 原配置语法、Web 构建、Console 编译和两个新增回归通过；完整回归为 Api.Tests 1604 通过、4 个既有显式跳过，PrdAgent.Tests 659 通过，合计 2263 通过、0 失败。临时租户相关数据首次清理 9 条，二次复查为 0，临时 helper 已删除；未改任何存量账号或密码。修复后的 GitHub CI、CDS 和浏览器四协议同源 dry-run 仍待本提交推送后复验。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 

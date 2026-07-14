@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 
@@ -9,6 +10,8 @@ const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemi
 const DEFAULT_SCOPES = 'invoke, route:read';
 
 export function ServiceKeysPage() {
+  const { tenant } = useAuth();
+  const isInternalTenant = tenant?.isInternal === true;
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -154,9 +157,10 @@ export function ServiceKeysPage() {
     || splitValues(scopes).includes('*');
   const sourceIsMap = sourceSystem.trim().toLowerCase() === 'map';
   const purposeMatchesSource = sourceIsMap ? purpose !== 'external-platform' : purpose === 'external-platform';
+  const purposeMatchesTenant = isInternalTenant || (!sourceIsMap && purpose === 'external-platform');
   const canSubmit = name.trim() && sourceSystem.trim() && /^[a-z][a-z0-9._-]{1,79}$/.test(clientCode.trim().toLowerCase()) && environment && splitValues(appCallerCodes).length
     && splitValues(ingressProtocols).length && splitValues(scopes).length
-    && purposeMatchesSource && (!usesWildcard || confirmWildcardRisk);
+    && purposeMatchesSource && purposeMatchesTenant && (!usesWildcard || confirmWildcardRisk);
   const updateSourceSystem = (value: string) => {
     setSourceSystem(value);
     const nextIsMap = value.trim().toLowerCase() === 'map';
@@ -232,14 +236,18 @@ export function ServiceKeysPage() {
       {showCreate ? (
         <div className="lg-service-key-form" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr)', gap: 8, padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <Field label="名称" value={name} onChange={setName} placeholder="例如 content-service" />
-          <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
+          {isInternalTenant
+            ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
+            : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
           <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
           <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
             <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
           </select></label>
-          <label style={labelStyle}>用途<select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)} style={inputStyle}>
-            <option value="runtime">MAP runtime</option><option value="release-gate">发布 Gate</option><option value="canary">Canary</option><option value="external-platform">外部平台</option>
-          </select></label>
+          {isInternalTenant
+            ? <label style={labelStyle}>用途<select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)} style={inputStyle}>
+              <option value="runtime">MAP runtime</option><option value="release-gate">发布 Gate</option><option value="canary">Canary</option><option value="external-platform">外部平台</option>
+            </select></label>
+            : <label style={labelStyle}>用途<input aria-label="用途" value="external-platform" readOnly style={inputStyle} /></label>}
           {!purposeMatchesSource ? <div style={{ gridColumn: '1 / -1', color: 'var(--danger)', fontSize: 12 }}>MAP 只能使用 runtime、release-gate 或 canary；其他来源只能使用 external-platform。</div> : null}
           <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="选择已有值或逗号分隔输入" list="llmgw-app-callers" />
           <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
@@ -264,7 +272,7 @@ export function ServiceKeysPage() {
 
       {error ? <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div> : null}
       {items ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-        <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 12 }}>MAP 生产 key 覆盖</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? '#3fb950' : '#f59e0b'} bg={item.ready ? 'rgba(63,185,80,0.12)' : 'rgba(245,158,11,0.12)'} />)}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>runtime、release-gate、canary 各用一把 production scoped key，不共享身份。</p></div>
+        {isInternalTenant ? <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 12 }}>MAP 生产 key 覆盖</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? '#3fb950' : '#f59e0b'} bg={item.ready ? 'rgba(63,185,80,0.12)' : 'rgba(245,158,11,0.12)'} />)}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>runtime、release-gate、canary 各用一把 production scoped key，不共享身份。</p></div> : null}
         <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 12 }}>外部平台独立身份</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-muted)" />) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>暂无外部平台 key</span>}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>每个 clientCode 与环境生成独立 key；一把 key 不能跨 purpose 或 environment。</p></div>
       </div> : null}
       {legacy ? <details style={{ flexShrink: 0, padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
