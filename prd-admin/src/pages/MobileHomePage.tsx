@@ -43,25 +43,27 @@ import { AppStoreGrid, AppStoreAppIcon, AppStorePill } from '@/components/mobile
 import { AS_COLOR, AS_TYPE, AS_SPACE, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
-/* ───────────── 常用应用宫格（iOS 系统色注册） ───────────── */
+/* ───────────── 常用应用宫格（iOS 双色渐变——平色显廉价,渐变才是 iOS icon 质感） ───────────── */
 
-const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideIcon; tint: string }> = [
-  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, tint: AS_COLOR.orange },
-  { key: 'report-agent', title: '周报', route: '/report-agent', Icon: FileText, tint: AS_COLOR.blue },
-  { key: 'visual-agent', title: '生图', route: '/visual-agent', Icon: ImageIcon, tint: AS_COLOR.purple },
-  { key: 'defect-agent', title: '缺陷', route: '/defect-agent', Icon: Bug, tint: AS_COLOR.red },
-  { key: 'literary-agent', title: '文学创作', route: '/literary-agent', Icon: Feather, tint: AS_COLOR.green },
-  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, tint: AS_COLOR.teal },
-  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, tint: AS_COLOR.orange },
-  { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, tint: AS_COLOR.indigo },
+type Grad = { from: string; to: string };
+
+const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideIcon; accent: Grad }> = [
+  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, accent: { from: AS_COLOR.orange, to: '#FFB340' } },
+  { key: 'report-agent', title: '周报', route: '/report-agent', Icon: FileText, accent: { from: AS_COLOR.blue, to: AS_COLOR.indigo } },
+  { key: 'visual-agent', title: '生图', route: '/visual-agent', Icon: ImageIcon, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
+  { key: 'defect-agent', title: '缺陷', route: '/defect-agent', Icon: Bug, accent: { from: AS_COLOR.red, to: AS_COLOR.pink } },
+  { key: 'literary-agent', title: '文学创作', route: '/literary-agent', Icon: Feather, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
+  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#32ADE6', to: AS_COLOR.teal } },
+  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C05B3C', to: AS_COLOR.orange } },
+  { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, accent: { from: AS_COLOR.indigo, to: AS_COLOR.purple } },
 ];
 
 /** 沉淀与档案：历史与个人资产类入口 */
-const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: string; Icon: LucideIcon; tint: string }> = [
-  { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, tint: AS_COLOR.purple },
-  { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, tint: AS_COLOR.green },
-  { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, tint: AS_COLOR.blue },
-  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, tint: AS_COLOR.teal },
+const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: string; Icon: LucideIcon; accent: Grad }> = [
+  { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
+  { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
+  { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, accent: { from: AS_COLOR.blue, to: AS_COLOR.teal } },
+  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, accent: { from: '#32ADE6', to: AS_COLOR.blue } },
 ];
 
 export default function MobileHomePage() {
@@ -88,8 +90,9 @@ export default function MobileHomePage() {
   const gridItems = APP_GRID.map((a) => ({
     key: a.key,
     Icon: a.Icon,
-    accent: { from: a.tint, to: a.tint },
+    accent: a.accent,
     label: a.title,
+    badge: a.key === 'changelog' && data.changelogUnread > 0 ? data.changelogUnread : undefined,
     onClick: () => navigate(a.route),
   }));
 
@@ -151,7 +154,7 @@ export default function MobileHomePage() {
               >
                 <AppStoreAppIcon
                   Icon={recentAgentMetaFor(headline.agentKey).Icon}
-                  accent={{ from: recentAgentMetaFor(headline.agentKey).accent, to: recentAgentMetaFor(headline.agentKey).accent }}
+                  accent={accentFor(headline.agentKey)}
                   size={46}
                 />
                 <span className="min-w-0 flex-1">
@@ -178,8 +181,9 @@ export default function MobileHomePage() {
                     <span className="min-w-0 flex-1 truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary }}>
                       {item.title || '未命名工作'}
                     </span>
+                    {/* 右侧只留相对时间——真实标题偏长,带上 agent 名会把标题挤没(demo 差距复盘) */}
                     <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
-                      {meta.label} · {formatRelativeTime(item.lastActiveAt)}
+                      {formatRelativeTime(item.lastActiveAt)}
                     </span>
                   </button>
                 );
@@ -205,7 +209,8 @@ export default function MobileHomePage() {
                     fontSize: 20,
                     fontWeight: 700,
                     letterSpacing: '-0.02em',
-                    color: s.color,
+                    // 0 值不上鲜艳色——亮蓝色的"0"比灰色的"0"更扎眼(demo 差距复盘)
+                    color: s.value > 0 ? s.color : C.labelTertiary,
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
@@ -305,7 +310,7 @@ export default function MobileHomePage() {
                 className="w-full flex items-center text-left active:opacity-60 transition-opacity"
                 style={{ gap: 12, padding: '10px 0', borderTop: idx > 0 ? `1px solid ${C.separator}` : undefined }}
               >
-                <AppStoreAppIcon Icon={row.Icon} accent={{ from: row.tint, to: row.tint }} size={34} />
+                <AppStoreAppIcon Icon={row.Icon} accent={row.accent} size={34} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate" style={{ ...AS_TYPE.itemSubtitle, fontWeight: 600, color: C.label }}>
                     {row.title}

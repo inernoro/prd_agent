@@ -241,7 +241,7 @@ export function AppStoreAppIcon({
           className="absolute inset-0 -z-10 flex items-center justify-center"
           style={{ background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
         >
-          <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: '#fff' }} />
+          <Icon size={Math.round(size * 0.48)} strokeWidth={1.9} style={{ color: '#fff' }} />
         </div>
       </div>
     );
@@ -265,7 +265,7 @@ export function AppStoreAppIcon({
           : `drop-shadow(0 2px 8px ${accent.from}66)`,
       }}
     >
-      <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: iconColor }} />
+      <Icon size={Math.round(size * 0.48)} strokeWidth={1.9} style={{ color: iconColor }} />
     </div>
   );
 }
@@ -824,6 +824,8 @@ interface GridItem {
   iconImageUrl?: string | null;
   accent: { from: string; to: string };
   label: string;
+  /** 右上角未读数角标（iOS app icon badge） */
+  badge?: number;
   onClick: () => void;
 }
 
@@ -849,8 +851,30 @@ export function AppStoreGrid({ items, columns = 4 }: { items: GridItem[]; column
           key={it.key}
           type="button"
           onClick={it.onClick}
-          className="flex flex-col items-center gap-2 active:opacity-60 transition-opacity"
+          className="relative flex flex-col items-center gap-2 active:opacity-60 transition-opacity"
         >
+          {it.badge != null && it.badge > 0 && (
+            <span
+              aria-hidden
+              className="absolute text-center"
+              style={{
+                top: -5,
+                right: '50%',
+                marginRight: -(AS_SIZE.gridIconSize / 2) - 6,
+                zIndex: 1,
+                minWidth: 17,
+                padding: '0 4px',
+                borderRadius: 999,
+                background: AS_COLOR.red,
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: '16px',
+              }}
+            >
+              {it.badge > 99 ? '99+' : it.badge}
+            </span>
+          )}
           <AppStoreAppIcon
             Icon={it.Icon}
             accent={it.accent}
