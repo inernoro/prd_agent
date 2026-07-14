@@ -1098,6 +1098,7 @@ export function MdToPptAgentPage() {
   const [pendingTemplateSwitch, setPendingTemplateSwitch] = useState<
     { kind: 'official'; value: string; label: string } | { kind: 'custom'; tpl: MdToPptTemplateItem } | null
   >(null);
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
 
   // ─── 生成期流式可视化（2 秒定理：等待时屏幕必须有持续变化的内容）
   //     delta 先进 ref，150ms 节流刷进 state，避免大 HTML 每个 token 触发整页 re-render。
@@ -2541,6 +2542,44 @@ export function MdToPptAgentPage() {
     } catch { /* ignore */ }
   }, [resetStreamPreview]);
 
+  const lastUserPrompt = useMemo(() => {
+    return [...messages].reverse().find((m) => m.role === 'user')?.content?.trim() ?? '';
+  }, [messages]);
+
+  const lastAssistantProblem = useMemo(() => {
+    const last = [...messages].reverse().find((m) => m.role === 'assistant');
+    const content = last?.content ?? '';
+    return last?.phase === 'error' || content.includes('退化为') || content.includes('生成失败') || content.includes('异常');
+  }, [messages]);
+
+  const handleRegenerateDeck = useCallback(() => {
+    if (isProcessing) return;
+    setStylePanelOpen(false);
+    if (outlineDraft) {
+      const fullContent =
+        outlineDraft.sourceText +
+        serializeClarifyAnswers(outlineDraft) +
+        `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(outlineDraft.outline)}`;
+      pushMsg({ role: 'user', content: '重新生成整份 PPT' });
+      launchConvert(
+        fullContent,
+        outlineDraft.totalPages || outlineDraft.outline.length || null,
+        outlineDraft.outline,
+        outlineDraft.summary
+      );
+      return;
+    }
+    if (lastUserPrompt) {
+      setInput(lastUserPrompt);
+      setGeneratedHtml('');
+      setArtifactPhase('idle');
+      inputRef.current?.focus();
+      toast.info('已带回上次需求', '检查后点发送即可重新开始。');
+      return;
+    }
+    handleReset();
+  }, [isProcessing, outlineDraft, serializeClarifyAnswers, serializeOutline, pushMsg, launchConvert, lastUserPrompt, handleReset]);
+
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
   const startedPageIndexes = useMemo(() => getStartedPageIndexes(diagLines), [diagLines]);
   const runningPageIndexes = useMemo(
@@ -2576,14 +2615,29 @@ export function MdToPptAgentPage() {
           )}
 
           {generatedHtml && !isStreaming && (
-            <button
-              onClick={() => void handlePublish()}
-              disabled={isPublishing}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 disabled:opacity-50"
-            >
-              {isPublishing ? <MapSpinner size={11} /> : <Globe size={11} />}
-              {isPublishing ? '发布中...' : '发布为网页'}
-            </button>
+            <>
+              <button
+                onClick={handleRegenerateDeck}
+                disabled={isProcessing}
+                className={[
+                  'flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold border disabled:opacity-50',
+                  lastAssistantProblem
+                    ? 'bg-red-500/15 text-red-200 border-red-400/30 hover:bg-red-500/20'
+                    : 'bg-purple-500/15 text-purple-200 border-purple-400/25 hover:bg-purple-500/20',
+                ].join(' ')}
+              >
+                <RotateCcw size={11} />
+                重新生成
+              </button>
+              <button
+                onClick={() => void handlePublish()}
+                disabled={isPublishing}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 disabled:opacity-50"
+              >
+                {isPublishing ? <MapSpinner size={11} /> : <Globe size={11} />}
+                {isPublishing ? '发布中...' : '发布为网页'}
+              </button>
+            </>
           )}
 
           <button
@@ -2599,10 +2653,11 @@ export function MdToPptAgentPage() {
 
           <button
             onClick={handleReset}
-            title="新建对话"
-            className="flex items-center justify-center w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+            title="清空当前结果，重新开始一个新 PPT"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
           >
             <RotateCcw size={12} />
+            新建
           </button>
         </div>
       </div>
@@ -3111,16 +3166,57 @@ export function MdToPptAgentPage() {
 
                   {/* Assistant: error */}
                   {msg.role === 'assistant' && msg.phase === 'error' && (
-                    <div className="flex items-start gap-2 text-red-400">
-                      <AlertCircle size={11} className="mt-0.5 shrink-0" />
-                      <span>{msg.content}</span>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-start gap-2 text-red-400">
+                        <AlertCircle size={11} className="mt-0.5 shrink-0" />
+                        <span>{msg.content}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={handleRegenerateDeck}
+                          disabled={isProcessing}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-100 hover:bg-red-500/16 disabled:opacity-50"
+                        >
+                          <RotateCcw size={11} />
+                          重新生成
+                        </button>
+                        <button
+                          onClick={handleReset}
+                          disabled={isProcessing}
+                          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                        >
+                          新建一份
+                        </button>
+                      </div>
                     </div>
                   )}
 
                   {/* Assistant: done / text */}
                   {msg.role === 'assistant' &&
                     (msg.phase === 'done' || msg.phase === 'text' || !msg.phase) && (
-                      <p>{msg.content}</p>
+                      <div className="flex flex-col gap-2">
+                        <p>{msg.content}</p>
+                        {msg.role === 'assistant' && msg.phase === 'done' && msg.content.includes('退化为') && (
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              onClick={handleRegenerateDeck}
+                              disabled={isProcessing}
+                              className="inline-flex items-center gap-1 rounded-md border border-purple-400/25 bg-purple-500/12 px-2 py-1 text-[11px] font-semibold text-purple-100 hover:bg-purple-500/18 disabled:opacity-50"
+                            >
+                              <RotateCcw size={11} />
+                              重新生成整份
+                            </button>
+                            <button
+                              onClick={redrawCurrentPage}
+                              disabled={isProcessing || editMode || !slidePos}
+                              className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                            >
+                              <Sparkles size={11} />
+                              重绘当前页
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                 </div>
               </div>
@@ -4178,38 +4274,106 @@ export function MdToPptAgentPage() {
                     <ChevronRight size={14} />
                   </button>
 
-                  {/* 模板色点：点击 = AI 参照该模板整体重绘（约 1 分钟，全程流式可见）。
-                        官方 10 套 + 自定义模板（参考图提取） */}
-                  <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
-                    {THEME_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => switchTheme(opt.value)}
-                        disabled={isStreaming}
-                        title={'换模板（AI 整体重绘，约 1 分钟）：' + opt.label}
-                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
-                        style={{
-                          background: opt.dotBg,
-                          border: '2px solid ' + opt.dotRing,
-                          boxShadow: templateId == null && theme === opt.value ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
-                        }}
-                      />
-                    ))}
-                    {customTemplates.length > 0 && <span className="w-px h-3.5 bg-white/10" />}
-                    {customTemplates.slice(0, 6).map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => selectCustomTemplate(t)}
-                        disabled={isStreaming}
-                        title={'换模板（AI 整体重绘，约 1 分钟）：' + t.name}
-                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
-                        style={{
-                          background: t.bgColor,
-                          border: '2px solid ' + t.accentColor,
-                          boxShadow: templateId === t.id ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
-                        }}
-                      />
-                    ))}
+                  <div className="relative ml-2 pl-2.5 border-l border-white/10" data-testid="theme-menu">
+                    <button
+                      onClick={() => setStylePanelOpen((v) => !v)}
+                      disabled={isStreaming}
+                      title="换风格：展开后选择模板，确认后 AI 会整体重绘"
+                      className={[
+                        'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                        stylePanelOpen
+                          ? 'bg-purple-500/20 text-purple-200 border-purple-400/35'
+                          : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                      ].join(' ')}
+                    >
+                      <Wand2 size={11} />
+                      换风格
+                    </button>
+
+                    {stylePanelOpen && !isStreaming && (
+                      <div
+                        data-testid="theme-panel"
+                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-white/10 bg-[#18191f] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--text-primary)]">选择设计风格</div>
+                            <div className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">会按新风格整体重绘，内容与页数保持不变</div>
+                          </div>
+                          <button
+                            onClick={() => setStylePanelOpen(false)}
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-white/6 hover:text-[var(--text-primary)]"
+                            title="关闭"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          {THEME_OPTIONS.map((opt) => {
+                            const active = templateId == null && theme === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                onClick={() => {
+                                  switchTheme(opt.value);
+                                  setStylePanelOpen(false);
+                                }}
+                                className={[
+                                  'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                  active
+                                    ? 'border-purple-400/50 bg-purple-500/14'
+                                    : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                    style={{ background: opt.dotBg, border: '2px solid ' + opt.dotRing }}
+                                  />
+                                  <span className="truncate text-[11px] font-semibold text-[var(--text-primary)]">{opt.label}</span>
+                                </div>
+                                <div className="mt-1 line-clamp-2 text-[10px] leading-snug text-[var(--text-tertiary)]">{opt.desc}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {customTemplates.length > 0 && (
+                          <>
+                            <div className="mt-3 border-t border-white/8 pt-3 text-[10px] font-semibold text-[var(--text-tertiary)]">自定义模板</div>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              {customTemplates.slice(0, 6).map((t) => {
+                                const active = templateId === t.id;
+                                return (
+                                  <button
+                                    key={t.id}
+                                    onClick={() => {
+                                      selectCustomTemplate(t);
+                                      setStylePanelOpen(false);
+                                    }}
+                                    className={[
+                                      'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                      active
+                                        ? 'border-purple-400/50 bg-purple-500/14'
+                                        : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                    ].join(' ')}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                        style={{ background: t.bgColor, border: '2px solid ' + t.accentColor }}
+                                      />
+                                      <span className="truncate text-[11px] font-semibold text-[var(--text-primary)]">{t.name}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
