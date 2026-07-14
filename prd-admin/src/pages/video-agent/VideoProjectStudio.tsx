@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   AudioLines,
+  Camera,
+  Clapperboard,
+  Clock3,
   Film,
   FolderOpen,
   Image as ImageIcon,
@@ -42,6 +45,7 @@ interface VideoProjectStudioProps {
 }
 
 const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
+const STUDIO_PREVIEW_IMAGE = '/video-studio/story-to-film-stage.jpg';
 
 const ACTIVE_RUN_STATUSES = new Set(['Queued', 'Scripting', 'Editing', 'Rendering']);
 
@@ -216,69 +220,100 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
 
       <main className="video-create-scroll">
         <section className="video-create-stage" aria-label="创建视频项目">
-          <div className="video-create-heading">
-            <span>文学创作转视频</span>
-            <h1>把一个故事变成一组镜头</h1>
-          </div>
+          <div className="video-create-workspace">
+            <div className="video-create-scene-column">
+              <figure className="video-create-scene-preview">
+                <img src={STUDIO_PREVIEW_IMAGE} alt="雨夜街巷的电影画面风格预览" />
+                <div className="video-create-scene-meta">
+                  <span><Clapperboard size={13} />{selectedStyle.label}</span>
+                  <span>{aspectRatio}</span>
+                </div>
+                <figcaption>
+                  <div><small>创作草图</small><strong>雨夜街巷</strong></div>
+                  <div>
+                    <span><Camera size={13} />{estimatedShots} 镜</span>
+                    <span><Clock3 size={13} />{estimatedDuration} 秒</span>
+                  </div>
+                </figcaption>
+              </figure>
 
-          <div className="video-create-composer">
-            <input
-              className="video-create-title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="给这部作品起个名字"
-              aria-label="项目名称"
-            />
-            <textarea
-              value={sourceMarkdown}
-              onChange={(event) => setSourceMarkdown(event.target.value)}
-              placeholder="粘贴小说、散文、故事或脚本"
-              aria-label="文学稿内容"
-            />
-
-            {assets.length > 0 && (
-              <div className="video-create-reference-chips" aria-label="已选参考素材">
-                {assets.map((asset) => (
-                  <div key={asset.id} className="video-create-reference-chip">
-                    {asset.type === 'audio' ? <AudioLines size={13} /> : asset.url ? <img src={asset.url} alt="" /> : <ImageIcon size={13} />}
-                    <span>{asset.name}</span>
-                    <button onClick={() => setAssets((current) => current.filter((item) => item.id !== asset.id))} aria-label={`移除${asset.name}`}><Trash2 size={11} /></button>
+              <div className="video-create-shot-strip" aria-label="镜头草图">
+                {['全景', '中景', '特写'].map((shot, index) => (
+                  <div key={shot}>
+                    <img src={STUDIO_PREVIEW_IMAGE} alt="" style={{ objectPosition: `${22 + index * 30}% center` }} />
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <strong>{shot}</strong>
                   </div>
                 ))}
               </div>
-            )}
-
-            <div className="video-create-composer-toolbar">
-              <div>
-                <button className="video-create-tool" onClick={() => fileInputRef.current?.click()} title="上传文稿"><Paperclip size={16} /><span>文稿</span></button>
-                <input ref={fileInputRef} type="file" accept={ACCEPT_TEXT} hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void readFile(file); event.target.value = ''; }} />
-                <button className={`video-create-tool ${referencesOpen ? 'is-active' : ''}`} onClick={() => setReferencesOpen((value) => !value)}><ImagePlus size={16} /><span>参考</span></button>
-                <button className={`video-create-tool ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><Settings2 size={16} /><span>设置</span></button>
-              </div>
-              <Button variant="primary" onClick={() => void onAnalyze(input)} disabled={busy || !sourceMarkdown.trim() || !model}>
-                {busy ? <MapSpinner size={15} /> : <Sparkles size={15} />}
-                AI 拆成分镜
-              </Button>
             </div>
-          </div>
 
-          <div className="video-create-presets" aria-label="视觉风格">
-            {VIDEO_STYLE_DEFINITIONS.slice(0, 6).map((style) => {
-              const Icon = style.icon;
-              return (
-                <button key={style.key} className={selectedStyle.key === style.key ? 'is-active' : ''} onClick={() => setStyleDescription(style.label)}>
-                  <i style={{ background: style.color }} />
-                  <Icon size={14} />
-                  <span>{style.label}</span>
-                </button>
-              );
-            })}
-          </div>
+            <div className="video-create-brief-column">
+              <div className="video-create-heading">
+                <span>文学创作转视频</span>
+                <h1>把一个故事变成一组镜头</h1>
+              </div>
 
-          <div className="video-create-estimate">
-            <span>{sourceMarkdown.length.toLocaleString('zh-CN')} 字</span>
-            <span>预计 {estimatedShots} 个镜头</span>
-            <span>约 {estimatedDuration} 秒</span>
+              <div className="video-create-composer">
+                <input
+                  className="video-create-title"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="给这部作品起个名字"
+                  aria-label="项目名称"
+                />
+                <textarea
+                  value={sourceMarkdown}
+                  onChange={(event) => setSourceMarkdown(event.target.value)}
+                  placeholder="粘贴小说、散文、故事或脚本"
+                  aria-label="文学稿内容"
+                />
+
+                {assets.length > 0 && (
+                  <div className="video-create-reference-chips" aria-label="已选参考素材">
+                    {assets.map((asset) => (
+                      <div key={asset.id} className="video-create-reference-chip">
+                        {asset.type === 'audio' ? <AudioLines size={13} /> : asset.url ? <img src={asset.url} alt="" /> : <ImageIcon size={13} />}
+                        <span>{asset.name}</span>
+                        <button onClick={() => setAssets((current) => current.filter((item) => item.id !== asset.id))} aria-label={`移除${asset.name}`}><Trash2 size={11} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="video-create-composer-toolbar">
+                  <div>
+                    <button className="video-create-tool" onClick={() => fileInputRef.current?.click()} title="上传文稿"><Paperclip size={16} /><span>文稿</span></button>
+                    <input ref={fileInputRef} type="file" accept={ACCEPT_TEXT} hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void readFile(file); event.target.value = ''; }} />
+                    <button className={`video-create-tool ${referencesOpen ? 'is-active' : ''}`} onClick={() => setReferencesOpen((value) => !value)}><ImagePlus size={16} /><span>参考</span></button>
+                    <button className={`video-create-tool ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><Settings2 size={16} /><span>设置</span></button>
+                  </div>
+                  <Button variant="primary" onClick={() => void onAnalyze(input)} disabled={busy || !sourceMarkdown.trim() || !model}>
+                    {busy ? <MapSpinner size={15} /> : <Sparkles size={15} />}
+                    AI 拆成分镜
+                  </Button>
+                </div>
+              </div>
+
+              <div className="video-create-presets" aria-label="视觉风格">
+                {VIDEO_STYLE_DEFINITIONS.slice(0, 6).map((style) => {
+                  const Icon = style.icon;
+                  return (
+                    <button key={style.key} className={selectedStyle.key === style.key ? 'is-active' : ''} onClick={() => setStyleDescription(style.label)}>
+                      <i style={{ background: style.color }} />
+                      <Icon size={14} />
+                      <span>{style.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="video-create-estimate">
+                <span>{sourceMarkdown.length.toLocaleString('zh-CN')} 字</span>
+                <span>{resolution}</span>
+                <span>每镜 {duration} 秒</span>
+              </div>
+            </div>
           </div>
 
           {referencesOpen && (
