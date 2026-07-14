@@ -65,6 +65,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 Id = Guid.NewGuid().ToString(),
                 TenantId = ResolveTenantId(start.TenantId),
                 TeamId = start.TeamId,
+                ServiceKeyId = NormalizeIdentity(start.ServiceKeyId),
+                ClientCode = NormalizeIdentity(start.ClientCode),
+                Environment = NormalizeIdentity(start.Environment),
+                ServiceKeyPrefix = NormalizeIdentity(start.ServiceKeyPrefix),
                 RequestId = start.RequestId,
                 ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
@@ -170,6 +174,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     Id = Guid.NewGuid().ToString(),
                     TenantId = ResolveTenantId(start.TenantId),
                     TeamId = start.TeamId,
+                    ServiceKeyId = NormalizeIdentity(start.ServiceKeyId),
+                    ClientCode = NormalizeIdentity(start.ClientCode),
+                    Environment = NormalizeIdentity(start.Environment),
+                    ServiceKeyPrefix = NormalizeIdentity(start.ServiceKeyPrefix),
                     RequestId = start.RequestId,
                     ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,
@@ -212,6 +220,9 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         => string.IsNullOrWhiteSpace(tenantId)
             ? _internalTenantId
             : tenantId.Trim();
+
+    private static string? NormalizeIdentity(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public void MarkFirstByte(string logId, DateTime at)
     {

@@ -31,6 +31,11 @@ public class LlmRequestLog
     /// <summary>服务端解析的租户边界；所有查询和费用聚合必须以此为首要过滤条件。</summary>
     public string TenantId { get; set; } = string.Empty;
     public string? TeamId { get; set; }
+    /// <summary>服务端鉴权解析出的工作负载身份。不得写入密钥明文或 KeyHash。</summary>
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
 
     // 关联/定位
     public string RequestId { get; set; } = string.Empty;

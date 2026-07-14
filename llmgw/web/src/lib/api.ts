@@ -336,6 +336,9 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
+export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
+  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+}
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {
   return apiRequest<OrganizationData>('/organization');
 }

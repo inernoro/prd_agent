@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -89,8 +90,12 @@ public static class GatewayHttpEndpoints
                         StatusCodes.Status401Unauthorized,
                         "GATEWAY_KEY_INVALID",
                         "gateway key rejected",
+                        KeyId: "legacy-map-shared",
                         TenantId: internalTenantId,
-                        LegacySharedKey: true)
+                        LegacySharedKey: true,
+                        ClientCode: "map-internal",
+                        Environment: "production",
+                        KeyPrefixSnapshot: "internal")
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,
                         gatewayApiKey,
@@ -102,6 +107,12 @@ public static class GatewayHttpEndpoints
                         context.RequestAborted);
                 if (!authorization.Allowed)
                 {
+                    await WriteRejectedGatewayRequestLogAsync(
+                        context,
+                        authorization,
+                        authorizationInputs,
+                        path,
+                        context.RequestAborted);
                     context.Response.StatusCode = authorization.StatusCode;
                     context.Response.ContentType = "application/json";
                     await context.Response.WriteAsync(JsonSerializer.Serialize(new
@@ -147,6 +158,28 @@ public static class GatewayHttpEndpoints
                         outcomeUnknown);
                 }
             }
+        });
+
+        // 已通过密钥门、但在入口校验或上游阶段失败的请求也必须可按工作负载身份审计。
+        // LlmGateway 已落过生命周期日志时不重复写；入口在开始调用前失败时补一条最小记录。
+        app.Use(async (context, next) =>
+        {
+            await next();
+            if (context.Response.StatusCode < StatusCodes.Status400BadRequest
+                || context.Items["llmgw.key.authorization"] is not GatewayKeyAuthorization authorization
+                || context.Items["llmgw.key.authorization.inputs"] is not GatewayAuthorizationInputs inputs)
+            {
+                return;
+            }
+
+            await WriteRejectedGatewayRequestLogAsync(
+                context,
+                authorization,
+                inputs,
+                context.Request.Path.Value ?? string.Empty,
+                CancellationToken.None,
+                context.Response.StatusCode,
+                "GATEWAY_REQUEST_REJECTED");
         });
 
         app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
@@ -1990,6 +2023,10 @@ public static class GatewayHttpEndpoints
         ingress.Context ??= new GatewayRequestContext { RequestId = ingress.RequestId };
         ingress.Context.TenantId = authorization.TenantId;
         ingress.Context.TeamId = authorization.TeamId;
+        ingress.Context.ServiceKeyId = authorization.KeyId;
+        ingress.Context.ClientCode = authorization.ClientCode;
+        ingress.Context.Environment = authorization.Environment;
+        ingress.Context.ServiceKeyPrefix = authorization.KeyPrefixSnapshot;
         if (!await RecordDiscoveredAppCallerAsync(services, ingress, ct))
         {
             var ownershipStatus = AppCallerStatusDecision.Reject(
@@ -3516,6 +3553,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = ingress.Context?.RequestId ?? ingress.RequestId,
                 SessionId = ingress.Context?.SessionId,
                 RunId = ingress.Context?.RunId,
@@ -4167,7 +4208,11 @@ public static class GatewayHttpEndpoints
             GatewayTransport: ctx?.GatewayTransport,
             IsHealthProbe: ctx?.IsHealthProbe,
             TenantId: ctx?.TenantId,
-            TeamId: ctx?.TeamId));
+            TeamId: ctx?.TeamId,
+            ServiceKeyId: ctx?.ServiceKeyId,
+            ClientCode: ctx?.ClientCode,
+            Environment: ctx?.Environment,
+            ServiceKeyPrefix: ctx?.ServiceKeyPrefix));
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
@@ -4219,6 +4264,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
@@ -4272,6 +4321,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
@@ -4664,6 +4717,70 @@ public static class GatewayHttpEndpoints
     {
         using var sha = SHA256.Create();
         return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+    }
+
+    private static async Task WriteRejectedGatewayRequestLogAsync(
+        HttpContext http,
+        GatewayKeyAuthorization authorization,
+        GatewayAuthorizationInputs inputs,
+        string path,
+        CancellationToken ct,
+        int? statusCode = null,
+        string? errorCode = null)
+    {
+        if (string.IsNullOrWhiteSpace(authorization.TenantId)
+            || string.IsNullOrWhiteSpace(authorization.KeyId))
+        {
+            return;
+        }
+
+        var data = http.RequestServices.GetService<LlmGatewayDataContext>();
+        if (data is null) return;
+        var now = DateTime.UtcNow;
+        var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+        try
+        {
+            var logs = data.Database.GetCollection<BsonDocument>("llmrequestlogs");
+            var alreadyLogged = await logs.CountDocumentsAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("TenantId", authorization.TenantId),
+                    Builders<BsonDocument>.Filter.Eq("RequestId", requestId)),
+                cancellationToken: ct) > 0;
+            if (alreadyLogged) return;
+            await logs.InsertOneAsync(
+                new BsonDocument
+                {
+                    { "_id", Guid.NewGuid().ToString() },
+                    { "TenantId", authorization.TenantId },
+                    { "TeamId", string.IsNullOrWhiteSpace(authorization.TeamId) ? BsonNull.Value : authorization.TeamId },
+                    { "ServiceKeyId", authorization.KeyId },
+                    { "ClientCode", string.IsNullOrWhiteSpace(authorization.ClientCode) ? BsonNull.Value : authorization.ClientCode },
+                    { "Environment", string.IsNullOrWhiteSpace(authorization.Environment) ? BsonNull.Value : authorization.Environment },
+                    { "ServiceKeyPrefix", string.IsNullOrWhiteSpace(authorization.KeyPrefixSnapshot) ? BsonNull.Value : authorization.KeyPrefixSnapshot },
+                    { "RequestId", requestId },
+                    { "AppCallerCode", inputs.AppCallerCode },
+                    { "SourceSystem", inputs.SourceSystem },
+                    { "IngressProtocol", inputs.IngressProtocol },
+                    { "Provider", "gateway-auth" },
+                    { "Model", string.Empty },
+                    { "Path", path },
+                    { "HttpMethod", http.Request.Method },
+                    { "RequestBodyRedacted", "{}" },
+                    { "Status", "failed" },
+                    { "StatusCode", statusCode ?? authorization.StatusCode },
+                    { "Error", errorCode ?? authorization.ErrorCode },
+                    { "StartedAt", now },
+                    { "EndedAt", now },
+                    { "DurationMs", 0L },
+                },
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?
+                .CreateLogger("GatewayRejectedRequestLog")
+                .LogWarning(ex, "写入已识别 service key 的拒绝请求日志失败。RequestId={RequestId}", requestId);
+        }
     }
 
     private sealed record RehydrateResult(

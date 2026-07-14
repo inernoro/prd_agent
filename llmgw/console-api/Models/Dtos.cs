@@ -83,6 +83,10 @@ public sealed class LlmLogListItem
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
     public string? RequestType { get; set; }
@@ -133,6 +137,10 @@ public sealed class LlmLogDetail
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
@@ -258,6 +266,9 @@ public sealed class LogsMeta
     public List<string> SourceSystems { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> ModelPolicies { get; set; } = new();
+    public List<string> ServiceKeyIds { get; set; } = new();
+    public List<string> ClientCodes { get; set; } = new();
+    public List<string> Environments { get; set; } = new();
 }
 
 // ── 日志汇总 ──
@@ -979,6 +990,8 @@ public sealed class ServiceKeyCreateRequest
 {
     public string? Name { get; set; }
     public string? SourceSystem { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
     public List<string>? AppCallerCodes { get; set; }
     public List<string>? IngressProtocols { get; set; }
     public List<string>? Scopes { get; set; }
@@ -999,6 +1012,8 @@ public sealed class ServiceKeyItem
     public string? TeamId { get; set; }
     public string? CreatedByUsername { get; set; }
     public string SourceSystem { get; set; } = "";
+    public string ClientCode { get; set; } = "";
+    public string Environment { get; set; } = "";
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();
@@ -1007,6 +1022,9 @@ public sealed class ServiceKeyItem
     public string? ExpiresAt { get; set; }
     public string? LastUsedAt { get; set; }
     public string? CreatedAt { get; set; }
+    public string? RotatesKeyId { get; set; }
+    public string? RotatedByKeyId { get; set; }
+    public string RotationState { get; set; } = "active";
 }
 
 public sealed class CreateTenantRequest

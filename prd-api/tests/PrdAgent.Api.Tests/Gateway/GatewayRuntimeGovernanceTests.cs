@@ -567,6 +567,9 @@ public sealed class GatewayRuntimeGovernanceTests
             Name = "test-key",
             KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
             SourceSystem = "external-system",
+            ClientCode = "content-agent",
+            Environment = "staging",
+            KeyPrefix = "gwk_test",
             AppCallerCodes = ["allowed-caller"],
             IngressProtocols = ["openai-compatible"],
             Scopes = ["chat"],
@@ -595,6 +598,10 @@ public sealed class GatewayRuntimeGovernanceTests
 
         allowed.Allowed.ShouldBeTrue();
         allowed.TenantId.ShouldBe("tenant-a");
+        allowed.KeyId.ShouldBe(keyRecord.Id);
+        allowed.ClientCode.ShouldBe("content-agent");
+        allowed.Environment.ShouldBe("staging");
+        allowed.KeyPrefixSnapshot.ShouldBe("gwk_test");
         denied.Allowed.ShouldBeFalse();
         denied.Authenticated.ShouldBeTrue();
         denied.StatusCode.ShouldBe(403);
@@ -602,6 +609,55 @@ public sealed class GatewayRuntimeGovernanceTests
             .GetCollection<BsonDocument>("llmgw_operation_audits")
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "service_key.scope_denied"));
         auditCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ScopedKey_RevokedKeyReturns401WithAuditIdentityButNoSecret()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_revoked_identity_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "revoked-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_revoke",
+            Enabled = false,
+            SourceSystem = "external",
+            ClientCode = "weekly-agent",
+            Environment = "production",
+            AppCallerCodes = ["weekly.generate::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external",
+            "weekly.generate::chat",
+            "openai-compatible",
+            "invoke",
+            null,
+            CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.Authenticated.ShouldBeTrue();
+        result.StatusCode.ShouldBe(401);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_INVALID");
+        result.KeyId.ShouldBe(record.Id);
+        result.TenantId.ShouldBe("tenant-a");
+        result.TeamId.ShouldBe("team-a");
+        result.ClientCode.ShouldBe("weekly-agent");
+        result.Environment.ShouldBe("production");
+        result.KeyPrefixSnapshot.ShouldBe("gwk_revoke");
+        result.Detail.ShouldNotContain(key);
+        result.Detail.ShouldNotContain(record.KeyHash);
     }
 
     [Fact]

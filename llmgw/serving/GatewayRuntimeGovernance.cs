@@ -23,7 +23,10 @@ public sealed record GatewayKeyAuthorization(
     string? KeyId = null,
     string? TenantId = null,
     string? TeamId = null,
-    bool LegacySharedKey = false);
+    bool LegacySharedKey = false,
+    string? ClientCode = null,
+    string? Environment = null,
+    string? KeyPrefixSnapshot = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -71,8 +74,12 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 200,
                 string.Empty,
                 "legacy MAP shared key",
+                KeyId: "legacy-map-shared",
                 TenantId: _internalTenantId,
-                LegacySharedKey: true);
+                LegacySharedKey: true,
+                ClientCode: "map-internal",
+                Environment: "production",
+                KeyPrefixSnapshot: "internal");
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -81,11 +88,23 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var record = locator is null
             ? null
             : await keys.Find(x => x.TenantId == locator.TenantId && x.Id == locator.ServiceKeyId && x.KeyHash == hash).FirstOrDefaultAsync(ct);
-        if (record == null
-            || string.IsNullOrWhiteSpace(record.TenantId)
-            || !record.Enabled
-            || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
+        if (record == null || string.IsNullOrWhiteSpace(record.TenantId))
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        if (!record.Enabled || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
+        {
+            return new(
+                false,
+                true,
+                401,
+                "GATEWAY_KEY_INVALID",
+                "invalid or expired gateway key",
+                record.Id,
+                record.TenantId,
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
+        }
 
         var lifecycleDenied = await CheckLifecycleAsync(record, appCallerCode, ct);
         if (lifecycleDenied is not null)
@@ -126,7 +145,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 "gateway key scope does not allow this request",
                 record.Id,
                 record.TenantId,
-                record.TeamId);
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
         }
 
         if (record.AllowedCidrs.Count > 0
@@ -144,7 +166,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 "gateway key does not allow this source IP",
                 record.Id,
                 record.TenantId,
-                record.TeamId);
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
         }
 
         if (record.RateLimitPerMinute is > 0)
@@ -206,7 +231,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                     "gateway key per-minute rate limit exceeded",
                     record.Id,
                     record.TenantId,
-                    record.TeamId);
+                    record.TeamId,
+                    ClientCode: ResolveClientCode(record),
+                    Environment: ResolveEnvironment(record),
+                    KeyPrefixSnapshot: record.KeyPrefix);
             }
         }
 
@@ -216,7 +244,18 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        return new(true, true, 200, string.Empty, "scoped key", record.Id, record.TenantId, record.TeamId);
+        return new(
+            true,
+            true,
+            200,
+            string.Empty,
+            "scoped key",
+            record.Id,
+            record.TenantId,
+            record.TeamId,
+            ClientCode: ResolveClientCode(record),
+            Environment: ResolveEnvironment(record),
+            KeyPrefixSnapshot: record.KeyPrefix);
     }
 
     public static string Sha256Hex(string value)
@@ -398,8 +437,17 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             detail,
             record.Id,
             record.TenantId,
-            record.TeamId);
+            record.TeamId,
+            ClientCode: ResolveClientCode(record),
+            Environment: ResolveEnvironment(record),
+            KeyPrefixSnapshot: record.KeyPrefix);
     }
+
+    private static string ResolveClientCode(GatewayServiceKeyRecord record)
+        => string.IsNullOrWhiteSpace(record.ClientCode) ? record.SourceSystem : record.ClientCode.Trim();
+
+    private static string ResolveEnvironment(GatewayServiceKeyRecord record)
+        => string.IsNullOrWhiteSpace(record.Environment) ? "unknown" : record.Environment.Trim().ToLowerInvariant();
 
     private Task WriteKeyDeniedAuditAsync(
         GatewayServiceKeyRecord record,

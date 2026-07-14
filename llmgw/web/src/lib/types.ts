@@ -50,6 +50,10 @@ export type LlmLogListItem = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  serviceKeyId?: string | null;
+  clientCode?: string | null;
+  environment?: string | null;
+  serviceKeyPrefix?: string | null;
   username?: string | null;
   displayName?: string | null;
   requestType?: string | null;
@@ -91,6 +95,10 @@ export type LlmLogDetail = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  serviceKeyId?: string | null;
+  clientCode?: string | null;
+  environment?: string | null;
+  serviceKeyPrefix?: string | null;
   requestType?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
@@ -212,6 +220,9 @@ export type LogsMeta = {
   sourceSystems: string[];
   ingressProtocols: string[];
   modelPolicies: string[];
+  serviceKeyIds: string[];
+  clientCodes: string[];
+  environments: string[];
 };
 
 export type LogsBucketItem = {
@@ -342,6 +353,9 @@ export type LogsListParams = {
   requestId?: string;
   sessionId?: string;
   modelPoolId?: string;
+  serviceKeyId?: string;
+  clientCode?: string;
+  environment?: string;
 };
 
 export type LogsListData = {
@@ -685,6 +699,8 @@ export type GatewayAppCaller = {
   appCallerCode: string;
   requestType: string;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
   ingressProtocol: string;
   observedIngressProtocols?: string[];
   title?: string | null;
@@ -707,6 +723,9 @@ export type GatewayAppCaller = {
   firstSeenAt?: string | null;
   lastSeenAt?: string | null;
   createdAt?: string | null;
+  rotatesKeyId?: string | null;
+  rotatedByKeyId?: string | null;
+  rotationState: string;
   updatedAt?: string | null;
 };
 
@@ -808,6 +827,8 @@ export type ServiceKeyItem = {
   teamId?: string | null;
   createdByUsername?: string | null;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
@@ -816,11 +837,16 @@ export type ServiceKeyItem = {
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   createdAt?: string | null;
+  rotatesKeyId?: string | null;
+  rotatedByKeyId?: string | null;
+  rotationState: string;
 };
 
 export type CreateServiceKeyRequest = {
   name: string;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];

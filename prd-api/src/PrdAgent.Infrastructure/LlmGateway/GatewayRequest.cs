@@ -168,6 +168,12 @@ public class GatewayRequestContext
 
     public string? TeamId { get; set; }
 
+    /// <summary>以下工作负载身份字段只允许 serving 从已验证密钥写入。</summary>
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
+
     /// <summary>
     /// 请求 ID（用于关联日志）
     /// </summary>
@@ -292,6 +298,10 @@ public class GatewayRequestContext
         {
             TenantId = source?.TenantId,
             TeamId = source?.TeamId,
+            ServiceKeyId = source?.ServiceKeyId,
+            ClientCode = source?.ClientCode,
+            Environment = source?.Environment,
+            ServiceKeyPrefix = source?.ServiceKeyPrefix,
             RequestId = source?.RequestId,
             SessionId = source?.SessionId,
             RunId = source?.RunId,
@@ -362,6 +372,10 @@ public sealed class GatewayIngressRequest
             {
                 TenantId = Context?.TenantId,
                 TeamId = Context?.TeamId,
+                ServiceKeyId = Context?.ServiceKeyId,
+                ClientCode = Context?.ClientCode,
+                Environment = Context?.Environment,
+                ServiceKeyPrefix = Context?.ServiceKeyPrefix,
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,

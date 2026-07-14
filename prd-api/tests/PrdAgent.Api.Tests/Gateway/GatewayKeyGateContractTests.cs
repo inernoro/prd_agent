@@ -39,6 +39,101 @@ public class GatewayKeyGateContractTests
     private const string GatewayKey = "correct-gateway-key";
 
     [Fact]
+    public async Task RecognizedDeniedKey_WritesTenantScopedWorkloadLogWithoutSecretMaterial()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_denied_identity_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var authorizer = new CapturingScopedKeyAuthorizer(_ => false);
+            await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer, gatewayData: data);
+            await app.StartAsync();
+            var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new { model = "ignored", messages = Array.Empty<object>() }),
+                Headers =
+                {
+                    { "X-Gateway-Key", "recognized-test-key-value" },
+                    { "X-Gateway-Source", "external" },
+                    { "X-Gateway-App-Caller", "content.chat::chat" },
+                    { "X-Request-Id", "request-denied-attribution" },
+                },
+            };
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            var log = await data.Database.GetCollection<BsonDocument>("llmrequestlogs").Find(_ => true).SingleAsync();
+            log["TenantId"].AsString.ShouldBe("tenant-test");
+            log["TeamId"].AsString.ShouldBe("team-test");
+            log["ServiceKeyId"].AsString.ShouldBe("capturing-key");
+            log["ClientCode"].AsString.ShouldBe("content-agent");
+            log["Environment"].AsString.ShouldBe("test");
+            log["ServiceKeyPrefix"].AsString.ShouldBe("gwk_test");
+            log["RequestId"].AsString.ShouldBe("request-denied-attribution");
+            log.Contains("KeyHash").ShouldBeFalse();
+            log.Values.Any(value => value.IsString && value.AsString.Contains("recognized-test-key-value", StringComparison.Ordinal)).ShouldBeFalse();
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task SuccessfulRequest_UsesServerKeyIdentityInsteadOfSpoofedBodyIdentity()
+    {
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "content.chat::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                    Context = new
+                    {
+                        TenantId = "attacker-tenant",
+                        TeamId = "attacker-team",
+                        ServiceKeyId = "attacker-key",
+                        ClientCode = "attacker-client",
+                        Environment = "attacker-environment",
+                        ServiceKeyPrefix = "attacker-prefix",
+                    },
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            var context = gateway.LastRequest.Context;
+            context.ShouldNotBeNull();
+            context!.TenantId.ShouldBe("tenant-test");
+            context.TeamId.ShouldBe("team-test");
+            context.ServiceKeyId.ShouldBe("capturing-key");
+            context.ClientCode.ShouldBe("content-agent");
+            context.Environment.ShouldBe("test");
+            context.ServiceKeyPrefix.ShouldBe("gwk_test");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentTeamDiscovery_OnlyOwnerTeamReachesUpstream()
     {
         var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
@@ -2345,7 +2440,11 @@ public class GatewayKeyGateContractTests
                 allowed ? string.Empty : "GATEWAY_KEY_SCOPE_DENIED",
                 allowed ? "allowed" : "scope denied",
                 "capturing-key",
-                "tenant-test"));
+                "tenant-test",
+                "team-test",
+                ClientCode: "content-agent",
+                Environment: "test",
+                KeyPrefixSnapshot: "gwk_test"));
         }
     }
 

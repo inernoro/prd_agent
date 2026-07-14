@@ -10,6 +10,43 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
+    public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
+    {
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var serving = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var activity = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+
+        Assert.Contains("public string? ServiceKeyId", logModel);
+        Assert.Contains("public string? ClientCode", logModel);
+        Assert.Contains("public string? Environment", logModel);
+        Assert.Contains("public string? ServiceKeyPrefix", logModel);
+        Assert.DoesNotContain("public string? KeyHash", logModel);
+        Assert.Contains("ingress.Context.ServiceKeyId = authorization.KeyId", serving);
+        Assert.Contains("ingress.Context.ClientCode = authorization.ClientCode", serving);
+        Assert.Contains("fb.Eq(\"ServiceKeyId\", serviceKeyId.Trim())", console);
+        Assert.Contains("fb.Eq(\"ClientCode\", clientCode.Trim())", console);
+        Assert.Contains("filterClientCode", activity);
+        Assert.Contains("filterEnvironment", activity);
+        Assert.Contains("filterServiceKeyId", activity);
+    }
+
+    [Fact]
+    public void ServiceKeyRotation_RequiresClientCutoverBeforeOldKeyRevocation()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+
+        Assert.Contains("/gw/service-keys/{id}/rotation/client-cutover", console);
+        Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
+        Assert.Contains("\"awaiting-client-cutover\"", console);
+        Assert.Contains("\"client-switched\"", console);
+        Assert.Contains("\"old-key-revoked\"", console);
+        Assert.Contains("\"completed\"", console);
+        Assert.Contains("确认已切换", page);
+        Assert.Contains("撤销旧钥并完成", page);
+    }
+    [Fact]
     public void Api_ShadowWriter_UsesGatewayDataContext()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
