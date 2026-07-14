@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
+using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Provisioning;
@@ -194,6 +195,7 @@ var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
 var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pools");
+var gwModelPoolTypes = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool_types");
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
@@ -259,12 +261,23 @@ await gwAppCallers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("AppCallerCode")
         .Ascending("RequestType"),
-    new CreateIndexOptions
+    new CreateIndexOptions<BsonDocument>
     {
         Name = "uniq_llmgw_app_callers_tenant_code_request_type",
         Unique = true,
         Collation = new Collation("en", strength: CollationStrength.Secondary),
     }));
+await gwModelPools.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Code"),
+    new CreateIndexOptions<BsonDocument>
+    {
+        Name = "uniq_llmgw_managed_pool_tenant_code",
+        Unique = true,
+        PartialFilterExpression = Builders<BsonDocument>.Filter.Eq("ManagedByRegistry", true),
+    }));
+await gwModelPoolTypes.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Code"),
+    new CreateIndexOptions { Name = "uniq_llmgw_pool_type_tenant_code", Unique = true }));
 
 app.Use(async (http, next) =>
 {
@@ -651,7 +664,11 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
     {
         var replay = await FindTenantCreationReplayAsync(teams, memberships, existingTenant, access.UserId);
         if (replay is not null)
+        {
+            await EnsureGatewayModelPoolTypesAsync(
+                gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
             return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+        }
         return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
     }
 
@@ -702,12 +719,30 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
                 {
                     var replay = await FindTenantCreationReplayAsync(teams, memberships, winner, access.UserId);
                     if (replay is not null)
+                    {
+                        await EnsureGatewayModelPoolTypesAsync(
+                            gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
                         return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+                    }
                 }
                 await Task.Delay(25);
             }
             return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
         }
+        throw;
+    }
+    try
+    {
+        await EnsureGatewayModelPoolTypesAsync(
+            gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenant.Id, internalTenantId, appendModels: false);
+    }
+    catch
+    {
+        await gwModelPoolTypes.DeleteManyAsync(Builders<BsonDocument>.Filter.Eq("TenantId", tenant.Id));
+        await gwModelPools.DeleteManyAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.Id),
+            Builders<BsonDocument>.Filter.Eq("ManagedByRegistry", true)));
+        await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
         throw;
     }
     await WriteOperationAuditAsync(operationAudits, http, "tenant.create", "llmgw_tenant", tenant.Id, tenant.Name, true, null,
@@ -1546,8 +1581,48 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 // 让网关控制台不只有日志，还能看模型池 / 平台 / 模型 / 影子比对。密钥字段一律不返回（只回 hasKey）。
 
 // 模型池列表
+app.MapGet("/gw/pool-types", async (HttpContext http) =>
+{
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var data = await BuildPoolTypesDataAsync(gwModelPoolTypes, gwModelPools, gwPlatforms, gwModels, gwModelExchanges, tenantId);
+    return Json(ApiEnvelope<PoolTypesData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 程序池类型初始化遵循“有则增加，无则不变”：只补缺失类型、缺失默认池和兼容的新成员。
+app.MapPost("/gw/pool-types/ensure", async (HttpContext http) =>
+{
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var ensured = await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: true);
+    var data = await BuildPoolTypesDataAsync(gwModelPoolTypes, gwModelPools, gwPlatforms, gwModels, gwModelExchanges, tenantId);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "pool_type.ensure_defaults",
+        targetType: "llmgw_model_pool_type",
+        targetId: "all",
+        targetName: "program pool types",
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "typesCreated", ensured.TypesCreated },
+            { "poolsCreated", ensured.PoolsCreated },
+            { "modelsAppended", ensured.ModelsAppended },
+            { "appendOnly", true },
+        });
+    return Json(ApiEnvelope<EnsurePoolTypesResult>.Ok(new EnsurePoolTypesResult
+    {
+        TypesCreated = ensured.TypesCreated,
+        PoolsCreated = ensured.PoolsCreated,
+        ModelsAppended = ensured.ModelsAppended,
+        Types = data,
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
     var fb = Builders<BsonDocument>.Filter;
     var filter = string.IsNullOrWhiteSpace(modelType) ? fb.Empty : fb.Eq("ModelType", modelType);
     var mapDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
@@ -1587,9 +1662,17 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var logStatsByPool = logStatsDocs
         .Where(d => !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
         .ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var defaultPointers = (await gwModelPoolTypes.Find(Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)).ToListAsync())
+        .Where(d => !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("DefaultPoolId")))
+        .ToDictionary(d => d.GetStringOrEmpty("Code"), d => d.GetStringOrEmpty("DefaultPoolId"), StringComparer.OrdinalIgnoreCase);
     var items = docs.Select(MapPool).ToList();
     foreach (var item in items)
     {
+        if (string.Equals(item.Authority, "llm_gateway", StringComparison.OrdinalIgnoreCase)
+            && defaultPointers.TryGetValue(item.ModelType, out var defaultPoolId))
+        {
+            item.IsDefaultForType = string.Equals(item.Id, defaultPoolId, StringComparison.Ordinal);
+        }
         var bound = appCallerDocs
             .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), item.Id, StringComparison.Ordinal))
             .OrderByDescending(d => string.Equals(d.AsNullableString("Status"), "active", StringComparison.OrdinalIgnoreCase))
@@ -2654,7 +2737,8 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
     async Task<(int claimed, int skipped)> ClaimCollectionAsync(
         IMongoCollection<BsonDocument> sourceCollection,
         IMongoCollection<BsonDocument> targetCollection,
-        string sourceName)
+        string sourceName,
+        bool isPool = false)
     {
         var sourceDocs = await sourceCollection.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
         var claimed = 0;
@@ -2669,6 +2753,12 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
             }
             var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
             var existing = await targetCollection.Find(filter).FirstOrDefaultAsync();
+            if (isPool && existing is not null
+                && (IsManagedAppendOnlyPool(existing) || await IsCurrentDefaultPoolAsync(gwModelPoolTypes, existing)))
+            {
+                skipped++;
+                continue;
+            }
             if (existing is not null && !overwrite)
             {
                 skipped++;
@@ -2681,13 +2771,31 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
             cloned["Authority"] = "llm_gateway";
             cloned["ClaimedAt"] = existing?.AsNullableUtcDateTime("ClaimedAt") ?? now;
             cloned["UpdatedAt"] = now;
-            await targetCollection.ReplaceOneAsync(filter, cloned, new ReplaceOptions { IsUpsert = true });
+            if (isPool) cloned["Version"] = (existing?.AsNullableLong("Version") ?? 0) + 1;
+            if (isPool && existing is not null)
+            {
+                var replaceResult = await targetCollection.ReplaceOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        filter,
+                        PoolVersionGuard(Builders<BsonDocument>.Filter, existing),
+                        PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+                    cloned);
+                if (replaceResult.ModifiedCount != 1)
+                {
+                    skipped++;
+                    continue;
+                }
+            }
+            else
+            {
+                await targetCollection.ReplaceOneAsync(filter, cloned, new ReplaceOptions { IsUpsert = true });
+            }
             claimed++;
         }
         return (claimed, skipped);
     }
 
-    var poolsResult = await ClaimCollectionAsync(modelGroups, gwModelPools, "model_groups");
+    var poolsResult = await ClaimCollectionAsync(modelGroups, gwModelPools, "model_groups", isPool: true);
     var platformsResult = await ClaimCollectionAsync(platforms, gwPlatforms, "llmplatforms");
     var modelsResult = await ClaimCollectionAsync(models, gwModels, "llmmodels");
     var exchangesResult = await ClaimCollectionAsync(modelExchanges, gwModelExchanges, "model_exchanges");
@@ -2731,6 +2839,8 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
         return Json(ApiEnvelope<BindActiveAppCallerPoolsResult>.Fail("INTERNAL_GOVERNANCE_ONLY", "配置权威迁移仅供内部租户使用"), jsonOptions, 403);
     var now = DateTime.UtcNow;
+    await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, internalTenantId, internalTenantId, appendModels: false);
     var gwPoolDocs = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
     var gwPoolIds = gwPoolDocs
         .Select(d => d.GetStringOrEmpty("_id"))
@@ -2745,17 +2855,23 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
             usableGwPoolIds.Add(poolId);
         }
     }
-    var defaultPoolByType = gwPoolDocs
-        .Where(d => d.AsNullableBool("IsDefaultForType") == true)
-        .Select(d => new
-        {
-            Id = d.GetStringOrEmpty("_id"),
-            Type = d.GetStringOrEmpty("ModelType").Trim(),
-            Name = d.AsNullableString("Name") ?? d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"),
-        })
-        .Where(x => x.Id.Length > 0 && x.Type.Length > 0 && usableGwPoolIds.Contains(x.Id))
-        .GroupBy(x => x.Type, StringComparer.OrdinalIgnoreCase)
-        .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Name, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
+    var poolById = gwPoolDocs.ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var poolTypeDocs = await gwModelPoolTypes.Find(Builders<BsonDocument>.Filter.Eq("TenantId", internalTenantId)).ToListAsync();
+    var defaultPoolByType = new Dictionary<string, (string Id, string Name)>(StringComparer.OrdinalIgnoreCase);
+    foreach (var type in poolTypeDocs)
+    {
+        var typeCode = type.GetStringOrEmpty("Code").Trim();
+        var poolId = type.GetStringOrEmpty("DefaultPoolId");
+        if (typeCode.Length == 0
+            || poolId.Length == 0
+            || !usableGwPoolIds.Contains(poolId)
+            || !poolById.TryGetValue(poolId, out var pool)
+            || !string.Equals(pool.GetStringOrEmpty("ModelType"), typeCode, StringComparison.OrdinalIgnoreCase))
+            continue;
+        defaultPoolByType[typeCode] = (
+            poolId,
+            pool.AsNullableString("Name") ?? pool.AsNullableString("Code") ?? poolId);
+    }
 
     var activeAppCallers = await gwAppCallers
         .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("Status", "active")))
@@ -5240,6 +5356,12 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
     if (description.Length > 1000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "description 最多 1000 字符"), jsonOptions, 400);
     if (body.Priority is < 1 or > 100000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priority 必须在 1 到 100000 之间"), jsonOptions, 400);
     if (body.StrategyType is < 0 or > 5) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "strategyType 仅支持 0 到 5"), jsonOptions, 400);
+    if (body.IsDefaultForType == true)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POINTER_REQUIRED",
+            "请先创建特殊模型池并添加可用成员，再使用“设为默认”；默认池只能通过原子默认指针切换。"), jsonOptions, 409);
+    }
 
     var now = DateTime.UtcNow;
     var doc = new BsonDocument
@@ -5250,7 +5372,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         ["Code"] = code,
         ["Priority"] = body.Priority ?? 50,
         ["ModelType"] = modelType,
-        ["IsDefaultForType"] = body.IsDefaultForType ?? false,
+        ["IsDefaultForType"] = false,
         ["StrategyType"] = body.StrategyType ?? 0,
         ["Models"] = new BsonArray(),
         ["SourceCollection"] = "llmgw_model_pools",
@@ -5258,27 +5380,11 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         ["ClaimedAt"] = now,
         ["CreatedAt"] = now,
         ["UpdatedAt"] = now,
+        ["Version"] = 1L,
     };
     if (description.Length > 0) doc["Description"] = description;
 
-    if (body.IsDefaultForType == true
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "默认模型池必须至少包含一个可用成员；请先创建为非默认池并添加可用模型。"),
-            jsonOptions,
-            400);
-    }
-
     await gwModelPools.InsertOneAsync(doc);
-    if (body.IsDefaultForType == true)
-    {
-        var fb = Builders<BsonDocument>.Filter;
-        await gwModelPools.UpdateManyAsync(
-            TenantAccess.Filter(http, fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", doc.GetStringOrEmpty("_id")))),
-            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
-    }
 
     await WriteOperationAuditAsync(
         operationAudits,
@@ -5293,7 +5399,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         {
             { "modelType", modelType },
             { "authority", "llm_gateway" },
-            { "isDefaultForType", body.IsDefaultForType ?? false },
+            { "isDefaultForType", false },
         });
 
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(doc)), jsonOptions, 201);
@@ -5318,13 +5424,31 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         }
         return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     }
+    if (body.IsDefaultForType is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POINTER_REQUIRED",
+            "isDefaultForType 不能通过通用编辑修改；请使用“设为默认”进行原子切换。"), jsonOptions, 409);
+    }
+    if (body.ModelType is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POOL_TYPE_IMMUTABLE",
+            "当前默认池不能修改 modelType；请先将同类型的另一个可用池设为默认。"), jsonOptions, 409);
+    }
+    var managedAppendOnly = IsManagedAppendOnlyPool(doc);
+    if (managedAppendOnly && (body.Code is not null || body.ModelType is not null))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "MANAGED_POOL_IMMUTABLE",
+            "平台托管默认池的 code 和 modelType 不可修改；可编辑名称、说明和调度策略。"), jsonOptions, 409);
+    }
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
     void AddChange(string field, object? from, object? to) =>
         changes[field] = new BsonDocument { { "from", ToBsonAuditValue(from) }, { "to", ToBsonAuditValue(to) } };
 
-    var nextModelType = doc.GetStringOrEmpty("ModelType");
     if (body.Name is not null)
     {
         var name = body.Name.Trim();
@@ -5346,7 +5470,6 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         var modelType = body.ModelType.Trim().ToLowerInvariant();
         if (modelType.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 不能为空"), jsonOptions, 400);
         if (modelType.Length > 80) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 最多 80 字符"), jsonOptions, 400);
-        nextModelType = modelType;
         updates.Add(Builders<BsonDocument>.Update.Set("ModelType", modelType));
         AddChange("modelType", doc.AsNullableString("ModelType"), modelType);
     }
@@ -5377,12 +5500,6 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
             AddChange("description", doc.AsNullableString("Description"), description);
         }
     }
-    if (body.IsDefaultForType is not null)
-    {
-        updates.Add(Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefaultForType.Value));
-        AddChange("isDefaultForType", doc.AsNullableBool("IsDefaultForType") ?? false, body.IsDefaultForType.Value);
-    }
-
     if (updates.Count == 0)
     {
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
@@ -5391,26 +5508,14 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
     var now = DateTime.UtcNow;
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", now));
 
-    var shouldBeDefault = body.IsDefaultForType ?? (doc.AsNullableBool("IsDefaultForType") ?? false);
-    if (shouldBeDefault
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "默认模型池必须至少包含一个可用成员；请先添加可用模型。"),
-            jsonOptions,
-            400);
-    }
-
-    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
-
-    if (shouldBeDefault)
-    {
-        var fb = Builders<BsonDocument>.Filter;
-        await gwModelPools.UpdateManyAsync(
-            TenantAccess.Filter(http, fb.And(fb.Eq("ModelType", nextModelType), fb.Ne("_id", id))),
-            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
-    }
+    var updateResult = await gwModelPools.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            filter,
+            PoolVersionGuard(Builders<BsonDocument>.Filter, doc),
+            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+        Builders<BsonDocument>.Update.Combine(updates.Append(Builders<BsonDocument>.Update.Inc("Version", 1))));
+    if (updateResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试属性编辑。"), jsonOptions, 409);
 
     await WriteOperationAuditAsync(
         operationAudits,
@@ -5452,6 +5557,16 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
         }
         var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
         var exists = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+        if (exists is not null && IsManagedAppendOnlyPool(exists))
+        {
+            skipped++;
+            continue;
+        }
+        if (exists is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, exists))
+        {
+            skipped++;
+            continue;
+        }
         if (exists is not null && !overwrite)
         {
             skipped++;
@@ -5464,7 +5579,25 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
         claimedDoc["Authority"] = "llm_gateway";
         claimedDoc["ClaimedAt"] = exists?.AsNullableUtcDateTime("ClaimedAt") ?? now;
         claimedDoc["UpdatedAt"] = now;
-        await gwModelPools.ReplaceOneAsync(filter, claimedDoc, new ReplaceOptions { IsUpsert = true });
+        claimedDoc["Version"] = (exists?.AsNullableLong("Version") ?? 0) + 1;
+        if (exists is null)
+        {
+            await gwModelPools.ReplaceOneAsync(filter, claimedDoc, new ReplaceOptions { IsUpsert = true });
+        }
+        else
+        {
+            var replaceResult = await gwModelPools.ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    filter,
+                    PoolVersionGuard(Builders<BsonDocument>.Filter, exists),
+                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+                claimedDoc);
+            if (replaceResult.ModifiedCount != 1)
+            {
+                skipped++;
+                continue;
+            }
+        }
         claimed++;
         changedItems.Add(MapPool(claimedDoc));
     }
@@ -5518,6 +5651,7 @@ app.MapPost("/gw/pools/price-currency/bulk-calibrate", async (HttpContext http, 
 
     foreach (var poolDoc in poolDocs)
     {
+        if (IsManagedAppendOnlyPool(poolDoc)) continue;
         if (!poolDoc.TryGetValue("Models", out var modelsValue) || !modelsValue.IsBsonArray)
         {
             continue;
@@ -5547,10 +5681,13 @@ app.MapPost("/gw/pools/price-currency/bulk-calibrate", async (HttpContext http, 
         if (!poolChanged) continue;
         touchedPools++;
         await gwModelPools.UpdateOneAsync(
-            Builders<BsonDocument>.Filter.Eq("_id", poolDoc.GetStringOrEmpty("_id")),
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", TenantAccess.GetRequired(http).TenantId),
+                Builders<BsonDocument>.Filter.Eq("_id", poolDoc.GetStringOrEmpty("_id"))),
             Builders<BsonDocument>.Update
                 .Set("Models", modelsArray)
-                .Set("UpdatedAt", now));
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
     }
 
     await WriteOperationAuditAsync(
@@ -5591,8 +5728,16 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再批量导入成员"), jsonOptions, 409);
+    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
+    if (managedAppendOnly && body.OverwriteExisting == true)
+    {
+        return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池只允许追加兼容且未存在的模型，不允许覆盖已有成员。"), jsonOptions, 409);
+    }
 
     var capabilityFilter = (body.CapabilityFilter ?? "compatible").Trim().ToLowerInvariant();
+    if (managedAppendOnly) capabilityFilter = "compatible";
     var allowedFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "compatible", "all", "vision", "image", "function_calling", "parallel_tool_calls",
@@ -5613,13 +5758,30 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var modelFb = Builders<BsonDocument>.Filter;
     var sourceFilters = new List<FilterDefinition<BsonDocument>>();
     if (platformId.Length > 0) sourceFilters.Add(modelFb.Eq("PlatformId", platformId));
-    if (body.EnabledOnly != false) sourceFilters.Add(modelFb.Eq("Enabled", true));
+    if (managedAppendOnly || body.EnabledOnly != false) sourceFilters.Add(modelFb.Ne("Enabled", false));
     var sourceFilter = sourceFilters.Count == 0 ? modelFb.Empty : modelFb.And(sourceFilters);
     var tenantSourceFilter = TenantAccess.Filter(http, sourceFilter);
     var gwModelDocs = await gwModels.Find(tenantSourceFilter).ToListAsync();
     var mapModelDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
         ? await models.Find(sourceFilter).ToListAsync()
         : new List<BsonDocument>();
+    var enabledPlatformIds = new HashSet<string>(StringComparer.Ordinal);
+    if (managedAppendOnly)
+    {
+        enabledPlatformIds.UnionWith((await gwPlatforms.Find(TenantAccess.Filter(http, modelFb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(platform => platform.GetStringOrEmpty("_id"))
+            .Where(id => id.Length > 0));
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+        {
+            enabledPlatformIds.UnionWith((await platforms.Find(modelFb.Ne("Enabled", false))
+                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .ToListAsync())
+                .Select(platform => platform.GetStringOrEmpty("_id"))
+                .Where(id => id.Length > 0));
+        }
+    }
 
     var byKey = new Dictionary<string, BsonDocument>(StringComparer.Ordinal);
     foreach (var modelDoc in gwModelDocs.Concat(mapModelDocs))
@@ -5633,7 +5795,10 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
 
     var poolModelType = pool.GetStringOrEmpty("ModelType");
     var matchedDocs = byKey.Values
-        .Where(modelDoc => DoesModelMatchBulkImportFilter(modelDoc, poolModelType, capabilityFilter))
+        .Where(modelDoc => managedAppendOnly
+            ? enabledPlatformIds.Contains(modelDoc.GetStringOrEmpty("PlatformId"))
+              && GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)
+            : DoesModelMatchBulkImportFilter(modelDoc, poolModelType, capabilityFilter))
         .OrderBy(modelDoc => modelDoc.AsNullableInt("Priority") ?? 100000)
         .ThenBy(modelDoc => modelDoc.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
         .ThenBy(modelDoc => modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id"), StringComparer.Ordinal)
@@ -5648,6 +5813,7 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var nextPriority = body.StartPriority ?? ((members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max()) + priorityStep);
     var imported = 0;
     var updated = 0;
+    var appendedMembers = new List<BsonDocument>();
     var skippedExisting = 0;
     var skippedInvalid = byKey.Count - gwModelDocs.Concat(mapModelDocs).Count(modelDoc =>
     {
@@ -5677,32 +5843,74 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
         if (existing is null) nextPriority += priorityStep;
         var member = BuildPoolMemberFromModel(modelDoc, modelId, resolvedPlatformId, priority, existing);
         existingByKey[key] = member;
-        if (existing is null) imported++;
+        if (existing is null)
+        {
+            imported++;
+            appendedMembers.Add(member);
+        }
         else updated++;
     }
 
-    var nextMembers = existingByKey.Values
-        .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-        .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-        .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-        .ToList();
+    var nextMembers = managedAppendOnly
+        ? members.Concat(appendedMembers).ToList()
+        : existingByKey.Values
+            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
+            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
+            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
+            .ToList();
 
     if (imported > 0 || updated > 0)
     {
-        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-            gwPlatforms,
-            gwModels,
-            gwModelExchanges,
-            pool,
-            new BsonArray(nextMembers));
-        if (validationError is not null)
+        if (managedAppendOnly)
         {
-            return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+            imported = 0;
+            foreach (var appended in appendedMembers)
+            {
+                var appendFilter = new BsonDocument
+                {
+                    { "TenantId", TenantAccess.GetRequired(http).TenantId },
+                    { "_id", id },
+                    { "ManagedByRegistry", true },
+                    { "AppendOnly", true },
+                    { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
+                    { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                        {
+                            { "ModelId", appended.GetStringOrEmpty("ModelId") },
+                            { "PlatformId", appended.GetStringOrEmpty("PlatformId") },
+                        })) },
+                };
+                var appendResult = await gwModelPools.UpdateOneAsync(
+                    appendFilter,
+                    Builders<BsonDocument>.Update.Push("Models", appended).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
+                if (appendResult.ModifiedCount == 1) imported++;
+                else skippedExisting++;
+            }
         }
+        else
+        {
+            var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+                gwModelPoolTypes,
+                gwPlatforms,
+                gwModels,
+                gwModelExchanges,
+                pool,
+                new BsonArray(nextMembers));
+            if (validationError is not null)
+            {
+                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+            }
 
-        await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-            .Set("Models", new BsonArray(nextMembers))
-            .Set("UpdatedAt", DateTime.UtcNow));
+            var writeResult = await gwModelPools.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    poolFilter,
+                    PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
+                .Set("Models", new BsonArray(nextMembers))
+                .Set("UpdatedAt", DateTime.UtcNow)
+                .Inc("Version", 1));
+            if (writeResult.ModifiedCount != 1)
+                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试批量导入。"), jsonOptions, 409);
+        }
     }
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
@@ -5749,6 +5957,7 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
+    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
 
     var modelId = (body.ModelId ?? string.Empty).Trim();
@@ -5786,6 +5995,10 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     {
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型不存在或平台不匹配：{modelId}"), jsonOptions, 400);
     }
+    if (managedAppendOnly && modelDoc.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<PoolItem>.Fail("MODEL_DISABLED", "停用模型不能加入平台托管默认池。"), jsonOptions, 409);
+    if (managedAppendOnly)
+        modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
 
     var resolvedPlatformId = platformId.Length > 0 ? platformId : modelDoc.GetStringOrEmpty("PlatformId");
     if (resolvedPlatformId.Length == 0)
@@ -5802,6 +6015,8 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     {
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
     }
+    if (managedAppendOnly && platformDoc.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<PoolItem>.Fail("PLATFORM_DISABLED", "停用平台的模型不能加入平台托管默认池。"), jsonOptions, 409);
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
     var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
@@ -5809,6 +6024,18 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
         string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal));
     var wasExisting = existing is not null;
+    if (managedAppendOnly && wasExisting)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池中的已有成员不可覆盖或重排；如需特殊配置，请创建专用模型池。"), jsonOptions, 409);
+    }
+    if (managedAppendOnly && !GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, pool.GetStringOrEmpty("ModelType")))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INCOMPATIBLE_MODEL_TYPE",
+            $"模型与程序池类型 {pool.GetStringOrEmpty("ModelType")} 不兼容。"), jsonOptions, 409);
+    }
     var member = existing is not null ? new BsonDocument(existing) : new BsonDocument
     {
         ["HealthStatus"] = 0,
@@ -5817,7 +6044,9 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     };
     member["ModelId"] = modelId;
     member["PlatformId"] = resolvedPlatformId;
-    member["Priority"] = body.Priority ?? (existing?.AsNullableInt("Priority") ?? members.Count + 1);
+    member["Priority"] = managedAppendOnly
+        ? members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10
+        : body.Priority ?? (existing?.AsNullableInt("Priority") ?? members.Count + 1);
 
     var protocol = body.Protocol?.Trim();
     if (string.IsNullOrWhiteSpace(protocol)) member.Remove("Protocol");
@@ -5875,30 +6104,74 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     if (capabilityDocs.Count > 0) member["Capabilities"] = new BsonArray(capabilityDocs);
     else member.Remove("Capabilities");
 
-    members = members
-        .Where(m => !(string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
-                      string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal)))
-        .Append(member)
-        .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-        .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-        .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-        .ToList();
-
-    var nextModels = new BsonArray(members);
-    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-        gwPlatforms,
-        gwModels,
-        gwModelExchanges,
-        pool,
-        nextModels);
-    if (validationError is not null)
+    if (managedAppendOnly)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        member = BuildPoolMemberFromModel(
+            modelDoc,
+            modelId,
+            resolvedPlatformId,
+            members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10,
+            existing: null);
     }
 
-    await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-        .Set("Models", nextModels)
-        .Set("UpdatedAt", DateTime.UtcNow));
+    members = managedAppendOnly
+        ? members.Append(member).ToList()
+        : members
+            .Where(m => !(string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
+                          string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal)))
+            .Append(member)
+            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
+            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
+            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
+            .ToList();
+
+    if (managedAppendOnly)
+    {
+        var appendFilter = new BsonDocument
+        {
+            { "TenantId", TenantAccess.GetRequired(http).TenantId },
+            { "_id", id },
+            { "ManagedByRegistry", true },
+            { "AppendOnly", true },
+            { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
+            { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                {
+                    { "ModelId", modelId },
+                    { "PlatformId", resolvedPlatformId },
+                })) },
+        };
+        var appendResult = await gwModelPools.UpdateOneAsync(
+            appendFilter,
+            Builders<BsonDocument>.Update.Push("Models", member).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
+        if (appendResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "该模型已存在，未覆盖已有成员。"), jsonOptions, 409);
+    }
+    else
+    {
+        var nextModels = new BsonArray(members);
+        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+            gwModelPoolTypes,
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
+            pool,
+            nextModels);
+        if (validationError is not null)
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        }
+
+        var writeResult = await gwModelPools.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                poolFilter,
+                PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
+            .Set("Models", nextModels)
+            .Set("UpdatedAt", DateTime.UtcNow)
+            .Inc("Version", 1));
+        if (writeResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试成员更新。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5931,6 +6204,12 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
+    if (IsManagedAppendOnlyPool(pool))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+    }
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
     var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
@@ -5945,6 +6224,7 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     members = members.Except(removed).ToList();
     var nextModels = new BsonArray(members);
     var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwModelPoolTypes,
         gwPlatforms,
         gwModels,
         gwModelExchanges,
@@ -5955,9 +6235,16 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
     }
 
-    await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
+    var deleteResult = await gwModelPools.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            poolFilter,
+            PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
         .Set("Models", nextModels)
-        .Set("UpdatedAt", DateTime.UtcNow));
+        .Set("UpdatedAt", DateTime.UtcNow)
+        .Inc("Version", 1));
+    if (deleteResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试删除。"), jsonOptions, 409);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5979,9 +6266,8 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 模型池默认标记：同一 ModelType 下将该池设为默认（互斥）。
-// 非事务环境下的安全次序（Mongo 单实例无跨文档事务）：**先置本池为默认，再清同类型其它池**。
-// 万一第二步失败，失败态是「同类型暂时两个默认」（MAP 调度仍能选到一个）——远好于「先清后置、第二步失败=零默认」（调度失去默认池）。
+// 模型池默认标记：单文档原子更新类型注册表中的 DefaultPoolId。
+// IsDefaultForType 只保留为历史兼容镜像，控制台与运行时均以 DefaultPoolId 为权威。
 app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleDefaultRequest body) =>
 {
     // 缺 isDefault 字段一律拒绝。
@@ -5993,21 +6279,17 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    var targetPools = gwModelPools;
-    var targetAuthority = "llm_gateway";
     if (doc is null)
     {
-        if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
-            return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
-        doc = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
-        targetPools = modelGroups;
-        targetAuthority = "map";
-        filter = sourceFilter;
+        var mapDoc = TenantAccess.GetRequired(http).TenantId == internalTenantId
+            ? await modelGroups.Find(sourceFilter).FirstOrDefaultAsync()
+            : null;
+        if (mapDoc is not null)
+            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池导入为平台配置，再设为默认"), jsonOptions, 409);
+        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     }
-    if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
-    if (targetAuthority == "llm_gateway"
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
     {
         return Json(ApiEnvelope<PoolItem>.Fail(
             "INVALID_INPUT",
@@ -6015,31 +6297,66 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             jsonOptions,
             400);
     }
-    // 非事务安全次序：先置本池为默认、再清同类型其它池。第二步万一失败是「暂时两个默认」（MAP 仍能选到一个），
-    // 远好于「先清后置」失败=零默认。
-    await targetPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: false);
     var fb = Builders<BsonDocument>.Filter;
-    var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-    var scopedOthers = targetAuthority == "llm_gateway" ? TenantAccess.Filter(http, others) : others;
-    var clearOthers = await targetPools.UpdateManyAsync(scopedOthers, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    var now = DateTime.UtcNow;
+    var reserveResult = await gwModelPools.UpdateOneAsync(
+        fb.And(filter, PoolVersionGuard(fb, doc), PoolNotSwitchingGuard(fb, now)),
+        Builders<BsonDocument>.Update
+            .Set("DefaultSwitchPendingUntil", now.AddSeconds(30))
+            .Set("UpdatedAt", now)
+            .Inc("Version", 1));
+    if (reserveResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试设为默认。"), jsonOptions, 409);
+    var typeFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", modelType));
+    var beforeType = await gwModelPoolTypes.Find(typeFilter).FirstOrDefaultAsync();
+    var updatedType = await gwModelPoolTypes.FindOneAndUpdateAsync(
+        typeFilter,
+        Builders<BsonDocument>.Update
+            .Set("DefaultPoolId", id)
+            .Set("UpdatedAt", now)
+            .Inc("Version", 1),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updatedType is null)
+    {
+        await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Unset("DefaultSwitchPendingUntil").Inc("Version", 1));
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_TYPE_NOT_REGISTERED", $"程序池类型未注册：{modelType}"), jsonOptions, 409);
+    }
+
+    // 兼容镜像依据原子指针重建；即使并发交错，权威读取也只认类型文档中的单一指针。
+    await gwModelPools.UpdateManyAsync(
+        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("ModelType", modelType)),
+        Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
+    var authoritativePoolId = updatedType.GetStringOrEmpty("DefaultPoolId");
+    await gwModelPools.UpdateOneAsync(
+        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", authoritativePoolId)),
+        Builders<BsonDocument>.Update
+            .Set("IsDefaultForType", true)
+            .Set("UpdatedAt", now)
+            .Unset("DefaultSwitchPendingUntil")
+            .Inc("Version", 1));
     await WriteOperationAuditAsync(
         operationAudits,
         http,
         action: "pool.set_default",
-        targetType: targetAuthority == "llm_gateway" ? "llmgw_model_pool" : "model_group",
+        targetType: "llmgw_model_pool",
         targetId: id,
         targetName: doc.AsNullableString("Name") ?? doc.AsNullableString("Code"),
         success: true,
         reason: null,
         changes: new BsonDocument
         {
-            { "isDefaultForType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("IsDefaultForType")) }, { "to", true } } },
+            { "defaultPoolId", new BsonDocument { { "from", beforeType?.AsNullableString("DefaultPoolId") ?? string.Empty }, { "to", id } } },
             { "modelType", modelType },
-            { "authority", targetAuthority },
-            { "clearedOtherDefaultCount", clearOthers.ModifiedCount },
+            { "authority", "llm_gateway" },
+            { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
         });
-    var fresh = await targetPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    var item = MapPool(fresh);
+    item.IsDefaultForType = string.Equals(authoritativePoolId, id, StringComparison.Ordinal);
+    return Json(ApiEnvelope<PoolItem>.Ok(item), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池认领：把 MAP 现有 model_groups 池复制到 GW 自有 llm_gateway.llmgw_model_pools。
@@ -6056,14 +6373,33 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
 
     var now = DateTime.UtcNow;
     var before = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    if (before is not null && IsManagedAppendOnlyPool(before))
+        return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "平台托管默认池不能被历史 MAP 池覆盖。"), jsonOptions, 409);
+    if (before is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, before))
+        return Json(ApiEnvelope<PoolItem>.Fail("DEFAULT_POOL_CLAIM_BLOCKED", "当前默认池不能被历史 MAP 池覆盖；请先切换默认池。"), jsonOptions, 409);
     var claimed = new BsonDocument(source);
     claimed["TenantId"] = internalTenantId;
     claimed["SourceCollection"] = "model_groups";
     claimed["Authority"] = "llm_gateway";
     claimed["ClaimedAt"] = now;
     claimed["UpdatedAt"] = now;
+    claimed["Version"] = (before?.AsNullableLong("Version") ?? 0) + 1;
 
-    await gwModelPools.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
+    if (before is null)
+    {
+        await gwModelPools.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
+    }
+    else
+    {
+        var replaceResult = await gwModelPools.ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                filter,
+                PoolVersionGuard(Builders<BsonDocument>.Filter, before),
+                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+            claimed);
+        if (replaceResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试认领。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -6168,6 +6504,7 @@ static async Task BackfillInternalTenantAsync(
     {
         "llmgw_app_callers",
         "llmgw_model_pools",
+        "llmgw_model_pool_types",
         "llmgw_platforms",
         "llmgw_models",
         "llmgw_model_exchanges",
@@ -7229,6 +7566,254 @@ static bool ModelHasParameterCapability(BsonDocument modelDoc)
         .Any(type => type.StartsWith("parameter:", StringComparison.OrdinalIgnoreCase));
 }
 
+static bool IsManagedAppendOnlyPool(BsonDocument pool)
+    => pool.AsNullableBool("ManagedByRegistry") == true
+       && pool.AsNullableBool("AppendOnly") == true
+       && string.Equals(pool.AsNullableString("PoolRole"), "default", StringComparison.OrdinalIgnoreCase);
+
+static FilterDefinition<BsonDocument> PoolVersionGuard(FilterDefinitionBuilder<BsonDocument> fb, BsonDocument pool)
+{
+    var version = pool.AsNullableLong("Version") ?? 0;
+    return pool.Contains("Version") ? fb.Eq("Version", version) : fb.Exists("Version", false);
+}
+
+static FilterDefinition<BsonDocument> PoolNotSwitchingGuard(FilterDefinitionBuilder<BsonDocument> fb, DateTime now)
+    => fb.Or(fb.Exists("DefaultSwitchPendingUntil", false), fb.Lte("DefaultSwitchPendingUntil", now));
+
+static async Task<bool> IsCurrentDefaultPoolAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    BsonDocument pool)
+{
+    var tenantId = pool.AsNullableString("TenantId");
+    var modelType = pool.AsNullableString("ModelType");
+    var poolId = pool.AsNullableString("_id");
+    if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
+        return false;
+    var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Code", modelType))).FirstOrDefaultAsync();
+    return type is null
+        ? pool.AsNullableBool("IsDefaultForType") == true
+        : string.Equals(type.AsNullableString("DefaultPoolId"), poolId, StringComparison.Ordinal);
+}
+
+static async Task<(int TypesCreated, int PoolsCreated, int ModelsAppended)> EnsureGatewayModelPoolTypesAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    IMongoCollection<BsonDocument> pools,
+    IMongoCollection<BsonDocument> gatewayModels,
+    IMongoCollection<BsonDocument> gatewayPlatforms,
+    IMongoCollection<BsonDocument> mapModels,
+    IMongoCollection<BsonDocument> mapPlatforms,
+    string tenantId,
+    string internalTenantId,
+    bool appendModels)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var now = DateTime.UtcNow;
+    var typeDocs = await poolTypes.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var poolDocs = await pools.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var typesCreated = 0;
+    var poolsCreated = 0;
+    var modelsAppended = 0;
+    var candidates = new List<BsonDocument>();
+    if (appendModels)
+    {
+        var enabledPlatformIds = (await gatewayPlatforms.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(platform => platform.GetStringOrEmpty("_id"))
+            .Where(id => id.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        candidates.AddRange((await gatewayModels.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Ne("Enabled", false))).ToListAsync())
+            .Where(model => enabledPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))));
+        if (string.Equals(tenantId, internalTenantId, StringComparison.Ordinal))
+        {
+            var enabledMapPlatformIds = (await mapPlatforms.Find(fb.Ne("Enabled", false))
+                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .ToListAsync())
+                .Select(platform => platform.GetStringOrEmpty("_id"))
+                .Where(id => id.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
+            candidates.AddRange((await mapModels.Find(fb.Ne("Enabled", false)).ToListAsync())
+                .Where(model => enabledPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))
+                                || enabledMapPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))));
+        }
+    }
+
+    foreach (var definition in GatewayModelPoolTypeRegistry.All.OrderBy(item => item.SortOrder))
+    {
+        var type = typeDocs.FirstOrDefault(d => string.Equals(d.GetStringOrEmpty("Code"), definition.Code, StringComparison.OrdinalIgnoreCase));
+        var defaultPoolId = type?.AsNullableString("DefaultPoolId")?.Trim() ?? string.Empty;
+        var defaultPool = defaultPoolId.Length > 0
+            ? poolDocs.FirstOrDefault(d => string.Equals(d.GetStringOrEmpty("_id"), defaultPoolId, StringComparison.Ordinal)
+                                           && string.Equals(d.GetStringOrEmpty("ModelType"), definition.Code, StringComparison.OrdinalIgnoreCase))
+            : null;
+        defaultPool ??= poolDocs
+            .Where(d => string.Equals(d.GetStringOrEmpty("ModelType"), definition.Code, StringComparison.OrdinalIgnoreCase)
+                        && d.AsNullableBool("IsDefaultForType") == true)
+            .OrderBy(d => d.AsNullableInt("Priority") ?? 50)
+            .FirstOrDefault();
+
+        if (defaultPool is null)
+        {
+            defaultPoolId = $"pool-default:{tenantId}:{definition.Code}";
+            var managedPool = new BsonDocument
+            {
+                ["_id"] = defaultPoolId,
+                ["TenantId"] = tenantId,
+                ["Name"] = definition.DefaultPoolName,
+                ["Code"] = definition.DefaultPoolCode,
+                ["Description"] = definition.Purpose,
+                ["Priority"] = 50,
+                ["ModelType"] = definition.Code,
+                ["IsDefaultForType"] = true,
+                ["StrategyType"] = 0,
+                ["Models"] = new BsonArray(),
+                ["SourceCollection"] = "llmgw_model_pools",
+                ["Authority"] = "llm_gateway",
+                ["ManagedByRegistry"] = true,
+                ["AppendOnly"] = true,
+                ["PoolRole"] = "default",
+                ["CreatedAt"] = now,
+                ["UpdatedAt"] = now,
+                ["Version"] = 1L,
+            };
+            try
+            {
+                var result = await pools.UpdateOneAsync(
+                    fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", defaultPoolId)),
+                    new BsonDocument("$setOnInsert", managedPool),
+                    new UpdateOptions { IsUpsert = true });
+                if (result.UpsertedId is not null) poolsCreated++;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 并发初始化已由另一请求创建同一确定性池，重读并继续。
+            }
+            defaultPool = await pools.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", defaultPoolId))).FirstAsync();
+            if (!poolDocs.Any(d => string.Equals(d.GetStringOrEmpty("_id"), defaultPoolId, StringComparison.Ordinal)))
+                poolDocs.Add(defaultPool);
+        }
+        else
+        {
+            defaultPoolId = defaultPool.GetStringOrEmpty("_id");
+        }
+
+        var typeId = $"pool-type:{tenantId}:{definition.Code}";
+        var typeFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", definition.Code));
+        try
+        {
+            var typeResult = await poolTypes.UpdateOneAsync(
+                typeFilter,
+                Builders<BsonDocument>.Update
+                    .SetOnInsert("_id", typeId)
+                    .SetOnInsert("TenantId", tenantId)
+                    .SetOnInsert("Code", definition.Code)
+                    .SetOnInsert("Name", definition.Name)
+                    .SetOnInsert("Purpose", definition.Purpose)
+                    .SetOnInsert("SortOrder", definition.SortOrder)
+                    .SetOnInsert("DefaultPoolId", defaultPoolId)
+                    .SetOnInsert("Version", 1L)
+                    .SetOnInsert("CreatedAt", now)
+                    .SetOnInsert("UpdatedAt", now),
+                new UpdateOptions { IsUpsert = true });
+            if (typeResult.UpsertedId is not null) typesCreated++;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发初始化已由另一请求创建同一确定性类型，继续处理剩余类型。
+        }
+        if (type is not null && !string.Equals(type.AsNullableString("DefaultPoolId"), defaultPoolId, StringComparison.Ordinal))
+        {
+            var oldPointer = type.AsNullableString("DefaultPoolId");
+            var oldVersion = type.AsNullableLong("Version") ?? 0;
+            var pointerFilter = oldPointer is null
+                ? fb.Exists("DefaultPoolId", false)
+                : fb.Eq("DefaultPoolId", oldPointer);
+            var versionFilter = type.Contains("Version") ? fb.Eq("Version", oldVersion) : fb.Exists("Version", false);
+            await poolTypes.UpdateOneAsync(fb.And(typeFilter, pointerFilter, versionFilter), Builders<BsonDocument>.Update
+                .Set("DefaultPoolId", defaultPoolId)
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
+        }
+
+        if (!appendModels || !IsManagedAppendOnlyPool(defaultPool)) continue;
+        var maxPriority = defaultPool.TryGetValue("Models", out var membersValue) && membersValue.IsBsonArray
+            ? membersValue.AsBsonArray.Where(v => v.IsBsonDocument).Select(v => v.AsBsonDocument.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max()
+            : 0;
+        foreach (var model in candidates.Where(candidate => GatewayModelPoolTypeRegistry.IsCompatible(candidate, definition.Code)))
+        {
+            var modelId = model.AsNullableString("ModelName") ?? model.AsNullableString("Name") ?? model.GetStringOrEmpty("_id");
+            var platformId = model.GetStringOrEmpty("PlatformId");
+            if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId)) continue;
+            maxPriority += 10;
+            var member = BuildPoolMemberFromModel(model, modelId, platformId, maxPriority, existing: null);
+            var appendFilter = new BsonDocument
+            {
+                { "TenantId", tenantId },
+                { "_id", defaultPoolId },
+                { "ManagedByRegistry", true },
+                { "AppendOnly", true },
+                { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                    {
+                        { "ModelId", modelId },
+                        { "PlatformId", platformId },
+                    })) },
+            };
+            var appendResult = await pools.UpdateOneAsync(
+                appendFilter,
+                Builders<BsonDocument>.Update.Push("Models", member).Set("UpdatedAt", now));
+            if (appendResult.ModifiedCount == 1) modelsAppended++;
+        }
+    }
+    return (typesCreated, poolsCreated, modelsAppended);
+}
+
+static async Task<PoolTypesData> BuildPoolTypesDataAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    IMongoCollection<BsonDocument> pools,
+    IMongoCollection<BsonDocument> platforms,
+    IMongoCollection<BsonDocument> models,
+    IMongoCollection<BsonDocument> exchanges,
+    string tenantId)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var types = await poolTypes.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var typeByCode = types.ToDictionary(d => d.GetStringOrEmpty("Code"), StringComparer.OrdinalIgnoreCase);
+    var poolIds = types.Select(d => d.GetStringOrEmpty("DefaultPoolId")).Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var poolDocs = poolIds.Count == 0
+        ? new List<BsonDocument>()
+        : await pools.Find(fb.And(fb.Eq("TenantId", tenantId), fb.In("_id", poolIds))).ToListAsync();
+    var poolById = poolDocs.ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var items = new List<PoolTypeItem>();
+    foreach (var definition in GatewayModelPoolTypeRegistry.All.OrderBy(item => item.SortOrder))
+    {
+        typeByCode.TryGetValue(definition.Code, out var type);
+        var defaultPoolId = type?.GetStringOrEmpty("DefaultPoolId") ?? string.Empty;
+        poolById.TryGetValue(defaultPoolId, out var pool);
+        var modelCount = pool is not null && pool.TryGetValue("Models", out var value) && value.IsBsonArray ? value.AsBsonArray.Count : 0;
+        var ready = pool is not null && await HasUsableGatewayPoolMemberAsync(platforms, models, exchanges, pool);
+        items.Add(new PoolTypeItem
+        {
+            Code = definition.Code,
+            Name = definition.Name,
+            Purpose = definition.Purpose,
+            SortOrder = definition.SortOrder,
+            DefaultPoolId = defaultPoolId,
+            ModelCount = modelCount,
+            Ready = ready,
+            Version = type?.AsNullableLong("Version") ?? 0,
+        });
+    }
+    return new PoolTypesData
+    {
+        Items = items,
+        Total = items.Count,
+        Ready = items.Count(item => item.Ready),
+        Waiting = items.Count(item => !item.Ready),
+    };
+}
+
 static PoolItem MapPool(BsonDocument d)
 {
     var modelsArr = d.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -7286,6 +7871,9 @@ static PoolItem MapPool(BsonDocument d)
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
         Models = items,
+        ManagedByRegistry = d.AsNullableBool("ManagedByRegistry") == true,
+        AppendOnly = d.AsNullableBool("AppendOnly") == true,
+        PoolRole = d.AsNullableString("PoolRole"),
     };
 }
 
@@ -7558,13 +8146,14 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
 }
 
 static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
+    IMongoCollection<BsonDocument> gwModelPoolTypes,
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
     BsonDocument pool,
     BsonArray nextModels)
 {
-    if (pool.AsNullableBool("IsDefaultForType") != true)
+    if (!await IsCurrentDefaultPoolAsync(gwModelPoolTypes, pool))
     {
         return null;
     }

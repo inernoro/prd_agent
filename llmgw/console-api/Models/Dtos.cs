@@ -477,6 +477,31 @@ public sealed class BulkClaimPoolsResult
     public int Skipped { get; set; }
     public List<PoolItem> Items { get; set; } = new();
 }
+public sealed class PoolTypesData
+{
+    public List<PoolTypeItem> Items { get; set; } = new();
+    public int Total { get; set; }
+    public int Ready { get; set; }
+    public int Waiting { get; set; }
+}
+public sealed class PoolTypeItem
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Purpose { get; set; } = "";
+    public int SortOrder { get; set; }
+    public string DefaultPoolId { get; set; } = "";
+    public int ModelCount { get; set; }
+    public bool Ready { get; set; }
+    public long Version { get; set; }
+}
+public sealed class EnsurePoolTypesResult
+{
+    public int TypesCreated { get; set; }
+    public int PoolsCreated { get; set; }
+    public int ModelsAppended { get; set; }
+    public PoolTypesData Types { get; set; } = new();
+}
 public sealed class BulkCalibratePoolPriceCurrencyRequest
 {
     public string? ModelType { get; set; }
@@ -722,6 +747,9 @@ public sealed class PoolItem
     public int HealthyMembers { get; set; }
     public int DegradedMembers { get; set; }
     public int UnavailableMembers { get; set; }
+    public bool ManagedByRegistry { get; set; }
+    public bool AppendOnly { get; set; }
+    public string? PoolRole { get; set; }
 }
 public sealed class PoolAppCallerItem
 {

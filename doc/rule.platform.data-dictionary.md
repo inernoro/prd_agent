@@ -116,6 +116,12 @@
 | `agent_open_endpoints` | `AgentOpenEndpoint` | P3 Agent 开放接口登记。每条描述"某个 Agent 在路径 Y 开放 HTTP 接口，需 scope Z 调用"。关键字段：`AgentKey`（kebab-case，对齐 `toolboxStore.BUILTIN_TOOLS`）+ `HttpMethod` + `Path`（绝对路径）+ `RequiredScopes: List<string>`（正则 `agent.{key}:{action}`）+ `AllowedCallerUserIds`（反向白名单，空=公开给所有持 scope 的 Key）+ `RequestExampleJson/ResponseExampleJson`（给前端渲染调用示例）+ `LinkedMarketplaceSkillId`（P3 桥接目标，已占位、自动桥接逻辑待后续实现） | 按 `AgentKey` 查询；按 `RequiredScopes` 反查（用于 scope 白名单校验） |
 | `home_recent_opens` | `UserRecentOpen` | 首页「继续上次」每用户最近打开台账。打开视觉/文学工作区详情或工作流详情时 `RecentOpenTracker.TouchAsync` 按 `(UserId, AgentKey, EntityId)` upsert。是 `GET /api/home/recent-work` 的唯一数据源——禁止改回实体全局时间戳（UpdatedAt/LastOpenedAt/LastExecutedAt），否则共享成员/定时任务的活跃会顶进所有用户的继续上次 | 建议手动建索引（`no-auto-index`）：`(UserId, LastOpenedAt desc)` + `(UserId, AgentKey, EntityId)` 唯一，见 guide.platform.mongodb-indexes.md |
 
+### LLM Gateway 独立数据库
+
+| 集合（collection） | 模型 | 用途 | 索引/TTL/唯一约束 |
+|---|---|---|---|
+| `llmgw_model_pool_types` | `BsonDocument` | 租户程序池类型注册表及默认池权威指针。关键字段为 `TenantId`、`Code`、`DefaultPoolId`、`Version`；运行时只信任同租户、同类型指针 | `(TenantId, Code)` 唯一；所有查询和更新必须包含 `TenantId` |
+
 ---
 
 ## Redis / 内存缓存（加速层）
@@ -255,5 +261,4 @@
 | 路径 | 格式 | 说明 |
 |---|---|---|
 | `{app_data_dir}/config.json` | JSON（pretty） | 桌面端配置（`apiBaseUrl/isDeveloper/clientId`），由 `src-tauri/src/commands/config.rs` 读写 |
-
 

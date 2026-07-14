@@ -193,9 +193,9 @@ public class GatewayDataDomainGuardTests
             < modelResolver.IndexOf("_db.LLMAppCallers", StringComparison.Ordinal),
             "GW-only 模式必须在任何 MAP appCaller 查询前短路");
         Assert.True(
-            modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal)
-            < modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal),
-            "pinned 精确模型必须先于默认池缺失检查，且在 GW-only 模式下只读 GW-owned 配置");
+            modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal)
+            < modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal),
+            "GW-only 模式必须先拒绝缺失专用池，再处理 pinned 精确模型，避免绕过 appCaller 治理边界");
         Assert.Contains("FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback)", modelResolver);
         Assert.Contains("normalized-to-supported-model-policy", consoleProgram);
         Assert.Contains("IsSupportedAppCallerModelPolicy(currentModelPolicy)", consoleProgram);
@@ -216,8 +216,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
         Assert.Contains("默认模型池必须至少包含一个可用成员", consoleProgram);
-        Assert.Contains("body.IsDefaultForType == true", consoleProgram);
-        Assert.Contains("targetAuthority == \"llm_gateway\"", consoleProgram);
+        Assert.Contains("DEFAULT_POINTER_REQUIRED", consoleProgram);
+        Assert.Contains("DefaultPoolId", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
         Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
@@ -246,6 +246,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("logsHref('runId', item.lastObservedRunId)", appCallersPage);
         Assert.Contains("item.observedIngressProtocols?.length", appCallersPage);
         Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
+    }
+
+    [Fact]
+    public void ProgramPoolRegistry_UsesTenantScopedAtomicPointerAndAppendOnlyManagedPools()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var registry = ReadRepoFile("llmgw/console-api/ModelPools/GatewayModelPoolTypeRegistry.cs");
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+
+        Assert.Contains("llmgw_model_pool_types", console);
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", console);
+        Assert.Contains("FindOneAndUpdateAsync", console);
+        Assert.Contains("DefaultSwitchPendingUntil", console);
+        Assert.Contains("PoolVersionGuard", console);
+        Assert.Contains("APPEND_ONLY_POOL", console);
+        Assert.Contains("Builders<BsonDocument>.Update.Push(\"Models\"", console);
+        Assert.Contains("if (IsManagedAppendOnlyPool(poolDoc)) continue;", console);
+        Assert.Contains("GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)", console);
+        Assert.Contains("MODEL_DISABLED", console);
+        Assert.Contains("PLATFORM_DISABLED", console);
+        Assert.Contains("modelId = modelDoc.AsNullableString(\"ModelName\") ?? modelDoc.AsNullableString(\"Name\") ?? modelDoc.GetStringOrEmpty(\"_id\")", console);
+        Assert.DoesNotContain("!Flag(model, \"IsImageGen\")", registry);
+        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_model_pool_types\")", resolver);
+        Assert.Contains("PinnedModel 不在 appCaller 专用模型池内", resolver);
+        Assert.Contains("有则增加，无则不变", page);
+        Assert.Contains("按平台规则补齐", page);
+        Assert.Contains("pool.appendOnly ? 'compatible' : filterMode", page);
+        Assert.Contains("已过滤已有成员与不匹配模型", page);
+        Assert.Contains("return false;", page);
     }
 
     [Fact]
@@ -2954,7 +2984,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ConsoleDefaultPoolSwitch_ClearsOnlyCurrentTenantGatewayPools()
+    public void ConsoleDefaultPoolSwitch_UsesTenantScopedAtomicPointer()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var endpointStart = console.IndexOf(
@@ -2968,11 +2998,12 @@ public class GatewayDataDomainGuardTests
         Assert.True(endpointEnd > endpointStart, "默认模型池切换端点边界无效");
         var endpoint = console[endpointStart..endpointEnd];
 
-        Assert.Contains(
-            "targetAuthority == \"llm_gateway\" ? TenantAccess.Filter(http, others) : others",
-            endpoint);
-        Assert.Contains("targetPools.UpdateManyAsync(scopedOthers", endpoint);
-        Assert.DoesNotContain("targetPools.UpdateManyAsync(others", endpoint);
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", endpoint);
+        Assert.Contains("FindOneAndUpdateAsync", endpoint);
+        Assert.Contains(".Set(\"DefaultPoolId\", id)", endpoint);
+        Assert.Contains("PoolVersionGuard", endpoint);
+        Assert.Contains("DefaultSwitchPendingUntil", endpoint);
+        Assert.DoesNotContain("targetPools.UpdateManyAsync", endpoint);
     }
 
     [Fact]
