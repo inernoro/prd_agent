@@ -1357,7 +1357,7 @@ function ProjectListSkeleton(): JSX.Element {
         <CdsLogoLoader
           label="加载项目列表"
           size="sm"
-          mineral="ember"
+          mineral="iris"
           className="text-[13px] font-medium text-muted-foreground"
         />
       </div>

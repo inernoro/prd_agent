@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 
 export type GemMineral =
   | 'ember'
+  | 'iris'
   | 'amethyst'
   | 'amber'
   | 'galaxy'
@@ -38,6 +39,8 @@ export type GemMode =
     瓷贴片暖色语言原生适配;amethyst 保留为备选。 */
 export const GEM_SHADES: Record<GemMineral, readonly [string, string, string, string, string, string]> = {
   ember: ['#7c2d12', '#9a3412', '#c2410c', '#ea580c', '#f97316', '#fb923c'],
+  // iris = 品牌新色:渐变紫→蓝的"开锅"molten 色阶(深紫→靛→蓝→热蓝辉光)。
+  iris: ['#2e1065', '#4c1d95', '#6d28d9', '#4f46e5', '#3b82f6', '#38bdf8'],
   amethyst: ['#2e1065', '#4c1d95', '#6d28d9', '#7c3aed', '#8b5cf6', '#a78bfa'],
   amber: ['#713f12', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24'],
   galaxy: ['#1e1b4b', '#312e81', '#3730a3', '#1d4ed8', '#0284c7', '#22d3ee'],
@@ -50,9 +53,9 @@ export const GEM_SHADES: Record<GemMineral, readonly [string, string, string, st
 
 /** 状态 → 默认矿色(状态系统设定 v2)。 */
 export const GEM_MODE_MINERAL: Record<GemMode, GemMineral> = {
-  static: 'ember',
-  brand: 'ember',
-  loader: 'ember',
+  static: 'iris',
+  brand: 'iris',
+  loader: 'iris',
   build: 'amber',
   deploy: 'galaxy',
   live: 'emerald',
