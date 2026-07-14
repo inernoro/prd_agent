@@ -52,6 +52,9 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('aria-label="文学稿内容"');
     expect(html).toContain('文学创作转视频');
     expect(html).toContain('把一个故事变成一组镜头');
+    expect(html).toContain('雨夜街巷的电影画面风格预览');
+    expect(html).toContain('aria-label="镜头草图"');
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(4);
     expect(html).toContain('AI 拆成分镜');
     expect(html).toContain('Seedance 1.5 Pro');
     expect(html).toContain('文稿</span>');
