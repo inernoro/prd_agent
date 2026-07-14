@@ -21,7 +21,7 @@
 | 1 | CDS master 的 `CDS_JWT_SECRET`（`cds/.cds.env`） | CDS 自身鉴权 + **所有项目**容器的 `Jwt__Secret` | `container.ts` 注入 | **已解耦**（2026-06-12）：项目 customEnv 显式定义 `Jwt__Secret` 时优先，全局值仅兜底。受影响项目应在「项目设置 → 项目环境变量」钉住自己的值 |
 | 2 | `Jwt__Secret` 在 prd-agent 内部的双重身份 | JWT 签名 + 平台 API key 的 AES 静态加密（`ApiKeyCrypto`） | 同一个配置值两用 | 轮换密钥 = 存量密文全哑。**轮换前必须先解密重加密所有 `ApiKeyEncrypted` 字段**（llmplatforms / llmmodels）。`PlatformKeyIntegrityWorker` 启动自检 + 站内告警兜底 |
 | 3 | CDS 全局变量 `_global` customEnv | 所有项目容器 | `getCustomEnv` 合并 | 合并顺序正确（项目值覆盖全局值）。新增全局变量前先确认没有项目把同名 key 用作不同语义 |
-| 4 | 共享 Mongo/Redis 基础设施 | 同项目所有分支预览 + 可能的生产实例 | 同一连接串/同一 database | 分支间共享数据是有意设计，但意味着：**A 分支写坏的数据 B 分支立刻可见**；llmrequestlogs 里会混入其他部署的记录（排障时先按时间窗 + 行为特征区分来源，勿误判） |
+| 4 | 共享 Mongo/Redis 基础设施 | 同项目所有分支预览 + 可能的生产实例 | 同一连接串/同一 database（dbScope 默认 shared，`MongoDB__DatabaseName` 不做 per-branch 后缀，恒为 `prdagent`） | 分支间共享数据是有意设计，但意味着：**A 分支写坏的数据 B 分支立刻可见**；llmrequestlogs 里会混入其他部署的记录（排障时先按时间窗 + 行为特征区分来源，勿误判）。**全局单行状态（`admin_notifications` 里 `TargetUserId=null` + 固定 Key 的行）尤其危险**：任何容器都能开/关同一行，旧构建/异钥分支会把误报复活成看似全局的事故。写共享库全局状态前必须判「是否权威部署」（`DeploymentAuthority.IsAuthoritativeDeployment`：非 CDS 分支预览才写），分支预览只读自检 + 本地日志 |
 | 5 | 生产 CDS 单实例多 Agent 共用 | 所有 Agent 的分支预览 + self-update | 任一 Agent self-update 即重启 CDS | 重启清空内存态（agent sessions）；self-update 切分支会替换 CDS 行为。self-update 前跑 dry-run，并意识到会影响所有人 |
 | 6 | `cds-compose.yml` 的 `x-cds-env` 占位值 | CDS 项目 env 导入 | re-import/sync 可能用占位值（`TODO: 请填写实际值`）覆盖真实值 | 重新导入 compose 前 diff 现有项目 env，含 `TODO` 的 key 一律不覆盖 |
 | 7 | CDS 平台注入的 `BULLMQ_PREFIX`（2026-07-09） | 同项目所有分支容器的 BullMQ 队列前缀 | 同项目多分支共用 Redis 时 BullMQ 默认前缀相同 → 兄弟分支互抢 job；平台按分支注入 `BULLMQ_PREFIX=<branch-db-slug>` 隔离 | **只兜底不覆盖**：customEnv/分支 env/profile.env 显式定义一律优先（`cds/src/services/env-provenance.ts` 步骤 4.5 在 profile 层之后判空注入，slug 与 per-branch DB 后缀同 SSOT）；系统级逃生阀 `CDS_BULLMQ_PREFIX_INJECTION=0`。项目若刻意要跨分支共享队列，显式钉住同一个 BULLMQ_PREFIX 即可 |
@@ -43,6 +43,7 @@
 | 日期 | 层面 | 事故 |
 |------|------|------|
 | 2026-06-12 | CDS env 注入 | 为 miduo-backend HS512 弱钥换 `CDS_JWT_SECRET`，穿透打哑 prd-agent 全部 6 平台 key 密文，模型池静默 401 约 2 小时（无告警）。修复：通道 1 解耦 + 通道 2 自检 Worker |
+| 2026-07-14 | 共享库全局告警行 | 「平台 API key 解密失败」告警反复出现——`admin_notifications` 全局单行被所有分支预览容器共享，跑旧构建（缺 IsStub）或异钥的分支不断把 dev-stub 误报「复活」成看似全局的事故；且分支预览的密文自动重加密会用本分支密钥改写共享库存量密文。修复：`DeploymentAuthority` 判权威部署，只有生产（非分支预览）才写共享库全局告警行 + 自动重加密，分支预览改为只读自检 + 本地日志；告警文案带来源标签 |
 | （此前 3 次） | 各异 | 用户口述「隔离问题爆发 4 次，总在不同层面」。历史事故发生时未记台账——此后每次隔离穿透事故必须在本表补一行，含层面 + 根因 + 修复 |
 
 ## 相关
