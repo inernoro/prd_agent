@@ -99,3 +99,9 @@
 - 次要:AppStoreGrid icon 尺寸(60/62)与列数(3/4);ResumeCard 数据源 `home_recent_opens` 字段是否够;海报族清扫的"产物纸面 vs chrome"边界。
 
 **手机轨底座0/底座1 与 MobileAssetsPage 无 blocker,不依赖上述决策,可立即开工。** PC 轨的 focus/accent 与 design/* 需先定 Q1。
+
+## 6. 预览
+
+底座0(已部署,待双主题目视验收,需 <768px 移动视口):
+- 移动百宝箱(AppStoreShelf/Pill/轮播小点 + "更多"弹层): https://apple-design-audit-m5r28u-claude-prd-agent.miduo.org/ai-toolbox
+- 浅色下开任意"更多"OverflowMenu,确认 sheet 不再深底浮暗。
