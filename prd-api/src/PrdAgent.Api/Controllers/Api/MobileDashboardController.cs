@@ -144,43 +144,80 @@ public class MobileDashboardController : ControllerBase
     // ─────────────────────────────────────────
 
     /// <summary>
-    /// 返回用户今日 / 近 7 日的使用统计。
+    /// 返回用户今日 / 近 7 日的使用统计（聚合值 + 按日序列,供首页迷你趋势图）。
+    /// tzOffsetMinutes 取 JS 的 Date.getTimezoneOffset() 约定（UTC+8 → -480）,
+    /// 日界按用户本地时区切,否则东八区用户早八点前"今天"恒为 0。
     /// </summary>
     [HttpGet("stats")]
-    public async Task<IActionResult> GetStats([FromQuery] int days = 7)
+    public async Task<IActionResult> GetStats([FromQuery] int days = 7, [FromQuery] int tzOffsetMinutes = 0)
     {
         var userId = GetUserId();
         days = Math.Clamp(days, 1, 30);
-        var since = DateTime.UtcNow.Date.AddDays(-days + 1);
+        tzOffsetMinutes = Math.Clamp(tzOffsetMinutes, -840, 840);
 
-        // 会话数
-        var sessionCount = await _db.Sessions
-            .CountDocumentsAsync(s => s.OwnerUserId == userId && s.CreatedAt >= since);
+        // 本地日界 → UTC 窗口起点
+        var localToday = DateTime.UtcNow.AddMinutes(-tzOffsetMinutes).Date;
+        var localSince = localToday.AddDays(-days + 1);
+        var since = localSince.AddMinutes(tzOffsetMinutes);
 
-        // 消息数（用户发送的）
-        var messageCount = await _db.Messages
-            .CountDocumentsAsync(m => m.SenderId == userId && m.Timestamp >= since);
+        DateTime LocalDay(DateTime utc) => utc.AddMinutes(-tzOffsetMinutes).Date;
 
-        // 生图任务数
-        var imageGenCount = await _db.ImageGenRuns
-            .CountDocumentsAsync(r => r.OwnerAdminId == userId && r.CreatedAt >= since);
+        // 会话（只取时间戳,在内存按本地日分桶——单用户 7 日量级很小）
+        var sessionTimes = await _db.Sessions
+            .Find(s => s.OwnerUserId == userId && s.CreatedAt >= since)
+            .Project(s => new { s.CreatedAt })
+            .ToListAsync();
+
+        // 消息（用户发送的）
+        var messageTimes = await _db.Messages
+            .Find(m => m.SenderId == userId && m.Timestamp >= since)
+            .Project(m => new { m.Timestamp })
+            .ToListAsync();
+
+        // 生图任务
+        var imageGenTimes = await _db.ImageGenRuns
+            .Find(r => r.OwnerAdminId == userId && r.CreatedAt >= since)
+            .Project(r => new { r.CreatedAt })
+            .ToListAsync();
 
         // Token 使用量（LLM 请求日志）
         var tokenFilter = Builders<LlmRequestLog>.Filter.Eq(l => l.UserId, userId)
                         & Builders<LlmRequestLog>.Filter.Gte(l => l.StartedAt, since);
         var tokenAgg = await _db.LlmRequestLogs
             .Find(tokenFilter)
-            .Project(l => new { input = l.InputTokens ?? 0, output = l.OutputTokens ?? 0 })
+            .Project(l => new { l.StartedAt, input = l.InputTokens ?? 0, output = l.OutputTokens ?? 0 })
             .ToListAsync();
         var totalTokens = tokenAgg.Sum(t => (long)t.input + t.output);
+
+        // 按本地日分桶,补零成完整 days 天(旧→新)
+        var sessionsByDay = sessionTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
+        var messagesByDay = messageTimes.GroupBy(x => LocalDay(x.Timestamp)).ToDictionary(g => g.Key, g => g.Count());
+        var imageGensByDay = imageGenTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
+        var tokensByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Sum(t => (long)t.input + t.output));
+
+        var daily = Enumerable.Range(0, days)
+            .Select(i =>
+            {
+                var day = localSince.AddDays(i);
+                return new
+                {
+                    date = day.ToString("yyyy-MM-dd"),
+                    sessions = sessionsByDay.GetValueOrDefault(day),
+                    messages = messagesByDay.GetValueOrDefault(day),
+                    imageGenerations = imageGensByDay.GetValueOrDefault(day),
+                    tokens = tokensByDay.GetValueOrDefault(day),
+                };
+            })
+            .ToList();
 
         return Ok(ApiResponse<object>.Ok(new
         {
             days,
-            sessions = sessionCount,
-            messages = messageCount,
-            imageGenerations = imageGenCount,
+            sessions = sessionTimes.Count,
+            messages = messageTimes.Count,
+            imageGenerations = imageGenTimes.Count,
             totalTokens,
+            daily,
         }));
     }
 

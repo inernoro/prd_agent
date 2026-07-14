@@ -18,12 +18,24 @@ export type GetMobileFeedContract = (args?: {
 
 // ─── Stats ───
 
+/** 单日统计桶（按用户本地时区切日,旧→新） */
+export interface MobileStatsDay {
+  /** yyyy-MM-dd（用户本地时区） */
+  date: string;
+  sessions: number;
+  messages: number;
+  imageGenerations: number;
+  tokens: number;
+}
+
 export interface MobileStats {
   days: number;
   sessions: number;
   messages: number;
   imageGenerations: number;
   totalTokens: number;
+  /** 按日序列（供首页迷你趋势柱）;旧后端无此字段,消费端需容错 */
+  daily?: MobileStatsDay[];
 }
 
 export type GetMobileStatsContract = (args?: {

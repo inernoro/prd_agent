@@ -99,12 +99,13 @@ export default function MobileHomePage() {
   const feedTint = (type: string): string =>
     type === 'visual-workspace' ? C.purple : type === 'defect' ? C.red : C.blue;
 
-  // 近7日聚合数（后端无按日序列,不编造迷你图）,数字按指标染 iOS 系统色
+  // 近7日:聚合大数 + 真实按日序列(后端 /api/mobile/stats 的 daily,按用户时区切日)
+  const daily = data.stats?.daily ?? [];
   const stats = [
-    { label: '会话', value: data.stats?.sessions ?? 0, color: C.blue },
-    { label: '消息', value: data.stats?.messages ?? 0, color: C.green },
-    { label: '生图', value: data.stats?.imageGenerations ?? 0, color: C.purple },
-    { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange },
+    { label: '会话', value: data.stats?.sessions ?? 0, color: C.blue, series: daily.map((d) => d.sessions) },
+    { label: '消息', value: data.stats?.messages ?? 0, color: C.green, series: daily.map((d) => d.messages) },
+    { label: '生图', value: data.stats?.imageGenerations ?? 0, color: C.purple, series: daily.map((d) => d.imageGenerations) },
+    { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange, series: daily.map((d) => d.tokens) },
   ];
 
   const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 16 } as const;
@@ -162,8 +163,27 @@ export default function MobileHomePage() {
                     {headline.title || '未命名工作'}
                   </span>
                   <span className="block truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}>
-                    {recentAgentMetaFor(headline.agentKey).label} · {formatRelativeTime(headline.lastActiveAt)}
+                    {recentAgentMetaFor(headline.agentKey).label}
+                    {headline.progressLabel ? ` · ${headline.progressLabel}` : ''} · {formatRelativeTime(headline.lastActiveAt)}
                   </span>
+                  {/* 诚实进度条:仅带状态机的实体有 progress(如缺陷),没有就不画 */}
+                  {headline.progress != null && (
+                    <span
+                      aria-hidden
+                      className="block"
+                      style={{ height: 4, borderRadius: 2, background: C.separator, marginTop: 8, overflow: 'hidden' }}
+                    >
+                      <span
+                        className="block"
+                        style={{
+                          height: '100%',
+                          width: `${Math.round(Math.max(0, Math.min(1, headline.progress)) * 100)}%`,
+                          background: C.blue,
+                          borderRadius: 2,
+                        }}
+                      />
+                    </span>
+                  )}
                 </span>
                 <AppStorePill label="继续" onClick={(e) => { e.stopPropagation(); navigate(headline.route); }} />
               </button>
@@ -199,24 +219,28 @@ export default function MobileHomePage() {
           </div>
         </Section>
 
-        {/* ── 近 7 日 ── */}
+        {/* ── 近 7 日（健康摘要式:大数 + 真实七日迷你柱） ── */}
         <Section C={C} title="近 7 日">
-          <div style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '16px 4px' }}>
-            {stats.map((s, idx) => (
-              <div key={s.label} style={{ textAlign: 'center', borderLeft: idx > 0 ? `1px solid ${C.separator}` : undefined }}>
-                <div
-                  style={{
-                    fontSize: 20,
-                    fontWeight: 700,
-                    letterSpacing: '-0.02em',
-                    // 0 值不上鲜艳色——亮蓝色的"0"比灰色的"0"更扎眼(demo 差距复盘)
-                    color: s.value > 0 ? s.color : C.labelTertiary,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {data.loading ? '—' : formatCompactNumber(s.value)}
+          <div style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '18px 14px', padding: '16px 14px' }}>
+            {stats.map((s) => (
+              <div key={s.label}>
+                <div style={{ ...AS_TYPE.caption, fontSize: 12, color: C.labelSecondary }}>{s.label}</div>
+                <div className="flex items-end justify-between" style={{ marginTop: 5, gap: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 700,
+                      letterSpacing: '-0.02em',
+                      lineHeight: 1,
+                      // 0 值不上鲜艳色——亮蓝色的"0"比灰色的"0"更扎眼
+                      color: s.value > 0 ? s.color : C.labelTertiary,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {data.loading ? '—' : formatCompactNumber(s.value)}
+                  </span>
+                  {s.series.length > 0 && <MiniBars series={s.series} color={s.color} mutedColor={C.labelTertiary} />}
                 </div>
-                <div style={{ ...AS_TYPE.caption, color: C.labelSecondary, marginTop: 3 }}>{s.label}</div>
               </div>
             ))}
           </div>
@@ -331,6 +355,32 @@ export default function MobileHomePage() {
         </footer>
       </main>
     </div>
+  );
+}
+
+/* ───────────── 七日迷你柱:真实按日序列,按本组最大值归一;全 0 显示等高哑柱 ───────────── */
+
+function MiniBars({ series, color, mutedColor }: { series: number[]; color: string; mutedColor: string }) {
+  const max = Math.max(...series, 0);
+  return (
+    <span aria-hidden className="flex items-end shrink-0" style={{ gap: 2.5, height: 22 }}>
+      {series.map((v, i) => {
+        const h = max > 0 ? Math.max(3, Math.round((v / max) * 22)) : 3;
+        return (
+          <span
+            key={i}
+            className="block"
+            style={{
+              width: 4,
+              height: h,
+              borderRadius: 2,
+              background: max > 0 && v > 0 ? color : mutedColor,
+              opacity: max > 0 && v > 0 ? 0.9 : 0.45,
+            }}
+          />
+        );
+      })}
+    </span>
   );
 }
 
