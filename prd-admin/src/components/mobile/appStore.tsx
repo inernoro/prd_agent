@@ -27,6 +27,7 @@ interface HeroProps {
  * 右上角头像由 AppShell header 承担，不放在这里。
  */
 export function AppStoreHero({ title }: HeroProps) {
+  const C = useAppStoreColors();
   return (
     <div
       style={{
@@ -37,7 +38,7 @@ export function AppStoreHero({ title }: HeroProps) {
       <h1
         style={{
           ...AS_TYPE.heroTitle,
-          color: AS_COLOR.label,
+          color: C.label,
           margin: 0,
         }}
       >
@@ -96,8 +97,9 @@ interface PillButtonProps {
 }
 
 export function AppStorePill({ label, onClick, caption, variant = 'default' }: PillButtonProps) {
-  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : AS_COLOR.pillBg;
-  const fg = variant === 'onImage' ? AS_COLOR.label : AS_COLOR.blue;
+  const C = useAppStoreColors();
+  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : C.pillBg;
+  const fg = variant === 'onImage' ? C.label : C.blue;
   return (
     <div className="flex flex-col items-center gap-0.5 shrink-0" style={{ fontFamily: AS_FONT_FAMILY }}>
       <button
@@ -120,7 +122,7 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
         {label}
       </button>
       {caption && (
-        <div style={{ ...AS_TYPE.caption, color: AS_COLOR.labelTertiary }}>{caption}</div>
+        <div style={{ ...AS_TYPE.caption, color: C.labelTertiary }}>{caption}</div>
       )}
     </div>
   );
@@ -286,6 +288,7 @@ export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
  *  - 只有"视觉中的活跃张"播放视频，节省带宽
  */
 export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
+  const C = useAppStoreColors();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -404,7 +407,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
                 width: active ? 22 : 7,
                 height: 7,
                 borderRadius: 999,
-                background: active ? AS_COLOR.label : AS_COLOR.labelTertiary,
+                background: active ? C.label : C.labelTertiary,
                 border: 'none',
                 padding: 0,
                 cursor: 'pointer',
@@ -615,6 +618,7 @@ export function AppStoreShelf({ items }: ShelfProps) {
 }
 
 function ShelfCard({ item }: { item: ShelfItem }) {
+  const C = useAppStoreColors();
   return (
     <button
       type="button"
@@ -625,15 +629,15 @@ function ShelfCard({ item }: { item: ShelfItem }) {
         height: AS_SIZE.shelfCardHeight,
         padding: '0 14px 0 14px',
         borderRadius: AS_SPACE.shelfCardRadius,
-        background: AS_COLOR.surface,
-        border: `1px solid ${AS_COLOR.hairline}`,
+        background: C.surface,
+        border: `1px solid ${C.hairline}`,
       }}
     >
       <AppStoreAppIcon Icon={item.Icon} accent={item.accent} imageUrl={item.iconImageUrl} size={56} />
       <div className="min-w-0 flex-1">
         <div
           className="truncate"
-          style={{ ...AS_TYPE.itemTitle, color: AS_COLOR.label }}
+          style={{ ...AS_TYPE.itemTitle, color: C.label }}
         >
           {item.title}
         </div>
@@ -641,7 +645,7 @@ function ShelfCard({ item }: { item: ShelfItem }) {
           className="line-clamp-2"
           style={{
             ...AS_TYPE.itemSubtitle,
-            color: AS_COLOR.labelSecondary,
+            color: C.labelSecondary,
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',
