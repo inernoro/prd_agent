@@ -1001,10 +1001,30 @@
     transform-box: fill-box;
   }
 
-  /* 品牌:整体微呼吸 + 每 5.2s 一道流光沿切面扫过一圈(灵动但不聒噪);
-     hover 时流光提速成一圈快旋。 */
+  /* 品牌:宝石**持续缓转**(几何运动,一眼看得出在动)+ 轻微呼吸缩放,
+     叠加切面巡游高光(见 cds-gem--simple.cds-gem--brand 的 glint)。
+     hover 时转速加快。这是"动态版"的核心——不再只靠亮度闪烁。 */
   .cds-gem--brand {
-    animation: cds-gem-breath 4.2s ease-in-out infinite alternate;
+    animation: cds-gem-brand-orbit 12s linear infinite;
+  }
+
+  @keyframes cds-gem-brand-orbit {
+    0% {
+      transform: rotate(0deg) scale(1);
+    }
+    50% {
+      transform: rotate(180deg) scale(1.05);
+    }
+    100% {
+      transform: rotate(360deg) scale(1);
+    }
+  }
+
+  .cds-topbar-brand:hover .cds-gem--brand,
+  .cds-rail-avatar:hover .cds-gem--brand,
+  .cdsh-brand:hover .cds-gem--brand,
+  .cds-gem--brand:hover {
+    animation-duration: 3.5s;
   }
 
   .cds-gem--brand .cds-gem-facet {
