@@ -65,6 +65,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("{ \"TenantId\", access.TenantId }", console);
         Assert.Contains("{ \"TeamId\", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId }", console);
         Assert.Contains("idx_llmgw_logs_tenant_provider_request", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", console);
         Assert.Contains("uniq_llmgw_cost_tenant_provider_external", initializer);
         Assert.Contains("uniq_llmgw_cost_tenant_provider_request", initializer);
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"TeamId\").Ascending(\"ServiceKeyId\")", initializer);

@@ -231,7 +231,8 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ClientCode").Ascending("Environment").Ascending("Purpose"),
-        new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload" }),
+        // 存量库已有不含 Purpose 的同名索引；用途扩维必须用新名字做纯加法迁移。
+        new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload_purpose" }),
 });
 await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
     Builders<BsonDocument>.IndexKeys
