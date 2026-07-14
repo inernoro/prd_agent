@@ -72,7 +72,8 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<LlmRequestLogBackground>(),
         sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
         sp.GetRequiredService<IAssetStorage>(),
-        sp.GetRequiredService<IConfiguration>()));
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<IHttpContextAccessor>()));
 builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
     new LlmShadowComparisonWriter(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,

@@ -294,6 +294,13 @@ public class GatewayRequestContext
     /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
     /// </summary>
     public static GatewayRequestContext WithTransport(GatewayRequestContext? source, string transport)
+        => Copy(source, source?.RequestId, transport);
+
+    /// <summary>返回一份使用服务端确定 requestId 的副本，其余字段保持不变。</summary>
+    public static GatewayRequestContext WithRequestId(GatewayRequestContext? source, string requestId)
+        => Copy(source, requestId, source?.GatewayTransport);
+
+    private static GatewayRequestContext Copy(GatewayRequestContext? source, string? requestId, string? transport)
         => new()
         {
             TenantId = source?.TenantId,
@@ -302,7 +309,7 @@ public class GatewayRequestContext
             ClientCode = source?.ClientCode,
             Environment = source?.Environment,
             ServiceKeyPrefix = source?.ServiceKeyPrefix,
-            RequestId = source?.RequestId,
+            RequestId = requestId,
             SessionId = source?.SessionId,
             RunId = source?.RunId,
             GroupId = source?.GroupId,

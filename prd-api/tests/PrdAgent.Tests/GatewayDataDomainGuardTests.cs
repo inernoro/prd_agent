@@ -14,6 +14,8 @@ public class GatewayDataDomainGuardTests
     {
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
         var serving = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var activity = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
 
@@ -29,6 +31,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("filterClientCode", activity);
         Assert.Contains("filterEnvironment", activity);
         Assert.Contains("filterServiceKeyId", activity);
+        Assert.Contains("LlmRequestLogContextItems.LifecycleStarted", serving);
+        Assert.Contains("MarkLifecycleStarted();", logWriter);
+        Assert.Contains("sp.GetRequiredService<IHttpContextAccessor>()", servingProgram);
     }
 
     [Fact]
@@ -40,6 +45,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/gw/service-keys/{id}/rotation/client-cutover", console);
         Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
         Assert.Contains("ROTATION_SOURCE_STAGE_INVALID", console);
+        Assert.Contains("string.IsNullOrWhiteSpace(successorId)", console);
         Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
         Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
         Assert.Contains("\"awaiting-client-cutover\"", console);

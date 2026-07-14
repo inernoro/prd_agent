@@ -24,6 +24,8 @@ namespace PrdAgent.LlmGatewayHost;
 /// </summary>
 public static class GatewayHttpEndpoints
 {
+    private const string GatewayRequestIdItemKey = "llmgw.request.id";
+
     private static readonly JsonSerializerOptions SnakeJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -167,7 +169,8 @@ public static class GatewayHttpEndpoints
             await next();
             if (context.Response.StatusCode < StatusCodes.Status400BadRequest
                 || context.Items["llmgw.key.authorization"] is not GatewayKeyAuthorization authorization
-                || context.Items["llmgw.key.authorization.inputs"] is not GatewayAuthorizationInputs inputs)
+                || context.Items["llmgw.key.authorization.inputs"] is not GatewayAuthorizationInputs inputs
+                || context.Items[LlmRequestLogContextItems.LifecycleStarted] is true)
             {
                 return;
             }
@@ -257,7 +260,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -335,7 +338,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -408,7 +411,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var requestedModel = parsed.Model;
             var multipartFields = parsed.MultipartFields ?? new Dictionary<string, object>(StringComparer.Ordinal);
             var runId = ResolveCompatRunId(http, multipartFields);
@@ -468,7 +471,7 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var appCallerCode = ResolveHeader(http, "X-Gateway-App-Caller")
                                 ?? AppCallerRegistry.PageAgent.Generate;
             var userId = ResolveHeader(http, "X-Gateway-User-Id");
@@ -558,7 +561,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -667,7 +670,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = NormalizeGeminiRouteModel(model);
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -746,7 +749,7 @@ public static class GatewayHttpEndpoints
                 : body.ExpectedModel;
             var ingress = new GatewayIngressRequest
             {
-                RequestId = Guid.NewGuid().ToString("N"),
+                RequestId = TrackGatewayRequestId(http),
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
                 AppCallerCode = body.AppCallerCode,
@@ -793,6 +796,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
@@ -892,6 +896,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
@@ -947,6 +952,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             request = ApplyVerifiedRawRequestContext(http, request, ingress);
             var executionStore = services.GetService<GatewayRequestExecutionStore>();
             GatewayExecutionBeginResult? execution = null;
@@ -1072,7 +1078,7 @@ public static class GatewayHttpEndpoints
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
-            var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim();
+            var requestId = TrackGatewayRequestId(http, request.RequestId);
             var profileTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? "Runtime profile test" : request.ProfileName.Trim();
             var profileContext = new GatewayRequestContext
             {
@@ -1163,26 +1169,28 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
+            var requestId = TrackGatewayRequestId(http, body.Context?.RequestId);
+            var requestContext = GatewayRequestContext.WithRequestId(body.Context, requestId);
             var ingress = new GatewayIngressRequest
             {
-                RequestId = body.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+                RequestId = requestId,
                 SourceSystem = body.Context?.SourceSystem ?? "map",
                 IngressProtocol = body.Context?.IngressProtocol ?? "gw-native",
                 AppCallerCode = body.AppCallerCode,
-                AppCallerTitle = body.Context?.AppCallerTitle,
+                AppCallerTitle = requestContext.AppCallerTitle,
                 RequestType = body.ModelType,
-                ModelPolicy = NormalizeModelPolicy(body.Context?.ModelPolicy)
+                ModelPolicy = NormalizeModelPolicy(requestContext.ModelPolicy)
                     ?? (!string.IsNullOrWhiteSpace(body.PinnedPlatformId) || !string.IsNullOrWhiteSpace(body.PinnedModelId)
                         ? "pinned"
                         : string.IsNullOrWhiteSpace(body.ExpectedModel) ? "auto" : "pinned"),
-                ModelPoolId = body.Context?.ModelPoolId,
-                ExpectedModel = string.Equals(NormalizeModelPolicy(body.Context?.ModelPolicy), "pool", StringComparison.OrdinalIgnoreCase)
-                                && !string.IsNullOrWhiteSpace(body.Context?.ModelPoolId)
-                    ? body.Context.ModelPoolId
+                ModelPoolId = requestContext.ModelPoolId,
+                ExpectedModel = string.Equals(NormalizeModelPolicy(requestContext.ModelPolicy), "pool", StringComparison.OrdinalIgnoreCase)
+                                && !string.IsNullOrWhiteSpace(requestContext.ModelPoolId)
+                    ? requestContext.ModelPoolId
                     : body.ExpectedModel,
                 PinnedPlatformId = body.PinnedPlatformId,
                 PinnedModelId = body.PinnedModelId,
-                Context = body.Context,
+                Context = requestContext,
             };
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
@@ -1591,6 +1599,24 @@ public static class GatewayHttpEndpoints
     {
         var value = http.Request.Headers[name].FirstOrDefault();
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string TrackGatewayRequestId(HttpContext http, string? preferred = null)
+    {
+        var normalizedPreferred = NormalizeOptionalTraceId(preferred);
+        if (normalizedPreferred is not null)
+        {
+            http.Items[GatewayRequestIdItemKey] = normalizedPreferred;
+            return normalizedPreferred;
+        }
+
+        if (http.Items[GatewayRequestIdItemKey] is string { Length: > 0 } tracked)
+            return tracked;
+
+        var requestId = NormalizeOptionalTraceId(ResolveHeader(http, "X-Request-Id"))
+                        ?? Guid.NewGuid().ToString("N");
+        http.Items[GatewayRequestIdItemKey] = requestId;
+        return requestId;
     }
 
     private static string? ReadString(JsonObject body, string key)
@@ -4737,16 +4763,10 @@ public static class GatewayHttpEndpoints
         var data = http.RequestServices.GetService<LlmGatewayDataContext>();
         if (data is null) return;
         var now = DateTime.UtcNow;
-        var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+        var requestId = TrackGatewayRequestId(http);
         try
         {
             var logs = data.Database.GetCollection<BsonDocument>("llmrequestlogs");
-            var alreadyLogged = await logs.CountDocumentsAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("TenantId", authorization.TenantId),
-                    Builders<BsonDocument>.Filter.Eq("RequestId", requestId)),
-                cancellationToken: ct) > 0;
-            if (alreadyLogged) return;
             await logs.InsertOneAsync(
                 new BsonDocument
                 {

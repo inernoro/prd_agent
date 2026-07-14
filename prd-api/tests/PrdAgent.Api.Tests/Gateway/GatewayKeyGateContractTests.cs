@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -77,6 +78,57 @@ public class GatewayKeyGateContractTests
             log["RequestId"].AsString.ShouldBe("request-denied-attribution");
             log.Contains("KeyHash").ShouldBeFalse();
             log.Values.Any(value => value.IsString && value.AsString.Contains("recognized-test-key-value", StringComparison.Ordinal)).ShouldBeFalse();
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task AuthorizedFailureWithoutClientRequestId_DoesNotDuplicateLifecycleLog()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_failed_identity_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        var httpContextAccessor = new HttpContextAccessor();
+        try
+        {
+            await data.Database.GetCollection<BsonDocument>("llmgw_teams").InsertOneAsync(new BsonDocument
+            {
+                { "_id", "team-test" },
+                { "TenantId", "tenant-test" },
+                { "Status", "active" },
+            });
+            var gateway = new LifecycleFailureGateway(data, httpContextAccessor);
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: new CapturingScopedKeyAuthorizer(_ => true),
+                gatewayData: data,
+                httpContextAccessor: httpContextAccessor);
+            await app.StartAsync();
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Headers = { { "X-Gateway-Key", "scoped-test-key" } },
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "content.chat::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                }),
+            };
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+            var logs = await data.Database.GetCollection<BsonDocument>("llmrequestlogs").Find(_ => true).ToListAsync();
+            logs.Count.ShouldBe(1);
+            logs[0]["Provider"].AsString.ShouldBe("test-lifecycle");
+            logs[0]["RequestId"].AsString.ShouldNotBeNullOrWhiteSpace();
+            logs[0]["ServiceKeyId"].AsString.ShouldBe("capturing-key");
         }
         finally
         {
@@ -2372,7 +2424,8 @@ public class GatewayKeyGateContractTests
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
         ILLMRequestContextAccessor? contextAccessor = null,
-        LlmGatewayDataContext? gatewayData = null)
+        LlmGatewayDataContext? gatewayData = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -2381,6 +2434,7 @@ public class GatewayKeyGateContractTests
         builder.Services.AddSingleton(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor>(
             contextAccessor ?? new PrdAgent.Core.Services.LLMRequestContextAccessor());
+        builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor ?? new HttpContextAccessor());
         builder.Services.AddSingleton<GatewayCancellationRegistry>();
         if (readinessProbe != null)
             builder.Services.AddSingleton(readinessProbe);
@@ -2487,6 +2541,53 @@ public class GatewayKeyGateContractTests
         {
             Interlocked.Increment(ref _sendCount);
             return Task.FromResult(GatewayResponse.Ok("ok", new GatewayModelResolution { Success = true, ActualModel = "fake-model" }));
+        }
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class LifecycleFailureGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        private readonly LlmGatewayDataContext _data;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+
+        public LifecycleFailureGateway(LlmGatewayDataContext data, IHttpContextAccessor httpContextAccessor)
+        {
+            _data = data;
+            _httpContextAccessor = httpContextAccessor;
+        }
+
+        public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        {
+            var context = request.Context ?? throw new InvalidOperationException("request context is required");
+            await _data.Database.GetCollection<BsonDocument>("llmrequestlogs").InsertOneAsync(
+                new BsonDocument
+                {
+                    { "_id", Guid.NewGuid().ToString("N") },
+                    { "TenantId", context.TenantId },
+                    { "TeamId", context.TeamId },
+                    { "ServiceKeyId", context.ServiceKeyId },
+                    { "ClientCode", context.ClientCode },
+                    { "Environment", context.Environment },
+                    { "ServiceKeyPrefix", context.ServiceKeyPrefix },
+                    { "RequestId", context.RequestId },
+                    { "Provider", "test-lifecycle" },
+                    { "Status", "failed" },
+                    { "StartedAt", DateTime.UtcNow },
+                },
+                cancellationToken: ct);
+            if (_httpContextAccessor.HttpContext is { } http)
+                http.Items[LlmRequestLogContextItems.LifecycleStarted] = true;
+            return GatewayResponse.Fail("TEST_FAILURE", "test failure", 422);
         }
 
         public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)

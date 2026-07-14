@@ -4057,7 +4057,8 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
     {
         return Json(ApiEnvelope<object>.Fail("ROTATION_CLIENT_SWITCH_REQUIRED", "请先确认客户端已切换到新密钥，再撤销旧密钥"), jsonOptions, 409);
     }
-    if (!string.IsNullOrWhiteSpace(predecessorId)
+    if (string.IsNullOrWhiteSpace(successorId)
+        && !string.IsNullOrWhiteSpace(predecessorId)
         && string.Equals(rotationState, "client-switched", StringComparison.Ordinal))
     {
         return Json(ApiEnvelope<object>.Fail("ROTATION_OLD_KEY_REVOKE_REQUIRED", "客户端已切换后必须撤销旧密钥完成轮换，不能撤销新密钥"), jsonOptions, 409);
