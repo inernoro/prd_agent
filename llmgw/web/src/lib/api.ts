@@ -27,6 +27,8 @@ import type {
   SessionsData,
   LlmLogDetail,
   PoolsData,
+  PoolTypesData,
+  EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
   GatewayAppCallersData,
@@ -440,6 +442,12 @@ export function bulkRotateApiKeys(req: BulkRotateApiKeysRequest): Promise<ApiRes
 }
 export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
+}
+export function getPoolTypes(): Promise<ApiResponse<PoolTypesData>> {
+  return apiRequest<PoolTypesData>('/pool-types');
+}
+export function ensurePoolTypes(): Promise<ApiResponse<EnsurePoolTypesResult>> {
+  return apiRequest<EnsurePoolTypesResult>('/pool-types/ensure', { method: 'POST' });
 }
 export function claimPoolToGateway(id: string): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/claim`, { method: 'PUT' });

@@ -412,8 +412,15 @@ export type ModelPool = {
   recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
   health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
   healthyMembers: number; degradedMembers: number; unavailableMembers: number;
+  managedByRegistry: boolean; appendOnly: boolean; poolRole?: string | null;
 };
 export type PoolsData = { items: ModelPool[]; total: number };
+export type PoolTypeItem = {
+  code: string; name: string; purpose: string; sortOrder: number; defaultPoolId: string;
+  modelCount: number; ready: boolean; version: number;
+};
+export type PoolTypesData = { items: PoolTypeItem[]; total: number; ready: number; waiting: number };
+export type EnsurePoolTypesResult = { typesCreated: number; poolsCreated: number; modelsAppended: number; types: PoolTypesData };
 export type CreatePoolRequest = {
   name: string;
   code?: string;
