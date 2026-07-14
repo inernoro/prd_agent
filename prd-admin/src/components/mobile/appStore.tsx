@@ -782,6 +782,252 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
   );
 }
 
+/* ─────────────────────── Grid：智能体宫格（App Store 主屏图标网格） ─────────────────────── */
+
+interface GridItem {
+  key: string;
+  Icon: LucideIcon;
+  /** 静态封面图（有则用 iOS app icon 式封面） */
+  iconImageUrl?: string | null;
+  accent: { from: string; to: string };
+  label: string;
+  onClick: () => void;
+}
+
+/**
+ * 智能体宫格 —— 圆角 icon + 短标，App Store 主屏/分类页范式。
+ * 列数默认 4，标签走 caption 档，颜色随双皮肤。
+ */
+export function AppStoreGrid({ items, columns = 4 }: { items: GridItem[]; columns?: number }) {
+  const C = useAppStoreColors();
+  if (items.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, 1fr)`,
+        gap: `${AS_SIZE.gridGap}px 8px`,
+        padding: `0 ${AS_SPACE.gutter - 4}px`,
+        fontFamily: AS_FONT_FAMILY,
+      }}
+    >
+      {items.map((it) => (
+        <button
+          key={it.key}
+          type="button"
+          onClick={it.onClick}
+          className="flex flex-col items-center gap-2 active:opacity-60 transition-opacity"
+        >
+          <AppStoreAppIcon
+            Icon={it.Icon}
+            accent={it.accent}
+            imageUrl={it.iconImageUrl}
+            size={AS_SIZE.gridIconSize}
+          />
+          <span
+            className="text-center"
+            style={{
+              ...AS_TYPE.caption,
+              fontWeight: 500,
+              color: C.label,
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {it.label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────────── Chips：分类横滑筛选条 ─────────────────────── */
+
+interface ChipItem {
+  key: string;
+  label: string;
+}
+
+/**
+ * 分类 chips —— 横滑 + 选中态（选中=前景色实底反白，未选=surface）。
+ * 单行 overflow-x，子项不换行，符合 mobile-first-density「成排放不下就横向滚动」。
+ */
+export function AppStoreChips({
+  items,
+  activeKey,
+  onSelect,
+}: {
+  items: ChipItem[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const C = useAppStoreColors();
+  if (items.length === 0) return null;
+  return (
+    <div
+      className="flex overflow-x-auto"
+      style={{
+        gap: 9,
+        padding: `0 ${AS_SPACE.gutter}px`,
+        scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch',
+        overscrollBehaviorX: 'contain',
+        fontFamily: AS_FONT_FAMILY,
+      }}
+    >
+      {items.map((it) => {
+        const on = it.key === activeKey;
+        return (
+          <button
+            key={it.key}
+            type="button"
+            onClick={() => onSelect(it.key)}
+            className="shrink-0 inline-flex items-center whitespace-nowrap transition-colors active:opacity-70"
+            style={{
+              height: AS_SPACE.chipHeight,
+              padding: '0 16px',
+              borderRadius: AS_SPACE.pillRadius,
+              ...AS_TYPE.pill,
+              fontWeight: 600,
+              background: on ? C.label : C.surface,
+              color: on ? C.bg : C.labelSecondary,
+              border: on ? 'none' : `1px solid ${C.hairline}`,
+            }}
+          >
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────── ResumeCard：继续上次 ─────────────────────── */
+
+interface ResumeCardProps {
+  Icon: LucideIcon;
+  iconImageUrl?: string | null;
+  accent: { from: string; to: string };
+  title: string;
+  subtitle: string;
+  /** 进度 0~1，给了就画进度条 */
+  progress?: number;
+  pillLabel?: string;
+  onClick: () => void;
+}
+
+/**
+ * 「继续上次」卡 —— icon + 标题/副标 +（可选）进度条 + Pill。
+ * 数据源建议 home_recent_opens（最近打开台账）。
+ */
+export function AppStoreResumeCard({
+  Icon,
+  iconImageUrl,
+  accent,
+  title,
+  subtitle,
+  progress,
+  pillLabel = '继续',
+  onClick,
+}: ResumeCardProps) {
+  const C = useAppStoreColors();
+  const pct = progress == null ? null : Math.max(0, Math.min(1, progress));
+  return (
+    <div style={{ padding: `0 ${AS_SPACE.gutter}px`, fontFamily: AS_FONT_FAMILY }}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full flex items-center gap-3 text-left transition-transform active:scale-[0.99]"
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.hairline}`,
+          borderRadius: AS_SPACE.shelfCardRadius,
+          padding: 14,
+        }}
+      >
+        <AppStoreAppIcon Icon={Icon} accent={accent} imageUrl={iconImageUrl} size={46} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
+            {title}
+          </div>
+          <div className="truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}>
+            {subtitle}
+          </div>
+          {pct != null && (
+            <div
+              style={{
+                height: 4,
+                borderRadius: 2,
+                background: C.separator,
+                marginTop: 8,
+                overflow: 'hidden',
+              }}
+            >
+              <div style={{ height: '100%', width: `${(pct * 100).toFixed(0)}%`, background: C.blue, borderRadius: 2 }} />
+            </div>
+          )}
+        </div>
+        <AppStorePillLabel label={pillLabel} />
+      </button>
+    </div>
+  );
+}
+
+/* ─────────────────────── TipCard：每日小技巧 ─────────────────────── */
+
+interface TipCardProps {
+  Icon: LucideIcon;
+  accent: { from: string; to: string };
+  title: string;
+  desc: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+/**
+ * 「每日小技巧」卡 —— 渐变 icon + 标题/说明 + 行动点（如"跟我做"）。
+ * 对齐页面教程（onboarding-tips）的轻提醒调性。
+ */
+export function AppStoreTipCard({ Icon, accent, title, desc, actionLabel = '跟我做', onAction }: TipCardProps) {
+  const C = useAppStoreColors();
+  return (
+    <div style={{ padding: `0 ${AS_SPACE.gutter}px`, fontFamily: AS_FONT_FAMILY }}>
+      <div
+        className="flex gap-3"
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.hairline}`,
+          borderRadius: AS_SPACE.shelfCardRadius,
+          padding: 16,
+          alignItems: 'flex-start',
+        }}
+      >
+        <AppStoreAppIcon Icon={Icon} accent={accent} size={44} />
+        <div className="min-w-0 flex-1">
+          <div style={{ ...AS_TYPE.itemTitle, color: C.label }}>{title}</div>
+          <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 4, lineHeight: 1.4 }}>
+            {desc}
+          </div>
+          {onAction && (
+            <button
+              type="button"
+              onClick={onAction}
+              className="inline-flex items-center gap-0.5 active:opacity-60 transition-opacity"
+              style={{ ...AS_TYPE.sectionAction, color: C.blue, marginTop: 8, fontWeight: 600 }}
+            >
+              {actionLabel}
+              <ChevronRight size={16} strokeWidth={2.2} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────── 程序化 mesh 渐变（无封面图时的兜底） ─────────────────────── */
 
 function buildMeshGradient(accent: { from: string; to: string }): string {

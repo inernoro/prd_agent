@@ -114,6 +114,8 @@ export const AS_SPACE = {
   sectionGap: 36,
   /** 区块标题到内容 */
   titleGap: 16,
+  /** 分类 chip 行高（App Store "分类"横滑筛选条） */
+  chipHeight: 34,
   /** 列表项垂直 padding */
   listItemPaddingY: 14,
   /** List 分隔线从 icon 右侧开始（icon 52 + 左 padding 20） */
@@ -144,6 +146,10 @@ export const AS_SIZE = {
   appIconSize: 52,
   /** Pill 按钮高度 */
   pillHeight: 30,
+  /** 智能体宫格里的圆角 icon 尺寸（App Store 主屏 app 图标级） */
+  gridIconSize: 60,
+  /** 智能体宫格行间距 */
+  gridGap: 16,
 } as const;
 
 /* ───────────── 苹果级字体栈 ───────────── */
