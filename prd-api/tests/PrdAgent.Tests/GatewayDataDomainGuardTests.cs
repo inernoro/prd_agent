@@ -46,6 +46,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
         Assert.Contains("ROTATION_SOURCE_STAGE_INVALID", console);
         Assert.Contains("string.IsNullOrWhiteSpace(successorId)", console);
+        Assert.Contains("var legacySourceClientCode = rotatedKey.AsNullableString(\"SourceSystem\")", console);
+        Assert.Contains("Regex.IsMatch(legacySourceClientCode", console);
+        Assert.Contains(".Set(\"ClientCode\", clientCode)", console);
+        Assert.Contains(".Set(\"Environment\", environment)", console);
         Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
         Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
         Assert.Contains("\"awaiting-client-cutover\"", console);
@@ -54,6 +58,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"completed\"", console);
         Assert.Contains("确认已切换", page);
         Assert.Contains("撤销旧钥并完成", page);
+        Assert.Contains("&& !item.rotatedByKeyId", page);
     }
     [Fact]
     public void Api_ShadowWriter_UsesGatewayDataContext()

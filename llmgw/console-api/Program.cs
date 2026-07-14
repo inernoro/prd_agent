@@ -3828,10 +3828,19 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
                 "ROTATION_SOURCE_STAGE_INVALID",
                 "上一轮密钥轮换尚未完成，不能再次发起轮换"), jsonOptions, 409);
         }
-        var rotatedClientCode = rotatedKey.AsNullableString("ClientCode") ?? rotatedKey.AsNullableString("SourceSystem");
+        var rotatedClientCode = rotatedKey.AsNullableString("ClientCode");
+        var legacySourceClientCode = rotatedKey.AsNullableString("SourceSystem");
+        var expectedClientCode = !string.IsNullOrWhiteSpace(rotatedClientCode)
+            ? rotatedClientCode
+            : !string.IsNullOrWhiteSpace(legacySourceClientCode)
+              && System.Text.RegularExpressions.Regex.IsMatch(legacySourceClientCode, "^[a-z][a-z0-9._-]{1,79}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+                ? legacySourceClientCode
+                : null;
         var rotatedEnvironment = rotatedKey.AsNullableString("Environment");
-        if (!string.Equals(rotatedClientCode, clientCode, StringComparison.OrdinalIgnoreCase)
-            || rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase))
+        // 历史 key 可能没有 ClientCode，且 SourceSystem 允许使用 "*"。当旧来源不能作为合法
+        // clientCode 时，轮换承担一次性身份升级；否则仍要求沿用可验证的历史身份。
+        if ((expectedClientCode is not null && !string.Equals(expectedClientCode, clientCode, StringComparison.OrdinalIgnoreCase))
+            || (rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase)))
         {
             return Json(ApiEnvelope<object>.Fail("ROTATION_IDENTITY_MISMATCH", "轮换不能修改 clientCode 或 environment"), jsonOptions, 409);
         }
@@ -3904,6 +3913,8 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
             Builders<BsonDocument>.Update
                 .Set("RotatedByKeyId", id)
                 .Set("RotationState", "awaiting-client-cutover")
+                .Set("ClientCode", clientCode)
+                .Set("Environment", environment)
                 .Set("UpdatedAt", now));
         if (rotationUpdate.ModifiedCount != 1)
         {
