@@ -3897,6 +3897,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
         throw;
     }
+    BsonDocument? stableSuccessor = null;
     if (rotatedKey is not null)
     {
         var sourceId = rotatedKey.GetStringOrEmpty("_id");
@@ -3925,6 +3926,35 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
                 Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
             await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
             return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+        stableSuccessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", id),
+                Builders<BsonDocument>.Filter.Eq("RotatesKeyId", sourceId),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.In("RotationState", new[] { "new-key-created", "client-switched", "completed" }))))
+            .FirstOrDefaultAsync();
+        if (stableSuccessor is null)
+        {
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", sourceId),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+                Builders<BsonDocument>.Update
+                    .Set("RotatedByKeyId", BsonNull.Value)
+                    .Set("RotationState", predecessorRotationState ?? "active")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", false)
+                    .Set("RotationState", "revoked")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换新密钥已被并发撤销，请刷新后重试"), jsonOptions, 409);
         }
     }
     await WriteOperationAuditAsync(
@@ -3968,7 +3998,9 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         rateLimitPerMinute = body.RateLimitPerMinute,
         rotatesKeyId = rotatedKey?.GetStringOrEmpty("_id"),
         expiresAt,
-        rotationState = rotatedKey is null ? "active" : "new-key-created",
+        rotationState = rotatedKey is null
+            ? "active"
+            : stableSuccessor?.AsNullableString("RotationState") ?? "new-key-created",
     }), jsonOptions, 201);
 }).RequireAuthorization("ServiceKeyWrite");
 

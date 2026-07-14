@@ -52,6 +52,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Set(\"Environment\", environment)", console);
         Assert.Contains("{ \"PredecessorRotationState\", rotatedKey is null ? BsonNull.Value : predecessorRotationState ?? \"active\" }", console);
         Assert.Contains(".Set(\"RotationState\", restoreState)", console);
+        Assert.Contains("BsonDocument? stableSuccessor = null", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.In(\"RotationState\", new[] { \"new-key-created\", \"client-switched\", \"completed\" })", console);
+        Assert.Contains("轮换新密钥已被并发撤销", console);
         Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
         Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
         Assert.Contains("\"awaiting-client-cutover\"", console);
