@@ -43,6 +43,22 @@ public class MdToPptAnchorTests
     }
 
     [Fact]
+    public void PagePrompts_UseGithubHtmlPptSkillContract()
+    {
+        var freePrompt = MdToPptController.BuildPageSystemPrompt("tech-dark", 1, 8);
+        Assert.Contains("GitHub html-ppt 技能契约", freePrompt);
+        Assert.Contains("templates/single-page", freePrompt);
+        Assert.Contains("data-title", freePrompt);
+        Assert.Contains(".notes", freePrompt);
+
+        var anchor = MdToPptAnchors.Load("cobalt-grid")!;
+        var anchoredPrompt = MdToPptController.BuildAnchoredPageSystemPrompt(anchor, anchor.ContentSlides[0], 1, 8);
+        Assert.Contains("GitHub html-ppt 技能契约", anchoredPrompt);
+        Assert.Contains("上游 lewislulu/html-ppt-skill", anchoredPrompt);
+        Assert.Contains("本页版式范本", anchoredPrompt);
+    }
+
+    [Fact]
     public void ExtractSlideBlock_NestedDivs_Balanced()
     {
         var text = "好的，这是结果：\n```html\n<div class=\"slide slide-3\"><div class=\"a\"><div>x</div></div><p>y</p></div>\n```";

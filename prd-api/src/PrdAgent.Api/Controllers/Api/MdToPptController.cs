@@ -1370,7 +1370,7 @@ public class MdToPptController : ControllerBase
         "要点卡片（.grid.g3 每卡一要点，禁止裸列表）",
     };
 
-    private static string BuildPageSystemPrompt(string? theme, int index, int total)
+    internal static string BuildPageSystemPrompt(string? theme, int index, int total)
     {
         var (_, tone) = ThemeTokens(theme);
         return
@@ -1386,6 +1386,7 @@ public class MdToPptController : ControllerBase
             "- 与其他页面共用同一套色板、字体、圆角、线条粗细、页脚/页码气质；禁止每页临时发明一套新风格\n" +
             "- 每页允许有不同版式，但必须看得出属于同一份控制台级专业演示\n" +
             "- 自定义创意只作为视觉表达，不得牺牲可读性、信息密度和代码正确性\n\n" +
+            HtmlPptSkillContract() + "\n" +
             "## 内容要求\n" +
             "信息充实：结构化正文（卡片/数据/对比/列表至少一种）+ 至少一个视觉装置（光晕/强调条/大数字/独特大字编排）。" +
             "绝不允许一句话居中、四周大片空白。\n\n" +
@@ -1441,10 +1442,11 @@ public class MdToPptController : ControllerBase
     // 子智能体拿"人工精调版式范本"只换内容不造布局，从根上杜绝重叠/溢出
     // ─────────────────────────────────────────────
 
-    private static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
+    internal static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
     {
         return
             "你在一套人工精调的成品演示设计系统内工作（不允许自由发挥布局）。\n" +
+            HtmlPptSkillContract() + "\n" +
             "## 铁律（违反会被系统剥离或整页重做）\n" +
             "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
             "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；同构列表项允许增删 1-2 个\n" +
@@ -1457,6 +1459,18 @@ public class MdToPptController : ControllerBase
             $"9. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
+    }
+
+    internal static string HtmlPptSkillContract()
+    {
+        return
+            "## GitHub html-ppt 技能契约\n" +
+            "来源：nexu-io/open-design 的 plugins/_official/examples/html-ppt（上游 lewislulu/html-ppt-skill）。\n" +
+            "- 始终从现有布局范本出发：把 templates/single-page 的 cover、toc、section-divider、bullets、two-column、three-column、kpi-grid、table、chart、terminal、flow、timeline、roadmap、comparison、cta、thanks 等布局映射到当前页面语义，再替换真实内容\n" +
+            "- 一页只输出一个 slide 根块；根块保留 class 中的 slide 身份，能加属性时补 data-title=\"本页标题\"，方便缩略图、概览和导出链路识别\n" +
+            "- 使用主题 token 与现有 CSS 变量，不写新的十六进制色值，不临时引入外部运行时，不破坏键盘预览、导出和静态托管兼容性\n" +
+            "- 版式选择要覆盖文本、数据、对比、流程、代码、图表、结语等场景，连续页面避免重复同一种布局\n" +
+            "- 如需要讲稿或创作说明，只能放进隐藏的 .notes 或 aside.notes，禁止把 presenter-only 文案显示在 slide 上\n";
     }
 
     private static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
@@ -2063,13 +2077,15 @@ public class MdToPptController : ControllerBase
         {
             (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
         }
-        await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name });
+        await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name, skill = "github-html-ppt" });
         await EmitAsync("diag", new
         {
             stage = "design_contract",
             total,
             parallel = 4,
             route = ShouldUseGatewayDirect(profile) ? "gateway-direct" : "cds-agent",
+            skill = "github-html-ppt",
+            skillSource = "nexu-io/open-design/plugins/_official/examples/html-ppt",
             quality = "style-consistency-and-html-validation"
         });
         _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total} platform={Platform}", userId, total, platform);

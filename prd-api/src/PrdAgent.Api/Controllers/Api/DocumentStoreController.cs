@@ -4584,25 +4584,25 @@ public class DocumentStoreController : ControllerBase
         var body = html.Length == 0
             ? $"<main><h1>{System.Net.WebUtility.HtmlEncode(title)}</h1><p>页面生成失败，请返回知识库重新生成。</p></main>"
             : html;
-        return $"""
+        return $$"""
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{System.Net.WebUtility.HtmlEncode(title)} - {CreativePublishKindLabel(kind)}</title>
+  <title>{{System.Net.WebUtility.HtmlEncode(title)}} - {{CreativePublishKindLabel(kind)}}</title>
   <style>
-    :root {{ color-scheme: light; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }}
-    body {{ margin: 0; background: #f7f8fb; color: #111827; }}
-    main {{ max-width: 880px; margin: 0 auto; padding: 32px 20px 48px; }}
-    h1 {{ font-size: clamp(28px, 7vw, 52px); line-height: 1.06; margin: 0 0 20px; }}
-    p, li {{ font-size: 16px; line-height: 1.8; }}
-    section, article {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 22px; box-shadow: 0 18px 45px rgba(15, 23, 42, .08); }}
+    :root { color-scheme: light; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    body { margin: 0; background: #f7f8fb; color: #111827; }
+    main { max-width: 880px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { font-size: clamp(28px, 7vw, 52px); line-height: 1.06; margin: 0 0 20px; }
+    p, li { font-size: 16px; line-height: 1.8; }
+    section, article { background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 22px; box-shadow: 0 18px 45px rgba(15, 23, 42, .08); }
   </style>
 </head>
 <body>
   <main>
-    {body}
+    {{body}}
   </main>
 </body>
 </html>
