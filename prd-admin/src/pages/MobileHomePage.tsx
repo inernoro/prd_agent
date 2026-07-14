@@ -211,7 +211,7 @@ export default function MobileHomePage() {
         {featuredItems.length > 0 && (
           <div style={{ marginTop: 28 }}>
             <AppStoreSectionHeader title="今日精选" caption="编辑为你挑的智能体" />
-            <AppStoreFeaturedCarousel items={featuredItems} />
+            <AppStoreFeaturedCarousel items={featuredItems} aspect="16 / 11" />
           </div>
         )}
 

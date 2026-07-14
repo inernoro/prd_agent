@@ -273,8 +273,9 @@ export interface FeaturedItem {
  * 单张海报级 Featured 大卡 —— 3:4 纵向占屏，视频/图片/渐变三级 fallback。
  * Apple Today 的单张大海报范式。
  */
-export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
-  return <FeaturedSlide item={{ ...props, key: 'single' }} isActive />;
+export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'> & { aspect?: string }) {
+  const { aspect, ...item } = props;
+  return <FeaturedSlide item={{ ...item, key: 'single' }} isActive aspect={aspect} />;
 }
 
 /**
@@ -287,7 +288,7 @@ export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
  *  - 底部 dot indicator（苹果小点）
  *  - 只有"视觉中的活跃张"播放视频，节省带宽
  */
-export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
+export function AppStoreFeaturedCarousel({ items, aspect }: { items: FeaturedItem[]; aspect?: string }) {
   const C = useAppStoreColors();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -361,7 +362,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   if (items.length === 1) {
     return (
       <div style={{ padding: `0 ${AS_SPACE.gutter}px` }}>
-        <FeaturedSlide item={items[0]} isActive />
+        <FeaturedSlide item={items[0]} isActive aspect={aspect} />
       </div>
     );
   }
@@ -381,7 +382,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
         }}
       >
         {items.map((item, i) => (
-          <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} />
+          <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} aspect={aspect} />
         ))}
       </div>
 
@@ -420,7 +421,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   );
 }
 
-function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boolean }) {
+function FeaturedSlide({ item, isActive, aspect = '3 / 4' }: { item: FeaturedItem; isActive: boolean; aspect?: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
 
@@ -444,7 +445,7 @@ function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boole
       className="relative snap-start shrink-0 overflow-hidden text-left transition-transform active:scale-[0.985]"
       style={{
         width: `calc(100vw - ${AS_SPACE.gutter * 2}px)`,
-        aspectRatio: '3 / 4',
+        aspectRatio: aspect,
         borderRadius: AS_SPACE.featuredRadius,
         background: hasMedia ? '#000' : buildMeshGradient(item.accent),
         fontFamily: AS_FONT_FAMILY,
