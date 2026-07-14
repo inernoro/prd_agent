@@ -2130,6 +2130,14 @@ public class MdToPptController : ControllerBase
                         sys = BuildPageSystemPrompt(req.Theme, i, total);
                         usr = BuildPageUserPrompt(req, i, total);
                     }
+                    await EmitAsync("diag", new
+                    {
+                        stage = "page_start",
+                        index = i,
+                        total,
+                        title = pages[i].Title,
+                        elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds
+                    });
                     var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
                     var section = NormalizeGeneratedSlideFragment(text, anchor != null);

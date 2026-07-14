@@ -6,3 +6,5 @@
 | polish | prd-admin | 将 MD 转 PPT 移动端改为单列精致创作工作台，避免桌面双栏压缩到手机 |
 | feat | prd-api | 新增知识库条目一键生成海报、教程、文案 HTML 并发布到网页托管的接口 |
 | feat | prd-admin | 知识详情页新增一键创作并自动发布到网页托管的操作入口 |
+| polish | prd-api | MD 转 PPT 并行逐页生成新增 page_start 诊断事件，首批页面返回前也能看到任务进展 |
+| polish | prd-admin | MD 转 PPT 移动端和聊天气泡展示正在生成的页码、完成页数和当前阶段 |

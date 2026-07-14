@@ -328,6 +328,33 @@ const MOBILE_CREATION_MODES = [
   },
 ];
 
+function getStartedPageIndexes(diagLines: MdToPptDiagEvent[]): number[] {
+  const indexes = new Set<number>();
+  for (const line of diagLines) {
+    if (line.stage !== 'page_start') continue;
+    const index = typeof line.index === 'number' ? line.index : Number(line.index);
+    if (Number.isInteger(index) && index >= 0) indexes.add(index);
+  }
+  return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function formatDiagStage(stage?: string): string {
+  switch (stage) {
+    case 'design_contract':
+      return '设计系统锁定';
+    case 'page_start':
+      return '页面生成已发起';
+    case 'send':
+      return '请求已发送';
+    case 'first_event':
+      return '已收到首个事件';
+    case 'first_text_delta':
+      return '模型开始输出';
+    default:
+      return stage || '准备中';
+  }
+}
+
 // 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
 function estimatePages(content: string): number {
   const len = content.trim().length;
@@ -1210,6 +1237,7 @@ export function MdToPptAgentPage() {
     setFrameAnchored(false);
     setPagesTotal(0);
     setPagesDone({});
+    setDiagLines([]);
     setPatchingSlide(null);
   }, []);
 
@@ -2514,6 +2542,14 @@ export function MdToPptAgentPage() {
   }, [resetStreamPreview]);
 
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
+  const startedPageIndexes = useMemo(() => getStartedPageIndexes(diagLines), [diagLines]);
+  const runningPageIndexes = useMemo(
+    () => startedPageIndexes.filter((index) => pagesDone[index] == null),
+    [startedPageIndexes, pagesDone]
+  );
+  const latestDiag = diagLines.length > 0 ? diagLines[diagLines.length - 1] : null;
+  const visibleProgressTotal = pagesTotal || expectedPages || outlineDraft?.outline.length || 0;
+  const visibleDoneCount = pagesTotal > 0 ? pagesDoneIdxs.length : slideProgress.titles.length;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -2868,6 +2904,38 @@ export function MdToPptAgentPage() {
                   </button>
                 )}
               </div>
+              {isStreaming && (
+                <div className="mt-3 rounded-md border border-purple-300/15 bg-purple-300/8 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-purple-100/80">
+                    <span>{formatDiagStage(latestDiag?.stage)}</span>
+                    <span className="tabular-nums">
+                      {visibleProgressTotal > 0
+                        ? `${visibleDoneCount}/${visibleProgressTotal} 页`
+                        : `${elapsedSec}s`}
+                    </span>
+                  </div>
+                  {visibleProgressTotal > 0 && (
+                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/8">
+                      <div
+                        className="h-full rounded-full bg-purple-300 transition-all duration-500"
+                        style={{ width: `${Math.max(visibleDoneCount > 0 ? 8 : 3, Math.min(96, (visibleDoneCount / visibleProgressTotal) * 100))}%` }}
+                      />
+                    </div>
+                  )}
+                  {runningPageIndexes.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {runningPageIndexes.slice(0, 8).map((index) => (
+                        <span key={index} className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/52">
+                          第 {index + 1} 页生成中
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-2 text-[10px] leading-relaxed text-white/38">
+                    8 页会按 4 路并行生成；首批页面返回前，主要耗时在模型生成单页 HTML 和片段校验。
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2992,10 +3060,25 @@ export function MdToPptAgentPage() {
                         </div>
                         {isStreaming && streamPreview.length === 0 && thinkingPreview.length === 0 && diagLines.length > 0 && (
                           <div className="text-[9px] font-mono text-[var(--text-tertiary)]">
-                            环境准备 {diagLines.slice(-1)[0].stage}
-                            {typeof diagLines.slice(-1)[0].elapsedMs === 'number'
-                              ? ` ${Math.round((diagLines.slice(-1)[0].elapsedMs as number) / 100) / 10}s`
+                            {formatDiagStage(latestDiag?.stage)}
+                            {typeof latestDiag?.elapsedMs === 'number'
+                              ? ` ${Math.round((latestDiag.elapsedMs as number) / 100) / 10}s`
                               : ''}
+                          </div>
+                        )}
+                        {isStreaming && runningPageIndexes.length > 0 && (
+                          <div className="rounded-md border border-purple-400/15 bg-purple-400/6 px-2 py-1.5">
+                            <div className="text-[9px] text-purple-200/80">
+                              已发起 {startedPageIndexes.length}{visibleProgressTotal ? ` / ${visibleProgressTotal}` : ''} 页，
+                              已完成 {visibleDoneCount}{visibleProgressTotal ? ` / ${visibleProgressTotal}` : ''} 页
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {runningPageIndexes.slice(0, 6).map((index) => (
+                                <span key={index} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]">
+                                  第 {index + 1} 页生成中
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         )}
                         {isStreaming && thinkingPreview.length > 0 && (
@@ -3915,7 +3998,7 @@ export function MdToPptAgentPage() {
                   ))}
                   {diagLines.length > 0 && (
                     <span className="px-2 py-0.5 rounded border border-purple-400/20 bg-purple-400/8 text-[10px] text-purple-200">
-                      {diagLines.slice(-1)[0].stage}
+                      {formatDiagStage(diagLines[diagLines.length - 1]?.stage)}
                     </span>
                   )}
                 </div>
