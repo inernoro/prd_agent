@@ -64,6 +64,17 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void DisabledStandbyOnProduction_CannotRotate()
+    {
+        // P2 回归（Codex review r3580192158）：无 CDS 标记但显式 ManageGlobalNotification=false
+        // 的 standby/canary 已退出共享状态归属，绝不可改写共享库密文（哪怕它有专属 primary）。
+        var config = Build(new() { ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false" });
+
+        DeploymentAuthority.IsAuthoritativeDeployment(config).ShouldBeFalse();
+        DeploymentAuthority.CanRotateSharedCiphertext(config).ShouldBeFalse();
+    }
+
+    [Fact]
     public void BranchPreviewTakingOverNotification_StillCannotRotate()
     {
         // P2 回归（Codex review r3580140302）：接管通知的开关绝不解锁密文重加密。

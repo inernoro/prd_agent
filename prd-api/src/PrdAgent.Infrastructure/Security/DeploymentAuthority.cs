@@ -47,15 +47,24 @@ public static class DeploymentAuthority
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
-    /// 与通知授权**独立且更严**：只有真正的生产部署（无 CDS 分支预览标记 CDS_PROJECT_ID）才允许。
+    /// 与通知授权**独立且更严**，同时满足两条才允许：
+    /// 1. 未被显式关停共享状态归属——`ManageGlobalNotification=false` 是「我不拥有任何共享状态」的
+    ///    总开关，standby/canary 用它退出时，连密文也不许动（P2，Codex review r3580192158）；
+    /// 2. 是真正的生产部署（无 CDS 分支预览标记 CDS_PROJECT_ID）。
     ///
-    /// 关键：`ManageGlobalNotification=true` 这个「接管通知」开关**绝不**解锁 rotation。否则一个
-    /// 异钥的 CDS 预览分支（自己的 ApiKeyCrypto:Secret ≠ 生产，且把生产密钥放进 LegacySecrets）
-    /// 一旦接管通知，就会把所有 legacy-decrypted 的共享库密文重加密成本分支的密钥，直接打哑生产——
-    /// 正是本 PR 要防的密文腐蚀场景。rotation 只认「是不是生产」这一硬事实，不认任何软开关。
+    /// 关键：`ManageGlobalNotification=true` 这个「接管通知」开关**绝不**解锁 preview 的 rotation
+    /// （落到第 2 条的 CDS 标记判定，preview 恒 false）。否则异钥 CDS 预览分支一旦接管通知，就会把
+    /// legacy-decrypted 的共享库密文重加密成本分支密钥、打哑生产——正是本 PR 要防的密文腐蚀场景。
+    /// 一句话：软开关只能**收紧**（false 一票否决），不能**放宽** rotation。
     /// </summary>
     public static bool CanRotateSharedCiphertext(IConfiguration configuration)
     {
+        // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决，连密文都不动。
+        var explicitFlag = configuration[ManageGlobalNotificationKey];
+        if (bool.TryParse(explicitFlag, out var forced) && !forced)
+            return false;
+
+        // 条件 2：rotation 只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         var cdsProjectId = ReadFirst(configuration, "CDS_PROJECT_ID");
         return string.IsNullOrWhiteSpace(cdsProjectId);
     }
