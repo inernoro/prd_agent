@@ -100,6 +100,13 @@
 
 **手机轨底座0/底座1 与 MobileAssetsPage 无 blocker,不依赖上述决策,可立即开工。** PC 轨的 focus/accent 与 design/* 需先定 Q1。
 
+## 6.2 demo 差距一步到位（2026-07-15,全栈）
+
+用户对比 mockup 与线上问"为什么 demo 好看太多",逐项归因修复:
+- **前端真锅(已修)**:宫格/档案/继续上次图标平色(from==to)→接回 AGENT_ACCENT 双色渐变 SSOT;字形 0.55→0.48+描边1.9;近7日 0 值降灰;继续上次次要行右侧只留时间;AppStoreGrid 补 badge 角标(更新中心未读恢复)。
+- **数据缺口(后端已补)**:`/api/mobile/stats` 新增 `daily` 按日序列(tzOffsetMinutes 按用户时区切日);`/api/home/recent-work` 新增 `progress/progressLabel`(仅缺陷状态机映射,其他类型 null 不造假)。前端近7日改 2x2 大数+MiniBars 七日柱,继续上次接进度条。
+- C# 本地无 SDK,推送后走 CDS 远端编译验证(cds-first-verification)。
+
 ## 6.1 真机反馈精修（2026-07-14，本地 Playwright file:// 验证)
 
 用户真机截图反馈,逐条修复并本地验证(截图取证):
