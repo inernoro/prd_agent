@@ -154,7 +154,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
         Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
-        Assert.Contains("TenantAccess.Filter(http, logFilter)", consoleProgram);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, logFilter)", consoleProgram);
         Assert.Contains("fb.Eq(\"ModelPoolId\", modelPoolId.Trim())", consoleProgram);
         Assert.Contains("action: \"pool.models.bulk_import\"", consoleProgram);
         Assert.Contains("action: wasExisting ? \"pool.model.update\" : \"pool.model.add\"", consoleProgram);
@@ -490,8 +490,8 @@ public class GatewayDataDomainGuardTests
         var overview = console[overviewStart..overviewEnd];
 
         Assert.Contains(overviewSignature, overview);
-        Assert.Contains("TenantAccess.Filter(http, fb.And(", overview);
-        Assert.Contains("serviceKeys.Find(TenantAccess.Filter(http))", overview);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, fb.And(", overview);
+        Assert.Contains("serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty))", overview);
         Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
         Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
         Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
@@ -3047,6 +3047,52 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("file: ./llmgw/serving/Dockerfile", workflow);
         Assert.Contains("context: ./llmgw/console-api", devCompose);
         Assert.Contains("context: ./llmgw/web", devCompose);
+    }
+
+    [Fact]
+    public void TenantHardening_EnforcesTeamReadScopeAndIdentityLifecycle()
+    {
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var user = ReadRepoFile("llmgw/console-api/Models/LlmGwUser.cs");
+        var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("FilterTeamScope", access);
+        Assert.Contains("UserSecurityVersionClaim", access);
+        Assert.Contains("user.SecurityVersion != securityVersion", access);
+        Assert.Contains("x.Status == \"active\"", access);
+        Assert.Contains("public long SecurityVersion", user);
+        Assert.Contains("TenantAccess.UserSecurityVersionClaim", jwt);
+
+        Assert.Contains("WILDCARD_SCOPE_DENIED", console);
+        Assert.Contains("WILDCARD_CONFIRMATION_REQUIRED", console);
+        Assert.Contains("service_key.create_wildcard", console);
+        Assert.Contains("TEAM_SCOPE_REQUIRED", console);
+        Assert.Contains("APP_CALLER_TEAM_MISMATCH", console);
+        Assert.Contains("membership.invalidate_sessions", console);
+        Assert.Contains("TryAcquireTenantOwnerMutationLockAsync", console);
+        Assert.Contains("MEMBERSHIP_VERSION_CONFLICT", console);
+        Assert.Contains("idempotentReplay = true", console);
+        Assert.Contains("invalidatedMemberships", console);
+        Assert.Contains("revokedServiceKeys", console);
+        Assert.Contains("disabledAppCallers", console);
+        Assert.Contains("RollbackTenantCreationAsync", console);
+        Assert.Contains("RollbackMemberCreationAsync", console);
+        Assert.True(
+            console.Split("TenantAccess.FilterTeamScope(http", StringSplitOptions.None).Length - 1 >= 10,
+            "日志、首页、协议覆盖、会话、详情和 appCaller 读取必须统一使用团队范围过滤");
+
+        Assert.Contains("service_key.tenant_inactive", runtime);
+        Assert.Contains("service_key.team_inactive", runtime);
+        Assert.Contains("service_key.owner_inactive", runtime);
+        Assert.Contains("service_key.owner_role_denied", runtime);
+        Assert.Contains("service_key.owner_team_denied", runtime);
+        Assert.Contains("service_key.app_caller_team_denied", runtime);
+        Assert.Contains("AppCallerStatusDecision.Reject(appCallerCode, requestType, \"team-disabled\")", endpoints);
+        Assert.Contains("app_caller.team_ownership_denied", endpoints);
+        Assert.Contains("GATEWAY_APP_CALLER_MISMATCH", endpoints);
     }
 
     private static string ReadRepoFile(string relativePath)

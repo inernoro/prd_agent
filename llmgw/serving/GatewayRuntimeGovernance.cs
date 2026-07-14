@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -85,6 +86,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             || !record.Enabled
             || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+
+        var lifecycleDenied = await CheckLifecycleAsync(record, appCallerCode, ct);
+        if (lifecycleDenied is not null)
+            return lifecycleDenied;
 
         if (!Matches(record.SourceSystem, sourceSystem)
             || !MatchesAny(record.AppCallerCodes, appCallerCode)
@@ -245,6 +250,156 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     private static bool IsDuplicateKey(MongoException exception)
         => exception is MongoCommandException { Code: 11000 or 11001 }
            || exception is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey };
+
+    private async Task<GatewayKeyAuthorization?> CheckLifecycleAsync(
+        GatewayServiceKeyRecord record,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        var tenantFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Status", "active"));
+        if (await _data.Database.GetCollection<BsonDocument>("llmgw_tenants")
+                .CountDocumentsAsync(tenantFilter, cancellationToken: ct) != 1)
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.tenant_inactive",
+                "tenant-inactive",
+                "GATEWAY_KEY_TENANT_INACTIVE",
+                "service key tenant is not active",
+                ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.CreatedByUserId))
+        {
+            var membershipFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+                Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+                Builders<BsonDocument>.Filter.Eq("Status", "active"));
+            var membership = await _data.Database.GetCollection<BsonDocument>("llmgw_memberships")
+                .Find(membershipFilter)
+                .Project(Builders<BsonDocument>.Projection.Include("Role").Include("TeamIds"))
+                .FirstOrDefaultAsync(ct);
+            if (membership is null)
+            {
+                return await RejectLifecycleAsync(
+                    record,
+                    "service_key.owner_inactive",
+                    "owner-membership-inactive",
+                    "GATEWAY_KEY_OWNER_INACTIVE",
+                    "service key owner membership is not active",
+                    ct);
+            }
+
+            var role = membership.TryGetValue("Role", out var roleValue) && roleValue.IsString
+                ? roleValue.AsString.Trim().ToLowerInvariant()
+                : null;
+            if (role is not ("owner" or "admin" or "developer"))
+            {
+                return await RejectLifecycleAsync(
+                    record,
+                    "service_key.owner_role_denied",
+                    "owner-role-denied",
+                    "GATEWAY_KEY_OWNER_ROLE_DENIED",
+                    "service key owner role no longer allows key usage",
+                    ct);
+            }
+
+            if (role == "developer")
+            {
+                if (string.IsNullOrWhiteSpace(record.TeamId))
+                {
+                    return await RejectLifecycleAsync(
+                        record,
+                        "service_key.owner_team_required",
+                        "owner-team-required",
+                        "GATEWAY_KEY_OWNER_TEAM_REQUIRED",
+                        "developer service key must be bound to a team",
+                        ct);
+                }
+
+                var activeTeamIds = membership.TryGetValue("TeamIds", out var teamIdsValue) && teamIdsValue.IsBsonArray
+                    ? teamIdsValue.AsBsonArray
+                        .Where(x => x.IsString)
+                        .Select(x => x.AsString)
+                    : Enumerable.Empty<string>();
+                if (!activeTeamIds.Contains(record.TeamId, StringComparer.Ordinal))
+                {
+                    return await RejectLifecycleAsync(
+                        record,
+                        "service_key.owner_team_denied",
+                        "owner-team-denied",
+                        "GATEWAY_KEY_OWNER_TEAM_DENIED",
+                        "service key owner no longer belongs to this team",
+                        ct);
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(record.TeamId))
+            return null;
+
+        var teamFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Status", "active"));
+        if (await _data.Database.GetCollection<BsonDocument>("llmgw_teams")
+                .CountDocumentsAsync(teamFilter, cancellationToken: ct) != 1)
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.team_inactive",
+                "team-inactive",
+                "GATEWAY_KEY_TEAM_INACTIVE",
+                "service key team is not active",
+                ct);
+        }
+
+        var normalizedAppCallerCode = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
+        var callers = await _data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+            .Find(Builders<GatewayAppCallerRecord>.Filter.And(
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, record.TenantId),
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, normalizedAppCallerCode)),
+                new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+            .ToListAsync(ct);
+        if (callers.Count > 0
+            && callers.Any(x => !string.Equals(x.TeamId, record.TeamId, StringComparison.Ordinal)))
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.app_caller_team_denied",
+                "app-caller-team-mismatch",
+                "GATEWAY_KEY_TEAM_MISMATCH",
+                "service key team does not own this appCaller",
+                ct);
+        }
+
+        return null;
+    }
+
+    private async Task<GatewayKeyAuthorization> RejectLifecycleAsync(
+        GatewayServiceKeyRecord record,
+        string action,
+        string reason,
+        string errorCode,
+        string detail,
+        CancellationToken ct)
+    {
+        await WriteKeyDeniedAuditAsync(record, action, reason, new BsonDocument
+        {
+            { "createdByUserId", record.CreatedByUserId },
+        }, ct);
+        return new(
+            false,
+            true,
+            403,
+            errorCode,
+            detail,
+            record.Id,
+            record.TenantId,
+            record.TeamId);
+    }
 
     private Task WriteKeyDeniedAuditAsync(
         GatewayServiceKeyRecord record,

@@ -987,6 +987,7 @@ public sealed class ServiceKeyCreateRequest
     public int? RateLimitPerMinute { get; set; }
     public string? RotatesKeyId { get; set; }
     public DateTime? ExpiresAt { get; set; }
+    public bool ConfirmWildcardRisk { get; set; }
 }
 
 public sealed class ServiceKeyItem

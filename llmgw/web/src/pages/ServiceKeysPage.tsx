@@ -26,6 +26,7 @@ export function ServiceKeysPage() {
   const [allowedCidrs, setAllowedCidrs] = useState('');
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
+  const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
 
   const load = useCallback(async () => {
@@ -56,6 +57,7 @@ export function ServiceKeysPage() {
       rateLimitPerMinute: rateLimitPerMinute ? Number(rateLimitPerMinute) : undefined,
       rotatesKeyId,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+      confirmWildcardRisk,
     });
     setCreating(false);
     if (!res.success) {
@@ -70,6 +72,7 @@ export function ServiceKeysPage() {
     setAllowedCidrs('');
     setRateLimitPerMinute('');
     setRotatesKeyId(undefined);
+    setConfirmWildcardRisk(false);
     setExpiresAt('');
     await load();
   };
@@ -103,11 +106,17 @@ export function ServiceKeysPage() {
     setAllowedCidrs(item.allowedCidrs.join(', '));
     setRateLimitPerMinute(item.rateLimitPerMinute ? String(item.rateLimitPerMinute) : '');
     setRotatesKeyId(item.id);
+    setConfirmWildcardRisk(false);
     setShowCreate(true);
   };
 
+  const usesWildcard = sourceSystem.trim() === '*'
+    || splitValues(appCallerCodes).includes('*')
+    || splitValues(ingressProtocols).includes('*')
+    || splitValues(scopes).includes('*');
   const canSubmit = name.trim() && sourceSystem.trim() && splitValues(appCallerCodes).length
-    && splitValues(ingressProtocols).length && splitValues(scopes).length;
+    && splitValues(ingressProtocols).length && splitValues(scopes).length
+    && (!usesWildcard || confirmWildcardRisk);
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -153,6 +162,12 @@ export function ServiceKeysPage() {
           <Field label="来源 CIDR（可选）" value={allowedCidrs} onChange={setAllowedCidrs} placeholder="10.20.0.0/16, 2001:db8::/32" />
           <Field label="每分钟上限（可选）" value={rateLimitPerMinute} onChange={setRateLimitPerMinute} placeholder="例如 60" type="number" />
           <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
+          {usesWildcard ? (
+            <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
+              <input type="checkbox" checked={confirmWildcardRisk} onChange={(event) => setConfirmWildcardRisk(event.target.checked)} />
+              <span><strong>确认创建通配密钥</strong><br />该密钥的来源、appCaller、协议或 scope 含通配符，权限范围明显扩大。Developer 即使确认也不能创建。</span>
+            </label>
+          ) : null}
           {rotatesKeyId ? <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 12 }}>正在轮换 {rotatesKeyId}。新旧密钥会并行有效，完成客户端切换后再撤销旧密钥。</div> : null}
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
             <Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '创建密钥'}</Button>
