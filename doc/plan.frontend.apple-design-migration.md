@@ -100,7 +100,10 @@
 
 **手机轨底座0/底座1 与 MobileAssetsPage 无 blocker,不依赖上述决策,可立即开工。** PC 轨的 focus/accent 与 design/* 需先定 Q1。
 
-## 6. 预览
+## 6. 预览与验收状态
+
+**验收诚实声明(2026-07-14)**:本轮所有改动均 **tsc + eslint + themeHardcodeRatchet 全绿**,部署 **HTTP 200 已就绪**。但**浏览器双主题目视验收未跑通**——本环境 headless chromium 无法经 agent 代理访问预览域名(curl 可达 200、浏览器被 CONNECTION_RESET,属出口限制),且移动首页需登录态。因此下列各行为 **已部署 + 静态验证绿**,**尚未**真人/自动目视验收。需真人在预览域名(移动视口、登录后)确认双主题观感,方可从「已部署」升「已验收」。
+
 
 底座0/底座1/MobileAssetsPage(已部署,待双主题目视验收,需 <768px 移动视口):
 - 移动百宝箱(AppStoreShelf/Pill/轮播小点 + "更多"弹层): https://apple-design-audit-m5r28u-claude-prd-agent.miduo.org/ai-toolbox
