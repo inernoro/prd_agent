@@ -17,12 +17,12 @@
 | **手机·底座0a** appStore.tsx 双皮肤破口 | 90 | 已部署 | 无 | 预览域名双主题目视验收(移动百宝箱 shelf/pill/轮播) | tsc+lint 绿;预览见文末 |
 | **手机·底座0b** MobileBottomSheet P0 | 90 | 已部署 | 无 | 预览域名浅色下开任意"更多"弹层验收(sheet 不再深底) | tsc+lint 绿;预览见文末 |
 | **手机·底座1** 补 4 缺失原语 + token | 90 | 已部署 | 无 | 已被 MobileHomePage 消费,随首页 `/` 一并双主题验收 | tsc+lint 绿 |
-| **手机·底座2** 玻璃 TabBar + chrome 收尾 | 0 | 未开始 | 无 | MobileTabBar 金色→AS_COLOR.blue、字号圆角收敛、T 对象派生 AS token;Fab/OverflowMenu/CompatGate/Segmented 补双皮肤 | 待办 |
+| **手机·底座2** 玻璃 TabBar 激活色 | 85 | 已部署 | 无 | 预览验收;chrome 收尾(Fab/OverflowMenu/CompatGate/Segmented)未做 | 金→蓝 tsc+lint 绿 |
 | **手机·页面** MobileAssetsPage(P0 白底浮暗卡) | 90 | 已部署 | 无 | 预览域名浅色下开"资产"页验收(卡片/tab/占位不再隐形) | tsc+lint+ratchet 绿;预览见文末 |
 | **手机·页面** MobileHomePage 重构 Today(主入口) | 90 | 已部署 | 无 | 预览域名 `/` 双主题验收(整页 App Store Today 观感) | tsc+lint+ratchet 绿;预览见文末 |
 | **手机·页面** MobileToolboxView 魔数收敛 | 0 | 未开始 | 无 | 字号 28/16/12/10→AS_TYPE;shared.ts accent→AS_COLOR iOS 色 | 待办 |
-| **手机·页面** MobileProfilePage 双皮肤补全 | 0 | 未开始 | 无 | 消除 active:bg-white/[0.03](:127/:161)、INFRA_COLORS(:21)→AS_COLOR | 待办 |
-| **手机·页面** MobileNotificationsPage | 0 | 未开始 | 无 | notificationTone 四档(:16-21)→AS_COLOR 语义色 | 待办 |
+| **手机·页面** MobileProfilePage 双皮肤补全 | 90 | 已部署 | 无 | 预览域名 `/profile` 双主题验收 | tsc+lint+ratchet 绿 |
+| **手机·页面** MobileNotificationsPage | 90 | 已部署 | 无 | 预览域名 `/notifications` 双主题验收 | tsc+lint+ratchet 绿 |
 | **手机·页面** MobileVisualAgentEditor token 迁移 | 0 | 未开始 | 无 | 引 hook,背景 #101014(:588)→AS_COLOR.bg,强调 rgba(120,120,255)→blue | 待办 |
 | **PC·底座** tokens.css 新增 --ios-* 语义层 | 0 | 未开始 | 无 | :root + [data-theme=light] 双块各加 --ios-blue/green/... (值取 AS_COLOR/AS_COLOR_LIGHT) | 待办 |
 | **PC·底座** --font-body 改 SF-first | 0 | 未开始 | 无(landing 保留 Space Grotesk 例外) | tokens.css:78 SF 打头;base.css 加 body{font-family:var(--font-body)} | 待办 |
