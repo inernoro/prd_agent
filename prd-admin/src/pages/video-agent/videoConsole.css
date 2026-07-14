@@ -133,9 +133,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   background-color: var(--video-page);
-  background-image: url('/textures/noise.png');
-  background-size: 420px 420px;
-  background-blend-mode: soft-light;
 }
 
 .video-create-stage {
