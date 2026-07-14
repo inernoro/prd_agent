@@ -975,25 +975,11 @@
     filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
   }
 
-  /* 小尺寸清晰档:切面永远满亮度(禁一切透明度波动=不发虚),但保留"活"——
-     brand 待机是一道**连续巡游**的高光:每个切面亮度做平滑正弦起伏,
-     相邻切面按 --gi 错相位,任意时刻都有一道亮脊沿 12 切面绕圈,
-     不再是"每 4.8s 才闪一下、其余时间发呆"(2026-07-14 用户反馈
-     "左上角 icon 不动,死气沉沉")。只调 brightness、opacity 恒为 1,
-     legibility 底线不破。loader 的组装循环不受此档压制。 */
-  .cds-gem--simple .cds-gem-facet {
+  /* 小尺寸清晰档:**非品牌** simple 切面永远满亮度(状态指示器不发虚)。
+     品牌切面从这条锁定里排除 —— 它要走下面的 facetGlow 待机动效
+     (透明度 0.72↔1 轮流起伏,用户指定的 cdsgemcolors 动态样式)。 */
+  .cds-gem--simple:not(.cds-gem--brand) .cds-gem-facet {
     opacity: 1 !important;
-  }
-
-  .cds-gem--simple.cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-glint 3.4s ease-in-out infinite;
-    animation-delay: calc(var(--gi, 0) * -0.28s);
-  }
-
-  .cds-gem--simple.cds-gem--brand:hover .cds-gem-facet,
-  .cds-rail-avatar:hover .cds-gem--simple.cds-gem--brand .cds-gem-facet {
-    animation-duration: 1.7s;
-    animation-delay: calc(var(--gi, 0) * -0.14s);
   }
 
   .cds-gem-facet {
@@ -1001,40 +987,21 @@
     transform-box: fill-box;
   }
 
-  /* 品牌:宝石**持续缓转**(几何运动,一眼看得出在动)+ 轻微呼吸缩放,
-     叠加切面巡游高光(见 cds-gem--simple.cds-gem--brand 的 glint)。
-     hover 时转速加快。这是"动态版"的核心——不再只靠亮度闪烁。 */
-  .cds-gem--brand {
-    animation: cds-gem-brand-orbit 12s linear infinite;
+  /* 品牌待机(用户指定的 cdsgemcolors「facetGlow」动态样式):每个切面透明度
+     在 0.72↔1 之间缓慢起伏,按 --gi 错相位 → 十二切面轮流点亮,像宝石内部
+     有光流转。这是几何层面的"活",一眼看得出在动(替代之前太隐晦的亮度闪烁
+     和过头的整体旋转)。floor 0.72 保证小尺寸依然清晰。 */
+  .cds-gem--brand .cds-gem-facet {
+    animation: cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
+    animation-delay: calc(var(--gi, 0) * 0.16s);
   }
 
-  @keyframes cds-gem-brand-orbit {
-    0% {
-      transform: rotate(0deg) scale(1);
-    }
-    50% {
-      transform: rotate(180deg) scale(1.05);
-    }
-    100% {
-      transform: rotate(360deg) scale(1);
-    }
-  }
-
+  /* hover:整颗宝石轻搏一下(pulseOnce),给一点即时反馈。 */
   .cds-topbar-brand:hover .cds-gem--brand,
   .cds-rail-avatar:hover .cds-gem--brand,
   .cdsh-brand:hover .cds-gem--brand,
   .cds-gem--brand:hover {
-    animation-duration: 3.5s;
-  }
-
-  .cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-ripple 5.2s ease-in-out infinite;
-    animation-delay: calc(var(--gi, 0) * 0.12s);
-  }
-
-  .cds-gem--brand:hover .cds-gem-facet {
-    animation-duration: 1.3s;
-    animation-delay: calc(var(--gi, 0) * 0.045s);
+    animation: cds-gem-hover-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   /* 一次性逐面组装入场(登录卡/冷启动) */
@@ -1138,16 +1105,26 @@
     }
   }
 
-  /* simple 档专用琉光:只调 brightness(永不低于 1)。平滑正弦起伏 +
-     各切面错相位(见 --gi 负延迟)= 一道亮脊连续绕圈,任意暂停帧
-     都是满亮度的清晰星形,但整体从不静止(治"死气沉沉")。 */
-  @keyframes cds-gem-glint {
-    0%,
-    100% {
-      filter: brightness(1);
+  /* 品牌待机:切面透明度起伏(cdsgemcolors facetGlow)。错相位 → 轮流点亮。 */
+  @keyframes cds-gem-facet-glow {
+    from {
+      opacity: 0.72;
     }
-    50% {
-      filter: brightness(1.42) saturate(1.1);
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* 品牌 hover:整颗宝石轻搏一下(cdsgemcolors pulseOnce)。 */
+  @keyframes cds-gem-hover-pulse {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.08);
+    }
+    100% {
+      transform: scale(1);
     }
   }
 
