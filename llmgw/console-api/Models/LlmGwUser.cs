@@ -33,6 +33,11 @@ public class LlmGwUser
     /// </summary>
     public bool PasswordChangedByUser { get; set; }
 
+    /// <summary>
+    /// 用户安全会话版本。改密、停用或强制退出时递增，使已经签发的 JWT 立即失效。
+    /// </summary>
+    public long SecurityVersion { get; set; } = 1;
+
     public string[] Scopes { get; set; } = Array.Empty<string>();
 
     /// <summary>

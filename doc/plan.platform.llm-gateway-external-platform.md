@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.6 | **日期**：2026-07-14 | **状态**：已完成
+> **版本**：v1.9 | **日期**：2026-07-14 | **状态**：补强批次进行中
 
 ## 1. 目标
 
@@ -56,6 +56,98 @@ PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `
 | 临时生产权限清理 | 已完成 | 临时控制台用户、membership、service key 与 token 均已停用或删除；临时 CDS 目标 `rt_c00f704bfee3` 已恢复原发布命令并设为禁用，常规生产目标保持启用；没有重置任何既有用户密码 |
 
 OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2026-07-13T14:09Z` 至 `14:10Z`，早于本次生产发布，且当前生产租户在相同时间窗没有对应 Gateway 日志，因此不能作为上线后回归证据。生产验收严格遵守一次真实 chat 上限：唯一真实请求实际路由到硅基流动，其余归因验证使用假上游和只读日志，没有追加第二次付费调用。后续首条自然命中 OpenRouter 的新请求应显示 `G-${appCallerCode}`；历史记录不会被改写。
+
+### 1.3 低认知 Agent 复测与真实治理缺口
+
+2026-07-14 使用一个不继承项目背景的独立 Agent，从公网入口模拟“首次接入 -> 理解租户 -> 获取 key -> 选择 OpenAI 协议 -> 安全测试 -> 复制 curl -> 定位请求和费用”。Agent 未使用生产账号、真实 key 或付费模型。公网首页和 health 均返回 200，生产 Gateway commit 为 `f6a0299b2845f125a28a160c8cace645f9b0e35f`。
+
+| 发现 | 事实 | 结论 |
+|---|---|---|
+| 公开首次接入 | 未登录用户只能看到账号密码登录，没有申请账号、加入首个租户或联系管理员的入口 | 完整外部自助评分 4/10；预置账号和成员关系后约 8/10 |
+| Quickstart key | key 创建与 Quickstart 分页；创建后不携带 appCaller；安全测试固定调用 `gw-native` 的 `route-self-test` | 仅授权 OpenAI 的 key 会在安全测试时因缺少 `gw-native` 或 `route:read` 返回 403 |
+| 团队边界 | service key 创建只校验 TeamId 属于当前租户，没有校验 appCaller 是否属于同一 TeamId；serving 治理查询也只按 TenantId + appCaller + requestType | 团队 A 的 key 可被配置为调用团队 B 的 appCaller，属于真实缺口 |
+| Developer 权限 | Developer 可以在自己创建的 key 中使用 `*` appCaller、协议或 scope | “只能管理自己的 key”不等于“只能创建最小权限 key”，需要限制通配符 |
+| 成员生命周期 | membership disabled 会让控制台 session 失效，但不会自动处理该成员创建的长期 M2M key | 离职或移出租户后，历史 key 仍可能继续调用，需要显式所有权转移或撤销策略 |
+| 成功请求归因 | scoped key 授权对象有 KeyId，但请求上下文和请求日志只保留 TenantId、TeamId、SourceSystem、appCaller，没有 ServiceKeyId | 当前不能精确回答“哪一把 key 发起了这次成功请求” |
+| 费用 | 当前只保存 token、池成员价格快照、原币种估算和 USD 明确值，没有供应商账单金额、供应商请求 ID 和对账状态 | 现状是可复算的 estimated cost，不是 actual 账单双向对账 |
+
+这些发现不推翻 PR-1 至 PR-5 的租户隔离结论：请求自报 TenantId 仍会被服务端 key/session 解析结果覆盖，跨租户读写、日志、预算、限流、取消和执行状态已有 TenantId 防线。补强重点是租户内部的 Team 边界、工作负载身份归因、身份生命周期和首次接入闭环。
+
+### 1.4 后续五个有限 PR
+
+后续补强继续一次只做一个 PR，不混回已经完成的 PR-1 至 PR-5，也不重做 full-http、模型迁移、模型池路由算法或发布 gate。
+
+| PR | 范围 | 独立完成门 |
+|---|---|---|
+| PR-6 | Team/service key 对抗安全、会话与组织生命周期 | 团队 A 用户和 key 读取或调用团队 B 资源拒绝；Developer 通配 key 拒绝；Tenant、Team 或 Membership 停用后关联调用立即拒绝；改密后旧 token 失效；租户和新用户创建失败不留半成品；所有反例先红后绿 |
+| PR-7 | 工作负载身份、密钥轮换与成功请求归因 | service key 增加 environment/clientCode；成功请求日志只写 ServiceKeyId、clientCode、key prefix 快照，不写 key/hash；Activity 可筛选调用身份；轮换流程明确区分新 key 已创建、客户端已切换、旧 key 已撤销 |
+| PR-8 | Agent-first 一页式 Quickstart | 同页创建 appCaller 和一次性 key；测试使用所选协议的假上游或 dry-run；复制 curl、环境变量和 Agent Skill 接入包；直接跳到 requestId 日志 |
+| PR-9 | 程序池类型、默认池原子切换与 append-only 默认池 | 类型注册表为唯一来源；租户初始化幂等创建默认池；默认池切换具备原子性且不能直接清空唯一默认池；平台模型只追加兼容且不存在的成员，不覆盖、不删除、不重排；特殊 appCaller 使用专属池 |
+| PR-10 | 费用对账合同、环境独立 key 灰度与 legacy key 收口 | 内部复算与供应商账单分层；unknown 保持 unknown；测试与正式的 MAP runtime、release gate、canary、每个外部平台各用独立 key；legacy shared key 具备调用清单、截止时间和告警，双 key 观测后撤销 |
+
+每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
+
+### 1.4.1 对抗安全执行账本
+
+2026-07-14 在已有跨租户验收之上增加团队内部、身份生命周期、并发一致性和失败原子性反例。以下“确认缺陷”来自静态控制流和数据流审计；在对应 PR 中必须先写失败测试复现，再修改运行时代码。未完成动态复现前不得把静态结论升级为生产事故结论。
+
+| ID | 风险 | 静态事实 | 归属 PR | 验收断言 |
+|---|---|---|---|---|
+| ADV-01 | Team A 用户读取 Team B 日志或请求正文 | Developer、Viewer 拥有日志与请求正文权限，公共数据过滤仅包含 TenantId，没有使用会话 TeamIds | PR-6 | 非 Owner/Admin 读取非所属 TeamId 的列表、详情、汇总、会话和元信息均返回空或 404 |
+| ADV-02 | Team A key 调用 Team B appCaller | key 创建只校验 TeamId 属于租户，appCaller 治理只按 TenantId、AppCallerCode、RequestType 查询 | PR-6 | key.TeamId、appCaller.TeamId、运行时 TeamId 任一不一致均返回 403，并写 tenant-scoped 拒绝审计 |
+| ADV-03 | Tenant、Team 或 Membership 停用后历史 key 继续调用 | scoped key 鉴权只复查 key Enabled、过期时间和 scope，没有复查租户、团队或创建者成员状态 | PR-6 | 三类主体任一停用后，关联 key 下一次请求立即拒绝；Owner 显式转移所有权的 key 除外 |
+| ADV-04 | Developer 创建通配超级 key | appCaller、协议和 scope 当前允许 `*`，Developer 没有额外最小权限约束 | PR-6 | Developer 使用任一 `*` 创建返回 403；Owner/Admin 必须二次确认且写高风险审计 |
+| ADV-05 | 改密后旧 JWT 继续有效 | JWT 有效期 12 小时，token 只携带 Membership Version，改密不提升用户安全版本 | PR-6 | 改密、停用用户和强制退出后，全部旧 token 下一次请求返回 401；其他用户不受影响 |
+| ADV-06 | 创建租户或成员中断留下半成品 | tenant、team、membership、user 当前分多次写入，只对部分 DuplicateKey 路径补偿 | PR-6 | 对每个可捕获写失败执行补偿后，租户、团队、成员和用户引用要么全部存在，要么全部不存在；按 slug 或成员目标重复提交重放既有结果。进程硬退出不伪称事务原子，进入 `2026-07-14-tenant-provision-crash-consistency` 债务，在开放匿名注册前用 pending 状态机和修复器偿还 |
+| ADV-07 | 轮换 key 后旧 key 仍被误认为已撤销 | RotatesKeyId 当前只记录关联，不改变旧 key 状态 | PR-7 | UI 和 API 返回明确轮换阶段；只有完成撤销后才显示“轮换完成”，旧 key 随后返回 401 |
+| ADV-08 | 成功请求无法定位具体 key | 授权结果包含 ServiceKeyId，但成功请求日志没有持久化该调用身份 | PR-7 | 每条成功和失败请求均可按 TenantId、TeamId、ServiceKeyId、clientCode 查询；不保存明文或 hash |
+| ADV-09 | 两个管理员并发切换默认池得到零默认池 | 当前流程分别执行“本池置默认”和“清其他池”，交错执行可互相清空 | PR-9 | 至少 100 轮并发切换后，每个 TenantId + ModelType 恰好一个默认池；失败不改变旧默认 |
+| ADV-10 | 通用更新直接取消唯一默认池 | 通用模型池更新允许直接写 `IsDefaultForType=false` | PR-9 | 取消唯一默认池返回 409；只能通过另一个具备可用成员的池完成替换 |
+| ADV-11 | legacy shared key 泄漏后进入内部租户 | legacy key 仍直接映射 internal tenant，不具备 scoped key 的团队和工作负载身份 | PR-10 | 建立 legacy 调用方清单、告警与截止时间；外部来源永远不能使用 legacy key；收口后 legacy key 返回 401 |
+
+PR-6 的最小测试矩阵固定为两个租户、每租户两个团队、每团队两个用户和两把 key。测试必须同时覆盖列表、详情、汇总、写入、调用、停用、改密和失败注入，禁止只验证正常 CRUD。PR-7 至 PR-10 复用同一矩阵和假上游，不增加批量付费调用。
+
+PR-6 的 owner 变更租约覆盖常规并发和版本冲突，但不把“进程暂停超过租约后恢复”宣称为已解决；该多副本 fencing 边界记录在 `2026-07-14-owner-mutation-lease-fencing`，必须在开放外部组织自主管理前偿还。
+
+### 1.5 目标架构与影响边界
+
+```text
+Agent / 外部平台 / MAP workload
+  -> environment + clientCode + tenant-scoped service key
+  -> 四协议适配层（GW Native / OpenAI / Claude / Gemini）
+  -> 服务端解析 TenantId / TeamId / ServiceKeyId
+  -> appCaller 治理（状态 / RBAC / 限流 / 预算 / PromptPolicy）
+  -> 程序池类型注册表
+       -> 默认池：租户初始化时幂等存在
+       -> 专属池：特殊 appCaller 显式绑定
+  -> 池成员（只追加兼容模型，不覆盖既有成员配置）
+  -> GW 平台模型 / Exchange
+  -> 供应商
+  -> 请求日志（tenant + key identity + route + token + price snapshot）
+  -> 费用层（estimated 复算 / provider actual / reconciliation）
+```
+
+新平台提供的模型先进入租户范围内的平台模型目录，再按能力匹配追加到已存在的默认池或专属池。模型目录、池和 appCaller 是引用关系，不复制模型，也不改写 MAP 已有模型标识。没有匹配类型、模型不可用、价格币种不明或池不存在时均保持原状，不自动创造业务语义。
+
+### 1.6 费用双向校验合同
+
+费用分三层，不能把三者混成一个金额：
+
+1. `estimated`：使用请求完成时保存的 input/output/cache token 与价格快照复算；价格不完整时为 unknown。
+2. `provider actual`：供应商响应或账单导入的实际金额，必须同时记录 provider request id、币种和账单时间窗。
+3. `reconciled`：以 TenantId、ServiceKeyId、provider、provider request id、模型和时间窗关联 estimated 与 actual，记录差额和状态，不覆盖原始值。
+
+新增字段只保存非敏感证据：`ServiceKeyId`、`ClientCode`、`Environment`、`ProviderRequestId`、`ProviderReportedCost`、`ProviderCostCurrency`、`PriceSnapshotHash`、`FxSnapshotId`、`ReconciliationStatus`、`ReconciliationDelta`。没有供应商金额时状态为 `actual-unavailable`；没有汇率快照时不同币种禁止计算差额。供应商不提供逐请求费用时，只能做账单时间窗汇总对账，页面必须明确粒度。
+
+### 1.7 可复用经验
+
+- 身份、业务用途和路由必须分开：key 表示“谁在调用”，appCaller 表示“为什么调用”，模型池表示“去哪里调用”。禁止再用一个字段承担三种语义。
+- 安全自测必须使用与用户所选协议完全一致的授权合同；不能让 OpenAI key 隐式依赖 GW Native scope。
+- 所有首次接入必须形成零费用闭环：生成身份、测试鉴权、产生 test-mode 记录、跳到日志；真实付费请求是可选下一步。
+- 默认配置只能幂等补齐和 append-only 增强；已有池成员的优先级、价格、协议和参数能力均不得被批量导入覆盖。
+- 金额先标来源再展示数值。estimated、actual、unknown 和 reconciled 是四种状态，不是四个 UI 文案。
+- 生产密钥永远先增加、后观测、再撤销；不原地覆盖，不重置用户密码，不把 key 写入仓库、日志、命令行参数或聊天。
+- 外部易用性必须由无背景 Agent 实测；“登录后能用”不能替代“从公开入口能开始”。
 
 执行期间保持以下边界：
 

@@ -9,8 +9,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
@@ -34,6 +37,72 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayKeyGateContractTests
 {
     private const string GatewayKey = "correct-gateway-key";
+
+    [Fact]
+    public async Task ConcurrentTeamDiscovery_OnlyOwnerTeamReachesUpstream()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_team_claim_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            await callers.Indexes.CreateOneAsync(new CreateIndexModel<GatewayAppCallerRecord>(
+                Builders<GatewayAppCallerRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType),
+                new CreateIndexOptions
+                {
+                    Unique = true,
+                    Collation = GatewayAppCallerIdentity.Collation,
+                }));
+            await data.Database.GetCollection<BsonDocument>("llmgw_teams").InsertManyAsync(
+            [
+                new BsonDocument { { "_id", "team-a" }, { "TenantId", "tenant-a" }, { "Status", "active" } },
+                new BsonDocument { { "_id", "team-b" }, { "TenantId", "tenant-a" }, { "Status", "active" } },
+            ]);
+            var gateway = new ConcurrentCountingGateway();
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: new TeamScopedTestAuthorizer(),
+                gatewayData: data);
+            await app.StartAsync();
+            var http = app.GetTestClient();
+
+            static HttpRequestMessage Request(string key) => new(HttpMethod.Post, "/gw/v1/send")
+            {
+                Headers = { { "X-Gateway-Key", key } },
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "shared-caller::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                    Context = new { SourceSystem = "map" },
+                }),
+            };
+
+            var responses = await Task.WhenAll(
+                http.SendAsync(Request("team-a-key")),
+                http.SendAsync(Request("team-b-key")));
+
+            responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(1);
+            responses.Count(x => x.StatusCode == HttpStatusCode.Forbidden).ShouldBe(1);
+            gateway.SendCount.ShouldBe(1);
+            var caller = await callers.Find(_ => true).SingleAsync();
+            caller.TeamId.ShouldBe(responses[0].StatusCode == HttpStatusCode.OK ? "team-a" : "team-b");
+            var deniedAudits = await data.Database.GetCollection<BsonDocument>("llmgw_operation_audits")
+                .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "app_caller.team_ownership_denied"));
+            deniedAudits.ShouldBe(1);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
 
     /// <summary>
     /// 起一个 in-process TestServer host 住 serving 端点，上游用永不被触达的 stub
@@ -2207,7 +2276,8 @@ public class GatewayKeyGateContractTests
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
-        ILLMRequestContextAccessor? contextAccessor = null)
+        ILLMRequestContextAccessor? contextAccessor = null,
+        LlmGatewayDataContext? gatewayData = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -2221,6 +2291,8 @@ public class GatewayKeyGateContractTests
             builder.Services.AddSingleton(readinessProbe);
         if (keyAuthorizer != null)
             builder.Services.AddSingleton(keyAuthorizer);
+        if (gatewayData != null)
+            builder.Services.AddSingleton(gatewayData);
 
         var app = builder.Build();
         var pascalJson = new JsonSerializerOptions
@@ -2275,6 +2347,59 @@ public class GatewayKeyGateContractTests
                 "capturing-key",
                 "tenant-test"));
         }
+    }
+
+    private sealed class TeamScopedTestAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(
+            string providedKey,
+            string legacySharedKey,
+            string sourceSystem,
+            string appCallerCode,
+            string ingressProtocol,
+            string requiredScope,
+            System.Net.IPAddress? remoteIp,
+            CancellationToken ct)
+        {
+            var teamId = providedKey switch
+            {
+                "team-a-key" => "team-a",
+                "team-b-key" => "team-b",
+                _ => null,
+            };
+            return Task.FromResult(new GatewayKeyAuthorization(
+                teamId is not null,
+                true,
+                teamId is null ? 401 : 200,
+                teamId is null ? "GATEWAY_KEY_INVALID" : string.Empty,
+                teamId is null ? "invalid" : "allowed",
+                providedKey,
+                "tenant-a",
+                teamId));
+        }
+    }
+
+    private sealed class ConcurrentCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        private int _sendCount;
+        public int SendCount => _sendCount;
+
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _sendCount);
+            return Task.FromResult(GatewayResponse.Ok("ok", new GatewayModelResolution { Success = true, ActualModel = "fake-model" }));
+        }
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 
     private sealed class CancellableGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway

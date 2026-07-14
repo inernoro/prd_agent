@@ -45,6 +45,7 @@ public static class TenantAccess
     public const string RoleClaim = "tenant_role";
     public const string MembershipClaim = "membership_id";
     public const string MembershipVersionClaim = "membership_version";
+    public const string UserSecurityVersionClaim = "user_security_version";
 
     public static TenantAccessContext GetRequired(HttpContext http)
         => http.Items.TryGetValue(ItemKey, out var value) && value is TenantAccessContext context
@@ -62,6 +63,19 @@ public static class TenantAccess
             Builders<T>.Filter.Eq("TenantId", GetRequired(http).TenantId),
             filter);
 
+    public static FilterDefinition<BsonDocument> FilterTeamScope(
+        HttpContext http,
+        FilterDefinition<BsonDocument> filter)
+    {
+        var access = GetRequired(http);
+        var tenantFilter = Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId);
+        if (access.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin or LlmGwTenantRoles.Billing)
+            return Builders<BsonDocument>.Filter.And(tenantFilter, filter);
+
+        var teamFilter = Builders<BsonDocument>.Filter.In("TeamId", access.TeamIds);
+        return Builders<BsonDocument>.Filter.And(tenantFilter, teamFilter, filter);
+    }
+
     public static bool HasPermission(ClaimsPrincipal user, string permission)
     {
         var role = user.FindFirst(RoleClaim)?.Value ?? string.Empty;
@@ -70,8 +84,10 @@ public static class TenantAccess
 
     public static async Task<TenantAccessContext?> ResolveAsync(
         HttpContext http,
+        IMongoCollection<LlmGwUser> users,
         IMongoCollection<LlmGwMembership> memberships,
         IMongoCollection<LlmGwTenant> tenants,
+        IMongoCollection<LlmGwTeam> teams,
         CancellationToken ct)
     {
         var userId = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
@@ -80,11 +96,18 @@ public static class TenantAccess
         var tenantId = http.User.FindFirst(TenantClaim)?.Value;
         var membershipId = http.User.FindFirst(MembershipClaim)?.Value;
         var versionText = http.User.FindFirst(MembershipVersionClaim)?.Value;
+        var securityVersionText = http.User.FindFirst(UserSecurityVersionClaim)?.Value;
         if (string.IsNullOrWhiteSpace(userId)
             || string.IsNullOrWhiteSpace(username)
             || string.IsNullOrWhiteSpace(tenantId)
             || string.IsNullOrWhiteSpace(membershipId)
-            || !long.TryParse(versionText, out var membershipVersion))
+            || !long.TryParse(versionText, out var membershipVersion)
+            || !long.TryParse(securityVersionText, out var securityVersion))
+            return null;
+
+
+        var user = await users.Find(x => x.Id == userId && x.IsActive).FirstOrDefaultAsync(ct);
+        if (user is null || user.SecurityVersion != securityVersion)
             return null;
 
         var membership = await memberships.Find(x =>
@@ -101,6 +124,14 @@ public static class TenantAccess
         var tenant = await tenants.Find(x => x.Id == tenantId && x.Status == "active").FirstOrDefaultAsync(ct);
         if (tenant is null) return null;
 
+        var activeTeamIds = membership.TeamIds.Count == 0
+            ? new List<string>()
+            : await teams.Find(x => x.TenantId == tenantId
+                    && membership.TeamIds.Contains(x.Id)
+                    && x.Status == "active")
+                .Project(x => x.Id)
+                .ToListAsync(ct);
+
         return new TenantAccessContext(
             tenant.Id,
             tenant.Name,
@@ -110,6 +141,6 @@ public static class TenantAccess
             membership.Id,
             membership.Version,
             membership.Role,
-            membership.TeamIds);
+            activeTeamIds);
     }
 }

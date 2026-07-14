@@ -829,6 +829,7 @@ export type CreateServiceKeyRequest = {
   rateLimitPerMinute?: number;
   rotatesKeyId?: string;
   expiresAt?: string;
+  confirmWildcardRisk?: boolean;
 };
 
 export type CreatedServiceKey = CreateServiceKeyRequest & {

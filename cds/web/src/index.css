@@ -2850,3 +2850,20 @@
     animation: none;
   }
 }
+
+/* ── 分支卡片浅色模式对比增强（2026-07-14，含 Codex P2「勿吞状态样式」修复）──
+   白卡（--surface-raised: 100%）在近白页面上、配发丝边框几乎糊在一起。给普通卡加
+   「更实的边缘 + 轻投影」把卡片抬起来(参考 Linear / GitHub 浅色卡片):整套增强只用
+   一条 box-shadow(inset ring 当更实的边 + 外投影当抬升),不碰 border-color(角色/异常
+   卡的彩色边框因此不受影响)。
+   Codex P2 修复要点:本项目 Tailwind 输出**不带 @layer**(全扁平),故靠层级让状态
+   utility 覆盖行不通——本规则选择器 (0,2,0) 会盖过 `shadow-[...]`/`ring-*` (0,1,0)。
+   因此用 :not() 把「带 box-shadow 的状态卡」显式排除掉:AI 活跃(ring+发光)、选中、
+   忙碌——这些卡不吃本投影,保留各自的状态阴影/光环。角色卡(main 等)只改 border/bg
+   不带 box-shadow,可安全叠加本 ring。深色模式完全不变,不改任何全局 token(零外溢)。 */
+[data-theme='light'] .cds-branch-card:not(.cds-ai-active-card):not(.cds-card-selected):not(.cds-branch-card-busy) {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--hairline-strong)),
+    0 1px 2px hsl(24 20% 15% / 0.06),
+    0 6px 16px -8px hsl(24 20% 15% / 0.12);
+}

@@ -39,6 +39,7 @@ public sealed class GwJwt
             new(JwtRegisteredClaimNames.Sub, user.Id),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
             new(ClaimTypes.Name, user.Username),
+            new(TenantAccess.UserSecurityVersionClaim, user.SecurityVersion.ToString()),
         };
 
         // 首登强制改密：带 mcp=1 的 token 只能调 /gw/auth/change-password，服务端策略门（LogsRead）拒绝
