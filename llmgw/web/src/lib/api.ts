@@ -67,6 +67,10 @@ import type {
   ServiceKeyItem,
   CreateServiceKeyRequest,
   CreatedServiceKey,
+  CostReconciliationSummary,
+  CostReconciliationImportRequest,
+  CostReconciliationItem,
+  LegacyKeyCutoverData,
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
@@ -344,6 +348,24 @@ export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; 
 }
 export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
   return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+}
+export function getCostReconciliations(params?: { from?: string; to?: string }): Promise<ApiResponse<CostReconciliationSummary>> {
+  return apiRequest<CostReconciliationSummary>('/cost-reconciliations', { query: params });
+}
+export function importCostReconciliation(req: CostReconciliationImportRequest): Promise<ApiResponse<CostReconciliationItem>> {
+  return apiRequest<CostReconciliationItem>('/cost-reconciliations/import', { method: 'POST', body: req });
+}
+export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>> {
+  return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');
+}
+export function updateLegacyKeyCutover(req: {
+  status: 'observing' | 'ready' | 'revoked';
+  deadlineAt: string;
+  allowedAppCallerCodes: string[];
+  successorServiceKeyIds: string[];
+  requiredSuccessorObservations: number;
+}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number }>> {
+  return apiRequest('/legacy-key-cutover', { method: 'PUT', body: req });
 }
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {
   return apiRequest<OrganizationData>('/organization');

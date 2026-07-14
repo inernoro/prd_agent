@@ -68,18 +68,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
 
         if (FixedTimeEquals(providedKey, legacySharedKey))
-            return new(
-                true,
-                true,
-                200,
-                string.Empty,
-                "legacy MAP shared key",
-                KeyId: "legacy-map-shared",
-                TenantId: _internalTenantId,
-                LegacySharedKey: true,
-                ClientCode: "map-internal",
-                Environment: "production",
-                KeyPrefixSnapshot: "internal");
+            return await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, ct);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -244,6 +233,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        // 退场判断依赖可持久化的 successor 观察证据，不能用 fire-and-forget 丢失计数。
+        await RecordSuccessorObservationAsync(record, ct);
         return new(
             true,
             true,
@@ -257,6 +248,112 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             Environment: ResolveEnvironment(record),
             KeyPrefixSnapshot: record.KeyPrefix);
     }
+
+    private async Task<GatewayKeyAuthorization> AuthorizeLegacyKeyAsync(
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var cutover = await _data.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == _internalTenantId)
+            .FirstOrDefaultAsync(ct);
+        var normalizedSource = sourceSystem.Trim().ToLowerInvariant();
+        var normalizedCaller = appCallerCode.Trim();
+        var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
+        var externalDenied = !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
+        var callerMissing = string.IsNullOrWhiteSpace(normalizedCaller);
+        var callerDenied = cutover?.AllowedAppCallerCodes.Count > 0
+                           && !cutover.AllowedAppCallerCodes.Contains(normalizedCaller, StringComparer.OrdinalIgnoreCase);
+        var deadlineReached = cutover?.DeadlineAt is not null && cutover.DeadlineAt <= now;
+        var revoked = string.Equals(cutover?.Status, "revoked", StringComparison.OrdinalIgnoreCase);
+        var allowed = !externalDenied && !callerMissing && !callerDenied && !deadlineReached && !revoked;
+        var decision = externalDenied ? "external-forbidden"
+            : callerMissing ? "app-caller-required"
+            : callerDenied ? "app-caller-not-in-inventory"
+            : deadlineReached ? "deadline-reached"
+            : revoked ? "revoked"
+            : "allowed";
+        await RecordLegacyUsageAsync(normalizedSource, normalizedCaller, normalizedProtocol, allowed, decision, now, ct);
+
+        if (allowed)
+        {
+            return new(
+                true, true, 200, string.Empty, "legacy MAP shared key",
+                KeyId: "legacy-map-shared",
+                TenantId: _internalTenantId,
+                LegacySharedKey: true,
+                ClientCode: "map-internal",
+                Environment: "production",
+                KeyPrefixSnapshot: "internal");
+        }
+
+        return new(
+            false,
+            true,
+            externalDenied || callerMissing || callerDenied ? 403 : 401,
+            externalDenied ? "GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN"
+                : callerMissing ? "GATEWAY_LEGACY_KEY_APP_CALLER_REQUIRED"
+                : callerDenied ? "GATEWAY_LEGACY_KEY_APP_CALLER_DENIED"
+                : "GATEWAY_LEGACY_KEY_REVOKED",
+            decision,
+            KeyId: "legacy-map-shared",
+            TenantId: _internalTenantId,
+            LegacySharedKey: true,
+            ClientCode: "map-internal",
+            Environment: "production",
+            KeyPrefixSnapshot: "internal");
+    }
+
+    private async Task RecordLegacyUsageAsync(
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        bool allowed,
+        string decision,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var collection = _data.Database.GetCollection<GatewayLegacyKeyUsageRecord>("llmgw_legacy_key_usage");
+        var filter = Builders<GatewayLegacyKeyUsageRecord>.Filter.And(
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.TenantId, _internalTenantId),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.SourceSystem, sourceSystem),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.IngressProtocol, ingressProtocol));
+        var update = Builders<GatewayLegacyKeyUsageRecord>.Update
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.TenantId, _internalTenantId)
+            .SetOnInsert(x => x.SourceSystem, sourceSystem)
+            .SetOnInsert(x => x.AppCallerCode, appCallerCode)
+            .SetOnInsert(x => x.IngressProtocol, ingressProtocol)
+            .SetOnInsert(x => x.FirstSeenAt, now)
+            .Set(x => x.LastSeenAt, now)
+            .Set(x => x.LastDecision, decision)
+            .Inc(x => x.TotalCount, 1)
+            .Inc(x => x.AllowedCount, allowed ? 1 : 0)
+            .Inc(x => x.RejectedCount, allowed ? 0 : 1);
+        try
+        {
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+        }
+        catch (MongoException ex) when (IsDuplicateKey(ex))
+        {
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = false }, ct);
+        }
+    }
+
+    private Task RecordSuccessorObservationAsync(GatewayServiceKeyRecord record, CancellationToken ct)
+        => _data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+                Builders<BsonDocument>.Filter.AnyEq("SuccessorServiceKeyIds", record.Id),
+                Builders<BsonDocument>.Filter.Ne("Status", "revoked")),
+            Builders<BsonDocument>.Update
+                .Inc("SuccessorObservedCount", 1)
+                .Inc($"SuccessorObservationCounts.{record.Id}", 1)
+                .Set("LastSuccessorUsedAt", DateTime.UtcNow),
+            cancellationToken: ct);
 
     public static string Sha256Hex(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

@@ -63,6 +63,13 @@ public class LlmRequestLogDoc
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? PriceSnapshotHash { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
     public int? StatusCode { get; set; }
     public string Status { get; set; } = string.Empty;
 

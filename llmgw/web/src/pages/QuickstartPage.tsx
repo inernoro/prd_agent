@@ -130,6 +130,7 @@ export function QuickstartPage() {
       sourceSystem: 'external',
       clientCode: normalizedClient,
       environment,
+      purpose: 'external-platform',
       appCallerCodes: [normalizedCode],
       ingressProtocols: [selectedProtocol.ingressProtocol],
       scopes: ['invoke'],

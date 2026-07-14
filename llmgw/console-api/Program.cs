@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
+using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
@@ -202,6 +203,9 @@ var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
 var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
+var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_reconciliations");
+var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
+var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -226,7 +230,7 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("CreatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
     new CreateIndexModel<BsonDocument>(
-        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ClientCode").Ascending("Environment"),
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ClientCode").Ascending("Environment").Ascending("Purpose"),
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload" }),
 });
 await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
@@ -238,6 +242,12 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("Environment")
         .Descending("StartedAt"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_workload_started" }));
+await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("Provider")
+        .Ascending("ProviderRequestId"),
+    new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }));
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -246,6 +256,41 @@ await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
         new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
+});
+await costReconciliations.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ExternalRecordId"),
+        new CreateIndexOptions { Name = "uniq_llmgw_cost_tenant_provider_external", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ProviderRequestId"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_cost_tenant_provider_request",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Granularity", "request"),
+                Builders<BsonDocument>.Filter.Type("ProviderRequestId", BsonType.String)),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ServiceKeyId").Descending("BilledAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_cost_tenant_key_billed" }),
+});
+await legacyKeyCutovers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId"),
+    new CreateIndexOptions { Name = "uniq_llmgw_legacy_cutover_tenant", Unique = true }));
+await legacyKeyUsage.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys
+            .Ascending("TenantId")
+            .Ascending("SourceSystem")
+            .Ascending("AppCallerCode")
+            .Ascending("IngressProtocol"),
+        new CreateIndexOptions { Name = "uniq_llmgw_legacy_usage_tenant_identity", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("LastSeenAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_legacy_usage_tenant_seen" }),
 });
 await promptPolicies.Indexes.CreateManyAsync(new[]
 {
@@ -3923,6 +3968,7 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
         SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
         ClientCode = d.AsNullableString("ClientCode") ?? d.AsNullableString("SourceSystem") ?? "历史未标注",
         Environment = d.AsNullableString("Environment") ?? "unknown",
+        Purpose = d.AsNullableString("Purpose") ?? (string.Equals(d.AsNullableString("SourceSystem"), "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform"),
         AppCallerCodes = d.AsStringList("AppCallerCodes"),
         IngressProtocols = d.AsStringList("IngressProtocols"),
         Scopes = d.AsStringList("Scopes"),
@@ -3945,6 +3991,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     var sourceSystem = (body.SourceSystem ?? "external").Trim();
     var clientCode = (body.ClientCode ?? string.Empty).Trim().ToLowerInvariant();
     var environment = (body.Environment ?? string.Empty).Trim().ToLowerInvariant();
+    var purpose = (body.Purpose ?? (string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform")).Trim().ToLowerInvariant();
     var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
     var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
     var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
@@ -3965,6 +4012,19 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     if (!allowedEnvironments.Contains(environment))
     {
         return Json(ApiEnvelope<object>.Fail("INVALID_KEY_ENVIRONMENT", "environment 仅支持 development、test、staging、production"), jsonOptions, 400);
+    }
+    var allowedPurposes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "runtime", "release-gate", "canary", "external-platform",
+    };
+    if (!allowedPurposes.Contains(purpose))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_KEY_PURPOSE", "purpose 仅支持 runtime、release-gate、canary、external-platform"), jsonOptions, 400);
+    }
+    if (string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) && purpose == "external-platform"
+        || !string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) && purpose != "external-platform")
+    {
+        return Json(ApiEnvelope<object>.Fail("KEY_PURPOSE_SOURCE_MISMATCH", "MAP key 使用 runtime、release-gate 或 canary；外部平台 key 使用 external-platform"), jsonOptions, 400);
     }
     var allowedProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -4098,12 +4158,15 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
                 ? legacySourceClientCode
                 : null;
         var rotatedEnvironment = rotatedKey.AsNullableString("Environment");
+        var rotatedPurpose = rotatedKey.AsNullableString("Purpose")
+            ?? (string.Equals(rotatedKey.AsNullableString("SourceSystem"), "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform");
         // 历史 key 可能没有 ClientCode，且 SourceSystem 允许使用 "*"。当旧来源不能作为合法
         // clientCode 时，轮换承担一次性身份升级；否则仍要求沿用可验证的历史身份。
         if ((expectedClientCode is not null && !string.Equals(expectedClientCode, clientCode, StringComparison.OrdinalIgnoreCase))
-            || (rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase)))
+            || (rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(rotatedPurpose, purpose, StringComparison.OrdinalIgnoreCase))
         {
-            return Json(ApiEnvelope<object>.Fail("ROTATION_IDENTITY_MISMATCH", "轮换不能修改 clientCode 或 environment"), jsonOptions, 409);
+            return Json(ApiEnvelope<object>.Fail("ROTATION_IDENTITY_MISMATCH", "轮换不能修改 clientCode、environment 或 purpose"), jsonOptions, 409);
         }
     }
 
@@ -4128,6 +4191,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         { "SourceSystem", sourceSystem },
         { "ClientCode", clientCode },
         { "Environment", environment },
+        { "Purpose", purpose },
         { "AppCallerCodes", new BsonArray(appCallerCodes) },
         { "IngressProtocols", new BsonArray(protocols) },
         { "Scopes", new BsonArray(scopes) },
@@ -4283,6 +4347,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
                 { "sourceSystem", sourceSystem },
                 { "clientCode", clientCode },
                 { "environment", environment },
+                { "purpose", purpose },
                 { "appCallerCount", appCallerCodes.Count },
                 { "protocolCount", protocols.Count },
                 { "scopeCount", scopes.Count },
@@ -4357,6 +4422,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         sourceSystem,
         clientCode,
         environment,
+        purpose,
         appCallerCodes,
         ingressProtocols = protocols,
         scopes,
@@ -4607,6 +4673,541 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
         successorKeyId = successorId,
     }), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
+
+// 供应商账单导入：只接受会话解析出的当前租户，不允许请求体自报 TenantId。
+app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReconciliationImportRequest body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var provider = (body.Provider ?? string.Empty).Trim().ToLowerInvariant();
+    var externalRecordId = (body.ExternalRecordId ?? string.Empty).Trim();
+    var providerRequestId = string.IsNullOrWhiteSpace(body.ProviderRequestId) ? null : body.ProviderRequestId.Trim();
+    var serviceKeyId = string.IsNullOrWhiteSpace(body.ServiceKeyId) ? null : body.ServiceKeyId.Trim();
+    var actualCurrency = CostReconciliationPolicy.NormalizeCurrency(body.ProviderCostCurrency);
+    if (provider.Length is < 2 or > 100
+        || externalRecordId.Length is < 2 or > 160
+        || body.ProviderReportedCost < 0
+        || actualCurrency is null)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_PROVIDER_COST",
+            "provider、externalRecordId、非负 providerReportedCost 与三字母币种均为必填"), jsonOptions, 400);
+    }
+    if (body.ProviderToEstimatedFxRate is not null
+        && (body.ProviderToEstimatedFxRate <= 0 || string.IsNullOrWhiteSpace(body.FxSnapshotId)))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_FX_SNAPSHOT",
+            "提供汇率时必须同时提供正数 providerToEstimatedFxRate 与 fxSnapshotId"), jsonOptions, 400);
+    }
+
+    var granularity = providerRequestId is null ? "window" : "request";
+    BsonDocument? matchedLog = null;
+    List<BsonDocument> windowLogs = [];
+    string? reconciliationTeamId = null;
+    DateTime? windowFrom = null;
+    DateTime? windowTo = null;
+    if (granularity == "request")
+    {
+        var requestMatches = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ProviderRequestId", providerRequestId),
+                Builders<BsonDocument>.Filter.Regex("Provider", new BsonRegularExpression(
+                    $"^{System.Text.RegularExpressions.Regex.Escape(provider)}$", "i")))))
+            .Limit(2)
+            .ToListAsync();
+        if (requestMatches.Count == 0)
+            return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_NOT_FOUND", "当前租户没有匹配的 provider request id"), jsonOptions, 404);
+        if (requestMatches.Count > 1)
+            return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_AMBIGUOUS", "provider request id 在当前租户命中多条日志，不能自动对账"), jsonOptions, 409);
+        matchedLog = requestMatches[0];
+        serviceKeyId = matchedLog.AsNullableString("ServiceKeyId");
+        reconciliationTeamId = matchedLog.AsNullableString("TeamId");
+        if (matchedLog.AsNullableUtcDateTime("StartedAt") is { } matchedStartedAt)
+        {
+            BsonValue requestTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
+            var coveringWindowFilters = new List<FilterDefinition<BsonDocument>>
+            {
+                Builders<BsonDocument>.Filter.Eq("Granularity", "window"),
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.Eq("TeamId", requestTeamValue),
+                Builders<BsonDocument>.Filter.Lte("WindowFrom", matchedStartedAt),
+                Builders<BsonDocument>.Filter.Gt("WindowTo", matchedStartedAt),
+            };
+            if (serviceKeyId is not null)
+            {
+                coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value),
+                    Builders<BsonDocument>.Filter.Eq("ServiceKeyId", serviceKeyId)));
+            }
+            if (await costReconciliations.CountDocumentsAsync(
+                    TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(coveringWindowFilters)),
+                    new CountOptions { Limit = 1 }) > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "PROVIDER_REQUEST_COVERED_BY_WINDOW",
+                    "该 provider request id 已包含在供应商汇总账单窗口中，不能重复导入逐请求费用"), jsonOptions, 409);
+            }
+        }
+    }
+    else
+    {
+        windowFrom = body.WindowFrom?.ToUniversalTime();
+        windowTo = body.WindowTo?.ToUniversalTime();
+        if (windowFrom is null || windowTo is null || windowFrom >= windowTo || windowTo - windowFrom > TimeSpan.FromDays(31))
+            return Json(ApiEnvelope<object>.Fail("INVALID_BILLING_WINDOW", "window 粒度必须提供不超过 31 天的有效 windowFrom/windowTo"), jsonOptions, 400);
+        BsonDocument? matchedServiceKey = null;
+        if (serviceKeyId is not null)
+        {
+            matchedServiceKey = await serviceKeys.Find(TenantAccess.FilterTeamScope(
+                    http,
+                    Builders<BsonDocument>.Filter.Eq("_id", serviceKeyId)))
+                .FirstOrDefaultAsync();
+            if (matchedServiceKey is null)
+                return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "当前租户没有匹配的 service key"), jsonOptions, 404);
+            reconciliationTeamId = matchedServiceKey.AsNullableString("TeamId");
+        }
+        var windowFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Gte("StartedAt", windowFrom.Value),
+            Builders<BsonDocument>.Filter.Lt("StartedAt", windowTo.Value),
+            Builders<BsonDocument>.Filter.Regex("Provider", new BsonRegularExpression(
+                $"^{System.Text.RegularExpressions.Regex.Escape(provider)}$", "i")));
+        if (serviceKeyId is not null) windowFilter &= Builders<BsonDocument>.Filter.Eq("ServiceKeyId", serviceKeyId);
+        var windowCount = await logs.CountDocumentsAsync(TenantAccess.FilterTeamScope(http, windowFilter));
+        if (windowCount == 0)
+            return Json(ApiEnvelope<object>.Fail("BILLING_WINDOW_EMPTY", "当前租户时间窗没有匹配请求"), jsonOptions, 404);
+        if (windowCount > 100000)
+            return Json(ApiEnvelope<object>.Fail("BILLING_WINDOW_TOO_LARGE", "单次时间窗最多对账 100000 条请求"), jsonOptions, 413);
+        windowLogs = await logs.Find(TenantAccess.FilterTeamScope(http, windowFilter))
+            .Project(Builders<BsonDocument>.Projection
+                .Include("EstimatedCost")
+                .Include("EstimatedCostCurrency")
+                .Include("Model")
+                .Include("ServiceKeyId")
+                .Include("TeamId")
+                .Include("ProviderRequestId")
+                .Include("ReconciliationStatus"))
+            .ToListAsync();
+        if (windowLogs.Any(x => !string.IsNullOrWhiteSpace(x.AsNullableString("ReconciliationStatus"))))
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST",
+                "账单窗口包含已逐请求对账的请求，请缩小窗口或改用原逐请求账单记录"), jsonOptions, 409);
+        var windowProviderRequestIds = windowLogs
+            .Select(x => x.AsNullableString("ProviderRequestId"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        foreach (var requestIdChunk in windowProviderRequestIds.Chunk(1000))
+        {
+            var reconciledRequestFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Granularity", "request"),
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.In("ProviderRequestId", requestIdChunk));
+            if (await costReconciliations.CountDocumentsAsync(
+                    TenantAccess.FilterTeamScope(http, reconciledRequestFilter),
+                    new CountOptions { Limit = 1 }) > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST",
+                    "账单窗口包含已逐请求对账的请求，请缩小窗口或改用原逐请求账单记录"), jsonOptions, 409);
+            }
+        }
+        var windowTeamIds = windowLogs
+            .Select(x => x.AsNullableString("TeamId"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var containsUnscopedLog = windowLogs.Any(x => string.IsNullOrWhiteSpace(x.AsNullableString("TeamId")));
+        if (windowTeamIds.Count > 1 || serviceKeyId is null && containsUnscopedLog && windowTeamIds.Count > 0)
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_TEAM_AMBIGUOUS",
+                "时间窗跨越多个团队，请按 service key 或团队拆分账单记录"), jsonOptions, 409);
+        if (reconciliationTeamId is null) reconciliationTeamId = windowTeamIds.SingleOrDefault();
+        BsonValue reconciliationTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
+        BsonValue reconciliationKeyValue = serviceKeyId is null ? BsonNull.Value : new BsonString(serviceKeyId);
+        var overlapFilters = new List<FilterDefinition<BsonDocument>>
+        {
+            Builders<BsonDocument>.Filter.Eq("Granularity", "window"),
+            Builders<BsonDocument>.Filter.Eq("Provider", provider),
+            Builders<BsonDocument>.Filter.Eq("TeamId", reconciliationTeamValue),
+            Builders<BsonDocument>.Filter.Ne("ExternalRecordId", externalRecordId),
+            Builders<BsonDocument>.Filter.Lt("WindowFrom", windowTo.Value),
+            Builders<BsonDocument>.Filter.Gt("WindowTo", windowFrom.Value),
+        };
+        if (serviceKeyId is not null)
+        {
+            overlapFilters.Add(Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", reconciliationKeyValue)));
+        }
+        var overlapFilter = Builders<BsonDocument>.Filter.And(overlapFilters);
+        if (await costReconciliations.CountDocumentsAsync(TenantAccess.FilterTeamScope(http, overlapFilter), new CountOptions { Limit = 1 }) > 0)
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_OVERLAP",
+                "该供应商与 service key 已存在重叠账单窗口，请使用原 externalRecordId 重试或拆分为不重叠窗口"), jsonOptions, 409);
+    }
+
+    decimal? estimatedCost;
+    string? estimatedCurrency;
+    string? preStatus = null;
+    if (matchedLog is not null)
+    {
+        estimatedCost = matchedLog.AsNullableDecimal("EstimatedCost");
+        estimatedCurrency = CostReconciliationPolicy.NormalizeCurrency(matchedLog.AsNullableString("EstimatedCostCurrency"));
+    }
+    else
+    {
+        var currencies = windowLogs
+            .Select(x => CostReconciliationPolicy.NormalizeCurrency(x.AsNullableString("EstimatedCostCurrency")))
+            .Where(x => x is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var complete = windowLogs.All(x => x.AsNullableDecimal("EstimatedCost") is not null
+                                           && CostReconciliationPolicy.NormalizeCurrency(x.AsNullableString("EstimatedCostCurrency")) is not null);
+        if (!complete)
+        {
+            estimatedCost = null;
+            estimatedCurrency = null;
+            preStatus = "estimated-incomplete";
+        }
+        else if (currencies.Count != 1)
+        {
+            estimatedCost = null;
+            estimatedCurrency = null;
+            preStatus = "estimated-mixed-currency";
+        }
+        else
+        {
+            estimatedCost = windowLogs.Sum(x => x.AsNullableDecimal("EstimatedCost")!.Value);
+            estimatedCurrency = currencies[0];
+        }
+    }
+
+    var decision = CostReconciliationPolicy.Evaluate(
+        estimatedCost,
+        estimatedCurrency,
+        body.ProviderReportedCost,
+        actualCurrency,
+        body.FxSnapshotId,
+        body.ProviderToEstimatedFxRate);
+    var reconciliationStatus = preStatus ?? decision.Status;
+    var createdAt = DateTime.UtcNow;
+    var suppliedBilledAt = body.BilledAt?.ToUniversalTime();
+    var billedAt = suppliedBilledAt ?? createdAt;
+    var importCanonical = JsonSerializer.Serialize(new
+    {
+        provider = provider.ToLowerInvariant(),
+        externalRecordId,
+        providerRequestId,
+        serviceKeyId,
+        windowFrom,
+        windowTo,
+        body.ProviderReportedCost,
+        providerCostCurrency = actualCurrency,
+        billedAt = suppliedBilledAt,
+        fxSnapshotId = body.FxSnapshotId?.Trim(),
+        body.ProviderToEstimatedFxRate,
+    });
+    var importHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(importCanonical))).ToLowerInvariant();
+    var id = Guid.NewGuid().ToString("N");
+    var reconciliationModel = matchedLog?.AsNullableString("Model")
+        ?? (windowLogs.Select(x => x.AsNullableString("Model")).Distinct(StringComparer.Ordinal).Count() == 1
+            ? windowLogs.FirstOrDefault()?.AsNullableString("Model")
+            : null);
+    var record = new BsonDocument
+    {
+        { "_id", id },
+        { "TenantId", access.TenantId },
+        { "TeamId", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId },
+        { "Provider", provider },
+        { "ExternalRecordId", externalRecordId },
+        { "Granularity", granularity },
+        { "RequestId", matchedLog?.AsNullableString("RequestId") is { } requestId ? requestId : BsonNull.Value },
+        { "ProviderRequestId", providerRequestId is null ? BsonNull.Value : providerRequestId },
+        { "ServiceKeyId", serviceKeyId is null ? BsonNull.Value : serviceKeyId },
+        { "Model", reconciliationModel is null ? BsonNull.Value : reconciliationModel },
+        { "EstimatedCost", estimatedCost is null ? BsonNull.Value : new BsonDecimal128(estimatedCost.Value) },
+        { "EstimatedCostCurrency", estimatedCurrency is null ? BsonNull.Value : estimatedCurrency },
+        { "ProviderReportedCost", new BsonDecimal128(body.ProviderReportedCost) },
+        { "ProviderCostCurrency", actualCurrency },
+        { "ProviderCostInEstimatedCurrency", decision.ProviderCostInEstimatedCurrency is null ? BsonNull.Value : new BsonDecimal128(decision.ProviderCostInEstimatedCurrency.Value) },
+        { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
+        { "ProviderToEstimatedFxRate", body.ProviderToEstimatedFxRate is null ? BsonNull.Value : new BsonDecimal128(body.ProviderToEstimatedFxRate.Value) },
+        { "ReconciliationStatus", reconciliationStatus },
+        { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
+        { "DeltaCurrency", decision.DeltaCurrency is null ? BsonNull.Value : decision.DeltaCurrency },
+        { "WindowFrom", windowFrom is null ? BsonNull.Value : new BsonDateTime(windowFrom.Value) },
+        { "WindowTo", windowTo is null ? BsonNull.Value : new BsonDateTime(windowTo.Value) },
+        { "BilledAt", billedAt },
+        { "ImportHash", importHash },
+        { "CreatedByUserId", access.UserId },
+        { "CreatedAt", createdAt },
+    };
+    try
+    {
+        await costReconciliations.InsertOneAsync(record);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var existing = await costReconciliations.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.Eq("ExternalRecordId", externalRecordId))))
+            .FirstOrDefaultAsync();
+        if (existing is not null && existing.AsNullableString("ImportHash") != importHash)
+            return Json(ApiEnvelope<object>.Fail("COST_IMPORT_CONFLICT", "同一供应商账单记录已用不同内容导入"), jsonOptions, 409);
+        if (existing is not null)
+            return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(existing)), jsonOptions);
+        if (providerRequestId is not null)
+        {
+            var requestExisting = await costReconciliations.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                    Builders<BsonDocument>.Filter.Eq("ProviderRequestId", providerRequestId),
+                    Builders<BsonDocument>.Filter.Eq("Granularity", "request"))))
+                .FirstOrDefaultAsync();
+            if (requestExisting is not null)
+                return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_ALREADY_RECONCILED", "该 provider request id 已关联另一条供应商账单记录"), jsonOptions, 409);
+        }
+        throw;
+    }
+
+    if (matchedLog is not null)
+    {
+        await logs.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", matchedLog.GetStringOrEmpty("_id"))),
+            new BsonDocument("$set", new BsonDocument
+            {
+                { "ProviderReportedCost", new BsonDecimal128(body.ProviderReportedCost) },
+                { "ProviderCostCurrency", actualCurrency },
+                { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
+                { "ReconciliationStatus", reconciliationStatus },
+                { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
+            }));
+    }
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "cost.reconciliation.import",
+        "llmgw_cost_reconciliation",
+        id,
+        externalRecordId,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "provider", provider },
+            { "granularity", granularity },
+            { "status", reconciliationStatus },
+            { "currency", actualCurrency },
+        });
+    return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(record)), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, string? to) =>
+{
+    var range = ResolveRange(from, to, 30);
+    var recordFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Gte("BilledAt", range.From),
+        Builders<BsonDocument>.Filter.Lt("BilledAt", range.To)));
+    var docs = await costReconciliations.Find(recordFilter)
+        .Sort(Builders<BsonDocument>.Sort.Descending("BilledAt"))
+        .Limit(500)
+        .ToListAsync();
+    var actualAggregate = await costReconciliations.Aggregate()
+        .Match(recordFilter & Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Ne("ProviderReportedCost", BsonNull.Value),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Decimal128),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Double),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Int32),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Int64)),
+            Builders<BsonDocument>.Filter.Type("ProviderCostCurrency", BsonType.String)))
+        .Group(new BsonDocument
+        {
+            { "_id", "$ProviderCostCurrency" },
+            { "Amount", new BsonDocument("$sum", "$ProviderReportedCost") },
+            { "Requests", new BsonDocument("$sum", 1) },
+        })
+        .Sort(new BsonDocument("_id", 1))
+        .ToListAsync();
+    var actualCosts = actualAggregate
+        .Where(x => x.AsNullableDecimal("Amount") is not null)
+        .Select(x => new EstimatedCostBucket
+        {
+            Currency = x.GetStringOrEmpty("_id"),
+            Amount = x.AsNullableDecimal("Amount")!.Value,
+            Requests = x.AsNullableLong("Requests") ?? 0,
+        }).ToList();
+    var statusAggregate = await costReconciliations.Aggregate()
+        .Match(recordFilter)
+        .Group(new BsonDocument
+        {
+            { "_id", new BsonDocument("$ifNull", new BsonArray { "$ReconciliationStatus", "unknown" }) },
+            { "Count", new BsonDocument("$sum", 1) },
+        })
+        .Sort(new BsonDocument("Count", -1))
+        .ToListAsync();
+    var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
+        Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("ReconciliationStatus", false),
+            Builders<BsonDocument>.Filter.Eq("ReconciliationStatus", BsonNull.Value))));
+    var totalRecords = await costReconciliations.CountDocumentsAsync(recordFilter);
+    var result = new CostReconciliationSummary
+    {
+        TotalRecords = totalRecords,
+        RequestRecords = await costReconciliations.CountDocumentsAsync(recordFilter & Builders<BsonDocument>.Filter.Eq("Granularity", "request")),
+        WindowRecords = await costReconciliations.CountDocumentsAsync(recordFilter & Builders<BsonDocument>.Filter.Eq("Granularity", "window")),
+        ActualUnavailableRequests = await logs.CountDocumentsAsync(logFilter),
+        ProviderActualCosts = actualCosts,
+        StatusDistribution = statusAggregate.Select(x => new LogsBucketItem
+        {
+            Key = string.IsNullOrWhiteSpace(x.GetStringOrEmpty("_id")) ? "unknown" : x.GetStringOrEmpty("_id"),
+            Count = x.AsNullableLong("Count") ?? 0,
+        }).ToList(),
+        Items = docs.Select(MapCostReconciliation).ToList(),
+    };
+    return Json(ApiEnvelope<CostReconciliationSummary>.Ok(result), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
+app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    if (!string.Equals(access.TenantId, internalTenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<object>.Ok(new { applicable = false, status = "not-applicable", usage = Array.Empty<object>() }), jsonOptions);
+    var policy = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
+    var usage = await legacyKeyUsage.Find(TenantAccess.Filter(http))
+        .Sort(Builders<BsonDocument>.Sort.Descending("LastSeenAt"))
+        .Limit(500)
+        .ToListAsync();
+    var successorIds = policy?.AsStringList("SuccessorServiceKeyIds") ?? [];
+    var successorCounts = ReadSuccessorObservationCounts(policy);
+    var requiredObservations = policy?.AsNullableLong("RequiredSuccessorObservations") ?? 1;
+    var minimumObserved = successorIds.Count == 0
+        ? 0
+        : successorIds.Min(id => successorCounts.GetValueOrDefault(id));
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        applicable = true,
+        status = policy?.AsNullableString("Status") ?? "observing",
+        deadlineAt = policy?.AsNullableUtcDateTime("DeadlineAt").ToIso(),
+        allowedAppCallerCodes = policy?.AsStringList("AllowedAppCallerCodes") ?? [],
+        successorServiceKeyIds = successorIds,
+        requiredSuccessorObservations = requiredObservations,
+        successorObservedCount = minimumObserved,
+        successorObservationCounts = successorCounts,
+        lastSuccessorUsedAt = policy?.AsNullableUtcDateTime("LastSuccessorUsedAt").ToIso(),
+        readyToRevoke = policy is not null
+                        && successorIds.Count > 0
+                        && successorIds.All(id => successorCounts.GetValueOrDefault(id) >= requiredObservations),
+        usage = usage.Select(x => new
+        {
+            sourceSystem = x.AsNullableString("SourceSystem"),
+            appCallerCode = x.AsNullableString("AppCallerCode"),
+            ingressProtocol = x.AsNullableString("IngressProtocol"),
+            totalCount = x.AsNullableLong("TotalCount") ?? 0,
+            allowedCount = x.AsNullableLong("AllowedCount") ?? 0,
+            rejectedCount = x.AsNullableLong("RejectedCount") ?? 0,
+            firstSeenAt = x.AsNullableUtcDateTime("FirstSeenAt").ToIso(),
+            lastSeenAt = x.AsNullableUtcDateTime("LastSeenAt").ToIso(),
+            lastDecision = x.AsNullableString("LastDecision"),
+        }),
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUpdateRequest body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    if (!string.Equals(access.TenantId, internalTenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<object>.Fail("LEGACY_KEY_NOT_APPLICABLE", "legacy shared key 只属于内部租户"), jsonOptions, 404);
+    var status = (body.Status ?? "observing").Trim().ToLowerInvariant();
+    if (status is not ("observing" or "ready" or "revoked"))
+        return Json(ApiEnvelope<object>.Fail("INVALID_LEGACY_CUTOVER_STATUS", "status 仅支持 observing、ready、revoked"), jsonOptions, 400);
+    var allowedCallers = NormalizeDistinct(body.AllowedAppCallerCodes ?? [], 500);
+    var successorIds = NormalizeDistinct(body.SuccessorServiceKeyIds ?? [], 100);
+    var required = Math.Clamp(body.RequiredSuccessorObservations, 1, 1000000);
+    if (body.DeadlineAt is null)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DEADLINE_REQUIRED", "必须设置 legacy key 截止时间"), jsonOptions, 400);
+    if (successorIds.Count > 0)
+    {
+        var successorDocs = await serviceKeys.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.In("_id", successorIds),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Regex("SourceSystem", new BsonRegularExpression("^map$", "i")))))
+            .ToListAsync();
+        if (successorDocs.Count != successorIds.Count)
+            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 MAP scoped key"), jsonOptions, 409);
+    }
+    var current = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
+    if (string.Equals(current?.AsNullableString("Status"), "revoked", StringComparison.OrdinalIgnoreCase)
+        && status != "revoked")
+        return Json(ApiEnvelope<object>.Fail("LEGACY_REVOCATION_FINAL", "legacy shared key 已永久撤销，不能恢复为可用状态"), jsonOptions, 409);
+    var currentSuccessorIds = current?.AsStringList("SuccessorServiceKeyIds") ?? [];
+    var successorSetUnchanged = currentSuccessorIds.Count == successorIds.Count
+                                && currentSuccessorIds.ToHashSet(StringComparer.Ordinal).SetEquals(successorIds);
+    var currentCounts = ReadSuccessorObservationCounts(current);
+    var retainedCounts = successorIds.ToDictionary(
+        id => id,
+        id => successorSetUnchanged ? currentCounts.GetValueOrDefault(id) : 0L,
+        StringComparer.Ordinal);
+    var minimumObserved = successorIds.Count == 0 ? 0 : successorIds.Min(id => retainedCounts[id]);
+    if (status == "revoked" && (successorIds.Count == 0 || minimumObserved < required))
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测次数达标后才能撤销 legacy key"), jsonOptions, 409);
+    var now = DateTime.UtcNow;
+    var id = current?.GetStringOrEmpty("_id") is { Length: > 0 } currentId ? currentId : Guid.NewGuid().ToString("N");
+    var policyFilter = TenantAccess.Filter(http);
+    if (status == "revoked")
+    {
+        foreach (var successorId in successorIds)
+            policyFilter &= Builders<BsonDocument>.Filter.Gte($"SuccessorObservationCounts.{successorId}", required);
+    }
+    var policyUpdate = Builders<BsonDocument>.Update
+        .SetOnInsert("_id", id)
+        .SetOnInsert("TenantId", access.TenantId)
+        .Set("Status", status)
+        .Set("DeadlineAt", body.DeadlineAt.Value.ToUniversalTime())
+        .Set("AllowedAppCallerCodes", new BsonArray(allowedCallers))
+        .Set("SuccessorServiceKeyIds", new BsonArray(successorIds))
+        .Set("RequiredSuccessorObservations", required)
+        .Set("UpdatedAt", now);
+    if (!successorSetUnchanged)
+    {
+        policyUpdate = policyUpdate
+            .Set("SuccessorObservationCounts", new BsonDocument(retainedCounts.Select(x => new BsonElement(x.Key, x.Value))))
+            .Set("SuccessorObservedCount", 0)
+            .Set("LastSuccessorUsedAt", BsonNull.Value);
+    }
+    UpdateResult updateResult;
+    try
+    {
+        updateResult = await legacyKeyCutovers.UpdateOneAsync(
+            policyFilter,
+            policyUpdate,
+            new UpdateOptions { IsUpsert = current is null });
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<object>.Fail("LEGACY_CUTOVER_CONFLICT", "退场策略已被并发创建，请刷新后重试"), jsonOptions, 409);
+    }
+    if (updateResult.MatchedCount == 0 && current is not null)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测状态已变化，请刷新后重试"), jsonOptions, 409);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        status == "revoked" ? "legacy_key.revoke" : "legacy_key.cutover_update",
+        "llmgw_legacy_key_cutover",
+        id,
+        "legacy-map-shared",
+        true,
+        null,
+        new BsonDocument
+        {
+            { "status", status },
+            { "deadlineAt", body.DeadlineAt.Value.ToUniversalTime() },
+            { "allowedAppCallerCount", allowedCallers.Count },
+            { "successorKeyCount", successorIds.Count },
+            { "requiredSuccessorObservations", required },
+        });
+    return Json(ApiEnvelope<object>.Ok(new { id, status, deadlineAt = body.DeadlineAt.Value.ToUniversalTime(), observed = minimumObserved, required }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 // 影子比对：汇总 + 最近 N 条
 app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
@@ -6524,6 +7125,9 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_provider_concurrency_slots",
         "llmgw_runtime_settings",
         "llmgw_asset_registry",
+        "llmgw_cost_reconciliations",
+        "llmgw_legacy_key_cutovers",
+        "llmgw_legacy_key_usage",
     };
     var missingTenant = Builders<BsonDocument>.Filter.Or(
         Builders<BsonDocument>.Filter.Exists("TenantId", false),
@@ -7017,6 +7621,49 @@ static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string f
         .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
+static Dictionary<string, long> ReadSuccessorObservationCounts(BsonDocument? document)
+{
+    if (document is null
+        || !document.TryGetValue("SuccessorObservationCounts", out var value)
+        || !value.IsBsonDocument)
+    {
+        return new Dictionary<string, long>(StringComparer.Ordinal);
+    }
+
+    return value.AsBsonDocument.Elements
+        .Where(element => element.Value.IsInt32 || element.Value.IsInt64)
+        .ToDictionary(
+            element => element.Name,
+            element => element.Value.ToInt64(),
+            StringComparer.Ordinal);
+}
+
+static CostReconciliationItem MapCostReconciliation(BsonDocument d) => new()
+{
+    Id = d.GetStringOrEmpty("_id"),
+    TeamId = d.AsNullableString("TeamId"),
+    Provider = d.GetStringOrEmpty("Provider"),
+    ExternalRecordId = d.GetStringOrEmpty("ExternalRecordId"),
+    Granularity = d.GetStringOrEmpty("Granularity"),
+    RequestId = d.AsNullableString("RequestId"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    Model = d.AsNullableString("Model"),
+    EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
+    EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.GetStringOrEmpty("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ProviderToEstimatedFxRate = d.AsNullableDecimal("ProviderToEstimatedFxRate"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
+    DeltaCurrency = d.AsNullableString("DeltaCurrency"),
+    ReconciliationStatus = d.GetStringOrEmpty("ReconciliationStatus"),
+    WindowFrom = d.AsNullableUtcDateTime("WindowFrom").ToIso(),
+    WindowTo = d.AsNullableUtcDateTime("WindowTo").ToIso(),
+    BilledAt = d.AsNullableUtcDateTime("BilledAt").ToIso(),
+    CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+};
+
 static long? Percentile95(IReadOnlyList<long> sortedValues)
 {
     if (sortedValues.Count == 0) return null;
@@ -7139,6 +7786,13 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.AsNullableString("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ReconciliationStatus = d.AsNullableString("ReconciliationStatus"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
     Error = d.AsNullableString("Error"),
     IsFallback = d.AsNullableBool("IsFallback"),
     ExpectedModel = d.AsNullableString("ExpectedModel"),
@@ -7197,6 +7851,13 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.AsNullableString("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ReconciliationStatus = d.AsNullableString("ReconciliationStatus"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
     StartedAt = d.AsNullableUtcDateTime("StartedAt").ToIso(),
     FirstByteAt = d.AsNullableUtcDateTime("FirstByteAt").ToIso(),
     EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),

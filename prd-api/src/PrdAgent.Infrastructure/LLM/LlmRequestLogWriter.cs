@@ -140,7 +140,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 InputPricePerMillion = start.InputPricePerMillion,
                 OutputPricePerMillion = start.OutputPricePerMillion,
                 PricePerCall = start.PricePerCall,
-                PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant()
+                PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant(),
+                PriceSnapshotHash = LlmCostEvidence.BuildPriceSnapshotHash(
+                    start.InputPricePerMillion,
+                    start.OutputPricePerMillion,
+                    start.PricePerCall,
+                    start.PriceCurrency)
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);

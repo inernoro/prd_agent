@@ -107,6 +107,13 @@ public sealed class LlmLogListItem
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? PriceSnapshotHash { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
     public string? Error { get; set; }
     public bool? IsFallback { get; set; }
     public string? ExpectedModel { get; set; }
@@ -174,6 +181,13 @@ public sealed class LlmLogDetail
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? PriceSnapshotHash { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
     public string? StartedAt { get; set; }
     public string? FirstByteAt { get; set; }
     public string? EndedAt { get; set; }
@@ -303,6 +317,67 @@ public sealed class EstimatedCostBucket
     public string Currency { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public long Requests { get; set; }
+}
+
+public sealed class CostReconciliationImportRequest
+{
+    public string? Provider { get; set; }
+    public string? ExternalRecordId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public DateTime? WindowFrom { get; set; }
+    public DateTime? WindowTo { get; set; }
+    public decimal ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public DateTime? BilledAt { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public decimal? ProviderToEstimatedFxRate { get; set; }
+}
+
+public sealed class CostReconciliationItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string ExternalRecordId { get; set; } = string.Empty;
+    public string Granularity { get; set; } = string.Empty;
+    public string? RequestId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? Model { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string ProviderCostCurrency { get; set; } = string.Empty;
+    public string? FxSnapshotId { get; set; }
+    public decimal? ProviderToEstimatedFxRate { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
+    public string? DeltaCurrency { get; set; }
+    public string ReconciliationStatus { get; set; } = string.Empty;
+    public string? WindowFrom { get; set; }
+    public string? WindowTo { get; set; }
+    public string? BilledAt { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+public sealed class CostReconciliationSummary
+{
+    public long TotalRecords { get; set; }
+    public long RequestRecords { get; set; }
+    public long WindowRecords { get; set; }
+    public long ActualUnavailableRequests { get; set; }
+    public List<EstimatedCostBucket> ProviderActualCosts { get; set; } = new();
+    public List<LogsBucketItem> StatusDistribution { get; set; } = new();
+    public List<CostReconciliationItem> Items { get; set; } = new();
+}
+
+public sealed class LegacyKeyCutoverUpdateRequest
+{
+    public string? Status { get; set; }
+    public DateTime? DeadlineAt { get; set; }
+    public List<string>? AllowedAppCallerCodes { get; set; }
+    public List<string>? SuccessorServiceKeyIds { get; set; }
+    public long RequiredSuccessorObservations { get; set; } = 1;
 }
 
 public sealed class LogsBucketItem
@@ -1031,6 +1106,7 @@ public sealed class ServiceKeyCreateRequest
     public string? SourceSystem { get; set; }
     public string? ClientCode { get; set; }
     public string? Environment { get; set; }
+    public string? Purpose { get; set; }
     public List<string>? AppCallerCodes { get; set; }
     public List<string>? IngressProtocols { get; set; }
     public List<string>? Scopes { get; set; }
@@ -1053,6 +1129,7 @@ public sealed class ServiceKeyItem
     public string SourceSystem { get; set; } = "";
     public string ClientCode { get; set; } = "";
     public string Environment { get; set; } = "";
+    public string Purpose { get; set; } = "runtime";
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();

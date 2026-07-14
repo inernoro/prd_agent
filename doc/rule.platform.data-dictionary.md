@@ -121,6 +121,9 @@
 | 集合（collection） | 模型 | 用途 | 索引/TTL/唯一约束 |
 |---|---|---|---|
 | `llmgw_model_pool_types` | `BsonDocument` | 租户程序池类型注册表及默认池权威指针。关键字段为 `TenantId`、`Code`、`DefaultPoolId`、`Version`；运行时只信任同租户、同类型指针 | `(TenantId, Code)` 唯一；所有查询和更新必须包含 `TenantId` |
+| `llmgw_cost_reconciliations` | `BsonDocument` | 供应商实际账单与网关请求估算的租户级对账记录。保存原始 estimated、provider actual、币种、可选汇率快照和差额，不覆盖请求原估算；跨币种缺少 `FxSnapshotId` 时差额保持空值 | `(TenantId, Provider, ExternalRecordId)` 唯一；请求粒度 `(TenantId, Provider, ProviderRequestId)` 条件唯一，防止更换外部记录号重复计费；窗口粒度同租户、团队、供应商、service key 不允许不同账单记录时间重叠；`(TenantId, TeamId, ServiceKeyId, BilledAt desc)`；所有查询和更新必须包含 `TenantId`，团队角色查询还必须包含服务端解析的团队范围 |
+| `llmgw_legacy_key_cutovers` | `GatewayLegacyKeyCutoverRecord` | 内部 MAP legacy shared key 的截止时间、appCaller 白名单、后继 scoped key 清单及逐 key 观察计数 | `TenantId` 唯一；撤销前每个 successor 均须达到观察阈值；所有查询和更新必须包含 `TenantId` |
+| `llmgw_legacy_key_usage` | `GatewayLegacyKeyUsageRecord` | legacy shared key 按租户、来源、appCaller、入口协议聚合的允许与拒绝盘点，不保存密钥明文或哈希 | `(TenantId, SourceSystem, AppCallerCode, IngressProtocol)` 唯一；`(TenantId, LastSeenAt desc)`；所有查询和更新必须包含 `TenantId` |
 
 ---
 
@@ -261,4 +264,3 @@
 | 路径 | 格式 | 说明 |
 |---|---|---|
 | `{app_data_dir}/config.json` | JSON（pretty） | 桌面端配置（`apiBaseUrl/isDeveloper/clientId`），由 `src-tauri/src/commands/config.rs` 读写 |
-
