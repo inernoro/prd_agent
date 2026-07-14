@@ -6,6 +6,35 @@ import { AS_COLOR, AS_TYPE, AS_SPACE, AS_SIZE, AS_FONT_FAMILY } from '@/lib/appS
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
 /**
+ * iOS「squircle」连续圆角遮罩 —— 超椭圆 |x|^n+|y|^n=1(n=4.5,最接近苹果 app icon)。
+ * 用 SVG mask 而非 border-radius,因为 CSS 圆角是圆弧角、iOS 是连续圆角(角和边平滑过渡)。
+ * 计算一次,所有尺寸共用(viewBox 100×100 自动缩放)。阴影须走 filter:drop-shadow 才能跟随形状。
+ */
+const SQUIRCLE_PATH = (() => {
+  const n = 4.5, pts = 96, p: string[] = [];
+  for (let i = 0; i < pts; i++) {
+    const t = (i / pts) * 2 * Math.PI;
+    const ct = Math.cos(t), st = Math.sin(t);
+    const x = 50 + 50 * Math.sign(ct) * Math.abs(ct) ** (2 / n);
+    const y = 50 + 50 * Math.sign(st) * Math.abs(st) ** (2 / n);
+    p.push(`${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return 'M' + p.join(' L') + ' Z';
+})();
+const SQUIRCLE_MASK = `url("data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path d='${SQUIRCLE_PATH}' fill='#000'/></svg>`,
+)}")`;
+const squircleStyle = (radius: number): CSSProperties => ({
+  borderRadius: radius, // 无 mask 支持时的圆角兜底
+  WebkitMaskImage: SQUIRCLE_MASK,
+  maskImage: SQUIRCLE_MASK,
+  WebkitMaskSize: '100% 100%',
+  maskSize: '100% 100%',
+  WebkitMaskRepeat: 'no-repeat',
+  maskRepeat: 'no-repeat',
+});
+
+/**
  * App Store Today tab（暗色）页面级复刻的基础组件集。
  *
  * 使用纪律：
@@ -188,11 +217,12 @@ export function AppStoreAppIcon({
         style={{
           width: size,
           height: size,
-          borderRadius: radius,
+          ...squircleStyle(radius),
           background: '#1c1c1e',
-          boxShadow: onImage
-            ? '0 1px 3px rgba(0, 0, 0, 0.12)'
-            : '0 2px 6px rgba(0, 0, 0, 0.35)',
+          // mask 会裁掉 box-shadow,故用 drop-shadow 让阴影跟随 squircle 轮廓
+          filter: onImage
+            ? 'drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12))'
+            : 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35))',
         }}
       >
         <img
@@ -228,11 +258,11 @@ export function AppStoreAppIcon({
       style={{
         width: size,
         height: size,
-        borderRadius: radius,
+        ...squircleStyle(radius),
         background,
-        boxShadow: onImage
-          ? '0 1px 3px rgba(0, 0, 0, 0.12)'
-          : `0 2px 8px ${accent.from}40`,
+        filter: onImage
+          ? 'drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12))'
+          : `drop-shadow(0 2px 8px ${accent.from}66)`,
       }}
     >
       <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: iconColor }} />
