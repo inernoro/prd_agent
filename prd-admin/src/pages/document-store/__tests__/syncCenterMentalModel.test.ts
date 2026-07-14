@@ -9,6 +9,7 @@ import {
 } from '../SyncCenterDialog';
 import type { PeerSyncRun } from '@/services/real/peerSync';
 import documentStorePageSource from '../DocumentStorePage.tsx?raw';
+import syncCenterSource from '../SyncCenterDialog.tsx?raw';
 
 const run = (overrides: Partial<PeerSyncRun>): PeerSyncRun => ({
   id: overrides.id ?? 'run-1',
@@ -60,6 +61,14 @@ describe('SyncCenterDialog mental model', () => {
     expect(documentStorePageSource).toContain('<SyncManagerPanel />');
     expect(documentStorePageSource).toContain('onOpenLegacySyncPanel');
     expect(documentStorePageSource).not.toContain("key: 'sync', label");
+  });
+
+  it('exposes sending inside a knowledge base and both automatic send modes', () => {
+    expect(documentStorePageSource).toContain('setShowSendToPeerDetail(true)');
+    expect(documentStorePageSource).toContain('<Send size={13} /> 发送到');
+    expect(syncCenterSource).toContain('内容变更时发送');
+    expect(syncCenterSource).toContain('定时检查并发送');
+    expect(syncCenterSource).toContain("autoMode === 'scheduled' ? 'scheduled' : 'trigger'");
   });
 
   it('surfaces per-item transfer failures from a successful API envelope', () => {

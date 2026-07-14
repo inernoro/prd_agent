@@ -320,6 +320,7 @@ def _require_release_gate_for_commit(
     commit: str,
     require_config_authority: bool = False,
     allow_skipped_runtime_gates: bool = False,
+    allow_skipped_config_authority: bool = False,
 ) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
@@ -360,21 +361,44 @@ def _require_release_gate_for_commit(
         active_without_usable = config.get("activeBoundPoolWithoutUsableMember")
         if active_without_usable is None:
             active_without_usable = config.get("ActiveBoundPoolWithoutUsableMember")
-        if not required or not ok:
+        active_missing_pool = config.get("activeMissingGatewayPool")
+        if active_missing_pool is None:
+            active_missing_pool = config.get("ActiveMissingGatewayPool")
+        readiness_percent = config.get("readinessPercent")
+        if readiness_percent is None:
+            readiness_percent = config.get("ReadinessPercent")
+        config_failures = config.get("failures")
+        if config_failures is None:
+            config_failures = config.get("Failures")
+        if not isinstance(config_failures, list):
+            config_failures = []
+        audited_maintenance_config_skip = (
+            allow_skipped_config_authority
+            and not required
+            and not ok
+            and status == "not-required"
+            and map_remaining is None
+            and active_ready is None
+            and active_without_usable is None
+            and active_missing_pool is None
+            and readiness_percent is None
+            and not config_failures
+        )
+        if not audited_maintenance_config_skip and (not required or not ok):
             raise SystemExit(
                 f"ERROR: {label} configAuthority is not required+ok for http-full gate: "
                 f"{path} required={required} ok={ok}"
             )
-        if status != "ready":
+        if not audited_maintenance_config_skip and status != "ready":
             raise SystemExit(f"ERROR: {label} configAuthority status is not ready: {path} status={status or 'empty'}")
-        if int(map_remaining or 0) != 0:
+        if not audited_maintenance_config_skip and int(map_remaining or 0) != 0:
             raise SystemExit(
                 f"ERROR: {label} configAuthority mapFallbackObjectsRemaining is not zero: "
                 f"{path} value={map_remaining}"
             )
-        if active_ready is not True:
+        if not audited_maintenance_config_skip and active_ready is not True:
             raise SystemExit(f"ERROR: {label} activeAppCallerMapFallbackReady is not true: {path}")
-        if int(active_without_usable or 0) != 0:
+        if not audited_maintenance_config_skip and int(active_without_usable or 0) != 0:
             raise SystemExit(
                 f"ERROR: {label} activeBoundPoolWithoutUsableMember is not zero: "
                 f"{path} value={active_without_usable}"
@@ -915,6 +939,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
                 shadow_evidence_commit,
                 require_config_authority=stage == "http-full",
                 allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                allow_skipped_config_authority=bool(maintenance_baseline_commit),
             )
         except SystemExit as exc:
             failures.append(str(exc))
@@ -1141,6 +1166,7 @@ def append(args: argparse.Namespace) -> int:
                     args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                     allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                    allow_skipped_config_authority=bool(maintenance_baseline_commit),
                 )
             if _bool_flag(args.protocol_canary_required):
                 _require_protocol_canary_for_commit(args.protocol_canary_json, "protocol canary evidence", args.commit)
@@ -1370,6 +1396,7 @@ def stage_report(args: argparse.Namespace) -> int:
                     args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
                     allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                    allow_skipped_config_authority=bool(maintenance_baseline_commit),
                 )
             elif label == "prodPreflightJson":
                 _require_prod_preflight_for_commit(path, label, args.commit, args.stage)
@@ -1643,6 +1670,12 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                         failures.append("maintenance baseline shadow check commit mismatch")
                     if int(item.get("critical") or 0) != 0 or int(item.get("httpFail") or 0) != 0 or item.get("ok") is not True:
                         failures.append(f"maintenance baseline shadow check is unsafe: {item.get('label') or 'unknown'}")
+            _require_release_gate_for_commit(
+                release_gate_path,
+                "maintenance baseline release gate",
+                shadow_evidence_commit,
+                require_config_authority=True,
+            )
         except (SystemExit, TypeError, ValueError) as exc:
             failures.append(str(exc))
 
