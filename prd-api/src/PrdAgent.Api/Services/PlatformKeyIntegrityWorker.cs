@@ -94,11 +94,14 @@ public class PlatformKeyIntegrityWorker : BackgroundService
         var stubUnreadable = new List<string>();   // dev-stub 解不出 —— 预期噪音，不告警
         var rotated = 0;
 
-        // 只有权威部署（非 CDS 分支预览）才写共享库：管理全局告警行 + 自动重加密密文。
-        // 分支预览容器的密文自动重加密尤其危险——若本分支注入的 primary secret 与生产不同，
-        // 重加密会把共享库里的存量密文改成本分支的密钥，直接打哑生产（跨项目隔离通道 2）。
+        // 两个独立授权，绝不合并：
+        // - isAuthoritative（通知层）：谁写共享库全局告警行。可被 ManageGlobalNotification 开关接管。
+        // - canRotate（密文层，更严）：谁改写共享库存量密文。只认「是不是生产」，接管通知的开关不解锁它。
+        //   否则异钥的 CDS 预览分支一旦接管通知，就会用本分支密钥重加密共享库密文、打哑生产
+        //   （跨项目隔离通道 2；P2 Codex review r3580140302）。
         var isAuthoritative = DeploymentAuthority.IsAuthoritativeDeployment(_configuration);
-        var canRotate = isAuthoritative && ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
+        var canRotate = DeploymentAuthority.CanRotateSharedCiphertext(_configuration)
+            && ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
 
         void MarkUnreadable(string label, string? name)
         {

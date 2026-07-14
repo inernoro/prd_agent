@@ -25,8 +25,13 @@ public static class DeploymentAuthority
     public const string ManageGlobalNotificationKey = "PlatformKeyIntegrity:ManageGlobalNotification";
 
     /// <summary>
-    /// 当前部署是否有权写共享库里的全局告警行 / 自动重加密存量密文。
+    /// 当前部署是否有权**写共享库里的全局告警行**（notification 层）。
     /// 默认：无 CDS 分支预览标记（CDS_PROJECT_ID）的部署（即生产）为权威；分支预览非权威。
+    /// 可用显式开关 <see cref="ManageGlobalNotificationKey"/> 让某个分支临时接管全局告警。
+    ///
+    /// 注意：本判定**只管通知**，绝不代表可以改写共享库密文——那是 <see cref="CanRotateSharedCiphertext"/>
+    /// 的职责，两者独立。接管通知的分支若同时被允许 rotate，会用本分支密钥改写生产密文（P2，
+    /// Codex review r3580140302）。
     /// </summary>
     public static bool IsAuthoritativeDeployment(IConfiguration configuration)
     {
@@ -36,6 +41,21 @@ public static class DeploymentAuthority
 
         // CDS 给每个分支预览容器注入 CDS_PROJECT_ID（cds/src/routes/branches.ts）；
         // 生产走独立发布链路，没有这个标记。
+        var cdsProjectId = ReadFirst(configuration, "CDS_PROJECT_ID");
+        return string.IsNullOrWhiteSpace(cdsProjectId);
+    }
+
+    /// <summary>
+    /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
+    /// 与通知授权**独立且更严**：只有真正的生产部署（无 CDS 分支预览标记 CDS_PROJECT_ID）才允许。
+    ///
+    /// 关键：`ManageGlobalNotification=true` 这个「接管通知」开关**绝不**解锁 rotation。否则一个
+    /// 异钥的 CDS 预览分支（自己的 ApiKeyCrypto:Secret ≠ 生产，且把生产密钥放进 LegacySecrets）
+    /// 一旦接管通知，就会把所有 legacy-decrypted 的共享库密文重加密成本分支的密钥，直接打哑生产——
+    /// 正是本 PR 要防的密文腐蚀场景。rotation 只认「是不是生产」这一硬事实，不认任何软开关。
+    /// </summary>
+    public static bool CanRotateSharedCiphertext(IConfiguration configuration)
+    {
         var cdsProjectId = ReadFirst(configuration, "CDS_PROJECT_ID");
         return string.IsNullOrWhiteSpace(cdsProjectId);
     }

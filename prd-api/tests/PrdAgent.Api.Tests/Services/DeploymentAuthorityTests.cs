@@ -50,6 +50,35 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void ProductionCanRotateSharedCiphertext()
+    {
+        var config = Build(new());
+        DeploymentAuthority.CanRotateSharedCiphertext(config).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CdsBranchPreview_CannotRotateSharedCiphertext()
+    {
+        var config = Build(new() { ["CDS_PROJECT_ID"] = "50bf3eac3d02" });
+        DeploymentAuthority.CanRotateSharedCiphertext(config).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void BranchPreviewTakingOverNotification_StillCannotRotate()
+    {
+        // P2 回归（Codex review r3580140302）：接管通知的开关绝不解锁密文重加密。
+        // 否则异钥预览分支会用本分支密钥改写共享库密文、打哑生产。
+        var config = Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true",
+        });
+
+        DeploymentAuthority.IsAuthoritativeDeployment(config).ShouldBeTrue();   // 可写通知
+        DeploymentAuthority.CanRotateSharedCiphertext(config).ShouldBeFalse();  // 但绝不 rotate
+    }
+
+    [Fact]
     public void DescribeSource_IncludesShortCommitAndBranch()
     {
         var config = Build(new()
