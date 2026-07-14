@@ -100,6 +100,14 @@
 
 **手机轨底座0/底座1 与 MobileAssetsPage 无 blocker,不依赖上述决策,可立即开工。** PC 轨的 focus/accent 与 design/* 需先定 Q1。
 
+## 6.1 真机反馈精修（2026-07-14，本地 Playwright file:// 验证)
+
+用户真机截图反馈,逐条修复并本地验证(截图取证):
+- **精选卡太高中间空**:FeaturedSlide 3:4 竖版海报(为整图设计)对智能体卡不合适 → 加 `aspect` 参数,首页传 16:11 横版。
+- **浅色卡片糊**:内容卡用 `C.surface`(浅灰叠浅灰)与 #f2f2f7 背景糊成一片 → 新增 `AS_COLOR.card`(浅#fff/暗#1C1C1E),ResumeCard/TipCard/ShelfCard + 首页近7日/动态/档案 + AssetsPage 改 `C.card`。
+- **图标圆角不像苹果**:CSS border-radius 是圆弧角 → `AppStoreAppIcon` 实装 iOS squircle(SVG mask 超椭圆 n=4.5 + drop-shadow),border-radius 兜底。
+- 验证手段:本地 `file://` + DOM-style(React 等价)Playwright 渲染(绕开 headless 浏览器无法经 agent 代理访问预览的限制),几何/配色确认;**整页真机(真实数据+登录态)仍需用户目视终验**。
+
 ## 6. 预览与验收状态
 
 **验收诚实声明(2026-07-14)**:本轮所有改动均 **tsc + eslint + themeHardcodeRatchet 全绿**,部署 **HTTP 200 已就绪**。但**浏览器双主题目视验收未跑通**——本环境 headless chromium 无法经 agent 代理访问预览域名(curl 可达 200、浏览器被 CONNECTION_RESET,属出口限制),且移动首页需登录态。因此下列各行为 **已部署 + 静态验证绿**,**尚未**真人/自动目视验收。需真人在预览域名(移动视口、登录后)确认双主题观感,方可从「已部署」升「已验收」。
