@@ -176,7 +176,7 @@ function ConsoleRouteFallback(): JSX.Element {
     <>
       <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
-          <CdsGem detail="simple" className="h-[26px] w-[26px]" />
+          <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
@@ -717,7 +717,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         onMouseEnter={preloadProjectListPage}
         onFocus={preloadProjectListPage}
       >
-        <CdsGem mode="brand" detail="simple" className="h-[26px] w-[26px]" aria-hidden />
+        <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" aria-hidden />
       </Link>
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
       <button

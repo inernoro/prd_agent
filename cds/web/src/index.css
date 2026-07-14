@@ -930,8 +930,26 @@
     border-radius: 14px;
     background-color: hsl(var(--surface-raised));
     border: 1px solid hsl(var(--hairline));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.05), 0 1px 2px rgb(0 0 0 / 0.18);
+    /* 品牌磁贴呼吸辉光:柔和的品牌色外发光每 4.2s 起落一次,让磁贴"活着"
+       (辉光在磁贴外圈,不碰宝石本体切面,不会把小尺寸宝石糊成一团)。 */
+    animation: cds-rail-avatar-breath 4.2s ease-in-out infinite;
     color: hsl(var(--foreground));
+  }
+
+  @keyframes cds-rail-avatar-breath {
+    0%,
+    100% {
+      box-shadow:
+        inset 0 1px 0 hsl(0 0% 100% / 0.05),
+        0 1px 2px rgb(0 0 0 / 0.18),
+        0 0 0 0 hsl(var(--primary) / 0);
+    }
+    50% {
+      box-shadow:
+        inset 0 1px 0 hsl(0 0% 100% / 0.05),
+        0 1px 2px rgb(0 0 0 / 0.18),
+        0 0 16px -3px hsl(var(--primary) / 0.45);
+    }
   }
 
   .cds-rail-avatar-icon {
@@ -1226,6 +1244,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .cds-rail-avatar,
     .cds-rail-avatar-icon,
     .cds-gem,
     .cds-gem-facet,
