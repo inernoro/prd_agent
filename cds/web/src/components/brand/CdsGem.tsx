@@ -197,14 +197,14 @@ export function CdsGemLoader({
   gemClassName,
   label,
   size = 'sm',
-  mineral = 'amethyst',
+  mineral = 'iris',
   inline = true,
 }: {
   className?: string;
   gemClassName?: string;
   label?: ReactNode;
   size?: CdsGemLoaderSize;
-  /** 上下文矿色:品牌场景紫晶,构建上下文琥珀,部署上下文银河…… */
+  /** 上下文矿色:品牌场景紫蓝 iris(默认),构建上下文琥珀,部署上下文银河…… */
   mineral?: GemMineral;
   inline?: boolean;
 }): JSX.Element {
