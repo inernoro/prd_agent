@@ -7,3 +7,4 @@
 | fix | prd-admin | 浅色主题内容卡从 surface(浅灰叠浅灰、糊在背景里)改用新增 AS_COLOR.card token(浅=纯白 #fff / 暗=悬浮灰 #1C1C1E),恢复 iOS grouped 清爽白卡;AppStoreResumeCard/TipCard/ShelfCard、首页近7日/动态/档案卡、MobileAssetsPage 卡片统一改 C.card |
 | fix | prd-admin | AppStoreAppIcon 圆角从固定 12px 改按尺寸等比(iOS superellipse ≈22.4%),避免大尺寸图标显方 |
 | feat | prd-admin | AppStoreAppIcon 实装 iOS squircle 连续圆角(SVG mask 超椭圆 n=4.5 + filter:drop-shadow 令阴影跟随形状),取代 CSS 圆弧圆角,更接近苹果 app icon;border-radius 保留作 mask 不支持兜底 |
+| fix | prd-admin | MobileTabBar 底座2:激活态从白/黑字+金色下划线改 iOS systemBlue(icon/label/指示条统一走 AS_COLOR.blue),贴近 iOS tab bar;明暗双皮肤对象结构保留不动 |
