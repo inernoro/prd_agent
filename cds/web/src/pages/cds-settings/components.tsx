@@ -4,7 +4,6 @@ import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { cn } from '@/lib/utils';
 
 export function Section({
@@ -50,6 +49,16 @@ export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.E
   return <PartialLoadingPanel label={label} />;
 }
 
+/** 紧凑骨架的行宽序列(错落有致,像真实文本/列表在成形)。 */
+const PANEL_SKELETON_ROWS = ['64%', '92%', '78%', '48%'] as const;
+
+/**
+ * 精致骨架屏(参考 OpenRouter)—— 全站加载态的 SSOT。
+ * 取代旧的「大宝石 logo + 点阵背景」居中面板(用户反馈"很丑"):
+ * 改为内容形状的 shimmer 占位,加载完成时视觉平滑接管,不突兀。
+ * label/detail 仅供无障碍朗读(role=status + aria-label),不再作为大字居中。
+ * 复用 index.css 的 .cds-loading-skeleton-line/-panel(reduced-motion 自动静止)。
+ */
 function PartialLoadingPanel({
   label,
   detail,
@@ -61,30 +70,49 @@ function PartialLoadingPanel({
   className?: string;
   expanded?: boolean;
 }): JSX.Element {
+  const a11yLabel = detail && typeof detail === 'string' ? `${label}：${detail}` : label;
   return (
     <div
-      className={cn(
-        'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
-        expanded ? 'min-h-[320px] px-8 py-10' : 'min-h-28 px-4 py-5',
-        className,
-      )}
+      role="status"
+      aria-live="polite"
+      aria-label={a11yLabel}
+      aria-busy="true"
+      className={cn('w-full rounded-md', expanded ? 'min-h-[320px] p-5' : 'min-h-28 p-4', className)}
     >
-      <ShapeGrid
-        className="cds-shape-backdrop"
-        speed={0.1}
-        squareSize={expanded ? 40 : 34}
-        hoverTrailAmount={0}
-      />
-      <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
-        <CdsLogoLoader
-          label={label}
-          size={expanded ? 'md' : 'sm'}
-          className="text-sm font-medium text-muted-foreground"
-        />
-        {detail ? (
-          <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">{detail}</p>
-        ) : null}
-      </div>
+      {expanded ? (
+        <div className="flex flex-col gap-4">
+          {/* 头部:标题 + 副标题 */}
+          <div className="flex flex-col gap-2.5">
+            <div className="cds-loading-skeleton-line h-6 w-1/3 min-w-[140px]" />
+            <div className="cds-loading-skeleton-line h-3.5 w-2/3 max-w-md" />
+          </div>
+          {/* 指标条 */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="cds-loading-skeleton-panel h-16 rounded-lg"
+                style={{ animationDelay: `${i * 0.12}s` }}
+              />
+            ))}
+          </div>
+          {/* 内容块 */}
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+            <div className="cds-loading-skeleton-panel h-40 rounded-lg" style={{ animationDelay: '0.2s' }} />
+            <div className="cds-loading-skeleton-panel h-40 rounded-lg" style={{ animationDelay: '0.32s' }} />
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {PANEL_SKELETON_ROWS.map((width, i) => (
+            <div
+              key={i}
+              className="cds-loading-skeleton-line h-4"
+              style={{ width, animationDelay: `${i * 0.1}s` }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
