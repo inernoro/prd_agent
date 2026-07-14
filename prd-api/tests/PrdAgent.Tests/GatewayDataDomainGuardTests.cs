@@ -50,6 +50,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Regex.IsMatch(legacySourceClientCode", console);
         Assert.Contains(".Set(\"ClientCode\", clientCode)", console);
         Assert.Contains(".Set(\"Environment\", environment)", console);
+        Assert.Contains("{ \"PredecessorRotationState\", rotatedKey is null ? BsonNull.Value : predecessorRotationState ?? \"active\" }", console);
+        Assert.Contains(".Set(\"RotationState\", restoreState)", console);
         Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
         Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
         Assert.Contains("\"awaiting-client-cutover\"", console);

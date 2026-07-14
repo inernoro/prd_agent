@@ -3807,6 +3807,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     }
 
     BsonDocument? rotatedKey = null;
+    string? predecessorRotationState = null;
     if (!string.IsNullOrWhiteSpace(body.RotatesKeyId))
     {
         var rotationFilter = Builders<BsonDocument>.Filter.Eq("_id", body.RotatesKeyId.Trim());
@@ -3819,10 +3820,10 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
             return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_REVOKED", "已撤销密钥不能发起轮换"), jsonOptions, 409);
         if (!string.IsNullOrWhiteSpace(rotatedKey.AsNullableString("RotatedByKeyId")))
             return Json(ApiEnvelope<object>.Fail("ROTATION_ALREADY_ACTIVE", "该密钥已有未完成轮换"), jsonOptions, 409);
-        var sourceRotationState = rotatedKey.AsNullableString("RotationState");
-        if (!string.IsNullOrWhiteSpace(sourceRotationState)
-            && !string.Equals(sourceRotationState, "active", StringComparison.Ordinal)
-            && !string.Equals(sourceRotationState, "completed", StringComparison.Ordinal))
+        predecessorRotationState = rotatedKey.AsNullableString("RotationState");
+        if (!string.IsNullOrWhiteSpace(predecessorRotationState)
+            && !string.Equals(predecessorRotationState, "active", StringComparison.Ordinal)
+            && !string.Equals(predecessorRotationState, "completed", StringComparison.Ordinal))
         {
             return Json(ApiEnvelope<object>.Fail(
                 "ROTATION_SOURCE_STAGE_INVALID",
@@ -3873,6 +3874,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         { "AllowedCidrs", new BsonArray(allowedCidrs) },
         { "RateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
         { "RotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+        { "PredecessorRotationState", rotatedKey is null ? BsonNull.Value : predecessorRotationState ?? "active" },
         { "RotatedByKeyId", BsonNull.Value },
         { "RotationState", rotatedKey is null ? "active" : "new-key-created" },
         { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
@@ -4094,6 +4096,19 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
     else if (!string.IsNullOrWhiteSpace(predecessorId)
              && string.Equals(rotationState, "new-key-created", StringComparison.Ordinal))
     {
+        var restoreState = existing.AsNullableString("PredecessorRotationState");
+        if (!string.Equals(restoreState, "active", StringComparison.Ordinal)
+            && !string.Equals(restoreState, "completed", StringComparison.Ordinal))
+        {
+            var predecessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true))))
+                .FirstOrDefaultAsync();
+            restoreState = !string.IsNullOrWhiteSpace(predecessor?.AsNullableString("RotatesKeyId"))
+                ? "completed"
+                : "active";
+        }
         await serviceKeys.UpdateOneAsync(
             TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
@@ -4101,7 +4116,7 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
                 Builders<BsonDocument>.Filter.Eq("Enabled", true))),
             Builders<BsonDocument>.Update
                 .Set("RotatedByKeyId", BsonNull.Value)
-                .Set("RotationState", "active")
+                .Set("RotationState", restoreState)
                 .Set("UpdatedAt", now));
     }
     await WriteOperationAuditAsync(
