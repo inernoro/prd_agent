@@ -939,10 +939,6 @@
     "whiteAlpha": 0,
     "darkHex": 1
   },
-  "/pages/MobileHomePage.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 7
-  },
   "/pages/MobileNotificationsPage.tsx": {
     "whiteAlpha": 3,
     "darkHex": 0

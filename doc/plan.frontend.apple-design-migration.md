@@ -16,10 +16,10 @@
 |---|---|---|---|---|---|
 | **手机·底座0a** appStore.tsx 双皮肤破口 | 90 | 已部署 | 无 | 预览域名双主题目视验收(移动百宝箱 shelf/pill/轮播) | tsc+lint 绿;预览见文末 |
 | **手机·底座0b** MobileBottomSheet P0 | 90 | 已部署 | 无 | 预览域名浅色下开任意"更多"弹层验收(sheet 不再深底) | tsc+lint 绿;预览见文末 |
-| **手机·底座1** 补 4 缺失原语 + token | 85 | 已部署 | 无 | 在 MobileHomePage 消费后一并双主题验收(原语纯新增,暂无独立入口) | tsc+lint 绿 |
+| **手机·底座1** 补 4 缺失原语 + token | 90 | 已部署 | 无 | 已被 MobileHomePage 消费,随首页 `/` 一并双主题验收 | tsc+lint 绿 |
 | **手机·底座2** 玻璃 TabBar + chrome 收尾 | 0 | 未开始 | 无 | MobileTabBar 金色→AS_COLOR.blue、字号圆角收敛、T 对象派生 AS token;Fab/OverflowMenu/CompatGate/Segmented 补双皮肤 | 待办 |
 | **手机·页面** MobileAssetsPage(P0 白底浮暗卡) | 90 | 已部署 | 无 | 预览域名浅色下开"资产"页验收(卡片/tab/占位不再隐形) | tsc+lint+ratchet 绿;预览见文末 |
-| **手机·页面** MobileHomePage 重构 Today(主入口) | 0 | 未开始 | 依赖底座1 原语先就位 | 删自研 LIGHT/DARK_SKIN(:74-105),头部换 AppStoreHero,补齐 Today 区块 | 待办 |
+| **手机·页面** MobileHomePage 重构 Today(主入口) | 90 | 已部署 | 无 | 预览域名 `/` 双主题验收(整页 App Store Today 观感) | tsc+lint+ratchet 绿;预览见文末 |
 | **手机·页面** MobileToolboxView 魔数收敛 | 0 | 未开始 | 无 | 字号 28/16/12/10→AS_TYPE;shared.ts accent→AS_COLOR iOS 色 | 待办 |
 | **手机·页面** MobileProfilePage 双皮肤补全 | 0 | 未开始 | 无 | 消除 active:bg-white/[0.03](:127/:161)、INFRA_COLORS(:21)→AS_COLOR | 待办 |
 | **手机·页面** MobileNotificationsPage | 0 | 未开始 | 无 | notificationTone 四档(:16-21)→AS_COLOR 语义色 | 待办 |
@@ -106,4 +106,5 @@
 - 移动百宝箱(AppStoreShelf/Pill/轮播小点 + "更多"弹层): https://apple-design-audit-m5r28u-claude-prd-agent.miduo.org/ai-toolbox
 - 移动资产页(P0 白底浮暗卡修复,浅色下卡片/tab/占位应清晰可见): https://apple-design-audit-m5r28u-claude-prd-agent.miduo.org/my-assets
 - 浅色下开任意"更多"OverflowMenu,确认 sheet 不再深底浮暗。
-- 底座1 的 4 个原语纯新增、暂无独立入口,待 MobileHomePage 重构消费后随首页一并验收。
+- **移动首页 `/`(主入口,整页 App Store Today 观感——最直观的改造):** https://apple-design-audit-m5r28u-claude-prd-agent.miduo.org/ (移动视口下访问根路由)
+- 底座1 的 4 个原语已被首页消费(精选轮播/宫格/继续上次/小技巧),随首页一并验收。
