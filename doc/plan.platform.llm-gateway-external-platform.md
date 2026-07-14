@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.6 | **日期**：2026-07-14 | **状态**：已完成
+> **版本**：v1.7 | **日期**：2026-07-14 | **状态**：补强批次进行中
 
 ## 1. 目标
 
@@ -56,6 +56,76 @@ PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `
 | 临时生产权限清理 | 已完成 | 临时控制台用户、membership、service key 与 token 均已停用或删除；临时 CDS 目标 `rt_c00f704bfee3` 已恢复原发布命令并设为禁用，常规生产目标保持启用；没有重置任何既有用户密码 |
 
 OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2026-07-13T14:09Z` 至 `14:10Z`，早于本次生产发布，且当前生产租户在相同时间窗没有对应 Gateway 日志，因此不能作为上线后回归证据。生产验收严格遵守一次真实 chat 上限：唯一真实请求实际路由到硅基流动，其余归因验证使用假上游和只读日志，没有追加第二次付费调用。后续首条自然命中 OpenRouter 的新请求应显示 `G-${appCallerCode}`；历史记录不会被改写。
+
+### 1.3 低认知 Agent 复测与真实治理缺口
+
+2026-07-14 使用一个不继承项目背景的独立 Agent，从公网入口模拟“首次接入 -> 理解租户 -> 获取 key -> 选择 OpenAI 协议 -> 安全测试 -> 复制 curl -> 定位请求和费用”。Agent 未使用生产账号、真实 key 或付费模型。公网首页和 health 均返回 200，生产 Gateway commit 为 `f6a0299b2845f125a28a160c8cace645f9b0e35f`。
+
+| 发现 | 事实 | 结论 |
+|---|---|---|
+| 公开首次接入 | 未登录用户只能看到账号密码登录，没有申请账号、加入首个租户或联系管理员的入口 | 完整外部自助评分 4/10；预置账号和成员关系后约 8/10 |
+| Quickstart key | key 创建与 Quickstart 分页；创建后不携带 appCaller；安全测试固定调用 `gw-native` 的 `route-self-test` | 仅授权 OpenAI 的 key 会在安全测试时因缺少 `gw-native` 或 `route:read` 返回 403 |
+| 团队边界 | service key 创建只校验 TeamId 属于当前租户，没有校验 appCaller 是否属于同一 TeamId；serving 治理查询也只按 TenantId + appCaller + requestType | 团队 A 的 key 可被配置为调用团队 B 的 appCaller，属于真实缺口 |
+| Developer 权限 | Developer 可以在自己创建的 key 中使用 `*` appCaller、协议或 scope | “只能管理自己的 key”不等于“只能创建最小权限 key”，需要限制通配符 |
+| 成员生命周期 | membership disabled 会让控制台 session 失效，但不会自动处理该成员创建的长期 M2M key | 离职或移出租户后，历史 key 仍可能继续调用，需要显式所有权转移或撤销策略 |
+| 成功请求归因 | scoped key 授权对象有 KeyId，但请求上下文和请求日志只保留 TenantId、TeamId、SourceSystem、appCaller，没有 ServiceKeyId | 当前不能精确回答“哪一把 key 发起了这次成功请求” |
+| 费用 | 当前只保存 token、池成员价格快照、原币种估算和 USD 明确值，没有供应商账单金额、供应商请求 ID 和对账状态 | 现状是可复算的 estimated cost，不是 actual 账单双向对账 |
+
+这些发现不推翻 PR-1 至 PR-5 的租户隔离结论：请求自报 TenantId 仍会被服务端 key/session 解析结果覆盖，跨租户读写、日志、预算、限流、取消和执行状态已有 TenantId 防线。补强重点是租户内部的 Team 边界、工作负载身份归因、身份生命周期和首次接入闭环。
+
+### 1.4 后续五个有限 PR
+
+后续补强继续一次只做一个 PR，不混回已经完成的 PR-1 至 PR-5，也不重做 full-http、模型迁移、模型池路由算法或发布 gate。
+
+| PR | 范围 | 独立完成门 |
+|---|---|---|
+| PR-6 | Team/service key 对抗安全与身份生命周期 | 团队 A key 访问团队 B appCaller 拒绝；Developer 通配 key 拒绝；成员停用后的 key 按明确策略转移或撤销；所有反例先红后绿 |
+| PR-7 | 工作负载身份与成功请求归因 | service key 增加 environment/clientCode；成功请求日志只写 ServiceKeyId、clientCode、key prefix 快照，不写 key/hash；Activity 可筛选调用身份 |
+| PR-8 | Agent-first 一页式 Quickstart | 同页创建 appCaller 和一次性 key；测试使用所选协议的假上游或 dry-run；复制 curl、环境变量和 Agent Skill 接入包；直接跳到 requestId 日志 |
+| PR-9 | 程序池类型与 append-only 默认池 | 类型注册表为唯一来源；租户初始化幂等创建默认池；平台模型只追加兼容且不存在的成员，不覆盖、不删除、不重排；特殊 appCaller 使用专属池 |
+| PR-10 | 费用对账合同与环境独立 key 灰度 | 内部复算与供应商账单分层；unknown 保持 unknown；测试与正式的 MAP runtime、release gate、canary、每个外部平台各用独立 key；双 key 观测后撤销 legacy shared key |
+
+每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
+
+### 1.5 目标架构与影响边界
+
+```text
+Agent / 外部平台 / MAP workload
+  -> environment + clientCode + tenant-scoped service key
+  -> 四协议适配层（GW Native / OpenAI / Claude / Gemini）
+  -> 服务端解析 TenantId / TeamId / ServiceKeyId
+  -> appCaller 治理（状态 / RBAC / 限流 / 预算 / PromptPolicy）
+  -> 程序池类型注册表
+       -> 默认池：租户初始化时幂等存在
+       -> 专属池：特殊 appCaller 显式绑定
+  -> 池成员（只追加兼容模型，不覆盖既有成员配置）
+  -> GW 平台模型 / Exchange
+  -> 供应商
+  -> 请求日志（tenant + key identity + route + token + price snapshot）
+  -> 费用层（estimated 复算 / provider actual / reconciliation）
+```
+
+新平台提供的模型先进入租户范围内的平台模型目录，再按能力匹配追加到已存在的默认池或专属池。模型目录、池和 appCaller 是引用关系，不复制模型，也不改写 MAP 已有模型标识。没有匹配类型、模型不可用、价格币种不明或池不存在时均保持原状，不自动创造业务语义。
+
+### 1.6 费用双向校验合同
+
+费用分三层，不能把三者混成一个金额：
+
+1. `estimated`：使用请求完成时保存的 input/output/cache token 与价格快照复算；价格不完整时为 unknown。
+2. `provider actual`：供应商响应或账单导入的实际金额，必须同时记录 provider request id、币种和账单时间窗。
+3. `reconciled`：以 TenantId、ServiceKeyId、provider、provider request id、模型和时间窗关联 estimated 与 actual，记录差额和状态，不覆盖原始值。
+
+新增字段只保存非敏感证据：`ServiceKeyId`、`ClientCode`、`Environment`、`ProviderRequestId`、`ProviderReportedCost`、`ProviderCostCurrency`、`PriceSnapshotHash`、`FxSnapshotId`、`ReconciliationStatus`、`ReconciliationDelta`。没有供应商金额时状态为 `actual-unavailable`；没有汇率快照时不同币种禁止计算差额。供应商不提供逐请求费用时，只能做账单时间窗汇总对账，页面必须明确粒度。
+
+### 1.7 可复用经验
+
+- 身份、业务用途和路由必须分开：key 表示“谁在调用”，appCaller 表示“为什么调用”，模型池表示“去哪里调用”。禁止再用一个字段承担三种语义。
+- 安全自测必须使用与用户所选协议完全一致的授权合同；不能让 OpenAI key 隐式依赖 GW Native scope。
+- 所有首次接入必须形成零费用闭环：生成身份、测试鉴权、产生 test-mode 记录、跳到日志；真实付费请求是可选下一步。
+- 默认配置只能幂等补齐和 append-only 增强；已有池成员的优先级、价格、协议和参数能力均不得被批量导入覆盖。
+- 金额先标来源再展示数值。estimated、actual、unknown 和 reconciled 是四种状态，不是四个 UI 文案。
+- 生产密钥永远先增加、后观测、再撤销；不原地覆盖，不重置用户密码，不把 key 写入仓库、日志、命令行参数或聊天。
+- 外部易用性必须由无背景 Agent 实测；“登录后能用”不能替代“从公开入口能开始”。
 
 执行期间保持以下边界：
 
