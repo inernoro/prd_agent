@@ -672,6 +672,204 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ScopedKey_TenantDisabledIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_tenant_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "disabled-tenant-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_tenants").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TENANT_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_TeamDisabledIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_team_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "disabled-team-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_teams").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TEAM_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_DisabledCreatorMembershipIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            CreatedByUserId = "user-a",
+            Name = "disabled-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_DeveloperRemovedFromTeamIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_removed_team_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            CreatedByUserId = "user-a",
+            Name = "removed-team-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("TeamIds", new BsonArray()));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_TEAM_DENIED");
+    }
+
+    [Fact]
+    public async Task ScopedKey_CreatorDowngradedToViewerIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_downgraded_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            CreatedByUserId = "user-a",
+            Name = "downgraded-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("Role", "viewer"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_ROLE_DENIED");
+    }
+
+    [Fact]
+    public async Task ScopedKey_CannotInvokeAppCallerOwnedByAnotherTeam()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_cross_team_caller_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "team-a-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["shared-caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertOneAsync(
+            new GatewayAppCallerRecord
+            {
+                TenantId = record.TenantId,
+                TeamId = "team-b",
+                AppCallerCode = "shared-caller",
+                RequestType = "chat",
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "shared-caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TEAM_MISMATCH");
+    }
+
+    [Fact]
     public async Task ScopedInvokeKey_CannotUseProfileTestScope()
     {
         var testDatabase = await TryCreateDatabaseAsync();
@@ -833,14 +1031,46 @@ public sealed class GatewayRuntimeGovernanceTests
             var databaseName = $"llmgw_governance_test_{Guid.NewGuid():N}";
             return new TestDatabase(client, databaseName, new LlmGatewayDataContext(connectionString, databaseName));
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            throw new Xunit.Sdk.XunitException($"MongoDB 行为测试依赖不可用：{ex.Message}");
         }
     }
 
     private static async Task InsertServiceKeyAsync(LlmGatewayDataContext context, GatewayServiceKeyRecord record)
     {
+        await context.Database.GetCollection<BsonDocument>("llmgw_tenants").ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            new BsonDocument
+            {
+                { "_id", record.TenantId },
+                { "Status", "active" },
+            },
+            new ReplaceOptions { IsUpsert = true });
+        if (!string.IsNullOrWhiteSpace(record.TeamId))
+        {
+            await context.Database.GetCollection<BsonDocument>("llmgw_teams").ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+                new BsonDocument
+                {
+                    { "_id", record.TeamId },
+                    { "TenantId", record.TenantId },
+                    { "Status", "active" },
+                },
+                new ReplaceOptions { IsUpsert = true });
+        }
+        if (!string.IsNullOrWhiteSpace(record.CreatedByUserId))
+        {
+            await context.Database.GetCollection<BsonDocument>("llmgw_memberships").InsertOneAsync(new BsonDocument
+            {
+                { "_id", Guid.NewGuid().ToString("N") },
+                { "TenantId", record.TenantId },
+                { "UserId", record.CreatedByUserId },
+                { "Role", "developer" },
+                { "TeamIds", string.IsNullOrWhiteSpace(record.TeamId) ? new BsonArray() : new BsonArray { record.TeamId } },
+                { "Status", "active" },
+            });
+        }
         await context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
         await context.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
             .InsertOneAsync(new GatewayServiceKeyDirectoryRecord

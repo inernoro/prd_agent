@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.8 | **日期**：2026-07-14 | **状态**：补强批次进行中
+> **版本**：v1.9 | **日期**：2026-07-14 | **状态**：补强批次进行中
 
 ## 1. 目标
 
@@ -98,7 +98,7 @@ OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2
 | ADV-03 | Tenant、Team 或 Membership 停用后历史 key 继续调用 | scoped key 鉴权只复查 key Enabled、过期时间和 scope，没有复查租户、团队或创建者成员状态 | PR-6 | 三类主体任一停用后，关联 key 下一次请求立即拒绝；Owner 显式转移所有权的 key 除外 |
 | ADV-04 | Developer 创建通配超级 key | appCaller、协议和 scope 当前允许 `*`，Developer 没有额外最小权限约束 | PR-6 | Developer 使用任一 `*` 创建返回 403；Owner/Admin 必须二次确认且写高风险审计 |
 | ADV-05 | 改密后旧 JWT 继续有效 | JWT 有效期 12 小时，token 只携带 Membership Version，改密不提升用户安全版本 | PR-6 | 改密、停用用户和强制退出后，全部旧 token 下一次请求返回 401；其他用户不受影响 |
-| ADV-06 | 创建租户或成员中断留下半成品 | tenant、team、membership、user 当前分多次写入，只对部分 DuplicateKey 路径补偿 | PR-6 | 在每个写入点注入失败后，租户、团队、成员和用户引用要么全部存在，要么全部不存在；重复提交幂等 |
+| ADV-06 | 创建租户或成员中断留下半成品 | tenant、team、membership、user 当前分多次写入，只对部分 DuplicateKey 路径补偿 | PR-6 | 对每个可捕获写失败执行补偿后，租户、团队、成员和用户引用要么全部存在，要么全部不存在；按 slug 或成员目标重复提交重放既有结果。进程硬退出不伪称事务原子，进入 `2026-07-14-tenant-provision-crash-consistency` 债务，在开放匿名注册前用 pending 状态机和修复器偿还 |
 | ADV-07 | 轮换 key 后旧 key 仍被误认为已撤销 | RotatesKeyId 当前只记录关联，不改变旧 key 状态 | PR-7 | UI 和 API 返回明确轮换阶段；只有完成撤销后才显示“轮换完成”，旧 key 随后返回 401 |
 | ADV-08 | 成功请求无法定位具体 key | 授权结果包含 ServiceKeyId，但成功请求日志没有持久化该调用身份 | PR-7 | 每条成功和失败请求均可按 TenantId、TeamId、ServiceKeyId、clientCode 查询；不保存明文或 hash |
 | ADV-09 | 两个管理员并发切换默认池得到零默认池 | 当前流程分别执行“本池置默认”和“清其他池”，交错执行可互相清空 | PR-9 | 至少 100 轮并发切换后，每个 TenantId + ModelType 恰好一个默认池；失败不改变旧默认 |
@@ -106,6 +106,8 @@ OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2
 | ADV-11 | legacy shared key 泄漏后进入内部租户 | legacy key 仍直接映射 internal tenant，不具备 scoped key 的团队和工作负载身份 | PR-10 | 建立 legacy 调用方清单、告警与截止时间；外部来源永远不能使用 legacy key；收口后 legacy key 返回 401 |
 
 PR-6 的最小测试矩阵固定为两个租户、每租户两个团队、每团队两个用户和两把 key。测试必须同时覆盖列表、详情、汇总、写入、调用、停用、改密和失败注入，禁止只验证正常 CRUD。PR-7 至 PR-10 复用同一矩阵和假上游，不增加批量付费调用。
+
+PR-6 的 owner 变更租约覆盖常规并发和版本冲突，但不把“进程暂停超过租约后恢复”宣称为已解决；该多副本 fencing 边界记录在 `2026-07-14-owner-mutation-lease-fencing`，必须在开放外部组织自主管理前偿还。
 
 ### 1.5 目标架构与影响边界
 

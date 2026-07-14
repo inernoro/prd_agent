@@ -20,6 +20,7 @@ using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
+using PrdAgent.LlmGw.Provisioning;
 using PrdAgent.LlmGw.Security;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -249,8 +250,10 @@ app.Use(async (http, next) =>
 
     var tenantAccess = await TenantAccess.ResolveAsync(
         http,
+        users,
         memberships,
         tenants,
+        teams,
         CancellationToken.None);
     if (tenantAccess is null)
     {
@@ -418,6 +421,11 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "账号没有可用的租户成员关系"), jsonOptions, 403);
     }
 
+    await users.UpdateOneAsync(
+        Builders<LlmGwUser>.Filter.And(
+            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+            Builders<LlmGwUser>.Filter.Exists(nameof(LlmGwUser.SecurityVersion), false)),
+        Builders<LlmGwUser>.Update.Set(u => u.SecurityVersion, 1));
     await users.UpdateOneAsync(u => u.Id == user.Id,
         Builders<LlmGwUser>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
     await WriteLoginAuditAsync(loginAudits, http, tenant.Id, username, user.Id, true, null);
@@ -483,13 +491,24 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     }
 
     var wasMustChangePassword = user.MustChangePassword;
+    var wasPasswordChangedByUser = user.PasswordChangedByUser;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
         .Set(u => u.PasswordChangedByUser, true)
+        .Inc(u => u.SecurityVersion, 1)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
-    await users.UpdateOneAsync(u => u.Id == user.Id, update);
+    var changedUser = await users.FindOneAndUpdateAsync(
+        Builders<LlmGwUser>.Filter.And(
+            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+            Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
+            Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
+            Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
+        update,
+        new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    if (changedUser is null)
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("PASSWORD_CHANGE_CONFLICT", "账号口令已被其他操作更新，请重新登录"), jsonOptions, 409);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -502,22 +521,21 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         changes: new BsonDocument
         {
             { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
-            { "passwordChangedByUser", new BsonDocument { { "from", user.PasswordChangedByUser }, { "to", true } } },
+            { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
         });
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
-    user.MustChangePassword = false;
     var tenantAccess = TenantAccess.GetRequired(http);
-    var membership = await memberships.Find(x => x.Id == tenantAccess.MembershipId && x.TenantId == tenantAccess.TenantId && x.UserId == user.Id && x.Status == "active").FirstOrDefaultAsync();
+    var membership = await memberships.Find(x => x.Id == tenantAccess.MembershipId && x.TenantId == tenantAccess.TenantId && x.UserId == changedUser.Id && x.Status == "active").FirstOrDefaultAsync();
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership);
+    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership);
     var data = new ChangePasswordResultDto
     {
         Token = token,
-        Username = user.Username,
-        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        Username = changedUser.Username,
+        DisplayName = string.IsNullOrEmpty(changedUser.DisplayName) ? changedUser.Username : changedUser.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
         Tenant = ToTenantSession(tenant, membership),
     };
@@ -600,13 +618,23 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         || slug.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '-')))
         return Json(ApiEnvelope<object>.Fail("INVALID_TENANT", "名称需为 2-120 字符，slug 仅支持 2-64 位小写字母、数字和连字符"), jsonOptions, 400);
 
+    var normalizedSlug = slug.ToUpperInvariant();
+    var existingTenant = await tenants.Find(x => x.NormalizedSlug == normalizedSlug).FirstOrDefaultAsync();
+    if (existingTenant is not null)
+    {
+        var replay = await FindTenantCreationReplayAsync(teams, memberships, existingTenant, access.UserId);
+        if (replay is not null)
+            return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+        return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+    }
+
     var now = DateTime.UtcNow;
     var tenant = new LlmGwTenant
     {
         Name = name,
         NormalizedName = name.ToUpperInvariant(),
         Slug = slug,
-        NormalizedSlug = slug.ToUpperInvariant(),
+        NormalizedSlug = normalizedSlug,
         CreatedAt = now,
         UpdatedAt = now,
     };
@@ -635,12 +663,25 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         await users.UpdateOneAsync(x => x.Id == access.UserId,
             Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, tenant.Id).Set(x => x.UpdatedAt, now));
     }
-    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    catch (Exception ex)
     {
-        await tenants.DeleteOneAsync(x => x.Id == tenant.Id);
-        await teams.DeleteOneAsync(x => x.Id == team.Id && x.TenantId == tenant.Id);
-        await memberships.DeleteOneAsync(x => x.Id == membership.Id && x.TenantId == tenant.Id);
-        return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+        await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
+        if (ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey })
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                var winner = await tenants.Find(x => x.NormalizedSlug == normalizedSlug && x.Status == "active").FirstOrDefaultAsync();
+                if (winner is not null)
+                {
+                    var replay = await FindTenantCreationReplayAsync(teams, memberships, winner, access.UserId);
+                    if (replay is not null)
+                        return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+                }
+                await Task.Delay(25);
+            }
+            return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+        }
+        throw;
     }
     await WriteOperationAuditAsync(operationAudits, http, "tenant.create", "llmgw_tenant", tenant.Id, tenant.Name, true, null,
         new BsonDocument { { "slug", tenant.Slug } });
@@ -651,9 +692,17 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
 {
     var access = TenantAccess.GetRequired(http);
     var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
-    var tenantTeams = await teams.Find(x => x.TenantId == access.TenantId)
+    var canReadEntireOrganization = access.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin;
+    var teamFilter = Builders<LlmGwTeam>.Filter.Eq(x => x.TenantId, access.TenantId);
+    var membershipFilter = Builders<LlmGwMembership>.Filter.Eq(x => x.TenantId, access.TenantId);
+    if (!canReadEntireOrganization)
+    {
+        teamFilter &= Builders<LlmGwTeam>.Filter.In(x => x.Id, access.TeamIds);
+        membershipFilter &= Builders<LlmGwMembership>.Filter.AnyIn(x => x.TeamIds, access.TeamIds);
+    }
+    var tenantTeams = await teams.Find(teamFilter)
         .SortBy(x => x.Name).ToListAsync();
-    var tenantMemberships = await memberships.Find(x => x.TenantId == access.TenantId)
+    var tenantMemberships = await memberships.Find(membershipFilter)
         .SortBy(x => x.CreatedAt).ToListAsync();
     var userIds = tenantMemberships.Select(x => x.UserId).Distinct(StringComparer.Ordinal).ToList();
     var tenantUsers = await users.Find(Builders<LlmGwUser>.Filter.In(x => x.Id, userIds)).ToListAsync();
@@ -669,7 +718,9 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
             username = userById.GetValueOrDefault(x.UserId)?.Username,
             displayName = userById.GetValueOrDefault(x.UserId)?.DisplayName,
             x.Role,
-            x.TeamIds,
+            teamIds = canReadEntireOrganization
+                ? x.TeamIds
+                : x.TeamIds.Where(teamId => access.TeamIds.Contains(teamId, StringComparer.Ordinal)).ToList(),
             x.Status,
             x.Version,
             x.CreatedAt,
@@ -708,6 +759,7 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
     var team = await teams.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
     if (team is null) return Json(ApiEnvelope<object>.Fail("TEAM_NOT_FOUND", "团队不存在"), jsonOptions, 404);
     var updates = new List<UpdateDefinition<LlmGwTeam>>();
+    string? nextStatus = null;
     if (body.Name is not null)
     {
         var name = body.Name.Trim();
@@ -719,6 +771,7 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
         var status = body.Status.Trim().ToLowerInvariant();
         if (status is not ("active" or "disabled")) return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "status 仅支持 active/disabled"), jsonOptions, 400);
         updates.Add(Builders<LlmGwTeam>.Update.Set(x => x.Status, status));
+        nextStatus = status;
     }
     if (updates.Count == 0) return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<LlmGwTeam>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
@@ -730,8 +783,47 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
     {
         return Json(ApiEnvelope<object>.Fail("TEAM_CONFLICT", "当前租户已存在同名团队"), jsonOptions, 409);
     }
-    await WriteOperationAuditAsync(operationAudits, http, "team.update", "llmgw_team", id, team.Name, true, null);
-    return Json(ApiEnvelope<object>.Ok(new { id, updated = true }), jsonOptions);
+    long invalidatedMemberships = 0;
+    long revokedServiceKeys = 0;
+    long disabledAppCallers = 0;
+    if (nextStatus == "disabled")
+    {
+        invalidatedMemberships = (await memberships.UpdateManyAsync(
+            x => x.TenantId == access.TenantId && x.TeamIds.Contains(id),
+            Builders<LlmGwMembership>.Update
+                .Inc(x => x.Version, 1)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow))).ModifiedCount;
+        revokedServiceKeys = (await serviceKeys.UpdateManyAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TeamId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true))),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("UpdatedAt", DateTime.UtcNow))).ModifiedCount;
+        disabledAppCallers = (await gwAppCallers.UpdateManyAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TeamId", id),
+                Builders<BsonDocument>.Filter.Ne("Status", "disabled"))),
+            Builders<BsonDocument>.Update
+                .Set("Status", "disabled")
+                .Set("UpdatedAt", DateTime.UtcNow))).ModifiedCount;
+    }
+    await WriteOperationAuditAsync(operationAudits, http, "team.update", "llmgw_team", id, team.Name, true, null,
+        new BsonDocument
+        {
+            { "status", nextStatus is null ? BsonNull.Value : nextStatus },
+            { "invalidatedMemberships", invalidatedMemberships },
+            { "revokedServiceKeys", revokedServiceKeys },
+            { "disabledAppCallers", disabledAppCallers },
+        });
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        updated = true,
+        invalidatedMemberships,
+        revokedServiceKeys,
+        disabledAppCallers,
+    }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberRequest body) =>
@@ -748,35 +840,82 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户的团队"), jsonOptions, 400);
 
     var memberUser = await users.Find(x => x.Username == username).FirstOrDefaultAsync();
-    if (memberUser is null)
+    if (memberUser is not null)
     {
-        var initialPassword = body.InitialPassword ?? string.Empty;
-        if (initialPassword.Length < 12)
-            return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
-        memberUser = new LlmGwUser
+        var existingMembership = await memberships.Find(x => x.TenantId == access.TenantId && x.UserId == memberUser.Id).FirstOrDefaultAsync();
+        if (existingMembership is not null)
         {
-            Username = username,
-            DisplayName = string.IsNullOrWhiteSpace(body.DisplayName) ? username : body.DisplayName.Trim(),
-            PasswordHash = PasswordHasher.Hash(initialPassword),
-            MustChangePassword = true,
-            TenantIds = new List<string> { access.TenantId },
-            DefaultTenantId = access.TenantId,
-        };
-        await users.InsertOneAsync(memberUser);
+            if (MembershipMatches(existingMembership, role, teamIds))
+                return Json(ApiEnvelope<object>.Ok(new { existingMembership.Id, existingMembership.UserId, memberUser.Username, existingMembership.Role, existingMembership.TeamIds, idempotentReplay = true }), jsonOptions);
+            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "用户已是当前租户成员，现有角色或团队范围与本次请求不同"), jsonOptions, 409);
+        }
     }
-    if (await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.UserId == memberUser.Id) > 0)
-        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "用户已是当前租户成员"), jsonOptions, 409);
 
-    var membership = new LlmGwMembership
+    var createdUser = false;
+    var hadTenantDirectoryEntry = memberUser?.TenantIds.Contains(access.TenantId, StringComparer.Ordinal) == true;
+    LlmGwMembership? membership = null;
+    try
     {
-        TenantId = access.TenantId,
-        UserId = memberUser.Id,
-        Role = role,
-        TeamIds = teamIds,
-    };
-    await memberships.InsertOneAsync(membership);
-    await users.UpdateOneAsync(x => x.Id == memberUser.Id,
-        Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, access.TenantId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (memberUser is null)
+        {
+            var initialPassword = body.InitialPassword ?? string.Empty;
+            if (initialPassword.Length < 12)
+                return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
+            memberUser = new LlmGwUser
+            {
+                Username = username,
+                DisplayName = string.IsNullOrWhiteSpace(body.DisplayName) ? username : body.DisplayName.Trim(),
+                PasswordHash = PasswordHasher.Hash(initialPassword),
+                MustChangePassword = true,
+                TenantIds = new List<string> { access.TenantId },
+                DefaultTenantId = access.TenantId,
+            };
+            await users.InsertOneAsync(memberUser);
+            createdUser = true;
+        }
+
+        membership = new LlmGwMembership
+        {
+            TenantId = access.TenantId,
+            UserId = memberUser.Id,
+            Role = role,
+            TeamIds = teamIds,
+        };
+        await memberships.InsertOneAsync(membership);
+        await users.UpdateOneAsync(x => x.Id == memberUser.Id,
+            Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, access.TenantId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+    }
+    catch (Exception ex)
+    {
+        if (memberUser is not null)
+            await ProvisioningCompensation.RollbackMemberCreationAsync(
+                users,
+                memberships,
+                access.TenantId,
+                memberUser.Id,
+                membership?.Id,
+                createdUser,
+                hadTenantDirectoryEntry);
+        if (ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey })
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                var winnerUser = await users.Find(x => x.Username == username).FirstOrDefaultAsync();
+                var winnerMembership = winnerUser is null
+                    ? null
+                    : await memberships.Find(x => x.TenantId == access.TenantId && x.UserId == winnerUser.Id).FirstOrDefaultAsync();
+                if (winnerUser is not null && winnerMembership is not null)
+                {
+                    if (MembershipMatches(winnerMembership, role, teamIds))
+                        return Json(ApiEnvelope<object>.Ok(new { winnerMembership.Id, winnerMembership.UserId, winnerUser.Username, winnerMembership.Role, winnerMembership.TeamIds, idempotentReplay = true }), jsonOptions);
+                    return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "并发创建的成员角色或团队范围与本次请求不同"), jsonOptions, 409);
+                }
+                await Task.Delay(25);
+            }
+            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "用户名或租户成员关系已被并发创建"), jsonOptions, 409);
+        }
+        throw;
+    }
     await WriteOperationAuditAsync(operationAudits, http, "membership.create", "llmgw_membership", membership.Id, memberUser.Username, true, null,
         new BsonDocument { { "role", membership.Role }, { "userId", membership.UserId } });
     return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.UserId, memberUser.Username, membership.Role, membership.TeamIds }), jsonOptions, 201);
@@ -796,23 +935,75 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
         return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以修改 owner 成员关系"), jsonOptions, 403);
     var removesOwner = membership.Role == LlmGwTenantRoles.Owner
         && (role is not null && role != LlmGwTenantRoles.Owner || status == "disabled");
-    if (removesOwner && await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.Role == LlmGwTenantRoles.Owner && x.Status == "active") <= 1)
-        return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
-    if (body.TeamIds is not null)
+    var ownerMutationToken = removesOwner
+        ? await TryAcquireTenantOwnerMutationLockAsync(tenants, access.TenantId)
+        : null;
+    if (removesOwner && ownerMutationToken is null)
+        return Json(ApiEnvelope<object>.Fail("ORGANIZATION_UPDATE_BUSY", "另一个 owner 变更正在执行，请重试"), jsonOptions, 409);
+    try
     {
-        var teamIds = body.TeamIds.Distinct(StringComparer.Ordinal).ToList();
-        if (teamIds.Count > 0 && await teams.CountDocumentsAsync(x => x.TenantId == access.TenantId && teamIds.Contains(x.Id) && x.Status == "active") != teamIds.Count)
-            return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户的团队"), jsonOptions, 400);
-        membership.TeamIds = teamIds;
+        if (removesOwner && await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.Role == LlmGwTenantRoles.Owner && x.Status == "active") <= 1)
+            return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
+        if (body.TeamIds is not null)
+        {
+            var teamIds = body.TeamIds.Distinct(StringComparer.Ordinal).ToList();
+            if (teamIds.Count > 0 && await teams.CountDocumentsAsync(x => x.TenantId == access.TenantId && teamIds.Contains(x.Id) && x.Status == "active") != teamIds.Count)
+                return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户的团队"), jsonOptions, 400);
+            membership.TeamIds = teamIds;
+        }
+        if (role is not null) membership.Role = role;
+        if (status is not null) membership.Status = status;
+        var previousVersion = membership.Version;
+        membership.Version++;
+        membership.UpdatedAt = DateTime.UtcNow;
+        var replaced = await memberships.ReplaceOneAsync(
+            x => x.Id == id && x.TenantId == access.TenantId && x.Version == previousVersion,
+            membership);
+        if (replaced.ModifiedCount != 1)
+            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
+        await WriteOperationAuditAsync(operationAudits, http, "membership.update", "llmgw_membership", membership.Id, membership.UserId, true, null,
+            new BsonDocument { { "role", membership.Role }, { "status", membership.Status }, { "version", membership.Version } });
+        return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version }), jsonOptions);
     }
-    if (role is not null) membership.Role = role;
-    if (status is not null) membership.Status = status;
-    membership.Version++;
-    membership.UpdatedAt = DateTime.UtcNow;
-    await memberships.ReplaceOneAsync(x => x.Id == id && x.TenantId == access.TenantId, membership);
-    await WriteOperationAuditAsync(operationAudits, http, "membership.update", "llmgw_membership", membership.Id, membership.UserId, true, null,
-        new BsonDocument { { "role", membership.Role }, { "status", membership.Status }, { "version", membership.Version } });
-    return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version }), jsonOptions);
+    finally
+    {
+        if (ownerMutationToken is not null)
+            await ReleaseTenantOwnerMutationLockAsync(tenants, access.TenantId, ownerMutationToken);
+    }
+}).RequireAuthorization("OrganizationWrite");
+
+app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var current = await memberships.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
+    if (current is null)
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_NOT_FOUND", "成员关系不存在"), jsonOptions, 404);
+    if (current.Role == LlmGwTenantRoles.Owner && access.Role != LlmGwTenantRoles.Owner)
+        return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以强制 owner 重新登录"), jsonOptions, 403);
+
+    var updated = await memberships.FindOneAndUpdateAsync(
+        Builders<LlmGwMembership>.Filter.And(
+            Builders<LlmGwMembership>.Filter.Eq(x => x.Id, id),
+            Builders<LlmGwMembership>.Filter.Eq(x => x.TenantId, access.TenantId),
+            Builders<LlmGwMembership>.Filter.Eq(x => x.Version, current.Version)),
+        Builders<LlmGwMembership>.Update
+            .Inc(x => x.Version, 1)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+        new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+    if (updated is null)
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请重试"), jsonOptions, 409);
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "membership.invalidate_sessions",
+        "llmgw_membership",
+        updated.Id,
+        updated.UserId,
+        true,
+        null,
+        new BsonDocument { { "version", updated.Version } });
+    return Json(ApiEnvelope<object>.Ok(new { updated.Id, updated.UserId, updated.Version, invalidated = true }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
@@ -827,7 +1018,7 @@ app.MapGet("/gw/logs", async (
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -850,7 +1041,7 @@ app.MapGet("/gw/logs", async (
 app.MapGet("/gw/logs/meta", async (HttpContext http) =>
 {
     var since = DateTime.UtcNow.AddDays(-30);
-    var recent = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Gte("StartedAt", since));
+    var recent = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Gte("StartedAt", since));
 
     var modelsRaw = await logs.Distinct<string>("Model", recent).ToListAsync();
     var statusesRaw = await logs.Distinct<string>("Status", recent).ToListAsync();
@@ -885,7 +1076,7 @@ app.MapGet("/gw/logs/timeseries", async (
     string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -917,7 +1108,7 @@ app.MapGet("/gw/logs/summary", async (
     string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -1001,7 +1192,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
     }
 
     var fb = Builders<BsonDocument>.Filter;
-    var overviewFilter = TenantAccess.Filter(http, fb.And(
+    var overviewFilter = TenantAccess.FilterTeamScope(http, fb.And(
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
         fb.Ne("IsHealthProbe", true)));
@@ -1028,7 +1219,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Include("Enabled")
         .Include("ExpiresAt")
         .Include("LastUsedAt");
-    var keyDocs = await serviceKeys.Find(TenantAccess.Filter(http)).Project(keyProjection).ToListAsync();
+    var keyDocs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty)).Project(keyProjection).ToListAsync();
 
     var canReadRecentRequests = TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead);
     var recentRequests = new List<LlmLogListItem>();
@@ -1158,7 +1349,7 @@ app.MapGet("/gw/protocol-coverage", async (HttpContext http, string? releaseComm
     var logFilter = runtimeCommit is null
         ? Builders<BsonDocument>.Filter.Gte("StartedAt", since)
         : Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit);
-    logFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+    logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
         logFilter,
         Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
 
@@ -1171,7 +1362,9 @@ app.MapGet("/gw/protocol-coverage", async (HttpContext http, string? releaseComm
         .Include("StartedAt")
         .Include("DroppedParameters");
     var logDocs = await logs.Find(logFilter).Project(logProjection).ToListAsync();
-    var appCallerDocs = await gwAppCallers.Find(TenantAccess.Filter(http)).ToListAsync();
+    var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(
+        http,
+        Builders<BsonDocument>.Filter.Empty)).ToListAsync();
 
     var items = TargetIngressProtocols().Select(protocol =>
     {
@@ -1263,7 +1456,7 @@ app.MapGet("/gw/logs/sessions", async (
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -1303,7 +1496,7 @@ app.MapGet("/gw/logs/sessions", async (
 // ───────────────────────────── 日志详情（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var filter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var doc = await logs.Find(filter).FirstOrDefaultAsync();
     if (doc is null)
     {
@@ -1328,7 +1521,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
     var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
     var since = DateTime.UtcNow.AddHours(-hours);
-    var appCallerDocs = await gwAppCallers.Find(TenantAccess.Filter(http))
+    var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(http, fb.Empty))
         .Project(Builders<BsonDocument>.Projection
             .Include("_id")
             .Include("AppCallerCode")
@@ -1338,7 +1531,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
         .ToListAsync();
     var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
     var logStatsDocs = await logs.Aggregate()
-        .Match(TenantAccess.Filter(http, logFilter))
+        .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
         {
             { "_id", "$ModelPoolId" },
@@ -2701,7 +2894,7 @@ app.MapGet("/gw/app-callers", async (
             fb.Regex("LastObservedSessionId", pattern),
             fb.Regex("LastObservedRunId", pattern)));
     }
-    var filter = TenantAccess.Filter(http, filters.Count > 0 ? fb.And(filters) : fb.Empty);
+    var filter = TenantAccess.FilterTeamScope(http, filters.Count > 0 ? fb.And(filters) : fb.Empty);
     var total = await gwAppCallers.CountDocumentsAsync(filter);
     var docs = await gwAppCallers.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("LastSeenAt").Ascending("AppCallerCode"))
@@ -2709,7 +2902,7 @@ app.MapGet("/gw/app-callers", async (
         .Limit(ps)
         .ToListAsync();
 
-    var recent = TenantAccess.Filter(http);
+    var recent = TenantAccess.FilterTeamScope(http, fb.Empty);
     var statuses = NormalizeDistinct(await gwAppCallers.Distinct<string>("Status", recent).ToListAsync(), 80);
     var sourceSystems = NormalizeDistinct(await gwAppCallers.Distinct<string>("SourceSystem", recent).ToListAsync(), 80);
     var protocolDocs = await gwAppCallers.Find(recent)
@@ -3439,7 +3632,7 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
     var ownScope = access.Role == LlmGwTenantRoles.Developer
         ? Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId)
         : Builders<BsonDocument>.Filter.Empty;
-    var docs = await serviceKeys.Find(TenantAccess.Filter(http, ownScope))
+    var docs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, ownScope))
         .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
         .Limit(500)
         .ToListAsync();
@@ -3518,13 +3711,66 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         teamId = tenant.TeamIds[0];
     }
 
+    var usesWildcard = sourceSystem == "*"
+        || appCallerCodes.Contains("*", StringComparer.Ordinal)
+        || protocols.Contains("*", StringComparer.Ordinal)
+        || scopes.Contains("*", StringComparer.Ordinal);
+    if (tenant.Role == LlmGwTenantRoles.Developer && usesWildcard)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "WILDCARD_SCOPE_DENIED",
+            "Developer 只能创建绑定具体来源、appCaller、协议和 scope 的 service key"), jsonOptions, 403);
+    }
+    if (usesWildcard
+        && tenant.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin
+        && !body.ConfirmWildcardRisk)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "WILDCARD_CONFIRMATION_REQUIRED",
+            "通配密钥可访问更大范围，必须显式确认高风险后才能创建"), jsonOptions, 409);
+    }
+    if (tenant.Role == LlmGwTenantRoles.Developer && teamId is null)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "TEAM_SCOPE_REQUIRED",
+            "Developer 创建 service key 时必须绑定所属团队"), jsonOptions, 403);
+    }
+    if (teamId is not null && appCallerCodes.Contains("*", StringComparer.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "TEAM_WILDCARD_DENIED",
+            "团队 service key 不能使用通配 appCaller"), jsonOptions, 400);
+    }
+    if (teamId is not null)
+    {
+        var callerCandidates = await gwAppCallers.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("AppCallerCode").Include("TeamId"))
+            .ToListAsync();
+        foreach (var appCallerCode in appCallerCodes)
+        {
+            var matches = callerCandidates
+                .Where(x => string.Equals(
+                    x.AsNullableString("AppCallerCode")?.Trim(),
+                    appCallerCode.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (matches.Count > 0
+                && matches.Any(x => !string.Equals(x.AsNullableString("TeamId"), teamId, StringComparison.Ordinal)))
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "APP_CALLER_TEAM_MISMATCH",
+                    $"appCaller {appCallerCode} 不属于所选团队"), jsonOptions, 403);
+            }
+        }
+    }
+
     BsonDocument? rotatedKey = null;
     if (!string.IsNullOrWhiteSpace(body.RotatesKeyId))
     {
         var rotationFilter = Builders<BsonDocument>.Filter.Eq("_id", body.RotatesKeyId.Trim());
         if (tenant.Role == LlmGwTenantRoles.Developer)
             rotationFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", tenant.UserId);
-        rotatedKey = await serviceKeys.Find(TenantAccess.Filter(http, rotationFilter)).FirstOrDefaultAsync();
+        rotatedKey = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, rotationFilter)).FirstOrDefaultAsync();
         if (rotatedKey is null)
             return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_NOT_FOUND", "待轮换密钥不存在或不在当前管理范围"), jsonOptions, 404);
     }
@@ -3577,7 +3823,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     await WriteOperationAuditAsync(
         operationAudits,
         http,
-        "service_key.create",
+        usesWildcard ? "service_key.create_wildcard" : "service_key.create",
         "llmgw_service_key",
         id,
         name,
@@ -3593,6 +3839,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
             { "allowedCidrCount", allowedCidrs.Count },
             { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
             { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+            { "usesWildcard", usesWildcard },
         });
     return Json(ApiEnvelope<object>.Ok(new
     {
@@ -3619,7 +3866,7 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
     var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
     if (access.Role == LlmGwTenantRoles.Developer)
         scopeFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId);
-    var keyFilter = TenantAccess.Filter(http, scopeFilter);
+    var keyFilter = TenantAccess.FilterTeamScope(http, scopeFilter);
     var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
@@ -3650,7 +3897,7 @@ app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
     if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
-    var filter = TenantAccess.Filter(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
+    var filter = TenantAccess.FilterTeamScope(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
     var total = await shadows.CountDocumentsAsync(filter);
     var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
     var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
@@ -5233,6 +5480,66 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
 
 app.Run();
 
+static async Task<(LlmGwTenant Tenant, string DefaultTeamId)?> FindTenantCreationReplayAsync(
+    IMongoCollection<LlmGwTeam> teams,
+    IMongoCollection<LlmGwMembership> memberships,
+    LlmGwTenant tenant,
+    string userId)
+{
+    if (tenant.Status != "active") return null;
+    var membership = await memberships.Find(x => x.TenantId == tenant.Id
+            && x.UserId == userId
+            && x.Role == LlmGwTenantRoles.Owner
+            && x.Status == "active")
+        .FirstOrDefaultAsync();
+    if (membership is null) return null;
+    var defaultTeam = await teams.Find(x => x.TenantId == tenant.Id
+            && membership.TeamIds.Contains(x.Id)
+            && x.Status == "active")
+        .SortBy(x => x.CreatedAt)
+        .FirstOrDefaultAsync();
+    return defaultTeam is null ? null : (tenant, defaultTeam.Id);
+}
+
+static bool MembershipMatches(
+    LlmGwMembership membership,
+    string role,
+    IReadOnlyCollection<string> teamIds)
+    => membership.Status == "active"
+       && string.Equals(membership.Role, role, StringComparison.OrdinalIgnoreCase)
+       && membership.TeamIds.ToHashSet(StringComparer.Ordinal).SetEquals(teamIds);
+
+static async Task<string?> TryAcquireTenantOwnerMutationLockAsync(
+    IMongoCollection<LlmGwTenant> tenants,
+    string tenantId)
+{
+    var now = DateTime.UtcNow;
+    var token = Guid.NewGuid().ToString("N");
+    var fb = Builders<LlmGwTenant>.Filter;
+    var filter = fb.And(
+        fb.Eq(x => x.Id, tenantId),
+        fb.Or(
+            fb.Exists("OwnerMutationLock", false),
+            fb.Eq("OwnerMutationLock", BsonNull.Value),
+            fb.Lte("OwnerMutationLock.ExpiresAt", now)));
+    var update = Builders<LlmGwTenant>.Update
+        .Set("OwnerMutationLock.Token", token)
+        .Set("OwnerMutationLock.ExpiresAt", now.AddSeconds(30));
+    var result = await tenants.UpdateOneAsync(filter, update);
+    return result.ModifiedCount == 1 ? token : null;
+}
+
+static async Task ReleaseTenantOwnerMutationLockAsync(
+    IMongoCollection<LlmGwTenant> tenants,
+    string tenantId,
+    string token)
+{
+    var filter = Builders<LlmGwTenant>.Filter.And(
+        Builders<LlmGwTenant>.Filter.Eq(x => x.Id, tenantId),
+        Builders<LlmGwTenant>.Filter.Eq("OwnerMutationLock.Token", token));
+    await tenants.UpdateOneAsync(filter, Builders<LlmGwTenant>.Update.Unset("OwnerMutationLock"));
+}
+
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
@@ -5405,6 +5712,7 @@ static async Task SeedAdminAsync(
                     .Set(u => u.IsActive, true)
                     .Set(u => u.MustChangePassword, resetMustChange)
                     .Set(u => u.PasswordChangedByUser, false)
+                    .Inc(u => u.SecurityVersion, 1)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
@@ -5460,6 +5768,7 @@ static async Task SeedAdminAsync(
             await users.UpdateOneAsync(u => u.Username == username,
                 Builders<LlmGwUser>.Update
                     .Set(u => u.IsActive, true)
+                    .Inc(u => u.SecurityVersion, 1)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
             await WriteSystemOperationAuditAsync(
                 operationAudits,

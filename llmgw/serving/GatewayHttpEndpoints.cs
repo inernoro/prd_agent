@@ -111,6 +111,7 @@ public static class GatewayHttpEndpoints
                     return;
                 }
                 context.Items["llmgw.key.authorization"] = authorization;
+                context.Items["llmgw.key.authorization.inputs"] = authorizationInputs;
             }
 
             var budgetCoordinator = context.RequestServices.GetService<GatewayBudgetCoordinator>();
@@ -732,7 +733,19 @@ public static class GatewayHttpEndpoints
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
-            await RecordDiscoveredAppCallerAsync(services, ingress, CancellationToken.None);
+            if (!await RecordDiscoveredAppCallerAsync(services, ingress, CancellationToken.None))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_TEAM_OWNERSHIP_DENIED",
+                        message = "appCaller 已归属其他团队",
+                        appCallerCode = body.AppCallerCode,
+                        requestType = body.ModelType,
+                    },
+                }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
+            }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
             var resolution = await gateway.ResolveModelAsync(
                 body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
@@ -1218,8 +1231,21 @@ public static class GatewayHttpEndpoints
             {
                 Builders<LlmShadowComparison>.Filter.Eq(x => x.TenantId, GetVerifiedTenantId(http)),
             };
-            if (!string.IsNullOrWhiteSpace(appCallerCode))
+            var verifiedTeamId = GetVerifiedTeamId(http);
+            if (!string.IsNullOrWhiteSpace(verifiedTeamId))
+                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.TeamId, verifiedTeamId));
+            var verifiedAppCaller = GetVerifiedAuthorizationInputs(http).AppCallerCode;
+            var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
+            if (authorization is not { LegacySharedKey: true })
+            {
+                if (string.IsNullOrWhiteSpace(verifiedAppCaller))
+                    return Results.Json(new { error = new { code = "GATEWAY_APP_CALLER_REQUIRED", message = "读取影子比对必须指定 appCaller" } }, jsonOpts, statusCode: 400);
+                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, verifiedAppCaller));
+            }
+            else if (!string.IsNullOrWhiteSpace(appCallerCode))
+            {
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
+            }
             if (!string.IsNullOrWhiteSpace(kind))
                 filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
             var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
@@ -1298,6 +1324,11 @@ public static class GatewayHttpEndpoints
             ? authorization.TeamId
             : null;
 
+    private static GatewayAuthorizationInputs GetVerifiedAuthorizationInputs(HttpContext context)
+        => context.Items["llmgw.key.authorization.inputs"] is GatewayAuthorizationInputs inputs
+            ? inputs
+            : throw new UnauthorizedAccessException("verified gateway authorization inputs are unavailable");
+
     private static string ResolveIngressProtocol(string path)
     {
         if (path.StartsWith("/v1beta/", StringComparison.OrdinalIgnoreCase)
@@ -1361,6 +1392,21 @@ public static class GatewayHttpEndpoints
             && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
         {
             appCallerCode = queryCaller.First()!.Trim();
+        }
+
+        if (path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase)
+            && context.Request.Query.TryGetValue("appCallerCode", out var shadowQueryCaller)
+            && !string.IsNullOrWhiteSpace(shadowQueryCaller.FirstOrDefault()))
+        {
+            var requestedAppCaller = shadowQueryCaller.First()!.Trim();
+            if (!string.IsNullOrWhiteSpace(headerAppCaller)
+                && !string.Equals(headerAppCaller, requestedAppCaller, StringComparison.OrdinalIgnoreCase))
+            {
+                return new(sourceSystem, requestedAppCaller, ingressProtocol, requiredScope,
+                    "GATEWAY_APP_CALLER_MISMATCH",
+                    "X-Gateway-App-Caller 与查询 appCallerCode 不一致");
+            }
+            appCallerCode = requestedAppCaller;
         }
 
         if (!ShouldInspectAuthorizationBody(path))
@@ -1944,7 +1990,17 @@ public static class GatewayHttpEndpoints
         ingress.Context ??= new GatewayRequestContext { RequestId = ingress.RequestId };
         ingress.Context.TenantId = authorization.TenantId;
         ingress.Context.TeamId = authorization.TeamId;
-        await RecordDiscoveredAppCallerAsync(services, ingress, ct);
+        if (!await RecordDiscoveredAppCallerAsync(services, ingress, ct))
+        {
+            var ownershipStatus = AppCallerStatusDecision.Reject(
+                ingress.AppCallerCode,
+                ingress.RequestType,
+                "team-ownership-denied");
+            return new AppCallerGovernanceDecision(
+                ownershipStatus,
+                AppCallerRateLimitDecision.Allow(ingress.AppCallerCode, ingress.RequestType),
+                AppCallerBudgetDecision.Allow(ingress.AppCallerCode, ingress.RequestType, 0, 0, hasCostEvidence: false));
+        }
         return await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
     }
 
@@ -1975,6 +2031,22 @@ public static class GatewayHttpEndpoints
                     Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, normalizedRequestType)),
                     new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
                 .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(caller?.TeamId))
+            {
+                var teamIsActive = await gatewayData.Database.GetCollection<BsonDocument>("llmgw_teams")
+                    .CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", caller.TeamId),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                        Builders<BsonDocument>.Filter.Eq("Status", "active")), cancellationToken: ct) == 1;
+                if (!teamIsActive)
+                {
+                    var teamStatus = AppCallerStatusDecision.Reject(appCallerCode, requestType, "team-disabled");
+                    return new AppCallerGovernanceDecision(
+                        teamStatus,
+                        AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                        AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
+                }
+            }
             var status = CheckAppCallerStatus(appCallerCode, requestType, caller?.Status);
             if (status.Rejected)
                 return new AppCallerGovernanceDecision(
@@ -4265,17 +4337,17 @@ public static class GatewayHttpEndpoints
         };
     }
 
-    private static async Task RecordDiscoveredAppCallerAsync(
+    private static async Task<bool> RecordDiscoveredAppCallerAsync(
         IServiceProvider services,
         GatewayIngressRequest ingress,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ingress.AppCallerCode) || string.IsNullOrWhiteSpace(ingress.RequestType))
-            return;
+            return true;
 
         var gatewayData = services.GetService<LlmGatewayDataContext>();
         if (gatewayData == null)
-            return;
+            return true;
 
         var collection = gatewayData.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
         var appCallerCode = GatewayAppCallerIdentity.NormalizePart(ingress.AppCallerCode);
@@ -4289,11 +4361,17 @@ public static class GatewayHttpEndpoints
         var sessionId = NormalizeOptionalTraceId(ingress.Context?.SessionId);
         var runId = NormalizeOptionalTraceId(ingress.Context?.RunId);
         var tenantId = ingress.Context?.TenantId;
-        if (string.IsNullOrWhiteSpace(tenantId)) return;
-        var filter = Builders<GatewayAppCallerRecord>.Filter.And(
+        if (string.IsNullOrWhiteSpace(tenantId)) return false;
+        var identityFilter = Builders<GatewayAppCallerRecord>.Filter.And(
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
             Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, requestType));
+        var requestedTeamId = ingress.Context?.TeamId;
+        var writeFilter = string.IsNullOrWhiteSpace(requestedTeamId)
+            ? identityFilter
+            : Builders<GatewayAppCallerRecord>.Filter.And(
+                identityFilter,
+                Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TeamId, requestedTeamId));
         var updates = new List<UpdateDefinition<GatewayAppCallerRecord>>
         {
             Builders<GatewayAppCallerRecord>.Update
@@ -4332,7 +4410,7 @@ public static class GatewayHttpEndpoints
 
         try
         {
-            await collection.UpdateOneAsync(filter, update, new UpdateOptions
+            await collection.UpdateOneAsync(writeFilter, update, new UpdateOptions
             {
                 IsUpsert = true,
                 Collation = GatewayAppCallerIdentity.Collation,
@@ -4340,8 +4418,55 @@ public static class GatewayHttpEndpoints
         }
         catch
         {
-            // 被动登记是观测能力，不能阻断模型请求主链路。
+            if (string.IsNullOrWhiteSpace(requestedTeamId))
+                return true;
         }
+
+        if (string.IsNullOrWhiteSpace(requestedTeamId))
+            return true;
+
+        GatewayAppCallerRecord? claimed;
+        try
+        {
+            claimed = await collection.Find(identityFilter, new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+                .FirstOrDefaultAsync(ct);
+        }
+        catch
+        {
+            return false;
+        }
+        if (claimed is not null && string.Equals(claimed.TeamId, requestedTeamId, StringComparison.Ordinal))
+            return true;
+
+        try
+        {
+            await gatewayData.Database.GetCollection<BsonDocument>("llmgw_operation_audits").InsertOneAsync(
+                new BsonDocument
+                {
+                    { "_id", Guid.NewGuid().ToString("N") },
+                    { "TenantId", tenantId },
+                    { "TeamId", requestedTeamId },
+                    { "Action", "app_caller.team_ownership_denied" },
+                    { "TargetType", "llmgw_app_caller" },
+                    { "TargetId", claimed?.Id ?? string.Empty },
+                    { "TargetName", appCallerCode },
+                    { "Success", false },
+                    { "Reason", "team-ownership-mismatch" },
+                    { "Changes", new BsonDocument
+                        {
+                            { "requestedTeamId", requestedTeamId },
+                            { "ownerTeamId", string.IsNullOrWhiteSpace(claimed?.TeamId) ? BsonNull.Value : claimed.TeamId },
+                            { "requestType", requestType },
+                        }
+                    },
+                    { "CreatedAt", DateTime.UtcNow },
+                }, cancellationToken: ct);
+        }
+        catch
+        {
+            // 拒绝结果保持 fail-closed；审计存储异常不能放行跨团队请求。
+        }
+        return false;
     }
 
     private static string? NormalizeOptionalTraceId(string? value)
