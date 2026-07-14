@@ -987,13 +987,16 @@
     transform-box: fill-box;
   }
 
-  /* 品牌待机(用户指定的 cdsgemcolors「facetGlow」动态样式):每个切面透明度
-     在 0.72↔1 之间缓慢起伏,按 --gi 错相位 → 十二切面轮流点亮,像宝石内部
-     有光流转。这是几何层面的"活",一眼看得出在动(替代之前太隐晦的亮度闪烁
-     和过头的整体旋转)。floor 0.72 保证小尺寸依然清晰。 */
+  /* 品牌 = 完全照抄用户参考 cdsgemcolors 的两段式:
+     ① play:每个切面 scale 0→1 逐面弹入(cds-gem-pop,back-out 回弹,按 --gi 错相位)
+        —— 这就是"慢慢出现"的组装入场,挂载即播一次。
+     ② settled:入场结束后切入 facetGlow(透明度 0.72↔1 错相位起伏),常驻不停。
+     两个动画同挂一个选择器,靠各自 delay 错开:pop 先跑,glow 延迟到入场后再接管。 */
   .cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
-    animation-delay: calc(var(--gi, 0) * 0.16s);
+    animation:
+      cds-gem-pop 0.62s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+      cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
+    animation-delay: calc(var(--gi, 0) * 0.07s), calc(var(--gi, 0) * 0.16s + 1.4s);
   }
 
   /* hover:整颗宝石轻搏一下(pulseOnce),给一点即时反馈。 */
