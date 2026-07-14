@@ -239,7 +239,7 @@ export default function MobileHomePage() {
                   >
                     {data.loading ? '—' : formatCompactNumber(s.value)}
                   </span>
-                  {s.series.length > 0 && <MiniBars series={s.series} color={s.color} mutedColor={C.labelTertiary} />}
+                  {s.series.length > 0 && <MiniBars series={s.series} color={s.color} trackColor={C.pillBg} />}
                 </div>
               </div>
             ))}
@@ -358,26 +358,29 @@ export default function MobileHomePage() {
   );
 }
 
-/* ───────────── 七日迷你柱:真实按日序列,按本组最大值归一;全 0 显示等高哑柱 ───────────── */
+/* ───────────── 七日迷你柱(Apple 健身/屏幕时间图表范式) ─────────────
+ * 每天一根全高浅轨道 + 从底部升起的填充:0 日=纯轨道(不再是一排丑点),
+ * 尖刺分布也有型;sqrt 缩放让偏态数据的小值仍可见。真实数据,不造假。 */
 
-function MiniBars({ series, color, mutedColor }: { series: number[]; color: string; mutedColor: string }) {
+function MiniBars({ series, color, trackColor }: { series: number[]; color: string; trackColor: string }) {
   const max = Math.max(...series, 0);
   return (
-    <span aria-hidden className="flex items-end shrink-0" style={{ gap: 2.5, height: 22 }}>
+    <span aria-hidden className="flex items-end shrink-0" style={{ gap: 3, height: 24 }}>
       {series.map((v, i) => {
-        const h = max > 0 ? Math.max(3, Math.round((v / max) * 22)) : 3;
+        const fill = max > 0 && v > 0 ? Math.max(5, Math.round(Math.sqrt(v / max) * 24)) : 0;
         return (
           <span
             key={i}
-            className="block"
-            style={{
-              width: 4,
-              height: h,
-              borderRadius: 2,
-              background: max > 0 && v > 0 ? color : mutedColor,
-              opacity: max > 0 && v > 0 ? 0.9 : 0.45,
-            }}
-          />
+            className="relative block overflow-hidden"
+            style={{ width: 5, height: 24, borderRadius: 2.5, background: trackColor }}
+          >
+            {fill > 0 && (
+              <span
+                className="absolute left-0 right-0 bottom-0 block"
+                style={{ height: fill, borderRadius: 2.5, background: color }}
+              />
+            )}
+          </span>
         );
       })}
     </span>

@@ -15,3 +15,4 @@
 | feat | prd-api | /api/mobile/stats 新增按日序列 daily(会话/消息/生图/Token 逐日桶,tzOffsetMinutes 按用户本地时区切日界),供首页七日迷你趋势柱 |
 | feat | prd-api | /api/home/recent-work 新增诚实进度 progress/progressLabel:仅带状态机的实体给进度(当前为缺陷 draft→closed 十态映射),其余类型 null 不画进度条 |
 | feat | prd-admin | 首页近7日卡改健康摘要式 2x2(大数 + 真实七日迷你柱 MiniBars,全 0 显示哑柱不造假);继续上次接 progress 进度条与状态标签;契约 MobileStats.daily/RecentWorkItemDto.progress 同步,getMobileStats 自动携带时区 |
+| fix | prd-admin | 首页七日迷你柱重设计:改 Apple 健身/屏幕时间图表范式(每日全高浅轨道 + 底部填充,轨道走 pillBg token 双主题适配,sqrt 缩放让偏态小值可见);修复真实数据下全 0/尖刺分布渲染成"一排丑点"的问题(用真实数据形态本地复现丑态并对比验证后落码) |
