@@ -88,6 +88,8 @@ export const AS_TYPE = {
 
   /** 区块标题（智能体 / 工具 / 最近活动）—— App Store "Must-Have Apps" 级 */
   sectionTitle: { fontSize: 26, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.1 },
+  /** 紧凑区块标题（健康摘要式仪表盘页，多区块纵向堆叠时用）—— iOS 健康「摘要」卡组标题级 */
+  groupTitle: { fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.15 },
   /** 区块"See All" 右侧字 */
   sectionAction: { fontSize: 17, fontWeight: 400, letterSpacing: '-0.01em' },
 

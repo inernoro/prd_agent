@@ -10,3 +10,4 @@
 | fix | prd-admin | MobileTabBar 底座2:激活态从白/黑字+金色下划线改 iOS systemBlue(icon/label/指示条统一走 AS_COLOR.blue),贴近 iOS tab bar;明暗双皮肤对象结构保留不动 |
 | fix | prd-admin | MobileProfilePage 接入 App Store 设计系统:纯黑/白卡双皮肤(C.card)、菜单与平台能力配色改 iOS 系统色、角色徽章/退出按钮硬编码色改 AS_COLOR、SF 字体;硬编码清零 |
 | fix | prd-admin | MobileNotificationsPage 接入 App Store 设计系统:notificationTone 四档改 iOS 语义色轻底、已处理卡改 C.card、var 令牌改 C.*、SF 字体;硬编码清零 |
+| feat | prd-admin | 首页布局从 App Store Today 商店范式改为「摘要」仪表盘(iOS 健康摘要风,用户拍板):去掉页内大标题/日期(AppShell 已有顶栏)、去掉智能体海报大卡与轮播、智能体降级为底部紧凑货架;排序改为 继续上次→常用应用→近7日→动态→档案;近7日改 iOS 彩色大数(无按日序列不编造迷你图);新增 AS_TYPE.groupTitle(20px) 紧凑区块标题档 |
