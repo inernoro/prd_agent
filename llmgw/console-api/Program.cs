@@ -125,6 +125,10 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
                 && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.ConfigWrite)));
+    options.AddPolicy("AppCallerWrite", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
+                && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.AppCallerWrite)));
     options.AddPolicy("ServiceKeyWrite", policy =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
@@ -250,6 +254,17 @@ await promptPolicies.Indexes.CreateManyAsync(new[]
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("UpdatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_prompt_policy_tenant_team_updated" }),
 });
+await gwAppCallers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("AppCallerCode")
+        .Ascending("RequestType"),
+    new CreateIndexOptions
+    {
+        Name = "uniq_llmgw_app_callers_tenant_code_request_type",
+        Unique = true,
+        Collation = new Collation("en", strength: CollationStrength.Secondary),
+    }));
 
 app.Use(async (http, next) =>
 {
@@ -2945,6 +2960,119 @@ app.MapGet("/gw/app-callers", async (
     };
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// 外部接入自助创建 appCaller。租户和团队边界只取服务端会话，调用方不能在请求中声明 TenantId。
+// 同一 TenantId + AppCallerCode + RequestType 已存在时只允许同团队幂等复用，禁止跨团队抢占身份。
+app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGatewayAppCallerRequest body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+
+    var access = TenantAccess.GetRequired(http);
+    var appCallerCode = (body.AppCallerCode ?? string.Empty).Trim();
+    var requestType = (body.RequestType ?? string.Empty).Trim().ToLowerInvariant();
+    var title = (body.Title ?? string.Empty).Trim();
+    var ingressProtocol = NormalizeIngressProtocol(body.IngressProtocol ?? string.Empty);
+    if (!IsValidSelfServiceAppCaller(appCallerCode, requestType))
+    {
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+            "INVALID_APP_CALLER",
+            "appCallerCode 必须使用小写 {app-key}.{feature}::chat 或 ::vision 格式，且后缀与 requestType 一致"), jsonOptions, 400);
+    }
+    if (title.Length > 160)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "title 最多 160 字符"), jsonOptions, 400);
+    if (ingressProtocol is not ("gw-native" or "openai-compatible" or "claude-compatible" or "gemini-compatible"))
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INGRESS_PROTOCOL", "不支持的入口协议"), jsonOptions, 400);
+
+    var teamId = string.IsNullOrWhiteSpace(body.TeamId) ? null : body.TeamId.Trim();
+    if (teamId is null && access.TeamIds.Count == 1)
+        teamId = access.TeamIds[0];
+    if (teamId is null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("TEAM_SCOPE_REQUIRED", "请选择当前租户中的团队"), jsonOptions, 400);
+
+    var teamExists = await teams.CountDocumentsAsync(x => x.Id == teamId && x.TenantId == access.TenantId && x.Status == "active") == 1;
+    if (!teamExists || access.Role == LlmGwTenantRoles.Developer && !access.TeamIds.Contains(teamId, StringComparer.Ordinal))
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("TEAM_SCOPE_DENIED", "不能为该团队创建 appCaller"), jsonOptions, 403);
+
+    var identity = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+        Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+    var tenantIdentity = TenantAccess.Filter(http, identity);
+    var identityOptions = new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) };
+    var existing = await gwAppCallers.Find(tenantIdentity, identityOptions).FirstOrDefaultAsync();
+    if (existing is not null)
+    {
+        if (!string.Equals(existing.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已归属当前租户中的其他团队"), jsonOptions, 409);
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(existing)), jsonOptions);
+    }
+
+    var now = DateTime.UtcNow;
+    var id = Guid.NewGuid().ToString("N");
+    var document = new BsonDocument
+    {
+        { "_id", id },
+        { "TenantId", access.TenantId },
+        { "TeamId", teamId },
+        { "AppCallerCode", appCallerCode },
+        { "RequestType", requestType },
+        { "SourceSystem", "external" },
+        { "IngressProtocol", ingressProtocol },
+        { "ObservedIngressProtocols", new BsonArray() },
+        { "Title", title.Length == 0 ? appCallerCode : title },
+        { "Status", "configured" },
+        { "ModelPolicy", "auto" },
+        { "ParameterPolicy", "default-drop" },
+        { "ObservedModelPoolIds", new BsonArray() },
+        { "ObservedModelPolicies", new BsonArray() },
+        { "ObservedParameterPolicies", new BsonArray() },
+        { "TotalSeen", 0L },
+        { "FirstSeenAt", now },
+        { "LastSeenAt", now },
+        { "CreatedAt", now },
+        { "UpdatedAt", now },
+    };
+    try
+    {
+        await gwAppCallers.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var winner = await gwAppCallers.Find(tenantIdentity, identityOptions).FirstOrDefaultAsync();
+        if (winner is not null && string.Equals(winner.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(winner)), jsonOptions);
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已被并发创建，请刷新后重试"), jsonOptions, 409);
+    }
+
+    try
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "app_caller.create",
+            targetType: "llmgw_app_caller",
+            targetId: id,
+            targetName: appCallerCode,
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "teamId", teamId },
+                { "requestType", requestType },
+                { "ingressProtocol", ingressProtocol },
+            },
+            throwOnFailure: true);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "创建 appCaller 后写入审计失败，执行补偿删除。TenantId={TenantId}, AppCallerId={AppCallerId}", access.TenantId, id);
+        await gwAppCallers.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+            "APP_CALLER_AUDIT_FAILED",
+            "appCaller 审计写入失败，本次创建已撤销，请稍后重试"), jsonOptions, 503);
+    }
+    return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(document)), jsonOptions, 201);
+}).RequireAuthorization("AppCallerWrite");
 
 // GW appCaller 配置：状态、模型池绑定与参数策略落 GW 自有库；active 状态必须绑定可用的 GW 权威池。
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
@@ -6650,6 +6778,7 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    TeamId = d.AsNullableString("TeamId"),
     ServiceKeyId = d.AsNullableString("ServiceKeyId"),
     ClientCode = d.AsNullableString("ClientCode"),
     Environment = d.AsNullableString("Environment"),
@@ -6695,6 +6824,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    TeamId = d.AsNullableString("TeamId"),
     ServiceKeyId = d.AsNullableString("ServiceKeyId"),
     ClientCode = d.AsNullableString("ClientCode"),
     Environment = d.AsNullableString("Environment"),
@@ -7264,6 +7394,7 @@ static ExchangeItem MapExchange(BsonDocument d)
 static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
 {
     Id = d.GetStringOrEmpty("_id"),
+    TeamId = d.AsNullableString("TeamId"),
     AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
     RequestType = d.GetStringOrEmpty("RequestType"),
     SourceSystem = d.GetStringOrEmpty("SourceSystem"),
@@ -7294,6 +7425,22 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
     UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
 };
+
+static bool IsValidSelfServiceAppCaller(string appCallerCode, string requestType)
+{
+    if (appCallerCode.Length is 0 or > 200 || requestType is not ("chat" or "vision")) return false;
+    var separator = appCallerCode.IndexOf("::", StringComparison.Ordinal);
+    if (separator <= 0 || separator != appCallerCode.LastIndexOf("::", StringComparison.Ordinal)) return false;
+    var declaredType = appCallerCode[(separator + 2)..];
+    if (!string.Equals(declaredType, requestType, StringComparison.Ordinal)) return false;
+    var segments = appCallerCode[..separator].Split('.', StringSplitOptions.None);
+    return segments.Length >= 2 && segments.All(IsKebabCaseAppCallerSegment) && IsKebabCaseAppCallerSegment(declaredType);
+}
+
+static bool IsKebabCaseAppCallerSegment(string value)
+    => value.Length > 0
+       && value[0] is >= 'a' and <= 'z'
+       && value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
 static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
 {

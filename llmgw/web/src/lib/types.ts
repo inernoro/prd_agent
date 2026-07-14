@@ -50,6 +50,7 @@ export type LlmLogListItem = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  teamId?: string | null;
   serviceKeyId?: string | null;
   clientCode?: string | null;
   environment?: string | null;
@@ -95,6 +96,7 @@ export type LlmLogDetail = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  teamId?: string | null;
   serviceKeyId?: string | null;
   clientCode?: string | null;
   environment?: string | null;
@@ -696,6 +698,7 @@ export type RuntimeGatesData = {
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
 export type GatewayAppCaller = {
   id: string;
+  teamId?: string | null;
   appCallerCode: string;
   requestType: string;
   sourceSystem: string;
@@ -727,6 +730,14 @@ export type GatewayAppCaller = {
   rotatedByKeyId?: string | null;
   rotationState: string;
   updatedAt?: string | null;
+};
+
+export type CreateGatewayAppCallerRequest = {
+  teamId: string;
+  appCallerCode: string;
+  requestType: 'chat' | 'vision';
+  title?: string;
+  ingressProtocol: 'gw-native' | 'openai-compatible' | 'claude-compatible' | 'gemini-compatible';
 };
 
 export type UpdateGatewayAppCallerRequest = {

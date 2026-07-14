@@ -2334,6 +2334,117 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task QuickstartDryRun_UsesFourRealProtocolPathsWithoutCallingUpstreamAndWritesIdentityLogs()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_quickstart_dryrun_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertOneAsync(new GatewayAppCallerRecord
+            {
+                TenantId = "tenant-test",
+                TeamId = "team-test",
+                AppCallerCode = "content.quickstart::chat",
+                RequestType = "chat",
+                SourceSystem = "external",
+                Status = "configured",
+                ModelPolicy = "auto",
+                ParameterPolicy = "default-drop",
+                Title = "Content Quickstart",
+            });
+            var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
+            await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer, gatewayData: data);
+            await app.StartAsync();
+            var cases = new[]
+            {
+                new
+                {
+                    Path = "/gw/v1/invoke",
+                    Body = "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]},\"context\":{\"sourceSystem\":\"external\"}}",
+                },
+                new
+                {
+                    Path = "/v1/chat/completions",
+                    Body = "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"stream\":false}",
+                },
+                new
+                {
+                    Path = "/v1/messages",
+                    Body = "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]}",
+                },
+                new
+                {
+                    Path = "/v1beta/models/auto:generateContent",
+                    Body = "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"OK\"}]}]}",
+                },
+            };
+
+            for (var index = 0; index < cases.Length; index++)
+            {
+                var requestId = $"quickstart-four-protocols-{index}";
+                using var request = new HttpRequestMessage(HttpMethod.Post, cases[index].Path)
+                {
+                    Content = new StringContent(cases[index].Body, System.Text.Encoding.UTF8, "application/json"),
+                    Headers =
+                    {
+                        { "X-Gateway-Key", "scoped-test-key" },
+                        { "X-Gateway-Source", "external" },
+                        { "X-Gateway-App-Caller", "content.quickstart::chat" },
+                        { "X-Gateway-Dry-Run", "quickstart" },
+                        { "X-Request-Id", requestId },
+                    },
+                };
+
+                using var response = await app.GetTestClient().SendAsync(request);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                response.StatusCode.ShouldBe(HttpStatusCode.OK, responseBody);
+                response.Headers.GetValues("X-Request-Id").Single().ShouldBe(requestId);
+                response.Headers.GetValues("X-Gateway-Upstream-Called").Single().ShouldBe("false");
+                responseBody.ShouldContain("dry");
+            }
+
+            var logs = await data.Database.GetCollection<BsonDocument>("llmrequestlogs")
+                .Find(Builders<BsonDocument>.Filter.Eq("Provider", "gateway-dry-run"))
+                .Sort(Builders<BsonDocument>.Sort.Ascending("RequestId"))
+                .ToListAsync();
+            logs.Count.ShouldBe(4);
+            logs.Select(x => x["IngressProtocol"].AsString).ToHashSet().SetEquals(new[]
+            {
+                "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
+            }).ShouldBeTrue();
+            foreach (var log in logs)
+            {
+                log["TenantId"].AsString.ShouldBe("tenant-test");
+                log["TeamId"].AsString.ShouldBe("team-test");
+                log["ServiceKeyId"].AsString.ShouldBe("capturing-key");
+                log["ClientCode"].AsString.ShouldBe("content-agent");
+                log["Environment"].AsString.ShouldBe("test");
+                log["Status"].AsString.ShouldBe("succeeded");
+                log.Contains("EstimatedCost").ShouldBeFalse();
+                log.Contains("EstimatedCostUsd").ShouldBeFalse();
+            }
+
+            var caller = await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+                .Find(x => x.TenantId == "tenant-test" && x.AppCallerCode == "content.quickstart::chat")
+                .SingleAsync();
+            caller.TotalSeen.ShouldBe(4);
+            caller.ObservedIngressProtocols.ToHashSet().SetEquals(new[]
+            {
+                "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
+            }).ShouldBeTrue();
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Fact]
     public async Task Healthz_IsExemptFromKeyGate()
     {
         // healthz 是密钥门的显式豁免（存活探针），无 key 也应 200——反证密钥门是「白名单 healthz + 其余全拦」。

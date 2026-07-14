@@ -83,6 +83,7 @@ public sealed class LlmLogListItem
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
     public string? ClientCode { get; set; }
     public string? Environment { get; set; }
@@ -137,6 +138,7 @@ public sealed class LlmLogDetail
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
     public string? ClientCode { get; set; }
     public string? Environment { get; set; }
@@ -577,6 +579,14 @@ public sealed class UpdateGatewayAppCallerRequest
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
 }
+public sealed class CreateGatewayAppCallerRequest
+{
+    public string? TeamId { get; set; }
+    public string? AppCallerCode { get; set; }
+    public string? RequestType { get; set; }
+    public string? Title { get; set; }
+    public string? IngressProtocol { get; set; }
+}
 
 public sealed class BulkUpdateGatewayAppCallersRequest
 {
@@ -923,6 +933,7 @@ public sealed class GatewayAppCallersData
 public sealed class GatewayAppCallerItem
 {
     public string Id { get; set; } = "";
+    public string? TeamId { get; set; }
     public string AppCallerCode { get; set; } = "";
     public string RequestType { get; set; } = "";
     public string SourceSystem { get; set; } = "";

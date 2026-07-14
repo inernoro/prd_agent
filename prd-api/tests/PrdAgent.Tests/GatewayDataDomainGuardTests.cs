@@ -420,7 +420,7 @@ public class GatewayDataDomainGuardTests
         var shadowStart = consoleProgram.IndexOf("// 影子比对", deleteStart, StringComparison.Ordinal);
 
         Assert.Contains("public const string ServiceKeyWrite = \"service-key:write\"", access);
-        Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite", access);
+        Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or AppCallerWrite or ServiceKeyWrite", access);
         Assert.DoesNotContain("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ConfigWrite", access);
         Assert.Contains("options.AddPolicy(\"ServiceKeyWrite\"", consoleProgram);
         Assert.Contains("CreatedByUserId", consoleProgram[listStart..createStart]);
@@ -453,7 +453,7 @@ public class GatewayDataDomainGuardTests
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
 
         Assert.Contains("X-Gateway-Source: external", quickstart);
-        Assert.Contains("\"sourceSystem\": \"external\"", quickstart);
+        Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
@@ -2847,9 +2847,13 @@ public class GatewayDataDomainGuardTests
         var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
 
         Assert.Contains("return new URL(window.location.href).origin", quickstart);
-        Assert.Contains("/gw/v1/route-self-test", quickstart);
+        Assert.Contains("createGatewayAppCaller", quickstart);
+        Assert.Contains("createServiceKey", quickstart);
+        Assert.Contains("X-Gateway-Dry-Run", quickstart);
+        Assert.Contains("protocolDefinition(bundle.protocol).path", quickstart);
         Assert.Contains("upstreamCalled === false", quickstart);
-        Assert.Contains("payload?.UpstreamCalled", quickstart);
+        Assert.Contains("/logs?requestId=", quickstart);
+        Assert.Contains("Agent Skill", quickstart);
         Assert.Contains("credentials: 'omit'", quickstart);
         Assert.DoesNotContain("gateway.example.com", quickstart);
         Assert.DoesNotContain("localStorage", quickstart);
@@ -2862,9 +2866,54 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("查看示例说明", logs);
         Assert.Contains("跟随系统", ReadRepoFile("llmgw/web/src/pages/SettingsPage.tsx"));
         Assert.Contains("prefers-color-scheme: light", theme);
-        Assert.Contains("WithMethods(HttpMethods.Get)", servingProgram);
-        Assert.Contains("WithHeaders(\"Authorization\", \"X-Gateway-Source\", \"X-Gateway-App-Caller\")", servingProgram);
+        Assert.Contains("WithMethods(HttpMethods.Get, HttpMethods.Post)", servingProgram);
+        Assert.Contains("\"X-Gateway-Dry-Run\"", servingProgram);
+        Assert.Contains("WithExposedHeaders(\"X-Request-Id\", \"X-Gateway-Upstream-Called\")", servingProgram);
         Assert.Contains("app.UseCors(BrowserDryRunCors)", servingProgram);
+    }
+
+    [Fact]
+    public void AgentFirstQuickstart_KeepsTenantAuthorityAndUnknownCostBoundaries()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+
+        var createStart = console.IndexOf("app.MapPost(\"/gw/app-callers\"", StringComparison.Ordinal);
+        var createEnd = console.IndexOf("RequireAuthorization(\"AppCallerWrite\")", createStart, StringComparison.Ordinal);
+        Assert.True(createStart >= 0 && createEnd > createStart);
+        var createEndpoint = console[createStart..createEnd];
+        Assert.Contains("TenantAccess.GetRequired(http)", createEndpoint);
+        Assert.Contains("TenantAccess.Filter(http, identity)", createEndpoint);
+        Assert.Contains("x.TenantId == access.TenantId", createEndpoint);
+        Assert.DoesNotContain("body.TenantId", createEndpoint);
+        Assert.Contains("uniq_llmgw_app_callers_tenant_code_request_type", console);
+        Assert.Contains("APP_CALLER_AUDIT_FAILED", createEndpoint);
+        Assert.Contains("gwAppCallers.DeleteOneAsync(TenantAccess.Filter(http", createEndpoint);
+        Assert.Contains("AppCallerWrite", access);
+
+        Assert.Contains("TryHandleQuickstartDryRunAsync", endpoints);
+        Assert.Contains("authorization.TenantId", endpoints);
+        Assert.Contains("authorization.TeamId", endpoints);
+        Assert.Contains("authorization.KeyId", endpoints);
+        Assert.Contains("authorization.ClientCode", endpoints);
+        Assert.Contains("authorization.Environment", endpoints);
+        Assert.Contains("\"gateway-dry-run\"", endpoints);
+        Assert.Contains("\"quickstart-dry-run-no-upstream\"", endpoints);
+        var dryRunStart = endpoints.IndexOf("private static async Task<bool> TryHandleQuickstartDryRunAsync", StringComparison.Ordinal);
+        var dryRunEnd = endpoints.IndexOf("private static bool IsQuickstartDryRunPath", dryRunStart, StringComparison.Ordinal);
+        var dryRunEndpoint = endpoints[dryRunStart..dryRunEnd];
+        Assert.DoesNotContain("EstimatedCost", dryRunEndpoint);
+        var logWriteIndex = dryRunEndpoint.IndexOf("llmrequestlogs", StringComparison.Ordinal);
+        var observationUpdateIndex = dryRunEndpoint.IndexOf(".Inc(x => x.TotalSeen, 1)", StringComparison.Ordinal);
+        Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
+
+        Assert.Contains("scopes: ['invoke']", quickstart);
+        Assert.Contains("ingressProtocols: [selectedProtocol.ingressProtocol]", quickstart);
+        Assert.DoesNotContain("tenantId:", quickstart);
+        Assert.DoesNotContain("['*']", quickstart);
     }
 
     [Fact]
