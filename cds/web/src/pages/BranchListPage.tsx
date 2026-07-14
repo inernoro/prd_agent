@@ -104,8 +104,11 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
   return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
 }
 
-/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。 */
-const APP_CHIP_FOLD_THRESHOLD = 8;
+/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。
+   2026-07-14 从 8 降到 3:让端口行恒为单行(3 个端口 + 「+N」+ 基础托盘在常见
+   3-4 列宽度下不换行),配合卡片固定行高(min-h)消除卡与卡之间的巨大空洞。
+   超出的端口收进「+N」的悬浮浮层(见 portsPopover),不再原地撑开推高整行。 */
+const APP_CHIP_FOLD_THRESHOLD = 3;
 
 /* 稳定的空数组引用：给 memo 化的 BranchCard 当默认值，避免每次渲染新建 [] 打破浅比较。 */
 const EMPTY_RESOURCES: BranchResource[] = [];
@@ -4679,11 +4682,15 @@ const BranchCard = memo(function BranchCard({
   const portedResources = resources.filter((resource) => resource.port);
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
-  const [appChipsExpanded, setAppChipsExpanded] = useState(false);
+  const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
   const foldedAppCount = appResources.length > APP_CHIP_FOLD_THRESHOLD
     ? appResources.length - APP_CHIP_FOLD_THRESHOLD
     : 0;
-  const visibleAppResources = foldedAppCount > 0 && !appChipsExpanded
+  // 端口 chip 单行封顶:超过阈值只展示前 N 个,其余收进「+N」的悬浮浮层
+  // (见下方 portsPopover)——保证端口行恒为单行、卡片高度稳定。展开走浮层
+  // (position:absolute,浮在本卡之上)而非原地撑开,不推高本卡、不影响整行,
+  // 复用 commitMenuOpen 的浮层模式(卡片 overflow-visible + 提 z)。
+  const visibleAppResources = foldedAppCount > 0
     ? appResources.slice(0, APP_CHIP_FOLD_THRESHOLD)
     : appResources;
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
@@ -4914,7 +4921,7 @@ const BranchCard = memo(function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex min-h-[200px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -5389,19 +5396,55 @@ const BranchCard = memo(function BranchCard({
                 </button>
               );
             })}
-            {foldedAppCount > 0 || appChipsExpanded ? (
-              <button
-                type="button"
-                className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                title={appChipsExpanded ? '收起服务端口' : `还有 ${foldedAppCount} 个服务端口，点击展开`}
-                aria-expanded={appChipsExpanded}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setAppChipsExpanded((current) => !current);
-                }}
+            {foldedAppCount > 0 ? (
+              // 「+N」折叠气泡:悬浮 / 聚焦弹出浮层展开全部端口。浮层 position:absolute
+              // 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度(端口行恒为单行)。
+              <span
+                className="relative inline-flex shrink-0"
+                onMouseEnter={() => setPortsPopoverOpen(true)}
+                onMouseLeave={() => setPortsPopoverOpen(false)}
               >
-                {appChipsExpanded ? '收起' : `+${foldedAppCount}`}
-              </button>
+                <button
+                  type="button"
+                  className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  title={`还有 ${foldedAppCount} 个服务端口，悬浮或聚焦展开`}
+                  aria-expanded={portsPopoverOpen}
+                  onFocus={() => setPortsPopoverOpen(true)}
+                  onBlur={() => setPortsPopoverOpen(false)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPortsPopoverOpen((current) => !current);
+                  }}
+                >
+                  +{foldedAppCount}
+                </button>
+                {portsPopoverOpen ? (
+                  <div
+                    className="absolute left-0 top-[calc(100%+6px)] z-[140] flex max-w-[min(320px,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+                    role="menu"
+                    aria-label="全部服务端口"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {appResources.map((resource) => (
+                      <button
+                        key={resource.id}
+                        type="button"
+                        role="menuitem"
+                        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                        title={`${resource.displayName}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setPortsPopoverOpen(false);
+                          onResourcePanel?.(resource);
+                        }}
+                      >
+                        <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                        {typeof resource.port === 'number' ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </span>
             ) : null}
             {/* 方案 C「托盘胶囊」(2026-07-05):基础容器(Mongo/Redis 等分支间共享的
                 基础设施)装进虚线托盘,冠名「基础」+ 实名 + 端口 —— 物理包裹让
