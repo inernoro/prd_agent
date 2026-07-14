@@ -958,22 +958,24 @@
   }
 
   /* 小尺寸清晰档:切面永远满亮度(禁一切透明度波动=不发虚),但保留"活"——
-     brand 待机换成亮度琉光:一道只增不减的高光每 4.8s 沿 12 切面扫一圈,
-     legibility 底线与灵动共存(2026-07-05 "只有动起来才像活跃的")。
-     loader 的组装循环不受此档压制(加载器的使命就是动)。 */
+     brand 待机是一道**连续巡游**的高光:每个切面亮度做平滑正弦起伏,
+     相邻切面按 --gi 错相位,任意时刻都有一道亮脊沿 12 切面绕圈,
+     不再是"每 4.8s 才闪一下、其余时间发呆"(2026-07-14 用户反馈
+     "左上角 icon 不动,死气沉沉")。只调 brightness、opacity 恒为 1,
+     legibility 底线不破。loader 的组装循环不受此档压制。 */
   .cds-gem--simple .cds-gem-facet {
     opacity: 1 !important;
   }
 
   .cds-gem--simple.cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-glint 4.8s ease-in-out infinite;
-    animation-delay: calc(var(--gi, 0) * 0.09s);
+    animation: cds-gem-glint 3.4s ease-in-out infinite;
+    animation-delay: calc(var(--gi, 0) * -0.28s);
   }
 
   .cds-gem--simple.cds-gem--brand:hover .cds-gem-facet,
   .cds-rail-avatar:hover .cds-gem--simple.cds-gem--brand .cds-gem-facet {
     animation-duration: 1.7s;
-    animation-delay: calc(var(--gi, 0) * 0.035s);
+    animation-delay: calc(var(--gi, 0) * -0.14s);
   }
 
   .cds-gem-facet {
@@ -1098,16 +1100,16 @@
     }
   }
 
-  /* simple 档专用琉光:只调 brightness(永不低于 1),高光短促、间隔长——
-     "活着"但一帧暂停下来也永远是满亮度的清晰星形。 */
+  /* simple 档专用琉光:只调 brightness(永不低于 1)。平滑正弦起伏 +
+     各切面错相位(见 --gi 负延迟)= 一道亮脊连续绕圈,任意暂停帧
+     都是满亮度的清晰星形,但整体从不静止(治"死气沉沉")。 */
   @keyframes cds-gem-glint {
     0%,
-    18%,
     100% {
       filter: brightness(1);
     }
-    7% {
-      filter: brightness(1.55) saturate(1.12);
+    50% {
+      filter: brightness(1.42) saturate(1.1);
     }
   }
 
