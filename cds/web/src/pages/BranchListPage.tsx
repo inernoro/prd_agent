@@ -5397,23 +5397,44 @@ const BranchCard = memo(function BranchCard({
               );
             })}
             {foldedAppCount > 0 ? (
-              // 「+N」折叠气泡:悬浮 / 聚焦弹出浮层展开全部端口。浮层 position:absolute
-              // 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度(端口行恒为单行)。
+              // 「+N」折叠气泡:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
+              // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
+              // 交互契约(2026-07-14,修 Codex P2 键盘/触摸可达性):
+              //  - 点击/回车/触摸 = 打开(set true,不 toggle):触摸端 mouseenter+click 会
+              //    连发两次,toggle 会一开一关净关闭 → 改为幂等打开,任何模态都能开。
+              //  - onBlur 挂在 wrapper 上并判 relatedTarget 是否仍在 wrapper 内:
+              //    Tab 进入菜单项时焦点仍在 wrapper 内 → 不关闭,菜单项可被 Tab 逐个聚焦
+              //    (原来 onBlur 挂 button 上,Tab 一离开 button 就 unmount,菜单永远够不到)。
+              //  - 关闭走:鼠标移出 / 焦点离开 wrapper / Esc / 点中某个端口。
               <span
                 className="relative inline-flex shrink-0"
                 onMouseEnter={() => setPortsPopoverOpen(true)}
                 onMouseLeave={() => setPortsPopoverOpen(false)}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setPortsPopoverOpen(false);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  // 拦掉浮层内的键盘事件,别冒泡到卡片根的 onKeyDown——那里 Enter/Space 会
+                  // preventDefault + 导航到详情,会抢掉「+N」/菜单项的原生 click 激活。
+                  // 只 stopPropagation、不 preventDefault:让原生 button click 照常触发
+                  // onClick(打开浮层 / 打开端口面板)。Esc 关闭浮层。
+                  if (event.key === 'Escape') {
+                    setPortsPopoverOpen(false);
+                  }
+                  event.stopPropagation();
+                }}
               >
                 <button
                   type="button"
                   className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                  title={`还有 ${foldedAppCount} 个服务端口，悬浮或聚焦展开`}
+                  title={`还有 ${foldedAppCount} 个服务端口，点击或悬浮展开`}
+                  aria-haspopup="menu"
                   aria-expanded={portsPopoverOpen}
-                  onFocus={() => setPortsPopoverOpen(true)}
-                  onBlur={() => setPortsPopoverOpen(false)}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setPortsPopoverOpen((current) => !current);
+                    setPortsPopoverOpen(true);
                   }}
                 >
                   +{foldedAppCount}
