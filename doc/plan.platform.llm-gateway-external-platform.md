@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.10 | **日期**：2026-07-15 | **状态**：补强批次进行中
+> **版本**：v1.11 | **日期**：2026-07-15 | **状态**：补强批次进行中
 
 ## 1. 目标
 
@@ -87,7 +87,7 @@ OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2
 
 PR-6 已完成：PR [#1121](https://github.com/inernoro/prd_agent/pull/1121) 已合并，合并提交为 `02a503a2980f6ee19c60061f794fb98a834f1cfe`。两个租户、每租户两个团队、每团队两个用户与两把密钥的对抗矩阵，团队资源隔离、主体停用级联、Developer 通配拒绝、会话安全版本、创建补偿与并发窗口均已通过本地 Mongo、GitHub CI、CDS 和直连验收；Bugbot 不适用。
 
-PR-7 本地证据（2026-07-15）：分支 `codex/llmgw-workload-identity-attribution` 已把 `ServiceKeyId`、`clientCode`、`environment` 和 key prefix 快照从服务端密钥鉴权结果贯通到成功与失败请求日志，日志模型不包含 key 或 KeyHash；Activity 列表、详情和全部聚合接口支持按三类调用身份筛选。隔离本地 Mongo 与真实控制台 HTTP 流程验证：切换前撤销旧 key 返回 409，确认切换后误撤新 key 返回 409，正确撤销旧 key 返回 200，完成态 key 可再次发起轮换并返回 201；撤销 key 的运行时鉴权返回 401 且仍保留非敏感审计身份。Console API、Serving、Web 与测试项目均构建通过；目标行为测试和结构守卫通过。尚待完整回归、独立复审、PR、CI、CDS 和浏览器直连验收，未触碰生产环境。
+PR-7 本地证据（2026-07-15）：PR [#1122](https://github.com/inernoro/prd_agent/pull/1122) 已把 `ServiceKeyId`、`clientCode`、`environment` 和 key prefix 快照从服务端密钥鉴权结果贯通到成功与失败请求日志，日志模型不包含 key 或 KeyHash；Activity 列表、详情和全部聚合接口支持按三类调用身份筛选。隔离本地 Mongo 与真实控制台 HTTP 流程验证：切换前撤销旧 key 返回 409，确认切换后误撤新 key 返回 409，正确撤销旧 key 返回 200，完成态 key 可再次发起轮换并返回 201；撤销 key 的运行时鉴权返回 401 且仍保留非敏感审计身份。独立对抗审查发现并修复“上一轮未完成仍可链式轮换”和“确认切换与撤销新 key 并发造成部分状态”两个边界；并发实跑中撤销胜出时，旧 key 恢复 `active` 且无 successor，新 key 为 `revoked`，没有半完成状态。Console API 0 warning/0 error，Serving、Web 与测试项目构建通过；Gateway 行为 118/118、数据域守卫 73/73、非 Integration/Manual 全量回归 Api.Tests 1596 通过与 PrdAgent.Tests 653 通过。尚待最终提交的 CI、CDS 和浏览器直连验收，未触碰生产环境。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 

@@ -39,6 +39,9 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("/gw/service-keys/{id}/rotation/client-cutover", console);
         Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
+        Assert.Contains("ROTATION_SOURCE_STAGE_INVALID", console);
+        Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
         Assert.Contains("\"awaiting-client-cutover\"", console);
         Assert.Contains("\"client-switched\"", console);
         Assert.Contains("\"old-key-revoked\"", console);
