@@ -58,6 +58,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Set(\"IssuanceState\", \"delivering\")", console);
         Assert.Contains("http.Response.OnCompleted(async () =>", console);
         Assert.Contains(".Set(\"IssuanceState\", \"issued\")", console);
+        Assert.Contains("DateTime.UtcNow.AddSeconds(-30)", console);
+        Assert.Contains("SERVICE_KEY_AUDIT_FAILED", console);
+        Assert.Contains("throwOnFailure: true", console);
+        Assert.Contains("await RollbackIssuanceAsync();", console);
         Assert.Contains("SERVICE_KEY_ISSUANCE_PENDING", console);
         Assert.Contains("轮换新密钥已被并发撤销", console);
         Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);

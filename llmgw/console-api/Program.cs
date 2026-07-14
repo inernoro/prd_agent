@@ -3654,6 +3654,13 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
     var ownScope = access.Role == LlmGwTenantRoles.Developer
         ? Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId)
         : Builders<BsonDocument>.Filter.Empty;
+    await serviceKeys.UpdateManyAsync(
+        TenantAccess.FilterTeamScope(http, ownScope
+            & Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering")
+            & Builders<BsonDocument>.Filter.Lte("UpdatedAt", DateTime.UtcNow.AddSeconds(-30))),
+        Builders<BsonDocument>.Update
+            .Set("IssuanceState", "issued")
+            .Set("UpdatedAt", DateTime.UtcNow));
     var issuanceScope = Builders<BsonDocument>.Filter.Or(
         Builders<BsonDocument>.Filter.Exists("IssuanceState", false),
         Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued"));
@@ -3970,19 +3977,8 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     }
     var pendingRotationState = rotatedKey is null ? "issuance-pending" : "rotation-initializing";
     var publishedRotationState = rotatedKey is null ? "active" : "new-key-created";
-    var deliveryReady = await serviceKeys.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("_id", id),
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
-            Builders<BsonDocument>.Filter.Eq("Enabled", false),
-            Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
-            Builders<BsonDocument>.Filter.Eq("RotationState", pendingRotationState)),
-        Builders<BsonDocument>.Update
-            .Set("Enabled", true)
-            .Set("IssuanceState", "delivering")
-            .Set("RotationState", publishedRotationState)
-            .Set("UpdatedAt", DateTime.UtcNow));
-    if (deliveryReady.ModifiedCount != 1)
+    var issuanceLogger = http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ServiceKeyIssuance");
+    async Task RollbackIssuanceAsync()
     {
         if (rotatedKey is not null)
         {
@@ -4007,65 +4003,105 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
                 .Set("IssuanceState", "failed")
                 .Set("RotationState", "revoked")
                 .Set("UpdatedAt", DateTime.UtcNow));
+    }
+    var deliveryReady = await serviceKeys.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", id),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Enabled", false),
+            Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
+            Builders<BsonDocument>.Filter.Eq("RotationState", pendingRotationState)),
+        Builders<BsonDocument>.Update
+            .Set("Enabled", true)
+            .Set("IssuanceState", "delivering")
+            .Set("RotationState", publishedRotationState)
+            .Set("UpdatedAt", DateTime.UtcNow));
+    if (deliveryReady.ModifiedCount != 1)
+    {
+        await RollbackIssuanceAsync();
         return Json(ApiEnvelope<object>.Fail(
             "SERVICE_KEY_ISSUANCE_CONFLICT",
             "密钥签发状态已变化，请刷新后重试"), jsonOptions, 409);
     }
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        usesWildcard ? "service_key.create_wildcard" : "service_key.create",
-        "llmgw_service_key",
-        id,
-        name,
-        true,
-        null,
-        new BsonDocument
-        {
-            { "sourceSystem", sourceSystem },
-            { "clientCode", clientCode },
-            { "environment", environment },
-            { "appCallerCount", appCallerCodes.Count },
-            { "protocolCount", protocols.Count },
-            { "scopeCount", scopes.Count },
-            { "teamId", teamId is null ? BsonNull.Value : teamId },
-            { "allowedCidrCount", allowedCidrs.Count },
-            { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
-            { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
-            { "usesWildcard", usesWildcard },
-        });
-    var issuanceLogger = http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ServiceKeyIssuance");
+    try
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            usesWildcard ? "service_key.create_wildcard" : "service_key.create",
+            "llmgw_service_key",
+            id,
+            name,
+            true,
+            null,
+            new BsonDocument
+            {
+                { "sourceSystem", sourceSystem },
+                { "clientCode", clientCode },
+                { "environment", environment },
+                { "appCallerCount", appCallerCodes.Count },
+                { "protocolCount", protocols.Count },
+                { "scopeCount", scopes.Count },
+                { "teamId", teamId is null ? BsonNull.Value : teamId },
+                { "allowedCidrCount", allowedCidrs.Count },
+                { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
+                { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+                { "usesWildcard", usesWildcard },
+            },
+            throwOnFailure: true);
+    }
+    catch (Exception ex)
+    {
+        issuanceLogger?.LogError(
+            ex,
+            "service key 创建审计失败，回滚签发。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
+        await RollbackIssuanceAsync();
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_AUDIT_FAILED",
+            "密钥创建审计失败，本次签发已回滚"), jsonOptions, 503);
+    }
     http.Response.OnCompleted(async () =>
     {
-        try
+        Exception? lastError = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            var published = await serviceKeys.UpdateOneAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("_id", id),
-                    Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
-                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
-                    Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering"),
-                    Builders<BsonDocument>.Filter.Eq("RotationState", publishedRotationState)),
-                Builders<BsonDocument>.Update
-                    .Set("IssuanceState", "issued")
-                    .Set("UpdatedAt", DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-            if (published.ModifiedCount != 1)
+            try
             {
-                issuanceLogger?.LogError(
-                    "service key 响应完成后未能收口签发状态。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
-                    tenant.TenantId,
-                    id);
+                var published = await serviceKeys.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                        Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering"),
+                        Builders<BsonDocument>.Filter.Eq("RotationState", publishedRotationState)),
+                    Builders<BsonDocument>.Update
+                        .Set("IssuanceState", "issued")
+                        .Set("UpdatedAt", DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (published.ModifiedCount == 1)
+                    return;
+                var current = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId)))
+                    .Project(Builders<BsonDocument>.Projection.Include("IssuanceState"))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (string.Equals(current?.AsNullableString("IssuanceState"), "issued", StringComparison.Ordinal))
+                    return;
             }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+            if (attempt < 3)
+                await Task.Delay(attempt * 100, CancellationToken.None);
         }
-        catch (Exception ex)
-        {
-            issuanceLogger?.LogError(
-                ex,
-                "service key 响应完成后收口签发状态失败。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
-                tenant.TenantId,
-                id);
-        }
+        issuanceLogger?.LogError(
+            lastError,
+            "service key 响应完成后三次尝试仍未收口签发状态，将由租户列表自愈。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
     });
     return Json(ApiEnvelope<object>.Ok(new
     {
@@ -6303,7 +6339,8 @@ static async Task WriteOperationAuditAsync(
     string? targetName,
     bool success,
     string? reason,
-    BsonDocument? changes = null)
+    BsonDocument? changes = null,
+    bool throwOnFailure = false)
 {
     try
     {
@@ -6338,6 +6375,8 @@ static async Task WriteOperationAuditAsync(
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+        if (throwOnFailure)
+            throw;
     }
 }
 
