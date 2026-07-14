@@ -10,6 +10,73 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
+    public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
+    {
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var serving = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var activity = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+
+        Assert.Contains("public string? ServiceKeyId", logModel);
+        Assert.Contains("public string? ClientCode", logModel);
+        Assert.Contains("public string? Environment", logModel);
+        Assert.Contains("public string? ServiceKeyPrefix", logModel);
+        Assert.DoesNotContain("public string? KeyHash", logModel);
+        Assert.Contains("ingress.Context.ServiceKeyId = authorization.KeyId", serving);
+        Assert.Contains("ingress.Context.ClientCode = authorization.ClientCode", serving);
+        Assert.Contains("fb.Eq(\"ServiceKeyId\", serviceKeyId.Trim())", console);
+        Assert.Contains("fb.Eq(\"ClientCode\", clientCode.Trim())", console);
+        Assert.Contains("filterClientCode", activity);
+        Assert.Contains("filterEnvironment", activity);
+        Assert.Contains("filterServiceKeyId", activity);
+        Assert.Contains("LlmRequestLogContextItems.LifecycleStarted", serving);
+        Assert.Contains("MarkLifecycleStarted();", logWriter);
+        Assert.Contains("sp.GetRequiredService<IHttpContextAccessor>()", servingProgram);
+    }
+
+    [Fact]
+    public void ServiceKeyRotation_RequiresClientCutoverBeforeOldKeyRevocation()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+
+        Assert.Contains("/gw/service-keys/{id}/rotation/client-cutover", console);
+        Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
+        Assert.Contains("ROTATION_SOURCE_STAGE_INVALID", console);
+        Assert.Contains("string.IsNullOrWhiteSpace(successorId)", console);
+        Assert.Contains("var legacySourceClientCode = rotatedKey.AsNullableString(\"SourceSystem\")", console);
+        Assert.Contains("Regex.IsMatch(legacySourceClientCode", console);
+        Assert.Contains(".Set(\"ClientCode\", clientCode)", console);
+        Assert.Contains(".Set(\"Environment\", environment)", console);
+        Assert.Contains("predecessorRotationState = !string.IsNullOrWhiteSpace(rotatedKey.AsNullableString(\"RotatesKeyId\"))", console);
+        Assert.Contains("{ \"PredecessorRotationState\", predecessorRotationState is null ? BsonNull.Value : predecessorRotationState }", console);
+        Assert.Contains(".Set(\"RotationState\", restoreState)", console);
+        Assert.Contains("BsonDocument? stableSuccessor = null", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"IssuanceState\", \"creating\")", console);
+        Assert.Contains(".Set(\"IssuanceState\", \"delivering\")", console);
+        Assert.Contains("http.Response.OnCompleted(async () =>", console);
+        Assert.Contains(".Set(\"IssuanceState\", \"issued\")", console);
+        Assert.Contains("DateTime.UtcNow.AddSeconds(-30)", console);
+        Assert.Contains("SERVICE_KEY_AUDIT_FAILED", console);
+        Assert.Contains("throwOnFailure: true", console);
+        Assert.Contains("await RollbackIssuanceAsync();", console);
+        Assert.Contains("SERVICE_KEY_ISSUANCE_PENDING", console);
+        Assert.Contains("轮换新密钥已被并发撤销", console);
+        Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"abort-in-progress\")", console);
+        Assert.Contains("service_key.rotation_abort", console);
+        Assert.Contains("\"awaiting-client-cutover\"", console);
+        Assert.Contains("\"client-switched\"", console);
+        Assert.Contains("\"old-key-revoked\"", console);
+        Assert.Contains("\"completed\"", console);
+        Assert.Contains("确认已切换", page);
+        Assert.Contains("撤销旧钥并完成", page);
+        Assert.Contains("&& !item.rotatedByKeyId", page);
+    }
+    [Fact]
     public void Api_ShadowWriter_UsesGatewayDataContext()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");

@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.9 | **日期**：2026-07-14 | **状态**：补强批次进行中
+> **版本**：v1.13 | **日期**：2026-07-15 | **状态**：补强批次进行中
 
 ## 1. 目标
 
@@ -84,6 +84,10 @@ OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2
 | PR-8 | Agent-first 一页式 Quickstart | 同页创建 appCaller 和一次性 key；测试使用所选协议的假上游或 dry-run；复制 curl、环境变量和 Agent Skill 接入包；直接跳到 requestId 日志 |
 | PR-9 | 程序池类型、默认池原子切换与 append-only 默认池 | 类型注册表为唯一来源；租户初始化幂等创建默认池；默认池切换具备原子性且不能直接清空唯一默认池；平台模型只追加兼容且不存在的成员，不覆盖、不删除、不重排；特殊 appCaller 使用专属池 |
 | PR-10 | 费用对账合同、环境独立 key 灰度与 legacy key 收口 | 内部复算与供应商账单分层；unknown 保持 unknown；测试与正式的 MAP runtime、release gate、canary、每个外部平台各用独立 key；legacy shared key 具备调用清单、截止时间和告警，双 key 观测后撤销 |
+
+PR-6 已完成：PR [#1121](https://github.com/inernoro/prd_agent/pull/1121) 已合并，合并提交为 `02a503a2980f6ee19c60061f794fb98a834f1cfe`。两个租户、每租户两个团队、每团队两个用户与两把密钥的对抗矩阵，团队资源隔离、主体停用级联、Developer 通配拒绝、会话安全版本、创建补偿与并发窗口均已通过本地 Mongo、GitHub CI、CDS 和直连验收；Bugbot 不适用。
+
+PR-7 本地证据（2026-07-15）：PR [#1122](https://github.com/inernoro/prd_agent/pull/1122) 已把 `ServiceKeyId`、`clientCode`、`environment` 和 key prefix 快照从服务端密钥鉴权结果贯通到成功与失败请求日志，日志模型不包含 key 或 KeyHash；Activity 列表、详情和全部聚合接口支持按三类调用身份筛选。隔离本地 Mongo 与真实控制台 HTTP 流程验证：切换前撤销旧 key 返回 409，确认切换后误撤新 key 返回 409，正确撤销旧 key 返回 200，完成态 key 可再次发起轮换并返回 201；撤销 key 的运行时鉴权返回 401 且仍保留非敏感审计身份。独立对抗审查发现并修复“上一轮未完成仍可链式轮换”和“确认切换与撤销新 key 并发造成部分状态”两个边界；Codex Review 继续发现并修复第二代 key 因保留 predecessor 而不能结束下一轮、无客户端 requestId 时失败日志重复、创建返回死 key、切换与中止竞态以及历史阶段缺失误恢复等问题。最终方案把新 key 先写为 `IssuanceState=creating`、`Enabled=false` 并从租户列表隐藏，交付响应前以条件更新切到可调用但仍不可查询、切换或撤销的 `delivering`，响应完成后最多重试三次收口为 `issued`，避免 201 后首调短暂 401；审计写入失败会恢复前驱、删除哈希目录并撤销新 key，返回 503 且不交付明文；极端情况下残留超过 30 秒的 `delivering` 会在同租户列表查询时收口为 `issued`，不形成永久隐藏且不可管理的 key。即使通过数据库猜中 id，签发期间直接撤销也返回 409 `SERVICE_KEY_ISSUANCE_PENDING`。客户端切换和轮换中止都必须先从 successor 的 `new-key-created` 状态取得唯一 CAS 仲裁权，只有中止获胜且前驱仍是 `awaiting-client-cutover` 才能恢复前驱，历史缺失 `RotationState` 时按是否存在 `RotatesKeyId` 推断 `completed/active`。真实 Mongo failpoint 将前驱 update 阻塞 15 秒，期间同租户列表中 successor 数量为 0，源 key 保持 `active` 且无 successor；30 秒窗口中直接撤销签发中 id 返回 409，创建完成后返回 201 且 key 正常发布。确认切换与撤销新 key 同时发起时仅确认返回 200、中止返回 409，最终源和 successor 均为 `client-switched` 且 successor 继续启用；历史完成 key 移除 `RotationState` 后再次轮换并中止，前驱准确恢复 `completed`、successor 为 `revoked`。最终代码重新启动后的真实 HTTP 创建返回 201，紧接着列表显示 key 已启用，数据库为 `IssuanceState=issued`、`RotationState=active`。Console API 0 warning/0 error，Serving 0 error，Web TypeScript 与生产构建通过，数据域守卫 73/73、PrdAgent.Tests 653/653、Api.Tests 1597 通过与 4 跳过；上一提交的 CI、CDS、冒烟 3/3、公网静态资源与浏览器零错误均已通过，尚待本次异常补偿增量提交复验，未触碰生产环境。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 

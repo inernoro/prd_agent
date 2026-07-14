@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -23,6 +24,8 @@ namespace PrdAgent.LlmGatewayHost;
 /// </summary>
 public static class GatewayHttpEndpoints
 {
+    private const string GatewayRequestIdItemKey = "llmgw.request.id";
+
     private static readonly JsonSerializerOptions SnakeJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -89,8 +92,12 @@ public static class GatewayHttpEndpoints
                         StatusCodes.Status401Unauthorized,
                         "GATEWAY_KEY_INVALID",
                         "gateway key rejected",
+                        KeyId: "legacy-map-shared",
                         TenantId: internalTenantId,
-                        LegacySharedKey: true)
+                        LegacySharedKey: true,
+                        ClientCode: "map-internal",
+                        Environment: "production",
+                        KeyPrefixSnapshot: "internal")
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,
                         gatewayApiKey,
@@ -102,6 +109,12 @@ public static class GatewayHttpEndpoints
                         context.RequestAborted);
                 if (!authorization.Allowed)
                 {
+                    await WriteRejectedGatewayRequestLogAsync(
+                        context,
+                        authorization,
+                        authorizationInputs,
+                        path,
+                        context.RequestAborted);
                     context.Response.StatusCode = authorization.StatusCode;
                     context.Response.ContentType = "application/json";
                     await context.Response.WriteAsync(JsonSerializer.Serialize(new
@@ -147,6 +160,29 @@ public static class GatewayHttpEndpoints
                         outcomeUnknown);
                 }
             }
+        });
+
+        // 已通过密钥门、但在入口校验或上游阶段失败的请求也必须可按工作负载身份审计。
+        // LlmGateway 已落过生命周期日志时不重复写；入口在开始调用前失败时补一条最小记录。
+        app.Use(async (context, next) =>
+        {
+            await next();
+            if (context.Response.StatusCode < StatusCodes.Status400BadRequest
+                || context.Items["llmgw.key.authorization"] is not GatewayKeyAuthorization authorization
+                || context.Items["llmgw.key.authorization.inputs"] is not GatewayAuthorizationInputs inputs
+                || context.Items[LlmRequestLogContextItems.LifecycleStarted] is true)
+            {
+                return;
+            }
+
+            await WriteRejectedGatewayRequestLogAsync(
+                context,
+                authorization,
+                inputs,
+                context.Request.Path.Value ?? string.Empty,
+                CancellationToken.None,
+                context.Response.StatusCode,
+                "GATEWAY_REQUEST_REJECTED");
         });
 
         app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
@@ -224,7 +260,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -302,7 +338,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -375,7 +411,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var requestedModel = parsed.Model;
             var multipartFields = parsed.MultipartFields ?? new Dictionary<string, object>(StringComparer.Ordinal);
             var runId = ResolveCompatRunId(http, multipartFields);
@@ -435,7 +471,7 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var appCallerCode = ResolveHeader(http, "X-Gateway-App-Caller")
                                 ?? AppCallerRegistry.PageAgent.Generate;
             var userId = ResolveHeader(http, "X-Gateway-User-Id");
@@ -525,7 +561,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -634,7 +670,7 @@ public static class GatewayHttpEndpoints
                 return;
             }
 
-            var requestId = ResolveHeader(http, "X-Request-Id") ?? Guid.NewGuid().ToString("N");
+            var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = NormalizeGeminiRouteModel(model);
             var modelPoolId = ResolveCompatModelPoolId(http, body);
@@ -713,7 +749,7 @@ public static class GatewayHttpEndpoints
                 : body.ExpectedModel;
             var ingress = new GatewayIngressRequest
             {
-                RequestId = Guid.NewGuid().ToString("N"),
+                RequestId = TrackGatewayRequestId(http),
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
                 AppCallerCode = body.AppCallerCode,
@@ -760,6 +796,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
@@ -859,6 +896,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
@@ -914,6 +952,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var ingress = ToIngress(request, "gw-native", "map");
+            TrackGatewayRequestId(http, ingress.RequestId);
             request = ApplyVerifiedRawRequestContext(http, request, ingress);
             var executionStore = services.GetService<GatewayRequestExecutionStore>();
             GatewayExecutionBeginResult? execution = null;
@@ -1039,7 +1078,7 @@ public static class GatewayHttpEndpoints
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
-            var requestId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString("N") : request.RequestId.Trim();
+            var requestId = TrackGatewayRequestId(http, request.RequestId);
             var profileTitle = string.IsNullOrWhiteSpace(request.ProfileName) ? "Runtime profile test" : request.ProfileName.Trim();
             var profileContext = new GatewayRequestContext
             {
@@ -1130,26 +1169,28 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
+            var requestId = TrackGatewayRequestId(http, body.Context?.RequestId);
+            var requestContext = GatewayRequestContext.WithRequestId(body.Context, requestId);
             var ingress = new GatewayIngressRequest
             {
-                RequestId = body.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+                RequestId = requestId,
                 SourceSystem = body.Context?.SourceSystem ?? "map",
                 IngressProtocol = body.Context?.IngressProtocol ?? "gw-native",
                 AppCallerCode = body.AppCallerCode,
-                AppCallerTitle = body.Context?.AppCallerTitle,
+                AppCallerTitle = requestContext.AppCallerTitle,
                 RequestType = body.ModelType,
-                ModelPolicy = NormalizeModelPolicy(body.Context?.ModelPolicy)
+                ModelPolicy = NormalizeModelPolicy(requestContext.ModelPolicy)
                     ?? (!string.IsNullOrWhiteSpace(body.PinnedPlatformId) || !string.IsNullOrWhiteSpace(body.PinnedModelId)
                         ? "pinned"
                         : string.IsNullOrWhiteSpace(body.ExpectedModel) ? "auto" : "pinned"),
-                ModelPoolId = body.Context?.ModelPoolId,
-                ExpectedModel = string.Equals(NormalizeModelPolicy(body.Context?.ModelPolicy), "pool", StringComparison.OrdinalIgnoreCase)
-                                && !string.IsNullOrWhiteSpace(body.Context?.ModelPoolId)
-                    ? body.Context.ModelPoolId
+                ModelPoolId = requestContext.ModelPoolId,
+                ExpectedModel = string.Equals(NormalizeModelPolicy(requestContext.ModelPolicy), "pool", StringComparison.OrdinalIgnoreCase)
+                                && !string.IsNullOrWhiteSpace(requestContext.ModelPoolId)
+                    ? requestContext.ModelPoolId
                     : body.ExpectedModel,
                 PinnedPlatformId = body.PinnedPlatformId,
                 PinnedModelId = body.PinnedModelId,
-                Context = body.Context,
+                Context = requestContext,
             };
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
@@ -1558,6 +1599,24 @@ public static class GatewayHttpEndpoints
     {
         var value = http.Request.Headers[name].FirstOrDefault();
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string TrackGatewayRequestId(HttpContext http, string? preferred = null)
+    {
+        var normalizedPreferred = NormalizeOptionalTraceId(preferred);
+        if (normalizedPreferred is not null)
+        {
+            http.Items[GatewayRequestIdItemKey] = normalizedPreferred;
+            return normalizedPreferred;
+        }
+
+        if (http.Items[GatewayRequestIdItemKey] is string { Length: > 0 } tracked)
+            return tracked;
+
+        var requestId = NormalizeOptionalTraceId(ResolveHeader(http, "X-Request-Id"))
+                        ?? Guid.NewGuid().ToString("N");
+        http.Items[GatewayRequestIdItemKey] = requestId;
+        return requestId;
     }
 
     private static string? ReadString(JsonObject body, string key)
@@ -1990,6 +2049,10 @@ public static class GatewayHttpEndpoints
         ingress.Context ??= new GatewayRequestContext { RequestId = ingress.RequestId };
         ingress.Context.TenantId = authorization.TenantId;
         ingress.Context.TeamId = authorization.TeamId;
+        ingress.Context.ServiceKeyId = authorization.KeyId;
+        ingress.Context.ClientCode = authorization.ClientCode;
+        ingress.Context.Environment = authorization.Environment;
+        ingress.Context.ServiceKeyPrefix = authorization.KeyPrefixSnapshot;
         if (!await RecordDiscoveredAppCallerAsync(services, ingress, ct))
         {
             var ownershipStatus = AppCallerStatusDecision.Reject(
@@ -3516,6 +3579,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = ingress.Context?.RequestId ?? ingress.RequestId,
                 SessionId = ingress.Context?.SessionId,
                 RunId = ingress.Context?.RunId,
@@ -4167,7 +4234,11 @@ public static class GatewayHttpEndpoints
             GatewayTransport: ctx?.GatewayTransport,
             IsHealthProbe: ctx?.IsHealthProbe,
             TenantId: ctx?.TenantId,
-            TeamId: ctx?.TeamId));
+            TeamId: ctx?.TeamId,
+            ServiceKeyId: ctx?.ServiceKeyId,
+            ClientCode: ctx?.ClientCode,
+            Environment: ctx?.Environment,
+            ServiceKeyPrefix: ctx?.ServiceKeyPrefix));
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
@@ -4219,6 +4290,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
@@ -4272,6 +4347,10 @@ public static class GatewayHttpEndpoints
             {
                 TenantId = ingress.Context?.TenantId,
                 TeamId = ingress.Context?.TeamId,
+                ServiceKeyId = ingress.Context?.ServiceKeyId,
+                ClientCode = ingress.Context?.ClientCode,
+                Environment = ingress.Context?.Environment,
+                ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
@@ -4664,6 +4743,64 @@ public static class GatewayHttpEndpoints
     {
         using var sha = SHA256.Create();
         return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+    }
+
+    private static async Task WriteRejectedGatewayRequestLogAsync(
+        HttpContext http,
+        GatewayKeyAuthorization authorization,
+        GatewayAuthorizationInputs inputs,
+        string path,
+        CancellationToken ct,
+        int? statusCode = null,
+        string? errorCode = null)
+    {
+        if (string.IsNullOrWhiteSpace(authorization.TenantId)
+            || string.IsNullOrWhiteSpace(authorization.KeyId))
+        {
+            return;
+        }
+
+        var data = http.RequestServices.GetService<LlmGatewayDataContext>();
+        if (data is null) return;
+        var now = DateTime.UtcNow;
+        var requestId = TrackGatewayRequestId(http);
+        try
+        {
+            var logs = data.Database.GetCollection<BsonDocument>("llmrequestlogs");
+            await logs.InsertOneAsync(
+                new BsonDocument
+                {
+                    { "_id", Guid.NewGuid().ToString() },
+                    { "TenantId", authorization.TenantId },
+                    { "TeamId", string.IsNullOrWhiteSpace(authorization.TeamId) ? BsonNull.Value : authorization.TeamId },
+                    { "ServiceKeyId", authorization.KeyId },
+                    { "ClientCode", string.IsNullOrWhiteSpace(authorization.ClientCode) ? BsonNull.Value : authorization.ClientCode },
+                    { "Environment", string.IsNullOrWhiteSpace(authorization.Environment) ? BsonNull.Value : authorization.Environment },
+                    { "ServiceKeyPrefix", string.IsNullOrWhiteSpace(authorization.KeyPrefixSnapshot) ? BsonNull.Value : authorization.KeyPrefixSnapshot },
+                    { "RequestId", requestId },
+                    { "AppCallerCode", inputs.AppCallerCode },
+                    { "SourceSystem", inputs.SourceSystem },
+                    { "IngressProtocol", inputs.IngressProtocol },
+                    { "Provider", "gateway-auth" },
+                    { "Model", string.Empty },
+                    { "Path", path },
+                    { "HttpMethod", http.Request.Method },
+                    { "RequestBodyRedacted", "{}" },
+                    { "Status", "failed" },
+                    { "StatusCode", statusCode ?? authorization.StatusCode },
+                    { "Error", errorCode ?? authorization.ErrorCode },
+                    { "StartedAt", now },
+                    { "EndedAt", now },
+                    { "DurationMs", 0L },
+                },
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?
+                .CreateLogger("GatewayRejectedRequestLog")
+                .LogWarning(ex, "写入已识别 service key 的拒绝请求日志失败。RequestId={RequestId}", requestId);
+        }
     }
 
     private sealed record RehydrateResult(

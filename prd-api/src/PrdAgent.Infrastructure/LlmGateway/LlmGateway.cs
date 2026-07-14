@@ -1079,6 +1079,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 TenantId = sourceContext?.TenantId,
                 TeamId = sourceContext?.TeamId,
+                ServiceKeyId = sourceContext?.ServiceKeyId,
+                ClientCode = sourceContext?.ClientCode,
+                Environment = sourceContext?.Environment,
+                ServiceKeyPrefix = sourceContext?.ServiceKeyPrefix,
                 RequestId = string.IsNullOrWhiteSpace(request.RequestId)
                     ? Guid.NewGuid().ToString("N")
                     : request.RequestId.Trim(),
@@ -3122,6 +3126,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PriceCurrency: resolution.PriceCurrency,
                     TenantId: request.Context?.TenantId,
                     TeamId: request.Context?.TeamId,
+                    ServiceKeyId: request.Context?.ServiceKeyId,
+                    ClientCode: request.Context?.ClientCode,
+                    Environment: request.Context?.Environment,
+                    ServiceKeyPrefix: request.Context?.ServiceKeyPrefix,
                     PromptPolicyId: request.Context?.PromptPolicyId,
                     PromptPolicyVersion: request.Context?.PromptPolicyVersion,
                     PromptPolicyHash: request.Context?.PromptPolicyHash,
@@ -3496,6 +3504,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PriceCurrency: resolution.PriceCurrency,
                     TenantId: request.Context?.TenantId,
                     TeamId: request.Context?.TeamId,
+                    ServiceKeyId: request.Context?.ServiceKeyId,
+                    ClientCode: request.Context?.ClientCode,
+                    Environment: request.Context?.Environment,
+                    ServiceKeyPrefix: request.Context?.ServiceKeyPrefix,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),

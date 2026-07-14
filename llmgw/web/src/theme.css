@@ -1693,6 +1693,16 @@ a:focus-visible {
   background: var(--bg-elevated);
 }
 
+.lg-service-key-mobile {
+  display: none;
+}
+
+.lg-service-key-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .lg-example-fields strong {
   color: var(--text-primary);
   font-size: 12px;
@@ -1963,6 +1973,134 @@ a:focus-visible {
   .lg-cost-trust-values {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .lg-service-key-heading {
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+  }
+
+  .lg-service-key-heading-actions {
+    width: 100%;
+    margin-left: 0 !important;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .lg-service-key-heading-actions > a {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .lg-service-key-heading-actions > button:first-of-type {
+    margin-left: auto;
+  }
+
+  .lg-service-key-desktop {
+    display: none !important;
+  }
+
+  .lg-service-key-mobile {
+    display: grid;
+    gap: 10px;
+    padding-bottom: 4px;
+    overflow: auto;
+  }
+
+  .lg-service-key-card {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+  }
+
+  .lg-service-key-card-heading,
+  .lg-service-key-card-identity {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .lg-service-key-card-heading > div,
+  .lg-service-key-card-identity {
+    min-width: 0;
+  }
+
+  .lg-service-key-card-heading strong,
+  .lg-service-key-card-heading code,
+  .lg-service-key-card-identity span,
+  .lg-service-key-card-identity strong,
+  .lg-service-key-card-identity small,
+  .lg-service-key-card dd small {
+    display: block;
+  }
+
+  .lg-service-key-card-heading strong {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .lg-service-key-card-heading code,
+  .lg-service-key-card-identity small,
+  .lg-service-key-card dd small {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .lg-service-key-card-identity {
+    display: block;
+    padding: 11px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+  }
+
+  .lg-service-key-card-identity span,
+  .lg-service-key-card dt {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .lg-service-key-card-identity strong {
+    margin-top: 5px;
+    font-size: 15px;
+  }
+
+  .lg-service-key-card dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+  }
+
+  .lg-service-key-card dl > div {
+    min-width: 0;
+  }
+
+  .lg-service-key-card dt,
+  .lg-service-key-card dd {
+    margin: 0;
+  }
+
+  .lg-service-key-card dd {
+    margin-top: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .lg-service-key-card .lg-service-key-actions {
+    justify-content: stretch;
+  }
+
+  .lg-service-key-card .lg-service-key-actions > button {
+    min-height: 42px;
+    flex: 1;
   }
 }
 

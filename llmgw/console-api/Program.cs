@@ -219,7 +219,19 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("CreatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ClientCode").Ascending("Environment"),
+        new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload" }),
 });
+await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("TeamId")
+        .Ascending("ServiceKeyId")
+        .Ascending("ClientCode")
+        .Ascending("Environment")
+        .Descending("StartedAt"),
+    new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_workload_started" }));
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -1012,13 +1024,14 @@ app.MapGet("/gw/logs", async (
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -1052,6 +1065,9 @@ app.MapGet("/gw/logs/meta", async (HttpContext http) =>
     var sourceSystemsRaw = await logs.Distinct<string>("SourceSystem", recent).ToListAsync();
     var ingressProtocolsRaw = await logs.Distinct<string>("IngressProtocol", recent).ToListAsync();
     var modelPoliciesRaw = await logs.Distinct<string>("ModelPolicy", recent).ToListAsync();
+    var serviceKeyIdsRaw = await logs.Distinct<string>("ServiceKeyId", recent).ToListAsync();
+    var clientCodesRaw = await logs.Distinct<string>("ClientCode", recent).ToListAsync();
+    var environmentsRaw = await logs.Distinct<string>("Environment", recent).ToListAsync();
 
     return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta
     {
@@ -1064,6 +1080,9 @@ app.MapGet("/gw/logs/meta", async (HttpContext http) =>
         SourceSystems = NormalizeDistinct(sourceSystemsRaw, 80),
         IngressProtocols = NormalizeDistinct(ingressProtocolsRaw, 80),
         ModelPolicies = NormalizeDistinct(modelPoliciesRaw, 40),
+        ServiceKeyIds = NormalizeDistinct(serviceKeyIdsRaw, 300),
+        ClientCodes = NormalizeDistinct(clientCodesRaw, 300),
+        Environments = NormalizeDistinct(environmentsRaw, 20),
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -1073,10 +1092,11 @@ app.MapGet("/gw/logs/timeseries", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -1105,10 +1125,11 @@ app.MapGet("/gw/logs/summary", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -1450,13 +1471,14 @@ app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -3632,7 +3654,17 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
     var ownScope = access.Role == LlmGwTenantRoles.Developer
         ? Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId)
         : Builders<BsonDocument>.Filter.Empty;
-    var docs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, ownScope))
+    await serviceKeys.UpdateManyAsync(
+        TenantAccess.FilterTeamScope(http, ownScope
+            & Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering")
+            & Builders<BsonDocument>.Filter.Lte("UpdatedAt", DateTime.UtcNow.AddSeconds(-30))),
+        Builders<BsonDocument>.Update
+            .Set("IssuanceState", "issued")
+            .Set("UpdatedAt", DateTime.UtcNow));
+    var issuanceScope = Builders<BsonDocument>.Filter.Or(
+        Builders<BsonDocument>.Filter.Exists("IssuanceState", false),
+        Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued"));
+    var docs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, ownScope & issuanceScope))
         .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
         .Limit(500)
         .ToListAsync();
@@ -3645,6 +3677,8 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
         TeamId = d.AsNullableString("TeamId"),
         CreatedByUsername = d.AsNullableString("CreatedByUsername"),
         SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
+        ClientCode = d.AsNullableString("ClientCode") ?? d.AsNullableString("SourceSystem") ?? "历史未标注",
+        Environment = d.AsNullableString("Environment") ?? "unknown",
         AppCallerCodes = d.AsStringList("AppCallerCodes"),
         IngressProtocols = d.AsStringList("IngressProtocols"),
         Scopes = d.AsStringList("Scopes"),
@@ -3653,6 +3687,9 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
         ExpiresAt = d.AsNullableUtcDateTime("ExpiresAt").ToIso(),
         LastUsedAt = d.AsNullableUtcDateTime("LastUsedAt").ToIso(),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        RotatesKeyId = d.AsNullableString("RotatesKeyId"),
+        RotatedByKeyId = d.AsNullableString("RotatedByKeyId"),
+        RotationState = d.AsNullableString("RotationState") ?? (d.AsNullableBool("Enabled") == false ? "revoked" : "active"),
     }).ToList();
     return Json(ApiEnvelope<List<ServiceKeyItem>>.Ok(items), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
@@ -3662,13 +3699,28 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     var tenant = TenantAccess.GetRequired(http);
     var name = (body.Name ?? string.Empty).Trim();
     var sourceSystem = (body.SourceSystem ?? "external").Trim();
+    var clientCode = (body.ClientCode ?? string.Empty).Trim().ToLowerInvariant();
+    var environment = (body.Environment ?? string.Empty).Trim().ToLowerInvariant();
     var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
     var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
     var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
     var allowedCidrs = NormalizeDistinct(body.AllowedCidrs ?? [], 50);
-    if (name.Length == 0 || sourceSystem.Length == 0 || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
+    if (name.Length == 0 || sourceSystem.Length == 0 || clientCode.Length == 0 || environment.Length == 0
+        || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
     {
-        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、clientCode、environment、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+    }
+    if (!System.Text.RegularExpressions.Regex.IsMatch(clientCode, "^[a-z][a-z0-9._-]{1,79}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_CLIENT_CODE", "clientCode 必须以小写字母开头，只能包含小写字母、数字、点、下划线和短横线，长度 2 至 80"), jsonOptions, 400);
+    }
+    var allowedEnvironments = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "development", "test", "staging", "production",
+    };
+    if (!allowedEnvironments.Contains(environment))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_KEY_ENVIRONMENT", "environment 仅支持 development、test、staging、production"), jsonOptions, 400);
     }
     var allowedProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -3765,6 +3817,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     }
 
     BsonDocument? rotatedKey = null;
+    string? predecessorRotationState = null;
     if (!string.IsNullOrWhiteSpace(body.RotatesKeyId))
     {
         var rotationFilter = Builders<BsonDocument>.Filter.Eq("_id", body.RotatesKeyId.Trim());
@@ -3773,6 +3826,41 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         rotatedKey = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, rotationFilter)).FirstOrDefaultAsync();
         if (rotatedKey is null)
             return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_NOT_FOUND", "待轮换密钥不存在或不在当前管理范围"), jsonOptions, 404);
+        if (rotatedKey.AsNullableBool("Enabled") != true)
+            return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_REVOKED", "已撤销密钥不能发起轮换"), jsonOptions, 409);
+        if (!string.IsNullOrWhiteSpace(rotatedKey.AsNullableString("RotatedByKeyId")))
+            return Json(ApiEnvelope<object>.Fail("ROTATION_ALREADY_ACTIVE", "该密钥已有未完成轮换"), jsonOptions, 409);
+        predecessorRotationState = rotatedKey.AsNullableString("RotationState");
+        if (!string.IsNullOrWhiteSpace(predecessorRotationState)
+            && !string.Equals(predecessorRotationState, "active", StringComparison.Ordinal)
+            && !string.Equals(predecessorRotationState, "completed", StringComparison.Ordinal))
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_SOURCE_STAGE_INVALID",
+                "上一轮密钥轮换尚未完成，不能再次发起轮换"), jsonOptions, 409);
+        }
+        if (string.IsNullOrWhiteSpace(predecessorRotationState))
+        {
+            predecessorRotationState = !string.IsNullOrWhiteSpace(rotatedKey.AsNullableString("RotatesKeyId"))
+                ? "completed"
+                : "active";
+        }
+        var rotatedClientCode = rotatedKey.AsNullableString("ClientCode");
+        var legacySourceClientCode = rotatedKey.AsNullableString("SourceSystem");
+        var expectedClientCode = !string.IsNullOrWhiteSpace(rotatedClientCode)
+            ? rotatedClientCode
+            : !string.IsNullOrWhiteSpace(legacySourceClientCode)
+              && System.Text.RegularExpressions.Regex.IsMatch(legacySourceClientCode, "^[a-z][a-z0-9._-]{1,79}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+                ? legacySourceClientCode
+                : null;
+        var rotatedEnvironment = rotatedKey.AsNullableString("Environment");
+        // 历史 key 可能没有 ClientCode，且 SourceSystem 允许使用 "*"。当旧来源不能作为合法
+        // clientCode 时，轮换承担一次性身份升级；否则仍要求沿用可验证的历史身份。
+        if ((expectedClientCode is not null && !string.Equals(expectedClientCode, clientCode, StringComparison.OrdinalIgnoreCase))
+            || (rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase)))
+        {
+            return Json(ApiEnvelope<object>.Fail("ROTATION_IDENTITY_MISMATCH", "轮换不能修改 clientCode 或 environment"), jsonOptions, 409);
+        }
     }
 
     var secretBytes = RandomNumberGenerator.GetBytes(32);
@@ -3792,14 +3880,20 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         { "KeyHash", keyHash },
         { "CreatedByUserId", tenant.UserId },
         { "CreatedByUsername", tenant.Username },
-        { "Enabled", true },
+        { "Enabled", false },
         { "SourceSystem", sourceSystem },
+        { "ClientCode", clientCode },
+        { "Environment", environment },
         { "AppCallerCodes", new BsonArray(appCallerCodes) },
         { "IngressProtocols", new BsonArray(protocols) },
         { "Scopes", new BsonArray(scopes) },
         { "AllowedCidrs", new BsonArray(allowedCidrs) },
         { "RateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
         { "RotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+        { "PredecessorRotationState", predecessorRotationState is null ? BsonNull.Value : predecessorRotationState },
+        { "RotatedByKeyId", BsonNull.Value },
+        { "RotationState", rotatedKey is null ? "issuance-pending" : "rotation-initializing" },
+        { "IssuanceState", "creating" },
         { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
         { "CreatedAt", now },
         { "UpdatedAt", now },
@@ -3820,27 +3914,195 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
         throw;
     }
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        usesWildcard ? "service_key.create_wildcard" : "service_key.create",
-        "llmgw_service_key",
-        id,
-        name,
-        true,
-        null,
-        new BsonDocument
+    BsonDocument? stableSuccessor = null;
+    if (rotatedKey is not null)
+    {
+        var sourceId = rotatedKey.GetStringOrEmpty("_id");
+        var rotationUpdate = await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", sourceId),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Exists("RotatedByKeyId", false),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", BsonNull.Value)),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Exists("RotationState", false),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", BsonNull.Value),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "active"),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "completed")))),
+            Builders<BsonDocument>.Update
+                .Set("RotatedByKeyId", id)
+                .Set("RotationState", "awaiting-client-cutover")
+                .Set("ClientCode", clientCode)
+                .Set("Environment", environment)
+                .Set("UpdatedAt", now));
+        if (rotationUpdate.ModifiedCount != 1)
         {
-            { "sourceSystem", sourceSystem },
-            { "appCallerCount", appCallerCodes.Count },
-            { "protocolCount", protocols.Count },
-            { "scopeCount", scopes.Count },
-            { "teamId", teamId is null ? BsonNull.Value : teamId },
-            { "allowedCidrCount", allowedCidrs.Count },
-            { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
-            { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
-            { "usesWildcard", usesWildcard },
-        });
+            await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+            await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
+            return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+        stableSuccessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", id),
+                Builders<BsonDocument>.Filter.Eq("RotatesKeyId", sourceId),
+                Builders<BsonDocument>.Filter.Eq("Enabled", false),
+                Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
+                Builders<BsonDocument>.Filter.Eq("RotationState", "rotation-initializing"))))
+            .FirstOrDefaultAsync();
+        if (stableSuccessor is null)
+        {
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", sourceId),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+                Builders<BsonDocument>.Update
+                    .Set("RotatedByKeyId", BsonNull.Value)
+                    .Set("RotationState", predecessorRotationState ?? "active")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", false)
+                    .Set("RotationState", "revoked")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换新密钥已被并发撤销，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    var pendingRotationState = rotatedKey is null ? "issuance-pending" : "rotation-initializing";
+    var publishedRotationState = rotatedKey is null ? "active" : "new-key-created";
+    var issuanceLogger = http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ServiceKeyIssuance");
+    async Task RollbackIssuanceAsync()
+    {
+        if (rotatedKey is not null)
+        {
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rotatedKey.GetStringOrEmpty("_id")),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+                Builders<BsonDocument>.Update
+                    .Set("RotatedByKeyId", BsonNull.Value)
+                    .Set("RotationState", predecessorRotationState ?? "active")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+        }
+        await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+        await serviceKeys.UpdateOneAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("IssuanceState", "failed")
+                .Set("RotationState", "revoked")
+                .Set("UpdatedAt", DateTime.UtcNow));
+    }
+    var deliveryReady = await serviceKeys.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", id),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Enabled", false),
+            Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
+            Builders<BsonDocument>.Filter.Eq("RotationState", pendingRotationState)),
+        Builders<BsonDocument>.Update
+            .Set("Enabled", true)
+            .Set("IssuanceState", "delivering")
+            .Set("RotationState", publishedRotationState)
+            .Set("UpdatedAt", DateTime.UtcNow));
+    if (deliveryReady.ModifiedCount != 1)
+    {
+        await RollbackIssuanceAsync();
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_ISSUANCE_CONFLICT",
+            "密钥签发状态已变化，请刷新后重试"), jsonOptions, 409);
+    }
+    try
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            usesWildcard ? "service_key.create_wildcard" : "service_key.create",
+            "llmgw_service_key",
+            id,
+            name,
+            true,
+            null,
+            new BsonDocument
+            {
+                { "sourceSystem", sourceSystem },
+                { "clientCode", clientCode },
+                { "environment", environment },
+                { "appCallerCount", appCallerCodes.Count },
+                { "protocolCount", protocols.Count },
+                { "scopeCount", scopes.Count },
+                { "teamId", teamId is null ? BsonNull.Value : teamId },
+                { "allowedCidrCount", allowedCidrs.Count },
+                { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
+                { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+                { "usesWildcard", usesWildcard },
+            },
+            throwOnFailure: true);
+    }
+    catch (Exception ex)
+    {
+        issuanceLogger?.LogError(
+            ex,
+            "service key 创建审计失败，回滚签发。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
+        await RollbackIssuanceAsync();
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_AUDIT_FAILED",
+            "密钥创建审计失败，本次签发已回滚"), jsonOptions, 503);
+    }
+    http.Response.OnCompleted(async () =>
+    {
+        Exception? lastError = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                var published = await serviceKeys.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                        Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering"),
+                        Builders<BsonDocument>.Filter.Eq("RotationState", publishedRotationState)),
+                    Builders<BsonDocument>.Update
+                        .Set("IssuanceState", "issued")
+                        .Set("UpdatedAt", DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (published.ModifiedCount == 1)
+                    return;
+                var current = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId)))
+                    .Project(Builders<BsonDocument>.Projection.Include("IssuanceState"))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (string.Equals(current?.AsNullableString("IssuanceState"), "issued", StringComparison.Ordinal))
+                    return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+            if (attempt < 3)
+                await Task.Delay(attempt * 100, CancellationToken.None);
+        }
+        issuanceLogger?.LogError(
+            lastError,
+            "service key 响应完成后三次尝试仍未收口签发状态，将由租户列表自愈。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
+    });
     return Json(ApiEnvelope<object>.Ok(new
     {
         id,
@@ -3849,6 +4111,8 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         key = plainKey,
         warning = "该 key 只显示一次；数据库未保存明文",
         sourceSystem,
+        clientCode,
+        environment,
         appCallerCodes,
         ingressProtocols = protocols,
         scopes,
@@ -3857,7 +4121,89 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         rateLimitPerMinute = body.RateLimitPerMinute,
         rotatesKeyId = rotatedKey?.GetStringOrEmpty("_id"),
         expiresAt,
+        rotationState = publishedRotationState,
     }), jsonOptions, 201);
+}).RequireAuthorization("ServiceKeyWrite");
+
+app.MapPost("/gw/service-keys/{id}/rotation/client-cutover", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    if (access.Role == LlmGwTenantRoles.Developer)
+        scopeFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId);
+    var keyFilter = TenantAccess.FilterTeamScope(http, scopeFilter);
+    var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    var successorId = existing.AsNullableString("RotatedByKeyId");
+    if (!string.Equals(existing.AsNullableString("RotationState"), "awaiting-client-cutover", StringComparison.Ordinal)
+        || string.IsNullOrWhiteSpace(successorId))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_STAGE_INVALID", "当前密钥不处于等待客户端切换阶段"), jsonOptions, 409);
+    }
+    var successorIdentityFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", successorId),
+        Builders<BsonDocument>.Filter.Eq("RotatesKeyId", id),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued")));
+    var successor = await serviceKeys.Find(successorIdentityFilter).FirstOrDefaultAsync();
+    if (successor is null)
+        return Json(ApiEnvelope<object>.Fail("ROTATION_SUCCESSOR_INVALID", "轮换新密钥不存在或已撤销"), jsonOptions, 409);
+
+    var now = DateTime.UtcNow;
+    var successorState = successor.AsNullableString("RotationState");
+    if (string.Equals(successorState, "new-key-created", StringComparison.Ordinal))
+    {
+        var successorCutover = await serviceKeys.UpdateOneAsync(
+            successorIdentityFilter & Builders<BsonDocument>.Filter.Eq("RotationState", "new-key-created"),
+            Builders<BsonDocument>.Update
+                .Set("RotationState", "client-switched")
+                .Set("UpdatedAt", now));
+        if (successorCutover.ModifiedCount != 1)
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    else if (!string.Equals(successorState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "ROTATION_SUCCESSOR_STAGE_INVALID",
+            "轮换新密钥状态无效，请刷新后重试"), jsonOptions, 409);
+    }
+
+    var sourceCutover = await serviceKeys.UpdateOneAsync(
+        keyFilter
+        & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+        & Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", successorId)
+        & Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"),
+        Builders<BsonDocument>.Update
+        .Set("RotationState", "client-switched")
+        .Set("UpdatedAt", now));
+    if (sourceCutover.ModifiedCount != 1)
+    {
+        var currentSource = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
+        if (currentSource is null
+            || !string.Equals(currentSource.AsNullableString("RotatedByKeyId"), successorId, StringComparison.Ordinal)
+            || !string.Equals(currentSource.AsNullableString("RotationState"), "client-switched", StringComparison.Ordinal))
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.rotation_client_cutover",
+        "llmgw_service_key",
+        id,
+        existing.AsNullableString("Name"),
+        true,
+        null,
+        new BsonDocument { { "successorKeyId", successorId } });
+    return Json(ApiEnvelope<object>.Ok(new { id, successorKeyId = successorId, rotationState = "client-switched" }), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
 
 app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
@@ -3870,9 +4216,136 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
     var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    var issuanceState = existing.AsNullableString("IssuanceState");
+    if (!string.IsNullOrWhiteSpace(issuanceState)
+        && !string.Equals(issuanceState, "issued", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_ISSUANCE_PENDING",
+            "密钥仍在签发中，不能撤销"), jsonOptions, 409);
+    }
+    var successorId = existing.AsNullableString("RotatedByKeyId");
+    var predecessorId = existing.AsNullableString("RotatesKeyId");
+    var rotationState = existing.AsNullableString("RotationState") ?? "active";
+    if (!string.IsNullOrWhiteSpace(successorId)
+        && !string.Equals(rotationState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_CLIENT_SWITCH_REQUIRED", "请先确认客户端已切换到新密钥，再撤销旧密钥"), jsonOptions, 409);
+    }
+    if (string.IsNullOrWhiteSpace(successorId)
+        && !string.IsNullOrWhiteSpace(predecessorId)
+        && string.Equals(rotationState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_OLD_KEY_REVOKE_REQUIRED", "客户端已切换后必须撤销旧密钥完成轮换，不能撤销新密钥"), jsonOptions, 409);
+    }
+
+    var now = DateTime.UtcNow;
+    if (string.IsNullOrWhiteSpace(successorId)
+        && !string.IsNullOrWhiteSpace(predecessorId)
+        && string.Equals(rotationState, "new-key-created", StringComparison.Ordinal))
+    {
+        var abortClaim = await serviceKeys.UpdateOneAsync(
+            keyFilter
+            & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+            & Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued")
+            & Builders<BsonDocument>.Filter.Eq("RotatesKeyId", predecessorId)
+            & Builders<BsonDocument>.Filter.Eq("RotationState", "new-key-created"),
+            Builders<BsonDocument>.Update
+                .Set("RotationState", "abort-in-progress")
+                .Set("UpdatedAt", now));
+        if (abortClaim.ModifiedCount != 1)
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var restoreState = existing.AsNullableString("PredecessorRotationState");
+        if (!string.Equals(restoreState, "active", StringComparison.Ordinal)
+            && !string.Equals(restoreState, "completed", StringComparison.Ordinal))
+        {
+            var predecessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true))))
+                .FirstOrDefaultAsync();
+            restoreState = !string.IsNullOrWhiteSpace(predecessor?.AsNullableString("RotatesKeyId"))
+                ? "completed"
+                : "active";
+        }
+        var predecessorRestore = await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
+                Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+            Builders<BsonDocument>.Update
+                .Set("RotatedByKeyId", BsonNull.Value)
+                .Set("RotationState", restoreState)
+                .Set("UpdatedAt", now));
+        if (predecessorRestore.ModifiedCount != 1)
+        {
+            await serviceKeys.UpdateOneAsync(
+                keyFilter & Builders<BsonDocument>.Filter.Eq("RotationState", "abort-in-progress"),
+                Builders<BsonDocument>.Update
+                    .Set("RotationState", "new-key-created")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var successorRevoke = await serviceKeys.UpdateOneAsync(
+            keyFilter
+            & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+            & Builders<BsonDocument>.Filter.Eq("RotationState", "abort-in-progress"),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("RotationState", "revoked")
+                .Set("UpdatedAt", DateTime.UtcNow));
+        if (successorRevoke.ModifiedCount != 1)
+            throw new InvalidOperationException("轮换中止已取得仲裁权，但新密钥撤销失败");
+        await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            "service_key.rotation_abort",
+            "llmgw_service_key",
+            id,
+            existing.AsNullableString("Name"),
+            true,
+            null,
+            new BsonDocument
+            {
+                { "predecessorKeyId", predecessorId },
+                { "predecessorRotationState", restoreState },
+            });
+        return Json(ApiEnvelope<object>.Ok(new
+        {
+            id,
+            revoked = true,
+            rotationState = "revoked",
+            predecessorKeyId = predecessorId,
+        }), jsonOptions);
+    }
+
     await serviceKeys.UpdateOneAsync(
         keyFilter,
-        Builders<BsonDocument>.Update.Set("Enabled", false).Set("UpdatedAt", DateTime.UtcNow));
+        Builders<BsonDocument>.Update
+            .Set("Enabled", false)
+            .Set("RotationState", !string.IsNullOrWhiteSpace(successorId) ? "old-key-revoked" : "revoked")
+            .Set("UpdatedAt", now));
+    if (!string.IsNullOrWhiteSpace(successorId))
+    {
+        await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", successorId),
+                Builders<BsonDocument>.Filter.Eq("RotatesKeyId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true))),
+            Builders<BsonDocument>.Update.Set("RotationState", "completed").Set("UpdatedAt", now));
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -3882,7 +4355,13 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
         existing.AsNullableString("Name"),
         true,
         null);
-    return Json(ApiEnvelope<object>.Ok(new { id, revoked = true }), jsonOptions);
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        revoked = true,
+        rotationState = !string.IsNullOrWhiteSpace(successorId) ? "old-key-revoked" : "revoked",
+        successorKeyId = successorId,
+    }), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
 
 // 影子比对：汇总 + 最近 N 条
@@ -5860,7 +6339,8 @@ static async Task WriteOperationAuditAsync(
     string? targetName,
     bool success,
     string? reason,
-    BsonDocument? changes = null)
+    BsonDocument? changes = null,
+    bool throwOnFailure = false)
 {
     try
     {
@@ -5895,6 +6375,8 @@ static async Task WriteOperationAuditAsync(
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+        if (throwOnFailure)
+            throw;
     }
 }
 
@@ -6020,7 +6502,10 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? runId,
     string? requestId,
     string? sessionId,
-    string? modelPoolId)
+    string? modelPoolId,
+    string? serviceKeyId,
+    string? clientCode,
+    string? environment)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -6041,6 +6526,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(requestId)) filters.Add(fb.Eq("RequestId", requestId.Trim()));
     if (!string.IsNullOrWhiteSpace(sessionId)) filters.Add(fb.Eq("SessionId", sessionId.Trim()));
     if (!string.IsNullOrWhiteSpace(modelPoolId)) filters.Add(fb.Eq("ModelPoolId", modelPoolId.Trim()));
+    if (!string.IsNullOrWhiteSpace(serviceKeyId)) filters.Add(fb.Eq("ServiceKeyId", serviceKeyId.Trim()));
+    if (!string.IsNullOrWhiteSpace(clientCode)) filters.Add(fb.Eq("ClientCode", clientCode.Trim()));
+    if (!string.IsNullOrWhiteSpace(environment)) filters.Add(fb.Eq("Environment", environment.Trim()));
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
@@ -6162,6 +6650,10 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    ClientCode = d.AsNullableString("ClientCode"),
+    Environment = d.AsNullableString("Environment"),
+    ServiceKeyPrefix = d.AsNullableString("ServiceKeyPrefix"),
     Username = null,
     DisplayName = null,
     RequestType = d.AsNullableString("RequestType"),
@@ -6203,6 +6695,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    ClientCode = d.AsNullableString("ClientCode"),
+    Environment = d.AsNullableString("Environment"),
+    ServiceKeyPrefix = d.AsNullableString("ServiceKeyPrefix"),
     RequestType = d.AsNullableString("RequestType"),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
     AppCallerCodeDisplayName = d.AsNullableString("AppCallerCodeDisplayName"),
