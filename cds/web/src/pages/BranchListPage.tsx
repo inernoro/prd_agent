@@ -4921,10 +4921,10 @@ const BranchCard = memo(function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[200px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex min-h-[244px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
-          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
+          : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
       } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}

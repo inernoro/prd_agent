@@ -2828,3 +2828,22 @@
     animation: none;
   }
 }
+
+/* ── 分支卡片浅色模式对比增强（2026-07-14）────────────────────────────────
+   白卡（--surface-raised: 100%）在近白页面（--background: 95%）上、配 84% 的
+   发丝边框，几乎糊在一起。浅色模式改用更实的 hairline-strong 边框 + 轻投影把
+   卡片「抬」起来（参考 Linear / GitHub 的浅色卡片对比）。深色模式保持不变。
+   规则不入 @layer（无层规则优先级高于所有 @layer，稳过 Tailwind 的 border 工具类）；
+   只作用于非异常卡（.cds-branch-card 仅打在非 error 卡上），异常卡的红边不受影响。 */
+[data-theme='light'] .cds-branch-card {
+  border-color: hsl(var(--hairline-strong));
+  box-shadow:
+    0 1px 2px hsl(24 20% 15% / 0.06),
+    0 6px 16px -8px hsl(24 20% 15% / 0.12);
+}
+[data-theme='light'] .cds-branch-card:hover {
+  border-color: hsl(24 14% 54%);
+  box-shadow:
+    0 2px 4px hsl(24 20% 15% / 0.08),
+    0 12px 26px -10px hsl(24 20% 15% / 0.18);
+}
