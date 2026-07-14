@@ -107,7 +107,7 @@ export default function MobileAssetsPage() {
               <div
                 key={asset.id}
                 className="flex flex-col rounded-xl overflow-hidden"
-                style={{ background: C.surface, border: `1px solid ${C.hairline}` }}
+                style={{ background: C.card, border: `1px solid ${C.hairline}` }}
               >
                 {/* 缩略图 */}
                 <div

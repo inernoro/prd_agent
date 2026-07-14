@@ -31,6 +31,9 @@ export const AS_COLOR = {
   surface: 'rgba(255, 255, 255, 0.05)',
   surfaceHover: 'rgba(255, 255, 255, 0.08)',
 
+  /** 分组卡片实底（iOS grouped cell）——暗=悬浮灰 #1C1C1E，浅=纯白，用于内容卡背景 */
+  card: '#1C1C1E',
+
   /** Pill 按钮底 —— App Store Get 按钮的灰色 */
   pillBg: 'rgba(120, 120, 128, 0.24)',
 
@@ -59,6 +62,8 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
 
   surface: 'rgba(0, 0, 0, 0.045)',
   surfaceHover: 'rgba(0, 0, 0, 0.07)',
+
+  card: '#ffffff',
 
   pillBg: 'rgba(120, 120, 128, 0.16)',
 

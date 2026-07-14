@@ -229,7 +229,7 @@ export default function MobileHomePage() {
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(4, 1fr)',
-                background: C.surface,
+                background: C.card,
                 border: `1px solid ${C.hairline}`,
                 borderRadius: AS_SPACE.shelfCardRadius,
                 padding: '16px 4px',
@@ -276,7 +276,7 @@ export default function MobileHomePage() {
           <div style={{ padding: `0 ${AS_SPACE.gutter}px` }}>
             <div
               style={{
-                background: C.surface,
+                background: C.card,
                 border: `1px solid ${C.hairline}`,
                 borderRadius: AS_SPACE.shelfCardRadius,
                 padding: '4px 14px',
@@ -326,7 +326,7 @@ export default function MobileHomePage() {
           <div style={{ padding: `0 ${AS_SPACE.gutter}px` }}>
             <div
               style={{
-                background: C.surface,
+                background: C.card,
                 border: `1px solid ${C.hairline}`,
                 borderRadius: AS_SPACE.shelfCardRadius,
                 padding: '4px 14px',
