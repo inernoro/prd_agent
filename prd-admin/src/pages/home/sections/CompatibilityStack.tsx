@@ -3,6 +3,18 @@ import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
 
+type GatewayLocation = Pick<Location, 'hostname' | 'protocol'>;
+
+export function resolveGatewayConsoleHref(location: GatewayLocation = window.location): string {
+  const previewSuffix = '.miduo.org';
+  if (!location.hostname.endsWith(previewSuffix)) return '/llmgw/';
+
+  if (location.hostname.endsWith(`-llmgw-web${previewSuffix}`)) return '/';
+
+  const previewSlug = location.hostname.slice(0, -previewSuffix.length);
+  return `${location.protocol}//${previewSlug}-llmgw-web${previewSuffix}/`;
+}
+
 /**
  * CompatibilityStack — 幕 7 · 模型兼容性矩阵
  *
@@ -78,7 +90,7 @@ export function CompatibilityStack() {
         </div>
         <div className="mt-6 flex justify-center">
           <a
-            href="/llmgw/"
+            href={resolveGatewayConsoleHref()}
             className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
           >
             {t.compat.action}
