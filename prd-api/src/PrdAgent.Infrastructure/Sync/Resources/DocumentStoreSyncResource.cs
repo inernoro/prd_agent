@@ -823,7 +823,8 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 // 用户取消：不能吞成 per-record failure，必须冒泡到 PeerSyncTransferService 的 cancelled catch，
                 // 否则逐篇写入阶段点「停止」会让整个 run 落 error（继续跑完剩余记录）而非 cancelled（Codex P2）。
-                throw;
+                // 带上此刻已提交的部分增删改计数，让 cancelled run 如实记录已改动的数量（Codex P2 审计准确）。
+                throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
             }
             catch (Exception ex)
             {
@@ -863,7 +864,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                 }
                 catch (PeerSyncRunCancelledException)
                 {
-                    throw; // 取消异常必须冒泡到 SyncItemAsync 的 cancelled catch，不能被下面的通用 catch 吞成 failure。
+                    // 取消异常必须冒泡到 SyncItemAsync 的 cancelled catch，不能被下面的通用 catch 吞成 failure。
+                    // 带上已删除等部分计数，让破坏性 align 取消的历史如实记录已删除数量（Codex P2 审计准确）。
+                    throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
                 }
                 catch (Exception ex)
                 {

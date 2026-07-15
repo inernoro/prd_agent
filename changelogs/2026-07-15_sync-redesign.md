@@ -1,3 +1,6 @@
+| refactor | prd-admin | 知识库「同步」与「发送到」合并为统一同步面板：方向（发送/拉回/双向）+ 自动开关一次设定长期生效，发送降级为面板内的一种方向，同一动作不再有三个入口 |
+| polish | prd-admin | 知识库顶栏同步按钮文案即状态（已同步·对端 / 需要处理 / 同步中）；列表页批量入口更名「批量同步」；原发送弹窗「原时间/覆盖/重传」三个开关收敛为固定默认值 |
+| refactor | prd-admin | 知识库同步面板重设计为一屏拓扑图：主视觉改为「本库⇄对端」关系图，箭头即同步方向、连线颜色与流动即状态，替代原文字表单；方向段控 + 立即同步 + 自动开关一屏完成，记录与高级对齐收进折叠 |
 | feat | prd-api | 知识库跨节点同步新增「取消进行中同步」能力：PeerSyncRun 加 CancelRequested 位 + cancelled 终态，新增 POST /api/peer-sync/runs/{id}/cancel 端点（归属校验），SyncItemAsync 在 push前/push后/本地写入前/逐篇 检查点轮询取消位主动中断落 cancelled |
 | refactor | prd-admin | 批量同步弹窗重写为「发起 / 历史」两视图，与单库面板同一套拓扑语言（已选N库⇄对端）；历史视图可查看全部同步台账并停止进行中的同步；砍掉旧监控面板术语与没开始就全是0的统计 |
 | feat | prd-admin | 单库同步面板的进行中同步也可一键停止（进度条与记录卡的停止按钮）；新增 cancelled 状态展示（中性灰，区别于失败红） |
@@ -13,3 +16,4 @@
 | fix | prd-api | 批量同步途中点停止时停整批：PeerItemSyncResult 加 Cancelled 标志，取消落 cancelled 后 Controller 批量 loop break，不再继续同步后续未开始的库（Codex PR#1144 P2） |
 | fix | prd-admin | 「已建立关系」（everSynced）收口为「当前选中对端+方向组合成功过」，不再认「该库任意成功 run」：切对端/换方向未成功时不再误显示为已建立、不再误开自动开关（与后端 gate 同口径，Codex PR#1144 P2） |
 | fix | prd-admin | 强制对齐成功后同步本地 direction（对齐归一方向），避免首次对齐后 everSynced 恒 false、面板一直说未建立/禁自动直到重开；批量弹窗改选时清掉上一轮 results，避免取消选中的行仍按旧结果显示（Codex PR#1144 P2） |
+| fix | prd-api | 取消时保留 apply 已提交的部分增删改计数：PeerSyncRunCancelledException 带回本次 apply 已处理数，SyncItemAsync 累加落 cancelled run，避免 pull/align 写入一半被停时历史显示删除0/计数陈旧与实际不符（Codex PR#1144 P2） |

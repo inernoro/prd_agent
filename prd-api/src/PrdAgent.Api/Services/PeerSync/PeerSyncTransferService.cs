@@ -273,10 +273,15 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             result.Message = summary;
             return result;
         }
-        catch (PeerSyncRunCancelledException)
+        catch (PeerSyncRunCancelledException cancelEx)
         {
-            // 用户主动取消：落 cancelled 终态（非失败）。已处理的增删改数如实保留，让用户看到停在哪。
+            // 用户主动取消：落 cancelled 终态（非失败）。累加取消时 apply 已提交的部分计数——pull/align 写入
+            // 一半被停，DB 已部分改动，异常带回本次 apply 的已处理数，如实记录（否则破坏性 align 取消历史会
+            // 显示删除 0 与实际不符）。非 apply 阶段取消则这些为 0，累加无害。
             // 库级状态用 updateDirection:false，只清 syncing、不动方向/不重置自动计时。
+            created += cancelEx.Created; updated += cancelEx.Updated; skipped += cancelEx.Skipped;
+            deleted += cancelEx.Deleted; failed += cancelEx.Failed;
+            assetsRewritten += cancelEx.AssetsRewritten; assetRewriteFailed += cancelEx.AssetRewriteFailed;
             _logger.LogInformation("[peer-sync] transfer item {ItemId} cancelled by user", itemId);
             await MarkPeerSyncAsync(resource.ResourceType, itemId, "cancelled", direction, node, "已被用户取消", ct, updateDirection: false);
             await FinishRunAsync(runId, PeerSyncRunStatus.Cancelled, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed, "已被用户取消", itemStartedAt, ct);
