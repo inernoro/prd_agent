@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
 /**
  * 移动端底部 Sheet —— iOS Action Sheet 风。
@@ -23,6 +24,7 @@ export interface MobileBottomSheetProps {
 }
 
 export function MobileBottomSheet({ open, onClose, title, note, children }: MobileBottomSheetProps) {
+  const C = useAppStoreColors();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -63,7 +65,7 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
           left: 0,
           right: 0,
           bottom: 0,
-          background: '#1c1c1e',
+          background: C.bg,
           borderRadius: '22px 22px 0 0',
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
           transform: open ? 'translateY(0)' : 'translateY(100%)',
@@ -72,7 +74,7 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
           minHeight: 0,
           overflowY: 'auto',
           overscrollBehavior: 'contain',
-          borderTop: `0.5px solid ${AS_COLOR.hairline}`,
+          borderTop: `0.5px solid ${C.hairline}`,
         }}
       >
         <div
@@ -80,7 +82,7 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
             width: 38,
             height: 5,
             borderRadius: 3,
-            background: 'rgba(255,255,255,0.22)',
+            background: C.labelTertiary,
             margin: '8px auto 6px',
           }}
         />
@@ -90,7 +92,7 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
               fontSize: 20,
               fontWeight: 800,
               letterSpacing: '-0.02em',
-              color: AS_COLOR.label,
+              color: C.label,
               padding: '6px 20px 4px',
             }}
           >
@@ -98,7 +100,7 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
           </h3>
         )}
         {note && (
-          <p style={{ fontSize: 12, color: AS_COLOR.labelTertiary, padding: '0 20px 10px', lineHeight: 1.4 }}>
+          <p style={{ fontSize: 12, color: C.labelTertiary, padding: '0 20px 10px', lineHeight: 1.4 }}>
             {note}
           </p>
         )}
@@ -124,6 +126,7 @@ export function MobileSheetRow({
   danger?: boolean;
   onClick?: () => void;
 }) {
+  const C = useAppStoreColors();
   return (
     <button
       type="button"
@@ -137,7 +140,7 @@ export function MobileSheetRow({
           width: 30,
           height: 30,
           borderRadius: 8,
-          background: accent ?? 'rgba(255,255,255,0.10)',
+          background: accent ?? C.surface,
         }}
       >
         {icon}
@@ -146,7 +149,7 @@ export function MobileSheetRow({
         style={{
           fontSize: 17,
           fontWeight: 500,
-          color: danger ? AS_COLOR.red : AS_COLOR.label,
+          color: danger ? C.red : C.label,
         }}
       >
         {label}

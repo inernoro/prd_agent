@@ -217,9 +217,10 @@ export default function DailyPostPage() {
           style={{ borderTop: `2px solid ${INK}`, borderBottom: `1px solid ${LINE_2}` }}
         >
           {[
-            { label: '会话', value: data.stats?.sessions ?? 0 },
-            { label: '消息', value: data.stats?.messages ?? 0 },
+            // 会话/消息是桌面 PRD 解读时代的死指标(恒 0),与首页同步换当前真实用量口径
+            { label: 'AI 调用', value: data.stats?.aiCalls ?? 0 },
             { label: '生图', value: data.stats?.imageGenerations ?? 0 },
+            { label: '缺陷', value: data.stats?.defects ?? 0 },
             { label: 'Token', value: data.stats?.totalTokens ?? 0 },
           ].map((stat, idx) => (
             <div

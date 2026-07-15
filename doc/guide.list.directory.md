@@ -723,6 +723,7 @@
   > 页面级路由迁完后,补 12k 行 app.js 里 13 项特色功能模块的功能级迁移(Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG / AI 占用 feed 等),分 3 wave,带状态/效果/测试/工作量字段
 
 - [移动端适配功能规划](plan.frontend.mobile-adaptation) `plan.frontend.mobile-adaptation`
+- [Apple 设计系统双轨迁移 · 活状态看板](plan.frontend.apple-design-migration) `plan.frontend.apple-design-migration`
   > 移动端响应式适配的功能规划
 
 - [移动端布局分析报告](plan.frontend.mobile-layout-review) `plan.frontend.mobile-layout-review`
@@ -831,6 +832,7 @@
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [缺陷管理 手机截图分享提交 · 债务台账](debt.defect-agent.mobile-share) `debt.defect-agent.mobile-share`
+- [Apple 设计系统迁移 · 债务台账](debt.frontend.apple-design-migration) `debt.frontend.apple-design-migration`
 - [移动端全局浅色主题 · 债务台账](debt.frontend.mobile-light-theme) `debt.frontend.mobile-light-theme`
 - [前端导航历史（返回上一页）· 债务台账](debt.frontend.navigation-history) `debt.frontend.navigation-history`
   > useSmartBack 已落地 + 主要污染源已修；边界：教程跨页 push、NavigationBridge push、cds-agent 整页跳转、长尾页面硬编码返回待走到哪修到哪

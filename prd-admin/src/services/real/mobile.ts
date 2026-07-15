@@ -19,8 +19,9 @@ export const getMobileFeedReal: GetMobileFeedContract = async (args) => {
 export const getMobileStatsReal: GetMobileStatsContract = async (args) => {
   const params = new URLSearchParams();
   if (args?.days) params.set('days', String(args.days));
-  const qs = params.toString() ? `?${params}` : '';
-  return await apiRequest<MobileStats>(`${api.mobile.stats()}${qs}`, { method: 'GET' });
+  // 后端按用户本地时区切日界（JS getTimezoneOffset 约定,UTC+8 → -480）
+  params.set('tzOffsetMinutes', String(new Date().getTimezoneOffset()));
+  return await apiRequest<MobileStats>(`${api.mobile.stats()}?${params}`, { method: 'GET' });
 };
 
 export const getMobileAssetsReal: GetMobileAssetsContract = async (args) => {

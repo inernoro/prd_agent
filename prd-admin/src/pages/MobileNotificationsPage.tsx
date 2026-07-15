@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useDataTheme } from '@/hooks/useDataTheme';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -11,26 +10,26 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
+import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
-/* ── 通知色调 ── */
-const notificationTone = {
-  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: '#93c5fd' },
-  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: '#fdba74' },
-  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: '#fca5a5' },
-  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: '#86efac' },
+/* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
+const TONE_BG: Record<string, string> = {
+  info: `${AS_COLOR.blue}14`,
+  warning: `${AS_COLOR.orange}1a`,
+  error: `${AS_COLOR.red}14`,
+  success: `${AS_COLOR.green}14`,
 };
-
-function getNotificationTone(level?: string) {
-  const key = (level ?? '').toLowerCase() as keyof typeof notificationTone;
-  return notificationTone[key] ?? notificationTone.info;
+function getToneBg(level?: string) {
+  return TONE_BG[(level ?? '').toLowerCase()] ?? TONE_BG.info;
 }
 
 /**
  * 移动端系统通知页 — 展示全部通知，支持单条/一键处理。
+ * App Store 设计系统：纯黑/白双皮肤 + iOS 系统色 + SF 字体。
  */
 export default function MobileNotificationsPage() {
-  const light = useDataTheme() === 'light';
-  const subtleBg = light ? 'rgba(20,21,26,0.06)' : 'rgba(255, 255, 255, 0.08)';
+  const C = useAppStoreColors();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,19 +106,19 @@ export default function MobileNotificationsPage() {
   }, []);
 
   return (
-    <div className="h-full min-h-0 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+    <div className="h-full min-h-0 overflow-auto" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
       <div className="px-4 pt-4 pb-28">
 
         {/* ── 头部操作栏 ── */}
         <div className="flex items-center justify-between mb-4">
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-xs" style={{ color: C.labelSecondary }}>
             {loading ? '加载中...' : `${activeNotifications.length} 条未处理`}
           </div>
           {activeNotifications.length > 0 && (
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all active:scale-95"
-              style={{ background: subtleBg, color: 'var(--text-primary)' }}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-transform active:scale-95"
+              style={{ background: C.pillBg, color: C.blue }}
               onClick={handleAll}
             >
               <CheckCircle2 size={14} />
@@ -132,7 +131,6 @@ export default function MobileNotificationsPage() {
         {activeNotifications.length > 0 && (
           <div className="space-y-3 mb-6">
             {activeNotifications.map((item) => {
-              const tone = getNotificationTone(item.level);
               const variant = getNotificationType(item);
               const ItemTypeIcon = variant.icon;
               const isHandling = handlingIds.has(item.id);
@@ -143,7 +141,7 @@ export default function MobileNotificationsPage() {
                   className="rounded-2xl border px-4 py-3"
                   style={{
                     borderColor: `${variant.accent}55`,
-                    background: tone.bg,
+                    background: getToneBg(item.level),
                     cursor: clickable ? 'pointer' : 'default',
                   }}
                   onClick={clickable ? () => void openNotification(item) : undefined}
@@ -159,11 +157,11 @@ export default function MobileNotificationsPage() {
                           {variant.label}
                         </span>
                       </div>
-                      <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-[13px] font-semibold" style={{ color: C.label }}>
                         {item.title}
                       </div>
                       {item.message && (
-                        <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                        <div className="mt-1 text-[12px] leading-relaxed" style={{ color: C.labelSecondary }}>
                           {item.message}
                         </div>
                       )}
@@ -177,9 +175,9 @@ export default function MobileNotificationsPage() {
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]"
                               style={{
-                                background: light ? 'rgba(20,21,26,0.05)' : 'rgba(255,255,255,0.06)',
-                                color: 'var(--text-secondary)',
-                                border: `1px solid ${light ? 'rgba(20,21,26,0.10)' : 'rgba(255,255,255,0.1)'}`,
+                                background: C.surface,
+                                color: C.labelSecondary,
+                                border: `1px solid ${C.hairline}`,
                               }}
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -190,20 +188,20 @@ export default function MobileNotificationsPage() {
                           ))}
                         </div>
                       )}
-                      <div className="mt-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-1.5 text-[10px]" style={{ color: C.labelTertiary }}>
                         {new Date(item.createdAt).toLocaleString('zh-CN')}
                       </div>
                     </div>
                     <button
                       type="button"
-                      className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-all active:scale-90"
-                      style={{ background: subtleBg }}
+                      className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-transform active:scale-90"
+                      style={{ background: C.surface }}
                       onClick={(e) => { e.stopPropagation(); void handleOne(item.id); }}
                       disabled={isHandling}
                     >
                       {isHandling
-                        ? <MapSpinner size={14} color="var(--text-muted)" />
-                        : <CheckCircle2 size={14} style={{ color: 'var(--text-secondary)' }} />
+                        ? <MapSpinner size={14} color={C.labelSecondary} />
+                        : <CheckCircle2 size={14} style={{ color: C.labelSecondary }} />
                       }
                     </button>
                   </div>
@@ -216,32 +214,33 @@ export default function MobileNotificationsPage() {
         {/* ── 空状态 ── */}
         {!loading && activeNotifications.length === 0 && handledNotifications.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Bell size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无通知</div>
+            <Bell size={32} style={{ color: C.labelTertiary }} />
+            <div className="text-sm" style={{ color: C.labelSecondary }}>暂无通知</div>
           </div>
         )}
 
         {/* ── 已处理通知 ── */}
         {handledNotifications.length > 0 && (
           <div>
-            <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-xs font-medium mb-3" style={{ color: C.labelSecondary }}>
               已处理
             </div>
             <div className="space-y-2">
               {handledNotifications.slice(0, 20).map((item) => (
                 <div
                   key={item.id}
-                  className="surface-inset rounded-xl px-4 py-3 opacity-60"
+                  className="rounded-xl px-4 py-3 opacity-60"
+                  style={{ background: C.card, border: `1px solid ${C.hairline}` }}
                 >
-                  <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-[12px] font-medium truncate" style={{ color: C.label }}>
                     {item.title}
                   </div>
                   {item.message && (
-                    <div className="text-[11px] mt-0.5 line-clamp-1" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[11px] mt-0.5 line-clamp-1" style={{ color: C.labelSecondary }}>
                       {item.message}
                     </div>
                   )}
-                  <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 text-[10px]" style={{ color: C.labelTertiary }}>
                     {item.handledAt ? `处理于 ${new Date(item.handledAt).toLocaleString('zh-CN')}` : '已处理'}
                   </div>
                 </div>

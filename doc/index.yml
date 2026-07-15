@@ -268,6 +268,7 @@ docs:
   plan.cds.web-migration: CDS 前端迁移计划与交接（React + Vite + Tailwind + shadcn/ui，逐页接管）
   plan.cds.legacy-feature-rollup: CDS legacy 12k 行 app.js 特色功能模块功能级迁移合并计划（Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG 等 13 项,分 3 wave）
   plan.frontend.mobile-adaptation: 移动端适配功能规划
+  plan.frontend.apple-design-migration: Apple 设计系统双轨迁移 · 活状态看板（手机端摘要仪表盘重构 + PC 端底座统一）
   plan.frontend.mobile-layout-review: 移动端布局分析报告
   plan.ai-toolbox.mvp: AI 百宝箱 MVP 规划
   plan.ai-toolbox.next-steps: AI 百宝箱未完成项与下一步规划
@@ -317,6 +318,7 @@ docs:
   debt.cds.removed-branch-pages: CDS 过期分支预览页(合并/放弃分流) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.defect-agent.mobile-share: 缺陷管理 手机截图分享提交 · 债务台账（iOS 无 share_target / PWA 安装引导 / 双面板未合并）
+  debt.frontend.apple-design-migration: Apple 设计系统迁移 · 债务台账（手机轨剩余页 / PC 底座轨 / 刻意取舍）
   debt.frontend.mobile-light-theme: 移动端全局浅色主题 · 债务台账（硬编码暗色页面清理 / 主题竞态收敛）
   debt.frontend.navigation-history: 前端导航历史（返回上一页）· 债务台账（教程跨页 push / NavigationBridge / cds-agent 整页跳转 / 长尾硬编码返回）
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
