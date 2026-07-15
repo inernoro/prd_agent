@@ -3145,7 +3145,17 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("scopes: ['invoke']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
-        Assert.Contains("disabled={!canCreateAccess || Boolean(bundle)}", quickstart);
+        Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);
+        Assert.Contains("requestType,", quickstart);
+        Assert.DoesNotContain("requestType: 'chat'", quickstart);
+        Assert.Contains("visionOpenAiContent", quickstart);
+        Assert.Contains("visionClaudeContent", quickstart);
+        Assert.Contains("visionGeminiParts", quickstart);
+        Assert.Contains("upstreamCalled=false", quickstart);
+        Assert.Contains("本页不提供关闭开关", quickstart);
+        Assert.Contains("/prompt-policy", quickstart);
+        Assert.Contains("const identityLocked = Boolean(bundle) || creatingStage !== null", quickstart);
+        Assert.Contains("disabled={!canCreateAccess || identityLocked}", quickstart);
         Assert.Contains("修改身份", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);
