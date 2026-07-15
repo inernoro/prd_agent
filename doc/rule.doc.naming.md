@@ -1,6 +1,6 @@
 # 文档命名规则（doc/）
 
-> **版本**：v3.1 | **日期**：2026-04-26 | **状态**：已落地
+> **版本**：v3.2 | **日期**：2026-07-15 | **状态**：已落地
 
 ## 文件命名格式
 
@@ -173,7 +173,12 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 ## debt.* 专项约定
 
-技术债务台账按**模块**归档，一个模块一个文件，例如 `debt.video-agent.md`、`debt.cds.md`、`debt.llm-gateway.md`。
+技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。按债务的分散程度选层级：
+
+- **债务少的模块** → 一个 `debt.{appname}.md` 汇总（如 `debt.video-agent.md`、`debt.workflow-agent.md`、`debt.llm-gateway.md`）。
+- **债务多、话题分散的大模块** → 按子模块拆成 `debt.{appname}.{子模块}.md`，避免单文件臃肿（如 `debt.cds.agent.md`、`debt.cds.selfupdate-prebuilt.md`、`debt.knowledge-base.galaxy-vs-universe.md`、`debt.frontend.mobile-light-theme.md`、`debt.platform.production-release.md`）。
+
+> 现状（2026-07-15）：66 个 debt 文件中 51 个已是子模块级——**子模块拆分是既定实践**。本节据此更正 v3.1「一个模块一个文件」的过窄表述，与通用格式（`[.{子模块}]`）对齐；`debt.*` 不是特例，一样走 appname 优先点分层级。
 
 ### 适用场景
 
