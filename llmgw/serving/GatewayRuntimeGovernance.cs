@@ -42,6 +42,28 @@ public interface IGatewayScopedKeyAuthorizer
         CancellationToken ct);
 }
 
+public static class GatewayLegacyProbeScopes
+{
+    public const string Route = "legacy-preflight:route";
+    public const string Readiness = "legacy-preflight:readiness";
+
+    public static bool IsReadOnlyProbe(string scope)
+        => scope is Route or Readiness;
+
+    public static string ResolveServiceKeyScope(string scope)
+        => scope switch
+        {
+            Route => "route:read",
+            Readiness => "readiness:read",
+            _ => scope,
+        };
+
+    public static string ResolveAuditCaller(string scope)
+        => scope == Readiness
+            ? "llmgw.legacy-preflight::readiness"
+            : "llmgw.legacy-preflight::route";
+}
+
 public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 {
     private readonly LlmGatewayDataContext _data;
@@ -69,7 +91,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
 
         if (FixedTimeEquals(providedKey, legacySharedKey))
-            return await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, ct);
+            return await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -100,10 +122,13 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         if (lifecycleDenied is not null)
             return lifecycleDenied;
 
-        if (!Matches(record.SourceSystem, sourceSystem)
-            || !MatchesAny(record.AppCallerCodes, appCallerCode)
+        var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
+        var serviceKeyScope = GatewayLegacyProbeScopes.ResolveServiceKeyScope(requiredScope);
+        if (!readOnlyProbe
+            && (!Matches(record.SourceSystem, sourceSystem)
+                || !MatchesAny(record.AppCallerCodes, appCallerCode))
             || !MatchesAny(record.IngressProtocols, ingressProtocol)
-            || !MatchesAny(record.Scopes, requiredScope))
+            || !MatchesAny(record.Scopes, serviceKeyScope))
         {
             await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_operation_audits").InsertOneAsync(
                 new MongoDB.Bson.BsonDocument
@@ -122,7 +147,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                             { "sourceSystem", sourceSystem },
                             { "appCallerCode", appCallerCode },
                             { "ingressProtocol", ingressProtocol },
-                            { "requiredScope", requiredScope },
+                            { "requiredScope", serviceKeyScope },
                         }
                     },
                     { "CreatedAt", DateTime.UtcNow },
@@ -254,18 +279,23 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string sourceSystem,
         string appCallerCode,
         string ingressProtocol,
+        string requiredScope,
         CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var cutover = await _data.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
             .Find(x => x.TenantId == _internalTenantId)
             .FirstOrDefaultAsync(ct);
-        var normalizedSource = sourceSystem.Trim().ToLowerInvariant();
-        var normalizedCaller = appCallerCode.Trim();
+        var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
+        var normalizedSource = readOnlyProbe ? "map" : sourceSystem.Trim().ToLowerInvariant();
+        var normalizedCaller = readOnlyProbe
+            ? GatewayLegacyProbeScopes.ResolveAuditCaller(requiredScope)
+            : appCallerCode.Trim();
         var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
-        var externalDenied = !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
-        var callerMissing = string.IsNullOrWhiteSpace(normalizedCaller);
-        var callerDenied = cutover?.AllowedAppCallerCodes.Count > 0
+        var externalDenied = !readOnlyProbe && !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
+        var callerMissing = !readOnlyProbe && string.IsNullOrWhiteSpace(normalizedCaller);
+        var callerDenied = !readOnlyProbe
+                           && cutover?.AllowedAppCallerCodes.Count > 0
                            && !cutover.AllowedAppCallerCodes.Contains(normalizedCaller, StringComparer.OrdinalIgnoreCase);
         var deadlineReached = cutover?.DeadlineAt is not null && cutover.DeadlineAt <= now;
         var revoked = string.Equals(cutover?.Status, "revoked", StringComparison.OrdinalIgnoreCase);
@@ -275,6 +305,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             : callerDenied ? "app-caller-not-in-inventory"
             : deadlineReached ? "deadline-reached"
             : revoked ? "revoked"
+            : readOnlyProbe ? "read-only-preflight-allowed"
             : "allowed";
         await RecordLegacyUsageAsync(normalizedSource, normalizedCaller, normalizedProtocol, allowed, decision, now, ct);
 

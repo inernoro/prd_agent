@@ -2540,6 +2540,30 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Fact]
+    public async Task RouteSelfTest_UsesServerDerivedLegacyPreflightScope()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == GatewayLegacyProbeScopes.Route);
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/route-self-test");
+            request.Headers.Add("X-Gateway-Key", "legacy-or-scoped-key");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.SourceSystem.ShouldBe("external");
+            authorizer.AppCallerCode.ShouldBeEmpty();
+            authorizer.RequiredScope.ShouldBe(GatewayLegacyProbeScopes.Route);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     /// <summary>
     /// 上游 stub：任何方法被调用即抛。401 应在中间件层短路，永远到不了这里；
     /// 若哪个受保护端点在无 key 时仍触达 gateway，会抛出而不是静默 200，暴露密钥门漏洞。

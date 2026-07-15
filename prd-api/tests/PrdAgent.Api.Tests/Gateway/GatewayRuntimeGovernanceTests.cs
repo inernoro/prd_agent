@@ -665,6 +665,77 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task LegacySharedKey_ReadOnlyPreflightWorksDuringCutoverButHonorsDeadline()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var cutovers = scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers");
+        await cutovers.InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+        {
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            Status = "observing",
+            DeadlineAt = DateTime.UtcNow.AddMinutes(5),
+            AllowedAppCallerCodes = ["map.chat::chat"],
+        });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var routeProbe = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        routeProbe.Allowed.ShouldBeTrue();
+        var usage = await scope.Context.Database.GetCollection<GatewayLegacyKeyUsageRecord>("llmgw_legacy_key_usage")
+            .Find(_ => true)
+            .SingleAsync();
+        usage.SourceSystem.ShouldBe("map");
+        usage.AppCallerCode.ShouldBe("llmgw.legacy-preflight::route");
+        usage.LastDecision.ShouldBe("read-only-preflight-allowed");
+
+        await cutovers.UpdateOneAsync(
+            x => x.TenantId == GatewayTenantDefaults.InternalTenantId,
+            Builders<GatewayLegacyKeyCutoverRecord>.Update.Set(x => x.DeadlineAt, DateTime.UtcNow.AddMinutes(-1)));
+        var expiredProbe = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Readiness, null, CancellationToken.None);
+
+        expiredProbe.Allowed.ShouldBeFalse();
+        expiredProbe.StatusCode.ShouldBe(401);
+        expiredProbe.ErrorCode.ShouldBe("GATEWAY_LEGACY_KEY_REVOKED");
+    }
+
+    [Fact]
+    public async Task ScopedMapKey_ReadOnlyPreflightUsesKeyIdentityAndNormalServiceKeyScope()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_scoped_route_probe_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime-probe",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_probe",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["weekly-report::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        result.LegacySharedKey.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task ScopedSuccessorKey_IncrementsDualKeyObservationWithoutChangingIdentity()
     {
         var testDatabase = await TryCreateDatabaseAsync();
