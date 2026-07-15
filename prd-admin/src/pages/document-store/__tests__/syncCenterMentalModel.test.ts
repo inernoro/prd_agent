@@ -73,11 +73,21 @@ describe('SyncCenterDialog mental model', () => {
     expect(documentStorePageSource).toContain('setShowSendToPeer(true)');
     expect(documentStorePageSource).toContain('批量同步');
     // 面板内方向 = 关系设定，三选一 + 自动开关
-    expect(syncCenterSource).toContain('同步方式');
-    expect(syncCenterSource).toContain('自动保持同步');
-    expect(syncCenterSource).toContain('内容变更时发送');
-    expect(syncCenterSource).toContain('定时检查并发送');
+    expect(syncCenterSource).toContain('内容变更时');
+    expect(syncCenterSource).toContain('定时检查');
     expect(syncCenterSource).toContain("autoMode === 'scheduled' ? 'scheduled' : 'trigger'");
+  });
+
+  it('makes the topology map the primary visual: direction is an arrow, status is the wire', () => {
+    // 拓扑图承载「方向 + 状态 + 对象」，取代文字表单
+    expect(syncCenterSource).toContain('function SyncTopology');
+    expect(syncCenterSource).toContain('sync-flow');
+    expect(syncCenterSource).toContain('TONE_WIRE');
+    // 一行状态文案由 tone 推导（红>金>青>灰）
+    expect(syncCenterSource).toContain('export function statusLine');
+    // 立即同步一个主按钮 + 自动开关，方向段控三选一
+    expect(syncCenterSource).toContain('立即同步');
+    expect(syncCenterSource).toContain('DIRECTION_OPTS');
   });
 
   it('derives the relationship direction from the last server-side sync direction', () => {
