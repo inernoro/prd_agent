@@ -676,6 +676,9 @@
 - [LLM Gateway 外部平台化与控制台体验收口](plan.platform.llm-gateway-external-platform) `plan.platform.llm-gateway-external-platform`
   > 租户/团队/用户/RBAC、外部接入教程、appCaller 提示词策略、左侧导航、图表与金额可信度的有限五 PR 计划
 
+- [LLM Gateway 模型网关权威教程 · 实施计划](plan.platform.llm-gateway-authoritative-tutorial) `plan.platform.llm-gateway-authoritative-tutorial`
+  > 从全空租户到生产治理的 33 章连续教程、实测修复、低理解力复验与 MAP/CDS 双归档计划
+
 - [LLM Gateway 控制台产品化与独立目录收拢](plan.platform.llm-gateway.console-productization) `plan.platform.llm-gateway.console-productization`
   > 双主题可发现性、请求记录、安全直测、租户首页、学习中心、模型池用户心智与根目录 llmgw 收拢的分阶段计划
 
@@ -1095,6 +1098,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-15 | 新增 | `plan.platform.llm-gateway-authoritative-tutorial` | LLM Gateway 模型网关权威教程 · 实施计划 |
 | 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
 | 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |

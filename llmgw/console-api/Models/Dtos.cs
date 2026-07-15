@@ -856,8 +856,18 @@ public sealed class PlatformItem
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
+public sealed class CreatePlatformRequest
+{
+    public string? Name { get; set; }
+    public string? PlatformType { get; set; }
+    public string? ProviderId { get; set; }
+    public string? ApiUrl { get; set; }
+    public string? ApiKey { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public string? Remark { get; set; }
+}
 
-// ── 模型（无密钥，仅 hasKey）──
+// ── 模型（密钥只允许写入，读取仅返回 hasKey）──
 public sealed class ModelsData { public List<ModelItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class ModelItem
 {
@@ -871,7 +881,36 @@ public sealed class ModelItem
     public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+}
+public sealed class CreateModelRequest
+{
+    public string? PlatformId { get; set; }
+    public string? Name { get; set; }
+    public string? ModelName { get; set; }
+    public string? Protocol { get; set; }
+    public List<string> Capabilities { get; set; } = new();
+    public string? ApiKey { get; set; }
+    public int? Timeout { get; set; }
+    public int? MaxRetries { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public int? MaxTokens { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public string? Remark { get; set; }
+}
+public sealed class CreateModelResult
+{
+    public ModelItem Item { get; set; } = new();
+    public int PoolTypesCreated { get; set; }
+    public int PoolsCreated { get; set; }
+    public int ModelsAppended { get; set; }
 }
 public sealed class ModelCapabilityItem { public string Type { get; set; } = ""; public string Source { get; set; } = ""; public bool Value { get; set; } }
 public sealed class ParameterCapabilitiesMetaData

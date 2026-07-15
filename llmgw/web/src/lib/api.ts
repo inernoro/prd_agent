@@ -42,6 +42,9 @@ import type {
   ModelPool,
   PlatformItem,
   ModelItem,
+  CreatePlatformRequest,
+  CreateModelRequest,
+  CreateModelResult,
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
@@ -275,10 +278,16 @@ export function getPools(modelType?: string, sinceHours = 168): Promise<ApiRespo
 export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
   return apiRequest<PlatformsData>('/platforms');
 }
+export function createPlatform(req: CreatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>('/platforms', { method: 'POST', body: req });
+}
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
     query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
+}
+export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
+  return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
 }
 export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
   return apiRequest<ParameterCapabilitiesMetaData>('/parameter-capabilities/meta');
