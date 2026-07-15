@@ -847,10 +847,23 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 try
                 {
+                    // 破坏性删除阶段也要能被停止：每次删除前报一次进度，经 actor 回调触发取消检查点，
+                    // 用户点「停止」后立即中断，不再删完剩余条目（Codex P2：align-remote/local 的删除循环之前不查取消）。
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = e.Title,
+                    }, ct);
                     await _db.DocumentEntries.DeleteOneAsync(x => x.Id == e.Id, ct);
                     if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
                         await CleanupReplacedDocAsync(e.DocumentId, string.Empty, e.Id);
                     deleted++;
+                }
+                catch (PeerSyncRunCancelledException)
+                {
+                    throw; // 取消异常必须冒泡到 SyncItemAsync 的 cancelled catch，不能被下面的通用 catch 吞成 failure。
                 }
                 catch (Exception ex)
                 {

@@ -677,9 +677,13 @@ public class PeerSyncController : ControllerBase
             // 方向不绑：run.Direction 存 runDirection（对齐为 align-*），与 store.PeerSyncDirection（push/pull/both）
             // 口径不同，绑方向会在对齐场景误判；方向不一致由前端 directionDirty 门 + worker 复用 store 方向兜底。
             var savedNodeId = store.PeerSyncNodeId ?? string.Empty;
+            // 绑定当前保存的对端 + 方向（等价集合，对齐 run.Direction=align-* 归一）：只认发往同一对端、
+            // 且方向等价于当前 store.PeerSyncDirection 的成功 run，避免同 peer 换方向未成功也被放行（Codex P2）。
+            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
             var hasSuccessfulSync = await _db.PeerSyncRuns
                 .Find(r => r.ResourceType == request.ResourceType && r.ItemId == request.ItemId
                     && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == savedNodeId
+                    && acceptableDirs.Contains(r.Direction)
                     && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
                 .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
             if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)

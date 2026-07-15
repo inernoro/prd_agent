@@ -190,16 +190,22 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             // SetAutoSync 的 gate 只在「开启自动」那一刻校验、不会重跑；若自动已对 A 开启，后来一次切到 B 的
             // 手动同步失败/取消（syncing mark 已把 store 改指向 B），worker 就会用未建立的 B 关系发流量（Codex P2）。
             // 这里每轮兜底：saved peer 没有成功 run 就跳过本轮（attempted 已 true，会推进 AutoLastAt，不每分钟空打）。
+            // 绑定「当前保存的对端 + 方向」：只认发往 saved peer 且方向等价于本轮 direction 的成功 run。
+            // 只绑 peer 不够——若自动建立为 push、后来同 peer 的手动 pull 失败/取消（syncing mark 已把方向改成
+            // pull），只绑 peer 会命中旧的 push 成功、worker 却跑未建立的 pull（Codex P2）。方向用等价集合匹配
+            // （对齐 run.Direction=align-* 归一到 push/pull/both）。
+            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(direction);
             var establishedForPeer = await db.PeerSyncRuns
                 .Find(r => r.ResourceType == "document-store" && r.ItemId == store.Id
                     && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId
+                    && acceptableDirs.Contains(r.Direction)
                     && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
                 .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
             if (string.IsNullOrEmpty(establishedForPeer))
             {
                 _logger.LogInformation(
-                    "[PeerSyncScheduleWorker] store {StoreId} peer {NodeId} relationship not established (no successful run), skip",
-                    storeId, store.PeerSyncNodeId);
+                    "[PeerSyncScheduleWorker] store {StoreId} peer {NodeId} direction {Dir} relationship not established (no successful run), skip",
+                    storeId, store.PeerSyncNodeId, direction);
                 return;
             }
 

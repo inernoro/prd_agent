@@ -38,6 +38,20 @@ public static class PeerSyncSchedule
     };
 
     /// <summary>
+    /// 给定一个归一方向（push/pull/both），返回「算作该方向成功过」的 run.Direction 取值集合。
+    /// 因为 run.Direction 存的是 runDirection：普通同步为 push/pull/both，强制对齐为 align-*（align-remote
+    /// 等价 pull、align-local 等价 push、align-both 等价 both）。判「该方向是否成功建立过」时必须把对齐
+    /// 等价值一并算上，否则「通过强制对齐建立、再开自动」的库会被误判为方向未建立（Codex P2）。
+    /// </summary>
+    public static string[] AcceptableRunDirections(string? normalizedDirection) => normalizedDirection switch
+    {
+        "push" => new[] { "push", "align-local" },
+        "pull" => new[] { "pull", "align-remote" },
+        "both" => new[] { "both", "align-both" },
+        _ => Array.Empty<string>(),
+    };
+
+    /// <summary>
     /// 该库当前是否「该自动同步了」。要求：
     /// 1) 已显式开启自动同步；
     /// 2) 上一轮已结束（不是 syncing 状态，避免叠跑）；

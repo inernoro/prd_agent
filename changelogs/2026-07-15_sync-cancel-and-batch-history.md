@@ -8,3 +8,4 @@
 | fix | prd-admin | 单库同步面板改了方向段控但未成功同步时禁用自动开关（directionDirty），避免「header 说自动 pull、后台仍 push」的方向不一致（Codex PR#1144 P2） |
 | fix | prd-api | 自动同步资格绑定当前保存对端：只认发往 store.PeerSyncNodeId 的成功 run，避免切对端 A→B 失败后 A 的旧成功误放行 B 关系（Codex PR#1144 P2） |
 | fix | prd-api | 取消能力健壮性三处（Codex PR#1144 P2 第四轮）：① push 真正发送 bundle 到对端前补一个取消检查点（导出大 bundle 耗时期间点停也能拦下）；② PeerSyncRunCancelledException 下沉 Core 层，DocumentStoreSyncResource 逐条 catch 前先放行取消异常，否则写入阶段点停会被吞成 per-record failure、run 落 error 而非 cancelled；③ 自动同步 worker 每轮兜底校验 saved peer 有成功 run，避免切对端 A→B 失败后 worker 用未建立的 B 关系发流量 |
+| fix | prd-api | 取消能力两处边界（Codex PR#1144 P2 第五轮）：① 强制对齐（align-remote/local）的镜像删除循环也接入取消——每次 DeleteOneAsync 前报进度触发取消检查、catch 放行取消异常，点停立即中断破坏性删除；② 自动同步资格（worker 守护 + SetAutoSync gate）除绑对端外再绑 normalized direction（对齐 run.Direction=align-* 用等价集合归一），避免 push 建立后同 peer 的 pull 失败仍放行未建立的 pull 方向 |
