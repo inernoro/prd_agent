@@ -102,7 +102,6 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 PromptPolicyId = string.IsNullOrWhiteSpace(start.PromptPolicyId) ? null : start.PromptPolicyId,
                 PromptPolicyVersion = start.PromptPolicyVersion,
                 PromptPolicyHash = string.IsNullOrWhiteSpace(start.PromptPolicyHash) ? null : start.PromptPolicyHash,
-                PromptPolicyChars = start.PromptPolicyChars,
                 DroppedParameters = start.DroppedParameters?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList(),
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,

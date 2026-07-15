@@ -57,6 +57,10 @@ export function AuditsPage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ flexShrink: 0, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+        <strong style={{ fontSize: 14 }}>操作审计</strong>
+        <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.55 }}>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
+      </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <input
           value={search}
@@ -128,12 +132,15 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
       <tr>
         <td style={td}>{fmtTime(item.createdAt)}</td>
         <td style={td}>
-          <span style={{ fontFamily: 'ui-monospace, monospace' }}>{item.action || '—'}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span>{actionLabel(item.action)}</span>
+            <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', fontSize: 10 }}>{item.action || '—'}</span>
+          </div>
         </td>
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 210 }}>
             <span>{item.targetName || item.targetId || '—'}</span>
-            <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', fontSize: 11 }}>{item.targetType || '—'}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{targetTypeLabel(item.targetType)} <code>{item.targetType || '—'}</code></span>
           </div>
         </td>
         <td style={td}>{item.actorUsername || item.actorUserId || '—'}</td>
@@ -159,6 +166,45 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
       ) : null}
     </>
   );
+}
+
+function actionLabel(value?: string | null) {
+  return ({
+    'tenant.create': '创建租户',
+    'team.create': '创建团队',
+    'team.update': '修改团队',
+    'membership.create': '添加成员',
+    'membership.update': '修改成员权限',
+    'membership.invalidate_sessions': '使成员会话失效',
+    'service_key.create': '创建接入密钥',
+    'service_key.create_wildcard': '创建通配密钥',
+    'service_key.rotation_client_cutover': '完成密钥轮换切换',
+    'service_key.rotation_abort': '中止密钥轮换',
+    'service_key.revoke': '撤销接入密钥',
+    'prompt_policy.update': '保存提示词策略版本',
+    'prompt_policy.rollback': '回滚提示词策略',
+    'model.create': '创建模型',
+    'model.set_enabled': '修改模型启停状态',
+    'model.rotate_api_key': '轮换模型密钥',
+    'model.delete_api_key': '删除模型密钥',
+    'pool.model.add': '向模型池增加模型',
+    'pool.model.update': '修改模型池成员',
+    'pool.model.remove': '移除模型池成员',
+    'cost.reconciliation.import': '导入供应商账单',
+  } as Record<string, string>)[value ?? ''] ?? '其他配置操作';
+}
+
+function targetTypeLabel(value?: string | null) {
+  return ({
+    llmgw_tenant: '租户',
+    llmgw_team: '团队',
+    llmgw_membership: '成员关系',
+    llmgw_service_key: '接入密钥',
+    llmgw_prompt_policy: '提示词策略',
+    llmgw_model: '模型',
+    llmgw_pool: '模型池',
+    llmgw_cost_reconciliation: '费用对账记录',
+  } as Record<string, string>)[value ?? ''] ?? '配置对象';
 }
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {

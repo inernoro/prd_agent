@@ -163,7 +163,6 @@ public sealed class LlmLogDetail
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
     public string? ThinkingText { get; set; }
