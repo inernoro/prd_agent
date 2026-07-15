@@ -1874,7 +1874,11 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>
-              {branch.status === 'running' && branch.previewUrl ? (
+              {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
+                  set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
+                  原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
+                  (Codex review P2)。 */}
+              {branch.status === 'running' && (previewUrl || branch.previewUrl) ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
@@ -1884,7 +1888,7 @@ export function BranchDetailDrawer({
                       每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
                   <div className="flex flex-col gap-1.5">
                     <a
-                      href={branch.previewUrl}
+                      href={previewUrl || branch.previewUrl}
                       target="_blank"
                       rel="noreferrer"
                       title="打开主应用入口"
@@ -1895,7 +1899,7 @@ export function BranchDetailDrawer({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{branch.previewUrl}</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{previewUrl || branch.previewUrl}</span>
                       </span>
                       <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
