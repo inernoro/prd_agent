@@ -1803,6 +1803,10 @@ a:focus-visible {
 }
 
 @media (max-width: 860px) {
+  .lg-config-table-shell > table {
+    min-width: 920px;
+  }
+
   .lg-console-header {
     height: 56px !important;
     min-height: 56px;

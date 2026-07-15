@@ -567,6 +567,15 @@ export type PlatformItem = {
   createdAt?: string | null; updatedAt?: string | null;
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
+export type CreatePlatformRequest = {
+  name: string;
+  platformType: 'openai' | 'claude';
+  providerId?: string;
+  apiUrl: string;
+  apiKey: string;
+  maxConcurrency?: number;
+  remark?: string;
+};
 
 // ── 模型（无密钥，仅 hasKey）──
 export type ModelCapability = { type: string; source: string; value: boolean };
@@ -592,9 +601,35 @@ export type ModelItem = {
   enablePromptCache?: boolean | null; remark?: string | null; hasKey: boolean;
   sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
-  capabilities: ModelCapability[]; createdAt?: string | null; updatedAt?: string | null;
+  capabilities: ModelCapability[];
+  inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
+  pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
+  createdAt?: string | null; updatedAt?: string | null;
 };
 export type ModelsData = { items: ModelItem[]; total: number };
+export type CreateModelRequest = {
+  platformId: string;
+  name?: string;
+  modelName: string;
+  protocol?: 'inherit' | 'openai' | 'claude';
+  capabilities: string[];
+  apiKey?: string;
+  timeout?: number;
+  maxRetries?: number;
+  maxConcurrency?: number;
+  maxTokens?: number;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: 'CNY' | 'USD';
+  remark?: string;
+};
+export type CreateModelResult = {
+  item: ModelItem;
+  poolTypesCreated: number;
+  poolsCreated: number;
+  modelsAppended: number;
+};
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {
