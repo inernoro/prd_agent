@@ -77,18 +77,31 @@ interface ProjectCoverProps {
   status: string;
 }
 
-const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, mediaType = 'image', status }) => (
-  <span className="video-create-project-cover">
-    <span className="video-create-project-placeholder"><Film size={24} /><span>视频作品</span></span>
-    {mediaUrl && mediaType === 'video' && (
-      <video src={mediaUrl} muted preload="metadata" onError={(event) => { event.currentTarget.hidden = true; }} />
-    )}
-    {mediaUrl && mediaType === 'image' && (
-      <img src={mediaUrl} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />
-    )}
-    <i>{statusLabel(status)}</i>
-  </span>
-);
+const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, mediaType = 'image', status }) => {
+  const isGeneratedVideo = Boolean(mediaUrl) && mediaType === 'video';
+  const placeholderLabel = isGeneratedVideo
+    ? '视频已生成'
+    : status === 'Completed'
+      ? '作品已完成'
+      : '继续创作';
+
+  return (
+    <span className="video-create-project-cover">
+      <span className="video-create-project-placeholder">
+        {isGeneratedVideo ? <CirclePlay size={25} /> : <Film size={24} />}
+        <span>{placeholderLabel}</span>
+      </span>
+      {mediaUrl && mediaType === 'image' && (
+        <span
+          className="video-create-project-media"
+          aria-hidden="true"
+          style={{ backgroundImage: `url(${JSON.stringify(mediaUrl)})` }}
+        />
+      )}
+      <i>{statusLabel(status)}</i>
+    </span>
+  );
+};
 
 const createTimelineTracks = (): VideoTimelineTrack[] => [
   { id: crypto.randomUUID().replaceAll('-', ''), type: 'video', name: '视频', muted: false, locked: false, clips: [] },
@@ -127,7 +140,10 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [assetName, setAssetName] = useState('');
   const [assetUrl, setAssetUrl] = useState('');
   const [assetDescription, setAssetDescription] = useState('');
+  const [activeSection, setActiveSection] = useState<'create' | 'works'>('create');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLElement>(null);
+  const recentWorkRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
@@ -207,16 +223,31 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const submitCreation = () => creationMode === 'storyboard' ? onAnalyze(input) : onCreateDirect(input);
   const actionLabel = creationMode === 'storyboard' ? '生成故事分镜' : '生成这段视频';
 
+  const scrollToSection = (section: 'create' | 'works') => {
+    setActiveSection(section);
+    const top = section === 'create' ? 0 : recentWorkRef.current?.offsetTop ?? 0;
+    scrollRef.current?.scrollTo({ top, behavior: 'smooth' });
+  };
+
+  const syncActiveSection = () => {
+    const container = scrollRef.current;
+    const recentWork = recentWorkRef.current;
+    if (!container || !recentWork) return;
+    const worksThreshold = Math.max(0, recentWork.offsetTop - container.clientHeight * 0.35);
+    const nextSection = container.scrollTop >= worksThreshold ? 'works' : 'create';
+    setActiveSection((current) => current === nextSection ? current : nextSection);
+  };
+
   return (
-    <div className="video-create-page" data-theme="light" data-testid="video-project-studio">
+    <div className="video-create-page" data-testid="video-project-studio">
       <header className="video-create-nav">
         <button className="video-create-brand" onClick={onNewProject}>
           <span><Film size={17} /></span>
           <div><strong>视频创作</strong><small>Story Flow</small></div>
         </button>
         <nav className="video-create-nav-tabs" aria-label="视频创作页面">
-          <button className="is-active" onClick={() => document.querySelector('.video-create-hero')?.scrollIntoView({ behavior: 'smooth' })}>创作</button>
-          <button onClick={() => document.getElementById('video-recent-work')?.scrollIntoView({ behavior: 'smooth' })}>作品</button>
+          <button className={activeSection === 'create' ? 'is-active' : ''} aria-current={activeSection === 'create' ? 'location' : undefined} onClick={() => scrollToSection('create')}>创作</button>
+          <button className={activeSection === 'works' ? 'is-active' : ''} aria-current={activeSection === 'works' ? 'location' : undefined} onClick={() => scrollToSection('works')}>作品</button>
         </nav>
         <div className="video-create-nav-actions">
           <button className="video-create-text-button" onClick={onNewProject}><Plus size={15} /> 新项目</button>
@@ -224,7 +255,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
         </div>
       </header>
 
-      <main className="video-create-scroll">
+      <main ref={scrollRef} className="video-create-scroll" onScroll={syncActiveSection}>
         <section className="video-create-stage" aria-label="创建视频项目">
           <div className="video-create-hero">
             <div className="video-create-heading">
@@ -356,14 +387,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           </section>
         </section>
 
-        <section id="video-recent-work" className="video-create-library" aria-label="最近作品">
+        <section ref={recentWorkRef} id="video-recent-work" className="video-create-library" aria-label="最近作品">
           <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
           {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
               {projects.slice(0, 6).map((item) => (
                 <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
                   <ProjectCover mediaUrl={coverForProject(item)} status={item.status} />
-                  <span className="video-create-project-copy"><strong>{item.title}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
+                  <span className="video-create-project-copy"><strong>{resolveVideoTitle(item.title, item.updatedAt, 28)}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
                   <ArrowUpRight size={15} />
                 </button>
               ))}
@@ -379,7 +410,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
             <div className="video-create-empty-library">
               <Film size={22} />
               <div><strong>还没有作品</strong><span>第一部作品会保存在这里</span></div>
-              <button onClick={() => document.querySelector('.video-create-hero')?.scrollIntoView({ behavior: 'smooth' })}>开始创作</button>
+              <button onClick={() => scrollToSection('create')}>开始创作</button>
             </div>
           )}
         </section>

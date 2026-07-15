@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
+import type { VideoGenRunListItem, VideoProject } from '@/services/contracts/videoAgent';
 import { VideoProjectStudio } from './VideoProjectStudio';
 
-const renderStudio = (runs: VideoGenRunListItem[] = []) => renderToStaticMarkup(
+const renderStudio = (runs: VideoGenRunListItem[] = [], projects: VideoProject[] = []) => renderToStaticMarkup(
   <VideoProjectStudio
-    projects={[]}
+    projects={projects}
     project={null}
     runs={runs}
     models={[{
@@ -45,11 +45,31 @@ const createRun = (status: string, overrides: Partial<VideoGenRunListItem> = {})
   ...overrides,
 });
 
+const createProject = (overrides: Partial<VideoProject> = {}): VideoProject => ({
+  id: 'project-1',
+  appKey: 'prd-admin',
+  ownerAdminId: 'admin-1',
+  title: '雨夜街巷',
+  status: 'Draft',
+  sourceMarkdown: '',
+  defaultAspectRatio: '16:9',
+  defaultResolution: '1080p',
+  defaultDuration: 5,
+  generateAudio: true,
+  assets: [],
+  timelineTracks: [],
+  createdAt: '2026-07-14T00:00:00Z',
+  updatedAt: '2026-07-14T00:00:00Z',
+  ...overrides,
+});
+
 describe('VideoProjectStudio', () => {
   it('opens on a focused literary creation flow instead of an editor console', () => {
     const html = renderStudio();
 
     expect(html).toContain('data-testid="video-project-studio"');
+    expect(html).not.toContain('data-theme="light"');
+    expect(html).toContain('aria-current="location"');
     expect(html).toContain('aria-label="文学稿内容"');
     expect(html).toContain('文学视频创作');
     expect(html).toContain('把故事变成镜头');
@@ -90,7 +110,22 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('1 个作品');
     expect(html).toContain('生成中');
     expect(html).toContain('镜头准备中');
-    expect(html).toContain('视频作品');
+    expect(html).toContain('继续创作');
     expect(html).not.toContain('/icon/backups/agent/video-agent.png');
+  });
+
+  it('sanitizes malformed project titles before rendering recent work cards', () => {
+    const html = renderStudio([], [createProject({ title: '![](' })]);
+
+    expect(html).not.toContain('![](');
+    expect(html).toContain('视频草稿');
+  });
+
+  it('does not preload generated videos in the recent work grid', () => {
+    const html = renderStudio([createRun('Completed', { videoAssetUrl: 'https://media.example/video.mp4' })]);
+
+    expect(html).toContain('视频已生成');
+    expect(html).not.toContain('<video');
+    expect(html).not.toContain('https://media.example/video.mp4');
   });
 });
