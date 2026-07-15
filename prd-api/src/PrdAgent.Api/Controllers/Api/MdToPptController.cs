@@ -1453,6 +1453,8 @@ public class MdToPptController : ControllerBase
         if (System.Text.RegularExpressions.Regex.IsMatch(t,
                 "(playfair|newsreader|cursive|calligraphy|handwriting|font-style\\s*:\\s*italic|poster|zine|vellum|editorial)"))
             return true;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(t, "class\\s*=\\s*['\"][^'\"]*console-dashboard[^'\"]*['\"]"))
+            return true;
 
         var operationalTokens = System.Text.RegularExpressions.Regex.Matches(t,
             "(console-dashboard|panel|metric|kpi|queue|task|status|preview|card|grid|flow|step|progress|publish|任务队列|预览|发布状态|指标|流程)",
@@ -2404,6 +2406,16 @@ public class MdToPptController : ControllerBase
                         title = pages[i].Title,
                         elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds
                     });
+                    if (consoleDashboardMode)
+                    {
+                        var dashboardSection = ConsoleDashboardFallbackSlide(layout, pages[i], i, total);
+                        sections[i] = dashboardSection;
+                        var dashboardDone = Interlocked.Increment(ref doneCount);
+                        var dashboardMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                        _logger.LogInformation("[MdToPpt-Pages] page {Idx} dashboard-rendered {N}/{Total} elapsedMs={Ms}", i, dashboardDone, total, dashboardMs);
+                        await EmitAsync("page", new { index = i, total, html = dashboardSection, done = dashboardDone });
+                        return;
+                    }
                     var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
                     var section = NormalizeGeneratedSlideFragment(text, anchor != null);

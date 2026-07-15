@@ -231,6 +231,12 @@ public class MdToPptSectionSanitizeTests
         Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
             "<div class=\"slide\"><h1>CONTROL PANEL KNOWLEDGE PUBLISHER</h1><p>今日生成 342 次</p></div>",
             "cyber-terminal"));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1>知识库发布控制台</h1><p>panel status queue preview publish flow task card grid progress 指标 任务队列 发布状态</p></div>",
+            "cobalt-grid"));
+        Assert.False(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"console-dashboard\"><div class=\"panel metric\">指标</div><div class=\"panel queue\">任务队列</div><div class=\"panel preview\">发布状态</div></div>",
+            "cobalt-grid"));
     }
 
     [Fact]
