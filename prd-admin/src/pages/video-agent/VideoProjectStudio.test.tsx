@@ -25,6 +25,7 @@ const renderStudio = (runs: VideoGenRunListItem[] = []) => renderToStaticMarkup(
     onNewProject={vi.fn()}
     onSave={vi.fn(async () => null)}
     onAnalyze={vi.fn(async () => undefined)}
+    onCreateDirect={vi.fn(async () => undefined)}
     onOpenRun={vi.fn()}
   />,
 );
@@ -50,13 +51,16 @@ describe('VideoProjectStudio', () => {
 
     expect(html).toContain('data-testid="video-project-studio"');
     expect(html).toContain('aria-label="文学稿内容"');
-    expect(html).toContain('文学创作转视频');
-    expect(html).toContain('把一个故事变成一组镜头');
+    expect(html).toContain('文学视频创作');
+    expect(html).toContain('把故事变成镜头');
+    expect(html).toContain('故事分镜');
+    expect(html).toContain('单镜直出');
     expect(html).toContain('雨夜街巷的电影画面风格预览');
     expect(html).toContain('aria-label="镜头草图"');
     expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(4);
-    expect(html).toContain('AI 拆成分镜');
-    expect(html).toContain('Seedance 1.5 Pro');
+    expect(html).toContain('生成故事分镜');
+    expect(html).not.toContain('Seedance 1.5 Pro');
+    expect(html).not.toContain('视频模型</span>');
     expect(html).toContain('文稿</span>');
     expect(html).toContain('参考</span>');
     expect(html).toContain('设置</span>');
@@ -74,7 +78,7 @@ describe('VideoProjectStudio', () => {
       createRun('Cancelled'),
     ]);
 
-    expect(html).not.toContain('最近作品');
+    expect(html).toContain('还没有作品');
     expect(html).not.toContain('Failed task');
     expect(html).not.toContain('Cancelled task');
   });

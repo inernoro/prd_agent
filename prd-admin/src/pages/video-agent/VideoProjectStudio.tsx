@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   AudioLines,
-  Camera,
-  Clapperboard,
-  Clock3,
+  BookOpenText,
+  ChevronRight,
+  CirclePlay,
   Film,
   FolderOpen,
   Image as ImageIcon,
   ImagePlus,
+  LayoutGrid,
   Paperclip,
   Plus,
   Save,
@@ -41,6 +42,7 @@ interface VideoProjectStudioProps {
   onNewProject: () => void;
   onSave: (input: VideoProjectInput) => Promise<VideoProject | null>;
   onAnalyze: (input: VideoProjectInput) => Promise<void>;
+  onCreateDirect: (input: VideoProjectInput) => Promise<void>;
   onOpenRun: (runId: string) => void;
 }
 
@@ -105,8 +107,10 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   onNewProject,
   onSave,
   onAnalyze,
+  onCreateDirect,
   onOpenRun,
 }) => {
+  const [creationMode, setCreationMode] = useState<'storyboard' | 'direct'>('storyboard');
   const [title, setTitle] = useState('');
   const [sourceMarkdown, setSourceMarkdown] = useState('');
   const [styleDescription, setStyleDescription] = useState('智能匹配');
@@ -200,18 +204,20 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   };
 
   const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const submitCreation = () => creationMode === 'storyboard' ? onAnalyze(input) : onCreateDirect(input);
+  const actionLabel = creationMode === 'storyboard' ? '生成故事分镜' : '生成这段视频';
 
   return (
-    <div className="video-create-page" data-testid="video-project-studio">
+    <div className="video-create-page" data-theme="light" data-testid="video-project-studio">
       <header className="video-create-nav">
         <button className="video-create-brand" onClick={onNewProject}>
           <span><Film size={17} /></span>
-          <div><strong>视频创作</strong><small>Seedance Studio</small></div>
+          <div><strong>视频创作</strong><small>Story Flow</small></div>
         </button>
-        <div className="video-create-model-state">
-          <i data-health={selectedModel?.healthStatus ?? 'Unavailable'} />
-          <span>{selectedModel?.name ?? (models.length ? '选择视频模型' : '模型池未配置')}</span>
-        </div>
+        <nav className="video-create-nav-tabs" aria-label="视频创作页面">
+          <button className="is-active" onClick={() => document.querySelector('.video-create-hero')?.scrollIntoView({ behavior: 'smooth' })}>创作</button>
+          <button onClick={() => document.getElementById('video-recent-work')?.scrollIntoView({ behavior: 'smooth' })}>作品</button>
+        </nav>
         <div className="video-create-nav-actions">
           <button className="video-create-text-button" onClick={onNewProject}><Plus size={15} /> 新项目</button>
           <button className="video-create-icon-button" onClick={() => void onSave(input)} disabled={busy} title="保存草稿"><Save size={16} /></button>
@@ -220,52 +226,35 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
 
       <main className="video-create-scroll">
         <section className="video-create-stage" aria-label="创建视频项目">
-          <div className="video-create-workspace">
-            <div className="video-create-scene-column">
-              <figure className="video-create-scene-preview">
-                <img src={STUDIO_PREVIEW_IMAGE} alt="雨夜街巷的电影画面风格预览" />
-                <div className="video-create-scene-meta">
-                  <span><Clapperboard size={13} />{selectedStyle.label}</span>
-                  <span>{aspectRatio}</span>
-                </div>
-                <figcaption>
-                  <div><small>创作草图</small><strong>雨夜街巷</strong></div>
-                  <div>
-                    <span><Camera size={13} />{estimatedShots} 镜</span>
-                    <span><Clock3 size={13} />{estimatedDuration} 秒</span>
-                  </div>
-                </figcaption>
-              </figure>
-
-              <div className="video-create-shot-strip" aria-label="镜头草图">
-                {['全景', '中景', '特写'].map((shot, index) => (
-                  <div key={shot}>
-                    <img src={STUDIO_PREVIEW_IMAGE} alt="" style={{ objectPosition: `${22 + index * 30}% center` }} />
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    <strong>{shot}</strong>
-                  </div>
-                ))}
-              </div>
+          <div className="video-create-hero">
+            <div className="video-create-heading">
+              <span><Sparkles size={14} /> 文学视频创作</span>
+              <h1>把故事变成镜头</h1>
             </div>
 
-            <div className="video-create-brief-column">
-              <div className="video-create-heading">
-                <span>文学创作转视频</span>
-                <h1>把一个故事变成一组镜头</h1>
-              </div>
+            <div className="video-create-mode" aria-label="创作方式">
+              <button className={creationMode === 'storyboard' ? 'is-active' : ''} onClick={() => setCreationMode('storyboard')} aria-pressed={creationMode === 'storyboard'}>
+                <BookOpenText size={17} />
+                <span><strong>故事分镜</strong><small>小说、散文、脚本</small></span>
+              </button>
+              <button className={creationMode === 'direct' ? 'is-active' : ''} onClick={() => setCreationMode('direct')} aria-pressed={creationMode === 'direct'}>
+                <CirclePlay size={17} />
+                <span><strong>单镜直出</strong><small>一段描述生成视频</small></span>
+              </button>
+            </div>
 
-              <div className="video-create-composer">
+            <div className="video-create-composer">
                 <input
                   className="video-create-title"
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
-                  placeholder="给这部作品起个名字"
+                  placeholder="作品名称（可选）"
                   aria-label="项目名称"
                 />
                 <textarea
                   value={sourceMarkdown}
                   onChange={(event) => setSourceMarkdown(event.target.value)}
-                  placeholder="粘贴小说、散文、故事或脚本"
+                  placeholder={creationMode === 'storyboard' ? '粘贴小说、散文、故事或脚本' : '描述主体、动作、环境和镜头运动'}
                   aria-label="文学稿内容"
                 />
 
@@ -288,14 +277,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
                     <button className={`video-create-tool ${referencesOpen ? 'is-active' : ''}`} onClick={() => setReferencesOpen((value) => !value)}><ImagePlus size={16} /><span>参考</span></button>
                     <button className={`video-create-tool ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><Settings2 size={16} /><span>设置</span></button>
                   </div>
-                  <Button variant="primary" onClick={() => void onAnalyze(input)} disabled={busy || !sourceMarkdown.trim() || !model}>
+                  <Button className="video-create-primary-action" variant="primary" onClick={() => void submitCreation()} disabled={busy || !sourceMarkdown.trim() || !model}>
                     {busy ? <MapSpinner size={15} /> : <Sparkles size={15} />}
-                    AI 拆成分镜
+                    {actionLabel}
                   </Button>
                 </div>
-              </div>
+            </div>
 
-              <div className="video-create-presets" aria-label="视觉风格">
+            <div className="video-create-presets" aria-label="视觉风格">
                 {VIDEO_STYLE_DEFINITIONS.slice(0, 6).map((style) => {
                   const Icon = style.icon;
                   return (
@@ -306,13 +295,13 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
                     </button>
                   );
                 })}
-              </div>
+            </div>
 
-              <div className="video-create-estimate">
+            <div className="video-create-estimate">
                 <span>{sourceMarkdown.length.toLocaleString('zh-CN')} 字</span>
+                <span>{creationMode === 'storyboard' ? `约 ${estimatedShots} 个镜头` : '1 个镜头'}</span>
                 <span>{resolution}</span>
                 <span>每镜 {duration} 秒</span>
-              </div>
             </div>
           </div>
 
@@ -343,11 +332,33 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
               </div>
             </section>
           )}
+
+          <section className="video-create-flow-preview" aria-label="镜头预览">
+            <figure className="video-create-flow-feature">
+              <img src={STUDIO_PREVIEW_IMAGE} alt="雨夜街巷的电影画面风格预览" />
+              <figcaption>
+                <span>{selectedStyle.label}</span>
+                <strong>{title.trim() || '雨夜街巷'}</strong>
+                <small>{creationMode === 'storyboard' ? `${estimatedShots} 个镜头 · 约 ${estimatedDuration} 秒` : `${aspectRatio} · ${duration} 秒`}</small>
+              </figcaption>
+            </figure>
+            <div className="video-create-flow-shots" aria-label="镜头草图">
+              <div className="video-create-flow-label"><LayoutGrid size={15} /><strong>镜头草图</strong><span>{creationMode === 'storyboard' ? estimatedShots : 1}</span></div>
+              {['环境全景', '人物中景', '情绪特写'].map((shot, index) => (
+                <div key={shot} className="video-create-flow-shot">
+                  <img src={STUDIO_PREVIEW_IMAGE} alt="" style={{ objectPosition: `${20 + index * 31}% center` }} />
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <strong>{shot}</strong>
+                  <ChevronRight size={14} />
+                </div>
+              ))}
+            </div>
+          </section>
         </section>
 
-        {recentWorkCount > 0 && (
-          <section className="video-create-library" aria-label="最近作品">
-            <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
+        <section id="video-recent-work" className="video-create-library" aria-label="最近作品">
+          <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
+          {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
               {projects.slice(0, 6).map((item) => (
                 <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
@@ -364,8 +375,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
                 </button>
               ))}
             </div>
-          </section>
-        )}
+          ) : (
+            <div className="video-create-empty-library">
+              <Film size={22} />
+              <div><strong>还没有作品</strong><span>第一部作品会保存在这里</span></div>
+              <button onClick={() => document.querySelector('.video-create-hero')?.scrollIntoView({ behavior: 'smooth' })}>开始创作</button>
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );

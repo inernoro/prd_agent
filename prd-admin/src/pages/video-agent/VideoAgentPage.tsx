@@ -21,6 +21,27 @@ import { VideoStoryboardEditor } from './VideoStoryboardEditor';
 
 const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
 
+export const buildDirectVideoRunInput = (project: VideoProject, input: VideoProjectInput) => {
+  const prompt = input.sourceMarkdown?.trim() ?? '';
+  const directPrompt = input.styleDescription && input.styleDescription !== '智能匹配'
+    ? `${prompt}\n视觉风格：${input.styleDescription}`
+    : prompt;
+  const directFirstFrameUrl = project.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+
+  return {
+    projectId: project.id,
+    mode: 'direct' as const,
+    articleTitle: project.title,
+    directPrompt,
+    directVideoModel: input.defaultVideoModel || undefined,
+    directAspectRatio: input.defaultAspectRatio as '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21' | undefined,
+    directResolution: input.defaultResolution as '480p' | '720p' | '1080p' | undefined,
+    directDuration: input.defaultDuration,
+    generateAudio: input.generateAudio,
+    directFirstFrameUrl,
+  };
+};
+
 export const VideoAgentPage: React.FC = () => {
   const [projects, setProjects] = useState<VideoProject[]>([]);
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
@@ -127,6 +148,37 @@ export const VideoAgentPage: React.FC = () => {
     }
   }, [loadWorkspace, replaceProject, selectedProject]);
 
+  const createDirectVideo = useCallback(async (input: VideoProjectInput) => {
+    const prompt = input.sourceMarkdown?.trim();
+    if (!prompt) {
+      toast.warning('请先输入画面描述');
+      return;
+    }
+    setBusy(true);
+    try {
+      const savedResponse = selectedProject
+        ? await updateVideoProjectReal(selectedProject.id, input)
+        : await createVideoProjectReal(input);
+      if (!savedResponse.success) {
+        toast.error('保存项目失败', savedResponse.error?.message);
+        return;
+      }
+      const project = savedResponse.data;
+      replaceProject(project);
+      const runResponse = await createVideoGenRunReal(buildDirectVideoRunInput(project, input));
+      if (!runResponse.success) {
+        toast.error('开始生成失败', runResponse.error?.message);
+        return;
+      }
+      setActiveRunId(runResponse.data.runId);
+      await loadWorkspace();
+    } catch (error) {
+      toast.error('开始生成失败', error instanceof Error ? error.message : '网络错误');
+    } finally {
+      setBusy(false);
+    }
+  }, [loadWorkspace, replaceProject, selectedProject]);
+
   if (loading) return <MapSectionLoader text="正在打开视频制作台" />;
 
   if (activeRunId) {
@@ -168,6 +220,7 @@ export const VideoAgentPage: React.FC = () => {
       }}
       onSave={saveProject}
       onAnalyze={analyzeProject}
+      onCreateDirect={createDirectVideo}
       onOpenRun={setActiveRunId}
     />
   );
