@@ -12,6 +12,7 @@ import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
+import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
 import {
   collectContainerDiagnostics,
   recordContainerLifecycleIntent,
@@ -2313,6 +2314,18 @@ export class ContainerService {
     tail = 200,
   ): AbortController {
     const ac = new AbortController();
+    // 预览实例守卫（Codex P2，2026-07-15）：本方法绕过 IShellExecutor 直接 spawn docker，
+    // 是预览实例里用户唯一可达的裸 spawn 路径（seed 的演示分支点「日志」就会走到）。
+    // 返回同一句中文拒绝而不是裸 spawn 失败。getLogs 走 shell.exec 已被
+    // PreviewInstanceShellExecutor 覆盖，deploy 链路在路由层已 403。
+    if (isPreviewInstance()) {
+      queueMicrotask(() => {
+        if (ac.signal.aborted) return;
+        onData(`${previewInstanceBlockedMessage('docker')}\n`);
+        onClose();
+      });
+      return ac;
+    }
     const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
