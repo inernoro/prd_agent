@@ -445,6 +445,7 @@ public class GatewayDataDomainGuardTests
         var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         var organizationPage = ReadRepoFile("llmgw/web/src/pages/OrganizationPage.tsx");
         var consoleLayout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
         var changePasswordPage = ReadRepoFile("llmgw/web/src/pages/ChangePasswordPage.tsx");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var membershipPolicy = ReadRepoFile("llmgw/console-api/Organization/MembershipPolicy.cs");
@@ -460,13 +461,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("已创建；首次登录时必须设置自己的密码", organizationPage);
         Assert.Contains("强制重新登录", organizationPage);
         Assert.Contains("只有 Owner 可以修改 Owner", organizationPage);
-        Assert.Contains("currentRole === 'owner' || currentRole === 'admin'", organizationPage);
+        Assert.Contains("canUseCapability(sessionTenant?.role, 'organizationWrite')", organizationPage);
         Assert.Contains("expectedVersion: member.version", organizationPage);
         Assert.Contains("memberInitialPassword.length < 12", organizationPage);
         Assert.Contains("memberRole === 'developer' && memberTeamIds.length === 0", organizationPage);
         Assert.Contains("team.status === 'active' || selected.includes(team.id)", organizationPage);
         Assert.Contains("不能在这里修改自己", organizationPage);
-        Assert.Contains("hiddenRoles: ['billing']", consoleLayout);
+        Assert.Contains("canAccessPage(tenant, item.page)", consoleLayout);
+        Assert.Contains("organization: { capability: 'logsRead' }", accessRules);
         Assert.DoesNotContain("tenantId:", organizationPage);
         Assert.Contains("新口令至少 12 位", changePasswordPage);
         Assert.DoesNotContain("admin/admin", changePasswordPage);
@@ -3005,17 +3007,60 @@ public class GatewayDataDomainGuardTests
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var app = ReadRepoFile("llmgw/web/src/App.tsx");
-        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
 
         Assert.Contains("public bool IsInternal { get; set; }", tenantModel);
         Assert.Contains("bool IsInternalTenant", access);
         Assert.Contains("tenant.IsInternal", access);
         Assert.Contains("IsInternal = access.IsInternalTenant", consoleProgram);
         Assert.Contains("IsInternal = tenant.IsInternal", consoleProgram);
-        Assert.Contains("function RequireInternalTenant", app);
-        Assert.Contains("tenant?.isInternal ?", app);
-        Assert.Contains("internalOnly: true", layout);
+        Assert.Contains("function RequirePageAccess", app);
+        Assert.Contains("if (!isTenantRole(tenant?.role))", app);
+        Assert.Contains("控制台不会加载导航或业务接口", app);
+        Assert.Contains("<RequirePageAccess page=\"home\"><OverviewPage", app);
+        Assert.Contains("<RequirePageAccess page=\"learn\"><LearningCenterPage", app);
+        Assert.Contains("<RequirePageAccess page=\"settings\"><SettingsPage", app);
+        Assert.Contains("canAccessPage(tenant, page)", app);
+        Assert.Contains("internalOnly: true", accessRules);
+        Assert.Contains("if (rule.internalOnly && !tenant.isInternal) return false", accessRules);
         Assert.DoesNotContain("TenantId", app);
+    }
+
+    [Fact]
+    public void Console_RbacVisibility_MirrorsServerPermissionsAndFailsClosed()
+    {
+        var serverAccess = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var pools = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var serviceKeys = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var governance = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+
+        Assert.Contains("LlmGwTenantRoles.Owner => true", serverAccess);
+        Assert.Contains("LlmGwTenantRoles.Billing => permission is UsageRead", serverAccess);
+        Assert.Contains("logsRead: ['owner', 'admin', 'developer', 'viewer']", accessRules);
+        Assert.Contains("usageRead: ALL_ROLES", accessRules);
+        Assert.Contains("configWrite: ['owner', 'admin']", accessRules);
+        Assert.Contains("appCallerWrite: ['owner', 'admin', 'developer']", accessRules);
+        Assert.Contains("serviceKeyWrite: ['owner', 'admin', 'developer']", accessRules);
+        Assert.Contains("home: { capability: 'usageRead' }", accessRules);
+        Assert.Contains("governance: { capability: 'logsRead', internalOnly: true }", accessRules);
+        Assert.Contains("return isTenantRole(role)", accessRules);
+        Assert.Contains("function RequirePageAccess", app);
+        Assert.Contains("不会再发起注定失败的请求", app);
+        Assert.Contains("items: group.items.filter((item) => canAccessPage(tenant, item.page))", layout);
+        Assert.Contains("const canSearchRequests = canUseCapability(tenant?.role, 'logsRead')", layout);
+        Assert.Contains("canWrite={canWrite}", pools);
+        Assert.Contains("当前角色可以查看模型池、成员健康和路由使用情况", pools);
+        Assert.Contains("const canCreateAccess = canUseCapability", quickstart);
+        Assert.Contains("不能创建 appCaller、签发密钥或执行安全直测", quickstart);
+        Assert.Contains("const canCreateWildcard = canCreateWildcardServiceKey(tenant?.role)", serviceKeys);
+        Assert.Contains("Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥", serviceKeys);
+        Assert.Contains("if (canManageLegacyCutover)", serviceKeys);
+        Assert.Contains("const canWrite = canUseCapability(tenant?.role, 'configWrite')", governance);
+        Assert.Contains("当前角色可以查看运行状态、配置权威和容器拓扑", governance);
     }
 
     [Fact]
@@ -3100,7 +3145,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("scopes: ['invoke']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
-        Assert.Contains("disabled={Boolean(bundle)}", quickstart);
+        Assert.Contains("disabled={!canCreateAccess || Boolean(bundle)}", quickstart);
         Assert.Contains("修改身份", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);

@@ -3,7 +3,9 @@ import { Check, Copy, FileCode2, KeyRound, ListFilter, Play, Rocket, Search, Shi
 import { Link } from 'react-router-dom';
 import { createGatewayAppCaller, createServiceKey, getOrganization } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
-import { Button, Chip, SectionLoader } from '@/components/ui';
+import { Button, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 type Protocol = 'native' | 'openai' | 'claude' | 'gemini';
 type SnippetTab = 'curl' | 'env' | 'skill';
@@ -38,6 +40,8 @@ const PROTOCOLS: ProtocolDefinition[] = [
 ];
 
 export function QuickstartPage() {
+  const { tenant } = useAuth();
+  const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
   const [protocol, setProtocol] = useState<Protocol>('openai');
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-agent.quickstart::chat');
@@ -221,17 +225,18 @@ export function QuickstartPage() {
 
         <section style={cardStyle}>
           <h2 style={headingStyle}><ShieldCheck size={15} />第一条可审计请求</h2>
+          {!canCreateAccess ? <ReadOnlyNotice>当前角色可以阅读四协议接入教程和复制示例，但不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
           {organizationLoading ? <SectionLoader text="正在读取当前租户和团队" /> : null}
           {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
           {!organizationLoading ? (
             <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <label style={labelStyle}>团队<select value={teamId} disabled={Boolean(bundle)} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
+              <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || Boolean(bundle)} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
                 <option value="">选择团队</option>
                 {activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select></label>
-              <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} placeholder="my-agent.quickstart::chat" disabled={Boolean(bundle)} />
-              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={Boolean(bundle)} />
-              <label style={labelStyle}>环境<select value={environment} disabled={Boolean(bundle)} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
+              <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} placeholder="my-agent.quickstart::chat" disabled={!canCreateAccess || Boolean(bundle)} />
+              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || Boolean(bundle)} />
+              <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || Boolean(bundle)} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
                 <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
               </select></label>
             </div>
@@ -250,8 +255,8 @@ export function QuickstartPage() {
           <div className="lg-quickstart-actions">
             <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 appCaller 和上方四种协议；切换协议后可直接测试。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
-              <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : '一键生成 appCaller 与 key'}</Button>
+              {canCreateAccess && bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
+              {canCreateAccess ? <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : '一键生成 appCaller 与 key'}</Button> : null}
             </div>
           </div>
 
@@ -266,7 +271,7 @@ export function QuickstartPage() {
 
           <div className="lg-safe-test-panel" style={{ marginTop: 12 }}>
             <div><Play size={17} /><span><strong>测试当前协议</strong><small>请求会发送到 {selectedProtocol.path}，经过 service key 与团队治理后写日志，并在模型解析前结束。</small></span></div>
-            <div className="lg-safe-test-controls"><Button variant="primary" disabled={!bundle || testing} onClick={() => void runDryRun()}>{testing ? '正在测试并写日志' : '点击测试'}</Button><span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 11 }}>明确返回 upstreamCalled=false 才算通过</span></div>
+            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing} onClick={() => void runDryRun()}>{testing ? '正在测试并写日志' : '点击测试'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{canCreateAccess ? '明确返回 upstreamCalled=false 才算通过' : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
             {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
           </div>
 
