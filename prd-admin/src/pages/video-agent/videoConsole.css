@@ -1,12 +1,12 @@
 .video-create-page,
 .video-console {
-  --video-accent: #77e3b2;
-  --video-accent-strong: #35c98a;
-  --video-cyan: #6fd5ef;
-  --video-danger: #fb7185;
-  --video-surface: color-mix(in srgb, var(--panel) 88%, #080a0c);
-  --video-surface-raised: color-mix(in srgb, var(--panel) 78%, #171b20);
-  --video-field: color-mix(in srgb, var(--bg-base) 84%, #11151a);
+  --video-accent: var(--accent-gold);
+  --video-accent-strong: var(--accent-gold-2);
+  --video-cyan: var(--canvas-state-running);
+  --video-danger: var(--canvas-state-failed);
+  --video-surface: var(--bg-elevated);
+  --video-surface-raised: var(--bg-secondary);
+  --video-field: var(--bg-input);
   color: var(--text-primary);
 }
 
@@ -31,7 +31,6 @@
 
 .video-create-brand,
 .video-create-nav-actions,
-.video-create-model-state,
 .video-create-text-button,
 .video-create-tool,
 .video-create-options-heading > div,
@@ -80,22 +79,30 @@
 .video-create-brand strong { font-size: 13px; }
 .video-create-brand small { margin-top: 1px; color: var(--text-muted); font-size: 9px; font-weight: 500; }
 
-.video-create-model-state {
-  gap: 7px;
-  justify-self: center;
-  color: var(--text-secondary);
+.video-create-nav-tabs {
+  display: flex;
+  height: 38px;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--video-surface-raised);
+}
+
+.video-create-nav-tabs button {
+  min-width: 64px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
-.video-create-model-state i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--video-danger);
+.video-create-nav-tabs button:hover { color: var(--text-primary); }
+.video-create-nav-tabs button.is-active {
+  background: var(--video-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card-sm);
 }
-
-.video-create-model-state i[data-health="Healthy"] { background: var(--video-accent-strong); }
-.video-create-model-state i[data-health="Degraded"] { background: #f5b942; }
 
 .video-create-nav-actions {
   gap: 6px;
@@ -329,14 +336,39 @@
 .video-create-project-cover { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; background: #0a0d10; }
 .video-create-project-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; color: #68717a; }
 .video-create-project-placeholder span { font-size: 9px; }
-.video-create-project-cover img,
-.video-create-project-cover video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.video-create-project-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .video-create-project-cover i { position: absolute; top: 9px; right: 9px; padding: 4px 6px; border-radius: 4px; background: rgba(7, 9, 11, 0.78); color: #eef2f5; font-size: 8px; font-style: normal; }
 .video-create-project-copy { display: block; min-width: 0; padding: 12px 34px 13px 13px; }
 .video-create-project-copy strong,
 .video-create-project-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-create-project-copy strong { color: var(--text-primary); font-size: 11px; }
 .video-create-project-copy small { margin-top: 4px; color: var(--text-muted); font-size: 9px; }
+
+.video-create-empty-library {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px solid var(--border-faint);
+  border-radius: 8px;
+  background: var(--video-surface);
+  color: var(--text-muted);
+}
+
+.video-create-empty-library div,
+.video-create-empty-library strong,
+.video-create-empty-library span { display: block; }
+.video-create-empty-library strong { color: var(--text-primary); font-size: 11px; }
+.video-create-empty-library span { margin-top: 4px; font-size: 9px; }
+.video-create-empty-library button {
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: var(--bg-base);
+  font-size: 10px;
+}
 
 .video-console {
   display: flex;
@@ -655,6 +687,9 @@
   .video-create-brand small,
   .video-create-text-button span,
   .video-create-tool span { display: none; }
+  .video-create-nav { grid-template-columns: auto 1fr auto; padding: 0 12px; }
+  .video-create-nav-tabs { justify-self: center; }
+  .video-create-nav-tabs button { min-width: 52px; }
   .video-create-stage { padding-top: 28px; }
   .video-create-composer textarea { min-height: 150px; }
   .video-create-project-grid { grid-template-columns: 1fr; }

@@ -13,6 +13,8 @@ export function sanitizeVideoTitle(raw: string | undefined | null, maxLen = 30):
   s = s.replace(/<!--[\s\S]*?-->/g, ' ');
   // 剥 markdown 图片 ![alt](url)
   s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  // 剥未完成的 markdown 图片片段（历史任务可能只保存到 "![]("）
+  s = s.replace(/!\[[^\]]*\]\([^\s)]*/g, ' ');
   // 剥 markdown 链接 [text](url) → 保留 text
   s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
   // 剥裸 URL
