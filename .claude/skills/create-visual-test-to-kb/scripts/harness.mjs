@@ -568,10 +568,11 @@ export async function finalizeVideo(page, ctx, outDir, name = 'walkthrough') {
 }
 
 // ── ZZ 照做：画框 + 步骤序号（核心：让"点哪到哪"一目了然）──
-// 在目标元素上注入红框 + 序号角标，截图前调用；截完用 clearBoxes 清掉。
+// 在目标元素上注入通过态绿框 + 序号角标，截图前调用；截完用 clearBoxes 清掉。
+// 失败证据必须由调用方显式传入红色，避免通过报告里出现红框误导读者。
 // opts.shape: 'box'(默认方框,框一片区域/差异) | 'circle'(圈圈,友好地指向单个按钮/输入框/图标)
-// opts.color: 十六进制色,默认红 #ff3b30
-export async function box(page, locator, label, { shape = 'box', color = '#ff3b30' } = {}) {
+// opts.color: 十六进制色,默认通过绿 #22c55e；失败时显式传 #ff3b30
+export async function box(page, locator, label, { shape = 'box', color = '#22c55e' } = {}) {
   const el = await locator.first().elementHandle().catch(() => null);
   if (!el) return false;
   const rect = await el.boundingBox().catch(() => null);
@@ -606,9 +607,9 @@ export async function clearBoxes(page) {
 // locator 由调用方构造（getByRole/getByText/...），caption 写"点这里去哪"。
 // v2.2: 支持 opts.expectText 透传给 shot()，让"点这里"图也能断言页面已就绪
 // opts.shape='circle' 让"点这里"标记画成圈圈（指向单个按钮更友好）
-export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000, expectText, shape = 'circle' } = {}) {
+export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000, expectText, shape = 'circle', color = '#22c55e' } = {}) {
   await locator.first().waitFor({ state: 'visible', timeout }).catch(() => {});
-  await box(page, locator, stepNo, { shape });
+  await box(page, locator, stepNo, { shape, color });
   await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   await clearBoxes(page);
   await locator.first().click({ timeout }).catch((e) => console.log('  stepClick 点击失败', name, e.message));
@@ -618,8 +619,8 @@ export async function stepClick(page, outDir, stepNo, locator, name, caption, { 
 // 结果/验证截图：可选框住"变化处"(toast/卡片/激活态)，序号入 caption。
 // v2.2: 支持 expectText 锁定结果断言（强烈推荐：结果图就是要证明 X 文本出现了）
 // opts.shape: 默认方框框住一片变化区域；指向单个元素时传 'circle'
-export async function stepShot(page, outDir, stepNo, name, caption, highlight, { expectText, shape = 'box' } = {}) {
-  if (highlight) await box(page, highlight, stepNo, { shape });
+export async function stepShot(page, outDir, stepNo, name, caption, highlight, { expectText, shape = 'box', color = '#22c55e' } = {}) {
+  if (highlight) await box(page, highlight, stepNo, { shape, color });
   await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   if (highlight) await clearBoxes(page);
 }
