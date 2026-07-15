@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.26 | **日期**：2026-07-15 | **状态**：PR-10 最终链路审查修复中
+> **版本**：v1.27 | **日期**：2026-07-15 | **状态**：PR-10 验收完成，合并门满足
 
 ## 1. 目标
 
@@ -108,6 +108,8 @@ PR-10 审查修复验收（2026-07-15）：提交 `3d3c5f568babe6ed09b422cf7e1a8
 PR-10 最终安全复核补充（2026-07-15）：线程级复核发现外部租户仍可提交 `sourceSystem=*`，由于通配来源可在 Serving 匹配 MAP 流量，仅限制显式 `map` 不足以形成来源边界。本轮改为所有 service key 均必须声明明确来源，服务端拒绝通配来源并返回 400 `INVALID_KEY_SOURCE`；外部租户仍只能使用 `external-platform` 用途。修复提交 `448cf7817d217542ad96bab97676e67d8c48d563` 的 Console 编译 0 警告、0 错误，定向守卫 1 项通过，与 CI 一致的完整非集成、非手工回归为 2264 通过、4 个既有显式跳过、0 失败；GitHub 相关镜像、Server Build & Test、CI Status 与 CDS Deploy `dr_9e55d05d8061a41e3055915e` 全绿，CDS 五个服务均运行目标提交且无漂移。公网健康端点返回目标提交；一次性外部租户从公网提交通配来源 key，返回 400 `INVALID_KEY_SOURCE`，没有生成 key。临时数据首次清理删除 TenantId 关联记录 2 条、用户 1 条、租户 1 条，第二遍全部为 0；辅助文件和内存凭据已删除。未调用付费模型，未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
 
 PR-10 最终链路审查补充（2026-07-15）：最新 Codex Review 发现普通、流式与 raw 的常规完成日志仍用合成响应头，导致供应商真实 request id 在进入 `LlmRequestLogBackground` 前丢失；同时 legacy 退场配置只校验 MAP 来源，test/development key 可能被当作生产后继累计观测并误触生产撤销。本轮要求日志只保留 content-type 与受信 request id 头，三类常规完成链路均透传真实响应头且不记录 cookie 等其他头；legacy 后继配置只接受 production MAP scoped key，Serving 对非 production key 不累计后继观测。修复后重新执行动态契约、完整回归、CI、CDS 和假上游逐请求对账验收，未通过前不得合并。
+
+PR-10 最终验收结论（2026-07-15）：最终代码提交 `e0b2ae40d6c0a48a77b8d3910440e7c929b5790a` 把 legacy 只读预检限定为服务端识别的受信 route-self-test/readyz 场景，并保证预检和普通 `route:read` 不累计退场证据，只有 `invoke`、`stream:invoke`、`raw:invoke` 三类真实业务调用计数；后继 key 必须是 production MAP runtime 身份并覆盖 legacy 允许的 appCaller、四协议和完整运行 scopes。密钥 Purpose 数据面门固定为 MAP 普通流量仅 `runtime`、`release-gate` 仅受信只读预检、`canary` 在没有专用受信路由前对普通数据面 fail-closed、外部租户仅 `external-platform`，所有 service key 禁止通配来源。供应商 request/window 导入由 `TenantId + Provider + TeamId` 原子短租约串行，逐请求幂等重试会修复日志 actual 投影；estimated 与 actual 不互相覆盖，unknown 不显示为 0，跨币种没有可审计 FX 快照时 delta 保持 null。隔离 Mongo 动态契约与完整非集成、非手工回归最终为 Api.Tests 1618 通过、4 个既有显式跳过，PrdAgent.Tests 660 通过，合计 2278 通过、0 失败；GitHub CI 0 失败。Codex Review 最终未发现重大问题，最终提交无新增行级意见，18 条审查线程未解决数为 0。CDS 精确运行 `dr_9c337f2b2bf0f761c7c121e6` 在提交 `e0b2ae40d6c0a48a77b8d3910440e7c929b5790a` 上完成，生成不可变版本 `dv_f1b30fc3b55c1a086eb9e22d`，5/5 服务就绪、无漂移且 `smokeOk=true`；API、Console、Serving 与 Web 镜像均使用该提交。公网 `/gw/healthz` 与 `/gw/v1/healthz` 返回 200 并精确回显该提交。Bugbot 因订阅停用记为不适用；未调用付费模型，未修改生产数据、生产 key、Secret、账号或任何既有密码。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 
