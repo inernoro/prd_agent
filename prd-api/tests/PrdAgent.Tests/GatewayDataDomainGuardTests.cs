@@ -3018,6 +3018,8 @@ public class GatewayDataDomainGuardTests
         var deleteStart = console.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
         var createEndpoint = console[createStart..deleteStart];
 
+        Assert.Contains("if (sourceSystem == \"*\")", createEndpoint);
+        Assert.Contains("INVALID_KEY_SOURCE", createEndpoint);
         Assert.Contains("!tenant.IsInternalTenant && (isMapSource || purpose != \"external-platform\")", createEndpoint);
         Assert.Contains("INTERNAL_KEY_PURPOSE_FORBIDDEN", createEndpoint);
         Assert.Contains("const isInternalTenant = tenant?.isInternal === true", page);

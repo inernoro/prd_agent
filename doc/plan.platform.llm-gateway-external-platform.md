@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.23 | **日期**：2026-07-15 | **状态**：PR-10 验收完成，合并门满足
+> **版本**：v1.24 | **日期**：2026-07-15 | **状态**：PR-10 最终安全复核修复中
 
 ## 1. 目标
 
@@ -104,6 +104,8 @@ PR-10 最终远程证据（2026-07-15）：修复提交 `0e25a3cb1975a166098009f
 PR-10 最终审查反馈（2026-07-15）：Codex Review 在提交 `0e25a3cb1` 上新增四条未过时意见。legacy shared key 的 GW Native 请求必须和 scoped key 一样从 body 解析 MAP/appCaller 身份；导入体省略 `providerReportedCost` 必须返回 400，不能把缺失值当成实际 0；无 ServiceKeyId 请求只能被 tenant/team/provider 相同且同样无 ServiceKeyId 的窗口覆盖；开发 compose 必须运行 `llmgw-serve`，否则 llmgw-web 新增的四协议代理在本地返回 502。四项均纳入本轮修复和回归，修复后重新等待 CI、CDS 与受影响链路验收，不沿用先前完成结论直接合并。
 
 PR-10 审查修复验收（2026-07-15）：提交 `3d3c5f568babe6ed09b422cf7e1a8e7f8464fcfe` 已完成上述四项修复。legacy shared key 的 GW Native body 身份动态契约通过；供应商 actual 改为必填可空 DTO 后显式校验，隔离 Mongo 与真实 Console HTTP 验证省略字段返回 400 `INVALID_PROVIDER_COST`；已存在 keyed 窗口时，无 ServiceKeyId 请求仍可独立导入 actual 并返回 201，不再被错误覆盖；开发 compose 已补齐 `llmgw-serve`，配置解析通过。完整回归为 Api.Tests 1605 通过、4 个既有显式跳过，PrdAgent.Tests 659 通过，合计 2264 通过、0 失败；GitHub CI、Console/Serving/Web/API 镜像、Server Build & Test 与 CDS Deploy `dr_1419000f52a111029369b05d` 全绿。CDS 五个服务均运行目标提交，无缺失、异常或提交漂移；公网 `/gw/healthz` 与 `/gw/v1/healthz` 均返回目标提交，远程一次性外部租户再次验证缺失供应商 actual 返回 400。四协议不重复调用，沿用同源代理未改动时已完成的每协议一次 dry-run 证据，继续保持 `upstreamCalled=false`。本轮临时数据首次清理删除 TenantId 关联记录 2 条、用户 1 条、租户 1 条，第二遍全部为 0；一次性辅助文件和内存凭据已删除。未调用付费模型，未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
+
+PR-10 最终安全复核补充（2026-07-15）：线程级复核发现外部租户仍可提交 `sourceSystem=*`，由于通配来源可在 Serving 匹配 MAP 流量，仅限制显式 `map` 不足以形成来源边界。本轮改为所有 service key 均必须声明明确来源，服务端拒绝通配来源并返回 400 `INVALID_KEY_SOURCE`；外部租户仍只能使用 `external-platform` 用途。Console 编译 0 警告、0 错误，定向守卫 1 项通过，与 CI 一致的完整非集成、非手工回归为 2264 通过、4 个既有显式跳过、0 失败。修复提交后重新等待 CI、CDS 与真实 HTTP 负向验收，未通过前不得合并。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 

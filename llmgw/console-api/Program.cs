@@ -4022,6 +4022,12 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     {
         return Json(ApiEnvelope<object>.Fail("INVALID_KEY_PURPOSE", "purpose 仅支持 runtime、release-gate、canary、external-platform"), jsonOptions, 400);
     }
+    if (sourceSystem == "*")
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_KEY_SOURCE",
+            "sourceSystem 必须是明确来源，不能使用通配符"), jsonOptions, 400);
+    }
     var isMapSource = string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase);
     if (!tenant.IsInternalTenant && (isMapSource || purpose != "external-platform"))
     {
