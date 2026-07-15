@@ -19,12 +19,15 @@ type AccessBundle = {
   key: string;
   keyId: string;
   keyPrefix: string;
-  protocol: Protocol;
-  baseUrl: string;
   appCallerCode: string;
   clientCode: string;
   environment: string;
   teamId: string;
+};
+
+type DisplayBundle = AccessBundle & {
+  protocol: Protocol;
+  baseUrl: string;
 };
 
 const PROTOCOLS: ProtocolDefinition[] = [
@@ -74,16 +77,16 @@ export function QuickstartPage() {
     return () => { active = false; };
   }, []);
 
-  const displayBundle = bundle ?? {
-    key: '',
-    keyId: '',
-    keyPrefix: 'gwk_',
+  const displayBundle: DisplayBundle = {
+    key: bundle?.key ?? '',
+    keyId: bundle?.keyId ?? '',
+    keyPrefix: bundle?.keyPrefix ?? 'gwk_',
     protocol,
     baseUrl: baseUrl.replace(/\/$/, ''),
-    appCallerCode: appCallerCode.trim() || 'my-agent.quickstart::chat',
-    clientCode: clientCode.trim() || 'my-agent',
-    environment,
-    teamId,
+    appCallerCode: bundle?.appCallerCode ?? (appCallerCode.trim() || 'my-agent.quickstart::chat'),
+    clientCode: bundle?.clientCode ?? (clientCode.trim() || 'my-agent'),
+    environment: bundle?.environment ?? environment,
+    teamId: bundle?.teamId ?? teamId,
   };
   const snippets = useMemo(() => ({
     curl: exampleFor(displayBundle.protocol, displayBundle.baseUrl, displayBundle.appCallerCode),
@@ -126,13 +129,13 @@ export function QuickstartPage() {
 
     setCreatingStage('key');
     const keyResponse = await createServiceKey({
-      name: `${normalizedClient}-${protocol}-quickstart`,
+      name: `${normalizedClient}-quickstart`,
       sourceSystem: 'external',
       clientCode: normalizedClient,
       environment,
       purpose: 'external-platform',
       appCallerCodes: [normalizedCode],
-      ingressProtocols: [selectedProtocol.ingressProtocol],
+      ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol),
       scopes: ['invoke'],
       teamId,
       allowedCidrs: [],
@@ -147,8 +150,6 @@ export function QuickstartPage() {
       key: keyResponse.data.key,
       keyId: keyResponse.data.id,
       keyPrefix: keyResponse.data.keyPrefix,
-      protocol,
-      baseUrl: normalizedBaseUrl,
       appCallerCode: normalizedCode,
       clientCode: normalizedClient,
       environment,
@@ -162,10 +163,11 @@ export function QuickstartPage() {
     setTesting(true);
     setTestResult(null);
     setActionError(null);
-    const definition = protocolDefinition(bundle.protocol);
+    const definition = protocolDefinition(protocol);
+    const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
     const requestId = createRequestId();
     try {
-      const response = await fetch(new URL(definition.path, `${bundle.baseUrl}/`).toString(), {
+      const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${bundle.key}`,
@@ -175,7 +177,7 @@ export function QuickstartPage() {
           'X-Gateway-Dry-Run': 'quickstart',
           'X-Request-Id': requestId,
         },
-        body: JSON.stringify(dryRunBody(bundle.protocol, bundle.appCallerCode, requestId)),
+        body: JSON.stringify(dryRunBody(protocol, bundle.appCallerCode, requestId)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -193,6 +195,14 @@ export function QuickstartPage() {
     } finally {
       setTesting(false);
     }
+  };
+
+  const editIdentity = () => {
+    if (!bundle) return;
+    if (!window.confirm('当前一次性密钥明文将从页面清除；已签发密钥仍然有效，可到“接入密钥”页撤销。确认修改身份？')) return;
+    setBundle(null);
+    setTestResult(null);
+    setSnippetTab('curl');
   };
 
   return (
@@ -215,13 +225,13 @@ export function QuickstartPage() {
           {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
           {!organizationLoading ? (
             <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <label style={labelStyle}>团队<select value={teamId} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
+              <label style={labelStyle}>团队<select value={teamId} disabled={Boolean(bundle)} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
                 <option value="">选择团队</option>
                 {activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select></label>
-              <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} placeholder="my-agent.quickstart::chat" />
-              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" />
-              <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
+              <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} placeholder="my-agent.quickstart::chat" disabled={Boolean(bundle)} />
+              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={Boolean(bundle)} />
+              <label style={labelStyle}>环境<select value={environment} disabled={Boolean(bundle)} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
                 <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
               </select></label>
             </div>
@@ -238,8 +248,11 @@ export function QuickstartPage() {
           <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={setBaseUrl} /></details>
 
           <div className="lg-quickstart-actions">
-            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，仅授权 ${protocolDefinition(bundle.protocol).label} 与当前 appCaller。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
-            <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '重新生成' : '一键生成 appCaller 与 key'}</Button>
+            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 appCaller 和上方四种协议；切换协议后可直接测试。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
+            <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
+              <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : '一键生成 appCaller 与 key'}</Button>
+            </div>
           </div>
 
           {bundle ? (
@@ -252,7 +265,7 @@ export function QuickstartPage() {
           {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
 
           <div className="lg-safe-test-panel" style={{ marginTop: 12 }}>
-            <div><Play size={17} /><span><strong>测试当前协议</strong><small>请求会发送到 {bundle ? protocolDefinition(bundle.protocol).path : selectedProtocol.path}，经过 service key 与团队治理后写日志，并在模型解析前结束。</small></span></div>
+            <div><Play size={17} /><span><strong>测试当前协议</strong><small>请求会发送到 {selectedProtocol.path}，经过 service key 与团队治理后写日志，并在模型解析前结束。</small></span></div>
             <div className="lg-safe-test-controls"><Button variant="primary" disabled={!bundle || testing} onClick={() => void runDryRun()}>{testing ? '正在测试并写日志' : '点击测试'}</Button><span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 11 }}>明确返回 upstreamCalled=false 才算通过</span></div>
             {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
           </div>
@@ -369,7 +382,7 @@ function stringValue(value: unknown) {
   return typeof value === 'string' ? value : undefined;
 }
 
-function environmentSnippet(bundle: AccessBundle) {
+function environmentSnippet(bundle: DisplayBundle) {
   return `export LLMGW_BASE_URL="${bundle.baseUrl}"
 export LLMGW_API_KEY="${bundle.key || 'YOUR_ONE_TIME_LLMGW_KEY'}"
 export LLMGW_APP_CALLER="${bundle.appCallerCode}"
@@ -378,7 +391,7 @@ export LLMGW_CLIENT_CODE="${bundle.clientCode}"
 export LLMGW_ENVIRONMENT="${bundle.environment}"`;
 }
 
-function agentSkillSnippet(bundle: AccessBundle) {
+function agentSkillSnippet(bundle: DisplayBundle) {
   const definition = protocolDefinition(bundle.protocol);
   return `---
 name: llmgw-${bundle.clientCode}
@@ -428,8 +441,8 @@ function Step({ number, title, text }: { number: string; title: string; text: st
   return <article style={cardStyle}><div style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 700 }}>STEP {number}</div><h2 style={{ margin: '6px 0', fontSize: 13 }}>{title}</h2><p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.55 }}>{text}</p></article>;
 }
 
-function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
-  return <label style={labelStyle}>{label}<input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
+function Field({ label, value, onChange, placeholder, disabled = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; disabled?: boolean }) {
+  return <label style={labelStyle}>{label}<input value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
 }
 
 function RouteRow({ name, text }: { name: string; text: string }) {
