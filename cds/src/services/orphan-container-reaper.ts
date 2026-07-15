@@ -60,7 +60,7 @@ const ORPHAN_CONTAINER_MIN_AGE_MS = 30 * 60_000;
 
 export interface OrphanContainerAction {
   containerName: string;
-  kind: 'infra' | 'app';
+  kind: 'infra' | 'app' | 'proxy';
   /** 关联到的 owner 标识（infra 无从考证时为空） */
   ownerHint?: string;
   action: 'stopped' | 'stop-failed' | 'already-stopped';
@@ -101,7 +101,7 @@ export function parseDockerCreatedAt(raw: string): number {
 
 async function listCdsContainers(
   shell: IShellExecutor,
-  type: 'infra' | 'app',
+  type: 'infra' | 'app' | 'resource-external-access',
 ): Promise<DiscoveredContainer[] | null> {
   const result = await shell.exec(
     `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=${type}" --format '{{.Names}}|{{.State}}|{{.CreatedAt}}|{{.Labels}}'`,
@@ -230,11 +230,12 @@ export async function sweepOrphanCdsContainers(opts: {
     return { skippedReason: 'state-empty', actions: [] };
   }
 
-  const [infraContainers, appContainers] = await Promise.all([
+  const [infraContainers, appContainers, proxyContainers] = await Promise.all([
     listCdsContainers(shell, 'infra'),
     listCdsContainers(shell, 'app'),
+    listCdsContainers(shell, 'resource-external-access'),
   ]);
-  if (infraContainers === null || appContainers === null) {
+  if (infraContainers === null || appContainers === null || proxyContainers === null) {
     return { skippedReason: 'docker-query-failed', actions: [] };
   }
 
@@ -257,7 +258,7 @@ export async function sweepOrphanCdsContainers(opts: {
 
   const stopOne = async (
     container: DiscoveredContainer,
-    kind: 'infra' | 'app',
+    kind: 'infra' | 'app' | 'proxy',
     ownerHint: string | undefined,
   ): Promise<void> => {
     if (!container.running) {
@@ -279,7 +280,7 @@ export async function sweepOrphanCdsContainers(opts: {
       source: 'orphan-container-reaper',
       action: ok ? 'container.orphan.stopped' : 'container.orphan.stop-failed',
       message: ok
-        ? `孤儿${kind === 'infra' ? '基础设施' : '应用'}容器已停止（state 中无 owner）: ${container.name}`
+        ? `孤儿${kind === 'infra' ? '基础设施' : kind === 'proxy' ? '外部访问代理' : '应用'}容器已停止（state 中无 owner）: ${container.name}`
         : `孤儿容器停止失败: ${container.name}`,
       containerName: container.name,
       details: {
@@ -318,6 +319,17 @@ export async function sweepOrphanCdsContainers(opts: {
     if (branchId && !profileId && knownBranchIds.has(branchId)) continue;
     if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'app', branchId);
+  }
+  // 外部访问代理容器（cds.type=resource-external-access，Codex P1）：删分支/项目
+  // 会移除策略 owner 但不停代理，公网端口会一直暴露已删资源。按 branchId 判归属
+  // （代理无 profileId，挂在分支上）——分支还在则保留，分支已删即孤儿，停掉即断
+  // 公网暴露。收割器只停不删，与其它类型一致。
+  for (const c of proxyContainers) {
+    if (belongsToOtherInstance(c)) continue;
+    const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
+    if (branchId && knownBranchIds.has(branchId)) continue;
+    if (withinGracePeriod(c, nowMs)) continue;
+    await stopOne(c, 'proxy', branchId);
   }
 
   return { actions };

@@ -41,8 +41,9 @@ function makeTombstoneState(items: Array<{ containerName: string; projectId: str
 const OLD_CREATED = '2026-01-01 00:00:00 +0000 UTC';
 const NEW_CREATED = new Date().toISOString();
 
-function mockPs(shell: MockShellExecutor, infraLines: string[], appLines: string[]): void {
+function mockPs(shell: MockShellExecutor, infraLines: string[], appLines: string[], proxyLines: string[] = []): void {
   shell.addResponsePattern(/cds\.type=infra/, () => ({ stdout: infraLines.join('\n'), stderr: '', exitCode: 0 }));
+  shell.addResponsePattern(/cds\.type=resource-external-access/, () => ({ stdout: proxyLines.join('\n'), stderr: '', exitCode: 0 }));
   shell.addResponsePattern(/cds\.type=app/, () => ({ stdout: appLines.join('\n'), stderr: '', exitCode: 0 }));
 }
 
@@ -128,6 +129,7 @@ describe('sweepOrphanCdsContainers', () => {
   it('skips when the docker query fails (never act on partial information)', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/cds\.type=infra/, () => ({ stdout: '', stderr: 'docker daemon down', exitCode: 1 }));
+    shell.addResponsePattern(/cds\.type=resource-external-access/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/cds\.type=app/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     const result = await sweepOrphanCdsContainers({ shell, state: makeState(), env: {} });
     expect(result.skippedReason).toBe('docker-query-failed');
@@ -272,5 +274,25 @@ describe('instance isolation (multi-master same host)', () => {
     const stopped = result.actions.filter((a) => a.action === 'stopped').map((a) => a.containerName).sort();
     expect(stopped).toEqual(['cds-legacy-ghost', 'cds-mine-ghost']);
     expect(shell.commands.join('\n')).not.toContain('cds-their-api');
+  });
+});
+
+describe('external-access proxy sweep', () => {
+  it('stops proxy containers whose branch is gone, spares live-branch proxies', async () => {
+    const shell = new MockShellExecutor();
+    mockPs(shell, [], [], [
+      `cds-ext-live|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=live-branch,cds.resource.id=mysql`,
+      `cds-ext-dead|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=deleted-branch,cds.resource.id=mysql`,
+    ]);
+    shell.addResponsePattern(/^docker stop /, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+    const result = await sweepOrphanCdsContainers({
+      shell,
+      state: makeState({ branches: [{ id: 'live-branch', services: {} }] }),
+      env: {},
+    });
+    const stopped = result.actions.filter((a) => a.action === 'stopped');
+    expect(stopped.map((a) => a.containerName)).toEqual(['cds-ext-dead']);
+    expect(stopped[0].kind).toBe('proxy');
+    expect(shell.commands.join('\n')).not.toContain('cds-ext-live');
   });
 });
