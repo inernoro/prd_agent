@@ -5,6 +5,20 @@ import { Activity, ArrowLeft, Building2, KeyRound, Lock, User } from 'lucide-rea
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui';
 
+type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
+
+export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {
+  const firstDot = location.hostname.indexOf('.');
+  if (firstDot < 0) return '/';
+
+  const hostPrefix = location.hostname.slice(0, firstDot);
+  const gatewaySuffix = '-llmgw-web';
+  if (!hostPrefix.endsWith(gatewaySuffix)) return '/';
+
+  const mapHost = `${hostPrefix.slice(0, -gatewaySuffix.length)}${location.hostname.slice(firstDot)}`;
+  return `${location.protocol}//${mapHost}/`;
+}
+
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -162,7 +176,7 @@ export function LoginPage() {
         <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
           新环境的首位管理员使用部署时提供的初始账号，首次登录后按页面提示设置自己的密码。没有账号时请联系本租户管理员，不要尝试共享他人的账号或密钥。
         </div>
-        <a href="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14, color: 'var(--text-secondary)', fontSize: 12, textDecoration: 'none' }}>
+        <a href={resolveMapHomeHref()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14, color: 'var(--text-secondary)', fontSize: 12, textDecoration: 'none' }}>
           <ArrowLeft size={14} />返回 MAP 首页
         </a>
       </div>
