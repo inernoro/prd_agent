@@ -68,7 +68,7 @@ public static class GatewayHttpEndpoints
             {
                 var providedKey = ResolveProvidedGatewayKey(context);
                 var authorizer = context.RequestServices.GetService<IGatewayScopedKeyAuthorizer>();
-                var authorizationInputs = authorizer != null && !HasGatewayKey(context, gatewayApiKey)
+                var authorizationInputs = authorizer != null
                     ? await ResolveScopedAuthorizationInputsAsync(context, path)
                     : new GatewayAuthorizationInputs(
                         ResolveHeader(context, "X-Gateway-Source") ?? "external",

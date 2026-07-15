@@ -52,12 +52,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("public string? PriceSnapshotHash", logModel);
         Assert.Contains("public string? ProviderRequestId", logModel);
         Assert.Contains("public decimal? ProviderReportedCost", logModel);
+        var importDto = dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)];
+        Assert.Contains("public decimal? ProviderReportedCost", importDto);
         Assert.Contains("SHA256.HashData", costEvidence);
         Assert.Contains("LlmCostEvidence.ResolveProviderRequestId(done.ResponseHeaders)", logBackground);
         Assert.DoesNotContain("TenantId", dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)]);
         Assert.Contains("BILLING_WINDOW_TEAM_AMBIGUOUS", console);
         Assert.Contains("BILLING_WINDOW_OVERLAP", console);
         Assert.Contains("PROVIDER_REQUEST_COVERED_BY_WINDOW", console);
+        Assert.Contains("providerReportedCost is null", console);
+        Assert.Contains("coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Eq(\"ServiceKeyId\", BsonNull.Value))", console);
         Assert.Contains("BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST", console);
         Assert.Contains("var actualAggregate = await costReconciliations.Aggregate()", console);
         Assert.Contains("var statusAggregate = await costReconciliations.Aggregate()", console);
@@ -2958,6 +2962,7 @@ public class GatewayDataDomainGuardTests
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
         var webNginx = ReadRepoFile("llmgw/web/nginx.conf");
+        var devCompose = ReadRepoFile("docker-compose.dev.yml");
 
         var createStart = console.IndexOf("app.MapPost(\"/gw/app-callers\"", StringComparison.Ordinal);
         var createEnd = console.IndexOf("RequireAuthorization(\"AppCallerWrite\")", createStart, StringComparison.Ordinal);
@@ -2999,6 +3004,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
         Assert.Contains("client_max_body_size 30m;", webNginx);
         Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+        Assert.Contains("llmgw-serve:", devCompose);
+        Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
+        Assert.Contains("- llmgw-serve", devCompose);
     }
 
     [Fact]

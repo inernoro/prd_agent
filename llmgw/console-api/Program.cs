@@ -4691,9 +4691,11 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
     var providerRequestId = string.IsNullOrWhiteSpace(body.ProviderRequestId) ? null : body.ProviderRequestId.Trim();
     var serviceKeyId = string.IsNullOrWhiteSpace(body.ServiceKeyId) ? null : body.ServiceKeyId.Trim();
     var actualCurrency = CostReconciliationPolicy.NormalizeCurrency(body.ProviderCostCurrency);
+    var providerReportedCost = body.ProviderReportedCost;
     if (provider.Length is < 2 or > 100
         || externalRecordId.Length is < 2 or > 160
-        || body.ProviderReportedCost < 0
+        || providerReportedCost is null
+        || providerReportedCost < 0
         || actualCurrency is null)
     {
         return Json(ApiEnvelope<object>.Fail(
@@ -4745,6 +4747,10 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
                 coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Or(
                     Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value),
                     Builders<BsonDocument>.Filter.Eq("ServiceKeyId", serviceKeyId)));
+            }
+            else
+            {
+                coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value));
             }
             if (await costReconciliations.CountDocumentsAsync(
                     TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(coveringWindowFilters)),
@@ -4892,7 +4898,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
     var decision = CostReconciliationPolicy.Evaluate(
         estimatedCost,
         estimatedCurrency,
-        body.ProviderReportedCost,
+        providerReportedCost.Value,
         actualCurrency,
         body.FxSnapshotId,
         body.ProviderToEstimatedFxRate);
@@ -4908,7 +4914,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         serviceKeyId,
         windowFrom,
         windowTo,
-        body.ProviderReportedCost,
+        providerReportedCost = providerReportedCost.Value,
         providerCostCurrency = actualCurrency,
         billedAt = suppliedBilledAt,
         fxSnapshotId = body.FxSnapshotId?.Trim(),
@@ -4934,7 +4940,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         { "Model", reconciliationModel is null ? BsonNull.Value : reconciliationModel },
         { "EstimatedCost", estimatedCost is null ? BsonNull.Value : new BsonDecimal128(estimatedCost.Value) },
         { "EstimatedCostCurrency", estimatedCurrency is null ? BsonNull.Value : estimatedCurrency },
-        { "ProviderReportedCost", new BsonDecimal128(body.ProviderReportedCost) },
+        { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
         { "ProviderCostCurrency", actualCurrency },
         { "ProviderCostInEstimatedCurrency", decision.ProviderCostInEstimatedCurrency is null ? BsonNull.Value : new BsonDecimal128(decision.ProviderCostInEstimatedCurrency.Value) },
         { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
@@ -4982,7 +4988,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", matchedLog.GetStringOrEmpty("_id"))),
             new BsonDocument("$set", new BsonDocument
             {
-                { "ProviderReportedCost", new BsonDecimal128(body.ProviderReportedCost) },
+                { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
                 { "ProviderCostCurrency", actualCurrency },
                 { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
                 { "ReconciliationStatus", reconciliationStatus },

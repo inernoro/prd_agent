@@ -664,6 +664,38 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Fact]
+    public async Task LegacyNativeKey_AuthorizesMapIdentityFromBody()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(new EchoingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "map.legacy-body::chat",
+                    ModelType = "chat",
+                    Context = new { SourceSystem = "map" },
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", GatewayKey);
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.SourceSystem.ShouldBe("map");
+            authorizer.AppCallerCode.ShouldBe("map.legacy-body::chat");
+            authorizer.RequiredScope.ShouldBe("invoke");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     public static IEnumerable<object[]> ScopedStreamingRequests() => new[]
     {
         new object[] { "/v1/chat/completions", "{\"model\":\"test\",\"messages\":[],\"stream\":true}", "application/json" },
@@ -2581,6 +2613,7 @@ public class GatewayKeyGateContractTests
         public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed) => _scopeAllowed = scopeAllowed;
 
         public int CallCount { get; private set; }
+        public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
 
@@ -2595,6 +2628,7 @@ public class GatewayKeyGateContractTests
             CancellationToken ct)
         {
             CallCount++;
+            SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
             var allowed = _scopeAllowed(requiredScope);

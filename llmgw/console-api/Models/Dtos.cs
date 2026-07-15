@@ -327,7 +327,7 @@ public sealed class CostReconciliationImportRequest
     public string? ServiceKeyId { get; set; }
     public DateTime? WindowFrom { get; set; }
     public DateTime? WindowTo { get; set; }
-    public decimal ProviderReportedCost { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
     public string? ProviderCostCurrency { get; set; }
     public DateTime? BilledAt { get; set; }
     public string? FxSnapshotId { get; set; }
