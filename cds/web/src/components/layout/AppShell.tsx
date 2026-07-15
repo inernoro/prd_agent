@@ -322,11 +322,13 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       <div className="cds-shell-body">
         {children}
       </div>
-      {/* 预览实例提示条（CDS 托管 CDS，2026-07-15）:固定顶部居中 pill，
+      {/* 预览实例提示条（CDS 托管 CDS，2026-07-15）:固定底部居中 pill，
           提醒这是分支预览出来的子 CDS，宿主/docker 操作已禁用。
+          位置说明:顶部居中会遮住 TopBar 的快速部署输入框（真机截图实证），
+          底部两角已被 GlobalUpdateBadge（左）/ 主题切换（右）占用，底部居中为空。
           遵守 mobile-layout-fallback:限宽 + truncate，不用 whitespace-nowrap 溢出。 */}
       {previewInstance && (
-        <div className="pointer-events-none fixed left-1/2 top-2 z-[120] w-max max-w-[calc(100vw-1rem)] -translate-x-1/2">
+        <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
           <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
             <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
             <span className="truncate text-xs text-muted-foreground">
