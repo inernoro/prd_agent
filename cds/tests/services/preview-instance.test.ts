@@ -38,7 +38,7 @@ describe('isPreviewInstance', () => {
 });
 
 describe('scrubParentSecretsFromEnv', () => {
-  it('removes parent-secret-looking keys, keeps child basic-auth keys', () => {
+  it('removes parent-secret-looking keys including inherited CDS_PASSWORD, remaps CDS_PREVIEW_* gate', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',
       LLMGW_ADMIN_PASSWORD: 'leak',
@@ -53,23 +53,35 @@ describe('scrubParentSecretsFromEnv', () => {
       DATABASE_URL: 'postgres://parent/db',
       CDS_REDIS_HOST: 'parent-redis',
       ConnectionStrings__Default: 'Server=parent',
-      CDS_PASSWORD: 'child-gate',
-      CDS_USERNAME: 'child',
+      // 继承来的通用 CDS_PASSWORD 可能是父实例门禁密码（Codex P1）→ 必须清
+      CDS_PASSWORD: 'parent-gate-leak',
+      // 子实例专用凭据 → 清洗后重映射
+      CDS_PREVIEW_USERNAME: 'child-admin',
+      CDS_PREVIEW_PASSWORD: 'child-gate',
       CDS_HOST: 'keep',
       ASSETS_PROVIDER: 'keep',
     };
     const scrubbed = scrubParentSecretsFromEnv(env);
     expect(scrubbed.sort()).toEqual([
-      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_URI', 'CDS_REDIS_HOST',
+      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_URI', 'CDS_PASSWORD',
+      'CDS_PREVIEW_PASSWORD', 'CDS_REDIS_HOST',
       'ConnectionStrings__Default', 'DATABASE_URL', 'GITHUB_TOKEN', 'JWT_SECRET',
       'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
     ]);
     expect(env.CDS_MONGO_URI).toBeUndefined();
+    // 父实例门禁密码没有幸存；子实例门禁来自专用键的重映射
     expect(env.CDS_PASSWORD).toBe('child-gate');
-    expect(env.CDS_USERNAME).toBe('child');
+    expect(env.CDS_USERNAME).toBe('child-admin');
     expect(env.CDS_HOST).toBe('keep');
     expect(env.ASSETS_PROVIDER).toBe('keep');
     expect(env.JWT_SECRET).toBeUndefined();
+  });
+
+  it('leaves no basic-auth gate when CDS_PREVIEW_* is absent (inherited password still scrubbed)', () => {
+    const env: NodeJS.ProcessEnv = { CDS_PREVIEW_INSTANCE: '1', CDS_PASSWORD: 'parent-gate-leak' };
+    const scrubbed = scrubParentSecretsFromEnv(env);
+    expect(scrubbed).toEqual(['CDS_PASSWORD']);
+    expect(env.CDS_PASSWORD).toBeUndefined();
   });
 
   it('is a no-op outside preview instances', () => {

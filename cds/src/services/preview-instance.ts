@@ -88,27 +88,35 @@ export function previewInstanceBlockedMessage(binary: string): string {
 const SECRET_ENV_KEY_PATTERN =
   /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|MONGO|REDIS|DATABASE|CONNECTION|_URI$|_URL$|_DSN$)/i;
 
-/** 子实例自用、不许清除的键（basic auth 门用）。 */
-const SCRUB_KEEP_KEYS: ReadonlySet<string> = new Set(['CDS_PASSWORD']);
-
 /**
  * 预览实例启动自清洗：从 process.env 删除疑似父实例密钥的变量。
  * 由 load-env.ts 在 .cds.env 注入后立即调用（早于 config.ts 的模块级求值）。
  * 非预览实例是 no-op。返回被清除的键名（不含值），供启动日志留痕。
+ *
+ * 子实例 basic auth 走专用键（Codex P1）：通用 CDS_PASSWORD **一律清除**——
+ * 父实例若用 basic auth，其 CDS_PASSWORD 可能经 _global/项目 env 流进子容器，
+ * 白名单保留它等于把父实例门禁密码留给未合并代码。子实例只认显式为它生成的
+ * CDS_PREVIEW_USERNAME / CDS_PREVIEW_PASSWORD，清洗后重映射到
+ * CDS_USERNAME / CDS_PASSWORD 供 server.ts 的 basic auth 消费。
  */
 export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
   if (!isPreviewInstance(env)) return [];
+  // 先抄下子实例专用凭据（本身命中 PASSWORD 模式，会在下面的循环里被删）。
+  const previewUsername = env.CDS_PREVIEW_USERNAME;
+  const previewPassword = env.CDS_PREVIEW_PASSWORD;
   const scrubbed: string[] = [];
   for (const key of Object.keys(env)) {
-    if (SCRUB_KEEP_KEYS.has(key)) continue;
     if (!SECRET_ENV_KEY_PATTERN.test(key)) continue;
     delete env[key];
     scrubbed.push(key);
   }
+  if (previewUsername) env.CDS_USERNAME = previewUsername;
+  if (previewPassword) env.CDS_PASSWORD = previewPassword;
   if (scrubbed.length > 0) {
     console.log(
       `[preview-instance] 已清除 ${scrubbed.length} 个疑似密钥的环境变量（子实例不持有父实例秘密）: ` +
-      scrubbed.sort().join(', '),
+      scrubbed.sort().join(', ') +
+      (previewPassword ? '；已用 CDS_PREVIEW_* 专用凭据启用子实例门禁' : ''),
     );
   }
   return scrubbed;
