@@ -1,4 +1,4 @@
-import { Zap } from 'lucide-react';
+import { ArrowRight, Zap } from 'lucide-react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -75,6 +75,15 @@ export function CompatibilityStack() {
         {/* Footer note */}
         <div className="mt-12 text-center text-[11px] text-white/35">
           {t.compat.footer}
+        </div>
+        <div className="mt-6 flex justify-center">
+          <a
+            href="/llmgw/"
+            className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
+          >
+            {t.compat.action}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </a>
         </div>
       </div>
     </section>
