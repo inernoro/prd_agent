@@ -48,6 +48,9 @@ import type {
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
+  ExchangeMetaData,
+  CreateExchangeRequest,
+  UpdateExchangeRequest,
   UpsertPoolModelRequest,
   KeyHealthData,
   CreatePoolRequest,
@@ -473,6 +476,15 @@ export function bulkUpdateModelCapabilities(req: BulkUpdateModelCapabilitiesRequ
 }
 export function claimExchangeToGateway(id: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function getExchangeMeta(): Promise<ApiResponse<ExchangeMetaData>> {
+  return apiRequest<ExchangeMetaData>('/exchanges/meta');
+}
+export function createExchange(req: CreateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>('/exchanges', { method: 'POST', body: req });
+}
+export function updateExchange(id: string, req: UpdateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
 }
 export function rotateExchangeApiKey(id: string, apiKey: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });
