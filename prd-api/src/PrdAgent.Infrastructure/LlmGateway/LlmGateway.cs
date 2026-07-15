@@ -82,6 +82,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _adapters[adapter.PlatformType] = adapter;
     }
 
+    private bool IsExternalTenant(string? tenantId)
+        => !string.IsNullOrWhiteSpace(tenantId)
+           && !string.Equals(tenantId, _internalTenantId, StringComparison.Ordinal);
+
+    private HttpClient CreateOutboundClient(string? tenantId)
+        => IsExternalTenant(tenantId)
+            ? _httpClientFactory.CreateClient("SafeOutbound")
+            : _httpClientFactory.CreateClient();
+
     /// <summary>
     /// 计算是否实际允许思考内容透传。
     /// Intent 模型类型强制禁止思考输出，其他类型尊重请求方的 IncludeThinking 设置。
@@ -254,7 +263,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? response = null;
             var responseBody = string.Empty;
@@ -512,7 +521,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
@@ -1552,7 +1561,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
             // 6. 发送请求
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
             var rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
@@ -1784,7 +1793,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         if (submitRequestId != null)
                             queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
 
-                        var queryClient = _httpClientFactory.CreateClient();
+                        var queryClient = CreateOutboundClient(request.Context?.TenantId);
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
                         var queryResp = await queryClient.SendAsync(queryRequest, ct);
@@ -1996,6 +2005,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
+            if (IsExternalTenant(request.Context?.TenantId))
+            {
+                const string message = "外部租户暂不开放 WebSocket Exchange；请使用 HTTP/HTTPS 上游，避免未经固定连接的 DNS 重绑定风险。";
+                var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                await FinishRawLogAsync(logId, 403, message, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+                return GatewayRawResponse.Fail("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", message, 403);
+            }
             if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;

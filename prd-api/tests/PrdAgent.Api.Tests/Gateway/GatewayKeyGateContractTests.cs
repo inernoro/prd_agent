@@ -2366,7 +2366,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task QuickstartDryRun_UsesFourRealProtocolPathsWithoutCallingUpstreamAndWritesIdentityLogs()
+    public async Task QuickstartDryRun_UsesChatAndVisionAcrossFourProtocolsWithoutCallingUpstream()
     {
         var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
                                ?? "mongodb://127.0.0.1:27017";
@@ -2376,48 +2376,51 @@ public class GatewayKeyGateContractTests
         var data = new LlmGatewayDataContext(connectionString, databaseName);
         try
         {
-            await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertOneAsync(new GatewayAppCallerRecord
-            {
-                TenantId = "tenant-test",
-                TeamId = "team-test",
-                AppCallerCode = "content.quickstart::chat",
-                RequestType = "chat",
-                SourceSystem = "external",
-                Status = "configured",
-                ModelPolicy = "auto",
-                ParameterPolicy = "default-drop",
-                Title = "Content Quickstart",
-            });
+            await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertManyAsync(
+            [
+                new GatewayAppCallerRecord
+                {
+                    TenantId = "tenant-test",
+                    TeamId = "team-test",
+                    AppCallerCode = "content.quickstart::chat",
+                    RequestType = "chat",
+                    SourceSystem = "external",
+                    Status = "configured",
+                    ModelPolicy = "auto",
+                    ParameterPolicy = "default-drop",
+                    Title = "Content Chat Quickstart",
+                },
+                new GatewayAppCallerRecord
+                {
+                    TenantId = "tenant-test",
+                    TeamId = "team-test",
+                    AppCallerCode = "content.quickstart::vision",
+                    RequestType = "vision",
+                    SourceSystem = "external",
+                    Status = "configured",
+                    ModelPolicy = "auto",
+                    ParameterPolicy = "default-drop",
+                    Title = "Content Vision Quickstart",
+                },
+            ]);
             var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
             await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer, gatewayData: data);
             await app.StartAsync();
-            var cases = new[]
+            (string Path, string Body, string AppCallerCode, string RequestType)[] cases =
             {
-                new
-                {
-                    Path = "/gw/v1/invoke",
-                    Body = "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]},\"context\":{\"sourceSystem\":\"external\"}}",
-                },
-                new
-                {
-                    Path = "/v1/chat/completions",
-                    Body = "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"stream\":false}",
-                },
-                new
-                {
-                    Path = "/v1/messages",
-                    Body = "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]}",
-                },
-                new
-                {
-                    Path = "/v1beta/models/auto:generateContent",
-                    Body = "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"OK\"}]}]}",
-                },
+                ("/gw/v1/invoke", "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]},\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::chat", "chat"),
+                ("/v1/chat/completions", "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"stream\":false}", "content.quickstart::chat", "chat"),
+                ("/v1/messages", "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]}", "content.quickstart::chat", "chat"),
+                ("/v1beta/models/auto:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"OK\"}]}]}", "content.quickstart::chat", "chat"),
+                ("/gw/v1/invoke", "{\"appCallerCode\":\"content.quickstart::vision\",\"modelType\":\"vision\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}]},\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::vision", "vision"),
+                ("/v1/chat/completions", "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}],\"stream\":false}", "content.quickstart::vision", "vision"),
+                ("/v1/messages", "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AAAA\"}}]}]}", "content.quickstart::vision", "vision"),
+                ("/v1beta/models/auto:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"Describe\"},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"AAAA\"}}]}]}", "content.quickstart::vision", "vision"),
             };
 
             for (var index = 0; index < cases.Length; index++)
             {
-                var requestId = $"quickstart-four-protocols-{index}";
+                var requestId = $"quickstart-{cases[index].RequestType}-{index}";
                 using var request = new HttpRequestMessage(HttpMethod.Post, cases[index].Path)
                 {
                     Content = new StringContent(cases[index].Body, System.Text.Encoding.UTF8, "application/json"),
@@ -2425,7 +2428,7 @@ public class GatewayKeyGateContractTests
                     {
                         { "X-Gateway-Key", "scoped-test-key" },
                         { "X-Gateway-Source", "external" },
-                        { "X-Gateway-App-Caller", "content.quickstart::chat" },
+                        { "X-Gateway-App-Caller", cases[index].AppCallerCode },
                         { "X-Gateway-Dry-Run", "quickstart" },
                         { "X-Request-Id", requestId },
                     },
@@ -2444,7 +2447,7 @@ public class GatewayKeyGateContractTests
                 .Find(Builders<BsonDocument>.Filter.Eq("Provider", "gateway-dry-run"))
                 .Sort(Builders<BsonDocument>.Sort.Ascending("RequestId"))
                 .ToListAsync();
-            logs.Count.ShouldBe(4);
+            logs.Count.ShouldBe(8);
             logs.Select(x => x["IngressProtocol"].AsString).ToHashSet().SetEquals(new[]
             {
                 "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
@@ -2457,18 +2460,23 @@ public class GatewayKeyGateContractTests
                 log["ClientCode"].AsString.ShouldBe("content-agent");
                 log["Environment"].AsString.ShouldBe("test");
                 log["Status"].AsString.ShouldBe("succeeded");
+                log["RequestType"].AsString.ShouldBe(log["AppCallerCode"].AsString.EndsWith("::vision", StringComparison.Ordinal) ? "vision" : "chat");
                 log.Contains("EstimatedCost").ShouldBeFalse();
                 log.Contains("EstimatedCostUsd").ShouldBeFalse();
             }
 
-            var caller = await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
-                .Find(x => x.TenantId == "tenant-test" && x.AppCallerCode == "content.quickstart::chat")
-                .SingleAsync();
-            caller.TotalSeen.ShouldBe(4);
-            caller.ObservedIngressProtocols.ToHashSet().SetEquals(new[]
+            var callers = await data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+                .Find(x => x.TenantId == "tenant-test" && x.AppCallerCode.StartsWith("content.quickstart::"))
+                .ToListAsync();
+            callers.Count.ShouldBe(2);
+            foreach (var caller in callers)
             {
-                "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
-            }).ShouldBeTrue();
+                caller.TotalSeen.ShouldBe(4);
+                caller.ObservedIngressProtocols.ToHashSet().SetEquals(new[]
+                {
+                    "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
+                }).ShouldBeTrue();
+            }
         }
         finally
         {

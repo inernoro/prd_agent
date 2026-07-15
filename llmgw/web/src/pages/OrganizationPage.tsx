@@ -14,6 +14,7 @@ import {
 import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { canAccessPage, canUseCapability } from '@/lib/access';
 
 type MemberRole = CreateMemberRequest['role'];
 type MemberItem = OrganizationData['members'][number];
@@ -43,8 +44,10 @@ export function OrganizationPage() {
   const [busy, setBusy] = useState(false);
 
   const currentRole = sessionTenant?.role ?? 'viewer';
-  const canManage = currentRole === 'owner' || currentRole === 'admin';
-  const canCreateTenant = currentRole === 'owner';
+  const canManage = canUseCapability(sessionTenant?.role, 'organizationWrite');
+  const canCreateTenant = canUseCapability(sessionTenant?.role, 'tenantOwner');
+  const canManageKeys = canAccessPage(sessionTenant, 'serviceKeys');
+  const canUseQuickstart = canAccessPage(sessionTenant, 'quickstart');
 
   const load = useCallback(async () => {
     setError(null);
@@ -189,7 +192,7 @@ export function OrganizationPage() {
           <div style={{ display: 'grid', gap: 9 }}>
             {data.members.map((member) => <MemberRow key={`${member.id}:${member.version}`} member={member} teams={data.teams} currentRole={currentRole} currentUsername={user?.username} canManage={canManage} onChanged={async (message) => { setNotice(message); await load(); }} onError={setError} />)}
           </div>
-          <p style={hintStyle}>成员准备完成后进入 <Link to="/service-keys" style={{ color: 'var(--accent)' }}>接入密钥</Link>，再打开 <Link to="/quickstart" style={{ color: 'var(--accent)' }}>Quickstart</Link>。</p>
+          <p style={hintStyle}>成员准备完成后，{canManageKeys ? <Link to="/service-keys" style={{ color: 'var(--accent)' }}>进入接入密钥</Link> : '由密钥管理员签发接入密钥'}，再{canUseQuickstart ? <Link to="/quickstart" style={{ color: 'var(--accent)' }}>打开 Quickstart</Link> : '由有接入权限的成员完成安全直测'}。</p>
         </section>
       </>}
     </div>

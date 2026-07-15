@@ -1956,6 +1956,17 @@ app.MapGet("/gw/exchanges", async (HttpContext http, bool? enabled) =>
     return Json(ApiEnvelope<ExchangesData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+app.MapGet("/gw/exchanges/meta", () =>
+{
+    var data = new ExchangeMetaData
+    {
+        TransformerTypes = GatewayConfigurationProvisioning.GetExchangeTransformerOptions().ToList(),
+        AuthSchemes = GatewayConfigurationProvisioning.GetExchangeAuthSchemeOptions().ToList(),
+        ModelTypes = GatewayConfigurationProvisioning.GetExchangeModelTypeOptions().ToList(),
+    };
+    return Json(ApiEnvelope<ExchangeMetaData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // GW-owned key 健康自检：只解密验证，不返回明文/密文/脱敏 key，不打上游，避免产生成本。
 app.MapGet("/gw/key-health", async (HttpContext http) =>
 {
@@ -6070,7 +6081,204 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
     return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Ok(result), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// Exchange 认领：先只提供 API，不暴露密钥明文；resolver 会优先读 GW 自有 exchange。
+// 创建 Exchange：外部租户直接写 llm_gateway 自有集合，不再要求先去 MAP 建同名对象。
+// tenantId 永远来自服务端会话；通讯密钥只加密落库，不进入响应或审计。
+app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (tenantId != internalTenantId)
+    {
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
+    var fb = Builders<BsonDocument>.Filter;
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwModelExchanges.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+
+    string encryptedApiKey;
+    try
+    {
+        encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey!, config);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+    }
+
+    var id = $"gw-exchange-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildExchangeDocument(draft, tenantId, id, encryptedApiKey, now);
+    string requiredAuditId;
+    try
+    {
+        requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "exchange.create",
+            targetType: "llmgw_model_exchange",
+            targetId: id,
+            targetName: draft.Name,
+            changes: new BsonDocument
+            {
+                { "modelCount", draft.Models.Count },
+                { "modelIds", new BsonArray(draft.Models.Select(item => item.ModelId)) },
+                { "targetAuthScheme", draft.TargetAuthScheme },
+                { "transformerType", draft.TransformerType },
+                { "enabled", draft.Enabled },
+                { "hasKey", true },
+                { "authority", "llm_gateway" },
+            });
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_FAILED", "无法先建立 Exchange 审计意图，本次未写入配置"), jsonOptions, 503);
+    }
+
+    try
+    {
+        await gwModelExchanges.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "duplicate_exchange");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "exchange_write_failed");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_WRITE_FAILED", "Exchange 写入失败，审计意图已保留"), jsonOptions, 503);
+    }
+
+    try
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: true, reason: null);
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_PENDING", "Exchange 已写入，审计意图仍待收口；请刷新列表并检查审计"), jsonOptions, 503);
+    }
+
+    var fresh = await gwModelExchanges.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_READBACK_FAILED", "Exchange 已创建，但服务端读回失败，请刷新列表确认"), jsonOptions, 503);
+    return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+// Exchange 映射编辑：完整替换可见映射字段，并用 version 防止旧页面覆盖并发修改。
+app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] UpdateExchangeRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (tenantId != internalTenantId)
+    {
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
+    var tenantFilter = TenantAccess.Filter(http, fb.Eq("_id", id));
+    var document = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
+    if (document is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "Exchange 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var currentVersion = document.AsNullableLong("Version") ?? 0;
+    if (draft.Version != currentVersion)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Ne("_id", id),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwModelExchanges.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+
+    var versionFilter = document.Contains("Version")
+        ? fb.Eq("Version", currentVersion)
+        : fb.Exists("Version", false);
+    var nextVersion = currentVersion + 1;
+    var update = Builders<BsonDocument>.Update
+        .Set("Name", draft.Name)
+        .Set("NameNormalized", draft.NameNormalized)
+        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(draft.Models))
+        .Set("TargetUrl", draft.TargetUrl)
+        .Set("TargetAuthScheme", draft.TargetAuthScheme)
+        .Set("TransformerType", draft.TransformerType)
+        .Set("Enabled", draft.Enabled)
+        .Set("Description", ToBsonAuditValue(draft.Description))
+        .Set("UpdatedAt", DateTime.UtcNow)
+        .Set("Version", nextVersion);
+    string requiredAuditId;
+    try
+    {
+        requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "exchange.update",
+            targetType: "llmgw_model_exchange",
+            targetId: id,
+            targetName: draft.Name,
+            changes: new BsonDocument
+            {
+                { "name", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("Name")) }, { "to", draft.Name } } },
+                { "modelCount", new BsonDocument { { "from", MapExchange(document).Models.Count }, { "to", draft.Models.Count } } },
+                { "modelIds", new BsonDocument { { "from", new BsonArray(MapExchange(document).Models.Select(item => item.ModelId)) }, { "to", new BsonArray(draft.Models.Select(item => item.ModelId)) } } },
+                { "targetUrlChanged", !string.Equals(document.AsNullableString("TargetUrl"), draft.TargetUrl, StringComparison.Ordinal) },
+                { "targetAuthScheme", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TargetAuthScheme")) }, { "to", draft.TargetAuthScheme } } },
+                { "transformerType", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TransformerType")) }, { "to", draft.TransformerType } } },
+                { "enabled", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableBool("Enabled")) }, { "to", draft.Enabled } } },
+                { "authority", "llm_gateway" },
+            });
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_FAILED", "无法先建立 Exchange 审计意图，本次未修改配置"), jsonOptions, 503);
+    }
+
+    UpdateResult updateResult;
+    try
+    {
+        updateResult = await gwModelExchanges.UpdateOneAsync(fb.And(tenantFilter, versionFilter), update);
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "exchange_write_failed");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_WRITE_FAILED", "Exchange 修改失败，审计意图已保留"), jsonOptions, 503);
+    }
+    if (updateResult.ModifiedCount != 1)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "version_conflict");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+    }
+
+    try
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: true, reason: null);
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_PENDING", "Exchange 已修改，审计意图仍待收口；请刷新列表并检查审计"), jsonOptions, 503);
+    }
+
+    var fresh = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_READBACK_FAILED", "Exchange 已更新，但服务端读回失败，请刷新列表确认"), jsonOptions, 503);
+    return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// Exchange 认领：兼容内部租户迁移；外部租户使用上方自助创建 API。
 app.MapPut("/gw/exchanges/{id}/claim", async (HttpContext http, string id) =>
 {
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
@@ -6976,9 +7184,26 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
                    ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
                        ? await models.Find(modelFilter).FirstOrDefaultAsync()
                        : null);
+    BsonDocument? exchangeDoc = null;
+    if (modelDoc is null && platformId.Length > 0)
+    {
+        exchangeDoc = await gwModelExchanges.Find(TenantAccess.Filter(http, modelFb.And(
+            modelFb.Eq("_id", platformId),
+            modelFb.Ne("Enabled", false)))).FirstOrDefaultAsync();
+        var exchangeModels = exchangeDoc is not null
+                             && exchangeDoc.TryGetValue("Models", out var exchangeModelsValue)
+                             && exchangeModelsValue.IsBsonArray
+            ? exchangeModelsValue.AsBsonArray.Where(item => item.IsBsonDocument).Select(item => item.AsBsonDocument)
+            : Enumerable.Empty<BsonDocument>();
+        var exchangeModel = exchangeModels.FirstOrDefault(item =>
+            string.Equals(item.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+            && item.AsNullableBool("Enabled") != false);
+        if (exchangeModel is not null)
+            modelDoc = GatewayConfigurationProvisioning.BuildExchangePoolModelDocument(platformId, exchangeModel);
+    }
     if (modelDoc is null)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型不存在或平台不匹配：{modelId}"), jsonOptions, 400);
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型或 Exchange 映射不存在、已停用或平台不匹配：{modelId}"), jsonOptions, 400);
     }
     if (managedAppendOnly && modelDoc.AsNullableBool("Enabled") == false)
         return Json(ApiEnvelope<PoolItem>.Fail("MODEL_DISABLED", "停用模型不能加入平台托管默认池。"), jsonOptions, 409);
@@ -6991,17 +7216,20 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型缺少 PlatformId：{modelId}"), jsonOptions, 400);
     }
 
-    var platformFilter = Builders<BsonDocument>.Filter.Eq("_id", resolvedPlatformId);
-    var platformDoc = await gwPlatforms.Find(TenantAccess.Filter(http, platformFilter)).FirstOrDefaultAsync()
-                      ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                          ? await platforms.Find(platformFilter).FirstOrDefaultAsync()
-                          : null);
-    if (platformDoc is null)
+    if (exchangeDoc is null)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
+        var platformFilter = Builders<BsonDocument>.Filter.Eq("_id", resolvedPlatformId);
+        var platformDoc = await gwPlatforms.Find(TenantAccess.Filter(http, platformFilter)).FirstOrDefaultAsync()
+                          ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
+                              ? await platforms.Find(platformFilter).FirstOrDefaultAsync()
+                              : null);
+        if (platformDoc is null)
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
+        }
+        if (managedAppendOnly && platformDoc.AsNullableBool("Enabled") == false)
+            return Json(ApiEnvelope<PoolItem>.Fail("PLATFORM_DISABLED", "停用平台的模型不能加入平台托管默认池。"), jsonOptions, 409);
     }
-    if (managedAppendOnly && platformDoc.AsNullableBool("Enabled") == false)
-        return Json(ApiEnvelope<PoolItem>.Fail("PLATFORM_DISABLED", "停用平台的模型不能加入平台托管默认池。"), jsonOptions, 409);
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
     var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
@@ -7782,6 +8010,68 @@ static async Task WriteLoginAuditAsync(
     {
         Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
     }
+}
+
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, CancellationToken ct)
+{
+    if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
+        || uri.Scheme is not ("http" or "https"))
+    {
+        return "外部租户 Exchange 只允许 HTTP 或 HTTPS 上游；WebSocket 上游暂不开放";
+    }
+
+    var host = uri.Host.Trim().TrimEnd('.');
+    if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        return "外部租户 Exchange 不能连接 localhost、内网或云元数据地址";
+
+    IPAddress[] addresses;
+    try
+    {
+        addresses = IPAddress.TryParse(host, out var literal)
+            ? [literal]
+            : await Dns.GetHostAddressesAsync(host, ct);
+    }
+    catch (Exception ex) when (ex is System.Net.Sockets.SocketException or OperationCanceledException)
+    {
+        return "目标地址当前无法完成安全 DNS 校验，请检查域名后重试";
+    }
+
+    if (addresses.Length == 0 || addresses.Any(IsBlockedExchangeTargetAddress))
+        return "外部租户 Exchange 不能连接 localhost、内网、链路本地或云元数据地址";
+    return null;
+}
+
+static bool IsBlockedExchangeTargetAddress(IPAddress address)
+{
+    if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+    if (IPAddress.IsLoopback(address)) return true;
+    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+    {
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length != 4) return true;
+        var b0 = bytes[0];
+        var b1 = bytes[1];
+        return b0 == 0
+               || b0 == 10
+               || b0 == 127
+               || (b0 == 100 && b1 is >= 64 and <= 127)
+               || (b0 == 169 && b1 == 254)
+               || (b0 == 172 && b1 is >= 16 and <= 31)
+               || (b0 == 192 && b1 == 168)
+               || b0 >= 224;
+    }
+    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+    {
+        var bytes = address.GetAddressBytes();
+        return address.Equals(IPAddress.IPv6Any)
+               || address.Equals(IPAddress.IPv6Loopback)
+               || address.Equals(IPAddress.IPv6None)
+               || address.IsIPv6LinkLocal
+               || address.IsIPv6SiteLocal
+               || bytes[0] == 0xff
+               || (bytes[0] & 0xfe) == 0xfc;
+    }
+    return true;
 }
 
 static async Task WriteOperationAuditAsync(
@@ -9098,6 +9388,7 @@ static ExchangeItem MapExchange(BsonDocument d)
         SourceCollection = d.AsNullableString("SourceCollection") ?? "model_exchanges",
         Authority = d.AsNullableString("Authority") ?? "map",
         ClaimedAt = d.AsNullableUtcDateTime("ClaimedAt").ToIso(),
+        Version = d.AsNullableLong("Version") ?? 0,
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
