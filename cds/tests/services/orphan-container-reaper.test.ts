@@ -10,7 +10,7 @@
  *   4. 事件留痕：停止动作写 server-event。
  */
 import { describe, it, expect } from 'vitest';
-import { sweepOrphanCdsContainers, isOrphanReaperEnabled } from '../../src/services/orphan-container-reaper.js';
+import { sweepOrphanCdsContainers, isOrphanReaperEnabled, processTeardownTombstones } from '../../src/services/orphan-container-reaper.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 function makeState(overrides: Partial<{
@@ -22,6 +22,18 @@ function makeState(overrides: Partial<{
     getProjects: () => overrides.projects ?? [{ id: 'p1' }],
     getAllBranches: () => overrides.branches ?? [],
     getInfraServices: () => overrides.infra ?? [],
+    getContainerTeardownTombstones: () => [],
+    removeContainerTeardownTombstone: () => {},
+  };
+}
+
+/** 可变墓碑 state stub：记录移除调用，供 processTeardownTombstones 断言。 */
+function makeTombstoneState(items: Array<{ containerName: string; projectId: string; requestedAt: string }>) {
+  let list = [...items];
+  return {
+    getContainerTeardownTombstones: () => [...list],
+    removeContainerTeardownTombstone: (name: string) => { list = list.filter((t) => t.containerName !== name); },
+    remaining: () => list.map((t) => t.containerName),
   };
 }
 
@@ -180,5 +192,66 @@ describe('sweepOrphanCdsContainers', () => {
     mockPs(shell, ['cds-infra-ghost|running|not-a-date|cds.managed=true,cds.type=infra,cds.service.id=x'], []);
     const result = await sweepOrphanCdsContainers({ shell, state: makeState(), env: {} });
     expect(result.actions).toEqual([]);
+  });
+});
+
+describe('processTeardownTombstones', () => {
+  const T = (name: string) => ({ containerName: name, projectId: 'dead-project', requestedAt: '2026-07-15T10:00:00.000Z' });
+
+  it('removes containers older than the tombstone and clears the tombstone', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-07-15T09:00:00.000000000Z', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/^docker rm -f /, () => ({ stdout: 'removed', stderr: '', exitCode: 0 }));
+    const state = makeTombstoneState([T('cds-dead-api')]);
+    const result = await processTeardownTombstones({ shell, state });
+    expect(result.removed).toEqual(['cds-dead-api']);
+    expect(state.remaining()).toEqual([]);
+  });
+
+  it('spares a same-name container created after the tombstone (project recreated)', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-07-15T11:00:00.000000000Z', stderr: '', exitCode: 0 }));
+    const state = makeTombstoneState([T('cds-reborn-api')]);
+    const result = await processTeardownTombstones({ shell, state });
+    expect(result.superseded).toEqual(['cds-reborn-api']);
+    expect(state.remaining()).toEqual([]);
+    expect(shell.commands.filter((c) => c.startsWith('docker rm'))).toHaveLength(0);
+  });
+
+  it('clears the tombstone when the container is already gone', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '', stderr: 'Error: No such object: cds-gone', exitCode: 1 }));
+    const state = makeTombstoneState([T('cds-gone')]);
+    const result = await processTeardownTombstones({ shell, state });
+    expect(result.removed).toEqual(['cds-gone']);
+    expect(state.remaining()).toEqual([]);
+  });
+
+  it('keeps the tombstone for retry when docker is unavailable', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }));
+    const state = makeTombstoneState([T('cds-dead-api')]);
+    const result = await processTeardownTombstones({ shell, state });
+    expect(result.pending).toEqual(['cds-dead-api']);
+    expect(state.remaining()).toEqual(['cds-dead-api']);
+  });
+
+  it('is retried by the sweep even when scan-state is empty (last-project delete)', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-07-15T09:00:00.000000000Z', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/^docker rm -f /, () => ({ stdout: 'removed', stderr: '', exitCode: 0 }));
+    const tomb = makeTombstoneState([T('cds-last-project-api')]);
+    const state = {
+      getProjects: () => [],
+      getAllBranches: () => [],
+      getInfraServices: () => [],
+      getContainerTeardownTombstones: tomb.getContainerTeardownTombstones,
+      removeContainerTeardownTombstone: tomb.removeContainerTeardownTombstone,
+    };
+    const result = await sweepOrphanCdsContainers({ shell, state, env: {} });
+    // 扫描式判定仍被空库守卫拦住，但墓碑补偿已经执行
+    expect(result.skippedReason).toBe('state-empty');
+    expect(tomb.remaining()).toEqual([]);
+    expect(shell.commands.some((c) => c.startsWith('docker rm -f'))).toBe(true);
   });
 });

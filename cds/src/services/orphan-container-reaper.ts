@@ -22,11 +22,17 @@
  *      人工 / 项目删除路径处置；
  *   5. 逃生阀：CDS_ORPHAN_CONTAINER_REAPER=0 整体关闭。
  */
-import type { IShellExecutor } from '../types.js';
+import type { IShellExecutor, ContainerTeardownTombstone } from '../types.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
+/** 墓碑处理所需的最小 state 视图（项目删除路由与收割器共用）。 */
+export interface TombstoneStateView {
+  getContainerTeardownTombstones(): ContainerTeardownTombstone[];
+  removeContainerTeardownTombstone(containerName: string): void;
+}
+
 /** 收割器状态视图的窄接口（便于单测注入，不拖整个 StateService）。 */
-export interface OrphanReaperStateView {
+export interface OrphanReaperStateView extends TombstoneStateView {
   getProjects(): Array<{ id: string }>;
   getAllBranches(): Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
   getInfraServices(): Array<{ containerName: string }>;
@@ -110,6 +116,80 @@ function withinGracePeriod(container: DiscoveredContainer, nowMs: number): boole
   return nowMs - container.createdAtMs < ORPHAN_CONTAINER_MIN_AGE_MS;
 }
 
+export interface TombstoneProcessResult {
+  /** rm -f 成功或容器本就不存在，墓碑已消 */
+  removed: string[];
+  /** 同名容器比墓碑新（项目已重建），放生并消墓碑 */
+  superseded: string[];
+  /** docker 暂不可用等，留待下轮 */
+  pending: string[];
+}
+
+/**
+ * 处理项目删除留下的容器清理墓碑（Codex 两条 P2 的共同解，语义见 types.ts）。
+ *
+ * 每条墓碑：docker inspect 取容器 Created 时间——
+ *   - 容器不存在 → 目的已达成，消墓碑；
+ *   - Created 晚于墓碑 requestedAt → 同名容器属于重建的后继项目，放生并消墓碑；
+ *   - 否则 rm -f，成功即消墓碑；docker 不可用/失败则留待下轮（墓碑持久化在
+ *     state 里，即使删的是最后一个项目、进程中途重启也不会丢——这正是
+ *     收割器空库守卫罩不住的场景）。
+ */
+export async function processTeardownTombstones(opts: {
+  shell: IShellExecutor;
+  state: TombstoneStateView;
+  eventLog?: ServerEventLogSink | null;
+}): Promise<TombstoneProcessResult> {
+  const { shell, state, eventLog } = opts;
+  const result: TombstoneProcessResult = { removed: [], superseded: [], pending: [] };
+  for (const tombstone of state.getContainerTeardownTombstones()) {
+    const name = tombstone.containerName;
+    const inspect = await shell.exec(`docker inspect -f '{{.Created}}' ${quote(name)}`, { timeout: 15_000 });
+    if (inspect.exitCode !== 0) {
+      if (/no such (object|container)/i.test(inspect.stderr || '')) {
+        state.removeContainerTeardownTombstone(name);
+        result.removed.push(name);
+        continue;
+      }
+      result.pending.push(name);
+      continue;
+    }
+    const createdMs = Date.parse(inspect.stdout.trim());
+    const requestedMs = Date.parse(tombstone.requestedAt);
+    if (Number.isFinite(createdMs) && Number.isFinite(requestedMs) && createdMs > requestedMs) {
+      state.removeContainerTeardownTombstone(name);
+      result.superseded.push(name);
+      eventLog?.record({
+        category: 'container',
+        severity: 'info',
+        source: 'orphan-container-reaper',
+        action: 'container.teardown.superseded',
+        message: `同名容器晚于删除墓碑创建（项目已重建），放生: ${name}`,
+        containerName: name,
+        details: { projectId: tombstone.projectId, requestedAt: tombstone.requestedAt },
+      });
+      continue;
+    }
+    const rm = await shell.exec(`docker rm -f ${quote(name)}`, { timeout: 60_000 });
+    if (rm.exitCode === 0 || /no such container/i.test(rm.stderr || '')) {
+      state.removeContainerTeardownTombstone(name);
+      result.removed.push(name);
+      eventLog?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'orphan-container-reaper',
+        action: 'container.teardown.completed',
+        message: `已按删除墓碑移除容器: ${name}`,
+        containerName: name,
+        details: { projectId: tombstone.projectId, requestedAt: tombstone.requestedAt },
+      });
+    } else {
+      result.pending.push(name);
+    }
+  }
+  return result;
+}
+
 /**
  * 单轮收割：找出孤儿 infra / app 容器并停掉（只停不删）。
  * 幂等：已停的孤儿记 already-stopped，不重复动作。
@@ -123,11 +203,16 @@ export async function sweepOrphanCdsContainers(opts: {
   const { shell, state, eventLog } = opts;
   if (!isOrphanReaperEnabled(opts.env)) return { skippedReason: 'disabled', actions: [] };
 
+  // 墓碑补偿先于一切守卫（Codex P2）：删除最后一个项目后 state 为空，但墓碑是
+  // 持久化的显式意图，不依赖「扫描推断」，即使空库也必须重试。
+  await processTeardownTombstones({ shell, state, eventLog });
+
   const projects = state.getProjects();
   const branches = state.getAllBranches();
   const infraServices = state.getInfraServices();
   if (projects.length === 0 && branches.length === 0 && infraServices.length === 0) {
-    // 空库守卫：更可能是 state 没加载成功 / 全新安装，绝不能把全部容器当孤儿。
+    // 空库守卫（仅针对**扫描式**孤儿判定）：空库更可能是 state 没加载成功 /
+    // 全新安装 / 同宿主第二实例，绝不能把全部容器当孤儿。墓碑路径不受此限。
     return { skippedReason: 'state-empty', actions: [] };
   }
 

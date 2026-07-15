@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -1547,6 +1547,41 @@ export class StateService {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
     this.state.projects.push(project);
+    this.save();
+  }
+
+  // ── 容器清理墓碑（项目删除异步清理的持久化意图，见 types.ts 注释）──
+
+  static readonly CONTAINER_TEARDOWN_TOMBSTONES_MAX = 200;
+
+  addContainerTeardownTombstones(items: ContainerTeardownTombstone[]): void {
+    if (!items.length) return;
+    const list = this.state.pendingContainerTeardowns || [];
+    for (const item of items) {
+      const existing = list.find((t) => t.containerName === item.containerName);
+      if (existing) {
+        // 同名重复墓碑取**较新的** requestedAt：旧时间戳会把当前这次真正要删的
+        // 容器误判成「后继项目的新容器」而放生。
+        existing.requestedAt = item.requestedAt;
+        existing.projectId = item.projectId;
+        continue;
+      }
+      list.push(item);
+    }
+    // ring-buffer 上限：墓碑是补偿意图不是审计账本，防极端情况下无限膨胀
+    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) list.shift();
+    this.state.pendingContainerTeardowns = list;
+    this.save();
+  }
+
+  getContainerTeardownTombstones(): ContainerTeardownTombstone[] {
+    return [...(this.state.pendingContainerTeardowns || [])];
+  }
+
+  removeContainerTeardownTombstone(containerName: string): void {
+    const list = this.state.pendingContainerTeardowns;
+    if (!list?.length) return;
+    this.state.pendingContainerTeardowns = list.filter((t) => t.containerName !== containerName);
     this.save();
   }
 

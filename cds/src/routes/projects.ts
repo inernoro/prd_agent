@@ -29,6 +29,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
+import { processTeardownTombstones } from '../services/orphan-container-reaper.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -3496,20 +3497,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
-    // 任何一步失败只记日志——孤儿容器收割器（orphan-container-reaper）每小时
-    // 兜底收敛，删除路径不必做到完美原子。
+    // 清理意图先落**墓碑**（Codex 两条 P2）：
+    //   - 异步段崩溃 / docker 暂不可用时，收割器按墓碑补偿重试——包括「删的是
+    //     最后一个项目、state 已空」这个空库守卫罩不住的场景；
+    //   - 同名项目被快速重建时，墓碑消费方按容器 Created 时间放生新容器，
+    //     绝不按名字盲删。
     const dockerNetwork = project.dockerNetwork;
-    const quoteName = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    if (teardownContainers.length > 0) {
+      stateService.addContainerTeardownTombstones(
+        teardownContainers.map((containerName) => ({
+          containerName,
+          projectId: project.id,
+          requestedAt: new Date().toISOString(),
+        })),
+      );
+    }
     void (async () => {
-      for (const name of teardownContainers) {
-        try {
-          const rm = await shell.exec(`docker rm -f ${quoteName(name)}`, { timeout: 60_000 });
-          if (rm.exitCode !== 0 && !/no such container/i.test(rm.stderr || '')) {
-            console.warn(`[projects] 删除项目 ${project.id} 时容器清理失败: ${name}: ${(rm.stderr || '').slice(0, 160)}`);
-          }
-        } catch (err) {
-          console.warn(`[projects] 删除项目 ${project.id} 时容器清理异常: ${name}: ${(err as Error).message}`);
-        }
+      try {
+        await processTeardownTombstones({ shell, state: stateService });
+      } catch (err) {
+        console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }
       if (dockerNetwork) {
         const result = await removeDockerNetwork(dockerNetwork);

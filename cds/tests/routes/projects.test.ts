@@ -891,6 +891,8 @@ describe('Projects router (P4 Part 2)', () => {
       const network = created.body.project.dockerNetwork;
 
       shell.addResponsePattern(/^docker rm -f /, () => ({ stdout: 'removed', stderr: '', exitCode: 0 }));
+      // 墓碑消费方 rm 前会 inspect Created 校验归属：给一个早于墓碑的时间
+      shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-01-01T00:00:00.000000000Z', stderr: '', exitCode: 0 }));
 
       const now = new Date().toISOString();
       stateService.addBranch({
@@ -953,6 +955,8 @@ describe('Projects router (P4 Part 2)', () => {
       expect(rmTargets).toContain('cds-td-b1-web');
       expect(rmTargets).toContain('cds-infra-teardown-mysql');
       expect(rmTargets).not.toContain('cds-state-mongo');
+      // 墓碑全部消费完毕（清理意图闭环，Codex P2）
+      expect(stateService.getContainerTeardownTombstones()).toEqual([]);
     });
   });
 });
