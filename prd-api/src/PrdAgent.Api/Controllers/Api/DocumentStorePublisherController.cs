@@ -212,10 +212,42 @@ public sealed class DocumentStorePublisherController : ControllerBase
         if (decision == PublisherContentDecision.Conflict)
             return ConflictResult("远端正文已被人工修改，且既不等于上次发布版本也不等于目标版本；不会覆盖");
 
-        var metadata = BuildMetadata(existing.Metadata, request, sourceId, targetSha256, kind);
-        if (EntryMatches(existing, request, parentId, metadata, targetSha256, currentSha256))
+        // lastAppliedRunId 是回滚安全 marker，不能参与内容 noop 判定。否则相同源文件
+        // 第二次发布时，单凭新 runId 就会改 UpdatedAt，整书永远无法达到可验证的 noop。
+        var noopMetadata = BuildMetadata(
+            existing.Metadata,
+            request,
+            sourceId,
+            targetSha256,
+            kind,
+            preserveLastAppliedRunId: true);
+        if (EntryMatches(existing, request, parentId, noopMetadata, targetSha256, currentSha256))
+        {
+            // 正文、标题与源 metadata 都未变化时保持 UpdatedAt 不动，但仍原子记录“最后观察到
+            // 该节点的发布批次”。这样旧批次随后尝试 rollback 时会被拒绝，不会删除已被后续
+            // 成功发布确认过的节点。该内部安全 marker 不把本次响应从 noop 变成 update。
+            existing.Metadata.TryGetValue(DocumentStorePublisherPolicy.LastAppliedRunIdKey, out var lastAppliedRunId);
+            if (!string.Equals(lastAppliedRunId, request.RunId, StringComparison.Ordinal))
+            {
+                var filter = Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(item => item.Id, existing.Id),
+                    Builders<DocumentEntry>.Filter.Eq(item => item.UpdatedAt, existing.UpdatedAt),
+                    Builders<DocumentEntry>.Filter.Eq("Metadata.publisher", request.Publisher),
+                    Builders<DocumentEntry>.Filter.Eq("Metadata.sourceId", sourceId),
+                    Builders<DocumentEntry>.Filter.Eq("Metadata.lastAppliedRunId", lastAppliedRunId));
+                var touched = await _db.DocumentEntries.UpdateOneAsync(
+                    filter,
+                    Builders<DocumentEntry>.Update.Set(
+                        $"Metadata.{DocumentStorePublisherPolicy.LastAppliedRunIdKey}",
+                        request.RunId),
+                    cancellationToken: CancellationToken.None);
+                if (touched.MatchedCount != 1)
+                    return ConflictResult("远端节点在 noop 确认前发生变化；请重新生成 plan");
+            }
             return Ok(ApiResponse<object>.Ok(new { action = "noop", nodeId = existing.Id, updatedAt = existing.UpdatedAt, sourceSha256 = targetSha256 }));
+        }
 
+        var metadata = BuildMetadata(existing.Metadata, request, sourceId, targetSha256, kind);
         return isFolder
             ? await UpdateFolderAsync(existing, request, parentId, metadata, targetSha256)
             : await UpdateDocumentAsync(existing, store, request, parentId, metadata, targetContent, targetSha256);
@@ -556,7 +588,8 @@ public sealed class DocumentStorePublisherController : ControllerBase
         string sourceId,
         string targetSha256,
         string kind,
-        string? createdByRunId = null)
+        string? createdByRunId = null,
+        bool preserveLastAppliedRunId = false)
         => DocumentStorePublisherPolicy.MergeMetadata(
             current,
             request.Metadata,
@@ -568,7 +601,9 @@ public sealed class DocumentStorePublisherController : ControllerBase
             request.SourceRevision.Trim(),
             kind,
             createdByRunId,
-            request.RunId);
+            preserveLastAppliedRunId
+                ? current?.GetValueOrDefault(DocumentStorePublisherPolicy.LastAppliedRunIdKey)
+                : request.RunId);
 
     private static bool HasTitleCollision(
         IReadOnlyList<DocumentEntry> all,
