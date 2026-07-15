@@ -452,15 +452,36 @@ public class DocumentStoreSyncResource : ISyncableResource
         var processed = 0;
         var total = records.Count;
         var guard = 0;
-        while (pendingFolders.Count > 0 && guard++ < 5000)
+        // 文件夹应用阶段（先于文件记录 / 镜像删除）也接入取消：progress 回调会触发取消检查点，若此时点「停止」，
+        // 默认零计数的取消异常会逃逸并跳过成功收尾的库摘要重算，且已插入/更新的文件夹不计入 cancelled run 审计。
+        // 与文件记录 / 镜像删除同款：先按实际条目数校正库摘要，再带上此刻部分计数抛出（Codex PR#1144 P2）。
+        try
         {
-            var progressed = false;
-            foreach (var f in pendingFolders.ToList())
+            while (pendingFolders.Count > 0 && guard++ < 5000)
             {
-                if (!string.IsNullOrEmpty(f.ParentLineageId)
-                    && !lineageToTargetId.ContainsKey(f.ParentLineageId)
-                    && !byLineage.ContainsKey(f.ParentLineageId))
-                    continue;
+                var progressed = false;
+                foreach (var f in pendingFolders.ToList())
+                {
+                    if (!string.IsNullOrEmpty(f.ParentLineageId)
+                        && !lineageToTargetId.ContainsKey(f.ParentLineageId)
+                        && !byLineage.ContainsKey(f.ParentLineageId))
+                        continue;
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = f.Title,
+                    }, ct);
+                    await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
+                    processed++;
+                    pendingFolders.Remove(f);
+                    progressed = true;
+                }
+                if (!progressed) break;
+            }
+            foreach (var f in pendingFolders)
+            {
                 await actor.ReportProgressAsync(new SyncProgressUpdate
                 {
                     Phase = "本地写入",
@@ -470,22 +491,12 @@ public class DocumentStoreSyncResource : ISyncableResource
                 }, ct);
                 await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
                 processed++;
-                pendingFolders.Remove(f);
-                progressed = true;
             }
-            if (!progressed) break;
         }
-        foreach (var f in pendingFolders)
+        catch (PeerSyncRunCancelledException)
         {
-            await actor.ReportProgressAsync(new SyncProgressUpdate
-            {
-                Phase = "本地写入",
-                Current = processed,
-                Total = total,
-                CurrentRecordTitle = f.Title,
-            }, ct);
-            await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
-            processed++;
+            await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
+            throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
         }
 
         // 文件类记录
@@ -574,6 +585,16 @@ public class DocumentStoreSyncResource : ISyncableResource
                         {
                             var stored = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                             if (stored == null) { failed++; continue; }
+                            // 大文件下载耗时，本记录唯一的取消检查点在循环顶部（下载之前）。下载后、写库前补一次取消轮询，
+                            // 否则用户在下载期间点「停止」会漏检，文件仍被写入、run 正常收尾而非 cancelled（Codex PR#1144 P2）。
+                            // 抛出的取消异常由本 per-file try 的 cancelled catch 兜住（校正库摘要 + 带部分计数重抛）。
+                            await actor.ReportProgressAsync(new SyncProgressUpdate
+                            {
+                                Phase = "本地写入",
+                                Current = processed,
+                                Total = total,
+                                CurrentRecordTitle = fe.Title,
+                            }, ct);
                             var att = BuildAttachment(pa, stored, actorUserId);
                             await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
                             await _db.Attachments.InsertOneAsync(att, cancellationToken: ct);
@@ -624,6 +645,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                     // 新建二进制条目
                     var storedNew = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                     if (storedNew == null) { failed++; continue; }
+                    // 同上：新建二进制条目下载后、写库前补取消检查点，兜住下载期间点停（Codex PR#1144 P2）。
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = fe.Title,
+                    }, ct);
                     var attNew = BuildAttachment(pa, storedNew, actorUserId);
                     await ReLocalizeAttachmentThumbnailAsync(attNew, pa, ct);
                     await _db.Attachments.InsertOneAsync(attNew, cancellationToken: ct);
@@ -819,6 +848,16 @@ public class DocumentStoreSyncResource : ISyncableResource
                     created++;
                 }
             }
+            catch (PeerSyncRunCancelledException)
+            {
+                // 用户取消：不能吞成 per-record failure，必须冒泡到 PeerSyncTransferService 的 cancelled catch，
+                // 否则逐篇写入阶段点「停止」会让整个 run 落 error（继续跑完剩余记录）而非 cancelled（Codex P2）。
+                // 带上此刻已提交的部分增删改计数，让 cancelled run 如实记录已改动的数量（Codex P2 审计准确）。
+                // rethrow 会跳过收尾的 store 级 DocumentCount/UpdatedAt 重算，而前面已提交了部分条目增删——
+                // 先按实际条目数校正库摘要再抛，避免取消的 pull/align 留下陈旧文档数（Codex PR#1144 P2）。
+                await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
+                throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[peer-sync] apply entry failed: {Title}", fe.Title);
@@ -841,10 +880,27 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 try
                 {
+                    // 破坏性删除阶段也要能被停止：每次删除前报一次进度，经 actor 回调触发取消检查点，
+                    // 用户点「停止」后立即中断，不再删完剩余条目（Codex P2：align-remote/local 的删除循环之前不查取消）。
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = e.Title,
+                    }, ct);
                     await _db.DocumentEntries.DeleteOneAsync(x => x.Id == e.Id, ct);
                     if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
                         await CleanupReplacedDocAsync(e.DocumentId, string.Empty, e.Id);
                     deleted++;
+                }
+                catch (PeerSyncRunCancelledException)
+                {
+                    // 取消异常必须冒泡到 SyncItemAsync 的 cancelled catch，不能被下面的通用 catch 吞成 failure。
+                    // 带上已删除等部分计数，让破坏性 align 取消的历史如实记录已删除数量（Codex P2 审计准确）。
+                    // 镜像删除已提交部分删除，rethrow 会跳过收尾的库摘要重算——先按实际条目数校正再抛（Codex PR#1144 P2）。
+                    await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
+                    throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
                 }
                 catch (Exception ex)
                 {
@@ -917,6 +973,29 @@ public class DocumentStoreSyncResource : ISyncableResource
                 + (failed > 0 ? $"/失败{failed}" : "")
                 + (assetsRewritten > 0 || assetRewriteFailed > 0 ? $"；图片重传{assetsRewritten}/失败{assetRewriteFailed}" : ""),
         };
+    }
+
+    /// <summary>
+    /// 取消中断时校正知识库摘要：逐篇 apply / 镜像删除已提交部分条目增删，但收尾的 store 级 DocumentCount/UpdatedAt
+    /// 重算被 rethrow 跳过，会留下与实际条目数不符的陈旧摘要。此处只按真实条目数校正 DocumentCount + 触碰 UpdatedAt，
+    /// **不套用未完成 bundle 的库级元数据**（Name/Tags/主文档等半量元数据不应在取消态落库）（Codex PR#1144 P2）。
+    /// 取消经业务 DB flag 触发（非 CancellationToken），此处 ct 仍有效，可正常读写。
+    /// </summary>
+    private async Task RefreshStoreSummaryOnCancelAsync(string storeId, CancellationToken ct)
+    {
+        try
+        {
+            var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == storeId, cancellationToken: ct);
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == storeId,
+                Builders<DocumentStore>.Update
+                    .Set(s => s.DocumentCount, (int)count)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[peer-sync] refresh store summary on cancel failed: {StoreId}", storeId);
+        }
     }
 
     private sealed record DocumentStorePeerApplyOptions(
