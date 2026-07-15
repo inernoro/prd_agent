@@ -789,6 +789,28 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void UsageCostStates_AreTraceableAndNeverInventFxOrZeroUnknownCost()
+    {
+        var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
+
+        foreach (var label in new[] { "费用四状态", "可估算", "供应商实际", "估算未知", "已对账" })
+        {
+            Assert.Contains(label, usagePage);
+        }
+
+        Assert.Contains("reconciliation.items.map", usagePage);
+        Assert.Contains("/logs?requestId=", usagePage);
+        Assert.Contains("逐条查看 Gateway 估算、供应商实际、差额依据和匹配粒度", usagePage);
+        Assert.Contains("汇总记录没有单条 requestId", usagePage);
+        Assert.Contains("value == null ? unknownLabel", usagePage);
+        Assert.Contains("item.reconciliationStatus !== 'reconciled' || item.reconciliationDelta == null", usagePage);
+        Assert.Contains("币种不同且没有可审计 FX，禁止计算差额", usagePage);
+        Assert.Contains("前端不猜测汇率", usagePage);
+        Assert.DoesNotContain("providerToEstimatedFxRate *", usagePage);
+        Assert.DoesNotContain("* item.providerToEstimatedFxRate", usagePage);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
