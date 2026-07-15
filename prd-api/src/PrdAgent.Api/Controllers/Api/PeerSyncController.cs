@@ -672,9 +672,14 @@ public class PeerSyncController : ControllerBase
         // 的库（status=cancelled/error 但关系仍在）会被误拒，连改自动同步周期都 400（Codex P2 两向）。
         if (request.Enabled)
         {
+            // 绑定「当前保存的对端」：只认发往 store.PeerSyncNodeId 的成功 run。否则切换对端 A→B 失败/取消时
+            // （syncing 阶段已把 B 写入 store），A 的旧成功会误放行，worker 却用未成功建立的 B 关系（Codex P2）。
+            // 方向不绑：run.Direction 存 runDirection（对齐为 align-*），与 store.PeerSyncDirection（push/pull/both）
+            // 口径不同，绑方向会在对齐场景误判；方向不一致由前端 directionDirty 门 + worker 复用 store 方向兜底。
+            var savedNodeId = store.PeerSyncNodeId ?? string.Empty;
             var hasSuccessfulSync = await _db.PeerSyncRuns
                 .Find(r => r.ResourceType == request.ResourceType && r.ItemId == request.ItemId
-                    && r.Origin == PeerSyncOrigin.Outgoing
+                    && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == savedNodeId
                     && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
                 .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
             if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)

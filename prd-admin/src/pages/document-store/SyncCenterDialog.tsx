@@ -293,7 +293,12 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     }
   };
 
-  const canAuto = everSynced && !shouldConfirmAutoDirection(peerSyncDirection);
+  // 自动同步复用「最近成功同步的方向」（服务端 PeerSyncDirection）；用户在段控里改了方向但还没成功
+  // 手动同步一次，就开自动，会出现「header 说自动 pull、后台 run 还 push」的不一致（Codex P2）。
+  // 因此本地方向与服务端保存方向不一致时，禁用自动开关，逼用户先按新方向成功同步一次。
+  const serverDirection = initialManualDirection(peerSyncDirection);
+  const directionDirty = !!serverDirection && !!direction && direction !== serverDirection;
+  const canAuto = everSynced && !shouldConfirmAutoDirection(peerSyncDirection) && !directionDirty;
   const primaryLabel = submitting ? '同步中…'
     : !direction ? '先选择方向'
       : tone === 'red' ? '重试同步'
@@ -400,7 +405,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                   <div className="flex shrink-0 items-center gap-2.5">
                     <div className="hidden text-right sm:block">
                       <div className="text-[11.5px] font-semibold" style={{ color: 'var(--text-secondary)' }}>自动</div>
-                      <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{!canAuto ? '同步一次后可开' : autoOn ? '保持同步' : '仅手动'}</div>
+                      <div className="text-[10px]" style={{ color: directionDirty ? 'rgb(252,211,77)' : 'var(--text-muted)' }}>{directionDirty ? '新方向需先同步' : !canAuto ? '同步一次后可开' : autoOn ? '保持同步' : '仅手动'}</div>
                     </div>
                     <button
                       role="switch"
@@ -408,7 +413,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                       aria-label="自动保持同步"
                       onClick={() => applyAuto(!autoOn, autoInterval)}
                       disabled={autoBusy || (!autoOn && !canAuto)}
-                      title={!canAuto ? '请先手动同步一次（确定对端与方向）' : autoOn ? '关闭自动同步' : '开启自动同步'}
+                      title={directionDirty ? '所选方向尚未保存，请先按新方向手动同步一次，再开自动' : !canAuto ? '请先手动同步一次（确定对端与方向）' : autoOn ? '关闭自动同步' : '开启自动同步'}
                       className="relative h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-40"
                       style={{
                         background: autoOn ? 'rgba(20,184,166,0.30)' : 'rgba(148,163,184,0.14)',
