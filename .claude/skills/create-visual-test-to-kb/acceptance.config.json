@@ -23,7 +23,7 @@
     "format": "html",
     "_formatNote": "CDS/local 报告默认用交互 HTML。报告正文仍用 Markdown 编写，archive_report.py 在归档前转换为带证据导航、表格筛选、章节折叠的 HTML；旧兼容可改为 md。",
     "cdsProjectId": "",
-    "_cdsProjectIdNote": "CDS 项目 ID。留空则按 env CDS_PROJECT_ID > config.project 解析；都没有则归到 CDS 自身（全局）。CDS 鉴权走 env CDS_PROJECT_KEY（项目级 cdsp_*，推荐最小权限）或 AI_ACCESS_KEY（全局），CDS_HOST 指向 cds 域名。",
+    "_cdsProjectIdNote": "CDS 项目 ID。留空则按 env CDS_PROJECT_ID > config.project 解析；都没有则归到 CDS 自身（全局）。CDS 鉴权走 env CDS_PROJECT_KEY（项目级最小权限 key）或 AI_ACCESS_KEY（全局），CDS_HOST 指向 CDS 服务地址。",
     "cdsFolder": "",
     "_cdsFolderNote": "文件夹归类三级解析：archive_report.py 的 --folder-path > 本字段 > --module 自动归类（三者都空才落项目根）。'/'分隔可嵌套（如「每日验收/2026-07」），在项目作用域内按名 find-or-create。本字段留空即默认按模块归类，报告不再散落项目根。",
     "naming": "{project} · {module} · {feature} · {type} · 验收报告",

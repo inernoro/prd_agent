@@ -71,7 +71,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
-import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 interface ToolCardProps {
   item: ToolboxItem;
@@ -322,6 +322,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           ...glassTileStyle(accent),
           minHeight: hasArtwork ? 258 : undefined,
           background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
+          border: hasArtwork ? 'none' : glassTileStyle(accent).border,
         }}
       >
         <AgentCardArtwork agentKey={item.agentKey} />
@@ -336,11 +337,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             }}
           />
         )}
-        {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸）—— 与首页瓦片一致 */}
-        <div
-          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
-        />
+        {hasArtwork ? (
+          <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
+        ) : (
+          <div
+            className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+            style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
+          />
+        )}
 
         {/* 头行：大图卡显示名称与直接任务；普通卡保留图标芯片。 */}
         <div className="relative z-10 flex items-start justify-between gap-2">
@@ -455,8 +459,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
             <ArrowUpRight
               size={15}
-              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
-              style={{ color: hasArtwork ? 'var(--media-card-task)' : 'var(--text-muted)' }}
+              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-[0.45] group-hover:translate-x-0 transition-all duration-200"
+              style={{ color: hasArtwork ? 'var(--media-card-task-muted)' : 'var(--text-muted)' }}
             />
             </div>
           </div>

@@ -2,8 +2,8 @@
 //
 // 运行：
 //   export PWPATH=$(npm root -g)/playwright
-//   export MAP_AI_USER=inernoro MAP_ACCEPT_PASS='***'
-//   node example-driver.mjs "<预览域名，如 https://xxx.miduo.org>"
+//   export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>'
+//   node example-driver.mjs "https://<preview-host>"
 //
 // 产出：/tmp/acc_shots/*.png + /tmp/acc_shots/manifest.json（喂给 archive_report.py）
 //

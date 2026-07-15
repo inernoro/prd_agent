@@ -138,4 +138,29 @@ public class PeerSyncScheduleTests
     {
         Assert.Equal(expected, PeerSyncSchedule.NormalizeMode(input));
     }
+
+    [Theory]
+    // 归一方向 → 含对齐等价值的集合
+    [InlineData("push", new[] { "push", "align-local" })]
+    [InlineData("pull", new[] { "pull", "align-remote" })]
+    [InlineData("both", new[] { "both", "align-both" })]
+    // align-* 原值也必须归一到同一集合：store.PeerSyncDirection 被 IsRunnableDirection /
+    // IsUserConfirmedAutoDirection 视为合法可运行值也含 align-*，若这里返回空集，established gate
+    // 会把「用强制对齐建立过」的库误判为未建立、禁掉自动同步（Codex PR#1144 P2 回归守卫）。
+    [InlineData("align-local", new[] { "push", "align-local" })]
+    [InlineData("align-remote", new[] { "pull", "align-remote" })]
+    [InlineData("align-both", new[] { "both", "align-both" })]
+    public void AcceptableRunDirections_NormalizesAlignEquivalents(string? input, string[] expected)
+    {
+        Assert.Equal(expected, PeerSyncSchedule.AcceptableRunDirections(input));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("received")]   // 仅接收审计，不算任何可运行方向
+    [InlineData("unknown")]
+    public void AcceptableRunDirections_EmptyForNonRunnable(string? input)
+    {
+        Assert.Empty(PeerSyncSchedule.AcceptableRunDirections(input));
+    }
 }
