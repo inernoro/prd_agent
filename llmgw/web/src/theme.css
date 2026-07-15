@@ -194,7 +194,8 @@ a:focus-visible {
 
   .lg-quickstart-steps,
   .lg-quickstart-detail-grid,
-  .lg-quickstart-inputs {
+  .lg-quickstart-inputs,
+  .lg-quickstart-request-types {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
@@ -1374,6 +1375,259 @@ a:focus-visible {
   gap: 12px;
 }
 
+.lg-cost-state-section,
+.lg-reconciliation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.lg-cost-state-section .lg-section-heading,
+.lg-reconciliation-section .lg-section-heading {
+  margin: 0;
+}
+
+.lg-cost-state-section h2,
+.lg-reconciliation-section h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.lg-cost-state-section .lg-section-heading p,
+.lg-reconciliation-section .lg-section-heading p {
+  margin: 4px 0 0;
+}
+
+.lg-cost-state-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lg-cost-state-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.lg-cost-state-card > small {
+  color: var(--text-muted);
+  font: 650 10px ui-monospace, monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.lg-cost-state-card > strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-primary);
+  font: 650 20px ui-monospace, monospace;
+}
+
+.lg-cost-state-card h3 {
+  margin: 5px 0 0;
+  font-size: 12px;
+}
+
+.lg-cost-state-card p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lg-cost-state-card.is-estimated {
+  border-top-color: var(--info);
+}
+
+.lg-cost-state-card.is-actual {
+  border-top-color: var(--accent);
+}
+
+.lg-cost-state-card.is-unknown {
+  border-top-color: var(--warn);
+}
+
+.lg-cost-state-card.is-reconciled {
+  border-top-color: var(--ok);
+}
+
+.lg-reconciliation-result {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--ok) 48%, var(--border-subtle));
+  border-radius: var(--radius);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.lg-reconciliation-result > div:nth-child(2) {
+  min-width: 0;
+}
+
+.lg-reconciliation-result strong,
+.lg-reconciliation-result span {
+  display: block;
+}
+
+.lg-reconciliation-result div > span {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.lg-reconciliation-result-values {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  font: 650 11px ui-monospace, monospace;
+}
+
+.lg-reconciliation-result-values span {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.lg-record-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lg-reconciliation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lg-reconciliation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.lg-reconciliation-card-head,
+.lg-reconciliation-footer,
+.lg-reconciliation-match {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lg-reconciliation-card-head > div {
+  min-width: 0;
+}
+
+.lg-reconciliation-card-head strong,
+.lg-reconciliation-card-head span {
+  display: block;
+}
+
+.lg-reconciliation-card-head > div span {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 11px ui-monospace, monospace;
+  text-overflow: ellipsis;
+}
+
+.lg-reconciliation-status {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.lg-reconciliation-match {
+  justify-content: flex-start;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.lg-reconciliation-match > span {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.lg-reconciliation-match strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-reconciliation-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.lg-reconciliation-metrics > div {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.lg-reconciliation-metrics small,
+.lg-reconciliation-metrics strong,
+.lg-reconciliation-metrics span {
+  display: block;
+}
+
+.lg-reconciliation-metrics small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.lg-reconciliation-metrics strong {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font: 650 12px ui-monospace, monospace;
+  text-overflow: ellipsis;
+}
+
+.lg-reconciliation-metrics span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.lg-reconciliation-footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.lg-reconciliation-footer > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .lg-trust-explanation {
   display: flex;
   gap: 16px;
@@ -2031,6 +2285,35 @@ a:focus-visible {
   .lg-usage-grid > div,
   .lg-settings-card {
     padding: 15px;
+  }
+
+  .lg-cost-state-grid,
+  .lg-reconciliation-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-reconciliation-result {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .lg-reconciliation-result-values,
+  .lg-reconciliation-result > .lg-text-link {
+    grid-column: 2;
+  }
+
+  .lg-reconciliation-result-values {
+    flex-wrap: wrap;
+  }
+
+  .lg-reconciliation-card-head,
+  .lg-reconciliation-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lg-reconciliation-match strong,
+  .lg-reconciliation-footer > span:first-child {
+    white-space: normal;
   }
 
   .lg-recent-row {

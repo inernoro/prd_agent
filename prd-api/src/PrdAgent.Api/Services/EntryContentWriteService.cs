@@ -24,17 +24,20 @@ public class EntryContentWriteService
     private readonly IDocumentService _documentService;
     private readonly DocStoreServices.MentionService _mentions;
     private readonly DocStoreServices.DocumentVersionService _versions;
+    private readonly ILogger<EntryContentWriteService> _logger;
 
     public EntryContentWriteService(
         MongoDbContext db,
         IDocumentService documentService,
         DocStoreServices.MentionService mentions,
-        DocStoreServices.DocumentVersionService versions)
+        DocStoreServices.DocumentVersionService versions,
+        ILogger<EntryContentWriteService> logger)
     {
         _db = db;
         _documentService = documentService;
         _mentions = mentions;
         _versions = versions;
+        _logger = logger;
     }
 
     /// <param name="UpdatedAt">写入使用的统一时间戳（DB 与响应必须同值，避免前端缓存键错位）</param>
@@ -43,7 +46,29 @@ public class EntryContentWriteService
     /// <param name="Orphaned">失锚的划词评论数</param>
     /// <param name="DocumentId">写入后的 ParsedPrd id（内容寻址可能与旧值不同）</param>
     /// <param name="Conflicted">乐观并发写失败（expectedUpdatedAt 不匹配，正文/评论/账本/快照均未改动）</param>
-    public record WriteResult(DateTime UpdatedAt, int MentionsWritten, int Rebound, int Orphaned, string DocumentId, bool Conflicted = false);
+    public record WriteResult(
+        DateTime UpdatedAt,
+        int MentionsWritten,
+        int Rebound,
+        int Orphaned,
+        string DocumentId,
+        bool Conflicted = false,
+        bool DerivedFailed = false,
+        bool DerivedMarkerPersisted = true);
+
+    /// <summary>
+    /// 与正文同一条 MongoDB 条件更新中写入的条目字段。供受控发布器使用，避免正文先成功、
+    /// 标题或 metadata 后失败形成半完成状态。普通在线编辑不传此参数，行为保持不变。
+    /// </summary>
+    public sealed record EntryFields(
+        string Title,
+        string? Summary,
+        string? ParentId,
+        IReadOnlyList<string> Tags,
+        string? Category,
+        double? SortOrder,
+        IReadOnlyDictionary<string, string> Metadata,
+        long FileSize);
 
     /// <summary>
     /// 把一段正文写入条目。调用方负责：权限校验、资产归一化、模板校验、活动日志。
@@ -65,7 +90,9 @@ public class EntryContentWriteService
         string versionSource,
         string? restoredFromVersionId = null,
         string? contentTypeOverride = null,
-        DateTime? expectedUpdatedAt = null)
+        DateTime? expectedUpdatedAt = null,
+        EntryFields? entryFields = null,
+        string? derivedStateMetadataKey = null)
     {
         // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
         var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
@@ -87,6 +114,18 @@ public class EntryContentWriteService
             .Set(e => e.UpdatedAt, now);
         if (!string.IsNullOrWhiteSpace(contentTypeOverride))
             contentUpdate = contentUpdate.Set(e => e.ContentType, contentTypeOverride);
+        if (entryFields != null)
+        {
+            contentUpdate = contentUpdate
+                .Set(e => e.Title, entryFields.Title)
+                .Set(e => e.Summary, entryFields.Summary)
+                .Set(e => e.ParentId, entryFields.ParentId)
+                .Set(e => e.Tags, entryFields.Tags.ToList())
+                .Set(e => e.Category, entryFields.Category)
+                .Set(e => e.SortOrder, entryFields.SortOrder)
+                .Set(e => e.Metadata, entryFields.Metadata.ToDictionary(pair => pair.Key, pair => pair.Value))
+                .Set(e => e.FileSize, entryFields.FileSize);
+        }
 
         // 乐观并发：条件更新（Id + UpdatedAt），检查与写入是同一条原子操作。
         // 未命中说明期间有人保存过 → 整次写入放弃（评论/账本/快照都不动），
@@ -100,19 +139,68 @@ public class EntryContentWriteService
         if (expectedUpdatedAt != null && updateResult.MatchedCount == 0)
             return new WriteResult(now, 0, 0, 0, entry.DocumentId!, Conflicted: true);
 
-        // 重锚定划词评论
-        var (rebound, orphaned) = await RebindInlineCommentsAsync(entry.Id, content);
+        try
+        {
+            // 重锚定划词评论
+            var (rebound, orphaned) = await RebindInlineCommentsAsync(entry.Id, content);
 
-        // 重算双链账本
-        var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
+            // 重算双链账本
+            var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
 
-        // 版本快照：先把改动前基线落库（去重），再记本次新正文。最新版本恒等于当前正文。
-        // 基线用 Edit：这是用户当前的工作内容，标其他 source 会在历史里误显示来源。
-        if (oldContent != null)
-            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Edit, actorId, actorName);
-        await _versions.SnapshotAsync(entry.Id, store.Id, content, versionSource, actorId, actorName, restoredFromVersionId);
+            // 版本快照：先把改动前基线落库（去重），再记本次新正文。最新版本恒等于当前正文。
+            // 基线用 Edit：这是用户当前的工作内容，标其他 source 会在历史里误显示来源。
+            if (oldContent != null)
+                await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Edit, actorId, actorName);
+            await _versions.SnapshotAsync(entry.Id, store.Id, content, versionSource, actorId, actorName, restoredFromVersionId);
 
-        return new WriteResult(now, mentionsWritten, rebound, orphaned, entry.DocumentId!);
+            var markerPersisted = await TrySetDerivedStateAsync(entry.Id, now, derivedStateMetadataKey, "ready");
+            return new WriteResult(
+                now,
+                mentionsWritten,
+                rebound,
+                orphaned,
+                entry.DocumentId!,
+                DerivedMarkerPersisted: markerPersisted);
+        }
+        catch (Exception exception) when (!string.IsNullOrWhiteSpace(derivedStateMetadataKey))
+        {
+            _logger.LogError(exception, "条目 {EntryId} 正文已提交，但派生数据刷新失败", entry.Id);
+            var markerPersisted = await TrySetDerivedStateAsync(entry.Id, now, derivedStateMetadataKey, "failed");
+            return new WriteResult(
+                now,
+                0,
+                0,
+                0,
+                entry.DocumentId!,
+                DerivedFailed: true,
+                DerivedMarkerPersisted: markerPersisted);
+        }
+    }
+
+    private async Task<bool> TrySetDerivedStateAsync(
+        string entryId,
+        DateTime expectedUpdatedAt,
+        string? metadataKey,
+        string state)
+    {
+        if (string.IsNullOrWhiteSpace(metadataKey)) return true;
+        try
+        {
+            var result = await _db.DocumentEntries.UpdateOneAsync(
+                Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(item => item.Id, entryId),
+                    Builders<DocumentEntry>.Filter.Eq(item => item.UpdatedAt, expectedUpdatedAt)),
+                Builders<DocumentEntry>.Update.Set($"Metadata.{metadataKey}", state),
+                cancellationToken: CancellationToken.None);
+            if (result.MatchedCount == 1) return true;
+            _logger.LogError("条目 {EntryId} 已提交，但派生状态 {State} 的并发标记未命中", entryId, state);
+            return false;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "条目 {EntryId} 已提交，但派生状态 {State} 标记写入失败", entryId, state);
+            return false;
+        }
     }
 
     /// <summary>

@@ -108,6 +108,33 @@
 
 每个需要代码修复的批次使用独立 PR；本批次本地、CI、CDS 和验收未完成时，不把下一批代码混入。Bugbot 因订阅停止记为不适用，改由 Codex Review 和独立对抗复审留证。
 
+T4-G2 只读逐页审计确认模型池规则和 PromptPolicy 数据边界无需重做，同时找出会让教程断头的剩余产品孤岛。按下列有限子批次处理；一个子批次未合并和验收前，不把下一批代码混入同一 PR：
+
+| 子批次 | 精确范围 | 不包含 | 完成门 |
+|---|---|---|---|
+| G2-A | 最小权限知识库 publisher snapshot、三方 hash、CAS 写入、安全回滚和 foreign 内容保护 | 教程正文、控制台 UI、生产写入 | AgentApiKey 只有 `document-store:write` 也能在隔离库完成 plan/apply/noop/conflict/rollback，不能触碰非受管条目 |
+| G2-B | 角色驱动的导航和写操作可见性 | 后端 RBAC 规则重做 | Owner、Admin、Developer、Viewer、Billing 不再看到注定 403 的入口，直接访问仍由后端拒绝 |
+| G2-C | chat/vision appCaller 自助创建、PromptPolicy 测试入口与 Quickstart 可展开安全选项 | 新协议、批量付费测试 | 外部新租户能分别创建 chat/vision；安全测试仍默认不访问付费上游 |
+| G2-D | 用量页四种费用状态、逐条对账、差额和导入结果反馈 | 汇率猜测、跨币种直接求和 | estimated、actual、unknown、reconciled 能双向追溯；无可信 FX 时保持原币种 |
+| G2-E | Exchange 自助创建与映射编辑 | 重做路由算法或模型迁移 | 空租户能建立第一条映射、读回、修改并在审计中定位 |
+| G2-F | 33 章源文件、离线校验、幂等发布器、隔离库双发布与整书连续测试 | 生产共享池变更、真实密钥入库 | 第 0 至 32 章齐全；第二次发布为 noop；人工漂移触发 conflict；无未解析图片占位符 |
+
+G2-A 已关闭：PR #1143 正常合并为 `6f4d4937dfc795a8703c94ecbafbda08d7273df9`；标准非集成套件 1654 项通过、4 项跳过，publisher 定向与真实 Mongo 行为测试 26 项通过，三轮独立对抗复审最终为 0 个 P0、0 个未关闭 P1。CDS 单 profile 使用目标提交镜像通过 TCP/HTTP 探测；公网验收覆盖 401、403、created、noop、陈旧 CAS 409、安全回滚 200，临时知识库与 Key 清理回查均为 0。
+
+G2-B 已关闭：PR #1145 正常 squash 合并为 `5aae0be79cdef75be17de39918e767a85141e961`。前端以 `llmgw/console-api/Auth/TenantAccessContext.cs` 为服务端权威镜像五角色权限，未知角色在控制台布局与业务 API 挂载前失败关闭；导航、顶部 requestId 搜索、旧深链和配置写控件统一走中央能力表。Viewer 的 Quickstart 保留教程与示例但不创建 appCaller/key、不执行直测；Developer 可管理团队内 appCaller 与 scoped key，但不能创建通配 key、进入 PromptPolicy、审计或修改路由配置；Billing 只保留概览、用量、学习中心和本地设置。前端生产构建、Gateway 数据域与 RBAC 合同 79/79、CI 同口径标准测试 675/675、GitHub CI、四镜像、CDS 完整部署和独立网关子域终验均通过；七张截图、十二项断言、双主题、零截图告警，独立复审为 0 个 P0、0 个 P1。不可变终验报告为 [G2-B 五角色 RBAC 独立子域终验](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb)。
+
+G2-C 精确计划：后端自助创建、PromptPolicy 版本与 serving 注入已经支持 `chat/vision`，本批不重写这些能力。当前断点仅在 Quickstart：`requestType`、appCaller 后缀校验、四协议示例和安全请求体全部写死为 chat，创建完成后也没有直达当前 appCaller 策略预览的入口。本批只做以下四项：第一，增加 chat/vision 调用类型选择，并自动保持 `appCallerCode` 的 `::chat/::vision` 后缀一致，手工输入不一致时在创建前明确拒绝；第二，为 GW Native、OpenAI、Claude、Gemini 分别生成 chat 或 vision 的真实协议形状，vision 仅携带内嵌占位图片并继续使用 `X-Gateway-Dry-Run: quickstart`，必须在模型解析和上游发送前结束；第三，在生成结果中显示 appCaller 类型、策略适用范围和当前角色可用的 PromptPolicy 预览入口，Developer 无配置权限时只说明由 Owner/Admin 管理；第四，把请求体、安全 header、`upstreamCalled=false` 成功门和“本页不提供付费开关”收进默认折叠的安全选项。完成门为 chat/vision 各自四协议共八个合同用例全部返回 requestId、写入同 TenantId/TeamId/ServiceKeyId 日志且无费用字段，上游对象若被调用则测试立即失败；前端生产构建、标准回归、CI、CDS、双主题与负向页面证据全部通过后才合并。
+
+G2-C 本地实现证据：Quickstart 已能选择文字对话或图片理解，自动同步 `::chat/::vision` 后缀；Viewer 可切换两类示例但不能创建，Developer 能创建团队 scoped 身份但只看到由 Owner/Admin 管理策略的说明，Owner/Admin 在生成后可直达对应 appCaller 的 PromptPolicy。创建阶段锁定身份字段，避免 appCaller 已按一种类型创建、界面却切换到另一类型的竞态。前端生产构建通过；chat/vision × GW Native/OpenAI/Claude/Gemini 八格安全测试使用 ThrowingGateway 通过，证明没有调用上游；Gateway 数据域守卫 79/79、协议与 key gate 92/92、标准非集成套件 1654 项通过且 4 项跳过、CI 同口径数据域套件 675/675 通过，解决方案编译 0 error。PR、CDS 和浏览器视觉证据未完成前仍保持进行中。
+
+G2-C 已关闭：PR #1146 正常 squash 合并为 `c346c99768114d4421a2160ca86fa2b94e6b16fe`。GitHub CI、Server Build & Test、四个相关镜像与 CDS Deploy 全绿；独立 `llmgw-web` 子域完成 10 图、33 条行为断言、深浅主题、390px 移动端、Owner/Developer/Viewer 和四协议 vision 安全直测，截图 warning 为 0。浏览器只使用合成角色、合成 key 与假上游；服务端 `ThrowingGateway` 集成测试独立证明没有访问上游。不可变终验报告为 [G2-C chat/vision Quickstart 独立子域终验](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2)。
+
+G2-D 精确计划：PR-10 已经交付 tenant-scoped 供应商账单导入、逐请求与时间窗对账、estimated/actual 分栏、FX 凭证门、唯一索引、审计、汇总和请求详情字段，本批不得重复实现后端算法或数据库结构。当前断点只在 `/usage`：页面有估算与 actual 汇总卡，但没有把 estimated、actual、unknown、reconciled 四种状态放在同一可信度看板；`CostReconciliationSummary.Items` 与 `StatusDistribution` 已由 API 返回却完全未展示，用户无法从导入结果追到 requestId、估算、供应商实际、差额、币种和 FX 证据；导入成功后表单静默关闭，没有明确成功回执。本批只做以下四项：第一，用现有 summary 与 reconciliation 派生四状态看板，estimated 按价格覆盖请求数、actual 按账单记录数、unknown 按缺价格请求数、reconciled 按状态分布计数，金额继续按原币种分卡展示；第二，导入成功后显示粒度、供应商流水、状态、actual、estimated 与差额，并提供 requestId 回查入口，窗口账单明确标为汇总、不得伪装成逐请求；第三，展示最近 500 条现有对账明细，状态使用中文解释，只有 `reconciled` 且 delta 非空时显示差额，`estimated-unavailable` 和 `fx-unavailable` 明确显示未知或缺汇率凭证，不渲染 0；第四，移动端使用纵向卡片而不是横向表格，不增加总币种金额、汇率猜测或前端换算。完成门为前端构建、费用边界守卫、现有服务端回归、GitHub CI、CDS、深浅主题、移动端、同币种对账、跨币种无 FX、unknown 与窗口粒度负向证据全部通过后才合并。
+
+G2-D 本地实现证据：`/usage` 已补费用四状态看板、导入成功回执、最近对账卡片、requestId 回查、窗口账单解释、独立读取失败态和 390px 单列布局；unknown 使用文字而不是 0，只有服务端状态为 `reconciled` 且返回 delta 才显示差额，前端不执行币种换算。Web 生产构建通过；新增费用展示边界守卫 1/1、标准数据域套件 676/676、API 非集成套件 1654 项通过且 4 项既有跳过、解决方案编译 0 error。多角度反向审查和分支范围检查没有未关闭的 P0/P1，也没有后端算法、集合、权限、模型池或发布 gate 越界。PR、GitHub CI、CDS 和正式浏览器视觉报告未完成前仍保持进行中。
+
+逐页审计同时确认：Quickstart 的四协议 dry-run 只证明地址、鉴权、团队、appCaller、协议形状、日志和 requestId，不证明真实模型路由、流式、vision 或参数语义保真。第 27 章必须另用假上游契约测试覆盖这些内容，每类真实协议最多一次。
+
 ## 六、视觉证据合同
 
 每个截图必须先出现真实产物，再截图并读回：
@@ -124,21 +151,21 @@
 |---|---|---|---|
 | 事实审计 | 已完成 | 已确认 17 个页面、6 组导航、页面—API 关系和公开登录断点 | 在后续实测中持续记录新增断点 |
 | 教程设计 | 已完成 | 33 章三级目录、连续测试数据和截图合同已冻结 | 随实测补齐每章异常树，不改变连续主线 |
-| 产品修复 | 已完成当前教程前置批次 | T0、T1、T2、T3 均已独立合并；T3 PR #1134 修复提示词字符口径含混、请求日志多记字符数、操作审计多记字符数/上限/开关、费用页术语难懂和 appCaller 心智缺失五个问题，合并提交 `aef8d21cc` | T4 实测若发现新的断头流程，只在独立修复 PR 中处理，不把修复混入教程内容 PR |
+| 产品修复 | G2-D 进行中 | T0、T1、T2、T3 均已独立合并；G2-A、G2-B、G2-C 已独立合并并验收，G2-C 合并提交为 `c346c9976` | 在独立 G2-D 分支只补费用四状态与逐条追溯；不重做后端对账或混入 Exchange |
 | 连续实测 | 进行中 | 四协议同钥、无 key 401、unknown cost 已通过；PromptPolicy 已完成 v1、v2、回滚生成 v3、当前运行态保存 v5；页面和 MongoDB 双向确认 v5 审计只含目标 id、version、policyHash；chat/vision、日志和四种费用状态定向测试 9/9 通过；PR #1134 CI/CDS 全绿，公网 health commit 一致，未登录审计与费用接口均返回 401 | T4 按 33 章顺序生成正文和截图，完成双主题、移动端、负面路径与新手复验 |
-| T4 流程补洞 | 进行中 | 真实编写第 5 章时发现“后端已有成员生命周期、前端只能查看”的功能孤岛；已补齐创建成员、分配团队、改角色与状态、强制重新登录，并修正首次改密页公共默认口令误导和前后端 12 位口令门槛。对抗审查继续找出并修复旧页面并发覆盖、无团队 Developer、隐藏停用团队、自我锁死、Billing 死入口、既有全局账号被无确认挂载、授权范围审计缺失、停用 Owner 无法清理、跨租户用户名抢占、长租户 slug 与账号短名契约冲突、Developer 省略停用团队范围以及 pending 审计幂等误报成功等边界；成员关键变更先写包含 TenantId 的 pending 审计意图，再执行业务写入并收口完成态。隔离租户完成页面、HTTP API、审计集合与 MongoDB 双向验证，23 项行为断言与 91 项成员策略/数据域守卫通过，成功操作没有残留 pending 审计，故障注入下 pending 幂等重放被拒绝 | 当前修复仍在独立 PR 的提交前复审阶段，未合并前不关闭 G1；本地验收账号在证据归档完成后定向清理 |
-| T4 视觉验收 | G3、G4 已关闭 | 完成 18 张有效标注截图的逐张人工回读；覆盖点击导航、租户边界、Developer 无团队负例、创建与列表读回、自我锁死保护、强制重新登录、成员审计、首次口令、短口令拒绝、Billing 导航、浅色、深色和手机抽屉。manifest 为 18/18 已标注、0 warning，自动捕获 P0/P1 为 0 | 先发布 T4-G1 有条件通过报告；PR 合并和公网预览通过后关闭 G1，再继续 G2 正文与 G5 新手复验 |
+| T4 流程补洞 | G1 已关闭 | 真实编写第 5 章时发现“后端已有成员生命周期、前端只能查看”的功能孤岛；已补齐创建成员、分配团队、改角色与状态、强制重新登录，并修正首次改密页公共默认口令误导和前后端 12 位口令门槛。对抗审查继续找出并修复旧页面并发覆盖、无团队 Developer、隐藏停用团队、自我锁死、Billing 死入口、既有全局账号被无确认挂载、授权范围审计缺失、停用 Owner 无法清理、跨租户用户名抢占、长租户 slug 与账号短名契约冲突、Developer 省略停用团队范围以及 pending 审计幂等误报成功等边界；成员关键变更先写包含 TenantId 的 pending 审计意图，再执行业务写入并收口完成态。隔离租户完成页面、HTTP API、审计集合与 MongoDB 双向验证，23 项行为断言与 91 项成员策略/数据域守卫通过，成功操作没有残留 pending 审计，故障注入下 pending 幂等重放被拒绝；PR #1138、CI、CDS、公网独立网关子域及浏览器复验全部通过，合并提交 `29f4e38e` | G1 已关闭；本地验收账号在证据归档完成后已定向清理。下一步只推进 G2 的 33 章连续实测，不把后续内容混回已合并修复 PR |
+| T4 视觉验收 | G1、G3、G4 已关闭 | 完成 18 张有效标注截图的逐张人工回读；覆盖点击导航、租户边界、Developer 无团队负例、创建与列表读回、自我锁死保护、强制重新登录、成员审计、首次口令、短口令拒绝、Billing 导航、浅色、深色和手机抽屉。manifest 为 18/18 已标注、0 warning，自动捕获 P0/P1 为 0；公网独立网关子域页面与主脚本 200，未登录组织接口 401，health commit 对齐，浏览器跳登录页且页面错误为 0 | 继续 G2 正文与 G5 新手复验；整本教程最终报告仍等待五门全部关闭 |
 | 低理解力复验 | 基线完成 | 无背景智能体无法从公开入口完成首请求 | 教程发布后重新复验 |
-| MAP 发布 | 在途总览已发布 | “模型网关权威教程”已建立唯一在途文档“LLM Gateway 权威教程：实时验收总览”，展示固定权重、PR、证据、问题和未完成项；仓库与本地在途报告已更新为 62% | 持续更新同一文档；恢复 MAP SSO 会话后同步 62%，T4 后再写入 33 章正文和图片 |
-| CDS 验收归档 | T4-G1 增量报告已完成 | [T4-G1 复验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4507c726cb6a4af98202bd46d3fffd58&report=ba6213d5dc214e73ae6d684ce1957222) 已按项目和月份归档；真实浏览器命中标题、核心正文、1 个报告 iframe 和 54 个图片节点 | 整本教程最终报告仍须等待 G1、G2、G5；当前报告保持内部登录态，不扩大为匿名公开 |
+| MAP 发布 | 在途总览已发布 | “模型网关权威教程”已建立唯一在途文档“LLM Gateway 权威教程：实时验收总览”，展示固定权重、PR、证据、问题和未完成项；仓库与本地在途报告已更新为总进度 62%、T4 3/5 | 持续更新同一文档；恢复 MAP SSO 会话后同步同一固定数值，G2 完成后再写入 33 章正文和图片 |
+| CDS 验收归档 | G1、G2-B、G2-C 增量报告已完成 | [T4-G1 合并后验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8)、[G2-B 独立子域终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb) 与 [G2-C chat/vision Quickstart 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2) 已归档并由登录态浏览器实开 | 整本教程最终报告仍须等待 G2、G5；增量报告保持内部登录态，不扩大为匿名公开 |
 
 ## 八、实时可见与固定进度
 
-实时总览固定入口：`https://map.ebcone.net/document-store?store=a406b53735494ac1bcf57c2de34b5b76`。库内唯一文档为“LLM Gateway 权威教程：实时验收总览”，后续只更新该文档，不创建随机进度页。
+当前可实时更新的唯一看板为 [GitHub issue #1139](https://github.com/inernoro/prd_agent/issues/1139)。总进度、门禁、当前证据、阻塞与下一步只更新该 issue，不再创建随机进度记录。MAP 最终目标入口仍为 `https://map.ebcone.net/document-store?store=a406b53735494ac1bcf57c2de34b5b76`；库内“LLM Gateway 权威教程：实时验收总览”是待恢复最小权限发布链后的产品内镜像，不再冒充实时来源。
 
-总进度按固定权重计算，禁止凭当前动作主观报数：T0 8%、T1 14%、T2 20%、T3 20%、T4 23%、T5 15%。当前 T0 至 T3 完成，因此已结算总进度为 `8 + 14 + 20 + 20 = 62%`。T4 不再报告主观的“阶段内部百分比”，改为 5 个可核验完成门：G1 流程孤岛修复 PR 合并、G2 33 章正文连续实测完成、G3 至少 12 张标注截图读回通过、G4 双主题/移动端/负面路径通过、G5 低理解力新手复验通过。当前 G3、G4 已关闭，T4 为 `2/5`；G1 仍等待独立 PR、CI、CDS 与公网预览，G2、G5 尚未开始。已关闭的阶段内完成门只更新 T4 看板；T4 五门未全部关闭前，已结算总进度仍保持 62%，不把零散工作折算成波动百分比。MAP 在途总览当前已发布快照仍为 49%；生产 MAP 改为 SSO 后，本轮自动更新被扫码登录门禁阻断，仓库计划文档和本地在途报告先作为 62% 最新账本，SSO 会话恢复后再把同一数值同步到固定总览。
+总进度按固定权重计算，禁止凭当前动作主观报数：T0 8%、T1 14%、T2 20%、T3 20%、T4 23%、T5 15%。当前 T0 至 T3 完成，因此已结算总进度为 `8 + 14 + 20 + 20 = 62%`。T4 不再报告主观的“阶段内部百分比”，改为 5 个可核验完成门：G1 流程孤岛修复 PR 合并、G2 33 章正文连续实测完成、G3 至少 12 张标注截图读回通过、G4 双主题/移动端/负面路径通过、G5 低理解力新手复验通过。当前 G1、G3、G4 已关闭，T4 为 `3/5`；G2、G5 尚未关闭。已关闭的阶段内完成门只更新 T4 看板；T4 五门未全部关闭前，已结算总进度仍保持 62%，不把零散工作折算成波动百分比。GitHub issue #1139 是 62% 最新账本；MAP 在途总览仍是 49% 旧快照，只有最小权限 publisher API、隔离演练和有效授权全部通过后才同步，禁止通过重置密码或高权 impersonation 绕开。
 
-CDS L2 报告与在途总览职责不同：在途总览用于实时纠偏；每个独立修复 PR 可以先归档一份不可变的增量验收报告。T4-G1 当前复验报告固定深链为 `https://cds.miduo.org/reports?project=prd-agent&folder=4507c726cb6a4af98202bd46d3fffd58&report=ba6213d5dc214e73ae6d684ce1957222`，已验证正文和图片真实渲染。整本教程最终报告仍必须等待 G1 至 G5 全部关闭；匿名公开属于权限扩大，只有取得单独授权后才创建。
+CDS L2 报告与在途总览职责不同：在途总览用于实时纠偏；每个独立修复 PR 可以先归档一份不可变的增量验收报告。T4-G1 合并后报告固定深链为 `https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8`，已验证标题、正文、iframe 和 54 个图片节点真实渲染。整本教程最终报告仍必须等待 G1 至 G5 全部关闭；匿名公开属于权限扩大，只有取得单独授权后才创建。
 
 ## 九、关联 SSOT
 
