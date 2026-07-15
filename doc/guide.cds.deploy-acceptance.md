@@ -1,96 +1,134 @@
-# CDS 可视化部署与验收指南
+# CDS 部署验收 · 指南
 
-> **类型**：guide（操作指南） · **版本**：v1.0 · **日期**：2026-06-01 · **状态**：可用
->
-> 面向使用者：如何在 CDS 上「纯前端点点点」一键部署一个前后端 + 数据库 + 消息队列并验收跑通。
-> 关联：`doc/plan.cds.visual-deploy.md`（计划看板）、`doc/design.cds.railway-onboarding-flow.md`（一键部署向导）、`doc/design.cds.ai-compose.md`（AI 生成 compose 备选）、`doc/spec.cds.compose-contract.md`（compose 契约）。
+> **版本**：v2.0 | **日期**：2026-07-15 | **状态**：开发中
 
----
+部署按钮显示成功不等于应用已经可用。CDS 的验收目标是证明：正确的代码和依赖已经运行，真实用户可以通过预览地址完成核心操作，出现问题时能够解释和恢复。
 
-## 一、30 秒了解
+## 适用场景
 
-CDS 是分支预览部署平台（mini-PaaS）。一个项目 = 一个 git 仓库；CDS 给每个分支起独立容器、绑定预览域名。本指南讲「从 0 部署一个前后端 + 基础设施」的可视化路径与验收清单。
+- 第一次把项目接入 CDS；
+- 推送新版本后确认没有退化；
+- 从 Compose 切换到托管模式；
+- 使用成功版本重新部署或回滚；
+- 判断故障属于业务代码、配置、CDS 还是外部服务。
 
-核心能力（本轮强化后）：
+## 验收前准备
 
-- 一键部署向导：选仓库 → 选运行环境（11 个预设或自动识别）→ 选基础设施 → 创建即自动 clone + 栈检测 + 生成构建配置 + 部署。
-- 基础设施一键可选，按类别分组：**数据库**（MongoDB / PostgreSQL / MySQL / SQL Server / ClickHouse）、**缓存**（Redis / Memcached）、**消息队列**（RabbitMQ / Kafka / NATS）、**搜索**（Elasticsearch）、**对象存储**（MinIO）。选中即自动生成持久化卷 + 注入连接环境变量（如 `DATABASE_URL` / `REDIS_URL` / `RABBITMQ_URL` / `KAFKA_BROKERS`）。
-- 实时部署时间线：拉取代码 → 构建镜像 → 启动服务 → 健康检查，全程可视，杜绝空白等待。
-- 新增基础设施类型只需在后端注册表 `cds/src/services/infra-catalog.ts` 加一条，UI 选择器与 `GET /api/infra/catalog` 自动出现，无需改前端。
+开始前确认以下信息：
 
----
+| 项目 | 需要知道什么 |
+| --- | --- |
+| 目标项目 | 项目名称和仓库来源 |
+| 目标版本 | 分支、提交和部署版本 |
+| 预览入口 | CDS 页面给出的最终预览地址 |
+| 核心操作 | 用户最重要的一条业务流程 |
+| 依赖 | 数据库、缓存、消息队列或外部服务 |
+| 恢复点 | 最近一个已验证成功版本 |
 
-## 二、一键部署一个前后端 + 基础设施（纯前端操作）
+## 第一阶段：确认部署过程完整
 
-1. 打开项目列表，点击「一键部署项目」。
-2. 选择仓库：填 Git URL 或用 GitHub 选择器；可填默认分支。
-3. 选择应用服务：为前端、后端各选运行环境（自动识别 / Node.js / Python / .NET / Java / Go / Rust / PHP / 静态站点 / Dockerfile / 自定义）。前端默认入口 `/`，后端默认 `/api/`。
-4. 选择基础设施：在分组选择器里勾选所需的数据库 / 缓存 / 消息队列等（可多选）。每项会自动生成持久化卷与连接环境变量。
-5. 点击创建。CDS 自动 clone 仓库 → 检测技术栈 → 生成构建配置（BuildProfile）→ 起基础设施容器 → 起应用容器。
-6. 观察实时时间线（拉取 → 构建 → 启动 → 健康检查）。任一阶段失败会在该阶段标红并给出原因。
-7. 就绪后打开预览域名验收（v3 公式：`{tail}-{prefix}-{project}.<预览根域>`）。
+打开本次部署记录，确认：
 
-无 `cds-compose.yml` 的仓库也能用：选了应用服务后，CDS 会按前端、后端分别生成构建配置，不会把你留在空白拓扑页。已有 `cds-compose.yml` / `docker-compose.yml` 的仓库则以其为最高优先级。
+- 准备、构建、启动和检查阶段有连续记录；
+- 页面刷新后仍然是同一条部署记录；
+- 触发来源、分支和提交与本次操作一致；
+- 每个服务分别显示结果；
+- 失败时有明确阶段、问题归属和处理建议。
 
----
+如果部署中断后页面完全找不到原过程，不应继续验收，应先确认部署记录是否正确恢复。
 
-## 三、基础设施目录（SSOT）
+## 第二阶段：通过预览地址验证
 
-后端唯一真源：`cds/src/services/infra-catalog.ts`。`GET /api/infra/catalog` 暴露脱敏视图（不含密码），前端选择器据此渲染。
+必须从 CDS 给出的预览地址访问，不能只在容器内部执行命令。
 
-| 类别 | 预设 | 镜像 | 端口 | 自动注入连接变量 |
-|---|---|---|---|---|
-| 数据库 | MongoDB | mongo:7 | 27017 | MONGODB_URL |
-| 数据库 | PostgreSQL | postgres:16-alpine | 5432 | DATABASE_URL / POSTGRES_URL |
-| 数据库 | MySQL | mysql:8 | 3306 | DATABASE_URL / MYSQL_URL |
-| 数据库 | SQL Server | mssql/server:2022 | 1433 | SQLSERVER_URL |
-| 数据库 | ClickHouse | clickhouse-server:24 | 8123 | CLICKHOUSE_URL |
-| 缓存 | Redis | redis:7-alpine | 6379 | REDIS_URL |
-| 缓存 | Memcached | memcached:1-alpine | 11211 | MEMCACHED_URL |
-| 消息队列 | RabbitMQ | rabbitmq:3-management | 5672 | RABBITMQ_URL |
-| 消息队列 | Apache Kafka | apache/kafka:3.7 (KRaft) | 9092 | KAFKA_BROKERS / KAFKA_URL |
-| 消息队列 | NATS | nats:2-alpine | 4222 | NATS_URL |
-| 搜索 | Elasticsearch | elasticsearch:8.11 | 9200 | ELASTICSEARCH_URL |
-| 对象存储 | MinIO | minio/minio | 9000 | S3_ENDPOINT / S3_ACCESS_KEY / S3_SECRET_KEY |
+至少完成：
 
-新增一类基础设施：在 `INFRA_CATALOG` 加一条（id / name / category / image / port / volumePaths / build 闭包生成 env 与连接串）。无需改前端、无需改其他后端代码。
+1. 打开最终功能页；
+2. 确认页面正常渲染或服务入口正常响应；
+3. 完成登录或身份校验；
+4. 执行一条核心业务操作；
+5. 刷新页面，确认数据和状态符合预期；
+6. 检查浏览器或接口没有持续错误。
 
----
+静态页不能只检查首页状态码；后台服务不能只检查进程存在；有数据依赖的项目必须完成一次真实读写。
 
-## 四、可直接学习的示例工程
+## 第三阶段：验证依赖
 
-仓库内 `cds/examples/` 下有自包含示例，均以 image + 命令 + 目录挂载运行（不构建自定义 Dockerfile），`cdscli verify` 评级 A：
+| 依赖类型 | 最低验收动作 |
+| --- | --- |
+| 数据库 | 写入一条测试数据并重新读取 |
+| 缓存 | 写入、读取，并确认过期或更新行为 |
+| 消息队列 | 发布一条消息并确认被消费 |
+| 对象存储 | 上传并重新读取一个测试文件 |
+| 外部服务 | 走真实调用路径并确认错误能被解释 |
 
-| 示例 | 栈 / 基础设施 | 演示 | 关键端点 |
-|---|---|---|---|
-| `demo-admin-pg-redis` | 静态管理台 + Express + PostgreSQL + Redis | 管理台读写 PG 的 items 表、Redis 计数 | `/api/health` `/api/items` `/api/visits` |
-| `demo-queue-rabbitmq` | 静态页 + Express + RabbitMQ | 发布 → 入队 → 消费 闭环 | `/api/health` `/api/publish` `/api/messages` |
-| `demo-stream-kafka` | 静态页 + Express + Kafka(KRaft 单节点) | 生产 → topic → 消费 | `/api/health` `/api/produce` `/api/events` |
-| `demo-events-nats` | 静态页 + Express + NATS | 发布 → subject → 订阅 | `/api/health` `/api/pub` `/api/sub` |
+基础设施容器显示运行，只能证明进程存在，不能代替业务链路验收。
 
----
+## 第四阶段：验证重复部署和恢复
 
-## 五、验收清单（逐项打勾）
+### 重新部署成功版本
 
-- [ ] 项目创建成功，clone 完成无报错
-- [ ] 栈检测生成了前端、后端构建配置（或读到了 cds-compose.yml）
-- [ ] 所选基础设施容器已起、状态 running
-- [ ] 应用环境变量里出现了对应连接串（DATABASE_URL / REDIS_URL / RABBITMQ_URL / KAFKA_BROKERS 等）
-- [ ] 部署时间线四阶段（拉取 / 构建 / 启动 / 健康检查）依次走到就绪
-- [ ] 预览域名打开返回 200，前端页面正常渲染
-- [ ] 后端 `/api/health` 返回正常，且能读写所选基础设施（数据/消息真实往返）
-- [ ] 数据库重启后数据仍在（持久化卷生效）
+选择一个标记为可复用的成功版本，点击“重新部署此版本”。确认：
 
----
+- 新操作生成新的部署记录；
+- 不重复执行没有必要的构建；
+- 预览地址恢复正常；
+- 运行版本与选择的版本一致。
 
-## 六、AI 生成 compose（备选，用户可配）
+### 恢复以前的版本
 
-CDS 自身不内置大模型，AI 生成 `cds-compose.yml` 草稿走「借用」路线：复用 CDS Agent（用户在运行时 profile 里配 OpenRouter 的 baseUrl/key/model）或 prd-api 的 `ILlmGateway`。生成的是**草稿**，必须在可视化编辑器人工确认、并通过 `cdscli verify`（遇 ERROR 阻断）后才应用。确定性栈检测器始终是默认与兜底。详见 `doc/design.cds.ai-compose.md`。
+选择以前的成功版本并点击“回滚到此版本”。确认：
 
----
+- 恢复过程可见；
+- 完成后预览可以访问；
+- 核心操作回到目标版本行为；
+- 当前运行版本指向所选恢复版本。
 
-## 七、本轮交付与验证状态（诚实记录）
+## 第五阶段：验证失败可理解
 
-- 已交付并验证：基础设施注册表 SSOT + `GET /api/infra/catalog` + 一键部署选择器接入（含 Kafka/NATS 等）；4 个示例工程（verify A）；部署时间线（既有，已确认接入分支详情）。后端/前端 `tsc` 全绿、全量 `vitest` 1796 通过、`cds` 技能 `pytest` 122 通过、示例 `cdscli verify` A 级。
-- 运行验证：开发分支经 CDS 自动部署在预览平台上以「前后端 running」状态跑通（admin + api 均 running，预览域名返回 200），证明可视化部署链路端到端可用。
-- 待后续：拓扑页新增基建选择器接 catalog（真随机密码）；Railway 式数据层操作（查询控制台 / 执行 init SQL / schema 浏览，设计见计划看板）；CLI 基建模板收敛到 `infra-catalog.ts`。新增的基础设施选择器需合并 main 后 CDS 自更新才在生产 UI 生效。
+准备一个安全的负面场景，例如错误端口或缺失的非敏感必填配置。部署失败后确认页面能够给出：
+
+- 问题归属；
+- 失败阶段；
+- 简明原因；
+- 建议处理顺序；
+- 查看相关日志的入口。
+
+基础诊断必须独立可用。“AI 解释”可以补充说明，但不能成为理解失败的唯一方式。
+
+## 发布前清单
+
+| 状态 | 检查项 | 通过标准 |
+| --- | --- | --- |
+| `[ ]` | Agent 接入 | 无长期密钥复制，无系统环境修改 |
+| `[ ]` | 仓库权限 | 私有仓库仅授权目标仓库，扫描和部署均可复用 |
+| `[ ]` | 运行方案 | 应用、目录、命令、端口和依赖正确 |
+| `[ ]` | 部署记录 | 刷新后仍能恢复同一条过程 |
+| `[ ]` | 预览访问 | 最终功能页可直接打开 |
+| `[ ]` | 核心流程 | 至少一条真实用户操作完成 |
+| `[ ]` | 数据依赖 | 至少一次真实读写或消息往返 |
+| `[ ]` | 版本复用 | 成功版本可判断并完成再次部署 |
+| `[ ]` | 回滚 | 以前的成功版本可以恢复 |
+| `[ ]` | 失败诊断 | 能区分代码、配置、CDS 和外部服务问题 |
+
+## 不通过时怎么处理
+
+| 现象 | 先检查 |
+| --- | --- |
+| 构建完成但页面打不开 | 启动命令、端口和健康检查 |
+| 页面能开但核心操作失败 | 后台接口、身份、数据库和外部依赖 |
+| 推送后没有自动部署 | GitHub App 安装范围、事件和目标分支 |
+| 私有仓库扫描失败 | 项目对应的单仓库授权是否存在 |
+| 刷新后过程消失 | 本次操作是否生成持久部署记录 |
+| 回滚仍然重新构建 | 目标版本是否具备可复用产物 |
+
+## 当前版本说明
+
+托管交付、部署记录、成功版本复用和回滚已经进入 CDS 主流程。页面批准式 Agent 接入、无环境变量接入、私有仓库授权复用和标准 Compose 自动补全已在本次开发分支完成验证，发布到正式环境后再按本清单验收对应入口。
+
+## 相关文档
+
+- [自动交付与 Agent 接入](guide.cds.managed-delivery.md)
+- [部署方式选择](guide.cds.deploy-three-paths.md)
+- [一键可视化部署](guide.cds.one-click-deploy.md)
+- [GitHub App 接入](guide.cds.github-app.md)

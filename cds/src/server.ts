@@ -1070,6 +1070,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
+    [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
+    [/^GET \/bootstrap-access-requests\/[^/]+$/, '轮询新项目接入结果'],
     [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
     [/^POST \/access-requests\/[^/]+\/reject$/, '拒绝授权申请'],
     // 项目虚拟 cds-compose.yml
@@ -1210,6 +1212,8 @@ function broadcastAiPairing(event: string, data: unknown) {
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
+  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   return false;
 }
 
@@ -3390,6 +3394,17 @@ export function createServer(deps: ServerDeps): express.Express {
     next();
   });
 
+  // Instantiate the GitHub App client before project routes so private-repo
+  // clone and later webhook/deploy routes share the same installation-token
+  // cache and authorization behavior.
+  const githubAppClient = deps.config.githubApp
+    ? new GitHubAppClient({
+        appId: deps.config.githubApp.appId,
+        privateKey: deps.config.githubApp.privateKey,
+        appSlug: deps.config.githubApp.appSlug,
+      })
+    : undefined;
+
   // API routes
   app.use('/api/bridge', createBridgeRouter({
     bridgeService: deps.bridgeService,
@@ -3402,6 +3417,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     shell: deps.shell,
     config: deps.config,
+    githubApp: githubAppClient,
     legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
   }));
   // Pending imports — agent-authored CDS compose awaiting operator approval.
@@ -3577,20 +3593,6 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     worktreeBase: deps.config.worktreeBase,
   }));
-  // ── GitHub App client (optional) ──
-  //
-  // Instantiate once and share between the webhook router and the branch
-  // router. Absent when CDS_GITHUB_APP_* env vars are not set — both
-  // consumers handle `undefined` gracefully (routes return 503, deploys
-  // skip check-run creation).
-  const githubAppClient = deps.config.githubApp
-    ? new GitHubAppClient({
-        appId: deps.config.githubApp.appId,
-        privateKey: deps.config.githubApp.privateKey,
-        appSlug: deps.config.githubApp.appSlug,
-      })
-    : undefined;
-
   deps.worktreeService.setGitEnvProvider(async (repoRoot: string) => {
     const auth = await resolveGitAuthEnv({
       repoRoot,

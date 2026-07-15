@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.5 | **日期**：2026-07-12 | **状态**：已完成
+> **版本**：v1.27 | **日期**：2026-07-15 | **状态**：PR-10 验收完成，合并门满足
 
 ## 1. 目标
 
@@ -41,6 +41,139 @@ PR-4 发布证据（2026-07-12）：最终提交 `5fba56b9552e161f16b74cb720b8be
 PR-5 精确计划（2026-07-12）：不再增加平台能力，只做有限验收收口。第一，修复生产治理验收脚本在 PR-1 后仍伪造无租户 claim JWT、Mongo 查询和清理缺少 TenantId 的漂移，改为通过真实控制台登录与 `/auth/context` 取得服务端租户。第二，用既有假上游合同覆盖 tenant-scoped key 的授权、越权、撤销和 GW Native、OpenAI、Claude、Gemini 四协议，不批量调用付费模型。第三，串联 PR-1 至 PR-4 的租户创建、密钥接入、PromptPolicy 元数据、Activity、费用可信度与桌面/移动证据，避免重复建设 full-http、模型池和发布 gate。第四，PR 分支在 CI、Codex Review 或替代人工复审、CDS、直连预览和完整测试租户清理全部通过后才能合并。
 
 PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `/gw/auth/context`，所有临时配置、预算、并发租约、日志和审计清理均包含服务端解析的 TenantId，并删除对 JWT secret 和手工签名的依赖；脚本语法、默认 dry-run 与数据域静态守卫通过。四协议 fidelity 与 service-key 鉴权合同合计 179/179 通过，数据域守卫 62/62 通过，控制台前端 TypeScript 与生产构建通过。首页协议列表已与 Quickstart 的 GW Native、OpenAI、Claude、Gemini 对齐。最终融合验收使用真实 `llmgw/console-api`、真实 `PrdAgent.LlmGateway`、独立 Mongo 和本地假上游：从控制台创建测试租户与团队，保存 PromptPolicy v1，创建一次性 `gwk_*`，GW Native、OpenAI、Claude、Gemini 四协议各返回 200 并在 Activity 形成四条同租户日志；四次上游请求均按前缀、请求 system、后缀顺序应用策略，日志只保留 policy id/version/hash，未保存策略正文。切换回内部租户后，组织、key、appCaller、日志、usage 和策略审计均不可见；撤销 key 后 serving 返回 401。验收后逐集合检查测试 TenantId、租户、团队、membership 和用户引用均为 0。未增加付费调用。最终提交的 GitHub CI、四镜像和 CDS Deploy 全绿，独立预览首页、Quickstart 与 Activity 深链均返回 200。PR #1089 已 squash 合并为 `90559e64ed63594fa5cd43c922e9713ddb7622ed`。Codex 自动复审因云端额度耗尽未生成结果，已用人工对抗审查替代；Bugbot 不适用。
+
+### 1.2 完成后产品化与生产硬化收口
+
+前序五个有限 PR 完成后，针对真实用户反馈和生产发布事故继续采用独立 PR 收口，没有重新打开模型迁移、模型池调度或 full-http 发布 gate。
+
+| 范围 | 状态 | 证据 |
+|---|---|---|
+| 控制台产品化与根目录收拢 | 已完成 | PR #1090 至 #1093 已独立完成双主题、请求记录中文化、自动 Gateway 地址与安全直测、租户首页、学习中心、模型池信息分层，以及根目录 `llmgw/` 原子收拢；详细证据继续由 `doc/plan.platform.llm-gateway.console-productization.md` 维护 |
+| OpenRouter App 归因 | 已完成 | PR #1108 将 OpenRouter 出站标题统一为 `G-${appCallerCode}`，内部 `AppCallerCode` 原值、日志与路由语义保持不变；定向假上游测试捕获 `HTTP-Referer=https://prd-agent.miduo.org` 和 `X-OpenRouter-Title=G-product-agent.marketing-consult::chat`，非 OpenRouter 上游不注入 |
+| 生产静态站恢复与防回归 | 已完成 | PR #1113 增加静态目录权限规范化、`index.html` 与实际入口资源完整性校验；生产恢复运行 `rel_624b31cda1c2046c` 成功，恢复前备份及 SHA256 校验保留于 `/root/backups/prdagent-static-recovery-rel_72243372921f35bb/`，恢复批次校验账本位于 `/root/backups/prdagent-static-recovery-rel_624b31cda1c2046c/SHA256SUMS` |
+| 维护发布账本门禁 | 已完成 | PR #1115 修复维护发布继承基线配置时的重复门禁；CDS 运行 `dr_510b99aa22f211e8b5537e75` 与 main 部署 `dr_5a4dc114d09b3fcc86677661` 成功 |
+| 公网与生产 Gateway 验收 | 已完成 | `https://map.ebcone.net/`、`/llmgw/`、`/gw/v1/healthz` 均返回 200；Gateway health 回显 commit `f6a0299b2845f125a28a160c8cace645f9b0e35f`，包含 OpenRouter 归因修复 |
+| 临时生产权限清理 | 已完成 | 临时控制台用户、membership、service key 与 token 均已停用或删除；临时 CDS 目标 `rt_c00f704bfee3` 已恢复原发布命令并设为禁用，常规生产目标保持启用；没有重置任何既有用户密码 |
+
+OpenRouter 页面中仍显示旧标题的三条记录，原始 JSON 时间为 `2026-07-13T14:09Z` 至 `14:10Z`，早于本次生产发布，且当前生产租户在相同时间窗没有对应 Gateway 日志，因此不能作为上线后回归证据。生产验收严格遵守一次真实 chat 上限：唯一真实请求实际路由到硅基流动，其余归因验证使用假上游和只读日志，没有追加第二次付费调用。后续首条自然命中 OpenRouter 的新请求应显示 `G-${appCallerCode}`；历史记录不会被改写。
+
+### 1.3 低认知 Agent 复测与真实治理缺口
+
+2026-07-14 使用一个不继承项目背景的独立 Agent，从公网入口模拟“首次接入 -> 理解租户 -> 获取 key -> 选择 OpenAI 协议 -> 安全测试 -> 复制 curl -> 定位请求和费用”。Agent 未使用生产账号、真实 key 或付费模型。公网首页和 health 均返回 200，生产 Gateway commit 为 `f6a0299b2845f125a28a160c8cace645f9b0e35f`。
+
+| 发现 | 事实 | 结论 |
+|---|---|---|
+| 公开首次接入 | 未登录用户只能看到账号密码登录，没有申请账号、加入首个租户或联系管理员的入口 | 完整外部自助评分 4/10；预置账号和成员关系后约 8/10 |
+| Quickstart key | key 创建与 Quickstart 分页；创建后不携带 appCaller；安全测试固定调用 `gw-native` 的 `route-self-test` | 仅授权 OpenAI 的 key 会在安全测试时因缺少 `gw-native` 或 `route:read` 返回 403 |
+| 团队边界 | service key 创建只校验 TeamId 属于当前租户，没有校验 appCaller 是否属于同一 TeamId；serving 治理查询也只按 TenantId + appCaller + requestType | 团队 A 的 key 可被配置为调用团队 B 的 appCaller，属于真实缺口 |
+| Developer 权限 | Developer 可以在自己创建的 key 中使用 `*` appCaller、协议或 scope | “只能管理自己的 key”不等于“只能创建最小权限 key”，需要限制通配符 |
+| 成员生命周期 | membership disabled 会让控制台 session 失效，但不会自动处理该成员创建的长期 M2M key | 离职或移出租户后，历史 key 仍可能继续调用，需要显式所有权转移或撤销策略 |
+| 成功请求归因 | scoped key 授权对象有 KeyId，但请求上下文和请求日志只保留 TenantId、TeamId、SourceSystem、appCaller，没有 ServiceKeyId | 当前不能精确回答“哪一把 key 发起了这次成功请求” |
+| 费用 | 当前只保存 token、池成员价格快照、原币种估算和 USD 明确值，没有供应商账单金额、供应商请求 ID 和对账状态 | 现状是可复算的 estimated cost，不是 actual 账单双向对账 |
+
+这些发现不推翻 PR-1 至 PR-5 的租户隔离结论：请求自报 TenantId 仍会被服务端 key/session 解析结果覆盖，跨租户读写、日志、预算、限流、取消和执行状态已有 TenantId 防线。补强重点是租户内部的 Team 边界、工作负载身份归因、身份生命周期和首次接入闭环。
+
+### 1.4 后续五个有限 PR
+
+后续补强继续一次只做一个 PR，不混回已经完成的 PR-1 至 PR-5，也不重做 full-http、模型迁移、模型池路由算法或发布 gate。
+
+| PR | 范围 | 独立完成门 |
+|---|---|---|
+| PR-6 | Team/service key 对抗安全、会话与组织生命周期 | 团队 A 用户和 key 读取或调用团队 B 资源拒绝；Developer 通配 key 拒绝；Tenant、Team 或 Membership 停用后关联调用立即拒绝；改密后旧 token 失效；租户和新用户创建失败不留半成品；所有反例先红后绿 |
+| PR-7 | 工作负载身份、密钥轮换与成功请求归因 | service key 增加 environment/clientCode；成功请求日志只写 ServiceKeyId、clientCode、key prefix 快照，不写 key/hash；Activity 可筛选调用身份；轮换流程明确区分新 key 已创建、客户端已切换、旧 key 已撤销 |
+| PR-8 | Agent-first 一页式 Quickstart | 同页创建 appCaller 和一次性 key；测试使用所选协议的假上游或 dry-run；复制 curl、环境变量和 Agent Skill 接入包；直接跳到 requestId 日志 |
+| PR-9 | 程序池类型、默认池原子切换与 append-only 默认池 | 类型注册表为唯一来源；租户初始化幂等创建默认池；默认池切换具备原子性且不能直接清空唯一默认池；平台模型只追加兼容且不存在的成员，不覆盖、不删除、不重排；特殊 appCaller 使用专属池 |
+| PR-10 | 费用对账合同、环境独立 key 灰度与 legacy key 收口 | 内部复算与供应商账单分层；unknown 保持 unknown；测试与正式的 MAP runtime、release gate、canary、每个外部平台各用独立 key；legacy shared key 具备调用清单、截止时间和告警，双 key 观测后撤销 |
+
+PR-6 已完成：PR [#1121](https://github.com/inernoro/prd_agent/pull/1121) 已合并，合并提交为 `02a503a2980f6ee19c60061f794fb98a834f1cfe`。两个租户、每租户两个团队、每团队两个用户与两把密钥的对抗矩阵，团队资源隔离、主体停用级联、Developer 通配拒绝、会话安全版本、创建补偿与并发窗口均已通过本地 Mongo、GitHub CI、CDS 和直连验收；Bugbot 不适用。
+
+PR-7 完成证据（2026-07-15）：PR [#1122](https://github.com/inernoro/prd_agent/pull/1122) 已把 `ServiceKeyId`、`clientCode`、`environment` 和 key prefix 快照从服务端密钥鉴权结果贯通到成功与失败请求日志，日志模型不包含 key 或 KeyHash；Activity 列表、详情和全部聚合接口支持按三类调用身份筛选。隔离本地 Mongo 与真实控制台 HTTP 流程验证：切换前撤销旧 key 返回 409，确认切换后误撤新 key 返回 409，正确撤销旧 key 返回 200，完成态 key 可再次发起轮换并返回 201；撤销 key 的运行时鉴权返回 401 且仍保留非敏感审计身份。独立对抗审查发现并修复“上一轮未完成仍可链式轮换”和“确认切换与撤销新 key 并发造成部分状态”两个边界；自动复审继续发现并修复第二代 key 因保留 predecessor 而不能结束下一轮、无客户端 requestId 时失败日志重复、创建返回死 key、切换与中止竞态以及历史阶段缺失误恢复等问题。最终方案把新 key 先写为 `IssuanceState=creating`、`Enabled=false` 并从租户列表隐藏，交付响应前以条件更新切到可调用但仍不可查询、切换或撤销的 `delivering`，响应完成后最多重试三次收口为 `issued`，避免 201 后首调短暂 401；审计写入失败会恢复前驱、删除哈希目录并撤销新 key，返回 503 且不交付明文；极端情况下残留超过 30 秒的 `delivering` 会在同租户列表查询时收口为 `issued`，不形成永久隐藏且不可管理的 key。真实 Mongo failpoint、并发切换与中止、历史阶段缺失恢复以及创建后首调均通过。最终提交 `66d0aa9c7ceaf4e96f5c366803c939598c0c7234` 的 GitHub CI、四镜像、CDS Deploy、smoke 3/3 和公网 health 精确提交回显全部通过；PR #1122 已 squash 合并为 `218e3229bb8337cea6a151811eae7cf10b92ba00`。Codex Review 最终未返回结果，按 `human-verify` 完成替代复审；Bugbot 不适用，未触碰生产环境。
+
+PR-8 完成证据（2026-07-15）：在 `/quickstart` 同页完成当前租户团队选择、appCaller 幂等创建、一次性团队 scoped key 签发、所选 GW Native/OpenAI/Claude/Gemini 真实协议路径 dry-run、requestId 日志直达，以及 cURL、环境变量和 Agent Skill 接入包复制。dry-run 先通过真实 service key、租户、团队、appCaller、协议和 scope 鉴权，在模型解析、预算预占和上游发送前结束；成功日志仅保存服务端解析的 TenantId、TeamId、ServiceKeyId、clientCode、environment 与 key prefix 快照，不保存明文 key 或 hash，费用字段保持 unknown。真实控制台与 serving HTTP 流程验证同一 appCaller 同团队重放返回同 id、跨团队抢占返回 409；OpenAI 兼容入口返回 `upstreamCalled=false`，日志列表与详情均能按 requestId 核对团队和工作负载身份。四协议假上游合同 1/1、数据域守卫 74/74、PrdAgent.Tests 654/654、Api.Tests 1598 通过与 4 跳过；Console API 0 warning/0 error，Serving 0 error，Web TypeScript 与生产构建通过。`human-verify` 发现并修复 console 独立启动缺少租户 appCaller 唯一索引、审计失败遗留未审计 appCaller、日志失败前先递增观察计数和日志 DTO 不返回 TeamId 四个问题。最终提交 `cfd240614770be945547607a05bc0cc4c6c908a3` 的 GitHub CI、console/serving/web 镜像和 CDS Deploy 运行 `dr_74b812510553b10d7f04b4e7` 全绿；CDS 5/5 服务运行且无运行漂移，三个 LLM Gateway 镜像均精确使用该提交，分层 smoke 3/3 通过。公网 `/quickstart`、`/gw/healthz` 及实际入口 JS/CSS 返回 200，Gateway health 精确回显该提交。隔离浏览器验收完成默认账号认领、一键创建、OpenAI dry-run、requestId 详情回查、桌面与移动无水平溢出、深浅主题和零 console warning/error；详情明确显示 Team、ServiceKeyId、client、environment、unknown cost 与 `upstreamCalled=false`。Codex Review 已覆盖最终提交且无改动建议；Bugbot 不适用。隔离测试数据库、临时账号、token 和一次性 key 已全部清理；未调用付费上游，未修改生产环境、共享预览账号或既有密码。
+
+PR-9 完成证据（2026-07-15）：新增 tenant-scoped `llmgw_model_pool_types` 类型注册表，默认池权威从跨文档布尔标记改为 `TenantId + Code + DefaultPoolId` 单文档原子指针；运行时先按该指针解析，类型文档存在但指针失效时 fail-closed，不回退历史布尔值。新租户及幂等创建重放会初始化 13 类默认池，存量租户仅允许 `ConfigWrite` 显式补齐，Viewer 的 GET 不产生写副作用。平台托管默认池只接受来自同租户 enabled 平台权威模型的兼容成员，使用不存在条件的原子 Push；不允许覆盖、删除、重排、伪造价格/币种/协议、历史 MAP 认领覆盖或价格币种批量校准。特殊 appCaller 的 pinned 模型必须位于专用池内，并继续按池候选解析以保留池级路由、费用和审计语义。独立刁钻审查发现并推动修复 Viewer 触发写入、专用池被误收编、负向能力误判、并发初始化 E11000、整数组写回丢成员、默认切换与删除最后成员 TOCTOU、伪造价格及旧维护端点绕过等反例。隔离 Mongo 与真实 Console HTTP 已完成：32 路并发初始化全部 200，最终 13 类与 13 个唯一默认池；16 路并发补齐后 chat 与 embedding 各只追加正确模型，orphan 和 disabled-platform 模型均未进入；伪造 CNY/零价格写入后落库仍为模型权威 USD 3/4；100 路 A/B 默认切换为 37 次成功、63 次受控 409，最终恰好一个默认；30 轮切换与删除最后成员交叉并发未出现空默认。Gateway 专项测试 115/115，Console API 与 Web 构建、GitHub CI、四个相关镜像和 CDS Deploy `dr_d18d2bb6073068177d9580fe` 全绿；CDS 5/5 服务精确运行提交 `f2b1a1c60c348e39923a50197469b9798079e28f`，公网 `/pools` 与 `/gw/healthz` 返回 200。隔离浏览器完成一键补齐、托管只追加说明、详情维护边界、桌面与移动无横向溢出、深浅主题及零 console warning/error 验收。PR [#1126](https://github.com/inernoro/prd_agent/pull/1126) 已 squash 合并为 `cc6c9eebaf46c61f1c894195cf7dde523a475604`；Bugbot 不适用，未调用任何上游或修改生产配置。
+
+PR-10 精确计划（2026-07-15）：第一，在请求完成时从既有价格字段生成不可逆 `PriceSnapshotHash`，从供应商响应头提取 `ProviderRequestId`；估算字段仍按请求时快照复算，任一价格或 token 缺失继续保持 unknown。第二，新增 tenant-scoped 供应商账单导入与对账记录，逐请求通过 `TenantId + provider + ProviderRequestId` 关联，供应商仅提供汇总账单时按明确时间窗和 ServiceKeyId 记录 window 粒度；原始 estimated 与 provider actual 不互相覆盖。相同币种才直接计算 delta，不同币种只有同时提供 `FxSnapshotId` 与明确汇率才换算，否则状态为 `fx-unavailable` 且 delta 为 null。第三，在现有 `clientCode + environment` 上增加单值 key purpose，固定为 `runtime`、`release-gate`、`canary`、`external-platform`；同一把 key 不能跨用途或环境，控制台展示 MAP 测试/正式三个用途以及每个外部平台的独立 key 覆盖缺口，轮换继承原用途。第四，legacy shared key 仅允许 `sourceSystem=map`，每次调用按 internal TenantId、appCaller、协议和来源形成清单；tenant-scoped 收口策略保存截止时间、允许清单、后继 scoped key 与状态，过期或 revoked 后返回 401，外部来源始终拒绝。生产撤销仍必须在双 key 观测达标后由人工显式执行，本 PR 只交付能力、假数据和隔离环境验收，不改生产 key、Secret 或任何用户密码。
+
+PR-10 本地证据（2026-07-15）：请求日志新增不可逆价格快照哈希和仅来自供应商响应头的请求 ID；tenant-scoped 对账记录支持 request/window 两种粒度，外部导入体不接受 TenantId，查询、唯一索引、团队范围、审计和汇总均由服务端租户上下文约束。供应商 actual 与内部 estimated 分栏保存，不相互覆盖；未知估算保持 null，相同币种才计算 delta，跨币种无 `FxSnapshotId` 与汇率时返回 `fx-unavailable`。逐请求重复账单、同 request ID 不同外部记录、重叠窗口、已逐请求对账后再覆盖窗口、已存在窗口后再导入逐请求均返回受控 409；汇总使用全量 Mongo 聚合，不受详情 500 条上限影响，非数值 actual 不会被折算为 0。密钥用途固定为四类，来源与用途不匹配、跨用途或跨环境轮换均拒绝；Quickstart 只签发 `external-platform`。legacy shared key 只对 internal MAP 生效，外部租户 403，过期或撤销 401；每把后继 scoped key 都必须分别达到观测阈值才能人工撤销，撤销状态不可恢复。隔离 Mongo 与真实 Console HTTP 已验证恶意 body 自报 tenantId 不改变归属、相同 provider request id 可被两个租户各自隔离对账、内部租户不可读取外部记录、unknown 不显示 0、CNY 与 USD 无汇率不相加、幂等重试与冲突、双粒度防重复、用途边界和每后继观测门。完整解决方案构建 0 error，Web TypeScript 与生产构建通过；Api.Tests 1604 通过、4 个既有显式跳过，PrdAgent.Tests 659 通过，合计 2263 通过、0 失败。首轮 GitHub CI 与相关镜像全绿，CDS 在共享存量库正确发现旧四字段索引与新增 `Purpose` 五字段索引同名冲突并阻断启动；修复改为新增版本化索引名，保留旧索引。隔离库先创建旧索引后，Console 与 Serving 均成功启动且两个索引并存，两个 health 端点返回 200；随后完整构建和 2263 项回归再次通过。所有上游场景使用假数据或隔离数据库，未调用付费模型，未修改生产 key、Secret、账号或密码。
+
+PR-10 真实接入复验补充（2026-07-15）：第二轮 GitHub CI 与 CDS run `dr_f747e9671cbafd21b138428b` 已通过，五个服务均运行目标 commit。使用唯一临时外部租户从移动端依次完成登录、创建团队、一键生成 appCaller 与 `external-platform` key，并对网页展示的同源 `/v1/chat/completions` 地址执行零费用 dry-run；该真实用户路径发现 llmgw-web 内层 nginx 只代理 Console `/gw/*`，兼容协议 POST 被 SPA 静态层返回 405。修复为在 SPA fallback 前把 `/gw/v1/*`、`/v1/*`、`/v1beta/*`、`/gemini/v1beta/*` 明确代理到 `llmgw-serve:8091`，并允许 vision 请求体通过内层 nginx。同轮还发现外部租户页面展示 MAP runtime/release-gate/canary 覆盖，且可自报 `sourceSystem=map`；服务端现以会话中的 `IsInternalTenant` 强制拒绝外部租户创建 MAP 内部用途 key，前端对外部租户固定显示 `external` 与 `external-platform` 并隐藏 MAP 覆盖。
+
+PR-10 最终远程证据（2026-07-15）：修复提交 `0e25a3cb1975a166098009fc21844eebc347dc8c` 的 GitHub CI、四个相关镜像、Server Build & Test 与 CDS Deploy `dr_c699dc6cfd827e5b2d7b362a` 全绿；CDS 5/5 服务均运行该提交，无缺失、异常或提交漂移。隔离外部租户从网页完成团队创建，并为 OpenAI、Claude、Gemini、GW Native 四种协议分别执行一次 Quickstart：每次均通过团队边界和密钥鉴权、生成 requestId、写入租户请求记录并明确 `upstreamCalled=false`，未访问付费上游。外部租户创建表单固定为 `sourceSystem=external`、`purpose=external-platform`；直接伪装 `sourceSystem=map` 与 `purpose=runtime` 返回 403 `INTERNAL_KEY_PURPOSE_FORBIDDEN`。390x844 深色与浅色、1280px 浅色均无横向溢出，浏览器 warning/error 为 0。验收数据首次清理删除 TenantId 关联记录 30 条、用户 1 条、租户 1 条，再次遍历全部目标集合和 identity 计数均为 0；一次性辅助程序与内存凭据已删除。未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
+
+PR-10 最终审查反馈（2026-07-15）：Codex Review 在提交 `0e25a3cb1` 上新增四条未过时意见。legacy shared key 的 GW Native 请求必须和 scoped key 一样从 body 解析 MAP/appCaller 身份；导入体省略 `providerReportedCost` 必须返回 400，不能把缺失值当成实际 0；无 ServiceKeyId 请求只能被 tenant/team/provider 相同且同样无 ServiceKeyId 的窗口覆盖；开发 compose 必须运行 `llmgw-serve`，否则 llmgw-web 新增的四协议代理在本地返回 502。四项均纳入本轮修复和回归，修复后重新等待 CI、CDS 与受影响链路验收，不沿用先前完成结论直接合并。
+
+PR-10 审查修复验收（2026-07-15）：提交 `3d3c5f568babe6ed09b422cf7e1a8e7f8464fcfe` 已完成上述四项修复。legacy shared key 的 GW Native body 身份动态契约通过；供应商 actual 改为必填可空 DTO 后显式校验，隔离 Mongo 与真实 Console HTTP 验证省略字段返回 400 `INVALID_PROVIDER_COST`；已存在 keyed 窗口时，无 ServiceKeyId 请求仍可独立导入 actual 并返回 201，不再被错误覆盖；开发 compose 已补齐 `llmgw-serve`，配置解析通过。完整回归为 Api.Tests 1605 通过、4 个既有显式跳过，PrdAgent.Tests 659 通过，合计 2264 通过、0 失败；GitHub CI、Console/Serving/Web/API 镜像、Server Build & Test 与 CDS Deploy `dr_1419000f52a111029369b05d` 全绿。CDS 五个服务均运行目标提交，无缺失、异常或提交漂移；公网 `/gw/healthz` 与 `/gw/v1/healthz` 均返回目标提交，远程一次性外部租户再次验证缺失供应商 actual 返回 400。四协议不重复调用，沿用同源代理未改动时已完成的每协议一次 dry-run 证据，继续保持 `upstreamCalled=false`。本轮临时数据首次清理删除 TenantId 关联记录 2 条、用户 1 条、租户 1 条，第二遍全部为 0；一次性辅助文件和内存凭据已删除。未调用付费模型，未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
+
+PR-10 最终安全复核补充（2026-07-15）：线程级复核发现外部租户仍可提交 `sourceSystem=*`，由于通配来源可在 Serving 匹配 MAP 流量，仅限制显式 `map` 不足以形成来源边界。本轮改为所有 service key 均必须声明明确来源，服务端拒绝通配来源并返回 400 `INVALID_KEY_SOURCE`；外部租户仍只能使用 `external-platform` 用途。修复提交 `448cf7817d217542ad96bab97676e67d8c48d563` 的 Console 编译 0 警告、0 错误，定向守卫 1 项通过，与 CI 一致的完整非集成、非手工回归为 2264 通过、4 个既有显式跳过、0 失败；GitHub 相关镜像、Server Build & Test、CI Status 与 CDS Deploy `dr_9e55d05d8061a41e3055915e` 全绿，CDS 五个服务均运行目标提交且无漂移。公网健康端点返回目标提交；一次性外部租户从公网提交通配来源 key，返回 400 `INVALID_KEY_SOURCE`，没有生成 key。临时数据首次清理删除 TenantId 关联记录 2 条、用户 1 条、租户 1 条，第二遍全部为 0；辅助文件和内存凭据已删除。未调用付费模型，未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
+
+PR-10 最终链路审查补充（2026-07-15）：最新 Codex Review 发现普通、流式与 raw 的常规完成日志仍用合成响应头，导致供应商真实 request id 在进入 `LlmRequestLogBackground` 前丢失；同时 legacy 退场配置只校验 MAP 来源，test/development key 可能被当作生产后继累计观测并误触生产撤销。本轮要求日志只保留 content-type 与受信 request id 头，三类常规完成链路均透传真实响应头且不记录 cookie 等其他头；legacy 后继配置只接受 production MAP scoped key，Serving 对非 production key 不累计后继观测。修复后重新执行动态契约、完整回归、CI、CDS 和假上游逐请求对账验收，未通过前不得合并。
+
+PR-10 最终验收结论（2026-07-15）：最终代码提交 `e0b2ae40d6c0a48a77b8d3910440e7c929b5790a` 把 legacy 只读预检限定为服务端识别的受信 route-self-test/readyz 场景，并保证预检和普通 `route:read` 不累计退场证据，只有 `invoke`、`stream:invoke`、`raw:invoke` 三类真实业务调用计数；后继 key 必须是 production MAP runtime 身份并覆盖 legacy 允许的 appCaller、四协议和完整运行 scopes。密钥 Purpose 数据面门固定为 MAP 普通流量仅 `runtime`、`release-gate` 仅受信只读预检、`canary` 在没有专用受信路由前对普通数据面 fail-closed、外部租户仅 `external-platform`，所有 service key 禁止通配来源。供应商 request/window 导入由 `TenantId + Provider + TeamId` 原子短租约串行，逐请求幂等重试会修复日志 actual 投影；estimated 与 actual 不互相覆盖，unknown 不显示为 0，跨币种没有可审计 FX 快照时 delta 保持 null。隔离 Mongo 动态契约与完整非集成、非手工回归最终为 Api.Tests 1618 通过、4 个既有显式跳过，PrdAgent.Tests 660 通过，合计 2278 通过、0 失败；GitHub CI 0 失败。Codex Review 最终未发现重大问题，最终提交无新增行级意见，18 条审查线程未解决数为 0。CDS 精确运行 `dr_9c337f2b2bf0f761c7c121e6` 在提交 `e0b2ae40d6c0a48a77b8d3910440e7c929b5790a` 上完成，生成不可变版本 `dv_f1b30fc3b55c1a086eb9e22d`，5/5 服务就绪、无漂移且 `smokeOk=true`；API、Console、Serving 与 Web 镜像均使用该提交。公网 `/gw/healthz` 与 `/gw/v1/healthz` 返回 200 并精确回显该提交。Bugbot 因订阅停用记为不适用；未调用付费模型，未修改生产数据、生产 key、Secret、账号或任何既有密码。
+
+每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
+
+### 1.4.1 对抗安全执行账本
+
+2026-07-14 在已有跨租户验收之上增加团队内部、身份生命周期、并发一致性和失败原子性反例。以下“确认缺陷”来自静态控制流和数据流审计；在对应 PR 中必须先写失败测试复现，再修改运行时代码。未完成动态复现前不得把静态结论升级为生产事故结论。
+
+| ID | 风险 | 静态事实 | 归属 PR | 验收断言 |
+|---|---|---|---|---|
+| ADV-01 | Team A 用户读取 Team B 日志或请求正文 | Developer、Viewer 拥有日志与请求正文权限，公共数据过滤仅包含 TenantId，没有使用会话 TeamIds | PR-6 | 非 Owner/Admin 读取非所属 TeamId 的列表、详情、汇总、会话和元信息均返回空或 404 |
+| ADV-02 | Team A key 调用 Team B appCaller | key 创建只校验 TeamId 属于租户，appCaller 治理只按 TenantId、AppCallerCode、RequestType 查询 | PR-6 | key.TeamId、appCaller.TeamId、运行时 TeamId 任一不一致均返回 403，并写 tenant-scoped 拒绝审计 |
+| ADV-03 | Tenant、Team 或 Membership 停用后历史 key 继续调用 | scoped key 鉴权只复查 key Enabled、过期时间和 scope，没有复查租户、团队或创建者成员状态 | PR-6 | 三类主体任一停用后，关联 key 下一次请求立即拒绝；Owner 显式转移所有权的 key 除外 |
+| ADV-04 | Developer 创建通配超级 key | appCaller、协议和 scope 当前允许 `*`，Developer 没有额外最小权限约束 | PR-6 | Developer 使用任一 `*` 创建返回 403；Owner/Admin 必须二次确认且写高风险审计 |
+| ADV-05 | 改密后旧 JWT 继续有效 | JWT 有效期 12 小时，token 只携带 Membership Version，改密不提升用户安全版本 | PR-6 | 改密、停用用户和强制退出后，全部旧 token 下一次请求返回 401；其他用户不受影响 |
+| ADV-06 | 创建租户或成员中断留下半成品 | tenant、team、membership、user 当前分多次写入，只对部分 DuplicateKey 路径补偿 | PR-6 | 对每个可捕获写失败执行补偿后，租户、团队、成员和用户引用要么全部存在，要么全部不存在；按 slug 或成员目标重复提交重放既有结果。进程硬退出不伪称事务原子，进入 `2026-07-14-tenant-provision-crash-consistency` 债务，在开放匿名注册前用 pending 状态机和修复器偿还 |
+| ADV-07 | 轮换 key 后旧 key 仍被误认为已撤销 | RotatesKeyId 当前只记录关联，不改变旧 key 状态 | PR-7 | UI 和 API 返回明确轮换阶段；只有完成撤销后才显示“轮换完成”，旧 key 随后返回 401 |
+| ADV-08 | 成功请求无法定位具体 key | 授权结果包含 ServiceKeyId，但成功请求日志没有持久化该调用身份 | PR-7 | 每条成功和失败请求均可按 TenantId、TeamId、ServiceKeyId、clientCode 查询；不保存明文或 hash |
+| ADV-09 | 两个管理员并发切换默认池得到零默认池 | 当前流程分别执行“本池置默认”和“清其他池”，交错执行可互相清空 | PR-9 | 至少 100 轮并发切换后，每个 TenantId + ModelType 恰好一个默认池；失败不改变旧默认 |
+| ADV-10 | 通用更新直接取消唯一默认池 | 通用模型池更新允许直接写 `IsDefaultForType=false` | PR-9 | 取消唯一默认池返回 409；只能通过另一个具备可用成员的池完成替换 |
+| ADV-11 | legacy shared key 泄漏后进入内部租户 | legacy key 仍直接映射 internal tenant，不具备 scoped key 的团队和工作负载身份 | PR-10 | 建立 legacy 调用方清单、告警与截止时间；外部来源永远不能使用 legacy key；收口后 legacy key 返回 401 |
+
+PR-6 的最小测试矩阵固定为两个租户、每租户两个团队、每团队两个用户和两把 key。测试必须同时覆盖列表、详情、汇总、写入、调用、停用、改密和失败注入，禁止只验证正常 CRUD。PR-7 至 PR-10 复用同一矩阵和假上游，不增加批量付费调用。
+
+PR-6 的 owner 变更租约覆盖常规并发和版本冲突，但不把“进程暂停超过租约后恢复”宣称为已解决；该多副本 fencing 边界记录在 `2026-07-14-owner-mutation-lease-fencing`，必须在开放外部组织自主管理前偿还。
+
+### 1.5 目标架构与影响边界
+
+```text
+Agent / 外部平台 / MAP workload
+  -> environment + clientCode + tenant-scoped service key
+  -> 四协议适配层（GW Native / OpenAI / Claude / Gemini）
+  -> 服务端解析 TenantId / TeamId / ServiceKeyId
+  -> appCaller 治理（状态 / RBAC / 限流 / 预算 / PromptPolicy）
+  -> 程序池类型注册表
+       -> 默认池：租户初始化时幂等存在
+       -> 专属池：特殊 appCaller 显式绑定
+  -> 池成员（只追加兼容模型，不覆盖既有成员配置）
+  -> GW 平台模型 / Exchange
+  -> 供应商
+  -> 请求日志（tenant + key identity + route + token + price snapshot）
+  -> 费用层（estimated 复算 / provider actual / reconciliation）
+```
+
+新平台提供的模型先进入租户范围内的平台模型目录，再按能力匹配追加到已存在的默认池或专属池。模型目录、池和 appCaller 是引用关系，不复制模型，也不改写 MAP 已有模型标识。没有匹配类型、模型不可用、价格币种不明或池不存在时均保持原状，不自动创造业务语义。
+
+### 1.6 费用双向校验合同
+
+费用分三层，不能把三者混成一个金额：
+
+1. `estimated`：使用请求完成时保存的 input/output/cache token 与价格快照复算；价格不完整时为 unknown。
+2. `provider actual`：供应商响应或账单导入的实际金额，必须同时记录 provider request id、币种和账单时间窗。
+3. `reconciled`：以 TenantId、ServiceKeyId、provider、provider request id、模型和时间窗关联 estimated 与 actual，记录差额和状态，不覆盖原始值。
+
+新增字段只保存非敏感证据：`ServiceKeyId`、`ClientCode`、`Environment`、`ProviderRequestId`、`ProviderReportedCost`、`ProviderCostCurrency`、`PriceSnapshotHash`、`FxSnapshotId`、`ReconciliationStatus`、`ReconciliationDelta`。没有供应商金额时状态为 `actual-unavailable`；没有汇率快照时不同币种禁止计算差额。供应商不提供逐请求费用时，只能做账单时间窗汇总对账，页面必须明确粒度。
+
+### 1.7 可复用经验
+
+- 身份、业务用途和路由必须分开：key 表示“谁在调用”，appCaller 表示“为什么调用”，模型池表示“去哪里调用”。禁止再用一个字段承担三种语义。
+- 安全自测必须使用与用户所选协议完全一致的授权合同；不能让 OpenAI key 隐式依赖 GW Native scope。
+- 所有首次接入必须形成零费用闭环：生成身份、测试鉴权、产生 test-mode 记录、跳到日志；真实付费请求是可选下一步。
+- 默认配置只能幂等补齐和 append-only 增强；已有池成员的优先级、价格、协议和参数能力均不得被批量导入覆盖。
+- 金额先标来源再展示数值。estimated、actual、unknown 和 reconciled 是四种状态，不是四个 UI 文案。
+- 生产密钥永远先增加、后观测、再撤销；不原地覆盖，不重置用户密码，不把 key 写入仓库、日志、命令行参数或聊天。
+- 外部易用性必须由无背景 Agent 实测；“登录后能用”不能替代“从公开入口能开始”。
 
 执行期间保持以下边界：
 

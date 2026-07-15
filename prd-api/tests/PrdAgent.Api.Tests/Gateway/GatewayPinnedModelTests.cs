@@ -71,6 +71,54 @@ public class GatewayPinnedModelTests
     }
 
     [Fact]
+    public async Task LlmGatewaySendAsync_PreservesProviderRequestIdWithoutLoggingOtherHeaders()
+    {
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            CreateResolver(AppCallerRegistry.Admin.ModelLab.Run),
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+                        """,
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+                response.Headers.TryAddWithoutValidation("OpenAI-Request-Id", "provider-request-through-gateway");
+                response.Headers.TryAddWithoutValidation("Set-Cookie", "secret=must-not-be-logged");
+                return Task.FromResult(response);
+            }))),
+            NullLogger<LlmGateway>.Instance,
+            logWriter);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.ModelLab.Run,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = PinnedModel,
+            PinnedPlatformId = PinnedPlatformId,
+            PinnedModelId = PinnedModel,
+            RequestBody = new JsonObject
+            {
+                ["model"] = DefaultModel,
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hello" },
+                },
+            },
+        });
+
+        response.Success.ShouldBeTrue(response.ErrorMessage);
+        logWriter.Done.ShouldNotBeNull();
+        logWriter.Done!.ResponseHeaders.ShouldNotBeNull();
+        logWriter.Done.ResponseHeaders!["openai-request-id"].ShouldBe("provider-request-through-gateway");
+        logWriter.Done.ResponseHeaders.ContainsKey("Set-Cookie").ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task GatewayCreateClient_StreamGenerateAsync_CarriesPinnedModelContract()
     {
         var gateway = new CapturingGateway();
@@ -293,5 +341,24 @@ public class GatewayPinnedModelTests
         }
 
         public HttpClient CreateClient(string name) => _client;
+    }
+
+    private sealed class CapturingLogWriter : ILlmRequestLogWriter
+    {
+        public LlmLogDone? Done { get; private set; }
+
+        public Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
+            => Task.FromResult<string?>("log-1");
+
+        public void MarkFirstByte(string logId, DateTime at)
+        {
+        }
+
+        public void MarkDone(string logId, LlmLogDone done)
+            => Done = done;
+
+        public void MarkError(string logId, string error, int? statusCode = null)
+        {
+        }
     }
 }

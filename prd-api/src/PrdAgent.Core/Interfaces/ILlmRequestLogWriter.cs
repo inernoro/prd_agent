@@ -2,6 +2,11 @@ using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.Interfaces;
 
+public static class LlmRequestLogContextItems
+{
+    public const string LifecycleStarted = "llmgw.request-log.lifecycle-started";
+}
+
 public record LlmLogStart(
     string RequestId,
     string Provider,
@@ -82,10 +87,13 @@ public record LlmLogStart(
     string? RunId = null,
     string? TenantId = null,
     string? TeamId = null,
+    string? ServiceKeyId = null,
+    string? ClientCode = null,
+    string? Environment = null,
+    string? ServiceKeyPrefix = null,
     string? PromptPolicyId = null,
     int? PromptPolicyVersion = null,
-    string? PromptPolicyHash = null,
-    int? PromptPolicyChars = null);
+    string? PromptPolicyHash = null);
 
 public record LlmLogDone(
     int? StatusCode,

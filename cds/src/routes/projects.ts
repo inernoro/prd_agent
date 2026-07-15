@@ -38,6 +38,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
+import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
+import type { GitHubAppClient } from '../services/github-app-client.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -78,6 +80,8 @@ export interface ProjectsRouterDeps {
   shell: IShellExecutor;
   /** Root CDS config — unused in Part 2 but reserved for Part 3 when we derive per-project paths. */
   config?: CdsConfig;
+  /** GitHub App client for project-scoped installation tokens during private-repo clone. */
+  githubApp?: GitHubAppClient | null;
   /** Kept for backward compat with P1 callers; ignored. */
   legacyProjectName?: string;
 }
@@ -1104,11 +1108,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
 
+    const repoRoot = nodePath.resolve(project.repoPath || nodePath.dirname(composePath));
+    const composeRoot = nodePath.dirname(nodePath.resolve(composePath));
+
+    function inferRunnableComposeProfile(candidate: BuildProfile): BuildProfile {
+      const hasCommand = Boolean(candidate.command?.trim());
+      const hasSyntheticImage = candidate.dockerImage.startsWith('cds-build-');
+      if (hasCommand && !hasSyntheticImage) return candidate;
+
+      const sourceRoot = nodePath.resolve(composeRoot, candidate.workDir || '.');
+      const isInsideRepo = sourceRoot === repoRoot || sourceRoot.startsWith(`${repoRoot}${nodePath.sep}`);
+      if (!isInsideRepo) {
+        sendEvent('progress', { line: `[profile] ${candidate.id} 的构建目录超出项目范围，保留 Compose 原配置` });
+        return candidate;
+      }
+
+      const detection = detectStack(sourceRoot, { preferManifest: true });
+      if (detection.stack === 'unknown' || detection.stack === 'dockerfile') return candidate;
+
+      const command = hasCommand ? candidate.command : composeAutoCommand(detection);
+      const dockerImage = hasSyntheticImage ? detection.dockerImage : candidate.dockerImage;
+      const cacheMounts = candidate.cacheMounts?.length
+        ? candidate.cacheMounts
+        : defaultCacheMountsFor(dockerImage);
+      sendEvent('progress', {
+        line: `[profile] ${candidate.id} 未声明完整启动配置，已从 ${detection.stack} 项目清单自动补全`,
+      });
+      return {
+        ...candidate,
+        dockerImage,
+        command: command || candidate.command,
+        ...(cacheMounts ? { cacheMounts } : {}),
+      };
+    }
+
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
     for (const candidate of parsed.buildProfiles) {
+      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
       const scoped: BuildProfile = {
-        ...(candidate as BuildProfile),
+        ...runnableCandidate,
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
       };
@@ -2657,6 +2696,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
+    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
+    // 已签发后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
+    // create-only key 未标 oneTime，保持原有可重复建项目行为。
+    if (callerAccess) {
+      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
+      if (callerKey?.oneTime && issuedProjectKey) {
+        stateService.revokeGlobalAgentKey(callerAccess.keyId);
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -3253,20 +3302,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const repoPath = project.repoPath;
     const gitUrl = project.gitRepoUrl;
 
-    // P4 Part 18 (Phase E audit fix #1): if the URL points at github.com
-    // AND a GitHub Device Flow token is stored, inject the token into
-    // the clone URL so private repos work. The token is ephemerally
-    // inserted into the shell command only — never persisted back to
-    // state.json. If Device Flow isn't connected we try the bare URL,
-    // which works for public repos.
+    // Private GitHub repositories prefer the project's GitHub App
+    // installation token. Device Flow remains a compatibility fallback.
+    // Authentication is passed through git's ephemeral extraheader env,
+    // never embedded into the command, SSE output, or persisted URL.
     //
     // Also (audit fix #9): the displayed gitUrl in events is the
     // ORIGINAL user-supplied URL, but we DO redact any embedded
     // userinfo before logging so pasted credentials don't leak into
     // the SSE log or state.json.
     const displayUrl = _redactUrlUserInfo(gitUrl);
-    const deviceToken = stateService.getGithubDeviceAuth()?.token;
-    const cloneUrl = _injectGithubTokenIfPossible(gitUrl, deviceToken);
+    const gitAuth = await resolveGitAuthEnv({
+      repoRoot: repoPath,
+      config,
+      stateService,
+      githubApp: deps.githubApp,
+    });
 
     // UF-01 preflight: when the URL points at github.com but we have
     // no Device Flow token, warn the user up-front. For public repos
@@ -3276,7 +3327,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // and the user sees an english git error with no actionable hint.
     // We emit a 'progress' warning now and map the error below.
     const isGithubUrl = _isGithubHttpsUrl(gitUrl);
-    const needsAuthHint = isGithubUrl && !deviceToken;
+    const needsAuthHint = isGithubUrl && gitAuth.source === 'none';
 
     try {
       stateService.updateProject(project.id, {
@@ -3290,7 +3341,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       if (needsAuthHint) {
         sendEvent('progress', {
-          line: '警告：未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
+          line: '警告：未检测到该项目可用的 GitHub App 授权或 GitHub 登录。若这是私有仓库,请先在设置中授权该仓库后重试。',
         });
       }
 
@@ -3322,8 +3373,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // don't leak into the SSE stream.
       sendEvent('progress', { line: `$ git clone ${displayUrl} ${repoPath}` });
       const clone = await shell.exec(
-        `GIT_TERMINAL_PROMPT=0 git clone "${cloneUrl}" "${repoPath}"`,
-        {
+        `git clone "${displayUrl}" "${repoPath}"`,
+        mergeGitAuthEnv({
           timeout: 10 * 60 * 1000, // 10 minutes max; cancel any stuck clone
           onData: (chunk: string) => {
             // git often emits carriage-return progress updates for
@@ -3335,14 +3386,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
               if (trimmed) sendEvent('progress', { line: trimmed });
             }
           },
-        },
+        }, gitAuth),
       );
 
       if (clone.exitCode !== 0) {
         const rawErr = (combinedOutput(clone) || 'git clone failed').trim();
         // UF-01: translate "could not read Username" into a clear,
         // actionable Chinese message pointing the user at Device Flow.
-        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, !!deviceToken);
+        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, gitAuth.source !== 'none');
         stateService.updateProject(project.id, {
           cloneStatus: 'error',
           cloneError: errMsg,

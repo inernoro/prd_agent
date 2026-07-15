@@ -95,6 +95,12 @@
 | 9 | 受限分组对「空间级 editor 但未被分组授权」者不可见，但其在树导航之外的入口（如分享链接、library 转存副本）不经过分组裁剪 | 分享链接体系本就独立于团队权限（密码/有效期），与既有语义一致 | 如需「受限分组站点禁止外发分享」，在 CreateShare 路径补分组角色校验 |
 | 10 | 角色标签改名无级联：成员标签是自由文本，改名/删除标签不会同步更新分组 AccessRules 里的 label 规则，旧规则变成「无人命中」 | 标签重命名后需到分组权限里重新授权 | 标签字典实体化（团队级 catalog + 引用计数 + 改名级联） |
 
+### 已修复（closed）
+
+| # | 边界 | 修复 |
+|---|------|------|
+| 11 | ~~`CopyToTeamAsync`（网页复制进团队）只校验团队级 owner/editor 角色和分组归属团队，缺失 `SetSiteGroup` 已有的受限分组写权限门控——团队有编辑权但受限分组无编辑权的用户可把网页复制进受限分组（越权写入）~~（已修复 2026-07-09，#802） | 补齐 `WebPageGroupAccess.IsRestricted -> ResolveGroupRole` 校验，与 `SetSiteGroup` 同款，无编辑权抛 `UnauthorizedAccessException` |
+
 ### 测试状态
 
 - 前端：pnpm tsc --noEmit 通过；eslint 改动文件零新增告警；vitest 404 例全绿

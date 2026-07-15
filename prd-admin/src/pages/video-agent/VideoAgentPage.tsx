@@ -228,7 +228,7 @@ const CreateMenu: React.FC<{
         >
           <Wand2 size={16} style={{ color: '#f472b6' }} />
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>🎬 创作分镜（高级）</div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>创作分镜（高级）</div>
             <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>上传文案 → AI 拆分镜 → 编辑每镜</div>
           </div>
         </button>
@@ -239,7 +239,7 @@ const CreateMenu: React.FC<{
         >
           <Sparkles size={16} style={{ color: '#a78bfa' }} />
           <div>
-            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>✨ 大模型直出（初级）</div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>大模型直出（初级）</div>
             <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>一段 prompt → 5-15s 短视频</div>
           </div>
         </button>

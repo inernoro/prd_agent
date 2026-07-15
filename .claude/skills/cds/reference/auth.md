@@ -1,16 +1,17 @@
 # 认证决策树 & 双层鉴权
 
-## 三种认证方式
+## 认证方式
 
 | 方式 | 密钥前缀 | 来源 | 优先级 | 交互成本 |
 |------|---------|------|--------|----------|
-| A. 静态 bootstrap | 任意字符串 | CDS master `process.env.AI_ACCESS_KEY` 或 customEnv | 最高 | 0（配好即用）|
-| B. 全局 bootstrap key | `cdsg_` | Dashboard 设置菜单" Agent 全局通行证" | 等同 A | 1 次签发 |
-| C. 项目级 key | `cdsp_<slug>_` | 项目卡片" 授权 Agent" | 仅本项目 | 1 次签发 |
-| D. 动态配对 | 随机 token | `/api/ai/request-access` + 用户点批准 | 24h 有效 | 每 24h 1 次 |
-| E. Cookie | — | 浏览器登录 | 同用户 | 不推荐 AI 用 |
+| A. 页面批准的项目授权 | `cdsp_<slug>_` | `cdscli connect --project` + 用户批准 | 最高 | 用户点 1 次 |
+| B. 页面批准的一次性建项目授权 | `cdsg_` | `cdscli connect --new-project` + 用户批准 | 首次接入 | 用户点 1 次 |
+| C. 旧版环境变量 | 任意 / `cdsp_` / `cdsg_` | 当前进程环境 | 兼容 | 已配置即用 |
+| D. Cookie | — | 浏览器登录 | 人类操作 | AI 禁用 |
 
-**AI 应优先用 A/B**（零交互），C 用于"用户粘 3 行代码给你"的场景，D 用于"用户没配静态 key 又不想给全局权限"的场景。
+Agent 必须优先使用 A/B。不得要求用户把长期密钥粘进对话；不得默认写 `~/.cdsrc` 或终端启动文件。
+
+项目凭据由 CLI 静默保存到当前仓库 `.cds/credentials.json` 并加入本地 git exclude。显式环境变量仍可覆盖项目配置，但仅用于 CI 或旧版兼容。
 
 ## 双层认证：CDS 层 vs 后端业务层
 
@@ -73,7 +74,7 @@
 }
 ```
 
-**正确处理**：告诉用户"去 `<got>` 项目页点「 授权 Agent」按钮重新生成 key 贴给我"，不要自己尝试换 key。
+**正确处理**：在目标项目目录重新运行 `cdscli connect --project <got>`，让用户在页面批准；不要索要或展示 key。
 
 ## 反面案例（禁止复发）
 
