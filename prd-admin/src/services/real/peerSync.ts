@@ -134,9 +134,12 @@ export interface PeerSyncRun {
   finishedAt?: string | null;
 }
 
-/** 列出同步运行台账。itemId 省略=当前用户全部可见条目；传 itemId=限定单库。 */
+/** 列出同步运行台账。itemId 省略=当前用户全部可见条目；传 itemId=限定单库。
+ *  established：仅单库（传 itemId 且为 document-store）返回——「当前保存的对端+方向」是否跑过全量历史门
+ *  （成功建立过关系）。前端 everSynced 只看被截断到 80 条的 runs，长命库成功 run 可能已滚出，故用此服务端
+ *  全量判定兜底，避免误禁自动开关（Codex PR#1144 P2）。非单库场景为 null。 */
 export async function listPeerSyncRuns(resourceType: string, itemId?: string) {
-  return await apiRequest<{ items: PeerSyncRun[] }>(
+  return await apiRequest<{ items: PeerSyncRun[]; established?: boolean | null }>(
     api.peerSync.runs(resourceType, itemId),
     { method: 'GET' },
   );

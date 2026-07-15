@@ -613,7 +613,29 @@ public class PeerSyncController : ControllerBase
             filter &= Builders<PeerSyncRun>.Filter.In(r => r.ItemId, allowed);
         }
         var runs = await _db.PeerSyncRuns.Find(filter).SortByDescending(r => r.StartedAt).Limit(take).ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items = runs }));
+
+        // 单库场景额外返回「已建立关系」标志：前端 everSynced 只看 capped(80) 的 runs 列表，长命库当年建立关系的
+        // 成功 run 可能早已滚出 80 条窗口，导致自动开关被误禁。此处对「当前保存的对端 + 方向」跑一次全量历史门
+        // （与 SetAutoSync gate 完全同口径：saved peer + acceptableDirs(saved direction) + status∈{synced,skipped}），
+        // 让前端在选中的组合==已保存关系时据此放行，不再依赖被截断的列表推断（Codex PR#1144 P2）。
+        bool? established = null;
+        if (!string.IsNullOrWhiteSpace(itemId) && string.Equals(resourceType, "document-store", StringComparison.Ordinal))
+        {
+            established = false;
+            var store = await _db.DocumentStores.Find(s => s.Id == itemId).FirstOrDefaultAsync(ct);
+            if (store != null && !string.IsNullOrWhiteSpace(store.PeerSyncNodeId))
+            {
+                var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
+                var hit = await _db.PeerSyncRuns
+                    .Find(r => r.ResourceType == resourceType && r.ItemId == itemId
+                        && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId
+                        && acceptableDirs.Contains(r.Direction)
+                        && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                    .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+                established = !string.IsNullOrEmpty(hit);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { items = runs, established }));
     }
 
     /// <summary>

@@ -110,6 +110,8 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const [autoInterval, setAutoInterval] = useState(autoIntervalMinutes && autoIntervalMinutes > 0 ? autoIntervalMinutes : 60);
   const [autoSendMode, setAutoSendMode] = useState<'trigger' | 'scheduled'>(autoMode === 'scheduled' ? 'scheduled' : 'trigger');
   const [autoBusy, setAutoBusy] = useState(false);
+  // 服务端全量历史判定的「已建立关系」（针对当前保存的对端+方向），兜底被截断到 80 条的 runs 列表（Codex P2）。
+  const [serverEstablished, setServerEstablished] = useState(false);
   const mounted = useRef(true);
   // 「需要处理」首次出现时自动展开失败记录一次；之后尊重用户手动折叠。
   const autoOpenedProblems = useRef(false);
@@ -119,11 +121,26 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   // 不是「该库任意成功过」：切对端 A→B 或换方向未成功时，旧组合的成功不能算作新组合已建立（Codex P2）。
   // run.direction 对齐存 align-*，用等价集合归一（align-remote≈pull / align-local≈push / align-both≈both）。
   const acceptableRunDirs = direction ? DIRECTION_ALIGN_EQUIV[direction] : [];
-  const everSynced = !!activeNode && runs.some(r =>
+  // 从（被截断到 80 条的）runs 列表推断的「已建立」——够用于绝大多数库，但长命库成功 run 可能已滚出窗口。
+  const everSyncedFromRuns = !!activeNode && runs.some(r =>
     r.origin === 'outgoing'
     && (r.status === 'synced' || r.status === 'skipped')
     && r.peerNodeId === activeNode.remoteNodeId
     && acceptableRunDirs.includes(r.direction));
+  // 自动同步复用「最近成功同步的方向」（服务端 PeerSyncDirection）；用户在段控里改了方向但还没成功
+  // 手动同步一次，就开自动，会出现「header 说自动 pull、后台 run 还 push」的不一致（Codex P2）。
+  // 因此本地方向与服务端保存方向不一致时，禁用自动开关，逼用户先按新方向成功同步一次。
+  const serverDirection = initialManualDirection(peerSyncDirection);
+  const directionDirty = !!serverDirection && !!direction && direction !== serverDirection;
+  // 同理，多对端时选了一个还没成功同步过的对端（≠ 已保存关系的 peerNodeId），也不能开自动：
+  // setAutoSync 不带 nodeId，后端会对 saved peer 开自动，而面板拓扑显示的是新选对端，方向/对端两不一致（Codex P2）。
+  const peerDirty = !!peerNodeId && !!activeNode && activeNode.remoteNodeId !== peerNodeId;
+  const relationDirty = directionDirty || peerDirty;
+  // 有效「已建立」= runs 列表可见成功记录，或（当前选中组合==已保存关系且服务端全量门通过）。
+  // 后者兜底 runs 被截断到 80 条、当年建立关系的成功 run 已滚出窗口的长命库；选中组合偏离已保存关系
+  // （relationDirty）时不认服务端 flag（它只针对 saved peer+方向），回落到 runs 推断（与后端 gate 同口径，Codex P2）。
+  const everSynced = everSyncedFromRuns || (serverEstablished && !relationDirty);
+  const canAuto = everSynced && !shouldConfirmAutoDirection(peerSyncDirection) && !relationDirty;
 
   useEffect(() => {
     // React StrictMode 开发态会执行一次 setup -> cleanup -> setup；第二次 setup 必须恢复存活标记，
@@ -145,7 +162,10 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const loadRuns = useCallback(async () => {
     const my = ++runsSeq.current;
     const res = await listPeerSyncRuns(resourceType, storeId);
-    if (mounted.current && my === runsSeq.current && res.success && res.data) setRuns(res.data.items || []);
+    if (mounted.current && my === runsSeq.current && res.success && res.data) {
+      setRuns(res.data.items || []);
+      setServerEstablished(!!res.data.established);
+    }
   }, [resourceType, storeId]);
 
   const load = useCallback(async () => {
@@ -164,7 +184,10 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
         if (saved) setNodeId(saved.id);
       }
     }
-    if (my === runsSeq.current && runsRes.success && runsRes.data) setRuns(runsRes.data.items || []);
+    if (my === runsSeq.current && runsRes.success && runsRes.data) {
+      setRuns(runsRes.data.items || []);
+      setServerEstablished(!!runsRes.data.established);
+    }
     setLoading(false);
   }, [resourceType, storeId, peerNodeId]);
 
@@ -309,16 +332,6 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     }
   };
 
-  // 自动同步复用「最近成功同步的方向」（服务端 PeerSyncDirection）；用户在段控里改了方向但还没成功
-  // 手动同步一次，就开自动，会出现「header 说自动 pull、后台 run 还 push」的不一致（Codex P2）。
-  // 因此本地方向与服务端保存方向不一致时，禁用自动开关，逼用户先按新方向成功同步一次。
-  const serverDirection = initialManualDirection(peerSyncDirection);
-  const directionDirty = !!serverDirection && !!direction && direction !== serverDirection;
-  // 同理，多对端时选了一个还没成功同步过的对端（≠ 已保存关系的 peerNodeId），也不能开自动：
-  // setAutoSync 不带 nodeId，后端会对 saved peer 开自动，而面板拓扑显示的是新选对端，方向/对端两不一致（Codex P2）。
-  const peerDirty = !!peerNodeId && !!activeNode && activeNode.remoteNodeId !== peerNodeId;
-  const relationDirty = directionDirty || peerDirty;
-  const canAuto = everSynced && !shouldConfirmAutoDirection(peerSyncDirection) && !relationDirty;
   const primaryLabel = submitting ? '同步中…'
     : !direction ? '先选择方向'
       : tone === 'red' ? '重试同步'

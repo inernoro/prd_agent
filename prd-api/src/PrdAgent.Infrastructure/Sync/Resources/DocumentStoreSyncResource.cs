@@ -824,6 +824,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                 // 用户取消：不能吞成 per-record failure，必须冒泡到 PeerSyncTransferService 的 cancelled catch，
                 // 否则逐篇写入阶段点「停止」会让整个 run 落 error（继续跑完剩余记录）而非 cancelled（Codex P2）。
                 // 带上此刻已提交的部分增删改计数，让 cancelled run 如实记录已改动的数量（Codex P2 审计准确）。
+                // rethrow 会跳过收尾的 store 级 DocumentCount/UpdatedAt 重算，而前面已提交了部分条目增删——
+                // 先按实际条目数校正库摘要再抛，避免取消的 pull/align 留下陈旧文档数（Codex PR#1144 P2）。
+                await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
                 throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
             }
             catch (Exception ex)
@@ -866,6 +869,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 {
                     // 取消异常必须冒泡到 SyncItemAsync 的 cancelled catch，不能被下面的通用 catch 吞成 failure。
                     // 带上已删除等部分计数，让破坏性 align 取消的历史如实记录已删除数量（Codex P2 审计准确）。
+                    // 镜像删除已提交部分删除，rethrow 会跳过收尾的库摘要重算——先按实际条目数校正再抛（Codex PR#1144 P2）。
+                    await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
                     throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
                 }
                 catch (Exception ex)
@@ -939,6 +944,29 @@ public class DocumentStoreSyncResource : ISyncableResource
                 + (failed > 0 ? $"/失败{failed}" : "")
                 + (assetsRewritten > 0 || assetRewriteFailed > 0 ? $"；图片重传{assetsRewritten}/失败{assetRewriteFailed}" : ""),
         };
+    }
+
+    /// <summary>
+    /// 取消中断时校正知识库摘要：逐篇 apply / 镜像删除已提交部分条目增删，但收尾的 store 级 DocumentCount/UpdatedAt
+    /// 重算被 rethrow 跳过，会留下与实际条目数不符的陈旧摘要。此处只按真实条目数校正 DocumentCount + 触碰 UpdatedAt，
+    /// **不套用未完成 bundle 的库级元数据**（Name/Tags/主文档等半量元数据不应在取消态落库）（Codex PR#1144 P2）。
+    /// 取消经业务 DB flag 触发（非 CancellationToken），此处 ct 仍有效，可正常读写。
+    /// </summary>
+    private async Task RefreshStoreSummaryOnCancelAsync(string storeId, CancellationToken ct)
+    {
+        try
+        {
+            var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == storeId, cancellationToken: ct);
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == storeId,
+                Builders<DocumentStore>.Update
+                    .Set(s => s.DocumentCount, (int)count)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[peer-sync] refresh store summary on cancel failed: {StoreId}", storeId);
+        }
     }
 
     private sealed record DocumentStorePeerApplyOptions(
