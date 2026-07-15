@@ -55,6 +55,8 @@ import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
+import { isPreviewInstance } from '../services/preview-instance.js';
+import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
 import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
@@ -2008,6 +2010,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
+  // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
+  // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
+  // 只拦这组容器动作，只读端点与非容器写操作（备注/标签等）不受影响。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST' || !isPreviewInstance()) {
+      next();
+      return;
+    }
+    // 允许可选尾斜杠：Express 非严格路由会把 /stop/ 派发到 /stop handler，
+    // 不吸收尾斜杠的话守卫会被绕过（Codex P2）。
+    // force-rebuild/:profileId 也是容器动作（会 docker stop + find rm -rf worktree），
+    // 必须同罩（Codex P2）。
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+|stop|restart|pull)\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+    res.status(403).json({
+      error: 'preview_instance',
+      message: 'CDS 预览实例不执行容器操作（部署/停止/重启/拉取）。此实例仅用于验收 CDS 自身的界面与交互；真实操作请回到生产 CDS。',
+    });
+  });
 
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
@@ -7936,6 +7961,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const labels = [
       'cds.managed=true',
       'cds.type=resource-external-access',
+      // 实例身份：与 app/infra 容器一致，同宿主多 CDS master 时收割器据此互不
+      // 触碰（Codex P1；缺此 label 时无标记代理会被别的实例误停）。
+      `cds.instance=${computeCdsInstanceId(config.repoRoot)}`,
       `cds.project.id=${input.projectId}`,
       `cds.branch.id=${input.branch.id}`,
       `cds.resource.id=${input.resourceId}`,
@@ -11044,6 +11072,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;
+    // 预览实例的容器动作拒绝已由 createBranchRouter 顶部的统一守卫中间件处理
+    //（deploy / deploy/:profileId / stop / restart / pull 一并覆盖）。
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
@@ -14466,6 +14496,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-logs', async (req, res) => {
     const { id } = req.params;
+    // 预览实例守卫（Codex P2，2026-07-15）：不加这条，isRunning/docker inspect 会先被
+    // 拦截 executor 打成 exitCode 1，路由返回误导性的「容器不存在，请重新部署」，
+    // 预览实例的中文拒绝语永远到不了 UI。在入口直接给准确说明。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例没有真实容器，无法查看容器日志。此实例仅用于验收 CDS 自身的界面与交互。',
+      });
+      return;
+    }
     const { profileId } = req.body as { profileId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
@@ -20193,6 +20233,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
+    // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持自更新。此实例随分支部署，推送新 commit 即自动重建；生产更新请到生产 CDS 执行。',
+      });
+      return;
+    }
     // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
     let { branch, force } = req.body as { branch?: string; force?: boolean };
@@ -20994,6 +21042,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
+    // 预览实例不支持自更新（同 /self-update）。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持强制同步。此实例随分支部署，推送新 commit 即自动重建。',
+      });
+      return;
+    }
     // 2026-05-08 用户反馈"强制更新一秒过 → 没法重复测试":body.force=true 强制
     // 跳过 no-op fast-path,即使 HEAD === origin 且 dist .build-sha 都已对上,
     // 也走完整 fetch + reset + analyze + (热/冷/web-only) 流程。这样测试人员

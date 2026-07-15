@@ -109,6 +109,8 @@ docs:
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
   design.cds.branch-local-extra-services: CDS 分支级临时额外服务（分支可在项目底座之上自助加服务，只在本分支部署、删分支即消失、不影响别的分支）
   design.cds.config-tree: CDS 配置树（全局→项目→分支→派生分支四层继承、派生=快照拷贝、env 逐 key 溯源检查器、快照分支层；波4 repo compose 纯结构种子方向）
+  design.cds.self-hosting: CDS Self-Hosting（CDS 托管 CDS）：预览实例模式（CDS_PREVIEW_INSTANCE）+ cds-self 独立项目 compose，验收 CDS 自身改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
+  design.cds.lifecycle-atomicity: CDS 生命周期原子性（对账收敛取代命令式级联）：孤儿容器收割器 + 项目删除连带容器物理清理（先容器后网络）；五类原子性问题分类与 68 孤儿容器实证；网络/卷/worktree 收割为后续波次
   design.cds.agent.api: CDS Agent API 契约设计
   design.cds.agent.runtime-architecture: CDS Agent 运行时架构设计
   design.cds.agent.official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
@@ -162,6 +164,7 @@ docs:
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
   guide.cds.managed-delivery: CDS 自动交付与 Agent 接入 · 指南
+  guide.cds.host-migration: CDS 宿主迁移 Runbook（拉取/构建/性能检查单：必迁三样、调度器与并发闸核对、缓存预热、极速版首拉限流）
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程
