@@ -1535,7 +1535,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 崩溃残留的 syncing 会让按钮永久脉冲（Bugbot: Stale syncing status pins UI）。
   const syncBusy = syncActive;
   // 「同步」按钮文案即状态：同步中 > 需要处理 > 已同步·对端 > 同步（还没建立关系）。
-  const syncEstablished = !syncBusy && store.peerSyncStatus !== 'error'
+  // 「已建立」= 真正成功同步过一次（status=synced）。失败(error)/取消(cancelled)/未同步都算未建立，
+  // 顶栏只显示「同步」，不显示「已同步·对端」（Codex P2：取消的首次同步不应显示为 synced）。
+  const syncEstablished = !syncBusy && store.peerSyncStatus === 'synced'
     && ['push', 'pull', 'both', 'align-remote', 'align-local', 'align-both'].includes(store.peerSyncDirection ?? '');
   const syncButtonLabel = syncBusy ? (isMobile ? '同步中' : '同步中…')
     : store.peerSyncStatus === 'error' ? '需要处理'
@@ -1943,6 +1945,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           autoIntervalMinutes={store.peerSyncIntervalMinutes}
           autoMode={store.peerSyncAutoMode}
           peerSyncDirection={store.peerSyncDirection}
+          peerNodeId={store.peerSyncNodeId}
           peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}
           onAfterSync={() => { void loadStore(); void loadEntries(); }}

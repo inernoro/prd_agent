@@ -37,6 +37,8 @@ interface Props {
   autoMode?: string | null;
   /** 最近一次同步的方向（非空表示已手动同步过一次，可开启自动同步） */
   peerSyncDirection?: string | null;
+  /** 最近一次同步的对端稳定 ID（RemoteNodeId），多对端时用于预选已保存的对端 */
+  peerNodeId?: string | null;
   /** 最近一次同步的对端名称 */
   peerNodeName?: string | null;
 }
@@ -83,7 +85,7 @@ export const TONE_WIRE: Record<SyncTone, { wire: string; strong: string; bg: str
   red: { wire: 'rgba(248,113,113,0.44)', strong: 'rgb(252,165,165)', bg: 'rgba(239,68,68,0.10)', anim: 'none' },
 };
 
-export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, autoEnabled, autoIntervalMinutes, autoMode, peerSyncDirection, peerNodeName }: Props) {
+export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, autoEnabled, autoIntervalMinutes, autoMode, peerSyncDirection, peerNodeId, peerNodeName }: Props) {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<PeerSyncRun[]>([]);
   const [nodes, setNodes] = useState<PeerNode[]>([]);
@@ -105,8 +107,9 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   // 「需要处理」首次出现时自动展开失败记录一次；之后尊重用户手动折叠。
   const autoOpenedProblems = useRef(false);
 
-  // 已手动同步过一次（有方向或有 outgoing 台账）才允许开启自动同步——和后端同口径。
-  const everSynced = !!peerSyncDirection || runs.some(r => r.origin === 'outgoing');
+  // 真正成功同步过一次（有成功的 outgoing 台账）才算「已建立关系」——和后端 auto-sync gate 同口径。
+  // 仅写过方向（首次失败/取消也会写 direction）不算，避免取消的首次同步被误判为已建立（Codex P2）。
+  const everSynced = runs.some(r => r.origin === 'outgoing' && (r.status === 'synced' || r.status === 'skipped'));
 
   useEffect(() => {
     // React StrictMode 开发态会执行一次 setup -> cleanup -> setup；第二次 setup 必须恢复存活标记，
@@ -139,11 +142,17 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     if (nodesRes.success && nodesRes.data) {
       const ns = nodesRes.data.items || [];
       setNodes(ns);
+      // 预选对端：单对端直接选；多对端则匹配已保存关系的 RemoteNodeId，
+      // 否则已建立关系的库重开面板会因 nodeId 空而无法立即同步（Codex P2）。
       if (ns.length === 1) setNodeId(ns[0].id);
+      else if (peerNodeId) {
+        const saved = ns.find(n => n.remoteNodeId === peerNodeId);
+        if (saved) setNodeId(saved.id);
+      }
     }
     if (my === runsSeq.current && runsRes.success && runsRes.data) setRuns(runsRes.data.items || []);
     setLoading(false);
-  }, [resourceType, storeId]);
+  }, [resourceType, storeId, peerNodeId]);
 
   useEffect(() => { void load(); }, [load]);
 

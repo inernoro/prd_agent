@@ -666,9 +666,14 @@ public class PeerSyncController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == request.ItemId).FirstOrDefaultAsync(ct);
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
-        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)))
+        // 「可开启自动同步」的充要条件是这个库确实成功同步过一次（status=synced）——不仅是写过方向。
+        // 否则一次从未成功的首次同步（失败 / 被取消，syncing 阶段已写入 direction+node）会被误判为
+        // 「已建立关系」而允许开自动同步（Codex P2）。取消落 cancelled、失败落 error，均不满足。
+        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)
+            || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)
+            || !string.Equals(store.PeerSyncStatus, "synced", StringComparison.Ordinal)))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                "请先手动选择发送或拉回方向后，再开启后台自动同步"));
+                "请先成功手动同步一次（确定对端与方向）后，再开启后台自动同步"));
 
         var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
         var mode = PeerSyncSchedule.NormalizeMode(request.Mode);
