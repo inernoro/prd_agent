@@ -59,6 +59,23 @@ function mockDockerNetworkHappyPath(shell: MockShellExecutor): Set<string> {
   return existing;
 }
 
+/**
+ * DELETE /projects/:id 的容器/网络物理清理是响应后异步执行的（2026-07-15），
+ * 测试用小步轮询等 mock shell 收到对应命令，避免 race。
+ */
+async function waitForCommands(
+  shell: { commands: string[] },
+  predicate: (cmds: string[]) => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate(shell.commands)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`waitForCommands timed out; saw: ${JSON.stringify(shell.commands)}`);
+}
+
 async function request(
   server: http.Server,
   method: string,
@@ -727,8 +744,12 @@ describe('Projects router (P4 Part 2)', () => {
       expect(del.body.cascade.buildProfiles).toEqual([]);
       expect(del.body.cascade.infraServices).toEqual([]);
       expect(del.body.cascade.routingRules).toEqual([]);
+      // 2026-07-15: 物理清理（容器 + 网络）改为响应后异步执行，响应体里
+      // 如实声明调度内容。
+      expect(del.body.containerTeardown).toEqual({ scheduled: [], network });
 
-      // Shell was asked to inspect + rm the network
+      // Shell was asked to inspect + rm the network (async teardown — poll).
+      await waitForCommands(shell, (cmds) => cmds.some((c) => c.startsWith('docker network rm')));
       const rmCmds = shell.commands.filter((c) => c.startsWith('docker network rm'));
       expect(rmCmds).toHaveLength(1);
       expect(rmCmds[0]).toContain(network);
@@ -854,6 +875,80 @@ describe('Projects router (P4 Part 2)', () => {
       expect(state.buildProfiles).toEqual([]);
       expect(state.infraServices.map((s) => s.id)).toEqual(['cds-state-mongo']);
       expect(state.routingRules).toEqual([]);
+    });
+
+    // 2026-07-15（用户实锤）：删项目必须连带停删容器，且顺序是先容器后网络
+    //（网络上挂着容器时 network rm 必然失败）。系统级 infra（cds-state-mongo）
+    // 绝不能被物理清理。
+    it('tears down branch/app + project infra containers before the network, sparing system infra', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'teardown-target' });
+      expect(created.status).toBe(201);
+      const pid = created.body.project.id;
+      const network = created.body.project.dockerNetwork;
+
+      shell.addResponsePattern(/^docker rm -f /, () => ({ stdout: 'removed', stderr: '', exitCode: 0 }));
+
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'td-b1',
+        projectId: pid,
+        branch: 'main',
+        worktreePath: '/tmp/wt-td-1',
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-td-b1-api', hostPort: 10001, status: 'running' },
+          web: { profileId: 'web', containerName: 'cds-td-b1-web', hostPort: 10002, status: 'stopped' },
+        },
+      });
+      stateService.addInfraService({
+        id: 'td-mysql',
+        projectId: pid,
+        name: 'mysql',
+        dockerImage: 'mysql:8',
+        containerName: 'cds-infra-teardown-mysql',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+      stateService.addInfraService({
+        id: 'cds-state-mongo',
+        projectId: pid,
+        name: 'CDS State MongoDB',
+        dockerImage: 'mongo:7',
+        containerName: 'cds-infra-cds-state-mongo',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+      stateService.save();
+
+      const del = await request(server, 'DELETE', '/api/projects/' + pid);
+      expect(del.status).toBe(200);
+      expect(del.body.containerTeardown.network).toBe(network);
+      expect(del.body.containerTeardown.scheduled.sort()).toEqual([
+        'cds-infra-teardown-mysql',
+        'cds-td-b1-api',
+        'cds-td-b1-web',
+      ]);
+      // 系统级 infra 不在清理名单
+      expect(del.body.containerTeardown.scheduled).not.toContain('cds-infra-cds-state-mongo');
+
+      await waitForCommands(shell, (cmds) => cmds.some((c) => c.startsWith('docker network rm')));
+
+      const relevant = shell.commands.filter(
+        (c) => c.startsWith('docker rm -f') || c.startsWith('docker network rm'),
+      );
+      // 三个容器的 rm -f 全部发生在 network rm 之前
+      const networkIdx = relevant.findIndex((c) => c.startsWith('docker network rm'));
+      expect(networkIdx).toBe(3);
+      const rmTargets = relevant.slice(0, 3).join('\n');
+      expect(rmTargets).toContain('cds-td-b1-api');
+      expect(rmTargets).toContain('cds-td-b1-web');
+      expect(rmTargets).toContain('cds-infra-teardown-mysql');
+      expect(rmTargets).not.toContain('cds-state-mongo');
     });
   });
 });

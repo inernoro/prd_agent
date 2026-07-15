@@ -243,6 +243,9 @@
 - [CDS Self-Hosting（CDS 托管 CDS）](design.cds.self-hosting) `design.cds.self-hosting`
   > 预览实例模式（CDS_PREVIEW_INSTANCE=1）：宿主操作统一拦截 + 越界服务跳过 + JSON store + seed 演示数据；cds-self 独立项目 compose 解「同仓库多构建」；验收 CDS 改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
 
+- [CDS 生命周期原子性](design.cds.lifecycle-atomicity) `design.cds.lifecycle-atomicity`
+  > 对账收敛取代命令式级联：state 是唯一权威，孤儿容器收割器每小时把无 owner 的 cds-managed 容器停掉；项目删除连带容器物理清理（先容器后网络）；五类原子性问题分类 + 68 孤儿容器日志实证；安全阀（label 过滤/空库守卫/系统容器免死/逃生阀）
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 

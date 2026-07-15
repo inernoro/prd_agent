@@ -48,6 +48,7 @@ import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './service
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { sweepOrphanCdsContainers, isOrphanReaperEnabled } from './services/orphan-container-reaper.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -2789,6 +2790,10 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
   }
 
+  // 孤儿容器收割器的 timer 句柄（首扫 setTimeout + 周期 setInterval），
+  // stop/shutdown 时统一清理。
+  const orphanReaperTimers: Array<NodeJS.Timeout> = [];
+
   // B'.2:standby 模式下**不**启动 scheduler/janitor。supervisor 调
   // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
   // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
@@ -2832,8 +2837,42 @@ janitorService.setRemoveFn(async (slug: string) => {
     if (config.mode !== 'executor') {
       infraFlapWatchdog.start();
     }
+    // 2026-07-15:孤儿容器收割器。删除的项目/分支残留的 cds-managed 容器
+    //（state 中无 owner）定期停掉——单日取证 68 个孤儿 app 容器 + 用户报告的
+    // 已删项目 infra 容器仍在跑。启动 2 分钟后首扫（让 startup reconcile 先
+    // 收敛 state），此后每小时一轮。详见 services/orphan-container-reaper.ts。
+    if (config.mode !== 'executor' && isOrphanReaperEnabled()) {
+      const runOrphanSweep = () => {
+        void sweepOrphanCdsContainers({
+          shell,
+          state: stateService,
+          eventLog: activeServerEventLogStore,
+        }).then((result) => {
+          if (result.skippedReason) {
+            console.log(`[orphan-reaper] 本轮跳过: ${result.skippedReason}`);
+            return;
+          }
+          const stopped = result.actions.filter((a) => a.action === 'stopped');
+          const failed = result.actions.filter((a) => a.action === 'stop-failed');
+          if (stopped.length || failed.length) {
+            console.warn(
+              `[orphan-reaper] 孤儿容器处置: 已停止 ${stopped.length} 个` +
+              (failed.length ? `, 失败 ${failed.length} 个` : '') +
+              ` (共发现 ${result.actions.length} 个孤儿)`,
+            );
+          }
+        }).catch((err) => {
+          console.warn(`[orphan-reaper] sweep 异常: ${(err as Error).message}`);
+        });
+      };
+      orphanReaperTimers.push(setTimeout(runOrphanSweep, 2 * 60_000));
+      const interval = setInterval(runOrphanSweep, 60 * 60_000);
+      interval.unref?.();
+      orphanReaperTimers.push(interval);
+    }
   }
   function stopBackgroundServices(): void {
+    for (const t of orphanReaperTimers.splice(0)) clearTimeout(t as NodeJS.Timeout);
     dockerEventMonitor.stop();
     systemLogMonitor.stop();
     schedulerService.stop();

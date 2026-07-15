@@ -3407,29 +3407,32 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    // Drop the docker network first so that even if state save fails,
-    // the operator can retry and succeed without network collisions.
-    if (project.dockerNetwork) {
-      const result = await removeDockerNetwork(project.dockerNetwork);
-      if (!result.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[projects] failed to remove docker network ${project.dockerNetwork}: ${result.detail}`,
-        );
-        // Continue anyway — zombie network is less harmful than zombie
-        // project entry. State cascade will clean up the rest.
-      }
-    }
+    // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
+    // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个
+    // 孤儿容器）。顺序修正：**先收容器、后删网络**——网络上还挂着容器时
+    // `docker network rm` 必然失败（active endpoints），旧实现先删网络等于
+    // 僵尸网络 + 僵尸容器双输。
+    //
+    // 在 state cascade 之前先抄下本项目的全部容器名（cascade 之后就查不到了）。
+    const projectBranches = stateService
+      .getAllBranches()
+      .filter((b) => (b.projectId || 'default') === project.id);
+    const appContainerNames = projectBranches
+      .flatMap((b) => Object.values(b.services || {}).map((s) => s.containerName))
+      .filter((n): n is string => Boolean(n));
+    // getInfraServicesForProject 已排除系统级 infra（如 cds-state-mongo，CDS
+    // 自身状态库）——removeProject 的 cascade 同样保护它，物理清理必须镜像该口径。
+    const infraContainerNames = stateService
+      .getInfraServicesForProject(project.id)
+      .map((s) => s.containerName)
+      .filter((n): n is string => Boolean(n));
+    const teardownContainers = [...new Set([...appContainerNames, ...infraContainerNames])];
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
     // orphans in state.json. The state service returns a summary so we
     // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost). Container teardown is intentionally NOT
-    // done here — the previous list view's per-branch DELETE already
-    // handles that, and chasing it from a project DELETE would slow the
-    // request to multi-second territory. We log the cascade summary so
-    // operators can run `docker ps` and see the leftovers.
+    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
       summary = stateService.removeProject(project.id);
@@ -3440,6 +3443,36 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+
+    // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
+    // 任何一步失败只记日志——孤儿容器收割器（orphan-container-reaper）每小时
+    // 兜底收敛，删除路径不必做到完美原子。
+    const dockerNetwork = project.dockerNetwork;
+    const quoteName = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    void (async () => {
+      for (const name of teardownContainers) {
+        try {
+          const rm = await shell.exec(`docker rm -f ${quoteName(name)}`, { timeout: 60_000 });
+          if (rm.exitCode !== 0 && !/no such container/i.test(rm.stderr || '')) {
+            console.warn(`[projects] 删除项目 ${project.id} 时容器清理失败: ${name}: ${(rm.stderr || '').slice(0, 160)}`);
+          }
+        } catch (err) {
+          console.warn(`[projects] 删除项目 ${project.id} 时容器清理异常: ${name}: ${(err as Error).message}`);
+        }
+      }
+      if (dockerNetwork) {
+        const result = await removeDockerNetwork(dockerNetwork);
+        if (!result.ok) {
+          console.warn(
+            `[projects] failed to remove docker network ${dockerNetwork}: ${result.detail}`,
+          );
+        }
+      }
+      console.log(
+        `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
+        (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
+      );
+    })();
 
     const totalCascade =
       summary.branches.length +
@@ -3461,6 +3494,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ok: true,
       projectId: project.id,
       cascade: summary,
+      // 容器/网络物理清理在后台进行；这里如实告知调度了哪些（expectation-management）。
+      containerTeardown: {
+        scheduled: teardownContainers,
+        network: dockerNetwork ?? null,
+      },
     });
   });
 
