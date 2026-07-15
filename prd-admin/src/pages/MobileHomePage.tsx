@@ -40,6 +40,7 @@ import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import {
   formatCompactNumber,
   formatDateline,
@@ -500,54 +501,93 @@ function RecommendedShelf({ S, onNavigate }: { S: Skin; onNavigate: (to: string)
           const Icon = iconFor(item.icon);
           const accent = accentFor(item.agentKey);
           const coverUrl = cdnBase ? buildDefaultCoverUrl(cdnBase, item.agentKey) : null;
+          const hasArtwork = hasAgentCardArtwork(item.agentKey);
           return (
             <button
               key={item.id}
               type="button"
               onClick={() => onNavigate(item.routePath ?? `/ai-toolbox?item=${item.id}`)}
-              className="shrink-0 flex items-center text-left transition-transform active:scale-[0.985]"
+              className={`group relative shrink-0 overflow-hidden flex text-left transition-transform active:scale-[0.985] ${hasArtwork ? 'flex-col justify-between' : 'items-center'}`}
               style={{
-                width: 250,
+                width: hasArtwork ? 286 : 250,
+                minHeight: hasArtwork ? 198 : undefined,
                 gap: 10,
-                padding: '11px 12px',
+                padding: hasArtwork ? '14px' : '11px 12px',
                 borderRadius: 14,
-                background: S.card,
+                background: hasArtwork ? 'var(--media-card-base)' : S.card,
                 border: `${S.dark ? '0.5px' : '1px'} solid ${S.cardBorder}`,
                 boxShadow: S.cardShadow,
                 color: S.text,
               }}
             >
-              <span
-                className="shrink-0 flex items-center justify-center overflow-hidden"
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 11,
-                  background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
-                }}
-              >
-                {coverUrl ? (
-                  <img
-                    src={coverUrl}
-                    alt=""
-                    aria-hidden
-                    className="h-full w-full object-cover"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none';
+              <AgentCardArtwork agentKey={item.agentKey} compact />
+              {hasArtwork ? (
+                <>
+                  <span className="relative z-10 flex w-full items-start justify-between gap-3">
+                    <span className="block max-w-[60%]" style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.2, color: 'var(--text-on-media)' }}>
+                      {item.name}
+                    </span>
+                    <AgentCardTask agentKey={item.agentKey} compact />
+                  </span>
+                  <span
+                    className="relative z-10 block w-full"
+                    style={{
+                      margin: 'auto -14px -14px',
+                      width: 'calc(100% + 28px)',
+                      padding: '13px 14px 14px',
+                      background: 'var(--media-card-panel-translucent)',
+                      backdropFilter: 'blur(12px)',
+                      WebkitBackdropFilter: 'blur(12px)',
                     }}
-                  />
-                ) : (
-                  <Icon size={21} style={{ color: '#fff' }} />
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate" style={{ fontSize: 13.5, fontWeight: S.dark ? 510 : 600 }}>
-                  {item.name}
-                </span>
-                <span className="block truncate" style={{ marginTop: 2, fontSize: 11.5, color: S.text3 }}>
-                  {item.description}
-                </span>
-              </span>
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+                      {item.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          className="shrink-0 rounded-full border px-2.5 py-1 font-medium leading-none"
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--media-card-tag-text)',
+                            background: 'var(--media-card-tag-bg)',
+                            borderColor: 'var(--media-card-tag-border)',
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span
+                    className="relative z-10 shrink-0 flex items-center justify-center overflow-hidden"
+                    style={{ width: 42, height: 42, borderRadius: 11, background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
+                  >
+                    {coverUrl ? (
+                      <img
+                        src={coverUrl}
+                        alt=""
+                        aria-hidden
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <Icon size={21} style={{ color: 'var(--text-on-media)' }} />
+                    )}
+                  </span>
+                  <span className="relative z-10 min-w-0 flex-1 self-end">
+                    <span className="block truncate" style={{ fontSize: 13.5, fontWeight: 650, color: S.text }}>
+                      {item.name}
+                    </span>
+                    <span className="block line-clamp-2" style={{ marginTop: 2, fontSize: 11.5, color: S.text3 }}>
+                      {item.description}
+                    </span>
+                  </span>
+                </>
+              )}
             </button>
           );
         })}
