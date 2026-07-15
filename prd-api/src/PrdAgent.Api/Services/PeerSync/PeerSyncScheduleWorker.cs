@@ -194,7 +194,11 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             // 只绑 peer 不够——若自动建立为 push、后来同 peer 的手动 pull 失败/取消（syncing mark 已把方向改成
             // pull），只绑 peer 会命中旧的 push 成功、worker 却跑未建立的 pull（Codex P2）。方向用等价集合匹配
             // （对齐 run.Direction=align-* 归一到 push/pull/both）。
-            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(direction);
+            // 用 saved 原方向 store.PeerSyncDirection（而非 NormalizeAutoDirection 折叠后的 direction）判「是否建立过」：
+            // NormalizeAutoDirection 会把 align-remote/align-local 都折成 both，若拿 both 去查，用 align-remote 建立的
+            // 关系（run.Direction=align-remote）永远命中不到、worker 每轮空跳，而 SetAutoSync 却按 saved 值放行——
+            // 两处口径必须一致，established 判定统一走 saved 方向（Codex PR#1144 P2）。
+            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
             var establishedForPeer = await db.PeerSyncRuns
                 .Find(r => r.ResourceType == "document-store" && r.ItemId == store.Id
                     && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId

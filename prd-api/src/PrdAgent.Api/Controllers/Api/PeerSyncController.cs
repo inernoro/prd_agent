@@ -536,8 +536,10 @@ public class PeerSyncController : ControllerBase
         // 本次手动 transfer 的租约持有者标识（区别于 worker 的实例 id）。
         var manualLeaseOwner = $"manual:{this.GetRequiredUserId()}:{Guid.NewGuid():N}";
         var isDocStore = string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal);
-        foreach (var itemId in request.ItemIds.Distinct())
+        var distinctItemIds = request.ItemIds.Distinct().ToList();
+        for (var idx = 0; idx < distinctItemIds.Count; idx++)
         {
+            var itemId = distinctItemIds[idx];
             if (!allowedSet.Contains(itemId))
             {
                 results.Add(new { itemId, ok = false, message = "无权访问该条目（不在你的可访问范围内）" });
@@ -573,7 +575,15 @@ public class PeerSyncController : ControllerBase
             {
                 if (isDocStore) await _transfer.ReleaseStoreSyncLeaseAsync(itemId, manualLeaseOwner, ct);
             }
-            if (cancelledMidway) break;
+            if (cancelledMidway)
+            {
+                // 批量途中被停止：为剩余「未开始」的条目补 cancelled 结果行，否则这些条目不进 results，
+                // 批量响应看起来「全部成功」，SendToPeerDialog 里它们停留在「已选中」态，用户看不出哪些库没同步。
+                // 这些条目未真正尝试（未联系对端、未改数据），anyFail 不置——它们不是失败，是被主动停在门外（Codex P2）。
+                foreach (var pendingId in distinctItemIds.Skip(idx + 1))
+                    results.Add(new { itemId = pendingId, ok = false, cancelled = true, message = "已取消（批量已停止，未开始同步）" });
+                break;
+            }
         }
 
         // 仅在至少有一次真正与对端 HTTP 通信成功时才 bump LastContactAt（与 admin ping test 同口径），
