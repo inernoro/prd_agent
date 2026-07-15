@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -11,6 +11,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.DocumentStore;
 using Shouldly;
+using System.Security.Cryptography;
+using System.Text;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -70,7 +72,7 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         (await controller.PutNode(store.Id, "chapter-root", update, CancellationToken.None))
             .ShouldBeOfType<OkObjectResult>();
         var updated = await fixture.Db.DocumentEntries.Find(entry => entry.Id == created.Id).SingleAsync();
-        updated.UpdatedAt.ShouldBeGreaterThan(created.UpdatedAt);
+        updated.UpdatedAt.ShouldBe(created.UpdatedAt);
         updated.Metadata[DocumentStorePublisherPolicy.CreatedByRunIdKey].ShouldBe("run-a");
         updated.Metadata[DocumentStorePublisherPolicy.LastAppliedRunIdKey].ShouldBe("run-b");
 
@@ -115,6 +117,37 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         (await fixture.Db.DocumentEntries.CountDocumentsAsync(entry => entry.StoreId == generic.Id)).ShouldBe(2);
     }
 
+    [Fact]
+    public async Task PublisherDocumentFlow_SecondWriteIsNoopAndManualDriftConflictsWithoutOverwrite()
+    {
+        await using var fixture = await PublisherMongoFixture.CreateAsync();
+        var store = await fixture.InsertStoreAsync("owner-a");
+        var controller = fixture.CreateController("owner-a");
+        const string content = "# 第 0 章\n\n[[第 1 章：什么是模型网关]]";
+
+        var create = DocumentRequest("run-a", "第 0 章：这本书怎么用", content);
+        (await controller.PutNode(store.Id, "chapter-00", create, CancellationToken.None))
+            .ShouldBeOfType<OkObjectResult>();
+        var created = await fixture.Db.DocumentEntries.Find(entry => entry.StoreId == store.Id).SingleAsync();
+        created.Metadata[DocumentStorePublisherPolicy.DerivedStateKey].ShouldBe("ready");
+
+        var noop = DocumentRequest("run-b", "第 0 章：这本书怎么用", content);
+        noop.ExpectedUpdatedAt = created.UpdatedAt;
+        noop.LastAppliedSha256 = DocumentStorePublisherPolicy.Sha256(content);
+        (await controller.PutNode(store.Id, "chapter-00", noop, CancellationToken.None))
+            .ShouldBeOfType<OkObjectResult>();
+        var afterNoop = await fixture.Db.DocumentEntries.Find(entry => entry.Id == created.Id).SingleAsync();
+        afterNoop.UpdatedAt.ShouldBe(created.UpdatedAt);
+
+        await fixture.ReplaceDocumentContentAsync(afterNoop.DocumentId!, content + "\n\n人工修订");
+        var conflict = DocumentRequest("run-c", "第 0 章：这本书怎么用", content);
+        conflict.ExpectedUpdatedAt = afterNoop.UpdatedAt;
+        conflict.LastAppliedSha256 = DocumentStorePublisherPolicy.Sha256(content);
+        var result = await controller.PutNode(store.Id, "chapter-00", conflict, CancellationToken.None);
+        result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(StatusCodes.Status409Conflict);
+        (await fixture.ReadDocumentContentAsync(afterNoop.DocumentId!)).ShouldBe(content + "\n\n人工修订");
+    }
+
     private static readonly string EmptySha = DocumentStorePublisherPolicy.Sha256(string.Empty);
 
     private static PublisherPutNodeRequest Request(string runId, string title)
@@ -128,6 +161,21 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
             SourceSha256 = EmptySha,
             ManifestSha256 = DocumentStorePublisherPolicy.Sha256("manifest"),
             SourceRevision = "revision-1",
+        };
+
+    private static PublisherPutNodeRequest DocumentRequest(string runId, string title, string content)
+        => new()
+        {
+            Publisher = "publisher-a",
+            RunId = runId,
+            Kind = "document",
+            Title = title,
+            SourcePath = "chapters/00-how-to-use.md",
+            SourceSha256 = DocumentStorePublisherPolicy.Sha256(content),
+            ManifestSha256 = DocumentStorePublisherPolicy.Sha256("manifest"),
+            SourceRevision = "revision-1",
+            ContentType = "text/markdown",
+            Content = content,
         };
 
     private static DocumentEntry ManagedFolder(string storeId, string id, string sourceId)
@@ -156,6 +204,7 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
     {
         private readonly MongoClient _client;
         private readonly string _databaseName;
+        private readonly MemoryDocumentService _documents = new();
 
         private PublisherMongoFixture(MongoClient client, string connectionString, string databaseName)
         {
@@ -191,11 +240,18 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
 
         public DocumentStorePublisherController CreateController(string ownerId)
         {
+            var mentions = new MentionService(Db);
+            var contentWriter = new EntryContentWriteService(
+                Db,
+                _documents,
+                mentions,
+                new DocumentVersionService(Db),
+                NullLogger<EntryContentWriteService>.Instance);
             var controller = new DocumentStorePublisherController(
                 Db,
-                new Mock<IDocumentService>().Object,
-                null!,
-                new MentionService(Db));
+                _documents,
+                contentWriter,
+                mentions);
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -208,6 +264,68 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
             return controller;
         }
 
+        public Task ReplaceDocumentContentAsync(string documentId, string content)
+            => _documents.ReplaceContentAsync(documentId, content);
+
+        public async Task<string?> ReadDocumentContentAsync(string documentId)
+            => (await _documents.GetByIdAsync(documentId))?.RawContent;
+
         public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
+    }
+
+    private sealed class MemoryDocumentService : IDocumentService
+    {
+        private readonly Dictionary<string, ParsedPrd> _documents = new(StringComparer.Ordinal);
+
+        public Task<ParsedPrd> ParseAsync(string content)
+        {
+            var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+            return Task.FromResult(new ParsedPrd
+            {
+                Id = Sha256(normalized),
+                RawContent = normalized,
+                CharCount = normalized.Length,
+            });
+        }
+
+        public Task<ParsedPrd?> GetByIdAsync(string documentId)
+            => Task.FromResult(_documents.TryGetValue(documentId, out var document) ? Clone(document) : null);
+
+        public Task<ParsedPrd> SaveAsync(ParsedPrd document)
+        {
+            _documents[document.Id] = Clone(document);
+            return Task.FromResult(Clone(document));
+        }
+
+        public async Task<ParsedPrd?> UpdateTitleAsync(string documentId, string title)
+        {
+            var document = await GetByIdAsync(documentId);
+            if (document == null) return null;
+            document.Title = title;
+            return await SaveAsync(document);
+        }
+
+        public int EstimateTokens(string content) => content.Length / 4;
+
+        public async Task ReplaceContentAsync(string documentId, string content)
+        {
+            var document = await GetByIdAsync(documentId) ?? throw new InvalidOperationException("document missing");
+            document.RawContent = content;
+            await SaveAsync(document);
+        }
+
+        private static ParsedPrd Clone(ParsedPrd source)
+            => new()
+            {
+                Id = source.Id,
+                Title = source.Title,
+                RawContent = source.RawContent,
+                CharCount = source.CharCount,
+                TokenEstimate = source.TokenEstimate,
+                CreatedAt = source.CreatedAt,
+            };
+
+        private static string Sha256(string value)
+            => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     }
 }
