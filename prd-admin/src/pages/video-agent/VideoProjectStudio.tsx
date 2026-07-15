@@ -110,6 +110,11 @@ const createTimelineTracks = (): VideoTimelineTrack[] => [
   { id: crypto.randomUUID().replaceAll('-', ''), type: 'music', name: '音乐', muted: false, locked: false, clips: [] },
 ];
 
+export const resolveVideoAudioSetting = (
+  requested: boolean,
+  selectedModel?: Pick<VideoModelOption, 'supportsAudio'>,
+) => requested && selectedModel?.supportsAudio === true;
+
 export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   projects,
   project,
@@ -144,19 +149,25 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
   const recentWorkRef = useRef<HTMLElement>(null);
+  const selectedModel = models.find((item) => item.id === model);
+  const effectiveGenerateAudio = resolveVideoAudioSetting(generateAudio, selectedModel);
 
   useEffect(() => {
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
     setSourceMarkdown(project?.sourceMarkdown ?? '');
     setStyleDescription(project?.styleDescription ?? '智能匹配');
     const savedModel = project?.defaultVideoModel;
-    setModel(savedModel && models.some((item) => item.id === savedModel)
+    const nextModel = savedModel && models.some((item) => item.id === savedModel)
       ? savedModel
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '');
+      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
+    setModel(nextModel);
     setAspectRatio(project?.defaultAspectRatio ?? '16:9');
     setResolution(project?.defaultResolution ?? '1080p');
     setDuration(project?.defaultDuration ?? 5);
-    setGenerateAudio(project?.generateAudio ?? true);
+    setGenerateAudio(resolveVideoAudioSetting(
+      project?.generateAudio ?? true,
+      models.find((item) => item.id === nextModel),
+    ));
     setAssets(project?.assets ?? []);
     setTimelineTracks(project?.timelineTracks?.length ? project.timelineTracks : createTimelineTracks());
   }, [project, models]);
@@ -169,12 +180,11 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     defaultAspectRatio: aspectRatio,
     defaultResolution: resolution,
     defaultDuration: duration,
-    generateAudio,
+    generateAudio: effectiveGenerateAudio,
     assets,
     timelineTracks,
-  }), [aspectRatio, assets, duration, generateAudio, model, resolution, sourceMarkdown, styleDescription, timelineTracks, title]);
+  }), [aspectRatio, assets, duration, effectiveGenerateAudio, model, resolution, sourceMarkdown, styleDescription, timelineTracks, title]);
 
-  const selectedModel = models.find((item) => item.id === model);
   const selectedStyle = VIDEO_STYLE_DEFINITIONS.find((style) => style.label === styleDescription)
     ?? VIDEO_STYLE_DEFINITIONS[0];
   const estimatedShots = Math.max(1, Math.min(16, Math.ceil(sourceMarkdown.trim().length / 320)));
@@ -359,7 +369,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
                 <label><span>画幅</span><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)}>{availableAspectRatios.map((value) => <option key={value}>{value}</option>)}</select></label>
                 <label><span>单镜时长</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{availableDurations.map((value) => <option key={value} value={value}>{value} 秒</option>)}</select></label>
                 <label><span>分辨率</span><select value={resolution} onChange={(event) => setResolution(event.target.value)}>{availableResolutions.map((value) => <option key={value}>{value}</option>)}</select></label>
-                <label className="video-create-audio-toggle"><span>同步音频</span><input type="checkbox" checked={generateAudio} disabled={!selectedModel?.supportsAudio} onChange={(event) => setGenerateAudio(event.target.checked)} /></label>
+                <label className="video-create-audio-toggle"><span>同步音频</span><input type="checkbox" checked={effectiveGenerateAudio} disabled={!selectedModel?.supportsAudio} onChange={(event) => setGenerateAudio(event.target.checked)} /></label>
               </div>
             </section>
           )}

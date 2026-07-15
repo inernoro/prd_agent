@@ -810,6 +810,8 @@ public class VideoGenRunWorker : BackgroundService
                             .Push($"Scenes.{sceneIdx}.Versions", version),
                         cancellationToken: CancellationToken.None);
 
+                    await SyncProjectSceneActivityAsync(run.Id);
+
                     await PublishEventAsync(run.Id, "scene.render.done",
                         new { sceneIndex = sceneIdx, videoUrl = stored.Url, cost = status.Cost });
 
@@ -917,8 +919,24 @@ public class VideoGenRunWorker : BackgroundService
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
                 .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed),
             cancellationToken: CancellationToken.None);
+        await SyncProjectSceneActivityAsync(runId);
         await PublishEventAsync(runId, "scene.render.error",
             new { sceneIndex = sceneIdx, message = trimmed });
+    }
+
+    internal static string ResolveProjectStatusForScenes(IReadOnlyCollection<VideoGenScene> scenes)
+    {
+        var hasActiveScene = scenes.Any(scene =>
+            scene.Status is SceneItemStatus.Rendering or SceneItemStatus.Generating);
+        return hasActiveScene ? VideoProjectStatus.Rendering : VideoProjectStatus.Editing;
+    }
+
+    private async Task SyncProjectSceneActivityAsync(string runId)
+    {
+        var run = await _db.VideoGenRuns.Find(x => x.Id == runId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null) return;
+        await UpdateProjectAsync(run, ResolveProjectStatusForScenes(run.Scenes));
     }
 
     private async Task<VideoGenRun?> ClaimExportRunAsync(CancellationToken ct)

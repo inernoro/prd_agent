@@ -1,3 +1,4 @@
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
@@ -41,5 +42,19 @@ public class VideoProjectModelTests
         task.Id.Length.ShouldBe(32);
         task.Status.ShouldBe(VideoExportTaskStatus.Queued);
         task.CurrentPhase.ShouldBe("queued");
+    }
+
+    [Fact]
+    public void SceneActivity_ShouldKeepProjectRenderingUntilEverySceneIsTerminal()
+    {
+        VideoGenRunWorker.ResolveProjectStatusForScenes([
+            new VideoGenScene { Status = SceneItemStatus.Done },
+            new VideoGenScene { Status = SceneItemStatus.Rendering },
+        ]).ShouldBe(VideoProjectStatus.Rendering);
+
+        VideoGenRunWorker.ResolveProjectStatusForScenes([
+            new VideoGenScene { Status = SceneItemStatus.Done },
+            new VideoGenScene { Status = SceneItemStatus.Error },
+        ]).ShouldBe(VideoProjectStatus.Editing);
     }
 }

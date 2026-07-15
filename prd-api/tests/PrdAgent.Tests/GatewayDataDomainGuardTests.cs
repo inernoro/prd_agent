@@ -963,6 +963,16 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VideoSceneWorker_SynchronizesProjectStatusAfterSceneTerminalStates()
+    {
+        var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+
+        Assert.Contains("await SyncProjectSceneActivityAsync(run.Id);", videoWorker);
+        Assert.Contains("await SyncProjectSceneActivityAsync(runId);", videoWorker);
+        Assert.Contains("ResolveProjectStatusForScenes(run.Scenes)", videoWorker);
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");

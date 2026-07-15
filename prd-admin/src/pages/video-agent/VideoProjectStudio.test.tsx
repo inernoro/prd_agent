@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRunListItem, VideoProject } from '@/services/contracts/videoAgent';
-import { VideoProjectStudio } from './VideoProjectStudio';
+import { resolveVideoAudioSetting, VideoProjectStudio } from './VideoProjectStudio';
 
 const renderStudio = (runs: VideoGenRunListItem[] = [], projects: VideoProject[] = []) => renderToStaticMarkup(
   <VideoProjectStudio
@@ -64,6 +64,12 @@ const createProject = (overrides: Partial<VideoProject> = {}): VideoProject => (
 });
 
 describe('VideoProjectStudio', () => {
+  it('disables requested audio when the selected model does not support it', () => {
+    expect(resolveVideoAudioSetting(true, { supportsAudio: false })).toBe(false);
+    expect(resolveVideoAudioSetting(true, { supportsAudio: true })).toBe(true);
+    expect(resolveVideoAudioSetting(false, { supportsAudio: true })).toBe(false);
+  });
+
   it('opens on a focused literary creation flow instead of an editor console', () => {
     const html = renderStudio();
 
