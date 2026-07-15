@@ -11,6 +11,7 @@ import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { MobileSegmented } from '@/components/mobile/MobileSegmented';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import { AppStoreSection, AppStoreRankedList } from '@/components/mobile/appStore';
+import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
  * 移动端「发现」（AI 百宝箱）—— 原生手机浏览体验。
@@ -187,7 +188,7 @@ export function MobileToolboxView() {
           <>
             {agents.length > 0 && (
               <AppStoreSection title="智能体" caption={`${agents.length} 个`}>
-                <div className="grid grid-cols-2 gap-3" style={{ padding: '0 16px' }}>
+                <div className="grid grid-cols-1 gap-3" style={{ padding: '0 16px' }}>
                   {agents.map((a) => (
                     <AgentCard key={a.id} item={a} onClick={() => open(a)} />
                   ))}
@@ -220,12 +221,13 @@ export function MobileToolboxView() {
   );
 }
 
-/* ─────────── 智能体大卡（2 列，渐变铺满） ─────────── */
+/* ─────────── 智能体大卡（单列大图） ─────────── */
 
 function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const light = useDataTheme() === 'light';
   const accent = accentFor(item.agentKey);
   const Icon = iconFor(item.icon);
+  const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const pcOnly = item.routePath ? resolveMobileCompat(item.routePath)?.level === 'pc-only' : false;
 
   return (
@@ -234,19 +236,20 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
       onClick={onClick}
       className="text-left active:scale-[0.97] transition-transform relative overflow-hidden flex flex-col justify-between"
       style={{
-        height: 150,
+        height: hasArtwork ? 216 : 150,
         borderRadius: 18,
         padding: 16,
         color: '#fff',
-        background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
+        background: hasArtwork ? 'var(--media-card-base)' : `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
         boxShadow: light ? '0 8px 22px -12px rgba(20,21,26,0.35)' : '0 8px 22px -10px rgba(0,0,0,0.6)',
       }}
     >
+      <AgentCardArtwork agentKey={item.agentKey} compact />
       {pcOnly && (
         <span
-          className="absolute"
+          className="absolute z-10"
           style={{
-            top: 12,
+            top: hasArtwork ? 58 : 12,
             right: 12,
             fontSize: 10,
             fontWeight: 700,
@@ -258,29 +261,68 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
           建议 PC
         </span>
       )}
-      <span
-        className="flex items-center justify-center"
-        style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.22)' }}
-      >
-        <Icon size={24} strokeWidth={2} />
-      </span>
-      <span>
-        <b style={{ fontSize: 17, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>{item.name}</b>
-        <span
-          className="block"
-          style={{
-            fontSize: 12,
-            opacity: 0.85,
-            lineHeight: 1.3,
-            marginTop: 3,
-            overflow: 'hidden',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-          }}
-        >
-          {item.description}
+      {hasArtwork ? (
+        <span className="relative z-10 flex items-start justify-between gap-2">
+          <b style={{ maxWidth: '62%', fontSize: 20, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>
+            {item.name}
+          </b>
+          <AgentCardTask agentKey={item.agentKey} compact />
         </span>
+      ) : (
+        <span
+          className="relative z-10 flex items-center justify-center"
+          style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
+        >
+          <Icon size={24} strokeWidth={2} />
+        </span>
+      )}
+      <span
+        className="relative z-10"
+        style={hasArtwork ? {
+          margin: 'auto -16px -16px',
+          padding: '14px 16px 16px',
+          background: 'var(--media-card-panel-translucent)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        } : undefined}
+      >
+        {!hasArtwork && (
+          <b style={{ fontSize: 17, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>{item.name}</b>
+        )}
+        {hasArtwork ? (
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+            {item.tags.slice(0, 3).map((tag) => (
+              <span
+                key={tag}
+                className="shrink-0 rounded-full border px-2.5 py-1 font-medium leading-none"
+                style={{
+                  fontSize: 12,
+                  color: 'var(--media-card-tag-text)',
+                  background: 'var(--media-card-tag-bg)',
+                  borderColor: 'var(--media-card-tag-border)',
+                }}
+              >
+                {tag}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span
+            className="block"
+            style={{
+              fontSize: 12,
+              opacity: 0.85,
+              lineHeight: 1.3,
+              marginTop: 3,
+              overflow: 'hidden',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+            }}
+          >
+            {item.description}
+          </span>
+        )}
       </span>
     </button>
   );

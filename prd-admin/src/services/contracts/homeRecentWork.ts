@@ -8,6 +8,10 @@ export type RecentWorkItemDto = {
   agentKey: string;
   title: string;
   lastActiveAt: string;
+  /** 诚实进度 0..1——仅带状态机的实体有（当前只有缺陷）,null/缺省则不画进度条 */
+  progress?: number | null;
+  /** 进度标签（如「验收中」）,可独立于 progress 存在（如「已驳回」） */
+  progressLabel?: string | null;
 };
 
 export type ListRecentWorkContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: RecentWorkItemDto[] }>>;

@@ -439,6 +439,62 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void OrganizationConsole_ExposesExistingTenantScopedMembershipLifecycle()
+    {
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var organizationPage = ReadRepoFile("llmgw/web/src/pages/OrganizationPage.tsx");
+        var consoleLayout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var changePasswordPage = ReadRepoFile("llmgw/web/src/pages/ChangePasswordPage.tsx");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var membershipPolicy = ReadRepoFile("llmgw/console-api/Organization/MembershipPolicy.cs");
+
+        Assert.Contains("export function createMember", webApi);
+        Assert.Contains("'/members'", webApi);
+        Assert.Contains("export function updateMember", webApi);
+        Assert.Contains("/invalidate-sessions", webApi);
+        Assert.Contains("export type CreateMemberRequest", webTypes);
+        Assert.Contains("export type UpdateMemberRequest", webTypes);
+        Assert.Contains("expectedVersion: number", webTypes);
+        Assert.Contains("添加成员", organizationPage);
+        Assert.Contains("已创建；首次登录时必须设置自己的密码", organizationPage);
+        Assert.Contains("强制重新登录", organizationPage);
+        Assert.Contains("只有 Owner 可以修改 Owner", organizationPage);
+        Assert.Contains("currentRole === 'owner' || currentRole === 'admin'", organizationPage);
+        Assert.Contains("expectedVersion: member.version", organizationPage);
+        Assert.Contains("memberInitialPassword.length < 12", organizationPage);
+        Assert.Contains("memberRole === 'developer' && memberTeamIds.length === 0", organizationPage);
+        Assert.Contains("team.status === 'active' || selected.includes(team.id)", organizationPage);
+        Assert.Contains("不能在这里修改自己", organizationPage);
+        Assert.Contains("hiddenRoles: ['billing']", consoleLayout);
+        Assert.DoesNotContain("tenantId:", organizationPage);
+        Assert.Contains("新口令至少 12 位", changePasswordPage);
+        Assert.DoesNotContain("admin/admin", changePasswordPage);
+        Assert.Contains("if (newPwd.Length < 12)", consoleProgram);
+        Assert.Contains("\"WEAK_PASSWORD\", \"新口令至少 12 位\"", consoleProgram);
+        Assert.Contains("body.ExpectedVersion != membership.Version", consoleProgram);
+        Assert.Contains("x.Version == previousVersion", consoleProgram);
+        Assert.Contains("DEVELOPER_TEAM_REQUIRED", consoleProgram);
+        Assert.Contains("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", consoleProgram);
+        Assert.Contains("SELF_SESSION_INVALIDATION_FORBIDDEN", consoleProgram);
+        Assert.Contains("MembershipPolicy.RemovesActiveOwner", consoleProgram);
+        Assert.Contains("MembershipPolicy.HasUsableDeveloperScope", consoleProgram);
+        Assert.Contains("MembershipPolicy.TryCanonicalizeUsername", consoleProgram);
+        Assert.Contains("MembershipPolicy.AllowsIdempotentReplay", consoleProgram);
+        Assert.Contains("MEMBERSHIP_PROVISIONING_INCOMPLETE", consoleProgram);
+        Assert.Contains("USERNAME_UNAVAILABLE", consoleProgram);
+        Assert.Contains("\"beforeTeamIds\"", consoleProgram);
+        Assert.Contains("\"teamIds\", new BsonArray(membership.TeamIds)", consoleProgram);
+        Assert.Contains("BeginRequiredOperationAuditAsync", consoleProgram);
+        Assert.Contains("CompleteRequiredOperationAuditAsync", consoleProgram);
+        Assert.Contains("{ \"State\", \"pending\" }", consoleProgram);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"TenantId\", tenantId)", consoleProgram);
+        Assert.Contains("^[a-z0-9][a-z0-9._-]{2,47}$", membershipPolicy);
+        Assert.Contains("teamIds.All(activeTeamIds.Contains)", membershipPolicy);
+        Assert.Contains("MaxCanonicalUsernameLength = 128", membershipPolicy);
+    }
+
+    [Fact]
     public void TenantBoundaryPropagation_PreservesVerifiedTenantAndInternalLogFallback()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -691,6 +747,14 @@ public class GatewayDataDomainGuardTests
         var serving = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var gatewayRequest = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var logDto = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var detailDrawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
+        var promptPolicyPage = ReadRepoFile("llmgw/web/src/pages/PromptPolicyPage.tsx");
+        var auditsPage = ReadRepoFile("llmgw/web/src/pages/AuditsPage.tsx");
+        var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
         Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
         Assert.Contains("Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"AppCallerCode\").Ascending(\"RequestType\").Ascending(\"Version\")", console);
@@ -704,6 +768,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PromptPolicyId: request.Context?.PromptPolicyId", gateway);
         Assert.Contains("PromptPolicyHash: request.Context?.PromptPolicyHash", gateway);
         Assert.Contains("SystemPromptText: string.IsNullOrWhiteSpace(request.Context?.PromptPolicyId) ? request.Context?.SystemPromptText : null", gateway);
+        foreach (var loggingSurface in new[] { gatewayRequest, gateway, logModel, logDto, webTypes, detailDrawer })
+        {
+            Assert.DoesNotContain("PromptPolicyChars", loggingSurface);
+            Assert.DoesNotContain("promptPolicyChars", loggingSurface);
+        }
+        Assert.Contains("日志只记录策略 id、版本和 hash", promptPolicyPage);
+        Assert.Contains("提示词策略只记录策略 id、版本和 hash", auditsPage);
+        Assert.Contains("{ \"version\", doc[\"Version\"] }", console);
+        Assert.Contains("{ \"policyHash\", doc[\"PolicyHash\"] }", console);
+        Assert.DoesNotContain("{ \"enabled\", doc[\"Enabled\"] }", console);
+        Assert.DoesNotContain("{ \"policyChars\", doc[\"PolicyChars\"] }", console);
+        Assert.DoesNotContain("{ \"maxChars\", doc[\"MaxChars\"] }", console);
+        Assert.Contains("个模板字符", promptPolicyPage);
+        Assert.Contains("个本次生效字符", promptPolicyPage);
+        Assert.Contains("缺价格保持“未知”，不会显示成 0", usagePage);
+        Assert.Contains("CNY 与 USD 不会直接相加", usagePage);
     }
 
     [Fact]

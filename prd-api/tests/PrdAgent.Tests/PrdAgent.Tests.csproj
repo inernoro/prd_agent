@@ -26,4 +26,8 @@
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
+  </ItemGroup>
+
 </Project>

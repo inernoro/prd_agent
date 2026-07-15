@@ -18341,9 +18341,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET /api/export-skill — export all CDS skills as a single tar.gz bundle
   //
   // 打包内容（全量，不分 legacy / unified）：
-  //   .claude/skills/cds/                — 统一技能（主入口 + CLI + reference）
-  //   .claude/skills/cds-deploy-pipeline/ — 部署流水线技能
-  //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //   skills/cds/                — 统一技能（主入口 + CLI + reference）
+  //   skills/cds-deploy-pipeline/ — 部署流水线技能
+  //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
   // 2026-07-09：目录复制与 tar 打包全部异步化——原实现 statSync/readdirSync
@@ -18376,7 +18377,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const skillName of skillsToCopy) {
         const skillDir = path.join(skillsRoot, skillName);
         if (!fs.existsSync(skillDir)) continue;
-        const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+        const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
         await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
         copiedCount++;
@@ -18389,35 +18390,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // README tailored to the new unified skill
       const readme = useLegacy
-        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
+        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
 包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
-## 三分钟安装
+## 安装
+
+解压后，将 \`skills/\` 下的三个目录复制到当前项目的 Agent Skills 目录：
+
+| Agent | 项目级目录 |
+|------|-----------|
+| Codex / 通用 Agent Skills | \`.agents/skills\` |
+| Cursor | \`.cursor/skills\` |
+| Claude Code | \`.claude/skills\` |
+
+不要写入用户主目录，不要修改 PATH、\`.bashrc\`、\`.zshrc\` 或系统环境变量。
+
+## 安全接入
 
 \`\`\`bash
-# 1. 解压到你项目的根目录（会在 .claude/skills/ 下放置所有 cds 技能）
-tar -xzf ${packName}.tar.gz --strip-components=1
+# 已有项目
+python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host> --project <project-id> --agent <agent-name>
 
-# 2. 加 alias（推荐）
-echo 'alias cdscli="python3 \\$(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"' >> ~/.bashrc
-source ~/.bashrc
-
-# 3. 初始化（交互式）
-cdscli init
-
-# 4. 验证
-cdscli auth check
-cdscli project list --human
+# 首次创建项目
+python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host> --new-project --agent <agent-name>
 \`\`\`
+
+命令会等待用户在 CDS 页面批准。凭据保存在当前项目的 \`.cds/credentials.json\`，
+并写入本地 git exclude；密钥不会出现在对话、标准输出或 shell 配置中。
 
 ## 主要命令
 
 | 命令 | 用途 |
 |------|------|
-| \`cdscli init\` | 首次配置 CDS_HOST / AI_ACCESS_KEY / 默认 projectId |
+| \`cdscli connect\` | 页面批准后安全连接，不复制密钥、不写全局环境变量 |
+| \`cdscli init\` | 交互式安全接入；\`--legacy-env\` 才使用旧版环境变量方式 |
 | \`cdscli scan --apply-to-cds <projectId>\` | 扫描本地 → 生成 compose YAML → 提交 CDS 审批 |
 | \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
 | \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
@@ -18428,23 +18437,32 @@ cdscli project list --human
 
 | 文件 | 何时看 |
 |------|--------|
-| \`.claude/skills/cds/SKILL.md\` | Claude Code 自动加载，主入口 |
-| \`.claude/skills/cds/reference/api.md\` | 需要 curl 直调 API |
-| \`.claude/skills/cds/reference/auth.md\` | 401 / 403 排查 |
-| \`.claude/skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
-| \`.claude/skills/cds/reference/smoke.md\` | 分层冒烟策略 |
-| \`.claude/skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
-| \`.claude/skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+| \`skills/cds/SKILL.md\` | 主入口 |
+| \`skills/cds/reference/api.md\` | 需要 curl 直调 API |
+| \`skills/cds/reference/auth.md\` | 401 / 403 排查 |
+| \`skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
+| \`skills/cds/reference/smoke.md\` | 分层冒烟策略 |
+| \`skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
+| \`skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
 
 ## 升级
 
-直接重新下载本包覆盖即可，\`~/.cdsrc\` 不受影响。
+运行 \`cdscli update\`。旧版本备份放在项目 \`.cds/skill-backups\`，不会产生重复可发现技能。
 
 ## 反馈
 
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
+      await fs.promises.writeFile(
+        path.join(packDir, 'manifest.json'),
+        JSON.stringify({
+          format: 'agent-skills',
+          version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
+          skills: skillsToCopy.filter((name) => fs.existsSync(path.join(skillsRoot, name))),
+        }, null, 2) + '\n',
+        'utf-8',
+      );
 
       // Create tar.gz using tar command (available on all Linux) — 异步 execFile，
       // 压缩期间事件循环不阻塞（原 execSync 会让所有请求/SSE/代理停摆）。

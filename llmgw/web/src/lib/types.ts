@@ -121,7 +121,6 @@ export type LlmLogDetail = {
   promptPolicyId?: string | null;
   promptPolicyVersion?: number | null;
   promptPolicyHash?: string | null;
-  promptPolicyChars?: number | null;
   questionText?: string | null;
   answerText?: string | null;
   thinkingText?: string | null;
@@ -1008,6 +1007,27 @@ export type OrganizationData = {
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
 export type CreatedTeam = { id: string; name: string; status: string };
+export type CreateMemberRequest = {
+  username: string;
+  displayName?: string;
+  initialPassword?: string;
+  role: 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
+  teamIds: string[];
+};
+export type CreatedMember = {
+  id: string;
+  userId: string;
+  username: string;
+  role: string;
+  teamIds: string[];
+  idempotentReplay?: boolean;
+};
+export type UpdateMemberRequest = {
+  expectedVersion: number;
+  role?: 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
+  status?: 'active' | 'disabled';
+  teamIds?: string[];
+};
 
 // ── 影子比对（只读）──
 export type ShadowSnapshot = {

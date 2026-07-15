@@ -163,7 +163,6 @@ public sealed class LlmLogDetail
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
     public string? ThinkingText { get; set; }
@@ -1210,6 +1209,7 @@ public sealed class CreateMemberRequest
 
 public sealed class UpdateMemberRequest
 {
+    public int ExpectedVersion { get; set; }
     public string? Role { get; set; }
     public string? Status { get; set; }
     public List<string>? TeamIds { get; set; }

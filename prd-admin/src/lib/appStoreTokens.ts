@@ -31,6 +31,9 @@ export const AS_COLOR = {
   surface: 'rgba(255, 255, 255, 0.05)',
   surfaceHover: 'rgba(255, 255, 255, 0.08)',
 
+  /** 分组卡片实底（iOS grouped cell）——暗=悬浮灰 #1C1C1E，浅=纯白，用于内容卡背景 */
+  card: '#1C1C1E',
+
   /** Pill 按钮底 —— App Store Get 按钮的灰色 */
   pillBg: 'rgba(120, 120, 128, 0.24)',
 
@@ -60,6 +63,8 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
   surface: 'rgba(0, 0, 0, 0.045)',
   surfaceHover: 'rgba(0, 0, 0, 0.07)',
 
+  card: '#ffffff',
+
   pillBg: 'rgba(120, 120, 128, 0.16)',
 
   blue: '#007aff',
@@ -83,6 +88,8 @@ export const AS_TYPE = {
 
   /** 区块标题（智能体 / 工具 / 最近活动）—— App Store "Must-Have Apps" 级 */
   sectionTitle: { fontSize: 26, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.1 },
+  /** 紧凑区块标题（健康摘要式仪表盘页，多区块纵向堆叠时用）—— iOS 健康「摘要」卡组标题级 */
+  groupTitle: { fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.15 },
   /** 区块"See All" 右侧字 */
   sectionAction: { fontSize: 17, fontWeight: 400, letterSpacing: '-0.01em' },
 
@@ -114,6 +121,8 @@ export const AS_SPACE = {
   sectionGap: 36,
   /** 区块标题到内容 */
   titleGap: 16,
+  /** 分类 chip 行高（App Store "分类"横滑筛选条） */
+  chipHeight: 34,
   /** 列表项垂直 padding */
   listItemPaddingY: 14,
   /** List 分隔线从 icon 右侧开始（icon 52 + 左 padding 20） */
@@ -144,6 +153,10 @@ export const AS_SIZE = {
   appIconSize: 52,
   /** Pill 按钮高度 */
   pillHeight: 30,
+  /** 智能体宫格里的圆角 icon 尺寸（App Store 主屏 app 图标级） */
+  gridIconSize: 60,
+  /** 智能体宫格行间距 */
+  gridGap: 16,
 } as const;
 
 /* ───────────── 苹果级字体栈 ───────────── */

@@ -7,7 +7,6 @@ import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, reset
 import type { SsoLoginOption } from '@/services/contracts/auth';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
-import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
 
 /**
  * LoginPage — 沿用 /home 的 Linear × Retro-Futurism 视觉语言
@@ -17,7 +16,7 @@ import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
  * 结构：
  *   1 · StaticBackdrop 静态背景（六层 CSS）
  *   2 · Hero 本地 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）
- *   3 · 中心玻璃卡片（HUD chip eyebrow + Space Grotesk 标题 + 表单 + HERO_GRADIENT 主 CTA）
+ *   3 · 中心玻璃卡片（HUD chip eyebrow + Space Grotesk 标题 + 表单 + 登录页语义渐变主 CTA）
  *   4 · 所有元素走 Reveal 阶梯进场
  *
  * 业务逻辑（login / 首次登录重置密码 / 权限拉取）保持与旧版一致，只改视觉层。
@@ -311,11 +310,16 @@ export default function LoginPage() {
 
   return (
     <div
-      className="relative min-h-screen w-full overflow-hidden bg-[#030306] text-white"
-      style={{ fontFamily: 'var(--font-body)' }}
+      className="relative min-h-screen w-full overflow-hidden text-white"
+      style={{ fontFamily: 'var(--font-body)', background: 'var(--login-bg)' }}
     >
       {/* Layer 1 · 全站静态背景 */}
       <StaticBackdrop />
+      <div
+        aria-hidden
+        className="absolute inset-0 z-0 pointer-events-none"
+        style={{ background: 'var(--login-backdrop-overlay)' }}
+      />
 
       {/* Layer 2 · Hero 局部 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）*/}
       <RetroHorizon />
@@ -361,28 +365,18 @@ export default function LoginPage() {
       <style>{`
         @keyframes login-title-pulse {
           0%, 100% {
-            text-shadow:
-              0 0 30px rgba(203, 213, 225, 0.32),
-              0 0 90px rgba(0, 240, 255, 0.22),
-              0 0 140px rgba(59, 130, 246, 0.12);
+            text-shadow: var(--login-title-shadow);
           }
           50% {
-            text-shadow:
-              0 0 40px rgba(226, 232, 240, 0.45),
-              0 0 110px rgba(0, 240, 255, 0.30),
-              0 0 160px rgba(59, 130, 246, 0.18);
+            text-shadow: var(--login-title-shadow-strong);
           }
         }
         @keyframes login-hud-pulse {
           0%, 100% {
-            box-shadow:
-              0 0 28px rgba(148, 163, 184, 0.18),
-              inset 0 0 14px rgba(148, 163, 184, 0.05);
+            box-shadow: var(--login-hud-shadow);
           }
           50% {
-            box-shadow:
-              0 0 38px rgba(203, 213, 225, 0.28),
-              inset 0 0 20px rgba(203, 213, 225, 0.08);
+            box-shadow: var(--login-hud-shadow-strong);
           }
         }
         @media (prefers-reduced-motion: reduce) {
@@ -406,10 +400,8 @@ function RetroHorizon() {
         style={{
           top: '72vh',
           height: '2px',
-          background:
-            'linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(122, 140, 246, 0.55) 70%, transparent 100%)',
-          boxShadow:
-            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(139, 92, 246, 0.3)',
+          background: 'var(--login-horizon)',
+          boxShadow: 'var(--login-horizon-shadow)',
         }}
       />
 
@@ -422,8 +414,7 @@ function RetroHorizon() {
           transform: 'translate(-50%, -50%)',
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
-          background:
-            'radial-gradient(circle at center, rgba(139, 92, 246, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(122, 140, 246, 0.06) 60%, transparent 75%)',
+          background: 'var(--login-sun)',
           filter: 'blur(6px)',
         }}
       />
@@ -446,15 +437,15 @@ function RetroHorizon() {
                 180deg,
                 transparent 0,
                 transparent 43px,
-                rgba(203, 213, 225, 0.38) 43px,
-                rgba(203, 213, 225, 0.38) 44px
+                var(--login-grid-horizontal) 43px,
+                var(--login-grid-horizontal) 44px
               ),
               repeating-linear-gradient(
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(122, 140, 246, 0.38) 43px,
-                rgba(122, 140, 246, 0.38) 44px
+                var(--login-grid-vertical) 43px,
+                var(--login-grid-vertical) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -479,10 +470,9 @@ function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
       data-login-pulse
       className="inline-flex items-center gap-3 px-4 py-2 rounded-md"
       style={{
-        background: 'rgba(10, 14, 22, 0.72)',
-        border: '1px solid rgba(203, 213, 225, 0.22)',
-        boxShadow:
-          '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
+        background: 'var(--login-panel-bg)',
+        border: '1px solid var(--login-border-strong)',
+        boxShadow: 'var(--login-hud-shadow)',
         fontFamily: 'var(--font-terminal)',
         animation: 'login-hud-pulse 4s ease-in-out infinite',
       }}
@@ -529,9 +519,9 @@ function MapMark({ className = 'w-14 h-14' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="mapLoginGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#5B8DEF', stopOpacity: 1 }} />
-          <stop offset="50%" style={{ stopColor: '#7C6CF0', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#A78BFA', stopOpacity: 1 }} />
+          <stop offset="0%" style={{ stopColor: 'var(--login-mark-start)', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: 'var(--login-mark-mid)', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: 'var(--login-mark-end)', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#mapLoginGradient)" />
@@ -578,8 +568,8 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
       <div
         className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
         style={{
-          background: 'rgba(10, 14, 22, 0.62)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          background: 'var(--login-field-bg)',
+          border: '1px solid var(--login-border)',
           backdropFilter: 'blur(10px)',
           WebkitBackdropFilter: 'blur(10px)',
         }}
@@ -607,7 +597,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- *  主 CTA —— HERO_GRADIENT pill
+ *  主 CTA —— 登录页石墨绿渐变 pill
  * ────────────────────────────────────────────────────────────────────────── */
 function PrimaryPill({
   children,
@@ -627,9 +617,8 @@ function PrimaryPill({
       disabled={disabled}
       className="group relative inline-flex w-full items-center justify-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
       style={{
-        background: HERO_GRADIENT,
-        boxShadow:
-          '0 0 48px rgba(124, 108, 240, 0.35), 0 0 100px rgba(122, 140, 246, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
+        background: 'var(--login-cta-gradient)',
+        boxShadow: 'var(--login-cta-shadow)',
         letterSpacing: '0.01em',
         fontFamily: 'var(--font-display)',
       }}
@@ -678,8 +667,8 @@ function GlassCard({ children }: { children: React.ReactNode }) {
     <div
       className="rounded-[22px] p-8"
       style={{
-        background: 'rgba(10, 14, 22, 0.72)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+        background: 'var(--login-panel-bg)',
+        border: '1px solid var(--login-border)',
         backdropFilter: 'blur(14px)',
         WebkitBackdropFilter: 'blur(14px)',
         boxShadow:
@@ -849,8 +838,8 @@ function LoginCard({
                 <div
                   className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
                   style={{
-                    background: 'rgba(10, 14, 22, 0.62)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    background: 'var(--login-field-bg)',
+                    border: '1px solid var(--login-border)',
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                   }}
@@ -1062,8 +1051,8 @@ function ResetCard({
           <div
             className="rounded-xl px-4 py-3 grid gap-1.5"
             style={{
-              background: 'rgba(10, 14, 22, 0.52)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
+              background: 'var(--login-field-bg)',
+              border: '1px solid var(--login-border)',
             }}
           >
             {passwordRules.map((rule) => {
