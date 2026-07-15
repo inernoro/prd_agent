@@ -691,6 +691,14 @@ public class GatewayDataDomainGuardTests
         var serving = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var gatewayRequest = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var logDto = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var detailDrawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
+        var promptPolicyPage = ReadRepoFile("llmgw/web/src/pages/PromptPolicyPage.tsx");
+        var auditsPage = ReadRepoFile("llmgw/web/src/pages/AuditsPage.tsx");
+        var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
         Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
         Assert.Contains("Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"AppCallerCode\").Ascending(\"RequestType\").Ascending(\"Version\")", console);
@@ -704,6 +712,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PromptPolicyId: request.Context?.PromptPolicyId", gateway);
         Assert.Contains("PromptPolicyHash: request.Context?.PromptPolicyHash", gateway);
         Assert.Contains("SystemPromptText: string.IsNullOrWhiteSpace(request.Context?.PromptPolicyId) ? request.Context?.SystemPromptText : null", gateway);
+        foreach (var loggingSurface in new[] { gatewayRequest, gateway, logModel, logDto, webTypes, detailDrawer })
+        {
+            Assert.DoesNotContain("PromptPolicyChars", loggingSurface);
+            Assert.DoesNotContain("promptPolicyChars", loggingSurface);
+        }
+        Assert.Contains("日志只记录策略 id、版本和 hash", promptPolicyPage);
+        Assert.Contains("提示词策略只记录策略 id、版本和 hash", auditsPage);
+        Assert.Contains("{ \"version\", doc[\"Version\"] }", console);
+        Assert.Contains("{ \"policyHash\", doc[\"PolicyHash\"] }", console);
+        Assert.DoesNotContain("{ \"enabled\", doc[\"Enabled\"] }", console);
+        Assert.DoesNotContain("{ \"policyChars\", doc[\"PolicyChars\"] }", console);
+        Assert.DoesNotContain("{ \"maxChars\", doc[\"MaxChars\"] }", console);
+        Assert.Contains("个模板字符", promptPolicyPage);
+        Assert.Contains("个本次生效字符", promptPolicyPage);
+        Assert.Contains("缺价格保持“未知”，不会显示成 0", usagePage);
+        Assert.Contains("CNY 与 USD 不会直接相加", usagePage);
     }
 
     [Fact]

@@ -121,7 +121,6 @@ export type LlmLogDetail = {
   promptPolicyId?: string | null;
   promptPolicyVersion?: number | null;
   promptPolicyHash?: string | null;
-  promptPolicyChars?: number | null;
   questionText?: string | null;
   answerText?: string | null;
   thinkingText?: string | null;

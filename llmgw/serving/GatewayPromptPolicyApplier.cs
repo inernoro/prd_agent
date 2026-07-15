@@ -81,7 +81,6 @@ public static partial class GatewayPromptPolicyApplier
         context.PromptPolicyId = policy.GetValue("_id", string.Empty).AsString;
         context.PromptPolicyVersion = policy.GetValue("Version", 0).ToInt32();
         context.PromptPolicyHash = policy.GetValue("PolicyHash", string.Empty).AsString;
-        context.PromptPolicyChars = policyChars;
         return new(true, CopyWithBody(request, body, context));
     }
 

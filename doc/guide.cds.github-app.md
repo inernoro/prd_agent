@@ -1,20 +1,48 @@
-# CDS GitHub App 接入与部署 Runbook
+# CDS GitHub App 接入与私有仓库部署 · 指南
 
-> **类型**：操作指南 (How-to) | **日期**：2026-07-09 | **版本**：v1.0 | **适用**：CDS GitHub App / 新环境接入
+> **版本**：v2.0 | **日期**：2026-07-15 | **状态**：开发中
+
+GitHub App 让用户只授权 CDS 访问被选择的仓库，并让后续扫描、构建、自动部署和 Agent 操作复用同一份项目授权。普通项目用户不需要创建 App、复制 Token 或处理 Webhook 密钥；这些属于 CDS 管理员的一次性平台配置。
+
+本文分为两条路径：项目用户完成仓库授权和部署；CDS 管理员为一个新 CDS 环境配置 GitHub App。
+
+事件订阅的完整清单见 [GitHub Webhook 订阅](guide.cds.github-webhook-events.md)，环境和凭据的边界见 [CDS 环境与凭据](guide.cds.env.md)。
+
+## 项目用户：授权一个私有仓库
+
+1. 在“一键部署项目”中点击“从 GitHub 选择”；
+2. 如果尚未安装 CDS GitHub App，按页面提示打开安装页；
+3. 优先选择“仅选定仓库”，只勾选目标仓库；
+4. 返回 CDS，选择目标仓库并创建或关联项目；
+5. 点击“检测仓库并自动填好配置”；
+6. 完成一次部署；
+7. 推送一个新提交，确认自动部署出现。
+
+授权成功后，CDS 会在项目范围内复用仓库访问能力：
+
+- Agent 不需要再索要个人 GitHub Token；
+- 仓库检测、拉取代码、构建和后续部署使用同一安装授权；
+- 授权不会进入业务容器或 Agent 对话；
+- 其他未选择仓库不会自动获得访问权限；
+- 撤销仓库安装后，后续拉取和自动部署会停止。
+
+项目用户的验收标准：
+
+| 检查项 | 通过标准 |
+| --- | --- |
+| 安装范围 | 只有被选择的仓库获得授权 |
+| 首次检测 | CDS 可以读取仓库和真实默认分支 |
+| 私有仓库部署 | 不再要求粘贴个人 Token |
+| 推送触发 | 目标分支推送后出现新的部署记录 |
+| 权限撤销 | GitHub 撤销安装后 CDS 不再能拉取仓库 |
+
+## CDS 管理员：配置新环境
+
+CDS 的 push 即部署链路使用 GitHub App，不要求每个仓库分别创建手工 Webhook。新环境需要依次完成：创建 App、生成私钥、写入 CDS 系统配置、重启、安装到目标仓库并验证推送。
 
 ---
 
-## 0. 一句话结论
-
-CDS 的 push 即部署链路走的是 **GitHub App 路线**（不是仓库级 webhook）。在一个新 CDS 域名上接入，只需按序做四件事：**建 App → 生成 private key → 写 5 个 `.cds.env` 变量 → 重启并从日志确认 `GitHub App configured`**，随后到目标 owner 安装 App、在 CDS 里 link 项目、push 自测。全程约 30 分钟。
-
-本文档以 2026-06-19 在 `geole.me` / `5.104.84.66` 复刻 miduo.org 部署链路的实操为蓝本，把踩到的坑固化成排查手册（见 §6）。
-
-> **本文档只讲 App 接入与配置。** 事件订阅的完整清单与「为什么勾这几个」见 `guide.cds.github-webhook-events`；系统级 / 项目级环境变量分层见 `guide.cds.env`。
-
----
-
-## SENSITIVE：绝不入库的敏感值（先读这段）
+## 绝不入库的敏感值
 
 下面两个值是**机密**，只允许存在于服务器的 `cds/.cds.env`（`chmod 600`）里，**禁止**写进任何 git 仓库、PR、issue、聊天记录、截图：
 
@@ -29,17 +57,17 @@ CDS 的 push 即部署链路走的是 **GitHub App 路线**（不是仓库级 we
 
 ---
 
-## 1. 前置条件（开始前逐条确认）
+## 管理员前置条件
 
-- [ ] **GitHub 管理权限**：你对目标 owner（个人账号或组织）有安装 App 的权限；若目标是组织且你非管理员，需要该组织管理员配合安装（见 §6.1，当前账号无法代装）。
+- [ ] **GitHub 管理权限**：你对目标 owner（个人账号或组织）有安装 App 的权限；若目标是组织且你非管理员，需要该组织管理员配合安装。
 - [ ] **CDS 域名可访问**：CDS 服务已经跑起来，且从公网 HTTPS 可达（GitHub 的 webhook 必须能从外网 POST 进来）。
 - [ ] **`CDS_PUBLIC_BASE_URL` 已确定**：这是 GitHub 侧回调 CDS 的公网基址（如 `https://cds.geole.me`），webhook URL 与 check-run 的 `details_url` 都由它拼出。没有它，App 设置里 webhook URL 就填不出正确形态。
 - [ ] **目标仓库 owner 可安装 App**：确认目标仓库的 owner 就是你打算安装 App 的 owner；跨 owner 需对方自行安装。
-- [ ] **DNS 已就绪**：CDS 域名（含用于预览的通配子域）在 DNS 上解析到 CDS 所在服务器。注意 apex 根域名与通配子域是两条独立记录（geole 实测坑，见 §6.6）。
+- [ ] **DNS 已就绪**：CDS 域名（含用于预览的通配子域）在 DNS 上解析到 CDS 所在服务器。注意根域名与通配子域是两条独立记录。
 
 ---
 
-## 2. 创建 GitHub App
+## 创建 GitHub App
 
 进入 GitHub → Settings（个人）或 Organization settings（组织）→ **Developer settings → GitHub Apps → New GitHub App**。
 
@@ -94,17 +122,17 @@ CDS 只对固定一组事件动作（`cds/src/routes/github-webhook.ts` 的 `SUP
 
 ---
 
-## 3. 生成 private key
+## 生成 private key
 
 在 App 设置页底部 **Private keys → Generate a private key**。浏览器会下载一个 `.pem` 文件。
 
 - **不生成 private key，App 就无法 mint installation token**（`getInstallationToken` 用该私钥以 RS256 签一个 App JWT，再 `POST /app/installations/:id/access_tokens` 换取 1 小时有效的安装令牌）。没有它，check run 发不出、PR 评论发不出、仓库列不出。
-- **`.pem` 文件禁止进 git**：直接内容写进服务器 `.cds.env`（见 §4）后即可删除本地下载。
+- **`.pem` 文件禁止进 git**：直接内容写进服务器 `.cds.env` 后即可删除本地下载。
 - 私钥是 **机密**（见顶部 SENSITIVE 段）。丢失或泄露就在 App 设置里 Revoke 后重新 Generate。
 
 ---
 
-## 4. 服务器配置（`.cds.env`）
+## 配置 CDS 服务器
 
 CDS 的系统级变量全部落在 `cds/.cds.env`（`chmod 600`，启动时被 `exec_cds.sh` `source`）。用 `exec_cds.sh` 的 env 命令写入，或手工编辑后自查引号。
 
@@ -153,7 +181,7 @@ cd cds && ./exec_cds.sh restart
 
 ---
 
-## 5. 验证（逐条打勾才算接入成功）
+## 验证平台配置
 
 ### 5.1 CDS 日志确认已配置
 
@@ -169,7 +197,7 @@ cd cds && ./exec_cds.sh restart
 [config] GitHub App NOT configured — appId=set privateKey=EMPTY webhookSecret=set
 ```
 
-则按 `appId/privateKey/webhookSecret` 三个字段的 `set`/`EMPTY`/`len=` 对照，定位是哪个 env 没注入（多半是 PEM 单引号问题导致 `source` 中断，见 §6.3）。此诊断行来自 `cds/src/config.ts` L152-163。
+则按 `appId/privateKey/webhookSecret` 三个字段的 `set`/`EMPTY`/`len=` 对照，定位是哪个 env 没注入。常见原因是 PEM 单引号问题导致 `source` 中断，处理方法见下方故障排查。
 
 ### 5.2 GitHub App 安装页安装到目标 owner
 
@@ -189,13 +217,13 @@ cd cds && ./exec_cds.sh restart
 
 ---
 
-## 6. 故障排查（geole 实测踩坑清单）
+## 故障排查
 
 ### 6.1 当前登录账号看不到目标 owner（无法代装 App）
 
 现象：安装页里选不到目标组织 / 仓库。
 
-原因与修复：GitHub App 的安装必须由**对该 owner 有权限的账号**发起，当前账号无法替别的 owner 安装。若目标是组织且你非管理员，把安装 URL（§5.2）发给该组织管理员，请其自行安装到目标仓库。
+原因与修复：GitHub App 的安装必须由**对该 owner 有权限的账号**发起，当前账号无法替别的 owner 安装。若目标是组织且你非管理员，把安装 URL 发给该组织管理员，请其自行安装到目标仓库。
 
 ### 6.2 `/api/github/app` 返回 401（这是鉴权，不是配置问题）
 
@@ -203,7 +231,7 @@ cd cds && ./exec_cds.sh restart
 
 原因：该端点走 CDS 的**正常登录网关**（cookie 或 AI key 鉴权，见 `cds/src/server.ts` 的登录中间件；只有 `POST /api/github/webhook` 因 HMAC 自鉴权被显式放行）。未带凭据访问必然 401，**与 GitHub App 是否配置无关**。
 
-修复：判断「App 配没配好」以 §5.1 的 `[config] GitHub App configured` 日志为准；要看 `/api/github/app` 的 JSON，先带上有效登录 cookie 或 AI access key 再请求。
+修复：判断 App 是否配置完成，以“CDS 日志确认已配置”中的 `[config] GitHub App configured` 日志为准；要看 `/api/github/app` 的 JSON，先带上有效登录 cookie 或项目权限再请求。
 
 ### 6.3 `.cds.env: RSA: command not found`（PEM 引号问题）
 
@@ -211,7 +239,7 @@ cd cds && ./exec_cds.sh restart
 
 原因：`CDS_GITHUB_APP_PRIVATE_KEY` 的多行 PEM 值没被**单引号**包裹，`source` 时被 shell 逐行当命令执行。
 
-修复：用 `env_upsert` 重写该值（自动单引号包裹，见 §4.2），或手工确认该变量整段被 `'...'` 包住。当前 `exec_cds.sh` 已内置单引号写入 + `lint_env_file` 预检告警（#856 / PR #1034）。修完 `./exec_cds.sh restart`，确认不再告警且出现 §5.1 的 configured 日志。
+修复：用 `env_upsert` 重写该值，或手工确认该变量整段被 `'...'` 包住。当前 `exec_cds.sh` 已内置单引号写入和 `lint_env_file` 预检告警。修完执行 `./exec_cds.sh restart`，确认不再告警且出现 configured 日志。
 
 ### 6.4 GitHub sudo mode / passkey 中断
 
@@ -225,8 +253,8 @@ cd cds && ./exec_cds.sh restart
 
 - **验签失败**（投递日志 `signatureValid=false` / 端点 401）：`CDS_GITHUB_WEBHOOK_SECRET` 与 App 设置里的 webhook secret 不一致，两边对齐后重启。
 - **owner 被白名单拦截**（`dispatchAction=ignored`，reason 含「不在白名单」）：到 CDS 系统设置把该 owner 加入 GitHub App 白名单。
-- **事件没订阅**（日志里压根没有该 push 投递）：回 App 设置的 Subscribe to events 补勾（§2.4）。
-- **503 not_configured**：`CDS_GITHUB_APP_ID/PRIVATE_KEY/WEBHOOK_SECRET` 三者有缺，回 §5.1 对照。
+- **事件没订阅**（日志里没有该 push 投递）：回 App 设置的 Subscribe to events 补勾。
+- **503 not_configured**：`CDS_GITHUB_APP_ID/PRIVATE_KEY/WEBHOOK_SECRET` 三者有缺，回到日志确认步骤逐项对照。
 
 ### 6.6 Cloudflare 报 `geole.me` 不满足 —— apex DNS ≠ App webhook 子域名
 
@@ -241,9 +269,10 @@ cd cds && ./exec_cds.sh restart
 
 ---
 
-## 7. 关联文档
+## 关联文档
 
-- `guide.cds.github-webhook-events` —— 事件订阅清单与逐项含义（本文档 §2.4 的权威来源）
-- `guide.cds.env` —— CDS 系统级 / 项目级环境变量分层
-- `guide.cds.deploy-three-paths` / `guide.cds.one-click-deploy` —— 项目接入与部署路径
+- [GitHub Webhook 订阅](guide.cds.github-webhook-events.md) —— 事件订阅清单与逐项含义
+- [CDS 环境与凭据](guide.cds.env.md) —— 系统配置、项目变量与 Agent 凭据边界
+- [CDS 部署方式选择](guide.cds.deploy-three-paths.md) —— 项目接入方式
+- [CDS 一键可视化部署](guide.cds.one-click-deploy.md) —— 项目用户部署路径
 - 代码 SSOT：`cds/src/config.ts`（env 解析 + configured 日志）、`cds/src/routes/github-webhook.ts`（webhook 端点 + 事件集）、`cds/src/services/github-app-client.ts`（token mint / check run / 评论）、`cds/src/services/github-app-whitelist.ts`（owner 白名单）、`cds/exec_cds.sh`（`.cds.env` 单引号写入 + PEM 预检）

@@ -1,157 +1,101 @@
-# 其他项目接入 cds 技能
+# 其他项目接入 CDS 技能
 
-本文面向"我刚下载了 cds 技能 tar.gz，怎么在自己项目里用起来"。
+本文面向 Codex、Cursor、Claude Code 及其他支持 Agent Skills 的宿主。默认采用项目级安装和页面批准，不要求用户复制密钥，也不修改电脑的终端配置。
 
-## 三分钟上手
+## 用户看到的流程
 
-```bash
-# 1. 解压到你项目的 .claude/skills/ 下
-tar -xzf cds-skill-*.tar.gz
-mv cds/skills/cds your-project/.claude/skills/cds
+1. 在 CDS 右上角选择「一键部署 → 接入 Agent」。
+2. 选择「连接已有项目」或「创建一个新项目」。
+3. 复制接入口令给当前 Agent。
+4. Agent 安装技能并发起授权申请。
+5. 用户在 CDS 右下角点击批准。
+6. Agent 自动验证连接，继续扫描、部署和冒烟测试。
 
-# 2. 把 CLI 加到 PATH（推荐 alias）
-echo 'alias cdscli="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"' >> ~/.bashrc
-source ~/.bashrc
+## 技能安装位置
 
-# 3. 首次初始化
-cdscli init
+下载包使用通用 `skills/<name>/SKILL.md` 结构。Agent 必须先识别宿主，再复制到当前项目对应目录：
 
-# 4. 验证
-cdscli auth check
-cdscli project list --human
-```
+| Agent | 项目级目录 |
+|------|-----------|
+| Codex / 通用 Agent Skills | `.agents/skills` |
+| Cursor | `.cursor/skills` |
+| Claude Code | `.claude/skills` |
 
-## init 向导的三个问题
+默认禁止安装到用户主目录。旧技能备份放在当前项目 `.cds/skill-backups`，禁止把 `.bak` 目录留在技能扫描目录。
 
-### Q1: CDS 地址
+## 安全接入
 
-```
-输入 CDS 地址（如 cds.miduo.org）: ____
-```
-
-- 只填域名，不带 `https://`
-- 如果不知道，问 CDS 运维拿 Dashboard URL
-
-### Q2: 认证方式
-
-| 选项 | 何时选 |
-|------|--------|
-| **A. 静态 AI_ACCESS_KEY** | 你已经 `export AI_ACCESS_KEY=xxx` 在 `.bashrc`；或运维发给你 |
-| **B. 动态配对** | 没静态 key，但能打开 Dashboard 点批准 |
-| **C. 项目级 cdsp_* 通行证** | 运维给你发了"只能操作某项目"的 key（前缀 cdsp_）|
-
-99% 情况选 **A**。B/C 适用于权限最小化场景。
-
-### Q3: 默认 projectId（可选）
-
-填了之后每次 `cdscli branch list` 自动带 `--project=<id>`。回车跳过也行。
-
-## 首次部署流程
-
-假设你已经 init 完 + 选好 projectId：
+假设 CLI 位于当前 Agent 的项目技能目录：
 
 ```bash
-# 你的项目还没在 CDS 上注册过
-cdscli scan --apply-to-cds <projectId>
-# → 生成 compose YAML + 提交到 CDS 待审批
-# → 给你一个链接，去 Dashboard 点批准
+# 连接已有项目
+python3 <skills-root>/cds/cli/cdscli.py connect \
+  --host https://cds.example \
+  --project <projectId> \
+  --agent <agentName>
 
-# 审批完成后
-git add .
-git commit -m "feat: first deploy"
-git push -u origin feat/foo
-
-cdscli deploy
-# → 自动 push + pull + deploy + smoke
+# 首次创建项目
+python3 <skills-root>/cds/cli/cdscli.py connect \
+  --host https://cds.example \
+  --new-project \
+  --agent <agentName>
 ```
 
-## 常见问题
+命令发起申请后会持续显示等待状态。用户批准后：
 
-### Q: cdscli: command not found
+- 已有项目：保存该项目专属授权。
+- 新项目：保存一次性建项目授权；创建成功后自动换成项目专属授权。
+- 凭据写入当前 git 项目的 `.cds/credentials.json`，权限为 `0600`。
+- CLI 将凭据文件加入 `.git/info/exclude`，不会污染 `git status`，也不会被提交。
+- CLI 不修改 `.bashrc`、`.zshrc`、全局 PATH 或系统环境变量。
+- CLI 不在 stdout 中输出密钥。
 
-没设 alias。手动运行：`python3 .claude/skills/cds/cli/cdscli.py auth check`
+## 首次部署其他仓库
 
-### Q: init 之后还是 401
-
-三个 env 可能冲突：
-- `~/.bashrc` 有旧 `AI_ACCESS_KEY`
-- `~/.cdsrc` 是 init 写的
-- 当前 shell 有手工 export
-
-解决：`unset AI_ACCESS_KEY CDS_PROJECT_KEY && source ~/.cdsrc && cdscli auth check`
-
-### Q: scan 扫出来的 YAML 不对
-
-MVP 扫描器只识别少数栈。把 YAML 改改再提交：
+在目标仓库目录运行：
 
 ```bash
-cdscli scan > /tmp/compose.yaml
-# 手工编辑 /tmp/compose.yaml
-# 然后手工 POST
-curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  "$CDS/api/projects/<id>/pending-import" \
-  -X POST -H "Content-Type: application/json" \
-  -d "$(jq -n --rawfile y /tmp/compose.yaml '{agentName:"cdscli",purpose:"manual",composeYaml:$y}')"
+python3 <skills-root>/cds/cli/cdscli.py onboard https://github.com/org/repo
 ```
 
-### Q: 我没有 Python 3
+`onboard` 会创建 CDS 项目、克隆仓库、检测运行方式并提示缺少的项目参数。创建动作如果使用一次性授权，CLI 会自动切换到新项目的专属授权。
 
-Python 3 是操作系统自带工具。macOS / Ubuntu / WSL 全部自带。真没有：
-```bash
-# Ubuntu
-sudo apt install -y python3
-# macOS (Homebrew)
-brew install python@3
-```
-
-### Q: 如何升级 cds 技能
-
-优先用 `cdscli update`，它会从当前 CDS 的 `/api/export-skill` 下载最新包并原地替换 `.claude/skills/cds`，`~/.cdsrc` 不受影响。
+后续部署：
 
 ```bash
-cd your-project
-cdscli version
-cdscli update
-cdscli version
+python3 <skills-root>/cds/cli/cdscli.py deploy
 ```
 
-如果你的旧包还没有 `cdscli update`，再手动重装：
+## 验证清单
 
 ```bash
-# 重新从 Dashboard 下载最新 tar.gz
-cd your-project
-rm -rf .claude/skills/cds
-tar -xzf cds-skill-<latest>.tar.gz -C .claude/skills/
-# init 不用重跑，~/.cdsrc 仍然有效
+python3 <skills-root>/cds/cli/cdscli.py auth check
+git status --short
 ```
 
-## 目录结构
+通过标准：
 
-```
-your-project/
-└── .claude/
-    └── skills/
-        └── cds/
-            ├── SKILL.md              ← Claude Code 自动加载
-            ├── cli/
-            │   └── cdscli.py         ← 所有 CDS API 封装
-            └── reference/
-                ├── api.md            ← API 端点清单
-                ├── auth.md           ← 双层认证决策树
-                ├── scan.md           ← 扫描规则
-                ├── smoke.md          ← 分层冒烟
-                ├── diagnose.md       ← 故障模式库
-                └── drop-in.md        ← 本文
+- `auth check` 成功。
+- `git status` 不出现 `.cds/credentials.json`。
+- 用户终端启动文件没有变化。
+- 对另一个 CDS 项目执行写操作时返回 `project_mismatch` 或权限拒绝。
+- 重启 Agent 后仍可从当前项目配置读取正确授权。
+
+## 升级
+
+```bash
+python3 <skills-root>/cds/cli/cdscli.py update
+python3 <skills-root>/cds/cli/cdscli.py version
 ```
 
-## 配合哪些技能用
+升级备份位于 `.cds/skill-backups`，不在 Agent 技能扫描范围内，因此不会出现多个可发现的 CDS 版本。
 
-```
-cds 技能                              其他技能配合
-─────────────────────────────────────────────
-cdscli deploy         ←→  /handoff (部署后生成交接清单)
-cdscli help-me-check  ←→  /verify  (修复后交叉验证)
-cdscli scan           ←→  /uat     (接入后做人工验收)
+## 旧版兼容
+
+已有环境变量仍可使用，但只作为兼容来源。只有用户明确要求旧流程时才运行：
+
+```bash
+python3 <skills-root>/cds/cli/cdscli.py init --legacy-env
 ```
 
-不重叠。cds 技能负责"跟 CDS 打交道"，其他技能负责"代码/产品/流程"。
+新用户禁止使用该方式。

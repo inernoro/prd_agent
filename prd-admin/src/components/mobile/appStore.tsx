@@ -6,6 +6,35 @@ import { AS_COLOR, AS_TYPE, AS_SPACE, AS_SIZE, AS_FONT_FAMILY } from '@/lib/appS
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
 /**
+ * iOS「squircle」连续圆角遮罩 —— 超椭圆 |x|^n+|y|^n=1(n=4.5,最接近苹果 app icon)。
+ * 用 SVG mask 而非 border-radius,因为 CSS 圆角是圆弧角、iOS 是连续圆角(角和边平滑过渡)。
+ * 计算一次,所有尺寸共用(viewBox 100×100 自动缩放)。阴影须走 filter:drop-shadow 才能跟随形状。
+ */
+const SQUIRCLE_PATH = (() => {
+  const n = 4.5, pts = 96, p: string[] = [];
+  for (let i = 0; i < pts; i++) {
+    const t = (i / pts) * 2 * Math.PI;
+    const ct = Math.cos(t), st = Math.sin(t);
+    const x = 50 + 50 * Math.sign(ct) * Math.abs(ct) ** (2 / n);
+    const y = 50 + 50 * Math.sign(st) * Math.abs(st) ** (2 / n);
+    p.push(`${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return 'M' + p.join(' L') + ' Z';
+})();
+const SQUIRCLE_MASK = `url("data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path d='${SQUIRCLE_PATH}' fill='#000'/></svg>`,
+)}")`;
+const squircleStyle = (radius: number): CSSProperties => ({
+  borderRadius: radius, // 无 mask 支持时的圆角兜底
+  WebkitMaskImage: SQUIRCLE_MASK,
+  maskImage: SQUIRCLE_MASK,
+  WebkitMaskSize: '100% 100%',
+  maskSize: '100% 100%',
+  WebkitMaskRepeat: 'no-repeat',
+  maskRepeat: 'no-repeat',
+});
+
+/**
  * App Store Today tab（暗色）页面级复刻的基础组件集。
  *
  * 使用纪律：
@@ -27,6 +56,7 @@ interface HeroProps {
  * 右上角头像由 AppShell header 承担，不放在这里。
  */
 export function AppStoreHero({ title }: HeroProps) {
+  const C = useAppStoreColors();
   return (
     <div
       style={{
@@ -37,7 +67,7 @@ export function AppStoreHero({ title }: HeroProps) {
       <h1
         style={{
           ...AS_TYPE.heroTitle,
-          color: AS_COLOR.label,
+          color: C.label,
           margin: 0,
         }}
       >
@@ -96,8 +126,9 @@ interface PillButtonProps {
 }
 
 export function AppStorePill({ label, onClick, caption, variant = 'default' }: PillButtonProps) {
-  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : AS_COLOR.pillBg;
-  const fg = variant === 'onImage' ? AS_COLOR.label : AS_COLOR.blue;
+  const C = useAppStoreColors();
+  const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : C.pillBg;
+  const fg = variant === 'onImage' ? C.label : C.blue;
   return (
     <div className="flex flex-col items-center gap-0.5 shrink-0" style={{ fontFamily: AS_FONT_FAMILY }}>
       <button
@@ -120,13 +151,14 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
         {label}
       </button>
       {caption && (
-        <div style={{ ...AS_TYPE.caption, color: AS_COLOR.labelTertiary }}>{caption}</div>
+        <div style={{ ...AS_TYPE.caption, color: C.labelTertiary }}>{caption}</div>
       )}
     </div>
   );
 }
 
-function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
+/** span 版药丸(非交互)——放进可点击容器内部用,避免 button 嵌套 button 的非法 DOM */
+export function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
   const C = useAppStoreColors();
   const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : C.pillBg;
   const fg = variant === 'onImage' ? C.label : C.blue;
@@ -176,6 +208,8 @@ export function AppStoreAppIcon({
   size = AS_SIZE.appIconSize,
   onImage = false,
 }: AppIconProps) {
+  // iOS app icon 圆角是按尺寸等比(superellipse ≈ 22.37%),不是固定值,否则大图标显方
+  const radius = Math.round(size * 0.2237);
   // 有封面图 —— 直接铺图（iOS app icon 的"品牌级"视觉）
   if (imageUrl) {
     return (
@@ -184,11 +218,12 @@ export function AppStoreAppIcon({
         style={{
           width: size,
           height: size,
-          borderRadius: AS_SPACE.iconRadius,
+          ...squircleStyle(radius),
           background: '#1c1c1e',
-          boxShadow: onImage
-            ? '0 1px 3px rgba(0, 0, 0, 0.12)'
-            : '0 2px 6px rgba(0, 0, 0, 0.35)',
+          // mask 会裁掉 box-shadow,故用 drop-shadow 让阴影跟随 squircle 轮廓
+          filter: onImage
+            ? 'drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12))'
+            : 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35))',
         }}
       >
         <img
@@ -207,7 +242,7 @@ export function AppStoreAppIcon({
           className="absolute inset-0 -z-10 flex items-center justify-center"
           style={{ background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
         >
-          <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: '#fff' }} />
+          <Icon size={Math.round(size * 0.48)} strokeWidth={1.9} style={{ color: '#fff' }} />
         </div>
       </div>
     );
@@ -224,14 +259,14 @@ export function AppStoreAppIcon({
       style={{
         width: size,
         height: size,
-        borderRadius: AS_SPACE.iconRadius,
+        ...squircleStyle(radius),
         background,
-        boxShadow: onImage
-          ? '0 1px 3px rgba(0, 0, 0, 0.12)'
-          : `0 2px 8px ${accent.from}40`,
+        filter: onImage
+          ? 'drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12))'
+          : `drop-shadow(0 2px 8px ${accent.from}66)`,
       }}
     >
-      <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: iconColor }} />
+      <Icon size={Math.round(size * 0.48)} strokeWidth={1.9} style={{ color: iconColor }} />
     </div>
   );
 }
@@ -271,8 +306,9 @@ export interface FeaturedItem {
  * 单张海报级 Featured 大卡 —— 3:4 纵向占屏，视频/图片/渐变三级 fallback。
  * Apple Today 的单张大海报范式。
  */
-export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
-  return <FeaturedSlide item={{ ...props, key: 'single' }} isActive />;
+export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'> & { aspect?: string }) {
+  const { aspect, ...item } = props;
+  return <FeaturedSlide item={{ ...item, key: 'single' }} isActive aspect={aspect} />;
 }
 
 /**
@@ -285,7 +321,8 @@ export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
  *  - 底部 dot indicator（苹果小点）
  *  - 只有"视觉中的活跃张"播放视频，节省带宽
  */
-export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
+export function AppStoreFeaturedCarousel({ items, aspect }: { items: FeaturedItem[]; aspect?: string }) {
+  const C = useAppStoreColors();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -358,7 +395,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   if (items.length === 1) {
     return (
       <div style={{ padding: `0 ${AS_SPACE.gutter}px` }}>
-        <FeaturedSlide item={items[0]} isActive />
+        <FeaturedSlide item={items[0]} isActive aspect={aspect} />
       </div>
     );
   }
@@ -378,7 +415,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
         }}
       >
         {items.map((item, i) => (
-          <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} />
+          <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} aspect={aspect} />
         ))}
       </div>
 
@@ -404,7 +441,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
                 width: active ? 22 : 7,
                 height: 7,
                 borderRadius: 999,
-                background: active ? AS_COLOR.label : AS_COLOR.labelTertiary,
+                background: active ? C.label : C.labelTertiary,
                 border: 'none',
                 padding: 0,
                 cursor: 'pointer',
@@ -417,7 +454,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   );
 }
 
-function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boolean }) {
+function FeaturedSlide({ item, isActive, aspect = '3 / 4' }: { item: FeaturedItem; isActive: boolean; aspect?: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
 
@@ -441,7 +478,7 @@ function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boole
       className="relative snap-start shrink-0 overflow-hidden text-left transition-transform active:scale-[0.985]"
       style={{
         width: `calc(100vw - ${AS_SPACE.gutter * 2}px)`,
-        aspectRatio: '3 / 4',
+        aspectRatio: aspect,
         borderRadius: AS_SPACE.featuredRadius,
         background: hasMedia ? '#000' : buildMeshGradient(item.accent),
         fontFamily: AS_FONT_FAMILY,
@@ -615,6 +652,7 @@ export function AppStoreShelf({ items }: ShelfProps) {
 }
 
 function ShelfCard({ item }: { item: ShelfItem }) {
+  const C = useAppStoreColors();
   return (
     <button
       type="button"
@@ -625,15 +663,15 @@ function ShelfCard({ item }: { item: ShelfItem }) {
         height: AS_SIZE.shelfCardHeight,
         padding: '0 14px 0 14px',
         borderRadius: AS_SPACE.shelfCardRadius,
-        background: AS_COLOR.surface,
-        border: `1px solid ${AS_COLOR.hairline}`,
+        background: C.card,
+        border: `1px solid ${C.hairline}`,
       }}
     >
       <AppStoreAppIcon Icon={item.Icon} accent={item.accent} imageUrl={item.iconImageUrl} size={56} />
       <div className="min-w-0 flex-1">
         <div
           className="truncate"
-          style={{ ...AS_TYPE.itemTitle, color: AS_COLOR.label }}
+          style={{ ...AS_TYPE.itemTitle, color: C.label }}
         >
           {item.title}
         </div>
@@ -641,7 +679,7 @@ function ShelfCard({ item }: { item: ShelfItem }) {
           className="line-clamp-2"
           style={{
             ...AS_TYPE.itemSubtitle,
-            color: AS_COLOR.labelSecondary,
+            color: C.labelSecondary,
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',
@@ -775,6 +813,276 @@ function RankedRow({ item, rank, isLast }: { item: RankedItem; rank: number | nu
         />
       )}
     </button>
+  );
+}
+
+/* ─────────────────────── Grid：智能体宫格（App Store 主屏图标网格） ─────────────────────── */
+
+interface GridItem {
+  key: string;
+  Icon: LucideIcon;
+  /** 静态封面图（有则用 iOS app icon 式封面） */
+  iconImageUrl?: string | null;
+  accent: { from: string; to: string };
+  label: string;
+  /** 右上角未读数角标（iOS app icon badge） */
+  badge?: number;
+  onClick: () => void;
+}
+
+/**
+ * 智能体宫格 —— 圆角 icon + 短标，App Store 主屏/分类页范式。
+ * 列数默认 4，标签走 caption 档，颜色随双皮肤。
+ */
+export function AppStoreGrid({ items, columns = 4 }: { items: GridItem[]; columns?: number }) {
+  const C = useAppStoreColors();
+  if (items.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, 1fr)`,
+        gap: `${AS_SIZE.gridGap}px 8px`,
+        padding: `0 ${AS_SPACE.gutter - 4}px`,
+        fontFamily: AS_FONT_FAMILY,
+      }}
+    >
+      {items.map((it) => (
+        <button
+          key={it.key}
+          type="button"
+          onClick={it.onClick}
+          className="relative flex flex-col items-center gap-2 active:opacity-60 transition-opacity"
+        >
+          {it.badge != null && it.badge > 0 && (
+            <span
+              aria-hidden
+              className="absolute text-center"
+              style={{
+                top: -5,
+                right: '50%',
+                marginRight: -(AS_SIZE.gridIconSize / 2) - 6,
+                zIndex: 1,
+                minWidth: 17,
+                padding: '0 4px',
+                borderRadius: 999,
+                background: AS_COLOR.red,
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: '16px',
+              }}
+            >
+              {it.badge > 99 ? '99+' : it.badge}
+            </span>
+          )}
+          <AppStoreAppIcon
+            Icon={it.Icon}
+            accent={it.accent}
+            imageUrl={it.iconImageUrl}
+            size={AS_SIZE.gridIconSize}
+          />
+          <span
+            className="text-center"
+            style={{
+              ...AS_TYPE.caption,
+              fontWeight: 500,
+              color: C.label,
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {it.label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────────── Chips：分类横滑筛选条 ─────────────────────── */
+
+interface ChipItem {
+  key: string;
+  label: string;
+}
+
+/**
+ * 分类 chips —— 横滑 + 选中态（选中=前景色实底反白，未选=surface）。
+ * 单行 overflow-x，子项不换行，符合 mobile-first-density「成排放不下就横向滚动」。
+ */
+export function AppStoreChips({
+  items,
+  activeKey,
+  onSelect,
+}: {
+  items: ChipItem[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const C = useAppStoreColors();
+  if (items.length === 0) return null;
+  return (
+    <div
+      className="flex overflow-x-auto"
+      style={{
+        gap: 9,
+        padding: `0 ${AS_SPACE.gutter}px`,
+        scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch',
+        overscrollBehaviorX: 'contain',
+        fontFamily: AS_FONT_FAMILY,
+      }}
+    >
+      {items.map((it) => {
+        const on = it.key === activeKey;
+        return (
+          <button
+            key={it.key}
+            type="button"
+            onClick={() => onSelect(it.key)}
+            className="shrink-0 inline-flex items-center whitespace-nowrap transition-colors active:opacity-70"
+            style={{
+              height: AS_SPACE.chipHeight,
+              padding: '0 16px',
+              borderRadius: AS_SPACE.pillRadius,
+              ...AS_TYPE.pill,
+              fontWeight: 600,
+              background: on ? C.label : C.surface,
+              color: on ? C.bg : C.labelSecondary,
+              border: on ? 'none' : `1px solid ${C.hairline}`,
+            }}
+          >
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────── ResumeCard：继续上次 ─────────────────────── */
+
+interface ResumeCardProps {
+  Icon: LucideIcon;
+  iconImageUrl?: string | null;
+  accent: { from: string; to: string };
+  title: string;
+  subtitle: string;
+  /** 进度 0~1，给了就画进度条 */
+  progress?: number;
+  pillLabel?: string;
+  onClick: () => void;
+}
+
+/**
+ * 「继续上次」卡 —— icon + 标题/副标 +（可选）进度条 + Pill。
+ * 数据源建议 home_recent_opens（最近打开台账）。
+ */
+export function AppStoreResumeCard({
+  Icon,
+  iconImageUrl,
+  accent,
+  title,
+  subtitle,
+  progress,
+  pillLabel = '继续',
+  onClick,
+}: ResumeCardProps) {
+  const C = useAppStoreColors();
+  const pct = progress == null ? null : Math.max(0, Math.min(1, progress));
+  return (
+    <div style={{ padding: `0 ${AS_SPACE.gutter}px`, fontFamily: AS_FONT_FAMILY }}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full flex items-center gap-3 text-left transition-transform active:scale-[0.99]"
+        style={{
+          background: C.card,
+          border: `1px solid ${C.hairline}`,
+          borderRadius: AS_SPACE.shelfCardRadius,
+          padding: 14,
+        }}
+      >
+        <AppStoreAppIcon Icon={Icon} accent={accent} imageUrl={iconImageUrl} size={46} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
+            {title}
+          </div>
+          <div className="truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}>
+            {subtitle}
+          </div>
+          {pct != null && (
+            <div
+              style={{
+                height: 4,
+                borderRadius: 2,
+                background: C.separator,
+                marginTop: 8,
+                overflow: 'hidden',
+              }}
+            >
+              <div style={{ height: '100%', width: `${(pct * 100).toFixed(0)}%`, background: C.blue, borderRadius: 2 }} />
+            </div>
+          )}
+        </div>
+        <AppStorePillLabel label={pillLabel} />
+      </button>
+    </div>
+  );
+}
+
+/* ─────────────────────── TipCard：每日小技巧 ─────────────────────── */
+
+interface TipCardProps {
+  Icon: LucideIcon;
+  accent: { from: string; to: string };
+  title: string;
+  desc: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+/**
+ * 「每日小技巧」卡 —— 渐变 icon + 标题/说明 + 行动点（如"跟我做"）。
+ * 对齐页面教程（onboarding-tips）的轻提醒调性。
+ */
+export function AppStoreTipCard({ Icon, accent, title, desc, actionLabel = '跟我做', onAction }: TipCardProps) {
+  const C = useAppStoreColors();
+  return (
+    <div style={{ padding: `0 ${AS_SPACE.gutter}px`, fontFamily: AS_FONT_FAMILY }}>
+      <div
+        className="flex gap-3"
+        style={{
+          background: C.card,
+          border: `1px solid ${C.hairline}`,
+          borderRadius: AS_SPACE.shelfCardRadius,
+          padding: 16,
+          alignItems: 'flex-start',
+        }}
+      >
+        <AppStoreAppIcon Icon={Icon} accent={accent} size={44} />
+        <div className="min-w-0 flex-1">
+          <div style={{ ...AS_TYPE.itemTitle, color: C.label }}>{title}</div>
+          <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 4, lineHeight: 1.4 }}>
+            {desc}
+          </div>
+          {onAction && (
+            <button
+              type="button"
+              onClick={onAction}
+              className="inline-flex items-center gap-0.5 active:opacity-60 transition-opacity"
+              style={{ ...AS_TYPE.sectionAction, color: C.blue, marginTop: 8, fontWeight: 600 }}
+            >
+              {actionLabel}
+              <ChevronRight size={16} strokeWidth={2.2} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
