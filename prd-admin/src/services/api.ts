@@ -1389,6 +1389,7 @@ export const api = {
     autoSync: () => '/api/peer-sync/auto-sync',
     runs: (type: string, itemId?: string) =>
       `/api/peer-sync/runs?resourceType=${encodeURIComponent(type)}${itemId ? `&itemId=${encodeURIComponent(itemId)}` : ''}`,
+    cancelRun: (id: string) => `/api/peer-sync/runs/${encodeURIComponent(id)}/cancel`,
     // 管理侧（设置 → 系统互联）
     adminList: () => '/api/admin/peer-nodes',
     adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',

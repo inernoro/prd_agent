@@ -186,6 +186,33 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
                 return;
             }
 
+            // 关系未建立守护（与 SetAutoSync gate 同口径）：只对「当前保存对端确实成功同步过」的库跑自动同步。
+            // SetAutoSync 的 gate 只在「开启自动」那一刻校验、不会重跑；若自动已对 A 开启，后来一次切到 B 的
+            // 手动同步失败/取消（syncing mark 已把 store 改指向 B），worker 就会用未建立的 B 关系发流量（Codex P2）。
+            // 这里每轮兜底：saved peer 没有成功 run 就跳过本轮（attempted 已 true，会推进 AutoLastAt，不每分钟空打）。
+            // 绑定「当前保存的对端 + 方向」：只认发往 saved peer 且方向等价于本轮 direction 的成功 run。
+            // 只绑 peer 不够——若自动建立为 push、后来同 peer 的手动 pull 失败/取消（syncing mark 已把方向改成
+            // pull），只绑 peer 会命中旧的 push 成功、worker 却跑未建立的 pull（Codex P2）。方向用等价集合匹配
+            // （对齐 run.Direction=align-* 归一到 push/pull/both）。
+            // 用 saved 原方向 store.PeerSyncDirection（而非 NormalizeAutoDirection 折叠后的 direction）判「是否建立过」：
+            // NormalizeAutoDirection 会把 align-remote/align-local 都折成 both，若拿 both 去查，用 align-remote 建立的
+            // 关系（run.Direction=align-remote）永远命中不到、worker 每轮空跳，而 SetAutoSync 却按 saved 值放行——
+            // 两处口径必须一致，established 判定统一走 saved 方向（Codex PR#1144 P2）。
+            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
+            var establishedForPeer = await db.PeerSyncRuns
+                .Find(r => r.ResourceType == "document-store" && r.ItemId == store.Id
+                    && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId
+                    && acceptableDirs.Contains(r.Direction)
+                    && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+            if (string.IsNullOrEmpty(establishedForPeer))
+            {
+                _logger.LogInformation(
+                    "[PeerSyncScheduleWorker] store {StoreId} peer {NodeId} direction {Dir} relationship not established (no successful run), skip",
+                    storeId, store.PeerSyncNodeId, direction);
+                return;
+            }
+
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
             // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
             // 先 PEER_SELF_BASE_URL，再 config["ServerUrl"]。反代部署只要配了其一，自动 push 的图片本地化

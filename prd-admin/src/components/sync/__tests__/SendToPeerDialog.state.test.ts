@@ -1,113 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { deriveQueueState } from '../SendToPeerDialog';
-import type { SyncItemSummary, TransferItemResult } from '@/services/real/peerSync';
+import { isSkippedResult } from '../SendToPeerDialog';
+import sendToPeerSource from '../SendToPeerDialog.tsx?raw';
+import type { TransferItemResult } from '@/services/real/peerSync';
 
-const selectedItems: SyncItemSummary[] = [
-  { itemId: 'kb-1', name: '时间回写验收-202606130838', recordCount: 1 },
-  { itemId: 'kb-2', name: '状态面板验收-202606130818', recordCount: 1 },
-  { itemId: 'kb-3', name: '验收报告', recordCount: 99 },
-  { itemId: 'kb-4', name: '图片重传验收-202606130625', recordCount: 1 },
-];
-
-describe('SendToPeerDialog queue state', () => {
-  it('keeps selected items idle before a transfer starts', () => {
-    const state = deriveQueueState(selectedItems.slice(0, 2), false, null, null, null);
-
-    expect(state.selectedCount).toBe(2);
-    expect(state.runningCount).toBe(0);
-    expect(state.waitingCount).toBe(0);
-    expect(state.failedCount).toBe(0);
-    expect(state.currentLabel).toBe('已选择，等待开始');
-    expect(state.itemStates.get('kb-1')).toBe('selected');
-    expect(state.itemStates.get('kb-2')).toBe('selected');
-    expect(state.itemProgress.get('kb-1')).toBe(0);
+describe('SendToPeerDialog', () => {
+  it('shows already-synced results as skipped (已一致), not completed work', () => {
+    const skipped: TransferItemResult = { itemId: 'kb-1', ok: true, created: 0, updated: 0, skipped: 112, failed: 0, message: '发送 新增0/更新0/跳过112' };
+    const done: TransferItemResult = { itemId: 'kb-2', ok: true, created: 2, updated: 3 };
+    const failed: TransferItemResult = { itemId: 'kb-3', ok: false, message: '目标端拒绝覆盖' };
+    expect(isSkippedResult(skipped)).toBe(true);
+    expect(isSkippedResult(done)).toBe(false);
+    expect(isSkippedResult(failed)).toBe(false);
   });
 
-  it('keeps summary buckets balanced while a transfer is running', () => {
-    const state = deriveQueueState(selectedItems, true, {
-      step: 3,
-      stage: '正在按血缘合并内容',
-      startedAt: Date.now(),
-    }, null, null);
-
-    expect(state.selectedCount).toBe(4);
-    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
-    expect(state.runningCount).toBe(1);
-    expect(state.waitingCount).toBe(3);
-  });
-
-  it('does not report reverse verification before the readback step', () => {
-    const merging = deriveQueueState(selectedItems, true, {
-      step: 3,
-      stage: '正在按血缘合并内容',
-      startedAt: Date.now(),
-    }, null, null);
-    const readingBack = deriveQueueState(selectedItems, true, {
-      step: 4,
-      stage: '正在回写同步状态',
-      startedAt: Date.now(),
-    }, null, null);
-
-    expect(merging.reverseLabel).toBe('等待回读');
-    expect(readingBack.reverseLabel).toBe('正在回读同步结果');
-  });
-
-  it('keeps the frozen transfer item running even if the live selection changes', () => {
-    const frozenQueue = selectedItems.slice(0, 2);
-    const state = deriveQueueState(frozenQueue, true, {
-      step: 4,
-      stage: '正在回写同步状态',
-      startedAt: Date.now(),
-    }, null, null);
-
-    expect(state.selectedCount).toBe(2);
-    expect(state.activeItem?.itemId).toBe('kb-1');
-    expect(state.itemStates.get('kb-1')).toBe('running');
-    expect(state.itemProgress.get('kb-1')).toBeGreaterThan(0);
-    expect(state.itemStates.get('kb-2')).toBe('waiting');
-  });
-
-  it('derives completed and failed counts from transfer results', () => {
-    const results: TransferItemResult[] = [
-      { itemId: 'kb-1', ok: true },
-      { itemId: 'kb-2', ok: false, message: '目标端拒绝覆盖' },
-      { itemId: 'kb-3', ok: true },
-      { itemId: 'kb-4', ok: true },
-    ];
-    const state = deriveQueueState(selectedItems, false, null, results, null);
-
-    expect(state.doneCount).toBe(3);
-    expect(state.failedCount).toBe(1);
-    expect(state.waitingCount).toBe(0);
-    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
-    expect(state.reverseLabel).toBe('部分条目未通过');
-  });
-
-  it('shows already synced results as skipped instead of completed work', () => {
-    const results: TransferItemResult[] = [
-      { itemId: 'kb-1', ok: true, created: 0, updated: 0, skipped: 112, failed: 0, message: '发送 新增0/更新0/跳过112' },
-      { itemId: 'kb-2', ok: true, created: 0, updated: 0, skipped: 1, failed: 0, message: '发送 新增0/更新0/跳过1' },
-    ];
-    const state = deriveQueueState(selectedItems.slice(0, 2), false, null, results, null);
-
-    expect(state.doneCount).toBe(0);
-    expect(state.skippedCount).toBe(2);
-    expect(state.itemStates.get('kb-1')).toBe('skipped');
-    expect(state.currentLabel).toBe('全部无变化，已跳过');
-    expect(state.reverseLabel).toBe('无变化，已跳过');
-  });
-
-  it('marks every selected queue item failed when the transfer request fails before item results', () => {
-    const state = deriveQueueState(selectedItems.slice(0, 3), false, null, null, '目标端不可用');
-
-    expect(state.selectedCount).toBe(3);
-    expect(state.failedCount).toBe(3);
-    expect(state.waitingCount).toBe(0);
-    expect(state.currentLabel).toBe('同步失败');
-    expect(state.itemStates.get('kb-1')).toBe('failed');
-    expect(state.itemStates.get('kb-2')).toBe('failed');
-    expect(state.itemStates.get('kb-3')).toBe('failed');
-    expect(state.itemProgress.get('kb-1')).toBe(100);
-    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
+  it('uses the topology language and drops the old monitoring-console jargon', () => {
+    // 新：批量拓扑图 + 发起/历史两视图 + 停止进行中的同步
+    expect(sendToPeerSource).toContain('BatchTopology');
+    expect(sendToPeerSource).toContain('TONE_WIRE');
+    expect(sendToPeerSource).toContain('cancelPeerSyncRun');
+    expect(sendToPeerSource).toContain("useState<Tab>('send')");
+    // 策略固定默认值（不再让用户开关原时间/覆盖/重传）
+    expect(sendToPeerSource).toContain("mode: 'overwrite', preserveTimestamps: true, rewriteAssetLinks: true");
+    // 砍掉的监听台术语与旧队列状态机
+    expect(sendToPeerSource).not.toContain('监听');
+    expect(sendToPeerSource).not.toContain('条目明细可审计');
+    expect(sendToPeerSource).not.toContain('deriveQueueState');
+    expect(sendToPeerSource).not.toContain('SyncMonitorStrip');
   });
 });
