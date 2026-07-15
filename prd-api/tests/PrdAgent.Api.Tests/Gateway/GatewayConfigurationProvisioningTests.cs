@@ -1,3 +1,5 @@
+using MongoDB.Bson;
+using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Provisioning;
 using Shouldly;
@@ -165,5 +167,118 @@ public sealed class GatewayConfigurationProvisioningTests
         document["IsVision"].AsBoolean.ShouldBeTrue();
         document["IsImageGen"].AsBoolean.ShouldBeTrue();
         document.Contains("ApiKeyEncrypted").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
+    {
+        var missingKey = new CreateExchangeRequest
+        {
+            Name = "教程原生中继",
+            TargetUrl = "https://provider.example.com/v1/models/{model}:generate",
+            Models = [new ExchangeModelWriteRequest { ModelId = "tutorial-chat", ModelType = "chat" }],
+        };
+        GatewayConfigurationProvisioning.TryNormalizeExchange(missingKey, out _, out var missingKeyError).ShouldBeFalse();
+        missingKeyError.ShouldContain("通讯密钥");
+
+        missingKey.ApiKey = "test-secret";
+        missingKey.Models.Add(new ExchangeModelWriteRequest { ModelId = "TUTORIAL-CHAT", ModelType = "vision" });
+        GatewayConfigurationProvisioning.TryNormalizeExchange(missingKey, out _, out var duplicateError).ShouldBeFalse();
+        duplicateError.ShouldContain("重复");
+    }
+
+    [Theory]
+    [InlineData("provider.example.com/v1")]
+    [InlineData("file:///tmp/upstream")]
+    [InlineData("https://user:password@provider.example.com/v1")]
+    [InlineData("https://provider.example.com/v1?api_key=must-not-leak")]
+    [InlineData("wss://provider.example.com/v1?token=must-not-leak")]
+    [InlineData("https://provider.example.com/v1?access-token=must-not-leak")]
+    [InlineData("https://provider.example.com/v1?X-Amz-Signature=must-not-leak")]
+    [InlineData("https://provider.example.com/v1#secret-must-not-be-stored")]
+    public void Exchange_RejectsUnsafeOrIncompleteUrls(string targetUrl)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeExchange(new CreateExchangeRequest
+        {
+            Name = "教程原生中继",
+            TargetUrl = targetUrl,
+            ApiKey = "test-secret",
+            Models = [new ExchangeModelWriteRequest { ModelId = "tutorial-chat", ModelType = "chat" }],
+        }, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("地址");
+    }
+
+    [Fact]
+    public void ExchangeDocument_TenantComesOnlyFromServerAndSecretNeverReturnsAsPlaintext()
+    {
+        typeof(CreateExchangeRequest).GetProperty("TenantId").ShouldBeNull();
+        typeof(UpdateExchangeRequest).GetProperty("TenantId").ShouldBeNull();
+        GatewayConfigurationProvisioning.TryNormalizeExchange(new CreateExchangeRequest
+        {
+            Name = "教程原生中继",
+            TargetUrl = "wss://provider.example.com/v1/stream",
+            ApiKey = "test-secret",
+            TargetAuthScheme = "x-api-key",
+            TransformerType = "doubao-asr-stream",
+            Models =
+            [
+                new ExchangeModelWriteRequest { ModelId = "tutorial-asr", DisplayName = "教程语音", ModelType = "asr" },
+                new ExchangeModelWriteRequest { ModelId = "tutorial-chat", ModelType = "chat", Enabled = false },
+            ],
+        }, out var draft, out var error).ShouldBeTrue(error);
+
+        var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
+            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch);
+
+        document["TenantId"].AsString.ShouldBe("tenant-from-session");
+        document["NameNormalized"].AsString.ShouldBe("教程原生中继");
+        document["TargetAuthScheme"].AsString.ShouldBe("XApiKey");
+        document["TargetApiKeyEncrypted"].AsString.ShouldBe("encrypted-only");
+        document.Contains("ApiKey").ShouldBeFalse();
+        document["Models"].AsBsonArray.Count.ShouldBe(2);
+        document["Version"].AsInt64.ShouldBe(1);
+    }
+
+    [Fact]
+    public void ExchangeUpdate_RequiresVersionAndRejectsUnknownTransformer()
+    {
+        var request = new UpdateExchangeRequest
+        {
+            Name = "教程原生中继",
+            TargetUrl = "https://provider.example.com/v1/models/{model}",
+            TargetAuthScheme = "Bearer",
+            TransformerType = "unknown-transformer",
+            Models = [new ExchangeModelWriteRequest { ModelId = "tutorial-chat", ModelType = "chat" }],
+        };
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out _, out var versionError).ShouldBeFalse();
+        versionError.ShouldContain("version");
+
+        request.Version = 3;
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out _, out var transformerError).ShouldBeFalse();
+        transformerError.ShouldContain("转换器");
+    }
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("vision")]
+    [InlineData("generation")]
+    [InlineData("asr")]
+    public void ExchangeModel_CanJoinItsDeclaredProgramPool(string modelType)
+    {
+        var exchangeModel = new BsonDocument
+        {
+            ["ModelId"] = $"tutorial-{modelType}",
+            ["DisplayName"] = $"教程 {modelType}",
+            ["ModelType"] = modelType,
+            ["Enabled"] = true,
+        };
+
+        var model = GatewayConfigurationProvisioning.BuildExchangePoolModelDocument("exchange-1", exchangeModel);
+
+        model["PlatformId"].AsString.ShouldBe("exchange-1");
+        model["ModelName"].AsString.ShouldBe($"tutorial-{modelType}");
+        model["SourceCollection"].AsString.ShouldBe("llmgw_model_exchanges");
+        GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
     }
 }

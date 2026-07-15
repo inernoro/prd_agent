@@ -133,6 +133,12 @@ G2-D 精确计划：PR-10 已经交付 tenant-scoped 供应商账单导入、逐
 
 G2-D 本地实现证据：`/usage` 已补费用四状态看板、导入成功回执、最近对账卡片、requestId 回查、窗口账单解释、独立读取失败态和 390px 单列布局；unknown 使用文字而不是 0，只有服务端状态为 `reconciled` 且返回 delta 才显示差额，前端不执行币种换算。Web 生产构建通过；新增费用展示边界守卫 1/1、标准数据域套件 676/676、API 非集成套件 1654 项通过且 4 项既有跳过、解决方案编译 0 error。多角度反向审查和分支范围检查没有未关闭的 P0/P1，也没有后端算法、集合、权限、模型池或发布 gate 越界。PR、GitHub CI、CDS 和正式浏览器视觉报告未完成前仍保持进行中。
 
+G2-D 已关闭：PR #1147 正常合并为 `883d8d81f0dd9b7da998db80072f73b5defab15e`。GitHub CI、Server Build & Test、四个相关镜像与 CDS Deploy 全绿；正式 L2 报告包含 16 张截图与 21 条断言，覆盖四费用状态、unknown 非 0、同币种差额、跨币种无 FX、窗口账单、移动端及双主题，P0/P1/P2/P3 均为 0。不可变终验报告为 [G2-D 费用可信度与对账追溯正式验收](https://cds.miduo.org/reports?project=prd-agent&folder=403bb94fcd9b41aaa9d8676037a49553&report=522e3a6f8e4642ed8bf322de428f0e61)。
+
+G2-E 精确计划：serving 已有 Exchange 解析与模型池消费，`llmgw_model_exchanges` 已经使用 TenantAccess 读取并以加密字段保存通讯密钥，本批不得重做路由算法、模型迁移、模型池或内部 MAP claim。当前断点是外部租户只能查看 Exchange，空租户没有自助创建或修改入口；旧 `prd-api ExchangeController` 写入的是 MAP `model_exchanges`，不能作为外部租户权威写路径。本批只做以下六项：第一，新增 tenant-scoped Exchange 元数据、创建和编辑 API，TenantId 只取服务端会话，名称唯一索引与所有查询都包含 TenantId；第二，创建必须提供只写通讯密钥，密钥只进入加密字段，读回和审计仅返回 `hasKey`，目标 URL 同时拒绝用户凭据和密钥查询参数；第三，模型映射至少一条、同一 Exchange 内大小写不敏感去重，并只接受程序池注册表已有用途、认证方式与转换器；第四，编辑使用 Version 乐观锁，猜测其他租户 ID 返回不存在，同租户重名拒绝但跨租户同名允许；第五，创建和编辑在业务写入前先建立包含 TenantId 的 pending 审计意图，写入后收口完成态，收口异常也保留可对账审计，不允许出现“有配置、无审计”，页面提供三步说明、空状态创建、基础/高级分层、读回回执与按 Exchange id 定位审计的入口，并让已启用映射能直接加入相应用途的既有模型池；第六，外部租户保存 HTTP 上游前执行 DNS 与私网地址校验，实际发送统一复用可固定解析结果、拒绝内网和保留地址且关闭自动跳转的安全出站连接器；外部 WebSocket 首版从选项、保存和执行三层明确拒绝，内部租户保持既有私网拓扑。完成门为配置归一化、租户数据域守卫、安全出站守卫、解决方案构建、标准回归、GitHub CI、CDS、深浅主题、390px 移动端、无 key、重名、陈旧版本、跨租户猜测、私网目标拒绝和审计定位全部通过后才合并。
+
+G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射、基础/高级分层、版本化编辑、服务端读回回执、模型池下一步与 Exchange id 审计入口；上游接口类型、认证方式和对应地址示例均在基础配置中直接可见，Gemini、fal.ai、豆包和火山方舟会给出对应认证推荐，外部租户看不到不可用的 WebSocket 类型；重复模型会在提交前按行定位，版本冲突保留当前表单并说明安全恢复步骤。API 已实现服务端会话 TenantId、租户内同名冲突、跨租户同名隔离、只写加密密钥、Version 乐观锁，以及业务写入前的 pending 审计意图；审计收口异常时仍保留可对账记录，已启用 Exchange 模型可以按声明用途加入既有程序池。对抗审查发现外部租户自定义地址可能形成 SSRF 后，已增加保存前 DNS/私网校验，并将外部租户 HTTP 发送切换到现有安全出站连接器；外部 WebSocket 首版从选项、保存和执行三层拒绝，内部租户仍使用既有客户端。最终解决方案编译 0 error，Exchange、模型池兼容与安全出站定向测试 37/37、租户数据域守卫 1/1、CI 同口径标准套件 API 1669 项通过且 4 项既有跳过、数据域 677/677、Web 生产构建 1619 模块通过；第三轮独立低理解度复核为 P0/P1/P2 全部 0。PR、GitHub CI、CDS 与正式浏览器报告完成前仍保持进行中。
+
 逐页审计同时确认：Quickstart 的四协议 dry-run 只证明地址、鉴权、团队、appCaller、协议形状、日志和 requestId，不证明真实模型路由、流式、vision 或参数语义保真。第 27 章必须另用假上游契约测试覆盖这些内容，每类真实协议最多一次。
 
 ## 六、视觉证据合同
@@ -151,13 +157,13 @@ G2-D 本地实现证据：`/usage` 已补费用四状态看板、导入成功回
 |---|---|---|---|
 | 事实审计 | 已完成 | 已确认 17 个页面、6 组导航、页面—API 关系和公开登录断点 | 在后续实测中持续记录新增断点 |
 | 教程设计 | 已完成 | 33 章三级目录、连续测试数据和截图合同已冻结 | 随实测补齐每章异常树，不改变连续主线 |
-| 产品修复 | G2-D 进行中 | T0、T1、T2、T3 均已独立合并；G2-A、G2-B、G2-C 已独立合并并验收，G2-C 合并提交为 `c346c9976` | 在独立 G2-D 分支只补费用四状态与逐条追溯；不重做后端对账或混入 Exchange |
+| 产品修复 | G2-E 进行中 | T0、T1、T2、T3 与 G2-A 至 G2-D 均已独立合并和验收；G2-D 合并提交为 `883d8d81f0` | 在独立 G2-E 分支只补 tenant-scoped Exchange 自助创建与编辑；不重做路由、模型迁移、模型池或 MAP claim |
 | 连续实测 | 进行中 | 四协议同钥、无 key 401、unknown cost 已通过；PromptPolicy 已完成 v1、v2、回滚生成 v3、当前运行态保存 v5；页面和 MongoDB 双向确认 v5 审计只含目标 id、version、policyHash；chat/vision、日志和四种费用状态定向测试 9/9 通过；PR #1134 CI/CDS 全绿，公网 health commit 一致，未登录审计与费用接口均返回 401 | T4 按 33 章顺序生成正文和截图，完成双主题、移动端、负面路径与新手复验 |
 | T4 流程补洞 | G1 已关闭 | 真实编写第 5 章时发现“后端已有成员生命周期、前端只能查看”的功能孤岛；已补齐创建成员、分配团队、改角色与状态、强制重新登录，并修正首次改密页公共默认口令误导和前后端 12 位口令门槛。对抗审查继续找出并修复旧页面并发覆盖、无团队 Developer、隐藏停用团队、自我锁死、Billing 死入口、既有全局账号被无确认挂载、授权范围审计缺失、停用 Owner 无法清理、跨租户用户名抢占、长租户 slug 与账号短名契约冲突、Developer 省略停用团队范围以及 pending 审计幂等误报成功等边界；成员关键变更先写包含 TenantId 的 pending 审计意图，再执行业务写入并收口完成态。隔离租户完成页面、HTTP API、审计集合与 MongoDB 双向验证，23 项行为断言与 91 项成员策略/数据域守卫通过，成功操作没有残留 pending 审计，故障注入下 pending 幂等重放被拒绝；PR #1138、CI、CDS、公网独立网关子域及浏览器复验全部通过，合并提交 `29f4e38e` | G1 已关闭；本地验收账号在证据归档完成后已定向清理。下一步只推进 G2 的 33 章连续实测，不把后续内容混回已合并修复 PR |
 | T4 视觉验收 | G1、G3、G4 已关闭 | 完成 18 张有效标注截图的逐张人工回读；覆盖点击导航、租户边界、Developer 无团队负例、创建与列表读回、自我锁死保护、强制重新登录、成员审计、首次口令、短口令拒绝、Billing 导航、浅色、深色和手机抽屉。manifest 为 18/18 已标注、0 warning，自动捕获 P0/P1 为 0；公网独立网关子域页面与主脚本 200，未登录组织接口 401，health commit 对齐，浏览器跳登录页且页面错误为 0 | 继续 G2 正文与 G5 新手复验；整本教程最终报告仍等待五门全部关闭 |
 | 低理解力复验 | 基线完成 | 无背景智能体无法从公开入口完成首请求 | 教程发布后重新复验 |
 | MAP 发布 | 在途总览已发布 | “模型网关权威教程”已建立唯一在途文档“LLM Gateway 权威教程：实时验收总览”，展示固定权重、PR、证据、问题和未完成项；仓库与本地在途报告已更新为总进度 62%、T4 3/5 | 持续更新同一文档；恢复 MAP SSO 会话后同步同一固定数值，G2 完成后再写入 33 章正文和图片 |
-| CDS 验收归档 | G1、G2-B、G2-C 增量报告已完成 | [T4-G1 合并后验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8)、[G2-B 独立子域终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb) 与 [G2-C chat/vision Quickstart 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2) 已归档并由登录态浏览器实开 | 整本教程最终报告仍须等待 G2、G5；增量报告保持内部登录态，不扩大为匿名公开 |
+| CDS 验收归档 | G1、G2-B、G2-C、G2-D 增量报告已完成 | [T4-G1 合并后验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8)、[G2-B 独立子域终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb)、[G2-C chat/vision Quickstart 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2) 与 [G2-D 费用可信度终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=403bb94fcd9b41aaa9d8676037a49553&report=522e3a6f8e4642ed8bf322de428f0e61) 已归档并完成服务端读回 | 整本教程最终报告仍须等待 G2、G5；增量报告保持内部登录态，不扩大为匿名公开 |
 
 ## 八、实时可见与固定进度
 

@@ -2,8 +2,8 @@
 // 「默认池」可就地切换：GW 权威池写 llm_gateway，MAP 来源池写旧集合。
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
-import type { ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
+import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
+import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { healthChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
@@ -44,12 +44,13 @@ export function ModelPoolsPage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([getPools(), getPoolTypes(), getModels({ enabled: true }), getParameterCapabilitiesMeta()]).then(([poolRes, typeRes, modelRes, parameterRes]) => {
+    Promise.all([getPools(), getPoolTypes(), getModels({ enabled: true }), getExchanges({ enabled: true }), getParameterCapabilitiesMeta()]).then(([poolRes, typeRes, modelRes, exchangeRes, parameterRes]) => {
       if (!alive) return;
       if (poolRes.success) setPools(poolRes.data.items);
       else setError(poolRes.error?.message || '加载失败');
       if (typeRes.success) setPoolTypes(typeRes.data);
-      if (modelRes.success) setModels(modelRes.data.items);
+      const exchangeCandidates = exchangeRes.success ? toExchangeModelCandidates(exchangeRes.data.items) : [];
+      setModels([...(modelRes.success ? modelRes.data.items : []), ...exchangeCandidates]);
       if (parameterRes.success) setParameterMeta(parameterRes.data.items);
     });
     return () => {
@@ -981,7 +982,7 @@ function PoolMemberEditor({
         <option value="">{filteredModels.length ? '选择要加入的模型' : '当前过滤无可用模型'}</option>
         {filteredModels.map((m) => (
           <option key={modelOptionKey(m)} value={modelOptionKey(m)}>
-            {(m.modelName || m.name || m.id)} · {m.platformId || 'no-platform'} · {capabilityLabelsForModel(m).slice(0, 4).join('/')}
+            {m.sourceCollection === 'llmgw_model_exchanges' ? 'Exchange · ' : ''}{(m.name || m.modelName || m.id)} · {capabilityLabelsForModel(m).slice(0, 4).join('/')}
           </option>
         ))}
       </select>
@@ -1150,6 +1151,45 @@ function capabilityLabelsForModel(model: ModelItem) {
     hasParameterCapabilities(model.capabilities) ? 'parameters' : '',
     ...model.capabilities.filter((c) => c.value).map((c) => c.type),
   ]);
+}
+
+function toExchangeModelCandidates(exchanges: ExchangeItem[]): ModelItem[] {
+  return exchanges
+    .filter((exchange) => exchange.authority === 'llm_gateway' && exchange.enabled)
+    .flatMap((exchange) => exchange.models.filter((model) => model.enabled).map((model) => {
+      const capabilityType = model.modelType === 'generation'
+        ? 'image_generation'
+        : model.modelType === 'long-context'
+          ? 'long_context'
+          : model.modelType === 'video-gen'
+            ? 'video_generation'
+            : model.modelType === 'audio-gen'
+              ? 'audio_generation'
+              : model.modelType;
+      return {
+        id: `exchange:${exchange.id}:${model.modelId}`,
+        name: `${exchange.name} / ${model.displayName || model.modelId}`,
+        modelName: model.modelId,
+        platformId: exchange.id,
+        timeout: 0,
+        maxRetries: 0,
+        maxConcurrency: 0,
+        enabled: true,
+        priority: 100,
+        isMain: model.modelType === 'chat',
+        isIntent: model.modelType === 'intent',
+        isVision: model.modelType === 'vision',
+        isImageGen: model.modelType === 'generation',
+        hasKey: exchange.hasKey,
+        sourceCollection: 'llmgw_model_exchanges',
+        authority: 'llm_gateway',
+        callCount: 0,
+        successCount: 0,
+        failCount: 0,
+        totalDuration: 0,
+        capabilities: [{ type: capabilityType, source: 'exchange', value: true }],
+      } satisfies ModelItem;
+    }));
 }
 
 function capabilityLabelsForMember(member: PoolModelInfo) {
