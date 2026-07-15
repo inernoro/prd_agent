@@ -74,6 +74,13 @@ export type LlmLogListItem = {
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  priceSnapshotHash?: string | null;
+  providerRequestId?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
+  fxSnapshotId?: string | null;
+  reconciliationStatus?: string | null;
+  reconciliationDelta?: number | null;
   error?: string | null;
   isFallback?: boolean | null;
   expectedModel?: string | null;
@@ -132,6 +139,13 @@ export type LlmLogDetail = {
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  priceSnapshotHash?: string | null;
+  providerRequestId?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
+  fxSnapshotId?: string | null;
+  reconciliationStatus?: string | null;
+  reconciliationDelta?: number | null;
   startedAt: string;
   firstByteAt?: string | null;
   endedAt?: string | null;
@@ -711,6 +725,7 @@ export type GatewayAppCaller = {
   sourceSystem: string;
   clientCode: string;
   environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   ingressProtocol: string;
   observedIngressProtocols?: string[];
   title?: string | null;
@@ -847,6 +862,7 @@ export type ServiceKeyItem = {
   sourceSystem: string;
   clientCode: string;
   environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
@@ -865,6 +881,7 @@ export type CreateServiceKeyRequest = {
   sourceSystem: string;
   clientCode: string;
   environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
@@ -881,6 +898,71 @@ export type CreatedServiceKey = CreateServiceKeyRequest & {
   key: string;
   warning: string;
   keyPrefix: string;
+};
+
+export type CostReconciliationItem = {
+  id: string;
+  teamId?: string | null;
+  provider: string;
+  externalRecordId: string;
+  granularity: 'request' | 'window';
+  requestId?: string | null;
+  providerRequestId?: string | null;
+  serviceKeyId?: string | null;
+  model?: string | null;
+  estimatedCost?: number | null;
+  estimatedCostCurrency?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency: string;
+  fxSnapshotId?: string | null;
+  providerToEstimatedFxRate?: number | null;
+  reconciliationDelta?: number | null;
+  deltaCurrency?: string | null;
+  reconciliationStatus: string;
+  windowFrom?: string | null;
+  windowTo?: string | null;
+  billedAt?: string | null;
+  createdAt?: string | null;
+};
+
+export type CostReconciliationSummary = {
+  totalRecords: number;
+  requestRecords: number;
+  windowRecords: number;
+  actualUnavailableRequests: number;
+  providerActualCosts: { currency: string; amount: number; requests: number }[];
+  statusDistribution: { key: string; count: number }[];
+  items: CostReconciliationItem[];
+};
+
+export type CostReconciliationImportRequest = {
+  provider: string;
+  externalRecordId: string;
+  providerRequestId?: string;
+  serviceKeyId?: string;
+  windowFrom?: string;
+  windowTo?: string;
+  providerReportedCost: number;
+  providerCostCurrency: string;
+  billedAt?: string;
+  fxSnapshotId?: string;
+  providerToEstimatedFxRate?: number;
+};
+
+export type LegacyKeyCutoverData = {
+  applicable: boolean;
+  status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
+  deadlineAt?: string | null;
+  allowedAppCallerCodes: string[];
+  successorServiceKeyIds: string[];
+  requiredIngressProtocols: string[];
+  requiredScopes: string[];
+  requiredSuccessorObservations: number;
+  successorObservedCount: number;
+  successorObservationCounts: Record<string, number>;
+  lastSuccessorUsedAt?: string | null;
+  readyToRevoke: boolean;
+  usage: { sourceSystem: string; appCallerCode: string; ingressProtocol: string; totalCount: number; allowedCount: number; rejectedCount: number; firstSeenAt?: string | null; lastSeenAt?: string | null; lastDecision?: string | null }[];
 };
 
 export type OrganizationData = {

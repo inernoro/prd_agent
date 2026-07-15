@@ -96,6 +96,10 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_provider_concurrency_slots",
             "llmgw_runtime_settings",
             "llmgw_asset_registry",
+            "llmgw_cost_reconciliations",
+            "llmgw_cost_import_scope_locks",
+            "llmgw_legacy_key_cutovers",
+            "llmgw_legacy_key_usage",
         };
 
         var missingTenant = Builders<BsonDocument>.Filter.Or(
@@ -170,6 +174,12 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                     .Ascending("RequestId")
                     .Descending("StartedAt"),
                 new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_request_time" }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("TenantId")
+                    .Ascending("Provider")
+                    .Ascending("ProviderRequestId"),
+                new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }),
         }, cancellationToken: ct);
 
         var shadows = _data.Database.GetCollection<BsonDocument>("llmshadow_comparisons");
@@ -249,6 +259,54 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 new CreateIndexOptions { Name = "idx_llmgw_exchange_tenant_enabled_name" }),
         }, ct);
 
+        await CreateBsonIndexesAsync("llmgw_cost_reconciliations", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ExternalRecordId"),
+                new CreateIndexOptions { Name = "uniq_llmgw_cost_tenant_provider_external", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ProviderRequestId"),
+                new CreateIndexOptions<BsonDocument>
+                {
+                    Name = "uniq_llmgw_cost_tenant_provider_request",
+                    Unique = true,
+                    PartialFilterExpression = Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("Granularity", "request"),
+                        Builders<BsonDocument>.Filter.Type("ProviderRequestId", BsonType.String)),
+                }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ServiceKeyId").Descending("BilledAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_cost_tenant_key_billed" }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_cost_import_scope_locks", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+                new CreateIndexOptions { Name = "uniq_llmgw_cost_import_lock_tenant_provider_team", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+                new CreateIndexOptions { Name = "ttl_llmgw_cost_import_scope_locks", ExpireAfter = TimeSpan.Zero }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_legacy_key_cutovers", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId"),
+                new CreateIndexOptions { Name = "uniq_llmgw_legacy_cutover_tenant", Unique = true }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_legacy_key_usage", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("TenantId")
+                    .Ascending("SourceSystem")
+                    .Ascending("AppCallerCode")
+                    .Ascending("IngressProtocol"),
+                new CreateIndexOptions { Name = "uniq_llmgw_legacy_usage_tenant_identity", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("LastSeenAt"),
+                new CreateIndexOptions { Name = "idx_llmgw_legacy_usage_tenant_seen" }),
+        }, ct);
+
         var budgets = _data.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
         await budgets.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetMonthRecord>(
             Builders<GatewayBudgetMonthRecord>.IndexKeys
@@ -303,6 +361,15 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             new CreateIndexModel<GatewayServiceKeyRecord>(
                 Builders<GatewayServiceKeyRecord>.IndexKeys.Ascending(x => x.TenantId).Descending(x => x.CreatedAt),
                 new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
+            new CreateIndexModel<GatewayServiceKeyRecord>(
+                Builders<GatewayServiceKeyRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.TeamId)
+                    .Ascending(x => x.ClientCode)
+                    .Ascending(x => x.Environment)
+                    .Ascending(x => x.Purpose),
+                // 存量库已有不含 Purpose 的同名索引；用途扩维必须用新名字做纯加法迁移。
+                new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload_purpose" }),
         }, cancellationToken: ct);
         await DropIndexIfPresentAsync(serviceKeys, "uniq_llmgw_service_key_hash", ct);
         var serviceKeyRateWindows = _data.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");

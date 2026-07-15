@@ -37,6 +37,77 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void CostEvidenceAndLegacyCutover_AreTenantScopedAuditableAndFailClosed()
+    {
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var costEvidence = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmCostEvidence.cs");
+        var logBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var governanceRecords = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var costPolicy = ReadRepoFile("llmgw/console-api/Costs/CostReconciliationPolicy.cs");
+
+        Assert.Contains("public string? PriceSnapshotHash", logModel);
+        Assert.Contains("public string? ProviderRequestId", logModel);
+        Assert.Contains("public decimal? ProviderReportedCost", logModel);
+        var importDto = dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)];
+        Assert.Contains("public decimal? ProviderReportedCost", importDto);
+        Assert.Contains("SHA256.HashData", costEvidence);
+        Assert.Contains("LlmCostEvidence.ResolveProviderRequestId(done.ResponseHeaders)", logBackground);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(gateway, "LlmCostEvidence.BuildSafeResponseHeaders").Count >= 3);
+        Assert.DoesNotContain("TenantId", dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)]);
+        Assert.Contains("BILLING_WINDOW_TEAM_AMBIGUOUS", console);
+        Assert.Contains("BILLING_WINDOW_OVERLAP", console);
+        Assert.Contains("PROVIDER_REQUEST_COVERED_BY_WINDOW", console);
+        Assert.Contains("providerReportedCost is null", console);
+        Assert.Contains("coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Eq(\"ServiceKeyId\", BsonNull.Value))", console);
+        Assert.Contains("BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST", console);
+        Assert.Contains("var actualAggregate = await costReconciliations.Aggregate()", console);
+        Assert.Contains("var statusAggregate = await costReconciliations.Aggregate()", console);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "await ApplyMatchedRequestLogAsync\\(\\);").Count >= 2);
+        Assert.Contains("Filter.Type(\"ProviderReportedCost\", BsonType.Decimal128)", console);
+        Assert.Contains("{ \"TenantId\", access.TenantId }", console);
+        Assert.Contains("{ \"TeamId\", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId }", console);
+        Assert.Contains("idx_llmgw_logs_tenant_provider_request", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", console);
+        Assert.Contains("uniq_llmgw_cost_tenant_provider_external", initializer);
+        Assert.Contains("uniq_llmgw_cost_tenant_provider_request", initializer);
+        Assert.Contains("uniq_llmgw_cost_import_lock_tenant_provider_team", initializer);
+        Assert.Contains("CostImportScopeLock.TryAcquireAsync", console);
+        Assert.Contains("CostImportScopeLock.TryRenewAsync", console);
+        Assert.Contains("CostImportScopeLock.ReleaseAsync", console);
+        Assert.True(console.LastIndexOf("CostImportScopeLock.TryAcquireAsync", StringComparison.Ordinal)
+                    < console.IndexOf("var overlapFilter", StringComparison.Ordinal));
+        Assert.True(console.IndexOf("CostImportScopeLock.TryRenewAsync", StringComparison.Ordinal)
+                    < console.IndexOf("await costReconciliations.InsertOneAsync(record)", StringComparison.Ordinal));
+        Assert.Contains("Ascending(\"TenantId\").Ascending(\"TeamId\").Ascending(\"ServiceKeyId\")", initializer);
+        Assert.Contains("return new(\"fx-unavailable\", null, null, null)", costPolicy);
+
+        Assert.Contains("public string Purpose { get; set; } = string.Empty", governanceRecords);
+        Assert.Contains("ROTATION_IDENTITY_MISMATCH", console);
+        Assert.Contains("rotatedPurpose, purpose", console);
+        Assert.Contains("GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN", runtime);
+        Assert.Contains("x => x.TenantId == _internalTenantId", runtime);
+        Assert.Contains("SuccessorObservationCounts", governanceRecords);
+        Assert.Contains(".Inc($\"SuccessorObservationCounts.{record.Id}\", 1)", runtime);
+        Assert.Contains("SuccessorObservationCounts.{successorId}", console);
+        Assert.Contains("new BsonRegularExpression(\"^production$\", \"i\")", console);
+        Assert.Contains("new BsonRegularExpression(\"^runtime$\", \"i\")", console);
+        Assert.Contains("LegacySuccessorScopePolicy.FindMissing(successor.AsStringList(\"Scopes\"), requiredScopes)", console);
+        Assert.Contains(".Set(\"RequiredScopes\", new BsonArray(requiredScopes))", console);
+        Assert.Contains("record.Environment, \"production\"", runtime);
+        Assert.Contains("GatewayKeyPurposePolicy.AllowsDataPlaneRequest", runtime);
+        Assert.Contains("GATEWAY_KEY_PURPOSE_DENIED", runtime);
+        Assert.Contains("GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope)", runtime);
+        Assert.Contains("LEGACY_REVOCATION_FINAL", console);
+        Assert.Contains("TenantAccess.Filter(http)", console);
+    }
+
+    [Fact]
     public void ServiceKeyRotation_RequiresClientCutoverBeforeOldKeyRevocation()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -2909,6 +2980,8 @@ public class GatewayDataDomainGuardTests
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var webNginx = ReadRepoFile("llmgw/web/nginx.conf");
+        var devCompose = ReadRepoFile("docker-compose.dev.yml");
 
         var createStart = console.IndexOf("app.MapPost(\"/gw/app-callers\"", StringComparison.Ordinal);
         var createEnd = console.IndexOf("RequireAuthorization(\"AppCallerWrite\")", createStart, StringComparison.Ordinal);
@@ -2944,6 +3017,33 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ingressProtocols: [selectedProtocol.ingressProtocol]", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);
+        Assert.Contains("location ^~ /gw/v1/", webNginx);
+        Assert.Contains("location ^~ /v1/", webNginx);
+        Assert.Contains("location ^~ /v1beta/", webNginx);
+        Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
+        Assert.Contains("client_max_body_size 30m;", webNginx);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+        Assert.Contains("llmgw-serve:", devCompose);
+        Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
+        Assert.Contains("- llmgw-serve", devCompose);
+    }
+
+    [Fact]
+    public void ExternalTenant_CannotMasqueradeAsMapServiceKeyPurpose()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var createStart = console.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
+        var deleteStart = console.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
+        var createEndpoint = console[createStart..deleteStart];
+
+        Assert.Contains("if (sourceSystem == \"*\")", createEndpoint);
+        Assert.Contains("INVALID_KEY_SOURCE", createEndpoint);
+        Assert.Contains("!tenant.IsInternalTenant && (isMapSource || purpose != \"external-platform\")", createEndpoint);
+        Assert.Contains("INTERNAL_KEY_PURPOSE_FORBIDDEN", createEndpoint);
+        Assert.Contains("const isInternalTenant = tenant?.isInternal === true", page);
+        Assert.Contains("外部租户身份由服务端固定，不能伪装为 MAP", page);
+        Assert.Contains("isInternalTenant ? <div", page);
     }
 
     [Fact]

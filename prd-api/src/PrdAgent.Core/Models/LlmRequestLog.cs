@@ -241,6 +241,15 @@ public class LlmRequestLog
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    /// <summary>请求开始时价格字段的不可逆 SHA-256 快照，用于证明 estimated 的复算口径。</summary>
+    public string? PriceSnapshotHash { get; set; }
+    /// <summary>供应商响应头返回的请求标识，用于关联 provider actual；不接受客户端自报。</summary>
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
 
     // Exchange 中继信息
     /// <summary>是否为 Exchange 中继请求</summary>

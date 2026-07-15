@@ -397,9 +397,14 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <MetricCard title="First byte" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
                 <MetricCard title="Throughput" value={tps == null ? DASH : `${tps} tok/s`} />
                 <MetricCard
-                  title="Cost"
+                  title="Estimated cost"
                   value={fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)}
                   note={detail.estimatedCost == null ? '缺价格快照' : undefined}
+                />
+                <MetricCard
+                  title="Provider actual"
+                  value={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
+                  note={detail.providerReportedCost == null ? '供应商账单尚未对账' : detail.reconciliationStatus ?? undefined}
                 />
                 <MetricCard title="Tokens" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} />
                 <MetricCard
@@ -424,6 +429,11 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="Estimated input cost" v={fmtCost(detail.estimatedInputCost, detail.estimatedCostCurrency)} />
                 <Row k="Estimated output cost" v={fmtCost(detail.estimatedOutputCost, detail.estimatedCostCurrency)} />
                 <Row k="Estimated call cost" v={fmtCost(detail.estimatedCallCost, detail.estimatedCostCurrency)} />
+                <Row k="Provider actual cost" v={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)} />
+                <Row k="Reconciliation status" v={detail.reconciliationStatus} />
+                <Row k="Reconciliation delta" v={fmtCost(detail.reconciliationDelta, detail.estimatedCostCurrency)} />
+                <Row k="FX snapshot" v={detail.fxSnapshotId} mono />
+                <Row k="Price snapshot hash" v={detail.priceSnapshotHash} mono copy />
               </div>
 
               <RouterTracePanel detail={detail} />
@@ -440,6 +450,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <Row k="Source system" v={detail.sourceSystem} />
                 <Row k="Ingress protocol" v={detail.ingressProtocol} />
                 <Row k="Request ID" v={detail.requestId} mono copy />
+                <Row k="Provider request ID" v={detail.providerRequestId} mono copy />
                 <Row k="Generation ID" v={detail.id} mono copy />
                 <Row k="Started" v={detail.startedAt} mono />
                 <Row k="First byte" v={detail.firstByteAt} mono />

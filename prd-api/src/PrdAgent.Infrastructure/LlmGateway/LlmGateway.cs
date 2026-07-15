@@ -921,7 +921,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var assembledThinking = thinkingBuilder.ToString();
             var assembledToolCalls = BuildAccumulatedToolCalls(toolCallAccum);
-            await FinishStreamLogAsync(logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls, finishReason, finalResolution, gatewayTransport, ct, providerAttempts);
+            await FinishStreamLogAsync(
+                logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls,
+                finishReason, finalResolution, gatewayTransport, ct, providerAttempts,
+                LlmCostEvidence.BuildSafeResponseHeaders(response, "text/event-stream"));
         }
         finally
         {
@@ -1734,7 +1737,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var endedNow = DateTime.UtcNow;
                     var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                     CompleteLastSendAttempt(rawProviderAttempts, (int)response.StatusCode, submitDurationMs, submitError);
-                    await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    await FinishRawLogAsync(
+                        logId, (int)response.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                        rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(response, "application/json"));
                     return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
                 }
 
@@ -1824,7 +1829,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 reason: $"exchange async poll attempt {pollAttempt} failed");
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
-                            await FinishRawLogAsync(logId, (int)queryResp.StatusCode, responseBody, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                            await FinishRawLogAsync(
+                                logId, (int)queryResp.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                                rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(queryResp, "application/json"));
                             return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
                         }
 
@@ -1914,7 +1921,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 9. 写入日志（完成）
-            await FinishRawLogAsync(logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, gatewayTransport, ct, rawProviderAttempts);
+            await FinishRawLogAsync(
+                logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, gatewayTransport, ct,
+                rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(
+                    response, contentType.Length > 0 ? contentType : "application/json"));
 
             // 10. 返回响应
             var responseHeaders = new Dictionary<string, string>();
@@ -3173,10 +3183,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId,
                 new LlmLogDone(
                     StatusCode: (int)response.StatusCode,
-                    ResponseHeaders: new Dictionary<string, string>
-                    {
-                        ["content-type"] = response.Content.Headers.ContentType?.ToString() ?? "application/json"
-                    },
+                    ResponseHeaders: LlmCostEvidence.BuildSafeResponseHeaders(response, "application/json"),
                     InputTokens: tokenUsage?.InputTokens,
                     OutputTokens: tokenUsage?.OutputTokens,
                     CacheCreationInputTokens: tokenUsage?.CacheCreationInputTokens,
@@ -3290,7 +3297,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult? resolution,
         string gatewayTransport,
         CancellationToken ct,
-        List<LlmProviderAttempt>? providerAttempts = null)
+        List<LlmProviderAttempt>? providerAttempts = null,
+        Dictionary<string, string>? responseHeaders = null)
     {
         if (_logWriter == null || logId == null) return Task.CompletedTask;
 
@@ -3301,7 +3309,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId,
                 new LlmLogDone(
                     StatusCode: 200,
-                    ResponseHeaders: new Dictionary<string, string>
+                    ResponseHeaders: responseHeaders ?? new Dictionary<string, string>
                     {
                         ["content-type"] = "text/event-stream"
                     },
@@ -3547,7 +3555,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult resolution,
         string gatewayTransport,
         CancellationToken ct,
-        List<LlmProviderAttempt>? providerAttempts = null)
+        List<LlmProviderAttempt>? providerAttempts = null,
+        Dictionary<string, string>? responseHeaders = null)
     {
         if (_logWriter == null || logId == null) return Task.CompletedTask;
 
@@ -3563,7 +3572,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId,
                 new LlmLogDone(
                     StatusCode: statusCode,
-                    ResponseHeaders: new Dictionary<string, string>
+                    ResponseHeaders: responseHeaders ?? new Dictionary<string, string>
                     {
                         ["content-type"] = "application/json"
                     },

@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers, getServiceKeys, revokeServiceKey } from '@/lib/api';
-import type { CreatedServiceKey, ServiceKeyItem } from '@/lib/types';
+import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 
 const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemini-compatible';
 const DEFAULT_SCOPES = 'invoke, route:read';
 
 export function ServiceKeysPage() {
+  const { tenant } = useAuth();
+  const isInternalTenant = tenant?.isInternal === true;
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -20,6 +23,7 @@ export function ServiceKeysPage() {
   const [sourceSystem, setSourceSystem] = useState('external');
   const [clientCode, setClientCode] = useState('');
   const [environment, setEnvironment] = useState('production');
+  const [purpose, setPurpose] = useState<'runtime' | 'release-gate' | 'canary' | 'external-platform'>('external-platform');
   const [appCallerCodes, setAppCallerCodes] = useState('');
   const [ingressProtocols, setIngressProtocols] = useState(DEFAULT_PROTOCOLS);
   const [scopes, setScopes] = useState(DEFAULT_SCOPES);
@@ -30,12 +34,28 @@ export function ServiceKeysPage() {
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
   const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
+  const [legacy, setLegacy] = useState<LegacyKeyCutoverData | null>(null);
+  const [legacyDeadline, setLegacyDeadline] = useState('');
+  const [legacyAllowedCallers, setLegacyAllowedCallers] = useState('');
+  const [legacySuccessorIds, setLegacySuccessorIds] = useState('');
+  const [legacyRequired, setLegacyRequired] = useState('1');
+  const [legacyStatus, setLegacyStatus] = useState<'observing' | 'ready' | 'revoked'>('observing');
+  const [legacyBusy, setLegacyBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     const res = await getServiceKeys();
     if (res.success) setItems(res.data);
     else setError(res.error?.message || '加载接入密钥失败');
+    const legacyRes = await getLegacyKeyCutover();
+    if (legacyRes.success && legacyRes.data.applicable) {
+      setLegacy(legacyRes.data);
+      setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
+      setLegacyDeadline(legacyRes.data.deadlineAt ? toLocalInput(legacyRes.data.deadlineAt) : '');
+      setLegacyAllowedCallers(legacyRes.data.allowedAppCallerCodes.join(', '));
+      setLegacySuccessorIds(legacyRes.data.successorServiceKeyIds.join(', '));
+      setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
+    }
   }, []);
 
   useEffect(() => {
@@ -53,6 +73,7 @@ export function ServiceKeysPage() {
       sourceSystem: sourceSystem.trim(),
       clientCode: clientCode.trim().toLowerCase(),
       environment,
+      purpose,
       appCallerCodes: splitValues(appCallerCodes),
       ingressProtocols: splitValues(ingressProtocols),
       scopes: splitValues(scopes),
@@ -118,6 +139,7 @@ export function ServiceKeysPage() {
     setSourceSystem(item.sourceSystem);
     setClientCode(item.clientCode);
     setEnvironment(item.environment === 'unknown' ? 'production' : item.environment);
+    setPurpose(item.purpose);
     setAppCallerCodes(item.appCallerCodes.join(', '));
     setIngressProtocols(item.ingressProtocols.join(', '));
     setScopes(item.scopes.join(', '));
@@ -133,9 +155,45 @@ export function ServiceKeysPage() {
     || splitValues(appCallerCodes).includes('*')
     || splitValues(ingressProtocols).includes('*')
     || splitValues(scopes).includes('*');
+  const sourceIsMap = sourceSystem.trim().toLowerCase() === 'map';
+  const purposeMatchesSource = sourceIsMap ? purpose !== 'external-platform' : purpose === 'external-platform';
+  const purposeMatchesTenant = isInternalTenant || (!sourceIsMap && purpose === 'external-platform');
   const canSubmit = name.trim() && sourceSystem.trim() && /^[a-z][a-z0-9._-]{1,79}$/.test(clientCode.trim().toLowerCase()) && environment && splitValues(appCallerCodes).length
     && splitValues(ingressProtocols).length && splitValues(scopes).length
-    && (!usesWildcard || confirmWildcardRisk);
+    && purposeMatchesSource && purposeMatchesTenant && (!usesWildcard || confirmWildcardRisk);
+  const updateSourceSystem = (value: string) => {
+    setSourceSystem(value);
+    const nextIsMap = value.trim().toLowerCase() === 'map';
+    if (nextIsMap && purpose === 'external-platform') setPurpose('runtime');
+    if (!nextIsMap && purpose !== 'external-platform') setPurpose('external-platform');
+  };
+  const activeKeys = (items ?? []).filter((item) => item.enabled);
+  const mapCoverage = (['runtime', 'release-gate', 'canary'] as const).map((requiredPurpose) => ({
+    purpose: requiredPurpose,
+    ready: activeKeys.some((item) => item.sourceSystem.toLowerCase() === 'map' && item.environment === 'production' && item.purpose === requiredPurpose),
+  }));
+  const externalIdentities = Array.from(new Set(activeKeys
+    .filter((item) => item.purpose === 'external-platform')
+    .map((item) => `${item.clientCode} · ${item.environment}`)));
+
+  const saveLegacyCutover = async () => {
+    if (!legacyDeadline) return;
+    if (legacyStatus === 'revoked' && !window.confirm('确认撤销 legacy shared key？撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。')) return;
+    setLegacyBusy(true);
+    const res = await updateLegacyKeyCutover({
+      status: legacyStatus,
+      deadlineAt: new Date(legacyDeadline).toISOString(),
+      allowedAppCallerCodes: splitValues(legacyAllowedCallers),
+      successorServiceKeyIds: splitValues(legacySuccessorIds),
+      requiredSuccessorObservations: Math.max(1, Number(legacyRequired) || 1),
+    });
+    setLegacyBusy(false);
+    if (!res.success) {
+      setError(res.error?.message || '更新 legacy 收口策略失败');
+      return;
+    }
+    await load();
+  };
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
     {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button> : null}
@@ -178,11 +236,19 @@ export function ServiceKeysPage() {
       {showCreate ? (
         <div className="lg-service-key-form" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr)', gap: 8, padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <Field label="名称" value={name} onChange={setName} placeholder="例如 content-service" />
-          <Field label="Source system" value={sourceSystem} onChange={setSourceSystem} placeholder="external" />
+          {isInternalTenant
+            ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
+            : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
           <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
           <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
             <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
           </select></label>
+          {isInternalTenant
+            ? <label style={labelStyle}>用途<select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)} style={inputStyle}>
+              <option value="runtime">MAP runtime</option><option value="release-gate">发布 Gate</option><option value="canary">Canary</option><option value="external-platform">外部平台</option>
+            </select></label>
+            : <label style={labelStyle}>用途<input aria-label="用途" value="external-platform" readOnly style={inputStyle} /></label>}
+          {!purposeMatchesSource ? <div style={{ gridColumn: '1 / -1', color: 'var(--danger)', fontSize: 12 }}>MAP 只能使用 runtime、release-gate 或 canary；其他来源只能使用 external-platform。</div> : null}
           <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="选择已有值或逗号分隔输入" list="llmgw-app-callers" />
           <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
           <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
@@ -205,6 +271,24 @@ export function ServiceKeysPage() {
       ) : null}
 
       {error ? <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div> : null}
+      {items ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {isInternalTenant ? <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 12 }}>MAP 生产 key 覆盖</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? '#3fb950' : '#f59e0b'} bg={item.ready ? 'rgba(63,185,80,0.12)' : 'rgba(245,158,11,0.12)'} />)}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>runtime、release-gate、canary 各用一把 production scoped key，不共享身份。</p></div> : null}
+        <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 12 }}>外部平台独立身份</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-muted)" />) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>暂无外部平台 key</span>}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>每个 clientCode 与环境生成独立 key；一把 key 不能跨 purpose 或 environment。</p></div>
+      </div> : null}
+      {legacy ? <details style={{ flexShrink: 0, padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 12 }}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 12 }}>
+          <label style={labelStyle}>截止时间<input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
+          <label style={labelStyle}>状态<select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
+          <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
+          <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
+          <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
+          <div style={{ display: 'flex', alignItems: 'end', justifyContent: 'flex-end' }}><Button variant="primary" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button></div>
+        </div>
+        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 11 }}>外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；只有真实业务调用观测达标才能显式撤销。</div>
+        <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 11 }}>必需协议：{legacy.requiredIngressProtocols.join(', ')}；必需 scope：{legacy.requiredScopes.join(', ')}</div>
+        {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: 10 }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
+      </details> : null}
       {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
         <div className="lg-service-key-empty">
           <KeyRound size={24} />
@@ -222,7 +306,7 @@ export function ServiceKeysPage() {
             </tr></thead>
             <tbody>{items.map((item) => <tr key={item.id}>
               <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.id}</div></td>
-              <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.sourceSystem}</div></td>
+              <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.purpose} · {item.sourceSystem}</div></td>
               <td style={{ ...td, ...mutedMono }}>{item.keyPrefix}</td>
               <td style={td}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
               <td style={td}>{item.appCallerCodes.join(', ')}</td>
@@ -246,7 +330,7 @@ export function ServiceKeysPage() {
             <div className="lg-service-key-card-identity">
               <span>工作负载身份</span>
               <strong>{item.clientCode}</strong>
-              <small>{item.environment} · {item.sourceSystem}</small>
+              <small>{item.environment} · {item.purpose} · {item.sourceSystem}</small>
             </div>
             <dl>
               <div><dt>轮换阶段</dt><dd>{rotationLabel(item.rotationState)}{item.rotatedByKeyId ? <small>新钥 {item.rotatedByKeyId}</small> : null}</dd></div>
@@ -277,6 +361,13 @@ function formatTime(value?: string | null) {
   if (!value) return '未设置';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function toLocalInput(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function rotationLabel(state: string) {
