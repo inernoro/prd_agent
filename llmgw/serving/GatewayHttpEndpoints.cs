@@ -4588,7 +4588,6 @@ public static class GatewayHttpEndpoints
                 PromptPolicyId = source?.PromptPolicyId,
                 PromptPolicyVersion = source?.PromptPolicyVersion,
                 PromptPolicyHash = source?.PromptPolicyHash,
-                PromptPolicyChars = source?.PromptPolicyChars,
                 ImageReferences = source?.ImageReferences,
                 GatewayTransport = GatewayTransports.Http,
                 SourceSystem = ingress.SourceSystem,

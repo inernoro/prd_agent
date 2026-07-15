@@ -8134,7 +8134,6 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     PromptPolicyId = d.AsNullableString("PromptPolicyId"),
     PromptPolicyVersion = d.AsNullableInt("PromptPolicyVersion"),
     PromptPolicyHash = d.AsNullableString("PromptPolicyHash"),
-    PromptPolicyChars = d.AsNullableInt("PromptPolicyChars"),
     QuestionText = d.AsNullableString("QuestionText"),
     AnswerText = d.AsNullableString("AnswerText"),
     ThinkingText = d.AsNullableString("ThinkingText"),
@@ -9663,10 +9662,7 @@ static PromptPolicyVersionItem MapPromptPolicy(BsonDocument doc) => new()
 static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
 {
     { "version", doc["Version"] },
-    { "enabled", doc["Enabled"] },
     { "policyHash", doc["PolicyHash"] },
-    { "policyChars", doc["PolicyChars"] },
-    { "maxChars", doc["MaxChars"] },
 };
 
 // 统一 JSON 输出（带信封 + 指定状态码）。

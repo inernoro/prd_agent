@@ -214,6 +214,22 @@ describe('stack-detector', () => {
       const r = detectStack(tmp);
       expect(r.stack).toBe('dockerfile');
     });
+
+    it('can prefer a runnable project manifest when Compose already selected the Dockerfile service', () => {
+      fs.writeFileSync(path.join(tmp, 'Dockerfile'), 'FROM node:20\n');
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'compose-app',
+        scripts: { start: 'node server.js' },
+      }));
+      fs.writeFileSync(path.join(tmp, 'package-lock.json'), '{}');
+
+      const r = detectStack(tmp, { preferManifest: true });
+
+      expect(r.stack).toBe('nodejs');
+      expect(r.dockerImage).toBe('node:20-slim');
+      expect(r.installCommand).toBe('npm ci');
+      expect(r.runCommand).toBe('npm start');
+    });
   });
 
   // ───────────────────────────────────────────────────────────

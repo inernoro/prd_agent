@@ -1,12 +1,12 @@
 ---
 name: cds
-version: 0.8.0
-description: CDS (Cloud Dev Space) core skill — hosts the canonical cdscli Python CLI, handles authentication (static AI_ACCESS_KEY / dynamic pairing / project key), manages env vars and project keys, owns CDS service self-update, defines the preview-URL slug formula, and acts as dispatcher when the user's intent is ambiguous between cold-path scanning and hot-path debugging. Activates when the user mentions CDS generically without specifying scan-or-deploy, configures CDS credentials, manages env / keys, updates the CDS service code itself, or asks about preview URL conventions. Does NOT directly perform project scanning (delegates to cds-project-scan, the cold path) or deployment debugging (delegates to cds-deploy-pipeline, the hot path). Trigger phrases include "cds 认证", "AI_ACCESS_KEY", "项目 key", "cds 自更新", "cds self-update", "预览地址公式", "配 cds 环境变量", "/cds", "/cds-auth", and the bare word "cds" when the user has not yet picked a direction.
+version: 0.9.0
+description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, defines the preview-URL slug formula, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
-# CDS — 核心技能：鉴权 / cdscli / env / self-update / 分诊器
+# CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.8.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"cds 认证"、"AI_ACCESS_KEY"、"项目 key"、"cds 自更新"、"预览地址公式"、"配 cds 环境变量"
+> **版本**：v0.9.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址公式"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -31,9 +31,9 @@ CDS 这边您想做什么？
 
 | 处理 | 不处理（去对应技能） |
 |---|---|
-| `AI_ACCESS_KEY` 静态密钥配置 + 校验 | 项目扫描 / compose 生成（`cds-project-scan`） |
-| 动态配对（Dashboard 批准） | 推送代码 / 部署到分支（`cds-deploy-pipeline`） |
-| 项目级 `cdsp_*` Key 提取 + 使用 | 看容器日志（`cds-deploy-pipeline`） |
+| 页面批准式安全接入（不复制密钥） | 项目扫描 / compose 生成（`cds-project-scan`） |
+| 项目级凭据加载与旧环境变量兼容 | 推送代码 / 部署到分支（`cds-deploy-pipeline`） |
+| 部署运行记录、失败诊断、版本与回滚 | 看容器日志（`cds-deploy-pipeline`） |
 | env 变量 get/set（`_global` / `<projectId>` scope） | 冒烟测试（`cds-deploy-pipeline`） |
 | `cdscli self update` 切分支 + 重启 CDS | |
 | 预览 URL slug 公式（v3 SSOT） | |
@@ -44,9 +44,19 @@ CDS 这边您想做什么？
 ```bash
 CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
 
-# 鉴权
-$CLI auth check                          # 校验 CDS_HOST + AI_ACCESS_KEY
-$CLI init                                # 交互式向导（首次接入）
+# 安全接入：默认页面批准，密钥不进入对话或 stdout，不写 shell profile
+$CLI connect --host https://cds.example --project <id> --agent Codex
+$CLI connect --host https://cds.example --new-project --agent Cursor
+$CLI init                                # 交互式安全向导
+$CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
+$CLI auth check                          # 校验当前项目凭据
+
+# 托管交付真相：运行过程与可复用版本
+$CLI deployment-run list --project <id>
+$CLI deployment-run show <runId>
+$CLI deployment-run diagnose <runId>
+$CLI deployment-version list --project <id>
+$CLI deployment-version deploy <versionId>
 
 # Env 管理
 $CLI env get --scope _global
@@ -156,40 +166,42 @@ $CLI schedule create "每天 02:00 curl -X POST https://old.example/pull 然后 
 - 含密钥的 curl 可以交给 `schedule test/create`，但最终回复不要复述完整密钥值。
 - 用户只说「定时跑这个」但没有调度时间时，不要猜默认每天；先要求补齐调度。
 
-## 认证：三种方式（按优先级）
+## 认证：页面批准优先
 
-### 首选：项目专属 Key（零心智）
+### 已有项目
 
-用户粘贴包含 `CDS_PROJECT_KEY=cdsp_...` 的代码块，AI 直接提取作为本次会话凭证：
+在目标 git 仓库目录运行：
 
 ```bash
-export CDS_HOST=https://xxx.miduo.org
-export CDS_PROJECT_ID=prd-agent-2
-export CDS_PROJECT_KEY=cdsp_prd-agent-2_a1B2c3D4e5F6...
-curl -sf -H "X-AI-Access-Key: $CDS_PROJECT_KEY" "$CDS_HOST/api/projects/$CDS_PROJECT_ID"
+$CLI connect --host https://cds.example --project <projectId> --agent <当前 Agent 名称>
 ```
 
-返回 `403 project_mismatch`：告诉用户去对应项目页点「授权 Agent」按钮重新生成。
+CLI 免密发起申请，用户在 CDS 右下角批准一次。项目 Key 只由 CLI 接收并写入当前项目
+`.cds/credentials.json`，文件权限为 `0600`，同时加入本地 git exclude。密钥禁止出现在对话、
+stdout、命令参数、shell profile 或系统环境变量持久配置中。
 
-### A: 静态密钥（推荐，零交互）
+### 首次创建项目
 
-`process.env.AI_ACCESS_KEY` 配好，AI 请求带 `X-AI-Access-Key` header。
+```bash
+$CLI connect --host https://cds.example --new-project --agent <当前 Agent 名称>
+```
 
-### B: 动态配对
+批准后得到一次性 create-only 授权。`project create` / `onboard` 创建项目成功时，CDS 自动
+吊销该授权并返回新项目专属 Key；CLI 静默保存并切换，不打印明文。
 
-AI `POST /api/ai/request-access` → 用户在 Dashboard 点批准 → 拿 24h token → 后续请求带 `X-CDS-AI-Token` header。
+### 旧版兼容
 
-### C: Cookie（兜底）
-
-用户从浏览器 DevTools 复制 `cds_token`，AI 用 `Cookie: cds_token=...` 兜底。
+已有 `CDS_HOST`、`CDS_PROJECT_KEY`、`AI_ACCESS_KEY` 的进程仍可直接使用。只有用户明确要求
+旧流程时才能运行 `cdscli init --legacy-env` 写 `~/.cdsrc`，不得把它作为默认接入方式。
 
 完整认证决策树（含错误码处理） → [reference/auth.md](reference/auth.md)
 
 ### 硬性禁令
 
 1. **禁止 `X-Cds-Internal: 1`**：能认证但 Activity 无 AI 标记，违反可观测性。
-2. **Bash 调用间变量隔离**：动态配对的 token 必须在**同一个 Bash 调用**内用 `&&` 链接完成，跨调用变量会丢。
-3. **AI 操作必须可见**：所有 AI 请求会出现在 CDS Dashboard 右下角监控浮窗，标紫色 "AI" 标签。
+2. **禁止索要密钥**：默认接入不得让用户把长期 Key 粘进对话或终端命令。
+3. **禁止环境侵入**：不得修改 `.bashrc`、`.zshrc`、全局 PATH 或用户主目录技能目录，除非用户明确选择全局安装。
+4. **AI 操作必须可见**：所有 AI 请求会出现在 CDS Dashboard 的活动记录中。
 
 ## 预览 URL 公式（v3 SSOT）
 

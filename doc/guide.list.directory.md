@@ -60,8 +60,8 @@
 - [周报 Agent Phase 5 用户故事](spec.report-agent.phase5) `spec.report-agent.phase5`
   > 周报 Agent 第五阶段的用户故事
 
-- [CDS (Cloud Development Suite) 功能需求说明书](spec.cds) `spec.cds`
-  > CDS 云开发套件的功能需求与用户故事
+- [CDS 产品能力 · 规格](spec.cds) `spec.cds`
+  > CDS 当前完整产品定位、用户流程、十五个功能域与验收标准
 
 - [作品投稿与画廊展示规格](spec.submission-gallery) `spec.submission-gallery`
   > 作品投稿、画廊瀑布流展示与社交互动的产品规格
@@ -222,8 +222,8 @@
 - [网络诊断功能](design.platform.network-diagnostics) `design.platform.network-diagnostics`
   > 客户端网络连通性诊断功能的设计
 
-- [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
-  > 云开发套件的架构设计
+- [CDS 总体架构 · 设计](design.cds) `design.cds`
+  > CDS 项目授权、托管交付、版本恢复、隔离、可观测与集群的总体架构
 
 - [CDS 托管交付契约](design.cds.managed-delivery) `design.cds.managed-delivery`
   > DeploymentRun 唯一事实源、不可变 DeploymentVersion、managed/compose 双模式、能力绑定与结构化诊断的分阶段设计
@@ -398,8 +398,8 @@
 - [Claude Code 云开发教程](guide.cds.cloud-dev-tutorial) `guide.cds.cloud-dev-tutorial`
   > 使用 Claude Code 进行云端协作开发的操作指南
 
-- [CDS 托管交付使用指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
-  > 面向普通用户介绍新增功能、3 分钟 Quick Start、日常上线、失败处理和版本恢复
+- [CDS 自动交付与 Agent 接入 · 指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
+  > 从页面批准 Agent 到自动识别、部署、预览、版本复用和恢复的主用户指南
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
@@ -479,28 +479,32 @@
 - [CDS Agent Runtime Pool 恢复指南](guide.cds.agent.runtime-pool-recovery) `guide.cds.agent.runtime-pool-recovery`
   > CDS Agent Runtime Pool 恢复与官方 SDK Smoke 测试操作指南
 
-- [CDS 环境变量配置指南](guide.cds.env) `guide.cds.env`
-  > CDS 环境变量的配置与使用说明
+- [CDS 环境与凭据 · 指南](guide.cds.env) `guide.cds.env`
+  > 区分 CDS 系统配置、项目运行变量、Agent 项目凭据和 GitHub 授权
 
-- [CDS + 后端 API 双层认证诊断指南](guide.cds.ai-auth) `guide.cds.ai-auth`
-  > CDS 与后端 API 双层认证的诊断与排查指南
+- [CDS 与业务 API 双层认证诊断 · 指南](guide.cds.ai-auth) `guide.cds.ai-auth`
+  > 分清 CDS 项目权限和业务应用身份，按真实用户路径诊断未授权问题
 
 - [CDS GitHub Webhook 订阅配置指南](guide.cds.github-webhook-events) `guide.cds.github-webhook-events`
   > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
 
-- [CDS GitHub App 接入与部署 Runbook](guide.cds.github-app) `guide.cds.github-app`
-  > 新 CDS 域名从建 GitHub App、生成 private key、写 5 个 .cds.env 变量到 push 自测的完整 runbook；含敏感值清单与 geole 实测踩坑排查（401 鉴权非配置、RSA command not found、apex DNS）
+- [CDS GitHub App 接入与私有仓库部署 · 指南](guide.cds.github-app) `guide.cds.github-app`
+  > 项目用户完成单仓库授权与部署，管理员完成 GitHub App 配置与推送验收
 
 - [CDS CLI 蜂群优化操作手册](guide.cds.cli-swarm) `guide.cds.cli-swarm`
   > 多 agent 并行反馈+修复+复测：3 个反馈方 + 1 个修复方 + 1 个协调方，含 5 段可直接复制的 prompt
 
-- [CDS 三种部署方式指南](guide.cds.deploy-three-paths) `guide.cds.deploy-three-paths`
-  > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
+- [CDS 部署方式选择 · 指南](guide.cds.deploy-three-paths) `guide.cds.deploy-three-paths`
+  > 按项目复杂度选择可视化托管、Compose 或 Agent 操作，并统一进入版本和回滚流程
 
-- [从零开始的 CDS 教程 · 指南](guide.cds.tutorial) `guide.cds.tutorial`
-- [CDS 可视化部署与验收指南](guide.cds.deploy-acceptance) `guide.cds.deploy-acceptance`
-- [CDS 一键可视化部署使用教程](guide.cds.one-click-deploy) `guide.cds.one-click-deploy`
-  > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
+- [从零开始使用 CDS · 指南](guide.cds.tutorial) `guide.cds.tutorial`
+  > 从 Agent 接入到首次部署、预览、日常发布和恢复的渐进教程
+
+- [CDS 部署验收 · 指南](guide.cds.deploy-acceptance) `guide.cds.deploy-acceptance`
+  > 通过真实预览地址验证部署过程、核心操作、依赖、版本复用和回滚
+
+- [CDS 一键可视化部署 · 指南](guide.cds.one-click-deploy) `guide.cds.one-click-deploy`
+  > 选择仓库、自动识别、试运行、持续部署、预览和恢复的纯页面操作指南
 
 - [CDS 全栈基础设施冒烟样例指南](guide.cds.fullstack-infra-smoke) `guide.cds.fullstack-infra-smoke`
   > 使用前端、后端、MySQL、Redis、RabbitMQ 极简样例验证 CDS 一键部署和沙盒导入适配度
@@ -1100,6 +1104,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-15 | 更新 | `spec.cds` `design.cds` `guide.cds.managed-delivery` `guide.cds.tutorial` `guide.cds.deploy-three-paths` `guide.cds.one-click-deploy` `guide.cds.deploy-acceptance` `guide.cds.env` `guide.cds.github-app` `guide.cds.ai-auth` | CDS 重大版本文档体系重构 |
 | 2026-07-15 | 新增 | `plan.platform.llm-gateway-authoritative-tutorial` | LLM Gateway 模型网关权威教程 · 实施计划 |
 | 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
 | 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |

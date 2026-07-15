@@ -23,6 +23,7 @@ import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 interface AccessRequest {
   id: string;
+  kind?: 'project' | 'bootstrap';
   projectId: string;
   agentName: string;
   purpose: string;
@@ -109,9 +110,8 @@ export function AccessRequestInbox(): JSX.Element | null {
               授权申请待批准
             </DialogTitle>
             <DialogDescription>
-              外部 Agent 直接发起的授权申请(无需任何预置密钥)。批准会当场签发一把该项目的
-              全权「授权密钥」交给 Agent —— Agent 凭它做接下来的所有操作(含直接读取项目环境
-              变量),你无需再手动提供参数。授权密钥明文只交付给 Agent 一次,此处不显示。
+              外部 Agent 可以在没有预置密钥时发起申请。已有项目会签发该项目的授权；首次接入
+              只签发一次性建项目权限，项目创建后自动失效。授权内容只交付给发起方一次，此处不显示。
             </DialogDescription>
           </DialogHeader>
 
@@ -126,7 +126,11 @@ export function AccessRequestInbox(): JSX.Element | null {
                     <div className="text-sm">
                       <div className="font-semibold text-foreground">{item.agentName || '未知 Agent'}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        项目: <code className="font-mono">{item.projectId}</code>
+                        {item.kind === 'bootstrap' ? (
+                          <span className="font-medium text-foreground">范围: 创建一个新项目</span>
+                        ) : (
+                          <>项目: <code className="font-mono">{item.projectId}</code></>
+                        )}
                         {' · '}
                         {new Date(item.createdAt).toLocaleString('zh-CN')}
                       </div>
@@ -141,7 +145,7 @@ export function AccessRequestInbox(): JSX.Element | null {
                       </Button>
                       <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy}>
                         {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        批准并签发授权密钥
+                        {item.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
                       </Button>
                     </div>
                   </div>
