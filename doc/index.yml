@@ -38,7 +38,7 @@ docs:
   spec.report-agent: 周报 Agent 产品需求文档
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
   spec.report-agent.phase5: 周报 Agent Phase 5 用户故事
-  spec.cds: CDS (Cloud Development Suite) 功能需求说明书
+  spec.cds: CDS 产品能力 · 规格
   spec.submission-gallery: 作品投稿与画廊展示规格
   spec.cds.compose-contract: CDS Compose 契约（SSOT）
   spec.cds.lifecycle: CDS 服务生命周期与缓存范围规格
@@ -103,7 +103,7 @@ docs:
   design.frontend.left-right-layout: 左右布局重新设计总结
   design.frontend.toast: Toast 通知系统实现
   design.platform.network-diagnostics: 网络诊断功能
-  design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds: CDS 总体架构 · 设计
   design.cds.managed-delivery: CDS 托管交付契约（DeploymentRun 唯一事实源 + 不可变 DeploymentVersion + managed/compose 双模式 + 结构化诊断）
   design.cds.build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds.branch-network-isolation: CDS 分支级网络隔离（每分支专属 app 网 + 共享 infra 网，杜绝跨分支服务发现串流）
@@ -161,7 +161,7 @@ docs:
   guide.platform.quickstart: PRD Agent 快速部署指南
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
-  guide.cds.managed-delivery: CDS 托管交付使用指南
+  guide.cds.managed-delivery: CDS 自动交付与 Agent 接入 · 指南
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程
@@ -188,17 +188,17 @@ docs:
   guide.cds.agent.admin: CDS Agent 管理员指南
   guide.cds.agent.runbook: CDS Agent 运行手册
   guide.cds.agent.runtime-pool-recovery: CDS Agent Runtime Pool 恢复与官方 SDK Smoke · 指南
-  guide.cds.env: CDS 环境变量配置指南
+  guide.cds.env: CDS 环境与凭据 · 指南
   guide.platform.troubleshooting: 疑难杂症排查手册
   guide.prd-agent.operations: PRD Agent 全平台操作手册
-  guide.cds.ai-auth: CDS + 后端 API 双层认证诊断指南
+  guide.cds.ai-auth: CDS 与业务 API 双层认证诊断 · 指南
   guide.cds.github-webhook-events: CDS GitHub Webhook 订阅配置指南
-  guide.cds.github-app: CDS GitHub App 接入与部署 Runbook（新环境从建 App 到 push 自测，含 geole 踩坑排查）
+  guide.cds.github-app: CDS GitHub App 接入与私有仓库部署 · 指南
   guide.cds.cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
-  guide.cds.deploy-three-paths: CDS 三种部署方式指南
-  guide.cds.tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
-  guide.cds.deploy-acceptance: CDS 可视化部署与验收指南（一键部署前后端+基建步骤 + 基础设施目录 + 验收清单）
-  guide.cds.one-click-deploy: CDS 一键可视化部署使用教程（贴仓库→检测填好→试运行验证→部署→应用已上线）
+  guide.cds.deploy-three-paths: CDS 部署方式选择 · 指南
+  guide.cds.tutorial: 从零开始使用 CDS · 指南
+  guide.cds.deploy-acceptance: CDS 部署验收 · 指南
+  guide.cds.one-click-deploy: CDS 一键可视化部署 · 指南
   guide.cds.fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill.workflow: AI 技能工作流指南
   guide.skill.removal-checklist: 删技能前置检查清单指南
