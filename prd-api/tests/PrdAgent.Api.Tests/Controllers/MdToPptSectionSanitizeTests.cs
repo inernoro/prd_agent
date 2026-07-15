@@ -149,13 +149,28 @@ public class MdToPptSectionSanitizeTests
     {
         Assert.False(MdToPptController.IsRunnableSlideFragment("<html><body><section>x</section></body></html>", anchored: false));
         Assert.False(MdToPptController.IsRunnableSlideFragment("<section><script>alert(1)</script></section>", anchored: false));
-        Assert.True(MdToPptController.IsRunnableSlideFragment("<section><div class=\"pp-root\"><h2>标题</h2></div></section>", anchored: false));
+        Assert.True(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>产品发布</h2><div class=\"grid g3\"><div class=\"card\">A</div><div class=\"stat\">42%</div></div></div></section>",
+            anchored: false));
+    }
+
+    [Fact]
+    public void RunnableSlideFragment_RejectsGenericTitleAndPlainBulletPage()
+    {
+        Assert.False(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>封面</h2><ul><li>A</li><li>B</li></ul></div></section>",
+            anchored: false));
+        Assert.False(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>产品发布</h2><ul><li>A</li><li>B</li><li>C</li></ul></div></section>",
+            anchored: false));
+        Assert.True(MdToPptController.LooksLikeLowQualitySlide(
+            "<section><h2>总结</h2><ul><li>A</li><li>B</li></ul></section>"));
     }
 
     [Fact]
     public void RunnableAnchoredSlide_AcceptsOfficialHtmlPptSectionRoot()
     {
-        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>标题</h1></section>";
+        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>产品发布</h1><div class=\"card\">A</div><div class=\"stat\">42%</div></section>";
         Assert.True(MdToPptController.IsRunnableSlideFragment(slide, anchored: true));
     }
 

@@ -130,6 +130,8 @@ public class MdToPptAnchorTests
 
         Assert.Contains("测试标题", slide);
         Assert.Contains("要点一", slide);
+        Assert.Contains("mdppt-fallback-layout", slide);
+        Assert.Contains("mdppt-fallback-card", slide);
         // 模板装饰（无文本块）被继承
         Assert.Contains("hc-grid", slide);
         // 页脚被继承（class 含 footer）

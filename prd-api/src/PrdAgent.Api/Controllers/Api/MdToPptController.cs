@@ -1456,7 +1456,8 @@ public class MdToPptController : ControllerBase
             "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；范本里的页脚（如页码、栏目名）原样保留位置\n" +
             "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置，必须用本页真实或代表性的数值与标签填满（数字来自要点、缺数据就给合理示意值），严禁留空容器、占位问号、或只有标题没有内容的空装置\n" +
             "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
-            $"9. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
+            "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n" +
+            $"10. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
     }
@@ -1485,6 +1486,9 @@ public class MdToPptController : ControllerBase
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
+        sb.Append("创意与质量要求：把用户意图转成具体发布会文案、数字、对比标签或流程节点；");
+        sb.Append("可在范本同构区域内调整词序和标签，但不得输出泛化标题“封面/目录/总结/标题”；");
+        sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
         sb.Append("把范本占位内容替换为以上真实内容，输出整个 slide 块。");
         return sb.ToString();
     }
@@ -1529,15 +1533,40 @@ public class MdToPptController : ControllerBase
         return result;
     }
 
-    /// <summary>锚定兜底页：范本结构保留，正文区粗暴替换为标题+要点（结构不塌的最低限度退化）</summary>
+    /// <summary>锚定兜底页：范本结构保留，正文区替换为可演示的设计块，避免退化成标题加列表。</summary>
     internal static string AnchoredFallbackSlide(MdToPptAnchors.AnchorSlide layout, MdToPptOutlinePageDto page, int index)
     {
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
-        var lis = string.Join("", (page.Bullets ?? new List<string>())
+        var bullets = (page.Bullets ?? new List<string>())
             .Where(b => !string.IsNullOrWhiteSpace(b))
-            .Select(b => $"<li style=\"margin:0 0 10px\">{enc(b)}</li>"));
-        var content = $"<div style=\"padding:6% 8%;position:relative;z-index:2\">" +
-                      $"<h2>{enc(page.Title)}</h2><ul style=\"line-height:1.8\">{lis}</ul></div>";
+            .Take(4)
+            .ToList();
+        while (bullets.Count < 3) bullets.Add("聚焦关键信息，压缩文字密度，保留可讲述的视觉层级");
+
+        var cardHtml = string.Join("", bullets.Take(3).Select((b, n) =>
+        {
+            var text = b.Trim();
+            var title = text.Length > 16 ? text[..16] : text;
+            return "<div class=\"mdppt-fallback-card\" style=\"border:1px solid currentColor;border-radius:18px;padding:18px 20px;background:rgba(255,255,255,.08)\">" +
+                   $"<div style=\"font-size:12px;letter-spacing:.18em;text-transform:uppercase;opacity:.62;margin-bottom:12px\">{(n + 1):00}</div>" +
+                   $"<div style=\"font-size:20px;font-weight:800;line-height:1.18;margin-bottom:8px\">{enc(title)}</div>" +
+                   $"<div style=\"font-size:14px;line-height:1.55;opacity:.76\">{enc(text)}</div>" +
+                   "</div>";
+        }));
+        var statLabel = bullets.Count >= 4 ? enc(bullets[3]) : enc(page.Title);
+        var content =
+            "<div class=\"mdppt-fallback-layout\" style=\"padding:5.5% 7%;position:relative;z-index:2;display:grid;grid-template-columns:1.05fr .95fr;gap:38px;align-items:center\">" +
+            "<div>" +
+            $"<div style=\"font-size:12px;letter-spacing:.22em;text-transform:uppercase;opacity:.66;margin-bottom:18px\">第 {index + 1:00} 页 / 设计兜底</div>" +
+            $"<h1 style=\"font-size:clamp(44px,6vw,76px);line-height:.98;margin:0 0 22px;font-weight:900;letter-spacing:-.035em\">{enc(page.Title)}</h1>" +
+            $"<p style=\"font-size:20px;line-height:1.5;margin:0;opacity:.78;max-width:34em\">{enc(bullets[0])}</p>" +
+            "<div style=\"width:88px;height:6px;background:currentColor;margin-top:30px;border-radius:999px;opacity:.88\"></div>" +
+            "</div>" +
+            "<div style=\"display:grid;gap:14px\">" + cardHtml +
+            "<div style=\"display:flex;align-items:end;justify-content:space-between;border-top:1px solid currentColor;padding-top:16px;opacity:.82\">" +
+            $"<div style=\"font-size:46px;line-height:1;font-weight:900\">{Math.Max(3, bullets.Count):00}</div>" +
+            $"<div style=\"font-size:13px;line-height:1.45;text-align:right;max-width:18em\">{statLabel}</div>" +
+            "</div></div></div>";
         // 兜底页不再裸奔（2026-06-12 用户视觉验收：兜底页无模板装饰、像贴了张白纸）：
         // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG）与页脚，
         // 即使子智能体两次输出都无效，这页也穿着设计系统的衣服降级。
@@ -1714,6 +1743,47 @@ public class MdToPptController : ControllerBase
         return hits >= 3;
     }
 
+    internal static bool LooksLikeLowQualitySlide(string fragment)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return true;
+        var heading = FirstVisibleHeading(fragment);
+        if (IsGenericSlideHeading(heading)) return true;
+
+        var strongVisualTokens = System.Text.RegularExpressions.Regex.Matches(fragment,
+            "\\b(card|stat|grid|feat|table|quote|step|timeline|roadmap|compare|chart|kpi|metric|hero|panel|module|split|poster|matrix|badge|chip|donut|legend|swatch|tile|service|pillar|insight|callout|figure|diagram|node|flow|stage|bar|ring|progress|pie)\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        if (strongVisualTokens >= 2) return false;
+        if (System.Text.RegularExpressions.Regex.IsMatch(fragment, "<(svg|table)\\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return false;
+
+        var liCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<li\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var containerCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<(div|section|article|aside)\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var headingCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<h[1-3]\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var hasPlainList = System.Text.RegularExpressions.Regex.IsMatch(fragment, "<ul\\b|<ol\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return hasPlainList && liCount >= 2 && headingCount <= 2 && containerCount <= 3;
+    }
+
+    private static string FirstVisibleHeading(string html)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(html, "<h[1-3]\\b[^>]*>([\\s\\S]*?)</h[1-3]>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return string.Empty;
+        var text = System.Text.RegularExpressions.Regex.Replace(m.Groups[1].Value, "<[^>]+>", " ");
+        return System.Net.WebUtility.HtmlDecode(text).Trim();
+    }
+
+    private static bool IsGenericSlideHeading(string heading)
+    {
+        if (string.IsNullOrWhiteSpace(heading)) return false;
+        var normalized = heading.Trim().Trim('：', ':', '-', ' ', '\t', '\r', '\n');
+        return normalized is "封面" or "目录" or "总结" or "标题" or "本页标题" or "概览" or "结束页";
+    }
+
     /// <summary>
     /// 子智能体产出的 section 消毒（2026-06-11 P0：页 2 黑屏根因修复）。
     /// 根因：子智能体把 display:flex / min-height:100vh 写在 section 根元素 inline style 上——
@@ -1776,11 +1846,20 @@ public class MdToPptController : ControllerBase
     private static string FallbackSection(MdToPptOutlinePageDto page, int index)
     {
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
-        var lis = string.Join("", (page.Bullets ?? new List<string>())
+        var bullets = (page.Bullets ?? new List<string>())
             .Where(b => !string.IsNullOrWhiteSpace(b))
-            .Select(b => $"<li>{enc(b)}</li>"));
-        return $"<section><div class=\"eyebrow\">第 {index + 1} 页</div>" +
-               $"<h2 class=\"title-md\">{enc(page.Title)}</h2><ul>{lis}</ul></section>";
+            .Take(4)
+            .ToList();
+        while (bullets.Count < 3) bullets.Add("保留核心观点，压缩次要文本，避免低密度空白页");
+        var cards = string.Join("", bullets.Take(3).Select((b, n) =>
+            $"<div class=\"card\"><div class=\"chip\">{(n + 1):00}</div><h3>{enc(b.Length > 16 ? b[..16] : b)}</h3><p>{enc(b)}</p></div>"));
+        return "<section>" +
+               $"<div class=\"eyebrow\">第 {index + 1:00} 页 / 设计兜底</div>" +
+               $"<h2 class=\"title-xl\">{enc(page.Title)}</h2>" +
+               $"<p class=\"lead\">{enc(bullets[0])}</p>" +
+               "<div class=\"bar\"></div>" +
+               $"<div class=\"grid g3\">{cards}</div>" +
+               "</section>";
     }
 
     internal static bool ShouldUseGatewayDirect(InfraAgentRuntimeProfile profile)
@@ -1864,7 +1943,8 @@ public class MdToPptController : ControllerBase
             return false;
         }
 
-        return System.Text.RegularExpressions.Regex.Matches(trimmed, "<").Count >= 2;
+        return System.Text.RegularExpressions.Regex.Matches(trimmed, "<").Count >= 2
+            && !LooksLikeLowQualitySlide(trimmed);
     }
 
     private static string NormalizeGeneratedSlideFragment(string? text, bool anchored)
