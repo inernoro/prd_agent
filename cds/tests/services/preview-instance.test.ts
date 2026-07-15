@@ -16,6 +16,7 @@ import {
   findBlockedBinary,
   PreviewInstanceShellExecutor,
   previewInstanceBlockedMessage,
+  scrubParentSecretsFromEnv,
 } from '../../src/services/preview-instance.js';
 import { seedPreviewInstanceDemoData, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -33,6 +34,40 @@ describe('isPreviewInstance', () => {
     for (const v of [undefined, '', '0', 'false', 'off', 'nope']) {
       expect(isPreviewInstance({ CDS_PREVIEW_INSTANCE: v })).toBe(false);
     }
+  });
+});
+
+describe('scrubParentSecretsFromEnv', () => {
+  it('removes parent-secret-looking keys, keeps child basic-auth keys', () => {
+    const env: NodeJS.ProcessEnv = {
+      CDS_PREVIEW_INSTANCE: '1',
+      LLMGW_ADMIN_PASSWORD: 'leak',
+      JWT_SECRET: 'leak',
+      CDS_JWT_SECRET: 'leak',
+      AI_ACCESS_KEY: 'leak',
+      GITHUB_TOKEN: 'leak',
+      TENCENT_COS_SECRET_KEY: 'leak',
+      CDS_PASSWORD: 'child-gate',
+      CDS_USERNAME: 'child',
+      CDS_HOST: 'keep',
+      ASSETS_PROVIDER: 'keep',
+    };
+    const scrubbed = scrubParentSecretsFromEnv(env);
+    expect(scrubbed.sort()).toEqual([
+      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'GITHUB_TOKEN', 'JWT_SECRET',
+      'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
+    ]);
+    expect(env.CDS_PASSWORD).toBe('child-gate');
+    expect(env.CDS_USERNAME).toBe('child');
+    expect(env.CDS_HOST).toBe('keep');
+    expect(env.ASSETS_PROVIDER).toBe('keep');
+    expect(env.JWT_SECRET).toBeUndefined();
+  });
+
+  it('is a no-op outside preview instances', () => {
+    const env: NodeJS.ProcessEnv = { JWT_SECRET: 'stay' };
+    expect(scrubParentSecretsFromEnv(env)).toEqual([]);
+    expect(env.JWT_SECRET).toBe('stay');
   });
 });
 

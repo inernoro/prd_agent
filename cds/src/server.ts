@@ -4028,18 +4028,26 @@ export function installSpaFallback(
       res.end(body);
     });
     // favicon and any other root-level files that Vite emits next to index.html
-    app.use(
-      express.static(reactDist, {
-        index: false,
-        setHeaders: (res, filePath) => {
-          if (filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-          }
-        },
-      })
-    );
+    const reactStatic = express.static(reactDist, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      },
+    });
+    // /index.html 不许走裸文件（Codex P2）：express.static 的 index:false 只关目录
+    // 索引，显式请求 /index.html 仍会吐原始文件，绕过 sendReactIndex 的预览实例
+    // 标记注入。跳过它让请求落到下方 catch-all 的 301 → /branch-list（注入版）。
+    app.use((req, res, next) => {
+      if (req.path === '/index.html') {
+        next();
+        return;
+      }
+      reactStatic(req, res, next);
+    });
     // 预览实例标记注入（Codex P1，2026-07-15）：子 CDS 的 dashboard 通过分支预览
     // 域名访问时，web 端 apiUrl() 的 `/_cds` 直通会把 /api/* 送回**父** CDS（forwarder
     // 对任意 host 都把 /_cds 路由到 master）——子实例的 API 被整体绕过。服务端在

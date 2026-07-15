@@ -73,6 +73,40 @@ export function previewInstanceBlockedMessage(binary: string): string {
 }
 
 /**
+ * 疑似密钥的 env 键名模式。预览实例是公网可达、跑未合并代码的低信任环境，
+ * 父 CDS 的全局变量注入却不区分项目（隔离穿透通道 3，2026-07-15 实测:
+ * LLMGW_ADMIN_PASSWORD 被注入子实例容器）。子实例根本不需要这些密钥，
+ * 启动最早期整体清除，任何后续信息泄露漏洞都摸不到父实例的秘密。
+ */
+const SECRET_ENV_KEY_PATTERN = /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)/i;
+
+/** 子实例自用、不许清除的键（basic auth 门用）。 */
+const SCRUB_KEEP_KEYS: ReadonlySet<string> = new Set(['CDS_PASSWORD']);
+
+/**
+ * 预览实例启动自清洗：从 process.env 删除疑似父实例密钥的变量。
+ * 由 load-env.ts 在 .cds.env 注入后立即调用（早于 config.ts 的模块级求值）。
+ * 非预览实例是 no-op。返回被清除的键名（不含值），供启动日志留痕。
+ */
+export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!isPreviewInstance(env)) return [];
+  const scrubbed: string[] = [];
+  for (const key of Object.keys(env)) {
+    if (SCRUB_KEEP_KEYS.has(key)) continue;
+    if (!SECRET_ENV_KEY_PATTERN.test(key)) continue;
+    delete env[key];
+    scrubbed.push(key);
+  }
+  if (scrubbed.length > 0) {
+    console.log(
+      `[preview-instance] 已清除 ${scrubbed.length} 个疑似密钥的环境变量（子实例不持有父实例秘密）: ` +
+      scrubbed.sort().join(', '),
+    );
+  }
+  return scrubbed;
+}
+
+/**
  * ShellExecutor 装饰器：预览实例模式下拦截宿主操作命令，其余命令
  * （git / node / 文件操作等只读、进程内动作）原样放行。
  */

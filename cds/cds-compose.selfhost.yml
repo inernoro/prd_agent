@@ -52,12 +52,19 @@ services:
       cd .. &&
       node dist/index.js
     environment:
-      # 预览实例模式：禁宿主操作 + 跳后台服务 + seed 演示数据（SSOT：
-      # cds/src/services/preview-instance.ts）
+      # 预览实例模式：禁宿主操作 + 跳后台服务 + seed 演示数据 + 启动时自清洗
+      # 父实例注入的密钥类 env（SSOT：cds/src/services/preview-instance.ts）
       CDS_PREVIEW_INSTANCE: "1"
       # 钉死 JSON 存储：绝不让子 CDS 连上父 CDS 的 mongo-split 库
       #（cross-project-isolation 通道 4：共享库写坏即穿透）。
       CDS_STORAGE_MODE: "json"
+    # 资源上限：子实例跑的是未合并代码，泄漏/死循环不许拖垮共享宿主
+    #（debt.cds.performance 的老病根；构建期由全局并发闸另行兜底）。
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2"
     labels:
       cds.path-prefix: "/"
       # /api/instance-mode 是公开端点，无需登录即可 200，适合做就绪探针。

@@ -60,7 +60,17 @@ SSOT:`cds/src/services/preview-instance.ts`。
 - **钉死 JSON store**(compose env `CDS_STORAGE_MODE=json`):绝不让子 CDS 连上父 CDS 的 mongo-split 库(隔离穿透通道 4)。state 落在分支 worktree 的 `.cds/state.json`(已 gitignore),分支删除随 worktree 一起回收。
 - **首启 seed 演示数据**(`preview-instance-seed.ts`):空库时生成 1 个演示项目 + 3 条分支(running / error / idle)+ 构建配置 + 活动日志,保证每个页面打开有内容可验(guided-exploration)。所有条目在名称/备注里写明"演示数据",不冒充真实部署(no-rootless-tree)。非空库(比如误配了 mongo)一律不碰。
 
-### 3.4 前端可感知
+### 3.4 子实例对父实例的反向防护（2026-07-15 加固）
+
+用户追问「子容器会不会伤到母体」后按 effective-env 实测补的三道闸：
+
+- **secret 自清洗**：父 CDS 的全局变量注入不分项目（隔离穿透通道 3，实测 `LLMGW_ADMIN_PASSWORD` 被注入子实例容器）。预览实例在 load-env 阶段（早于 config 模块求值）按键名模式（PASSWORD/SECRET/TOKEN/API_KEY/ACCESS_KEY/PRIVATE_KEY/CREDENTIAL）清除 process.env 中的疑似密钥，仅保留子实例 basic auth 自用的 `CDS_PASSWORD`。清除的键名（不含值）写启动日志留痕。
+- **资源上限**：compose 加 `deploy.resources.limits`（memory 1536M / cpus 2）——子实例跑的是未合并代码，泄漏/死循环不许拖垮共享宿主。
+- **API 直通隔离**：子实例服务端往 index.html 注入 `window.__CDS_PREVIEW_INSTANCE__` 标记，web 端据此关闭 `/_cds` 直通与兜底重试（否则 forwarder 会把子实例 dashboard 的请求送回父实例）。
+
+仍然存在、需运维动作的：cds-self 项目环境变量必须配 `CDS_AUTH_MODE=basic` + 账号密码（子实例接共享 infra 网、公网可达，无认证不可接受）。
+
+### 3.5 前端可感知
 
 - 公开端点 `GET /api/instance-mode` → `{ previewInstance: boolean }`(登录前后都可读,兼做就绪探针);
 - Shell 顶部居中常驻 pill:"CDS 预览实例 — 仅用于验收 CDS 自身改动,部署 / docker 操作已禁用",防止把演示实例当生产(expectation-management)。
@@ -89,7 +99,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 ## 七、风险与已知边界
 
-- 子 CDS 认证默认 disabled(未配 CDS_USERNAME/PASSWORD 时),公网可见演示数据——建议按 §四.3 配置 basic auth;
+- 子 CDS 认证默认 disabled(未配 CDS_USERNAME/PASSWORD 时)——按 §四.3 配置 basic auth 为**必做**(子实例接共享 infra 网、公网可达;secret 自清洗已消除密钥外溢面,但内网可达面仍在);
 - 演示分支的"运行中"状态是 seed 出来的形状数据,点它的预览链接不会有真页面(分支卡有备注说明);
 - 冷构建(两次 pnpm install + tsc + vite build)约 3-6 分钟,readiness 窗口已放到 1200s;
 - 同仓库双项目会双份 clone(磁盘),janitor 只在父 CDS 生效,子实例无清理需求(无容器、state 随 worktree 回收)。
