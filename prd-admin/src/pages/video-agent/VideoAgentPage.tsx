@@ -468,15 +468,15 @@ const DirectCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: stri
 };
 
 // ─── 高级创作 modal：拖/选文件上传 + 风格胶囊（标题由 AI 自动取名） ───
-const STYLE_PRESETS: { key: string; label: string; emoji: string }[] = [
-  { key: 'cinematic', label: '电影级光影', emoji: '🎞️' },
-  { key: '3d-cartoon', label: '3D 卡通', emoji: '🧸' },
-  { key: 'documentary', label: '写实纪录片', emoji: '📽️' },
-  { key: 'pixel', label: '像素风', emoji: '👾' },
-  { key: 'ink', label: '水墨国风', emoji: '🖌️' },
-  { key: 'cyberpunk', label: '赛博朋克', emoji: '🌃' },
-  { key: 'minimal', label: '极简插画', emoji: '✏️' },
-  { key: 'retro-film', label: '复古胶片', emoji: '📷' },
+const STYLE_PRESETS: { key: string; label: string }[] = [
+  { key: 'cinematic', label: '电影级光影' },
+  { key: '3d-cartoon', label: '3D 卡通' },
+  { key: 'documentary', label: '写实纪录片' },
+  { key: 'pixel', label: '像素风' },
+  { key: 'ink', label: '水墨国风' },
+  { key: 'cyberpunk', label: '赛博朋克' },
+  { key: 'minimal', label: '极简插画' },
+  { key: 'retro-film', label: '复古胶片' },
 ];
 
 const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
@@ -712,7 +712,7 @@ const StoryboardCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: 
                     color: styleKey === s.key ? '#f472b6' : 'var(--text-secondary)',
                   }}
                 >
-                  {s.emoji} {s.label}
+                  {s.label}
                 </button>
               ))}
             </div>
