@@ -42,6 +42,7 @@
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
     <!-- serving 网关端点扩展（MapGatewayServingEndpoints）+ DTO，自测复用同一份映射 -->
     <ProjectReference Include="..\..\..\llmgw\serving\PrdAgent.LlmGateway.csproj" />
+    <ProjectReference Include="..\..\..\llmgw\console-api\prd-llmgw.csproj" />
   </ItemGroup>
 
 </Project>

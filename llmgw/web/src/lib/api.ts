@@ -27,10 +27,13 @@ import type {
   SessionsData,
   LlmLogDetail,
   PoolsData,
+  PoolTypesData,
+  EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
   GatewayAppCallersData,
   GatewayAppCaller,
+  CreateGatewayAppCallerRequest,
   UpdateGatewayAppCallerRequest,
   BulkUpdateGatewayAppCallersRequest,
   BulkUpdateGatewayAppCallersResult,
@@ -39,6 +42,9 @@ import type {
   ModelPool,
   PlatformItem,
   ModelItem,
+  CreatePlatformRequest,
+  CreateModelRequest,
+  CreateModelResult,
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
@@ -64,6 +70,10 @@ import type {
   ServiceKeyItem,
   CreateServiceKeyRequest,
   CreatedServiceKey,
+  CostReconciliationSummary,
+  CostReconciliationImportRequest,
+  CostReconciliationItem,
+  LegacyKeyCutoverData,
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
@@ -268,10 +278,16 @@ export function getPools(modelType?: string, sinceHours = 168): Promise<ApiRespo
 export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
   return apiRequest<PlatformsData>('/platforms');
 }
+export function createPlatform(req: CreatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>('/platforms', { method: 'POST', body: req });
+}
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
     query: { platformId: params?.platformId, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
+}
+export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
+  return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
 }
 export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
   return apiRequest<ParameterCapabilitiesMetaData>('/parameter-capabilities/meta');
@@ -324,6 +340,9 @@ export function getGatewayAppCallers(params?: {
 export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
   return apiRequest<GatewayAppCaller>(`/app-callers/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
 }
+export function createGatewayAppCaller(req: CreateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
+  return apiRequest<GatewayAppCaller>('/app-callers', { method: 'POST', body: req });
+}
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
 }
@@ -335,6 +354,27 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 }
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
+  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+}
+export function getCostReconciliations(params?: { from?: string; to?: string }): Promise<ApiResponse<CostReconciliationSummary>> {
+  return apiRequest<CostReconciliationSummary>('/cost-reconciliations', { query: params });
+}
+export function importCostReconciliation(req: CostReconciliationImportRequest): Promise<ApiResponse<CostReconciliationItem>> {
+  return apiRequest<CostReconciliationItem>('/cost-reconciliations/import', { method: 'POST', body: req });
+}
+export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>> {
+  return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');
+}
+export function updateLegacyKeyCutover(req: {
+  status: 'observing' | 'ready' | 'revoked';
+  deadlineAt: string;
+  allowedAppCallerCodes: string[];
+  successorServiceKeyIds: string[];
+  requiredSuccessorObservations: number;
+}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number }>> {
+  return apiRequest('/legacy-key-cutover', { method: 'PUT', body: req });
 }
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {
   return apiRequest<OrganizationData>('/organization');
@@ -433,6 +473,12 @@ export function bulkRotateApiKeys(req: BulkRotateApiKeysRequest): Promise<ApiRes
 }
 export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
+}
+export function getPoolTypes(): Promise<ApiResponse<PoolTypesData>> {
+  return apiRequest<PoolTypesData>('/pool-types');
+}
+export function ensurePoolTypes(): Promise<ApiResponse<EnsurePoolTypesResult>> {
+  return apiRequest<EnsurePoolTypesResult>('/pool-types/ensure', { method: 'POST' });
 }
 export function claimPoolToGateway(id: string): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/claim`, { method: 'PUT' });

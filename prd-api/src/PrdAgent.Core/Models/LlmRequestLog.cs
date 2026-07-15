@@ -31,6 +31,11 @@ public class LlmRequestLog
     /// <summary>服务端解析的租户边界；所有查询和费用聚合必须以此为首要过滤条件。</summary>
     public string TenantId { get; set; } = string.Empty;
     public string? TeamId { get; set; }
+    /// <summary>服务端鉴权解析出的工作负载身份。不得写入密钥明文或 KeyHash。</summary>
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
 
     // 关联/定位
     public string RequestId { get; set; } = string.Empty;
@@ -126,7 +131,6 @@ public class LlmRequestLog
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
 
     /// <summary>
     /// 入口适配器或 Provider adapter 丢弃的参数名。
@@ -236,6 +240,15 @@ public class LlmRequestLog
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    /// <summary>请求开始时价格字段的不可逆 SHA-256 快照，用于证明 estimated 的复算口径。</summary>
+    public string? PriceSnapshotHash { get; set; }
+    /// <summary>供应商响应头返回的请求标识，用于关联 provider actual；不接受客户端自报。</summary>
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
 
     // Exchange 中继信息
     /// <summary>是否为 Exchange 中继请求</summary>

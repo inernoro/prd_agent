@@ -1274,7 +1274,7 @@ public class LlmGatewayTests
             Context = new GatewayRequestContext
             {
                 TenantId = "tenant-a", PromptPolicyId = "policy-a", PromptPolicyVersion = 7,
-                PromptPolicyHash = "policy-hash", PromptPolicyChars = 48,
+                PromptPolicyHash = "policy-hash",
                 SystemPromptText = "sensitive-policy-prefix\n\nrequest-system\n\nsensitive-policy-suffix",
             },
         });
@@ -1287,7 +1287,6 @@ public class LlmGatewayTests
         Assert.Equal("policy-a", logWriter.Start.PromptPolicyId);
         Assert.Equal(7, logWriter.Start.PromptPolicyVersion);
         Assert.Equal("policy-hash", logWriter.Start.PromptPolicyHash);
-        Assert.Equal(48, logWriter.Start.PromptPolicyChars);
     }
 
     [Fact]

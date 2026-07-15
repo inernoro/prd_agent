@@ -284,6 +284,7 @@ docs:
   plan.platform.llm-gateway-production-hardening: LLM Gateway 生产事实、隐性风险与架构修正 · 计划
   plan.platform.llm-gateway-known-availability-closeout: LLM Gateway 已知可用性收口计划（三个有限 PR、一次生产部署、一次性验收）
   plan.platform.llm-gateway-external-platform: LLM Gateway 外部平台化与控制台体验收口 · 计划
+  plan.platform.llm-gateway-authoritative-tutorial: LLM Gateway 模型网关权威教程 · 实施计划
   plan.platform.llm-gateway.console-productization: LLM Gateway 控制台产品化与独立目录收拢 · 计划
   plan.platform.llm-gateway-protocol-router: LLM Gateway 协议入口与模型池迁移计划（GW Native/OpenAI/Claude/Gemini 多入口统一 IR + GW 模型池权威）
   plan.platform.llm-gateway-protocol-router-pr-split: LLM Gateway 协议路由 PR 拆分计划（将 staging 大分支拆成文档、API、控制台、发布 gate 四个可审查单元）
