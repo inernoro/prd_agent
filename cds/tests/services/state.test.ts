@@ -790,4 +790,68 @@ describe('StateService', () => {
       expect(b?.ciImageError).toContain('等待超时');
     });
   });
+
+  // Codex P1 (2026-07-15): 删除带 TCP 外部访问代理的分支后，enabled 策略残留在
+  // resourceExternalAccess（removeBranch 不清它），若 getActiveExternalAccessProxy
+  // ContainerNames 仍把它的代理名算作 active，收割器会永远跳过这个仍在公网暴露的
+  // resource-external-access 容器。归属存活校验确保归属消失后代理不再被保护。
+  describe('getActiveExternalAccessProxyContainerNames — 归属存活校验', () => {
+    beforeEach(() => {
+      service.load();
+    });
+
+    function addExternalAccessBranch(branchId: string): void {
+      service.addBranch({
+        id: branchId,
+        projectId: 'default',
+        branch: `feature/${branchId}`,
+        worktreePath: path.join(path.dirname(stateFile), 'wt', branchId),
+        status: 'running',
+        createdAt: '2026-07-15T00:00:00Z',
+        services: {},
+      });
+      service.upsertResourceExternalAccess({
+        projectId: 'default',
+        branchId,
+        resourceId: 'mysql',
+        enabled: true,
+        kind: 'tcp',
+        proxyContainerName: `cds-proxy-${branchId}`,
+        allowlist: [],
+        expiresAt: null,
+      });
+    }
+
+    it('活分支的启用策略：代理名在 active 集合中（受保护，不被收割）', () => {
+      addExternalAccessBranch('alive');
+      const active = service.getActiveExternalAccessProxyContainerNames();
+      expect(active.has('cds-proxy-alive')).toBe(true);
+    });
+
+    it('分支删除后：残留策略的代理名不再算 active（收割器可断掉公网暴露）', () => {
+      addExternalAccessBranch('to-delete');
+      expect(service.getActiveExternalAccessProxyContainerNames().has('cds-proxy-to-delete')).toBe(true);
+      // removeBranch 只删 branch 记录，不清 resourceExternalAccess —— 策略残留
+      service.removeBranch('to-delete');
+      expect(service.getResourceExternalAccessForBranch('default', 'to-delete').length).toBe(1);
+      // 但归属分支已消失，代理不再受保护
+      expect(service.getActiveExternalAccessProxyContainerNames().has('cds-proxy-to-delete')).toBe(false);
+    });
+
+    it('过期策略照旧排除，与归属校验正交', () => {
+      addExternalAccessBranch('expired');
+      service.upsertResourceExternalAccess({
+        projectId: 'default',
+        branchId: 'expired',
+        resourceId: 'mysql',
+        enabled: true,
+        kind: 'tcp',
+        proxyContainerName: 'cds-proxy-expired',
+        allowlist: [],
+        expiresAt: '2026-07-15T00:00:00Z',
+      });
+      const active = service.getActiveExternalAccessProxyContainerNames('2026-07-15T01:00:00Z');
+      expect(active.has('cds-proxy-expired')).toBe(false);
+    });
+  });
 });
