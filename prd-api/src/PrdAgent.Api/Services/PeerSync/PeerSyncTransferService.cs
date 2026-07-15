@@ -187,10 +187,11 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             }
             // PR #742 review High：both 模式下若 push 失败仍跑 pull 会用对端覆盖本地未推上去的改动 ——
             // 用户的本地编辑可能被丢。语义应为「先推后拉，推不通就不拉」，避免静默数据丢失。
-            // 取消检查点 B：push 阶段之后、pull 之前。both 模式下这里能在两阶段之间及时停下。
-            await ThrowIfCancelRequestedAsync(runId, ct);
             if (direction == "pull" || (direction == "both" && pushOk))
             {
+                // 取消检查点 B：仅在还有 pull 阶段要跑时才检查。push-only 走到这里 push 已成功且无后续阶段，
+                // 若在此无条件取消，会把已发到对端的成功 push 误记 cancelled 并跳过成功收尾/签名更新（Codex P2）。
+                await ThrowIfCancelRequestedAsync(runId, ct);
                 await UpdateRunProgressAsync(runId, "从对端拉取", 0, 0, itemName, ct);
                 var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
                 if (bundle == null)

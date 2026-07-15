@@ -3,3 +3,5 @@
 | feat | prd-admin | 单库同步面板的进行中同步也可一键停止（进度条与记录卡的停止按钮）；新增 cancelled 状态展示（中性灰，区别于失败红） |
 | fix | prd-api | 修复取消/失败的首次同步被误判为已建立关系：开启后台自动同步的门禁额外要求 status=synced（真正成功过一次），取消(cancelled)/失败(error)均不满足（Codex PR#1144 P2） |
 | fix | prd-admin | 单库同步面板多对端时按 RemoteNodeId 预选已保存对端（避免已建立关系的库重开面板因 nodeId 空而主按钮禁用）；「已建立」判定收口为真正成功同步过，取消的首次同步不再显示为已同步（Codex PR#1144 P2） |
+| fix | prd-api | 取消检查点 B 仅在还有 pull 阶段时才生效：避免 push-only 传输在对端已成功后被误记 cancelled 并跳过成功收尾（Codex PR#1144 P2） |
+| fix | prd-api | 自动同步开启门禁改用「有过成功 outgoing run」判定，而非最后一次 status：修复之前成功建立、最近一次同步被取消/失败的库无法重开自动同步或改周期（Codex PR#1144 P2） |

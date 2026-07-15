@@ -666,14 +666,23 @@ public class PeerSyncController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == request.ItemId).FirstOrDefaultAsync(ct);
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
-        // 「可开启自动同步」的充要条件是这个库确实成功同步过一次（status=synced）——不仅是写过方向。
-        // 否则一次从未成功的首次同步（失败 / 被取消，syncing 阶段已写入 direction+node）会被误判为
-        // 「已建立关系」而允许开自动同步（Codex P2）。取消落 cancelled、失败落 error，均不满足。
-        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)
-            || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)
-            || !string.Equals(store.PeerSyncStatus, "synced", StringComparison.Ordinal)))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                "请先成功手动同步一次（确定对端与方向）后，再开启后台自动同步"));
+        // 「可开启自动同步」= 这个库确实成功同步过一次。判定用「有过成功的 outgoing run」而非
+        // store.PeerSyncStatus（最后一次状态）——否则：① 从未成功的首次同步（失败/取消，syncing 阶段
+        // 已写 direction+node）会被误判为已建立；② 反过来，之前成功建立、最近一次手动同步被取消/失败
+        // 的库（status=cancelled/error 但关系仍在）会被误拒，连改自动同步周期都 400（Codex P2 两向）。
+        if (request.Enabled)
+        {
+            var hasSuccessfulSync = await _db.PeerSyncRuns
+                .Find(r => r.ResourceType == request.ResourceType && r.ItemId == request.ItemId
+                    && r.Origin == PeerSyncOrigin.Outgoing
+                    && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+            if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)
+                || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)
+                || string.IsNullOrEmpty(hasSuccessfulSync))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "请先成功手动同步一次（确定对端与方向）后，再开启后台自动同步"));
+        }
 
         var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
         var mode = PeerSyncSchedule.NormalizeMode(request.Mode);
