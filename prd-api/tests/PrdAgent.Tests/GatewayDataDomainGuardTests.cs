@@ -44,6 +44,7 @@ public class GatewayDataDomainGuardTests
         var logBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         var governanceRecords = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
         var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
@@ -56,6 +57,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("public decimal? ProviderReportedCost", importDto);
         Assert.Contains("SHA256.HashData", costEvidence);
         Assert.Contains("LlmCostEvidence.ResolveProviderRequestId(done.ResponseHeaders)", logBackground);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(gateway, "LlmCostEvidence.BuildSafeResponseHeaders").Count >= 3);
         Assert.DoesNotContain("TenantId", dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)]);
         Assert.Contains("BILLING_WINDOW_TEAM_AMBIGUOUS", console);
         Assert.Contains("BILLING_WINDOW_OVERLAP", console);
@@ -84,6 +86,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("SuccessorObservationCounts", governanceRecords);
         Assert.Contains(".Inc($\"SuccessorObservationCounts.{record.Id}\", 1)", runtime);
         Assert.Contains("SuccessorObservationCounts.{successorId}", console);
+        Assert.Contains("new BsonRegularExpression(\"^production$\", \"i\")", console);
+        Assert.Contains("record.Environment, \"production\"", runtime);
         Assert.Contains("LEGACY_REVOCATION_FINAL", console);
         Assert.Contains("TenantAccess.Filter(http)", console);
     }

@@ -5151,10 +5151,11 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         var successorDocs = await serviceKeys.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.In("_id", successorIds),
                 Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Regex("Environment", new BsonRegularExpression("^production$", "i")),
                 Builders<BsonDocument>.Filter.Regex("SourceSystem", new BsonRegularExpression("^map$", "i")))))
             .ToListAsync();
         if (successorDocs.Count != successorIds.Count)
-            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 MAP scoped key"), jsonOptions, 409);
+            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 production MAP scoped key"), jsonOptions, 409);
     }
     var current = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
     if (string.Equals(current?.AsNullableString("Status"), "revoked", StringComparison.OrdinalIgnoreCase)

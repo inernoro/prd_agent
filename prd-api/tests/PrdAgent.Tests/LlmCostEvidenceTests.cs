@@ -36,4 +36,21 @@ public sealed class LlmCostEvidenceTests
             ["X-Tt-Logid"] = "doubao-request-1",
         }));
     }
+
+    [Fact]
+    public void SafeResponseHeaders_PreserveProviderRequestIdAndExcludeUntrustedHeaders()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+        };
+        response.Headers.TryAddWithoutValidation("OpenAI-Request-Id", "provider-request-2");
+        response.Headers.TryAddWithoutValidation("Set-Cookie", "secret=must-not-be-logged");
+
+        var headers = LlmCostEvidence.BuildSafeResponseHeaders(response, "application/octet-stream");
+
+        Assert.Equal("provider-request-2", LlmCostEvidence.ResolveProviderRequestId(headers));
+        Assert.Equal("application/json; charset=utf-8", headers["content-type"]);
+        Assert.DoesNotContain("Set-Cookie", headers.Keys, StringComparer.OrdinalIgnoreCase);
+    }
 }

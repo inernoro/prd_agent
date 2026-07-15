@@ -344,7 +344,11 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     }
 
     private Task RecordSuccessorObservationAsync(GatewayServiceKeyRecord record, CancellationToken ct)
-        => _data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers").UpdateOneAsync(
+    {
+        if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase))
+            return Task.CompletedTask;
+
+        return _data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers").UpdateOneAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
                 Builders<BsonDocument>.Filter.AnyEq("SuccessorServiceKeyIds", record.Id),
@@ -354,6 +358,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 .Inc($"SuccessorObservationCounts.{record.Id}", 1)
                 .Set("LastSuccessorUsedAt", DateTime.UtcNow),
             cancellationToken: ct);
+    }
 
     public static string Sha256Hex(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

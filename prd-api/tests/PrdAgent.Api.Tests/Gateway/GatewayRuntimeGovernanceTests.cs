@@ -716,6 +716,49 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task NonProductionScopedKey_DoesNotIncrementLegacySuccessorObservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_nonprod_successor_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-test",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_nonprod",
+            SourceSystem = "map",
+            ClientCode = "map-test",
+            Environment = "test",
+            Purpose = "runtime",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task ScopedKey_RevokedKeyReturns401WithAuditIdentityButNoSecret()
     {
         var testDatabase = await TryCreateDatabaseAsync();

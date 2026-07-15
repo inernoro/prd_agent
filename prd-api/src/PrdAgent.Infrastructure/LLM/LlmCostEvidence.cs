@@ -56,6 +56,33 @@ public static class LlmCostEvidence
         return null;
     }
 
+    public static Dictionary<string, string> BuildSafeResponseHeaders(
+        HttpResponseMessage? response,
+        string fallbackContentType)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["content-type"] = response?.Content?.Headers.ContentType?.ToString() ?? fallbackContentType,
+        };
+        if (response is null) return result;
+
+        foreach (var candidate in ProviderRequestIdHeaders)
+        {
+            IEnumerable<string>? values = null;
+            if (!response.Headers.TryGetValues(candidate, out values)
+                && (response.Content is null || !response.Content.Headers.TryGetValues(candidate, out values)))
+            {
+                continue;
+            }
+
+            var value = string.Join(", ", values).Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+                result[candidate] = value.Length <= 200 ? value : value[..200];
+        }
+
+        return result;
+    }
+
     private static string Format(decimal? value)
         => value?.ToString("G29", CultureInfo.InvariantCulture) ?? "unknown";
 }
