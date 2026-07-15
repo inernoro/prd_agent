@@ -7,3 +7,4 @@
 | fix | prd-api | 自动同步开启门禁改用「有过成功 outgoing run」判定，而非最后一次 status：修复之前成功建立、最近一次同步被取消/失败的库无法重开自动同步或改周期（Codex PR#1144 P2） |
 | fix | prd-admin | 单库同步面板改了方向段控但未成功同步时禁用自动开关（directionDirty），避免「header 说自动 pull、后台仍 push」的方向不一致（Codex PR#1144 P2） |
 | fix | prd-api | 自动同步资格绑定当前保存对端：只认发往 store.PeerSyncNodeId 的成功 run，避免切对端 A→B 失败后 A 的旧成功误放行 B 关系（Codex PR#1144 P2） |
+| fix | prd-api | 取消能力健壮性三处（Codex PR#1144 P2 第四轮）：① push 真正发送 bundle 到对端前补一个取消检查点（导出大 bundle 耗时期间点停也能拦下）；② PeerSyncRunCancelledException 下沉 Core 层，DocumentStoreSyncResource 逐条 catch 前先放行取消异常，否则写入阶段点停会被吞成 per-record failure、run 落 error 而非 cancelled；③ 自动同步 worker 每轮兜底校验 saved peer 有成功 run，避免切对端 A→B 失败后 worker 用未建立的 B 关系发流量 |

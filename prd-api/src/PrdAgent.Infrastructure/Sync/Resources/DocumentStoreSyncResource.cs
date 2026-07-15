@@ -819,6 +819,12 @@ public class DocumentStoreSyncResource : ISyncableResource
                     created++;
                 }
             }
+            catch (PeerSyncRunCancelledException)
+            {
+                // 用户取消：不能吞成 per-record failure，必须冒泡到 PeerSyncTransferService 的 cancelled catch，
+                // 否则逐篇写入阶段点「停止」会让整个 run 落 error（继续跑完剩余记录）而非 cancelled（Codex P2）。
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[peer-sync] apply entry failed: {Title}", fe.Title);

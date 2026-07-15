@@ -186,6 +186,23 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
                 return;
             }
 
+            // 关系未建立守护（与 SetAutoSync gate 同口径）：只对「当前保存对端确实成功同步过」的库跑自动同步。
+            // SetAutoSync 的 gate 只在「开启自动」那一刻校验、不会重跑；若自动已对 A 开启，后来一次切到 B 的
+            // 手动同步失败/取消（syncing mark 已把 store 改指向 B），worker 就会用未建立的 B 关系发流量（Codex P2）。
+            // 这里每轮兜底：saved peer 没有成功 run 就跳过本轮（attempted 已 true，会推进 AutoLastAt，不每分钟空打）。
+            var establishedForPeer = await db.PeerSyncRuns
+                .Find(r => r.ResourceType == "document-store" && r.ItemId == store.Id
+                    && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId
+                    && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+            if (string.IsNullOrEmpty(establishedForPeer))
+            {
+                _logger.LogInformation(
+                    "[PeerSyncScheduleWorker] store {StoreId} peer {NodeId} relationship not established (no successful run), skip",
+                    storeId, store.PeerSyncNodeId);
+                return;
+            }
+
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
             // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
             // 先 PEER_SELF_BASE_URL，再 config["ServerUrl"]。反代部署只要配了其一，自动 push 的图片本地化

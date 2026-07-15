@@ -60,16 +60,6 @@ public interface IPeerSyncTransferService
         string triggeredByUserId, string? triggeredByName, DateTime startedAt, CancellationToken ct);
 }
 
-/// <summary>
-/// 用户主动取消某个在途同步 run 的内部信号。SyncItemAsync 在阶段检查点轮询 run.CancelRequested，
-/// 为 true 时抛此异常，由专门 catch 落 cancelled 终态。用独立异常类型（而非 OperationCanceledException）
-/// 是为了和「HTTP 断开导致的 ct 取消」区分开——后者按现状仍落 error，用户主动取消落 cancelled。
-/// </summary>
-public sealed class PeerSyncRunCancelledException : Exception
-{
-    public PeerSyncRunCancelledException() : base("同步已被用户取消") { }
-}
-
 /// <summary>单条目同步的聚合结果（供 Controller 拼响应、worker 写状态）。</summary>
 public sealed class PeerItemSyncResult
 {
@@ -162,6 +152,9 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 }
                 AttachPeerApplyOptions(bundle, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl);
                 await UpdateRunProgressAsync(runId, "发送到对端", 0, bundle.Records.Count, FirstRecordTitle(bundle) ?? bundle.Item.Name, ct);
+                // 取消检查点 A2：ExportAsync 构建大 bundle 可能耗时，检查点 A 之后、真正发送到对端之前再查一次，
+                // 避免用户在导出期间点停后整包仍被写到对端并收尾成功（Codex P2）。
+                await ThrowIfCancelRequestedAsync(runId, ct);
                 var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, direction, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl, ct);
                 await UpdateRunProgressAsync(runId, "发送到对端", bundle.Records.Count, bundle.Records.Count, null, ct);
                 // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
