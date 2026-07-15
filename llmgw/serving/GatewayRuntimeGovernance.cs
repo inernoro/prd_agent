@@ -86,6 +86,12 @@ public static class GatewayKeyPurposePolicy
     }
 }
 
+public static class GatewaySuccessorObservationPolicy
+{
+    public static bool IsBusinessInvocationScope(string scope)
+        => scope is "invoke" or "stream:invoke" or "raw:invoke";
+}
+
 public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 {
     private readonly LlmGatewayDataContext _data;
@@ -302,9 +308,9 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        // 退场判断依赖真实生产调用的可持久化 successor 观察证据。只读 preflight
-        // 只能证明密钥可鉴权，不能证明业务流量已经从 legacy 切换。
-        if (!readOnlyProbe)
+        // 退场判断只接受真实 invoke/stream/raw 业务调用。route、readiness、请求查询、
+        // 取消与任何 preflight 都只能证明控制面可用，不能证明业务流量已经切换。
+        if (GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope))
             await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
         return new(
             true,

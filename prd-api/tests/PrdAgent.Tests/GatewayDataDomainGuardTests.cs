@@ -102,6 +102,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("record.Environment, \"production\"", runtime);
         Assert.Contains("GatewayKeyPurposePolicy.AllowsDataPlaneRequest", runtime);
         Assert.Contains("GATEWAY_KEY_PURPOSE_DENIED", runtime);
+        Assert.Contains("GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope)", runtime);
         Assert.Contains("LEGACY_REVOCATION_FINAL", console);
         Assert.Contains("TenantAccess.Filter(http)", console);
     }

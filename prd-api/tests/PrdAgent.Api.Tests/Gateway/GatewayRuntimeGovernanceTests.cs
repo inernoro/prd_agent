@@ -737,7 +737,7 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
-    public async Task ScopedSuccessorKey_ReadOnlyPreflightDoesNotIncrementCutoverEvidence()
+    public async Task ScopedSuccessorKey_ReadOnlyPreflightAndOrdinaryRouteDoNotIncrementCutoverEvidence()
     {
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
@@ -772,8 +772,12 @@ public sealed class GatewayRuntimeGovernanceTests
         var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
             key, "legacy-key", "map", "weekly-report::chat",
             "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+        var ordinaryRoute = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "weekly-report::chat",
+            "gw-native", "route:read", null, CancellationToken.None);
 
         result.Allowed.ShouldBeTrue();
+        ordinaryRoute.Allowed.ShouldBeTrue();
         var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
             .Find(x => x.TenantId == "tenant-a")
             .SingleAsync();

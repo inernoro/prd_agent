@@ -14,3 +14,4 @@
 | fix | llmgw | 逐请求费用幂等重试会补写请求日志投影，修复中断后的对账不一致 |
 | security | llmgw | 普通数据面只接受 MAP runtime 或外部平台用途密钥，发布 Gate 仅允许只读预检 |
 | fix | llmgw | 费用导入增加租户供应商团队原子租约，串行化 request/window 防止并发双计费 |
+| security | llmgw | legacy 后继观测只累计 invoke、stream 与 raw 业务调用，排除全部控制面只读请求 |
