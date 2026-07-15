@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -234,7 +235,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         // 退场判断依赖可持久化的 successor 观察证据，不能用 fire-and-forget 丢失计数。
-        await RecordSuccessorObservationAsync(record, ct);
+        await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
         return new(
             true,
             true,
@@ -343,15 +344,26 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         }
     }
 
-    private Task RecordSuccessorObservationAsync(GatewayServiceKeyRecord record, CancellationToken ct)
+    private Task RecordSuccessorObservationAsync(
+        GatewayServiceKeyRecord record,
+        string appCallerCode,
+        string ingressProtocol,
+        CancellationToken ct)
     {
         if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase))
             return Task.CompletedTask;
+
+        var normalizedCaller = appCallerCode.Trim();
+        var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
+        var callerPattern = new BsonRegularExpression($"^(?:{Regex.Escape(normalizedCaller)}|\\*)$", "i");
+        var protocolPattern = new BsonRegularExpression($"^(?:{Regex.Escape(normalizedProtocol)}|\\*)$", "i");
 
         return _data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers").UpdateOneAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
                 Builders<BsonDocument>.Filter.AnyEq("SuccessorServiceKeyIds", record.Id),
+                Builders<BsonDocument>.Filter.Regex("AllowedAppCallerCodes", callerPattern),
+                Builders<BsonDocument>.Filter.Regex("RequiredIngressProtocols", protocolPattern),
                 Builders<BsonDocument>.Filter.Ne("Status", "revoked")),
             Builders<BsonDocument>.Update
                 .Inc("SuccessorObservedCount", 1)

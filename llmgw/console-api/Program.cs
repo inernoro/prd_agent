@@ -19,6 +19,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Costs;
+using PrdAgent.LlmGw.Governance;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
@@ -5099,6 +5100,7 @@ app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
         .Limit(500)
         .ToListAsync();
     var successorIds = policy?.AsStringList("SuccessorServiceKeyIds") ?? [];
+    var requiredIngressProtocols = policy?.AsStringList("RequiredIngressProtocols") ?? [];
     var successorCounts = ReadSuccessorObservationCounts(policy);
     var requiredObservations = policy?.AsNullableLong("RequiredSuccessorObservations") ?? 1;
     var minimumObserved = successorIds.Count == 0
@@ -5111,6 +5113,7 @@ app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
         deadlineAt = policy?.AsNullableUtcDateTime("DeadlineAt").ToIso(),
         allowedAppCallerCodes = policy?.AsStringList("AllowedAppCallerCodes") ?? [],
         successorServiceKeyIds = successorIds,
+        requiredIngressProtocols,
         requiredSuccessorObservations = requiredObservations,
         successorObservedCount = minimumObserved,
         successorObservationCounts = successorCounts,
@@ -5143,11 +5146,14 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         return Json(ApiEnvelope<object>.Fail("INVALID_LEGACY_CUTOVER_STATUS", "status 仅支持 observing、ready、revoked"), jsonOptions, 400);
     var allowedCallers = NormalizeDistinct(body.AllowedAppCallerCodes ?? [], 500);
     var successorIds = NormalizeDistinct(body.SuccessorServiceKeyIds ?? [], 100);
+    var requiredIngressProtocols = TargetIngressProtocols().Select(protocol => protocol.Key).ToList();
     var required = Math.Clamp(body.RequiredSuccessorObservations, 1, 1000000);
     if (body.DeadlineAt is null)
         return Json(ApiEnvelope<object>.Fail("LEGACY_DEADLINE_REQUIRED", "必须设置 legacy key 截止时间"), jsonOptions, 400);
     if (successorIds.Count > 0)
     {
+        if (allowedCallers.Count == 0)
+            return Json(ApiEnvelope<object>.Fail("LEGACY_CALLER_INVENTORY_REQUIRED", "配置后继 key 前必须列出 legacy key 的允许调用方"), jsonOptions, 409);
         var successorDocs = await serviceKeys.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.In("_id", successorIds),
                 Builders<BsonDocument>.Filter.Eq("Enabled", true),
@@ -5156,6 +5162,17 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
             .ToListAsync();
         if (successorDocs.Count != successorIds.Count)
             return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 production MAP scoped key"), jsonOptions, 409);
+        foreach (var successor in successorDocs)
+        {
+            var missingCallers = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("AppCallerCodes"), allowedCallers);
+            var missingProtocols = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("IngressProtocols"), requiredIngressProtocols);
+            if (missingCallers.Count > 0 || missingProtocols.Count > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "LEGACY_SUCCESSOR_SCOPE_INCOMPLETE",
+                    $"后继 key {successor.GetStringOrEmpty("_id")} 未覆盖 legacy 调用方或四协议范围"), jsonOptions, 409);
+            }
+        }
     }
     var current = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
     if (string.Equals(current?.AsNullableString("Status"), "revoked", StringComparison.OrdinalIgnoreCase)
@@ -5187,6 +5204,7 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         .Set("DeadlineAt", body.DeadlineAt.Value.ToUniversalTime())
         .Set("AllowedAppCallerCodes", new BsonArray(allowedCallers))
         .Set("SuccessorServiceKeyIds", new BsonArray(successorIds))
+        .Set("RequiredIngressProtocols", new BsonArray(requiredIngressProtocols))
         .Set("RequiredSuccessorObservations", required)
         .Set("UpdatedAt", now);
     if (!successorSetUnchanged)

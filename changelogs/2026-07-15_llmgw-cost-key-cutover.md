@@ -8,3 +8,4 @@
 | security | llmgw | 禁止 service key 使用通配来源，阻断外部租户借通配符伪装 MAP 流量 |
 | fix | prd-api | 将供应商 request id 安全透传到普通、流式和 raw 请求日志，恢复逐请求费用对账 |
 | security | llmgw | legacy 生产退场只接受 production MAP 后继 key，并拒绝非生产流量累计观测次数 |
+| security | llmgw | 后继密钥必须完整覆盖 legacy 调用方与四协议，且仅相关流量累计退场观测证据 |

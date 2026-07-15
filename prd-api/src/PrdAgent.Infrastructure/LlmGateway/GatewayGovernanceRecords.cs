@@ -45,6 +45,7 @@ public sealed class GatewayLegacyKeyCutoverRecord
     public DateTime? DeadlineAt { get; set; }
     public List<string> AllowedAppCallerCodes { get; set; } = new();
     public List<string> SuccessorServiceKeyIds { get; set; } = new();
+    public List<string> RequiredIngressProtocols { get; set; } = new();
     public long RequiredSuccessorObservations { get; set; } = 1;
     public long SuccessorObservedCount { get; set; }
     public Dictionary<string, long> SuccessorObservationCounts { get; set; } = new(StringComparer.Ordinal);
