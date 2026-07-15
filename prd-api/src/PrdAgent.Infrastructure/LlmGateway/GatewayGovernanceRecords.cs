@@ -16,15 +16,58 @@ public sealed class GatewayServiceKeyRecord
     public string CreatedByUsername { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
     public string SourceSystem { get; set; } = "external";
+    /// <summary>稳定的调用工作负载标识，由控制台创建时绑定，禁止由请求自报。</summary>
+    public string ClientCode { get; set; } = string.Empty;
+    /// <summary>密钥使用环境：development / test / staging / production。</summary>
+    public string Environment { get; set; } = string.Empty;
+    /// <summary>单值用途：runtime / release-gate / canary / external-platform。</summary>
+    public string Purpose { get; set; } = string.Empty;
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();
     public List<string> AllowedCidrs { get; set; } = new();
     public int? RateLimitPerMinute { get; set; }
+    public string? RotatesKeyId { get; set; }
+    public string? RotatedByKeyId { get; set; }
+    public string RotationState { get; set; } = "active";
     public DateTime? ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUsedAt { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayLegacyKeyCutoverRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string Status { get; set; } = "observing";
+    public DateTime? DeadlineAt { get; set; }
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public List<string> SuccessorServiceKeyIds { get; set; } = new();
+    public List<string> RequiredIngressProtocols { get; set; } = new();
+    public List<string> RequiredScopes { get; set; } = new();
+    public long RequiredSuccessorObservations { get; set; } = 1;
+    public long SuccessorObservedCount { get; set; }
+    public Dictionary<string, long> SuccessorObservationCounts { get; set; } = new(StringComparer.Ordinal);
+    public DateTime? LastSuccessorUsedAt { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayLegacyKeyUsageRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string SourceSystem { get; set; } = string.Empty;
+    public string AppCallerCode { get; set; } = string.Empty;
+    public string IngressProtocol { get; set; } = string.Empty;
+    public long TotalCount { get; set; }
+    public long AllowedCount { get; set; }
+    public long RejectedCount { get; set; }
+    public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;
+    public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+    public string LastDecision { get; set; } = string.Empty;
 }
 
 [BsonIgnoreExtraElements]

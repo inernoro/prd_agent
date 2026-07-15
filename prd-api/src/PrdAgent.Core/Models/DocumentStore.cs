@@ -120,6 +120,17 @@ public class DocumentStore
     /// <summary>自动同步周期（分钟）。null/缺省按 worker 默认（60）。下限 5 分钟，worker 会兜底夹紧。</summary>
     public int? PeerSyncIntervalMinutes { get; set; }
 
+    /// <summary>
+    /// 自动发送模式：trigger（检测到内容签名变化后发送，默认）/ scheduled（按设置周期检查并发送）。
+    /// 两种模式都会先比较稳定内容签名，无变化不访问对端。
+    /// </summary>
+    public string PeerSyncAutoMode { get; set; } = "trigger";
+
+    /// <summary>
+    /// 最近一次已确认同步的稳定内容签名。签名忽略本地化后的附件 URL，防止同一图片在两端来回重传。
+    /// </summary>
+    public string? PeerSyncLastContentSignature { get; set; }
+
     /// <summary>最近一次「自动」同步的发起时间（与手动 PeerSyncLastAt 区分，仅用于到期判定）。</summary>
     public DateTime? PeerSyncAutoLastAt { get; set; }
 

@@ -10,6 +10,144 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
+    public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
+    {
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var serving = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var activity = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+
+        Assert.Contains("public string? ServiceKeyId", logModel);
+        Assert.Contains("public string? ClientCode", logModel);
+        Assert.Contains("public string? Environment", logModel);
+        Assert.Contains("public string? ServiceKeyPrefix", logModel);
+        Assert.DoesNotContain("public string? KeyHash", logModel);
+        Assert.Contains("ingress.Context.ServiceKeyId = authorization.KeyId", serving);
+        Assert.Contains("ingress.Context.ClientCode = authorization.ClientCode", serving);
+        Assert.Contains("fb.Eq(\"ServiceKeyId\", serviceKeyId.Trim())", console);
+        Assert.Contains("fb.Eq(\"ClientCode\", clientCode.Trim())", console);
+        Assert.Contains("filterClientCode", activity);
+        Assert.Contains("filterEnvironment", activity);
+        Assert.Contains("filterServiceKeyId", activity);
+        Assert.Contains("LlmRequestLogContextItems.LifecycleStarted", serving);
+        Assert.Contains("MarkLifecycleStarted();", logWriter);
+        Assert.Contains("sp.GetRequiredService<IHttpContextAccessor>()", servingProgram);
+    }
+
+    [Fact]
+    public void CostEvidenceAndLegacyCutover_AreTenantScopedAuditableAndFailClosed()
+    {
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var costEvidence = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmCostEvidence.cs");
+        var logBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var governanceRecords = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var costPolicy = ReadRepoFile("llmgw/console-api/Costs/CostReconciliationPolicy.cs");
+
+        Assert.Contains("public string? PriceSnapshotHash", logModel);
+        Assert.Contains("public string? ProviderRequestId", logModel);
+        Assert.Contains("public decimal? ProviderReportedCost", logModel);
+        var importDto = dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)];
+        Assert.Contains("public decimal? ProviderReportedCost", importDto);
+        Assert.Contains("SHA256.HashData", costEvidence);
+        Assert.Contains("LlmCostEvidence.ResolveProviderRequestId(done.ResponseHeaders)", logBackground);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(gateway, "LlmCostEvidence.BuildSafeResponseHeaders").Count >= 3);
+        Assert.DoesNotContain("TenantId", dtos[dtos.IndexOf("class CostReconciliationImportRequest", StringComparison.Ordinal)..dtos.IndexOf("class CostReconciliationItem", StringComparison.Ordinal)]);
+        Assert.Contains("BILLING_WINDOW_TEAM_AMBIGUOUS", console);
+        Assert.Contains("BILLING_WINDOW_OVERLAP", console);
+        Assert.Contains("PROVIDER_REQUEST_COVERED_BY_WINDOW", console);
+        Assert.Contains("providerReportedCost is null", console);
+        Assert.Contains("coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Eq(\"ServiceKeyId\", BsonNull.Value))", console);
+        Assert.Contains("BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST", console);
+        Assert.Contains("var actualAggregate = await costReconciliations.Aggregate()", console);
+        Assert.Contains("var statusAggregate = await costReconciliations.Aggregate()", console);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "await ApplyMatchedRequestLogAsync\\(\\);").Count >= 2);
+        Assert.Contains("Filter.Type(\"ProviderReportedCost\", BsonType.Decimal128)", console);
+        Assert.Contains("{ \"TenantId\", access.TenantId }", console);
+        Assert.Contains("{ \"TeamId\", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId }", console);
+        Assert.Contains("idx_llmgw_logs_tenant_provider_request", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", initializer);
+        Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", console);
+        Assert.Contains("uniq_llmgw_cost_tenant_provider_external", initializer);
+        Assert.Contains("uniq_llmgw_cost_tenant_provider_request", initializer);
+        Assert.Contains("uniq_llmgw_cost_import_lock_tenant_provider_team", initializer);
+        Assert.Contains("CostImportScopeLock.TryAcquireAsync", console);
+        Assert.Contains("CostImportScopeLock.TryRenewAsync", console);
+        Assert.Contains("CostImportScopeLock.ReleaseAsync", console);
+        Assert.True(console.LastIndexOf("CostImportScopeLock.TryAcquireAsync", StringComparison.Ordinal)
+                    < console.IndexOf("var overlapFilter", StringComparison.Ordinal));
+        Assert.True(console.IndexOf("CostImportScopeLock.TryRenewAsync", StringComparison.Ordinal)
+                    < console.IndexOf("await costReconciliations.InsertOneAsync(record)", StringComparison.Ordinal));
+        Assert.Contains("Ascending(\"TenantId\").Ascending(\"TeamId\").Ascending(\"ServiceKeyId\")", initializer);
+        Assert.Contains("return new(\"fx-unavailable\", null, null, null)", costPolicy);
+
+        Assert.Contains("public string Purpose { get; set; } = string.Empty", governanceRecords);
+        Assert.Contains("ROTATION_IDENTITY_MISMATCH", console);
+        Assert.Contains("rotatedPurpose, purpose", console);
+        Assert.Contains("GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN", runtime);
+        Assert.Contains("x => x.TenantId == _internalTenantId", runtime);
+        Assert.Contains("SuccessorObservationCounts", governanceRecords);
+        Assert.Contains(".Inc($\"SuccessorObservationCounts.{record.Id}\", 1)", runtime);
+        Assert.Contains("SuccessorObservationCounts.{successorId}", console);
+        Assert.Contains("new BsonRegularExpression(\"^production$\", \"i\")", console);
+        Assert.Contains("new BsonRegularExpression(\"^runtime$\", \"i\")", console);
+        Assert.Contains("LegacySuccessorScopePolicy.FindMissing(successor.AsStringList(\"Scopes\"), requiredScopes)", console);
+        Assert.Contains(".Set(\"RequiredScopes\", new BsonArray(requiredScopes))", console);
+        Assert.Contains("record.Environment, \"production\"", runtime);
+        Assert.Contains("GatewayKeyPurposePolicy.AllowsDataPlaneRequest", runtime);
+        Assert.Contains("GATEWAY_KEY_PURPOSE_DENIED", runtime);
+        Assert.Contains("GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope)", runtime);
+        Assert.Contains("LEGACY_REVOCATION_FINAL", console);
+        Assert.Contains("TenantAccess.Filter(http)", console);
+    }
+
+    [Fact]
+    public void ServiceKeyRotation_RequiresClientCutoverBeforeOldKeyRevocation()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+
+        Assert.Contains("/gw/service-keys/{id}/rotation/client-cutover", console);
+        Assert.Contains("ROTATION_CLIENT_SWITCH_REQUIRED", console);
+        Assert.Contains("ROTATION_SOURCE_STAGE_INVALID", console);
+        Assert.Contains("string.IsNullOrWhiteSpace(successorId)", console);
+        Assert.Contains("var legacySourceClientCode = rotatedKey.AsNullableString(\"SourceSystem\")", console);
+        Assert.Contains("Regex.IsMatch(legacySourceClientCode", console);
+        Assert.Contains(".Set(\"ClientCode\", clientCode)", console);
+        Assert.Contains(".Set(\"Environment\", environment)", console);
+        Assert.Contains("predecessorRotationState = !string.IsNullOrWhiteSpace(rotatedKey.AsNullableString(\"RotatesKeyId\"))", console);
+        Assert.Contains("{ \"PredecessorRotationState\", predecessorRotationState is null ? BsonNull.Value : predecessorRotationState }", console);
+        Assert.Contains(".Set(\"RotationState\", restoreState)", console);
+        Assert.Contains("BsonDocument? stableSuccessor = null", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"IssuanceState\", \"creating\")", console);
+        Assert.Contains(".Set(\"IssuanceState\", \"delivering\")", console);
+        Assert.Contains("http.Response.OnCompleted(async () =>", console);
+        Assert.Contains(".Set(\"IssuanceState\", \"issued\")", console);
+        Assert.Contains("DateTime.UtcNow.AddSeconds(-30)", console);
+        Assert.Contains("SERVICE_KEY_AUDIT_FAILED", console);
+        Assert.Contains("throwOnFailure: true", console);
+        Assert.Contains("await RollbackIssuanceAsync();", console);
+        Assert.Contains("SERVICE_KEY_ISSUANCE_PENDING", console);
+        Assert.Contains("轮换新密钥已被并发撤销", console);
+        Assert.Contains("successorIdentityFilter & Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"new-key-created\")", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"awaiting-client-cutover\")", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"RotationState\", \"abort-in-progress\")", console);
+        Assert.Contains("service_key.rotation_abort", console);
+        Assert.Contains("\"awaiting-client-cutover\"", console);
+        Assert.Contains("\"client-switched\"", console);
+        Assert.Contains("\"old-key-revoked\"", console);
+        Assert.Contains("\"completed\"", console);
+        Assert.Contains("确认已切换", page);
+        Assert.Contains("撤销旧钥并完成", page);
+        Assert.Contains("&& !item.rotatedByKeyId", page);
+    }
+    [Fact]
     public void Api_ShadowWriter_UsesGatewayDataContext()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
@@ -126,9 +264,9 @@ public class GatewayDataDomainGuardTests
             < modelResolver.IndexOf("_db.LLMAppCallers", StringComparison.Ordinal),
             "GW-only 模式必须在任何 MAP appCaller 查询前短路");
         Assert.True(
-            modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal)
-            < modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal),
-            "pinned 精确模型必须先于默认池缺失检查，且在 GW-only 模式下只读 GW-owned 配置");
+            modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal)
+            < modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal),
+            "GW-only 模式必须先拒绝缺失专用池，再处理 pinned 精确模型，避免绕过 appCaller 治理边界");
         Assert.Contains("FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback)", modelResolver);
         Assert.Contains("normalized-to-supported-model-policy", consoleProgram);
         Assert.Contains("IsSupportedAppCallerModelPolicy(currentModelPolicy)", consoleProgram);
@@ -149,12 +287,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
         Assert.Contains("默认模型池必须至少包含一个可用成员", consoleProgram);
-        Assert.Contains("body.IsDefaultForType == true", consoleProgram);
-        Assert.Contains("targetAuthority == \"llm_gateway\"", consoleProgram);
+        Assert.Contains("DEFAULT_POINTER_REQUIRED", consoleProgram);
+        Assert.Contains("DefaultPoolId", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
         Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
-        Assert.Contains("TenantAccess.Filter(http, logFilter)", consoleProgram);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, logFilter)", consoleProgram);
         Assert.Contains("fb.Eq(\"ModelPoolId\", modelPoolId.Trim())", consoleProgram);
         Assert.Contains("action: \"pool.models.bulk_import\"", consoleProgram);
         Assert.Contains("action: wasExisting ? \"pool.model.update\" : \"pool.model.add\"", consoleProgram);
@@ -179,6 +317,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("logsHref('runId', item.lastObservedRunId)", appCallersPage);
         Assert.Contains("item.observedIngressProtocols?.length", appCallersPage);
         Assert.Contains("RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim()", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs"));
+    }
+
+    [Fact]
+    public void ProgramPoolRegistry_UsesTenantScopedAtomicPointerAndAppendOnlyManagedPools()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var registry = ReadRepoFile("llmgw/console-api/ModelPools/GatewayModelPoolTypeRegistry.cs");
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+
+        Assert.Contains("llmgw_model_pool_types", console);
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", console);
+        Assert.Contains("FindOneAndUpdateAsync", console);
+        Assert.Contains("DefaultSwitchPendingUntil", console);
+        Assert.Contains("PoolVersionGuard", console);
+        Assert.Contains("APPEND_ONLY_POOL", console);
+        Assert.Contains("Builders<BsonDocument>.Update.Push(\"Models\"", console);
+        Assert.Contains("if (IsManagedAppendOnlyPool(poolDoc)) continue;", console);
+        Assert.Contains("GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)", console);
+        Assert.Contains("MODEL_DISABLED", console);
+        Assert.Contains("PLATFORM_DISABLED", console);
+        Assert.Contains("modelId = modelDoc.AsNullableString(\"ModelName\") ?? modelDoc.AsNullableString(\"Name\") ?? modelDoc.GetStringOrEmpty(\"_id\")", console);
+        Assert.DoesNotContain("!Flag(model, \"IsImageGen\")", registry);
+        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_model_pool_types\")", resolver);
+        Assert.Contains("PinnedModel 不在 appCaller 专用模型池内", resolver);
+        Assert.Contains("有则增加，无则不变", page);
+        Assert.Contains("按平台规则补齐", page);
+        Assert.Contains("pool.appendOnly ? 'compatible' : filterMode", page);
+        Assert.Contains("已过滤已有成员与不匹配模型", page);
+        Assert.Contains("return false;", page);
     }
 
     [Fact]
@@ -353,7 +521,7 @@ public class GatewayDataDomainGuardTests
         var shadowStart = consoleProgram.IndexOf("// 影子比对", deleteStart, StringComparison.Ordinal);
 
         Assert.Contains("public const string ServiceKeyWrite = \"service-key:write\"", access);
-        Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ServiceKeyWrite", access);
+        Assert.Contains("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or AppCallerWrite or ServiceKeyWrite", access);
         Assert.DoesNotContain("LlmGwTenantRoles.Developer => permission is LogsRead or RequestBodyRead or UsageRead or ConfigWrite", access);
         Assert.Contains("options.AddPolicy(\"ServiceKeyWrite\"", consoleProgram);
         Assert.Contains("CreatedByUserId", consoleProgram[listStart..createStart]);
@@ -386,7 +554,7 @@ public class GatewayDataDomainGuardTests
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
 
         Assert.Contains("X-Gateway-Source: external", quickstart);
-        Assert.Contains("\"sourceSystem\": \"external\"", quickstart);
+        Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
@@ -454,6 +622,24 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ProductionStaticDist_RequiresEntryAssetsAndNormalizesPermissions()
+    {
+        var deploy = ReadRepoFile("exec_dep.sh");
+        var validator = ReadRepoFile("scripts/validate-static-dist.sh");
+        var behaviorTest = ReadRepoFile("scripts/tests/validate-static-dist.test.sh");
+
+        Assert.Contains("[ ! -s deploy/web/dist/index.html ]", deploy);
+        Assert.Contains("scripts/validate-static-dist.sh --normalize deploy/web/dist", deploy);
+        Assert.Contains("find \"$static_root\" -type d -exec chmod 755 {} +", validator);
+        Assert.Contains("find \"$static_root\" -type f -exec chmod 644 {} +", validator);
+        Assert.Contains("index.html does not reference a local JavaScript entry asset", validator);
+        Assert.Contains("referenced entry asset is missing or empty", validator);
+        Assert.Contains("umask 077", behaviorTest);
+        Assert.Contains("expected missing index validation to fail", behaviorTest);
+        Assert.Contains("expected missing entry asset validation to fail", behaviorTest);
+    }
+
+    [Fact]
     public void TenantOverviewAndLearningCenter_AreTenantScopedAndExplainTheFullAccessChain()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -472,8 +658,8 @@ public class GatewayDataDomainGuardTests
         var overview = console[overviewStart..overviewEnd];
 
         Assert.Contains(overviewSignature, overview);
-        Assert.Contains("TenantAccess.Filter(http, fb.And(", overview);
-        Assert.Contains("serviceKeys.Find(TenantAccess.Filter(http))", overview);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, fb.And(", overview);
+        Assert.Contains("serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty))", overview);
         Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
         Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
         Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
@@ -505,6 +691,14 @@ public class GatewayDataDomainGuardTests
         var serving = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var gatewayRequest = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
+        var logDto = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        var detailDrawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
+        var promptPolicyPage = ReadRepoFile("llmgw/web/src/pages/PromptPolicyPage.tsx");
+        var auditsPage = ReadRepoFile("llmgw/web/src/pages/AuditsPage.tsx");
+        var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
         Assert.Contains("uniq_llmgw_prompt_policy_tenant_caller_type_version", console);
         Assert.Contains("Builders<BsonDocument>.IndexKeys.Ascending(\"TenantId\").Ascending(\"AppCallerCode\").Ascending(\"RequestType\").Ascending(\"Version\")", console);
@@ -518,6 +712,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PromptPolicyId: request.Context?.PromptPolicyId", gateway);
         Assert.Contains("PromptPolicyHash: request.Context?.PromptPolicyHash", gateway);
         Assert.Contains("SystemPromptText: string.IsNullOrWhiteSpace(request.Context?.PromptPolicyId) ? request.Context?.SystemPromptText : null", gateway);
+        foreach (var loggingSurface in new[] { gatewayRequest, gateway, logModel, logDto, webTypes, detailDrawer })
+        {
+            Assert.DoesNotContain("PromptPolicyChars", loggingSurface);
+            Assert.DoesNotContain("promptPolicyChars", loggingSurface);
+        }
+        Assert.Contains("日志只记录策略 id、版本和 hash", promptPolicyPage);
+        Assert.Contains("提示词策略只记录策略 id、版本和 hash", auditsPage);
+        Assert.Contains("{ \"version\", doc[\"Version\"] }", console);
+        Assert.Contains("{ \"policyHash\", doc[\"PolicyHash\"] }", console);
+        Assert.DoesNotContain("{ \"enabled\", doc[\"Enabled\"] }", console);
+        Assert.DoesNotContain("{ \"policyChars\", doc[\"PolicyChars\"] }", console);
+        Assert.DoesNotContain("{ \"maxChars\", doc[\"MaxChars\"] }", console);
+        Assert.Contains("个模板字符", promptPolicyPage);
+        Assert.Contains("个本次生效字符", promptPolicyPage);
+        Assert.Contains("缺价格保持“未知”，不会显示成 0", usagePage);
+        Assert.Contains("CNY 与 USD 不会直接相加", usagePage);
     }
 
     [Fact]
@@ -2776,9 +2986,18 @@ public class GatewayDataDomainGuardTests
         var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
 
         Assert.Contains("return new URL(window.location.href).origin", quickstart);
-        Assert.Contains("/gw/v1/route-self-test", quickstart);
+        Assert.Contains("createGatewayAppCaller", quickstart);
+        Assert.Contains("createServiceKey", quickstart);
+        Assert.Contains("X-Gateway-Dry-Run", quickstart);
+        Assert.Contains("const definition = protocolDefinition(protocol);", quickstart);
+        Assert.Contains("PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
+        var quickstartTestStart = quickstart.IndexOf("const runDryRun", StringComparison.Ordinal);
+        var quickstartTestEnd = quickstart.IndexOf("const editIdentity", quickstartTestStart, StringComparison.Ordinal);
+        Assert.True(quickstartTestStart >= 0 && quickstartTestEnd > quickstartTestStart);
+        Assert.DoesNotContain("bundle.protocol", quickstart[quickstartTestStart..quickstartTestEnd]);
         Assert.Contains("upstreamCalled === false", quickstart);
-        Assert.Contains("payload?.UpstreamCalled", quickstart);
+        Assert.Contains("/logs?requestId=", quickstart);
+        Assert.Contains("Agent Skill", quickstart);
         Assert.Contains("credentials: 'omit'", quickstart);
         Assert.DoesNotContain("gateway.example.com", quickstart);
         Assert.DoesNotContain("localStorage", quickstart);
@@ -2791,9 +3010,85 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("查看示例说明", logs);
         Assert.Contains("跟随系统", ReadRepoFile("llmgw/web/src/pages/SettingsPage.tsx"));
         Assert.Contains("prefers-color-scheme: light", theme);
-        Assert.Contains("WithMethods(HttpMethods.Get)", servingProgram);
-        Assert.Contains("WithHeaders(\"Authorization\", \"X-Gateway-Source\", \"X-Gateway-App-Caller\")", servingProgram);
+        Assert.Contains("WithMethods(HttpMethods.Get, HttpMethods.Post)", servingProgram);
+        Assert.Contains("\"X-Gateway-Dry-Run\"", servingProgram);
+        Assert.Contains("WithExposedHeaders(\"X-Request-Id\", \"X-Gateway-Upstream-Called\")", servingProgram);
         Assert.Contains("app.UseCors(BrowserDryRunCors)", servingProgram);
+    }
+
+    [Fact]
+    public void AgentFirstQuickstart_KeepsTenantAuthorityAndUnknownCostBoundaries()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var webNginx = ReadRepoFile("llmgw/web/nginx.conf");
+        var devCompose = ReadRepoFile("docker-compose.dev.yml");
+
+        var createStart = console.IndexOf("app.MapPost(\"/gw/app-callers\"", StringComparison.Ordinal);
+        var createEnd = console.IndexOf("RequireAuthorization(\"AppCallerWrite\")", createStart, StringComparison.Ordinal);
+        Assert.True(createStart >= 0 && createEnd > createStart);
+        var createEndpoint = console[createStart..createEnd];
+        Assert.Contains("TenantAccess.GetRequired(http)", createEndpoint);
+        Assert.Contains("TenantAccess.Filter(http, identity)", createEndpoint);
+        Assert.Contains("x.TenantId == access.TenantId", createEndpoint);
+        Assert.DoesNotContain("body.TenantId", createEndpoint);
+        Assert.Contains("uniq_llmgw_app_callers_tenant_code_request_type", console);
+        Assert.Contains("APP_CALLER_AUDIT_FAILED", createEndpoint);
+        Assert.Contains("gwAppCallers.DeleteOneAsync(TenantAccess.Filter(http", createEndpoint);
+        Assert.Contains("AppCallerWrite", access);
+
+        Assert.Contains("TryHandleQuickstartDryRunAsync", endpoints);
+        Assert.Contains("authorization.TenantId", endpoints);
+        Assert.Contains("authorization.TeamId", endpoints);
+        Assert.Contains("authorization.KeyId", endpoints);
+        Assert.Contains("authorization.ClientCode", endpoints);
+        Assert.Contains("authorization.Environment", endpoints);
+        Assert.Contains("\"gateway-dry-run\"", endpoints);
+        Assert.Contains("\"quickstart-dry-run-no-upstream\"", endpoints);
+        var dryRunStart = endpoints.IndexOf("private static async Task<bool> TryHandleQuickstartDryRunAsync", StringComparison.Ordinal);
+        var dryRunEnd = endpoints.IndexOf("private static bool IsQuickstartDryRunPath", dryRunStart, StringComparison.Ordinal);
+        var dryRunEndpoint = endpoints[dryRunStart..dryRunEnd];
+        Assert.DoesNotContain("EstimatedCost", dryRunEndpoint);
+        var logWriteIndex = dryRunEndpoint.IndexOf("llmrequestlogs", StringComparison.Ordinal);
+        var observationUpdateIndex = dryRunEndpoint.IndexOf(".Inc(x => x.TotalSeen, 1)", StringComparison.Ordinal);
+        Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
+
+        Assert.Contains("scopes: ['invoke']", quickstart);
+        Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
+        Assert.Contains("disabled={Boolean(bundle)}", quickstart);
+        Assert.Contains("修改身份", quickstart);
+        Assert.DoesNotContain("tenantId:", quickstart);
+        Assert.DoesNotContain("['*']", quickstart);
+        Assert.Contains("location ^~ /gw/v1/", webNginx);
+        Assert.Contains("location ^~ /v1/", webNginx);
+        Assert.Contains("location ^~ /v1beta/", webNginx);
+        Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
+        Assert.Contains("client_max_body_size 30m;", webNginx);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+        Assert.Contains("llmgw-serve:", devCompose);
+        Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
+        Assert.Contains("- llmgw-serve", devCompose);
+    }
+
+    [Fact]
+    public void ExternalTenant_CannotMasqueradeAsMapServiceKeyPurpose()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var createStart = console.IndexOf("app.MapPost(\"/gw/service-keys\"", StringComparison.Ordinal);
+        var deleteStart = console.IndexOf("app.MapDelete(\"/gw/service-keys/{id}\"", createStart, StringComparison.Ordinal);
+        var createEndpoint = console[createStart..deleteStart];
+
+        Assert.Contains("if (sourceSystem == \"*\")", createEndpoint);
+        Assert.Contains("INVALID_KEY_SOURCE", createEndpoint);
+        Assert.Contains("!tenant.IsInternalTenant && (isMapSource || purpose != \"external-platform\")", createEndpoint);
+        Assert.Contains("INTERNAL_KEY_PURPOSE_FORBIDDEN", createEndpoint);
+        Assert.Contains("const isInternalTenant = tenant?.isInternal === true", page);
+        Assert.Contains("外部租户身份由服务端固定，不能伪装为 MAP", page);
+        Assert.Contains("isInternalTenant ? <div", page);
     }
 
     [Fact]
@@ -2834,7 +3129,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ConsoleDefaultPoolSwitch_ClearsOnlyCurrentTenantGatewayPools()
+    public void ConsoleDefaultPoolSwitch_UsesTenantScopedAtomicPointer()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var endpointStart = console.IndexOf(
@@ -2848,11 +3143,12 @@ public class GatewayDataDomainGuardTests
         Assert.True(endpointEnd > endpointStart, "默认模型池切换端点边界无效");
         var endpoint = console[endpointStart..endpointEnd];
 
-        Assert.Contains(
-            "targetAuthority == \"llm_gateway\" ? TenantAccess.Filter(http, others) : others",
-            endpoint);
-        Assert.Contains("targetPools.UpdateManyAsync(scopedOthers", endpoint);
-        Assert.DoesNotContain("targetPools.UpdateManyAsync(others", endpoint);
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", endpoint);
+        Assert.Contains("FindOneAndUpdateAsync", endpoint);
+        Assert.Contains(".Set(\"DefaultPoolId\", id)", endpoint);
+        Assert.Contains("PoolVersionGuard", endpoint);
+        Assert.Contains("DefaultSwitchPendingUntil", endpoint);
+        Assert.DoesNotContain("targetPools.UpdateManyAsync", endpoint);
     }
 
     [Fact]
@@ -3043,6 +3339,52 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("file: ./llmgw/serving/Dockerfile", workflow);
         Assert.Contains("context: ./llmgw/console-api", devCompose);
         Assert.Contains("context: ./llmgw/web", devCompose);
+    }
+
+    [Fact]
+    public void TenantHardening_EnforcesTeamReadScopeAndIdentityLifecycle()
+    {
+        var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var user = ReadRepoFile("llmgw/console-api/Models/LlmGwUser.cs");
+        var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("FilterTeamScope", access);
+        Assert.Contains("UserSecurityVersionClaim", access);
+        Assert.Contains("user.SecurityVersion != securityVersion", access);
+        Assert.Contains("x.Status == \"active\"", access);
+        Assert.Contains("public long SecurityVersion", user);
+        Assert.Contains("TenantAccess.UserSecurityVersionClaim", jwt);
+
+        Assert.Contains("WILDCARD_SCOPE_DENIED", console);
+        Assert.Contains("WILDCARD_CONFIRMATION_REQUIRED", console);
+        Assert.Contains("service_key.create_wildcard", console);
+        Assert.Contains("TEAM_SCOPE_REQUIRED", console);
+        Assert.Contains("APP_CALLER_TEAM_MISMATCH", console);
+        Assert.Contains("membership.invalidate_sessions", console);
+        Assert.Contains("TryAcquireTenantOwnerMutationLockAsync", console);
+        Assert.Contains("MEMBERSHIP_VERSION_CONFLICT", console);
+        Assert.Contains("idempotentReplay = true", console);
+        Assert.Contains("invalidatedMemberships", console);
+        Assert.Contains("revokedServiceKeys", console);
+        Assert.Contains("disabledAppCallers", console);
+        Assert.Contains("RollbackTenantCreationAsync", console);
+        Assert.Contains("RollbackMemberCreationAsync", console);
+        Assert.True(
+            console.Split("TenantAccess.FilterTeamScope(http", StringSplitOptions.None).Length - 1 >= 10,
+            "日志、首页、协议覆盖、会话、详情和 appCaller 读取必须统一使用团队范围过滤");
+
+        Assert.Contains("service_key.tenant_inactive", runtime);
+        Assert.Contains("service_key.team_inactive", runtime);
+        Assert.Contains("service_key.owner_inactive", runtime);
+        Assert.Contains("service_key.owner_role_denied", runtime);
+        Assert.Contains("service_key.owner_team_denied", runtime);
+        Assert.Contains("service_key.app_caller_team_denied", runtime);
+        Assert.Contains("AppCallerStatusDecision.Reject(appCallerCode, requestType, \"team-disabled\")", endpoints);
+        Assert.Contains("app_caller.team_ownership_denied", endpoints);
+        Assert.Contains("GATEWAY_APP_CALLER_MISMATCH", endpoints);
     }
 
     private static string ReadRepoFile(string relativePath)

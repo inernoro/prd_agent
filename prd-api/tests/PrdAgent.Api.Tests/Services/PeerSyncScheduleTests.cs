@@ -20,6 +20,7 @@ public class PeerSyncScheduleTests
             PeerSyncStatus = status,
             PeerSyncAutoLastAt = autoLastAt,
             PeerSyncIntervalMinutes = interval,
+            PeerSyncAutoMode = PeerSyncSchedule.ScheduledMode,
         };
 
     [Fact]
@@ -97,5 +98,44 @@ public class PeerSyncScheduleTests
         var now = DateTime.UtcNow;
         var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-2), interval: 1);
         Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_UsesShortDebounceInsteadOfScheduledInterval()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-3), interval: 1440);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        store.UpdatedAt = now.AddMinutes(-3);
+        Assert.True(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_CombinesRapidChanges()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-1), interval: 5);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_WaitsForQuietWindowAfterLatestContentChange()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-10), interval: 5);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        store.UpdatedAt = now.AddSeconds(-30);
+        Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Theory]
+    [InlineData(null, "trigger")]
+    [InlineData("unknown", "trigger")]
+    [InlineData("trigger", "trigger")]
+    [InlineData("scheduled", "scheduled")]
+    public void NormalizeMode_DefaultsToTrigger(string? input, string expected)
+    {
+        Assert.Equal(expected, PeerSyncSchedule.NormalizeMode(input));
     }
 }

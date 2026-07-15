@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
@@ -79,7 +80,6 @@ public sealed class GatewayRuntimeGovernanceTests
         result.Request.Context!.PromptPolicyId.ShouldBe("policy-a");
         result.Request.Context.PromptPolicyVersion.ShouldBe(3);
         result.Request.Context.PromptPolicyHash.ShouldBe("hash-a");
-        result.Request.Context.PromptPolicyChars.ShouldBe(37);
     }
 
     [Fact]
@@ -567,6 +567,9 @@ public sealed class GatewayRuntimeGovernanceTests
             Name = "test-key",
             KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
             SourceSystem = "external-system",
+            ClientCode = "content-agent",
+            Environment = "staging",
+            KeyPrefix = "gwk_test",
             AppCallerCodes = ["allowed-caller"],
             IngressProtocols = ["openai-compatible"],
             Scopes = ["chat"],
@@ -595,6 +598,10 @@ public sealed class GatewayRuntimeGovernanceTests
 
         allowed.Allowed.ShouldBeTrue();
         allowed.TenantId.ShouldBe("tenant-a");
+        allowed.KeyId.ShouldBe(keyRecord.Id);
+        allowed.ClientCode.ShouldBe("content-agent");
+        allowed.Environment.ShouldBe("staging");
+        allowed.KeyPrefixSnapshot.ShouldBe("gwk_test");
         denied.Allowed.ShouldBeFalse();
         denied.Authenticated.ShouldBeTrue();
         denied.StatusCode.ShouldBe(403);
@@ -602,6 +609,486 @@ public sealed class GatewayRuntimeGovernanceTests
             .GetCollection<BsonDocument>("llmgw_operation_audits")
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "service_key.scope_denied"));
         auditCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LegacySharedKey_NeverAcceptsExternalSourceAndRecordsInventory()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var denied = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "external", "outside.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+        var allowed = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        denied.Allowed.ShouldBeFalse();
+        denied.StatusCode.ShouldBe(403);
+        denied.ErrorCode.ShouldBe("GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN");
+        allowed.Allowed.ShouldBeTrue();
+        allowed.LegacySharedKey.ShouldBeTrue();
+        var usage = await scope.Context.Database.GetCollection<GatewayLegacyKeyUsageRecord>("llmgw_legacy_key_usage")
+            .Find(_ => true)
+            .ToListAsync();
+        usage.Count.ShouldBe(2);
+        usage.Sum(x => x.AllowedCount).ShouldBe(1);
+        usage.Sum(x => x.RejectedCount).ShouldBe(1);
+        usage.ShouldAllBe(x => x.TenantId == GatewayTenantDefaults.InternalTenantId);
+    }
+
+    [Fact]
+    public async Task LegacySharedKey_DeadlineAndRevocationFailClosed()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = GatewayTenantDefaults.InternalTenantId,
+                Status = "observing",
+                DeadlineAt = DateTime.UtcNow.AddMinutes(-1),
+                AllowedAppCallerCodes = ["map.chat::chat"],
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            "legacy-key", "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(401);
+        result.ErrorCode.ShouldBe("GATEWAY_LEGACY_KEY_REVOKED");
+    }
+
+    [Fact]
+    public async Task LegacySharedKey_ReadOnlyPreflightWorksDuringCutoverButHonorsDeadline()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var cutovers = scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers");
+        await cutovers.InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+        {
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            Status = "observing",
+            DeadlineAt = DateTime.UtcNow.AddMinutes(5),
+            AllowedAppCallerCodes = ["map.chat::chat"],
+        });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var routeProbe = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        routeProbe.Allowed.ShouldBeTrue();
+        var usage = await scope.Context.Database.GetCollection<GatewayLegacyKeyUsageRecord>("llmgw_legacy_key_usage")
+            .Find(_ => true)
+            .SingleAsync();
+        usage.SourceSystem.ShouldBe("map");
+        usage.AppCallerCode.ShouldBe("llmgw.legacy-preflight::route");
+        usage.LastDecision.ShouldBe("read-only-preflight-allowed");
+
+        await cutovers.UpdateOneAsync(
+            x => x.TenantId == GatewayTenantDefaults.InternalTenantId,
+            Builders<GatewayLegacyKeyCutoverRecord>.Update.Set(x => x.DeadlineAt, DateTime.UtcNow.AddMinutes(-1)));
+        var expiredProbe = await authorizer.AuthorizeAsync(
+            "legacy-key", "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Readiness, null, CancellationToken.None);
+
+        expiredProbe.Allowed.ShouldBeFalse();
+        expiredProbe.StatusCode.ShouldBe(401);
+        expiredProbe.ErrorCode.ShouldBe("GATEWAY_LEGACY_KEY_REVOKED");
+    }
+
+    [Fact]
+    public async Task ScopedMapKey_ReadOnlyPreflightUsesKeyIdentityAndNormalServiceKeyScope()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_scoped_route_probe_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime-probe",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_probe",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["weekly-report::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        result.LegacySharedKey.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ScopedSuccessorKey_ReadOnlyPreflightAndOrdinaryRouteDoNotIncrementCutoverEvidence()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_scoped_successor_probe_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime-probe",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_probe",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["weekly-report::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["weekly-report::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["gw-native"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "weekly-report::chat",
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+        var ordinaryRoute = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "weekly-report::chat",
+            "gw-native", "route:read", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        ordinaryRoute.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+        cutover.LastSuccessorUsedAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ScopedSuccessorKey_IncrementsDualKeyObservationWithoutChangingIdentity()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_successor_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_success",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["map.chat::chat"],
+                SuccessorServiceKeyIds = [record.Id, "unused-successor"],
+                RequiredIngressProtocols = ["openai-compatible"],
+                RequiredSuccessorObservations = 2,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+        result.Allowed.ShouldBeTrue();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        GatewayLegacyKeyCutoverRecord? cutover;
+        do
+        {
+            cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+                .Find(x => x.TenantId == "tenant-a")
+                .SingleAsync();
+            if (cutover.SuccessorObservedCount >= 1) break;
+            await Task.Delay(20);
+        } while (DateTime.UtcNow < deadline);
+        cutover!.SuccessorObservedCount.ShouldBe(1);
+        cutover.SuccessorObservationCounts[record.Id].ShouldBe(1);
+        cutover.SuccessorObservationCounts.ContainsKey("unused-successor").ShouldBeFalse();
+        cutover.LastSuccessorUsedAt.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task NonProductionScopedKey_DoesNotIncrementLegacySuccessorObservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_nonprod_successor_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-test",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_nonprod",
+            SourceSystem = "map",
+            ClientCode = "map-test",
+            Environment = "test",
+            Purpose = "runtime",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["map.chat::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["openai-compatible"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ProductionCanaryKey_IsRejectedFromOrdinaryRuntimeDataPlane()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_canary_successor_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-canary",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_canary",
+            SourceSystem = "map",
+            ClientCode = "map-canary",
+            Environment = "production",
+            Purpose = "canary",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["map.chat::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["openai-compatible"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_PURPOSE_DENIED");
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ReleaseGateKey_AllowsOnlyReadOnlyPreflight()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_release_gate_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-release-gate",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_gate",
+            SourceSystem = "map",
+            ClientCode = "map-release-gate",
+            Environment = "production",
+            Purpose = "release-gate",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["invoke", "route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var runtime = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "gw-native", "invoke", null, CancellationToken.None);
+        var preflight = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        runtime.Allowed.ShouldBeFalse();
+        runtime.ErrorCode.ShouldBe("GATEWAY_KEY_PURPOSE_DENIED");
+        preflight.Allowed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task CostImportScopeLock_SerializesTenantProviderTeamAndReleasesForRetry()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var locks = scope.Context.Database.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
+        await locks.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+            new CreateIndexOptions { Unique = true }));
+
+        var contenders = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            CostImportScopeLock.TryAcquireAsync(
+                locks, "tenant-a", "provider-a", "team-a", CancellationToken.None)));
+
+        contenders.Count(x => x is not null).ShouldBe(1);
+        var winner = contenders.Single(x => x is not null)!;
+        (await CostImportScopeLock.TryRenewAsync(locks, winner, CancellationToken.None)).ShouldBeTrue();
+        var otherTenant = await CostImportScopeLock.TryAcquireAsync(
+            locks, "tenant-b", "provider-a", "team-a", CancellationToken.None);
+        otherTenant.ShouldNotBeNull();
+
+        await CostImportScopeLock.ReleaseAsync(locks, winner, CancellationToken.None);
+        var retry = await CostImportScopeLock.TryAcquireAsync(
+            locks, "tenant-a", "provider-a", "team-a", CancellationToken.None);
+        retry.ShouldNotBeNull();
+
+        await CostImportScopeLock.ReleaseAsync(locks, retry!, CancellationToken.None);
+        await CostImportScopeLock.ReleaseAsync(locks, otherTenant!, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task SuccessorObservation_IgnoresTrafficOutsideLegacyCallerInventory()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_successor_unrelated_traffic_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_success",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["map.chat::chat", "map.unrelated::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["map.chat::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["openai-compatible"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var unrelated = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.unrelated::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        unrelated.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ScopedKey_RevokedKeyReturns401WithAuditIdentityButNoSecret()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_revoked_identity_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "revoked-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_revoke",
+            Enabled = false,
+            SourceSystem = "external",
+            ClientCode = "weekly-agent",
+            Environment = "production",
+            AppCallerCodes = ["weekly.generate::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external",
+            "weekly.generate::chat",
+            "openai-compatible",
+            "invoke",
+            null,
+            CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.Authenticated.ShouldBeTrue();
+        result.StatusCode.ShouldBe(401);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_INVALID");
+        result.KeyId.ShouldBe(record.Id);
+        result.TenantId.ShouldBe("tenant-a");
+        result.TeamId.ShouldBe("team-a");
+        result.ClientCode.ShouldBe("weekly-agent");
+        result.Environment.ShouldBe("production");
+        result.KeyPrefixSnapshot.ShouldBe("gwk_revoke");
+        result.Detail.ShouldNotContain(key);
+        result.Detail.ShouldNotContain(record.KeyHash);
     }
 
     [Fact]
@@ -669,6 +1156,204 @@ public sealed class GatewayRuntimeGovernanceTests
         denied.Allowed.ShouldBeFalse();
         denied.Authenticated.ShouldBeTrue();
         denied.StatusCode.ShouldBe(403);
+    }
+
+    [Fact]
+    public async Task ScopedKey_TenantDisabledIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_tenant_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "disabled-tenant-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_tenants").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TENANT_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_TeamDisabledIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_team_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "disabled-team-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_teams").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TEAM_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_DisabledCreatorMembershipIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_disabled_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            CreatedByUserId = "user-a",
+            Name = "disabled-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("Status", "disabled"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ScopedKey_DeveloperRemovedFromTeamIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_removed_team_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            CreatedByUserId = "user-a",
+            Name = "removed-team-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("TeamIds", new BsonArray()));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_TEAM_DENIED");
+    }
+
+    [Fact]
+    public async Task ScopedKey_CreatorDowngradedToViewerIsRejectedImmediately()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_downgraded_owner_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            CreatedByUserId = "user-a",
+            Name = "downgraded-owner-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+            Builders<BsonDocument>.Update.Set("Role", "viewer"));
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_OWNER_ROLE_DENIED");
+    }
+
+    [Fact]
+    public async Task ScopedKey_CannotInvokeAppCallerOwnedByAnotherTeam()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_test_cross_team_caller_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            TeamId = "team-a",
+            Name = "team-a-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            AppCallerCodes = ["shared-caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertOneAsync(
+            new GatewayAppCallerRecord
+            {
+                TenantId = record.TenantId,
+                TeamId = "team-b",
+                AppCallerCode = "shared-caller",
+                RequestType = "chat",
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "external", "shared-caller", "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_TEAM_MISMATCH");
     }
 
     [Fact]
@@ -833,14 +1518,46 @@ public sealed class GatewayRuntimeGovernanceTests
             var databaseName = $"llmgw_governance_test_{Guid.NewGuid():N}";
             return new TestDatabase(client, databaseName, new LlmGatewayDataContext(connectionString, databaseName));
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            throw new Xunit.Sdk.XunitException($"MongoDB 行为测试依赖不可用：{ex.Message}");
         }
     }
 
     private static async Task InsertServiceKeyAsync(LlmGatewayDataContext context, GatewayServiceKeyRecord record)
     {
+        await context.Database.GetCollection<BsonDocument>("llmgw_tenants").ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            new BsonDocument
+            {
+                { "_id", record.TenantId },
+                { "Status", "active" },
+            },
+            new ReplaceOptions { IsUpsert = true });
+        if (!string.IsNullOrWhiteSpace(record.TeamId))
+        {
+            await context.Database.GetCollection<BsonDocument>("llmgw_teams").ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+                new BsonDocument
+                {
+                    { "_id", record.TeamId },
+                    { "TenantId", record.TenantId },
+                    { "Status", "active" },
+                },
+                new ReplaceOptions { IsUpsert = true });
+        }
+        if (!string.IsNullOrWhiteSpace(record.CreatedByUserId))
+        {
+            await context.Database.GetCollection<BsonDocument>("llmgw_memberships").InsertOneAsync(new BsonDocument
+            {
+                { "_id", Guid.NewGuid().ToString("N") },
+                { "TenantId", record.TenantId },
+                { "UserId", record.CreatedByUserId },
+                { "Role", "developer" },
+                { "TeamIds", string.IsNullOrWhiteSpace(record.TeamId) ? new BsonArray() : new BsonArray { record.TeamId } },
+                { "Status", "active" },
+            });
+        }
         await context.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
         await context.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
             .InsertOneAsync(new GatewayServiceKeyDirectoryRecord

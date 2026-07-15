@@ -3,9 +3,11 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -22,7 +24,10 @@ public sealed record GatewayKeyAuthorization(
     string? KeyId = null,
     string? TenantId = null,
     string? TeamId = null,
-    bool LegacySharedKey = false);
+    bool LegacySharedKey = false,
+    string? ClientCode = null,
+    string? Environment = null,
+    string? KeyPrefixSnapshot = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -35,6 +40,56 @@ public interface IGatewayScopedKeyAuthorizer
         string requiredScope,
         IPAddress? remoteIp,
         CancellationToken ct);
+}
+
+public static class GatewayLegacyProbeScopes
+{
+    public const string Route = "legacy-preflight:route";
+    public const string Readiness = "legacy-preflight:readiness";
+
+    public static bool IsReadOnlyProbe(string scope)
+        => scope is Route or Readiness;
+
+    public static string ResolveServiceKeyScope(string scope)
+        => scope switch
+        {
+            Route => "route:read",
+            Readiness => "readiness:read",
+            _ => scope,
+        };
+
+    public static string ResolveAuditCaller(string scope)
+        => scope == Readiness
+            ? "llmgw.legacy-preflight::readiness"
+            : "llmgw.legacy-preflight::route";
+}
+
+public static class GatewayKeyPurposePolicy
+{
+    public static string ResolveEffectivePurpose(GatewayServiceKeyRecord record)
+    {
+        if (!string.IsNullOrWhiteSpace(record.Purpose))
+            return record.Purpose.Trim().ToLowerInvariant();
+
+        return string.Equals(record.SourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+            ? "runtime"
+            : "external-platform";
+    }
+
+    public static bool AllowsDataPlaneRequest(GatewayServiceKeyRecord record, bool readOnlyProbe)
+    {
+        var purpose = ResolveEffectivePurpose(record);
+        if (!string.Equals(record.SourceSystem, "map", StringComparison.OrdinalIgnoreCase))
+            return purpose == "external-platform";
+
+        return purpose == "runtime" || readOnlyProbe && purpose == "release-gate";
+    }
+}
+
+public static class GatewaySuccessorObservationPolicy
+{
+    public static bool IsBusinessInvocationScope(string scope)
+        => scope is "invoke" or "stream:invoke" or "raw:invoke";
 }
 
 public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
@@ -64,14 +119,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
 
         if (FixedTimeEquals(providedKey, legacySharedKey))
-            return new(
-                true,
-                true,
-                200,
-                string.Empty,
-                "legacy MAP shared key",
-                TenantId: _internalTenantId,
-                LegacySharedKey: true);
+            return await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -80,16 +128,56 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var record = locator is null
             ? null
             : await keys.Find(x => x.TenantId == locator.TenantId && x.Id == locator.ServiceKeyId && x.KeyHash == hash).FirstOrDefaultAsync(ct);
-        if (record == null
-            || string.IsNullOrWhiteSpace(record.TenantId)
-            || !record.Enabled
-            || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
+        if (record == null || string.IsNullOrWhiteSpace(record.TenantId))
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        if (!record.Enabled || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
+        {
+            return new(
+                false,
+                true,
+                401,
+                "GATEWAY_KEY_INVALID",
+                "invalid or expired gateway key",
+                record.Id,
+                record.TenantId,
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
+        }
 
-        if (!Matches(record.SourceSystem, sourceSystem)
-            || !MatchesAny(record.AppCallerCodes, appCallerCode)
+        var lifecycleDenied = await CheckLifecycleAsync(record, appCallerCode, ct);
+        if (lifecycleDenied is not null)
+            return lifecycleDenied;
+
+        var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
+        var serviceKeyScope = GatewayLegacyProbeScopes.ResolveServiceKeyScope(requiredScope);
+        if (!GatewayKeyPurposePolicy.AllowsDataPlaneRequest(record, readOnlyProbe))
+        {
+            await WriteKeyDeniedAuditAsync(record, "service_key.purpose_denied", "purpose-mismatch", new BsonDocument
+            {
+                { "purpose", GatewayKeyPurposePolicy.ResolveEffectivePurpose(record) },
+                { "requiredScope", serviceKeyScope },
+                { "readOnlyProbe", readOnlyProbe },
+            }, ct);
+            return new(
+                false,
+                true,
+                403,
+                "GATEWAY_KEY_PURPOSE_DENIED",
+                "gateway key purpose does not allow this data-plane request",
+                record.Id,
+                record.TenantId,
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
+        }
+        if (!readOnlyProbe
+            && (!Matches(record.SourceSystem, sourceSystem)
+                || !MatchesAny(record.AppCallerCodes, appCallerCode))
             || !MatchesAny(record.IngressProtocols, ingressProtocol)
-            || !MatchesAny(record.Scopes, requiredScope))
+            || !MatchesAny(record.Scopes, serviceKeyScope))
         {
             await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_operation_audits").InsertOneAsync(
                 new MongoDB.Bson.BsonDocument
@@ -108,7 +196,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                             { "sourceSystem", sourceSystem },
                             { "appCallerCode", appCallerCode },
                             { "ingressProtocol", ingressProtocol },
-                            { "requiredScope", requiredScope },
+                            { "requiredScope", serviceKeyScope },
                         }
                     },
                     { "CreatedAt", DateTime.UtcNow },
@@ -121,7 +209,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 "gateway key scope does not allow this request",
                 record.Id,
                 record.TenantId,
-                record.TeamId);
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
         }
 
         if (record.AllowedCidrs.Count > 0
@@ -139,7 +230,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 "gateway key does not allow this source IP",
                 record.Id,
                 record.TenantId,
-                record.TeamId);
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
         }
 
         if (record.RateLimitPerMinute is > 0)
@@ -201,7 +295,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                     "gateway key per-minute rate limit exceeded",
                     record.Id,
                     record.TenantId,
-                    record.TeamId);
+                    record.TeamId,
+                    ClientCode: ResolveClientCode(record),
+                    Environment: ResolveEnvironment(record),
+                    KeyPrefixSnapshot: record.KeyPrefix);
             }
         }
 
@@ -211,7 +308,151 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        return new(true, true, 200, string.Empty, "scoped key", record.Id, record.TenantId, record.TeamId);
+        // 退场判断只接受真实 invoke/stream/raw 业务调用。route、readiness、请求查询、
+        // 取消与任何 preflight 都只能证明控制面可用，不能证明业务流量已经切换。
+        if (GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope))
+            await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
+        return new(
+            true,
+            true,
+            200,
+            string.Empty,
+            "scoped key",
+            record.Id,
+            record.TenantId,
+            record.TeamId,
+            ClientCode: ResolveClientCode(record),
+            Environment: ResolveEnvironment(record),
+            KeyPrefixSnapshot: record.KeyPrefix);
+    }
+
+    private async Task<GatewayKeyAuthorization> AuthorizeLegacyKeyAsync(
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        string requiredScope,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var cutover = await _data.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == _internalTenantId)
+            .FirstOrDefaultAsync(ct);
+        var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
+        var normalizedSource = readOnlyProbe ? "map" : sourceSystem.Trim().ToLowerInvariant();
+        var normalizedCaller = readOnlyProbe
+            ? GatewayLegacyProbeScopes.ResolveAuditCaller(requiredScope)
+            : appCallerCode.Trim();
+        var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
+        var externalDenied = !readOnlyProbe && !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
+        var callerMissing = !readOnlyProbe && string.IsNullOrWhiteSpace(normalizedCaller);
+        var callerDenied = !readOnlyProbe
+                           && cutover?.AllowedAppCallerCodes.Count > 0
+                           && !cutover.AllowedAppCallerCodes.Contains(normalizedCaller, StringComparer.OrdinalIgnoreCase);
+        var deadlineReached = cutover?.DeadlineAt is not null && cutover.DeadlineAt <= now;
+        var revoked = string.Equals(cutover?.Status, "revoked", StringComparison.OrdinalIgnoreCase);
+        var allowed = !externalDenied && !callerMissing && !callerDenied && !deadlineReached && !revoked;
+        var decision = externalDenied ? "external-forbidden"
+            : callerMissing ? "app-caller-required"
+            : callerDenied ? "app-caller-not-in-inventory"
+            : deadlineReached ? "deadline-reached"
+            : revoked ? "revoked"
+            : readOnlyProbe ? "read-only-preflight-allowed"
+            : "allowed";
+        await RecordLegacyUsageAsync(normalizedSource, normalizedCaller, normalizedProtocol, allowed, decision, now, ct);
+
+        if (allowed)
+        {
+            return new(
+                true, true, 200, string.Empty, "legacy MAP shared key",
+                KeyId: "legacy-map-shared",
+                TenantId: _internalTenantId,
+                LegacySharedKey: true,
+                ClientCode: "map-internal",
+                Environment: "production",
+                KeyPrefixSnapshot: "internal");
+        }
+
+        return new(
+            false,
+            true,
+            externalDenied || callerMissing || callerDenied ? 403 : 401,
+            externalDenied ? "GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN"
+                : callerMissing ? "GATEWAY_LEGACY_KEY_APP_CALLER_REQUIRED"
+                : callerDenied ? "GATEWAY_LEGACY_KEY_APP_CALLER_DENIED"
+                : "GATEWAY_LEGACY_KEY_REVOKED",
+            decision,
+            KeyId: "legacy-map-shared",
+            TenantId: _internalTenantId,
+            LegacySharedKey: true,
+            ClientCode: "map-internal",
+            Environment: "production",
+            KeyPrefixSnapshot: "internal");
+    }
+
+    private async Task RecordLegacyUsageAsync(
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        bool allowed,
+        string decision,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var collection = _data.Database.GetCollection<GatewayLegacyKeyUsageRecord>("llmgw_legacy_key_usage");
+        var filter = Builders<GatewayLegacyKeyUsageRecord>.Filter.And(
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.TenantId, _internalTenantId),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.SourceSystem, sourceSystem),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
+            Builders<GatewayLegacyKeyUsageRecord>.Filter.Eq(x => x.IngressProtocol, ingressProtocol));
+        var update = Builders<GatewayLegacyKeyUsageRecord>.Update
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.TenantId, _internalTenantId)
+            .SetOnInsert(x => x.SourceSystem, sourceSystem)
+            .SetOnInsert(x => x.AppCallerCode, appCallerCode)
+            .SetOnInsert(x => x.IngressProtocol, ingressProtocol)
+            .SetOnInsert(x => x.FirstSeenAt, now)
+            .Set(x => x.LastSeenAt, now)
+            .Set(x => x.LastDecision, decision)
+            .Inc(x => x.TotalCount, 1)
+            .Inc(x => x.AllowedCount, allowed ? 1 : 0)
+            .Inc(x => x.RejectedCount, allowed ? 0 : 1);
+        try
+        {
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+        }
+        catch (MongoException ex) when (IsDuplicateKey(ex))
+        {
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = false }, ct);
+        }
+    }
+
+    private Task RecordSuccessorObservationAsync(
+        GatewayServiceKeyRecord record,
+        string appCallerCode,
+        string ingressProtocol,
+        CancellationToken ct)
+    {
+        if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase)
+            || GatewayKeyPurposePolicy.ResolveEffectivePurpose(record) != "runtime")
+            return Task.CompletedTask;
+
+        var normalizedCaller = appCallerCode.Trim();
+        var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
+        var callerPattern = new BsonRegularExpression($"^(?:{Regex.Escape(normalizedCaller)}|\\*)$", "i");
+        var protocolPattern = new BsonRegularExpression($"^(?:{Regex.Escape(normalizedProtocol)}|\\*)$", "i");
+
+        return _data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+                Builders<BsonDocument>.Filter.AnyEq("SuccessorServiceKeyIds", record.Id),
+                Builders<BsonDocument>.Filter.Regex("AllowedAppCallerCodes", callerPattern),
+                Builders<BsonDocument>.Filter.Regex("RequiredIngressProtocols", protocolPattern),
+                Builders<BsonDocument>.Filter.Ne("Status", "revoked")),
+            Builders<BsonDocument>.Update
+                .Inc("SuccessorObservedCount", 1)
+                .Inc($"SuccessorObservationCounts.{record.Id}", 1)
+                .Set("LastSuccessorUsedAt", DateTime.UtcNow),
+            cancellationToken: ct);
     }
 
     public static string Sha256Hex(string value)
@@ -245,6 +486,165 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     private static bool IsDuplicateKey(MongoException exception)
         => exception is MongoCommandException { Code: 11000 or 11001 }
            || exception is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey };
+
+    private async Task<GatewayKeyAuthorization?> CheckLifecycleAsync(
+        GatewayServiceKeyRecord record,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        var tenantFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Status", "active"));
+        if (await _data.Database.GetCollection<BsonDocument>("llmgw_tenants")
+                .CountDocumentsAsync(tenantFilter, cancellationToken: ct) != 1)
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.tenant_inactive",
+                "tenant-inactive",
+                "GATEWAY_KEY_TENANT_INACTIVE",
+                "service key tenant is not active",
+                ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.CreatedByUserId))
+        {
+            var membershipFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+                Builders<BsonDocument>.Filter.Eq("UserId", record.CreatedByUserId),
+                Builders<BsonDocument>.Filter.Eq("Status", "active"));
+            var membership = await _data.Database.GetCollection<BsonDocument>("llmgw_memberships")
+                .Find(membershipFilter)
+                .Project(Builders<BsonDocument>.Projection.Include("Role").Include("TeamIds"))
+                .FirstOrDefaultAsync(ct);
+            if (membership is null)
+            {
+                return await RejectLifecycleAsync(
+                    record,
+                    "service_key.owner_inactive",
+                    "owner-membership-inactive",
+                    "GATEWAY_KEY_OWNER_INACTIVE",
+                    "service key owner membership is not active",
+                    ct);
+            }
+
+            var role = membership.TryGetValue("Role", out var roleValue) && roleValue.IsString
+                ? roleValue.AsString.Trim().ToLowerInvariant()
+                : null;
+            if (role is not ("owner" or "admin" or "developer"))
+            {
+                return await RejectLifecycleAsync(
+                    record,
+                    "service_key.owner_role_denied",
+                    "owner-role-denied",
+                    "GATEWAY_KEY_OWNER_ROLE_DENIED",
+                    "service key owner role no longer allows key usage",
+                    ct);
+            }
+
+            if (role == "developer")
+            {
+                if (string.IsNullOrWhiteSpace(record.TeamId))
+                {
+                    return await RejectLifecycleAsync(
+                        record,
+                        "service_key.owner_team_required",
+                        "owner-team-required",
+                        "GATEWAY_KEY_OWNER_TEAM_REQUIRED",
+                        "developer service key must be bound to a team",
+                        ct);
+                }
+
+                var activeTeamIds = membership.TryGetValue("TeamIds", out var teamIdsValue) && teamIdsValue.IsBsonArray
+                    ? teamIdsValue.AsBsonArray
+                        .Where(x => x.IsString)
+                        .Select(x => x.AsString)
+                    : Enumerable.Empty<string>();
+                if (!activeTeamIds.Contains(record.TeamId, StringComparer.Ordinal))
+                {
+                    return await RejectLifecycleAsync(
+                        record,
+                        "service_key.owner_team_denied",
+                        "owner-team-denied",
+                        "GATEWAY_KEY_OWNER_TEAM_DENIED",
+                        "service key owner no longer belongs to this team",
+                        ct);
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(record.TeamId))
+            return null;
+
+        var teamFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", record.TeamId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", record.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Status", "active"));
+        if (await _data.Database.GetCollection<BsonDocument>("llmgw_teams")
+                .CountDocumentsAsync(teamFilter, cancellationToken: ct) != 1)
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.team_inactive",
+                "team-inactive",
+                "GATEWAY_KEY_TEAM_INACTIVE",
+                "service key team is not active",
+                ct);
+        }
+
+        var normalizedAppCallerCode = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
+        var callers = await _data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+            .Find(Builders<GatewayAppCallerRecord>.Filter.And(
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, record.TenantId),
+                    Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, normalizedAppCallerCode)),
+                new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+            .ToListAsync(ct);
+        if (callers.Count > 0
+            && callers.Any(x => !string.Equals(x.TeamId, record.TeamId, StringComparison.Ordinal)))
+        {
+            return await RejectLifecycleAsync(
+                record,
+                "service_key.app_caller_team_denied",
+                "app-caller-team-mismatch",
+                "GATEWAY_KEY_TEAM_MISMATCH",
+                "service key team does not own this appCaller",
+                ct);
+        }
+
+        return null;
+    }
+
+    private async Task<GatewayKeyAuthorization> RejectLifecycleAsync(
+        GatewayServiceKeyRecord record,
+        string action,
+        string reason,
+        string errorCode,
+        string detail,
+        CancellationToken ct)
+    {
+        await WriteKeyDeniedAuditAsync(record, action, reason, new BsonDocument
+        {
+            { "createdByUserId", record.CreatedByUserId },
+        }, ct);
+        return new(
+            false,
+            true,
+            403,
+            errorCode,
+            detail,
+            record.Id,
+            record.TenantId,
+            record.TeamId,
+            ClientCode: ResolveClientCode(record),
+            Environment: ResolveEnvironment(record),
+            KeyPrefixSnapshot: record.KeyPrefix);
+    }
+
+    private static string ResolveClientCode(GatewayServiceKeyRecord record)
+        => string.IsNullOrWhiteSpace(record.ClientCode) ? record.SourceSystem : record.ClientCode.Trim();
+
+    private static string ResolveEnvironment(GatewayServiceKeyRecord record)
+        => string.IsNullOrWhiteSpace(record.Environment) ? "unknown" : record.Environment.Trim().ToLowerInvariant();
 
     private Task WriteKeyDeniedAuditAsync(
         GatewayServiceKeyRecord record,
