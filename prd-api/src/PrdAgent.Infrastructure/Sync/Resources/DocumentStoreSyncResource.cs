@@ -585,6 +585,16 @@ public class DocumentStoreSyncResource : ISyncableResource
                         {
                             var stored = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                             if (stored == null) { failed++; continue; }
+                            // 大文件下载耗时，本记录唯一的取消检查点在循环顶部（下载之前）。下载后、写库前补一次取消轮询，
+                            // 否则用户在下载期间点「停止」会漏检，文件仍被写入、run 正常收尾而非 cancelled（Codex PR#1144 P2）。
+                            // 抛出的取消异常由本 per-file try 的 cancelled catch 兜住（校正库摘要 + 带部分计数重抛）。
+                            await actor.ReportProgressAsync(new SyncProgressUpdate
+                            {
+                                Phase = "本地写入",
+                                Current = processed,
+                                Total = total,
+                                CurrentRecordTitle = fe.Title,
+                            }, ct);
                             var att = BuildAttachment(pa, stored, actorUserId);
                             await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
                             await _db.Attachments.InsertOneAsync(att, cancellationToken: ct);
@@ -635,6 +645,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                     // 新建二进制条目
                     var storedNew = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                     if (storedNew == null) { failed++; continue; }
+                    // 同上：新建二进制条目下载后、写库前补取消检查点，兜住下载期间点停（Codex PR#1144 P2）。
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = fe.Title,
+                    }, ct);
                     var attNew = BuildAttachment(pa, storedNew, actorUserId);
                     await ReLocalizeAttachmentThumbnailAsync(attNew, pa, ct);
                     await _db.Attachments.InsertOneAsync(attNew, cancellationToken: ct);
