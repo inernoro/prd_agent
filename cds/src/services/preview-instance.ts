@@ -112,6 +112,11 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   }
   if (previewUsername) env.CDS_USERNAME = previewUsername;
   if (previewPassword) env.CDS_PASSWORD = previewPassword;
+  // auth mode 归一化（Codex P2）：继承的 CDS_AUTH_MODE 不可信——父实例若注入
+  // github，其凭据已被上面清洗，子实例会卡在配不齐的 github 模式；注入 basic
+  // 而无专用凭据则整实例锁死。子实例只有两种确定态：有专用凭据 = basic，
+  // 没有 = disabled（与文档口径一致）。
+  env.CDS_AUTH_MODE = previewPassword ? 'basic' : 'disabled';
   if (scrubbed.length > 0) {
     console.log(
       `[preview-instance] 已清除 ${scrubbed.length} 个疑似密钥的环境变量（子实例不持有父实例秘密）: ` +

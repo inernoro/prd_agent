@@ -69,19 +69,22 @@ describe('scrubParentSecretsFromEnv', () => {
       'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
     ]);
     expect(env.CDS_MONGO_URI).toBeUndefined();
-    // 父实例门禁密码没有幸存；子实例门禁来自专用键的重映射
+    // 父实例门禁密码没有幸存；子实例门禁来自专用键的重映射，auth mode 强制 basic
     expect(env.CDS_PASSWORD).toBe('child-gate');
     expect(env.CDS_USERNAME).toBe('child-admin');
+    expect(env.CDS_AUTH_MODE).toBe('basic');
     expect(env.CDS_HOST).toBe('keep');
     expect(env.ASSETS_PROVIDER).toBe('keep');
     expect(env.JWT_SECRET).toBeUndefined();
   });
 
   it('leaves no basic-auth gate when CDS_PREVIEW_* is absent (inherited password still scrubbed)', () => {
-    const env: NodeJS.ProcessEnv = { CDS_PREVIEW_INSTANCE: '1', CDS_PASSWORD: 'parent-gate-leak' };
+    // 继承的 CDS_AUTH_MODE=github 同样不可信：凭据已被清洗，归一化为 disabled
+    const env: NodeJS.ProcessEnv = { CDS_PREVIEW_INSTANCE: '1', CDS_PASSWORD: 'parent-gate-leak', CDS_AUTH_MODE: 'github' };
     const scrubbed = scrubParentSecretsFromEnv(env);
     expect(scrubbed).toEqual(['CDS_PASSWORD']);
     expect(env.CDS_PASSWORD).toBeUndefined();
+    expect(env.CDS_AUTH_MODE).toBe('disabled');
   });
 
   it('is a no-op outside preview instances', () => {

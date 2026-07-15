@@ -2019,7 +2019,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       next();
       return;
     }
-    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|stop|restart|pull)$/.test(req.path)) {
+    // 允许可选尾斜杠：Express 非严格路由会把 /stop/ 派发到 /stop handler，
+    // 不吸收尾斜杠的话守卫会被绕过（Codex P2）。
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|stop|restart|pull)\/?$/.test(req.path)) {
       next();
       return;
     }

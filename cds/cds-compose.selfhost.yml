@@ -18,12 +18,13 @@
 #
 # 安全提示：预览域名是公网可达的。必须在「项目环境变量」（CDS env scope，
 # 勿写进本文件）配置子实例专用凭据：
-#   CDS_AUTH_MODE=basic
 #   CDS_PREVIEW_USERNAME=<自定>
 #   CDS_PREVIEW_PASSWORD=<为子实例单独生成，勿复用父实例密码>
 # 注意是 CDS_PREVIEW_* 前缀：通用 CDS_PASSWORD 会被子实例的 secret 自清洗
 # 一并清除（父实例若用 basic auth，其密码可能经全局变量流进子容器——
 # 白名单保留通用键等于把父实例门禁密码留给未合并代码，Codex P1）。
+# auth mode 无需配置：子实例启动时自动归一化——有 CDS_PREVIEW_PASSWORD 即
+# basic，没有即 disabled；继承的 CDS_AUTH_MODE（如父实例的 github）不生效。
 
 x-cds-project:
   name: cds-self
