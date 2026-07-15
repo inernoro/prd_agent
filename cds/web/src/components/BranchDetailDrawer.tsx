@@ -783,6 +783,7 @@ export function BranchDetailDrawer({
   deployments = [],
   activityEvents = [],
   previewUrl = '',
+  branchStatus,
   initialResourceId,
   initialResourceDetailTab,
   onToast,
@@ -1877,8 +1878,11 @@ export function BranchDetailDrawer({
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
-                  (Codex review P2)。 */}
-              {branch.status === 'running' && (previewUrl || branch.previewUrl) ? (
+                  (Codex review P2)。
+                  状态判定同时看抽屉内快照 branch.status 与父组件经 SSE 实时透传的
+                  branchStatus —— 抽屉打开期间 building→running 时 branch 快照不刷,
+                  只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
+              {(branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
