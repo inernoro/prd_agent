@@ -23,4 +23,5 @@
 | fix | prd-api | 取消 pull/align 时校正知识库摘要：逐篇写入/镜像删除已提交部分条目增删，但 rethrow 跳过收尾的 DocumentCount/UpdatedAt 重算会留下陈旧文档数——两处取消 catch 先按实际条目数校正库摘要再抛（不套用未完成 bundle 的库级元数据）（Codex PR#1144 P2） |
 | fix | prd-api | 文件夹应用阶段点停也保全审计与摘要：文件夹 parent-first 多趟扫描的 progress 回调会触发取消检查点，此前该阶段取消会以零计数逃逸、跳过库摘要重算——补齐与文件记录/镜像删除同款 try-catch，取消时先校正 DocumentCount 再带部分计数抛出（Codex PR#1144 P2） |
 | fix | prd-api | 大文件下载期间点停也能及时中断：二进制附件条目本记录唯一取消检查点在下载之前，此前下载期间点「停止」会漏检、文件仍被写入且 run 正常收尾——两处 DownloadAndStoreAttachmentAsync 之后、写库之前各补一次取消轮询，由 per-file cancelled catch 兜住（Codex PR#1144 P2） |
+| fix | prd-api | AcceptableRunDirections 兼容 align-* 原值入参：store.PeerSyncDirection 被 IsRunnableDirection/IsUserConfirmedAutoDirection 视为合法值也含 align-remote/local/both，此前该函数对 align-* 返回空集，使「用强制对齐建立关系」的库被 established gate 误判未建立、禁掉自动同步——补 align-* 归一到等价集合 + 守卫测试（Codex PR#1144 P2） |
 | fix | prd-api,prd-admin | 「已建立关系」不再从被截断到 80 条的 runs 列表推断：ListRuns 单库场景返回服务端全量历史 established 标志（与 SetAutoSync gate 同口径），前端 everSynced 在选中组合==已保存关系时据此兜底，修复长命库当年成功 run 滚出窗口后自动开关被误禁（Codex PR#1144 P2） |
