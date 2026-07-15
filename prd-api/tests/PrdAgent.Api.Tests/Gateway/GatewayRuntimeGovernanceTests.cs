@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
@@ -880,7 +881,7 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
-    public async Task ProductionCanaryKey_DoesNotIncrementRuntimeCutoverObservation()
+    public async Task ProductionCanaryKey_IsRejectedFromOrdinaryRuntimeDataPlane()
     {
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
@@ -916,12 +917,81 @@ public sealed class GatewayRuntimeGovernanceTests
             key, "legacy-key", "map", "map.chat::chat",
             "openai-compatible", "invoke", null, CancellationToken.None);
 
-        result.Allowed.ShouldBeTrue();
+        result.Allowed.ShouldBeFalse();
+        result.StatusCode.ShouldBe(403);
+        result.ErrorCode.ShouldBe("GATEWAY_KEY_PURPOSE_DENIED");
         var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
             .Find(x => x.TenantId == "tenant-a")
             .SingleAsync();
         cutover.SuccessorObservedCount.ShouldBe(0);
         cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ReleaseGateKey_AllowsOnlyReadOnlyPreflight()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_release_gate_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-release-gate",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_gate",
+            SourceSystem = "map",
+            ClientCode = "map-release-gate",
+            Environment = "production",
+            Purpose = "release-gate",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["invoke", "route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var runtime = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "gw-native", "invoke", null, CancellationToken.None);
+        var preflight = await authorizer.AuthorizeAsync(
+            key, "legacy-key", "external", string.Empty,
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        runtime.Allowed.ShouldBeFalse();
+        runtime.ErrorCode.ShouldBe("GATEWAY_KEY_PURPOSE_DENIED");
+        preflight.Allowed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task CostImportScopeLock_SerializesTenantProviderTeamAndReleasesForRetry()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var locks = scope.Context.Database.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
+        await locks.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+            new CreateIndexOptions { Unique = true }));
+
+        var contenders = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            CostImportScopeLock.TryAcquireAsync(
+                locks, "tenant-a", "provider-a", "team-a", CancellationToken.None)));
+
+        contenders.Count(x => x is not null).ShouldBe(1);
+        var winner = contenders.Single(x => x is not null)!;
+        (await CostImportScopeLock.TryRenewAsync(locks, winner, CancellationToken.None)).ShouldBeTrue();
+        var otherTenant = await CostImportScopeLock.TryAcquireAsync(
+            locks, "tenant-b", "provider-a", "team-a", CancellationToken.None);
+        otherTenant.ShouldNotBeNull();
+
+        await CostImportScopeLock.ReleaseAsync(locks, winner, CancellationToken.None);
+        var retry = await CostImportScopeLock.TryAcquireAsync(
+            locks, "tenant-a", "provider-a", "team-a", CancellationToken.None);
+        retry.ShouldNotBeNull();
+
+        await CostImportScopeLock.ReleaseAsync(locks, retry!, CancellationToken.None);
+        await CostImportScopeLock.ReleaseAsync(locks, otherTenant!, CancellationToken.None);
     }
 
     [Fact]

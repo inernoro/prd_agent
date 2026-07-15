@@ -205,6 +205,7 @@ var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
 var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
 var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_reconciliations");
+var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
 var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
@@ -277,6 +278,15 @@ await costReconciliations.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ServiceKeyId").Descending("BilledAt"),
         new CreateIndexOptions { Name = "idx_llmgw_cost_tenant_key_billed" }),
+});
+await costImportScopeLocks.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+        new CreateIndexOptions { Name = "uniq_llmgw_cost_import_lock_tenant_provider_team", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_cost_import_scope_locks", ExpireAfter = TimeSpan.Zero }),
 });
 await legacyKeyCutovers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
     Builders<BsonDocument>.IndexKeys.Ascending("TenantId"),
@@ -4723,6 +4733,9 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
     string? reconciliationTeamId = null;
     DateTime? windowFrom = null;
     DateTime? windowTo = null;
+    CostImportScopeLease? costImportLease = null;
+    try
+    {
     if (granularity == "request")
     {
         var requestMatches = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
@@ -4738,6 +4751,16 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         matchedLog = requestMatches[0];
         serviceKeyId = matchedLog.AsNullableString("ServiceKeyId");
         reconciliationTeamId = matchedLog.AsNullableString("TeamId");
+        costImportLease = await CostImportScopeLock.TryAcquireAsync(
+            costImportScopeLocks,
+            access.TenantId,
+            provider,
+            reconciliationTeamId,
+            http.RequestAborted);
+        if (costImportLease is null)
+            return Json(ApiEnvelope<object>.Fail(
+                "COST_IMPORT_SCOPE_BUSY",
+                "当前租户、供应商和团队正在导入费用，请稍后重试"), jsonOptions, 409);
         if (matchedLog.AsNullableUtcDateTime("StartedAt") is { } matchedStartedAt)
         {
             BsonValue requestTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
@@ -4842,6 +4865,16 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
                 "BILLING_WINDOW_TEAM_AMBIGUOUS",
                 "时间窗跨越多个团队，请按 service key 或团队拆分账单记录"), jsonOptions, 409);
         if (reconciliationTeamId is null) reconciliationTeamId = windowTeamIds.SingleOrDefault();
+        costImportLease = await CostImportScopeLock.TryAcquireAsync(
+            costImportScopeLocks,
+            access.TenantId,
+            provider,
+            reconciliationTeamId,
+            http.RequestAborted);
+        if (costImportLease is null)
+            return Json(ApiEnvelope<object>.Fail(
+                "COST_IMPORT_SCOPE_BUSY",
+                "当前租户、供应商和团队正在导入费用，请稍后重试"), jsonOptions, 409);
         BsonValue reconciliationTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
         BsonValue reconciliationKeyValue = serviceKeyId is null ? BsonNull.Value : new BsonString(serviceKeyId);
         var overlapFilters = new List<FilterDefinition<BsonDocument>>
@@ -4978,6 +5011,17 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             }));
     }
 
+    if (costImportLease is null
+        || !await CostImportScopeLock.TryRenewAsync(
+            costImportScopeLocks,
+            costImportLease,
+            http.RequestAborted))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "COST_IMPORT_SCOPE_LOST",
+            "费用导入租约已失效，未写入账单，请重试"), jsonOptions, 409);
+    }
+
     try
     {
         await costReconciliations.InsertOneAsync(record);
@@ -5028,6 +5072,24 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             { "currency", actualCurrency },
         });
     return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(record)), jsonOptions, 201);
+    }
+    finally
+    {
+        if (costImportLease is not null)
+        {
+            try
+            {
+                await CostImportScopeLock.ReleaseAsync(
+                    costImportScopeLocks,
+                    costImportLease,
+                    CancellationToken.None);
+            }
+            catch (MongoException)
+            {
+                // 账单已写入时不能让锁释放故障把成功响应改为 500；短租约会由 TTL 回收。
+            }
+        }
+    }
 }).RequireAuthorization("ConfigWrite");
 
 app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, string? to) =>
@@ -7182,6 +7244,7 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_runtime_settings",
         "llmgw_asset_registry",
         "llmgw_cost_reconciliations",
+        "llmgw_cost_import_scope_locks",
         "llmgw_legacy_key_cutovers",
         "llmgw_legacy_key_usage",
     };

@@ -97,6 +97,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_runtime_settings",
             "llmgw_asset_registry",
             "llmgw_cost_reconciliations",
+            "llmgw_cost_import_scope_locks",
             "llmgw_legacy_key_cutovers",
             "llmgw_legacy_key_usage",
         };
@@ -276,6 +277,15 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             new CreateIndexModel<BsonDocument>(
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ServiceKeyId").Descending("BilledAt"),
                 new CreateIndexOptions { Name = "idx_llmgw_cost_tenant_key_billed" }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_cost_import_scope_locks", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+                new CreateIndexOptions { Name = "uniq_llmgw_cost_import_lock_tenant_provider_team", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+                new CreateIndexOptions { Name = "ttl_llmgw_cost_import_scope_locks", ExpireAfter = TimeSpan.Zero }),
         }, ct);
         await CreateBsonIndexesAsync("llmgw_legacy_key_cutovers", new[]
         {

@@ -76,10 +76,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("idx_llmgw_service_key_tenant_workload_purpose", console);
         Assert.Contains("uniq_llmgw_cost_tenant_provider_external", initializer);
         Assert.Contains("uniq_llmgw_cost_tenant_provider_request", initializer);
+        Assert.Contains("uniq_llmgw_cost_import_lock_tenant_provider_team", initializer);
+        Assert.Contains("CostImportScopeLock.TryAcquireAsync", console);
+        Assert.Contains("CostImportScopeLock.TryRenewAsync", console);
+        Assert.Contains("CostImportScopeLock.ReleaseAsync", console);
+        Assert.True(console.LastIndexOf("CostImportScopeLock.TryAcquireAsync", StringComparison.Ordinal)
+                    < console.IndexOf("var overlapFilter", StringComparison.Ordinal));
+        Assert.True(console.IndexOf("CostImportScopeLock.TryRenewAsync", StringComparison.Ordinal)
+                    < console.IndexOf("await costReconciliations.InsertOneAsync(record)", StringComparison.Ordinal));
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"TeamId\").Ascending(\"ServiceKeyId\")", initializer);
         Assert.Contains("return new(\"fx-unavailable\", null, null, null)", costPolicy);
 
-        Assert.Contains("public string Purpose { get; set; } = \"runtime\"", governanceRecords);
+        Assert.Contains("public string Purpose { get; set; } = string.Empty", governanceRecords);
         Assert.Contains("ROTATION_IDENTITY_MISMATCH", console);
         Assert.Contains("rotatedPurpose, purpose", console);
         Assert.Contains("GATEWAY_LEGACY_KEY_EXTERNAL_FORBIDDEN", runtime);
@@ -92,7 +100,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LegacySuccessorScopePolicy.FindMissing(successor.AsStringList(\"Scopes\"), requiredScopes)", console);
         Assert.Contains(".Set(\"RequiredScopes\", new BsonArray(requiredScopes))", console);
         Assert.Contains("record.Environment, \"production\"", runtime);
-        Assert.Contains("record.Purpose, \"runtime\"", runtime);
+        Assert.Contains("GatewayKeyPurposePolicy.AllowsDataPlaneRequest", runtime);
+        Assert.Contains("GATEWAY_KEY_PURPOSE_DENIED", runtime);
         Assert.Contains("LEGACY_REVOCATION_FINAL", console);
         Assert.Contains("TenantAccess.Filter(http)", console);
     }

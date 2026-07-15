@@ -21,7 +21,7 @@ public sealed class GatewayServiceKeyRecord
     /// <summary>密钥使用环境：development / test / staging / production。</summary>
     public string Environment { get; set; } = string.Empty;
     /// <summary>单值用途：runtime / release-gate / canary / external-platform。</summary>
-    public string Purpose { get; set; } = "runtime";
+    public string Purpose { get; set; } = string.Empty;
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();

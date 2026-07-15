@@ -12,3 +12,5 @@
 | fix | llmgw | 保留 legacy 退场期只读 preflight，继续执行截止与撤销门，且禁止预检累计切流证据 |
 | security | llmgw | legacy 后继 key 必须使用 production MAP runtime 身份并覆盖全部运行时 scope |
 | fix | llmgw | 逐请求费用幂等重试会补写请求日志投影，修复中断后的对账不一致 |
+| security | llmgw | 普通数据面只接受 MAP runtime 或外部平台用途密钥，发布 Gate 仅允许只读预检 |
+| fix | llmgw | 费用导入增加租户供应商团队原子租约，串行化 request/window 防止并发双计费 |

@@ -64,6 +64,28 @@ public static class GatewayLegacyProbeScopes
             : "llmgw.legacy-preflight::route";
 }
 
+public static class GatewayKeyPurposePolicy
+{
+    public static string ResolveEffectivePurpose(GatewayServiceKeyRecord record)
+    {
+        if (!string.IsNullOrWhiteSpace(record.Purpose))
+            return record.Purpose.Trim().ToLowerInvariant();
+
+        return string.Equals(record.SourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+            ? "runtime"
+            : "external-platform";
+    }
+
+    public static bool AllowsDataPlaneRequest(GatewayServiceKeyRecord record, bool readOnlyProbe)
+    {
+        var purpose = ResolveEffectivePurpose(record);
+        if (!string.Equals(record.SourceSystem, "map", StringComparison.OrdinalIgnoreCase))
+            return purpose == "external-platform";
+
+        return purpose == "runtime" || readOnlyProbe && purpose == "release-gate";
+    }
+}
+
 public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 {
     private readonly LlmGatewayDataContext _data;
@@ -124,6 +146,27 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 
         var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
         var serviceKeyScope = GatewayLegacyProbeScopes.ResolveServiceKeyScope(requiredScope);
+        if (!GatewayKeyPurposePolicy.AllowsDataPlaneRequest(record, readOnlyProbe))
+        {
+            await WriteKeyDeniedAuditAsync(record, "service_key.purpose_denied", "purpose-mismatch", new BsonDocument
+            {
+                { "purpose", GatewayKeyPurposePolicy.ResolveEffectivePurpose(record) },
+                { "requiredScope", serviceKeyScope },
+                { "readOnlyProbe", readOnlyProbe },
+            }, ct);
+            return new(
+                false,
+                true,
+                403,
+                "GATEWAY_KEY_PURPOSE_DENIED",
+                "gateway key purpose does not allow this data-plane request",
+                record.Id,
+                record.TenantId,
+                record.TeamId,
+                ClientCode: ResolveClientCode(record),
+                Environment: ResolveEnvironment(record),
+                KeyPrefixSnapshot: record.KeyPrefix);
+        }
         if (!readOnlyProbe
             && (!Matches(record.SourceSystem, sourceSystem)
                 || !MatchesAny(record.AppCallerCodes, appCallerCode))
@@ -384,7 +427,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         CancellationToken ct)
     {
         if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(record.Purpose, "runtime", StringComparison.OrdinalIgnoreCase))
+            || GatewayKeyPurposePolicy.ResolveEffectivePurpose(record) != "runtime")
             return Task.CompletedTask;
 
         var normalizedCaller = appCallerCode.Trim();
