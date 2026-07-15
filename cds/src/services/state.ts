@@ -1568,8 +1568,16 @@ export class StateService {
       }
       list.push(item);
     }
-    // ring-buffer 上限：墓碑是补偿意图不是审计账本，防极端情况下无限膨胀
-    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) list.shift();
+    // ring-buffer 上限：墓碑是补偿意图不是审计账本，防极端情况下无限膨胀。
+    // 但**绝不截掉本批刚写入的墓碑**（Codex P2：单次删除 >200 容器时旧实现会
+    // 把当前批次的头部挤掉，且删的是最后一个项目时再无人补偿）——只淘汰
+    // 历史遗留条目，本批超限就整批保留。
+    const justAdded = new Set(items.map((i) => i.containerName));
+    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) {
+      const idx = list.findIndex((t) => !justAdded.has(t.containerName));
+      if (idx === -1) break;
+      list.splice(idx, 1);
+    }
     this.state.pendingContainerTeardowns = list;
     this.save();
   }

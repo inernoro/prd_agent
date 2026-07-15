@@ -48,7 +48,7 @@ import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './service
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
-import { sweepOrphanCdsContainers, isOrphanReaperEnabled } from './services/orphan-container-reaper.js';
+import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -2847,6 +2847,7 @@ janitorService.setRemoveFn(async (slug: string) => {
           shell,
           state: stateService,
           eventLog: activeServerEventLogStore,
+          instanceId: computeCdsInstanceId(config.repoRoot),
         }).then((result) => {
           if (result.skippedReason) {
             console.log(`[orphan-reaper] 本轮跳过: ${result.skippedReason}`);

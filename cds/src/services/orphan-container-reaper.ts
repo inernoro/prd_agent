@@ -22,8 +22,20 @@
  *      人工 / 项目删除路径处置；
  *   5. 逃生阀：CDS_ORPHAN_CONTAINER_REAPER=0 整体关闭。
  */
+import { createHash } from 'node:crypto';
 import type { IShellExecutor, ContainerTeardownTombstone } from '../types.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+
+/**
+ * CDS 实例身份（Codex P1，2026-07-15）：同一宿主可能跑多个 CDS master（生产 +
+ * 测试各管各的 repoRoot），docker 只按 cds.managed label 过滤会把**别的实例**的
+ * 容器当成本实例的孤儿收割掉。用 repoRoot 哈希作为稳定实例 id：容器创建时打
+ * `cds.instance=<id>` label，收割器跳过 label 存在且不等于本实例的容器；
+ * 无 label 的历史容器仍在收割范围（升级前的存量孤儿要能被清），随重建自然收敛。
+ */
+export function computeCdsInstanceId(repoRoot: string): string {
+  return createHash('sha1').update(repoRoot || '').digest('hex').slice(0, 12);
+}
 
 /** 墓碑处理所需的最小 state 视图（项目删除路由与收割器共用）。 */
 export interface TombstoneStateView {
@@ -199,6 +211,8 @@ export async function sweepOrphanCdsContainers(opts: {
   state: OrphanReaperStateView;
   eventLog?: ServerEventLogSink | null;
   env?: NodeJS.ProcessEnv;
+  /** 本 CDS 实例 id（computeCdsInstanceId）。传入后跳过带异实例 label 的容器。 */
+  instanceId?: string;
 }): Promise<OrphanSweepResult> {
   const { shell, state, eventLog } = opts;
   if (!isOrphanReaperEnabled(opts.env)) return { skippedReason: 'disabled', actions: [] };
@@ -277,13 +291,23 @@ export async function sweepOrphanCdsContainers(opts: {
     });
   };
 
+  // 异实例守卫（Codex P1）：label 带 cds.instance 且不等于本实例 → 属于同宿主
+  // 另一个 CDS master，绝不触碰。无 label 的历史容器不受此限（存量孤儿要能清）。
+  const belongsToOtherInstance = (c: DiscoveredContainer): boolean => {
+    if (!opts.instanceId) return false;
+    const label = c.labels.match(/cds\.instance=([^,]+)/)?.[1];
+    return Boolean(label) && label !== opts.instanceId;
+  };
+
   for (const c of infraContainers) {
     if (PROTECTED_CONTAINER_NAMES.has(c.name)) continue;
+    if (belongsToOtherInstance(c)) continue;
     if (knownInfraNames.has(c.name)) continue;
     if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'infra', undefined);
   }
   for (const c of appContainers) {
+    if (belongsToOtherInstance(c)) continue;
     const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
     const profileId = c.labels.match(/cds\.profile\.id=([^,]+)/)?.[1];
     // 归属判定（任一命中即有主）：branchId/profileId 配对在 state、或 state 的某个

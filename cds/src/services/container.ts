@@ -13,6 +13,7 @@ import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkP
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
+import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import {
   collectContainerDiagnostics,
   recordContainerLifecycleIntent,
@@ -1605,6 +1606,7 @@ export class ContainerService {
         '--tmpfs /tmp',
         `--label cds.managed=true`,
         `--label cds.type=job`,
+        `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
         `--label cds.project.id=${entry.projectId || 'default'}`,
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
@@ -2361,6 +2363,8 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=app',
+      // 实例身份:同宿主多 CDS master 时收割器据此互不触碰(Codex P1)
+      `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${projectId || '_unknown'}`,
       `--label cds.branch.id=${branchId}`,
       `--label cds.profile.id=${profileId}`,
@@ -2376,6 +2380,7 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
       `--label cds.network=${network}`,

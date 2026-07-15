@@ -10,7 +10,7 @@
  *   4. 事件留痕：停止动作写 server-event。
  */
 import { describe, it, expect } from 'vitest';
-import { sweepOrphanCdsContainers, isOrphanReaperEnabled, processTeardownTombstones } from '../../src/services/orphan-container-reaper.js';
+import { sweepOrphanCdsContainers, isOrphanReaperEnabled, processTeardownTombstones, computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 function makeState(overrides: Partial<{
@@ -253,5 +253,24 @@ describe('processTeardownTombstones', () => {
     expect(result.skippedReason).toBe('state-empty');
     expect(tomb.remaining()).toEqual([]);
     expect(shell.commands.some((c) => c.startsWith('docker rm -f'))).toBe(true);
+  });
+});
+
+describe('instance isolation (multi-master same host)', () => {
+  it('never touches containers labeled with another CDS instance id; legacy unlabeled still swept', async () => {
+    const mine = computeCdsInstanceId('/root/a/prd_agent');
+    const theirs = computeCdsInstanceId('/root/b/prd_agent');
+    expect(mine).not.toBe(theirs);
+    const shell = new MockShellExecutor();
+    mockPs(shell, [], [
+      `cds-their-api|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.instance=${theirs},cds.branch.id=their-branch,cds.profile.id=api`,
+      `cds-mine-ghost|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.instance=${mine},cds.branch.id=deleted,cds.profile.id=api`,
+      `cds-legacy-ghost|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.branch.id=deleted-legacy,cds.profile.id=api`,
+    ]);
+    shell.addResponsePattern(/^docker stop /, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+    const result = await sweepOrphanCdsContainers({ shell, state: makeState(), env: {}, instanceId: mine });
+    const stopped = result.actions.filter((a) => a.action === 'stopped').map((a) => a.containerName).sort();
+    expect(stopped).toEqual(['cds-legacy-ghost', 'cds-mine-ghost']);
+    expect(shell.commands.join('\n')).not.toContain('cds-their-api');
   });
 });
