@@ -39,7 +39,7 @@ import {
   recentAgentMetaFor,
   useMobileHomeData,
 } from '@/pages/mobile-home/shared';
-import { AppStoreGrid, AppStoreAppIcon, AppStorePill } from '@/components/mobile/appStore';
+import { AppStoreGrid, AppStoreAppIcon, AppStorePillLabel } from '@/components/mobile/appStore';
 import { AS_COLOR, AS_TYPE, AS_SPACE, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
@@ -185,7 +185,8 @@ export default function MobileHomePage() {
                     </span>
                   )}
                 </span>
-                <AppStorePill label="继续" onClick={(e) => { e.stopPropagation(); navigate(headline.route); }} />
+                {/* span 版药丸:外层整卡已是 button,内部不得再嵌 button(Codex P2,非法 DOM) */}
+                <AppStorePillLabel label="继续" />
               </button>
               {restRecent.map((item) => {
                 const meta = recentAgentMetaFor(item.agentKey);

@@ -157,7 +157,8 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
   );
 }
 
-function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
+/** span 版药丸(非交互)——放进可点击容器内部用,避免 button 嵌套 button 的非法 DOM */
+export function AppStorePillLabel({ label, caption, variant = 'default' }: Omit<PillButtonProps, 'onClick'>) {
   const C = useAppStoreColors();
   const bg = variant === 'onImage' ? 'rgba(255, 255, 255, 0.20)' : C.pillBg;
   const fg = variant === 'onImage' ? C.label : C.blue;
