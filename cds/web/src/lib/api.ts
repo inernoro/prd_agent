@@ -125,6 +125,9 @@ export async function apiRequest<T = unknown>(
 
 function alternateApiUrl(rawUrl: string, primaryUrl: string): string | null {
   if (!rawUrl.startsWith('/api/')) return null;
+  // 子 CDS 预览实例（Codex P2）：transient 兜底重试也不许切 /_cds——那会被
+  // forwarder 送回父实例，把父数据当成子实例数据渲染。子实例只有同源一条路。
+  if (isChildPreviewCdsInstance()) return null;
   if (shouldPreferCdsPassthrough() && primaryUrl.startsWith('/_cds/api/')) return null;
   if (primaryUrl.startsWith('/_cds/api/')) return rawUrl;
   if (primaryUrl.startsWith('/api/')) return `/_cds${primaryUrl}`;
