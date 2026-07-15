@@ -22,6 +22,7 @@ import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -134,7 +135,10 @@ describe('Projects router (P4 Part 2)', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/api', createProjectsRouter({ stateService, shell }));
+    const githubApp = {
+      getInstallationToken: async () => 'github-app-installation-token',
+    } as GitHubAppClient;
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp }));
 
     server = app.listen(0);
   });
@@ -950,7 +954,10 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       if (typeof h === 'string' && h) (req as any).cdsProjectKey = { projectId: h, keyId: 'k' };
       next();
     });
-    app.use('/api', createProjectsRouter({ stateService, shell, config }));
+    const githubApp = {
+      getInstallationToken: async () => 'github-app-installation-token',
+    } as GitHubAppClient;
+    app.use('/api', createProjectsRouter({ stateService, shell, config, githubApp }));
 
     server = app.listen(0);
   });
@@ -1244,15 +1251,85 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(after.cloneError).toBeUndefined();
       expect(after.gitDefaultBranch).toBe('master');
 
-      // The git clone command was actually executed. P4 Part 18
-      // (Phase E audit fix #1): the command is now prefixed with
-      // `GIT_TERMINAL_PROMPT=0` so private repos fail fast instead
-      // of prompting for credentials — so we match a substring.
+      // The git clone command was actually executed. Authentication and
+      // non-interactive flags are carried in the process env rather than
+      // embedded into the command or visible SSE output.
       const cloneCmds = shell.commands.filter((c) => c.includes('git clone'));
       expect(cloneCmds).toHaveLength(1);
       expect(cloneCmds[0]).toContain('https://github.com/example/test.git');
       expect(cloneCmds[0]).toContain(`${REPOS_BASE}/${pid}`);
-      expect(cloneCmds[0]).toContain('GIT_TERMINAL_PROMPT=0');
+    });
+
+    it('uses the project GitHub App installation token for private-repo clone', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      let cloneEnv: Record<string, string | undefined> | undefined;
+      shell.addResponsePattern(/git clone /, (_match, options) => {
+        cloneEnv = options?.env;
+        return { stdout: 'Cloning into private-repo\n', stderr: '', exitCode: 0 };
+      });
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Private App Clone',
+        gitRepoUrl: 'https://github.com/example/private-repo.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      stateService.updateProject(pid, { githubInstallationId: 146383199 });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+
+      expect(clone.events.find((event) => event.event === 'complete')).toBeDefined();
+      expect(cloneEnv?.GIT_TERMINAL_PROMPT).toBe('0');
+      expect(cloneEnv?.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
+      expect(cloneEnv?.GIT_CONFIG_VALUE_0).toMatch(/^AUTHORIZATION: basic /);
+      const cloneCommand = shell.commands.find((command) => command.includes('git clone'))!;
+      expect(cloneCommand).toContain('https://github.com/example/private-repo.git');
+      expect(cloneCommand).not.toContain('github-app-installation-token');
+    });
+
+    it('fills a runnable command for a standard build-only Compose service', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Compose Build App',
+        gitRepoUrl: 'https://github.com/example/compose-build-app.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'Dockerfile'), 'FROM node:20-alpine\nCMD ["node", "server.js"]\n');
+        fs.writeFileSync(path.join(repoPath, 'package.json'), JSON.stringify({
+          name: 'compose-build-app',
+          scripts: { start: 'node server.js' },
+        }));
+        fs.writeFileSync(path.join(repoPath, 'package-lock.json'), '{}');
+        fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), [
+          'services:',
+          '  app:',
+          '    build: .',
+          '    ports:',
+          '      - "4302:4302"',
+        ].join('\n'));
+        return { stdout: 'Cloning into compose-build-app\n', stderr: '', exitCode: 0 };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+
+      expect(clone.status).toBe(200);
+      const profile = stateService.getBuildProfilesForProject(pid)[0];
+      expect(profile.dockerImage).toBe('node:20-slim');
+      expect(profile.command).toBe('npm ci && npm start');
+      expect(profile.containerPort).toBe(4302);
+      expect(profile.workDir).toBe('.');
+      expect(clone.events.some((event) =>
+        event.event === 'progress' && String(event.data.line).includes('项目清单自动补全'),
+      )).toBe(true);
     });
 
     it('auto-detects the cloned stack and creates a default build profile', async () => {

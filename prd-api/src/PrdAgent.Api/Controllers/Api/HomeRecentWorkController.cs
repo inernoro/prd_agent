@@ -35,7 +35,33 @@ public sealed class HomeRecentWorkController : ControllerBase
         _permissions = permissions;
     }
 
-    public record RecentWorkItem(string Route, string AgentKey, string Title, DateTime LastActiveAt);
+    public record RecentWorkItem(
+        string Route,
+        string AgentKey,
+        string Title,
+        DateTime LastActiveAt,
+        double? Progress = null,
+        string? ProgressLabel = null);
+
+    /// <summary>
+    /// 缺陷状态机 → 诚实进度（0..1）+ 中文标签。
+    /// 只有带状态机的实体才给进度;工作区/知识库等无进度概念的类型返回 null,前端不画进度条。
+    /// rejected 属终态但非"完成",不给进度只给标签。
+    /// </summary>
+    private static (double? Progress, string Label)? DefectProgress(string status) => status switch
+    {
+        DefectStatus.Draft => (0.10, "草稿"),
+        DefectStatus.Reviewing => (0.25, "评审中"),
+        DefectStatus.Awaiting => (0.35, "待处理"),
+        DefectStatus.Submitted => (0.45, "已提交"),
+        DefectStatus.Assigned => (0.55, "已指派"),
+        DefectStatus.Processing => (0.70, "处理中"),
+        DefectStatus.Verifying => (0.85, "验收中"),
+        DefectStatus.Resolved => (0.95, "已解决"),
+        DefectStatus.Closed => (1.00, "已关闭"),
+        DefectStatus.Rejected => (null, "已驳回"),
+        _ => null,
+    };
 
     /// <summary>
     /// 各脚印类型对应的模块门禁，与各详情控制器的 [AdminController] 读权限一一对应。
@@ -141,6 +167,7 @@ public sealed class HomeRecentWorkController : ControllerBase
         // 缺陷/周报/评审/知识库的复核口径与各详情端点一致：打点只代表"当时有权看"，
         // 这里必须按当前权限重判，否则被改派/移出团队/收权后仍会泄漏标题并留下死链（Codex P2）。
         var defectTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+        var defectStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
         if (defectIds.Count > 0)
         {
             // 同 GetDefect：reporter / assignee / 缺陷管理权限
@@ -158,9 +185,13 @@ public sealed class HomeRecentWorkController : ControllerBase
             }
             var defects = await _db.DefectReports
                 .Find(defectFilter)
-                .Project(x => new { x.Id, x.Title })
+                .Project(x => new { x.Id, x.Title, x.Status })
                 .ToListAsync(ct);
-            foreach (var d in defects) defectTitles[d.Id] = string.IsNullOrWhiteSpace(d.Title) ? "未命名缺陷" : d.Title!;
+            foreach (var d in defects)
+            {
+                defectTitles[d.Id] = string.IsNullOrWhiteSpace(d.Title) ? "未命名缺陷" : d.Title!;
+                defectStatuses[d.Id] = d.Status;
+            }
         }
 
         var reportTitles = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -268,11 +299,24 @@ public sealed class HomeRecentWorkController : ControllerBase
                 "document-store" => $"/document-store?store={open.EntityId}",
                 _ => $"/visual-agent/{open.EntityId}",
             };
+            // 进度:只有带状态机的实体给(当前仅缺陷),其余 null → 前端不画进度条,不造假数据
+            double? progress = null;
+            string? progressLabel = null;
+            if (open.AgentKey == "defect-agent"
+                && defectStatuses.TryGetValue(open.EntityId, out var defectStatus)
+                && DefectProgress(defectStatus) is { } dp)
+            {
+                progress = dp.Progress;
+                progressLabel = dp.Label;
+            }
+
             items.Add(new RecentWorkItem(
                 Route: route,
                 AgentKey: open.AgentKey,
                 Title: string.IsNullOrWhiteSpace(title) ? "未命名" : title,
-                LastActiveAt: open.LastOpenedAt));
+                LastActiveAt: open.LastOpenedAt,
+                Progress: progress,
+                ProgressLabel: progressLabel));
             if (items.Count >= limit) break;
         }
 

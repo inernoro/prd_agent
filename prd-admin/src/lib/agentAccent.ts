@@ -24,6 +24,7 @@ export const AGENT_ACCENT: Record<string, { from: string; to: string }> = {
   'transcript-agent': { from: '#FF375F', to: '#BF5AF2' }, // Pink → Purple
   'workflow-agent':   { from: '#30D158', to: '#64D2FF' }, // Green → Teal
   'arena':            { from: '#FF9F0A', to: '#FFD60A' }, // Orange → Yellow
+  'document-store':   { from: '#FF9F0A', to: '#FFB340' }, // Orange → 浅橙(知识库,recent-work 后端会返回该 key)
 };
 
 export const DEFAULT_ACCENT = { from: '#0A84FF', to: '#5E5CE6' };

@@ -1209,6 +1209,7 @@ public sealed class CreateMemberRequest
 
 public sealed class UpdateMemberRequest
 {
+    public int ExpectedVersion { get; set; }
     public string? Role { get; set; }
     public string? Status { get; set; }
     public List<string>? TeamIds { get; set; }

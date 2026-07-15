@@ -321,6 +321,27 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     expect(blocked.body.error).toBe('project_out_of_scope');
   });
 
+  it('页面批准的一次性 bootstrap key：建成首个项目后自动吊销', async () => {
+    const plaintext = 'cdsg_one-time-bootstrap';
+    const crypto = await import('node:crypto');
+    stateService.addGlobalAgentKey({
+      id: 'once0001',
+      label: 'one time',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      scope: 'rw',
+      access: { canCreateProjects: true, projects: [] },
+      oneTime: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    const create = await request(server, 'POST', '/api/projects', { name: 'One Time Project' }, {
+      'X-AI-Access-Key': plaintext,
+    });
+    expect(create.status).toBe(201);
+    expect(create.body.issuedProjectKey?.plaintext).toMatch(/^cdsp_/);
+    expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+  });
+
   it("projects:'all' key = 全权 admin：可操作现有项目，且建项目不再另发 key", async () => {
     seedProject('existing-proj');
     const sign = await request(server, 'POST', '/api/global-agent-keys', {

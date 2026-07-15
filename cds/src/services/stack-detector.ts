@@ -961,7 +961,10 @@ function withDatabaseInitialization(result: StackDetection, searchPath: string):
  * Falls back to an "unknown" marker if nothing matches so the
  * caller can surface a helpful message.
  */
-export function detectStack(searchPath: string): StackDetection {
+export function detectStack(
+  searchPath: string,
+  options: { preferManifest?: boolean } = {},
+): StackDetection {
   if (!fs.existsSync(searchPath)) {
     return {
       stack: 'unknown',
@@ -973,8 +976,7 @@ export function detectStack(searchPath: string): StackDetection {
       summary: `路径不存在: ${searchPath}`,
     };
   }
-  const detectors = [
-    detectDockerfile,
+  const manifestDetectors = [
     detectNodejs,
     detectGo,
     detectRust,
@@ -983,6 +985,9 @@ export function detectStack(searchPath: string): StackDetection {
     detectRuby,
     detectPhp,
   ];
+  const detectors = options.preferManifest
+    ? [...manifestDetectors, detectDockerfile]
+    : [detectDockerfile, ...manifestDetectors];
   for (const d of detectors) {
     const result = d(searchPath);
     if (result) {
