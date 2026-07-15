@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.22 | **日期**：2026-07-15 | **状态**：PR-10 最终审查反馈修复中
+> **版本**：v1.23 | **日期**：2026-07-15 | **状态**：PR-10 验收完成，合并门满足
 
 ## 1. 目标
 
@@ -102,6 +102,8 @@ PR-10 真实接入复验补充（2026-07-15）：第二轮 GitHub CI 与 CDS run
 PR-10 最终远程证据（2026-07-15）：修复提交 `0e25a3cb1975a166098009fc21844eebc347dc8c` 的 GitHub CI、四个相关镜像、Server Build & Test 与 CDS Deploy `dr_c699dc6cfd827e5b2d7b362a` 全绿；CDS 5/5 服务均运行该提交，无缺失、异常或提交漂移。隔离外部租户从网页完成团队创建，并为 OpenAI、Claude、Gemini、GW Native 四种协议分别执行一次 Quickstart：每次均通过团队边界和密钥鉴权、生成 requestId、写入租户请求记录并明确 `upstreamCalled=false`，未访问付费上游。外部租户创建表单固定为 `sourceSystem=external`、`purpose=external-platform`；直接伪装 `sourceSystem=map` 与 `purpose=runtime` 返回 403 `INTERNAL_KEY_PURPOSE_FORBIDDEN`。390x844 深色与浅色、1280px 浅色均无横向溢出，浏览器 warning/error 为 0。验收数据首次清理删除 TenantId 关联记录 30 条、用户 1 条、租户 1 条，再次遍历全部目标集合和 identity 计数均为 0；一次性辅助程序与内存凭据已删除。未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
 
 PR-10 最终审查反馈（2026-07-15）：Codex Review 在提交 `0e25a3cb1` 上新增四条未过时意见。legacy shared key 的 GW Native 请求必须和 scoped key 一样从 body 解析 MAP/appCaller 身份；导入体省略 `providerReportedCost` 必须返回 400，不能把缺失值当成实际 0；无 ServiceKeyId 请求只能被 tenant/team/provider 相同且同样无 ServiceKeyId 的窗口覆盖；开发 compose 必须运行 `llmgw-serve`，否则 llmgw-web 新增的四协议代理在本地返回 502。四项均纳入本轮修复和回归，修复后重新等待 CI、CDS 与受影响链路验收，不沿用先前完成结论直接合并。
+
+PR-10 审查修复验收（2026-07-15）：提交 `3d3c5f568babe6ed09b422cf7e1a8e7f8464fcfe` 已完成上述四项修复。legacy shared key 的 GW Native body 身份动态契约通过；供应商 actual 改为必填可空 DTO 后显式校验，隔离 Mongo 与真实 Console HTTP 验证省略字段返回 400 `INVALID_PROVIDER_COST`；已存在 keyed 窗口时，无 ServiceKeyId 请求仍可独立导入 actual 并返回 201，不再被错误覆盖；开发 compose 已补齐 `llmgw-serve`，配置解析通过。完整回归为 Api.Tests 1605 通过、4 个既有显式跳过，PrdAgent.Tests 659 通过，合计 2264 通过、0 失败；GitHub CI、Console/Serving/Web/API 镜像、Server Build & Test 与 CDS Deploy `dr_1419000f52a111029369b05d` 全绿。CDS 五个服务均运行目标提交，无缺失、异常或提交漂移；公网 `/gw/healthz` 与 `/gw/v1/healthz` 均返回目标提交，远程一次性外部租户再次验证缺失供应商 actual 返回 400。四协议不重复调用，沿用同源代理未改动时已完成的每协议一次 dry-run 证据，继续保持 `upstreamCalled=false`。本轮临时数据首次清理删除 TenantId 关联记录 2 条、用户 1 条、租户 1 条，第二遍全部为 0；一次性辅助文件和内存凭据已删除。未调用付费模型，未修改生产数据、生产 key、Secret 或任何既有账号密码；Bugbot 因订阅停用记为不适用。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 
