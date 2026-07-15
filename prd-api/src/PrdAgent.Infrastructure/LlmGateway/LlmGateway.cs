@@ -3143,7 +3143,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PromptPolicyId: request.Context?.PromptPolicyId,
                     PromptPolicyVersion: request.Context?.PromptPolicyVersion,
                     PromptPolicyHash: request.Context?.PromptPolicyHash,
-                    PromptPolicyChars: request.Context?.PromptPolicyChars,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),

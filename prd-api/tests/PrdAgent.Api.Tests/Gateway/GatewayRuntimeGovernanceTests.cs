@@ -80,7 +80,6 @@ public sealed class GatewayRuntimeGovernanceTests
         result.Request.Context!.PromptPolicyId.ShouldBe("policy-a");
         result.Request.Context.PromptPolicyVersion.ShouldBe(3);
         result.Request.Context.PromptPolicyHash.ShouldBe("hash-a");
-        result.Request.Context.PromptPolicyChars.ShouldBe(37);
     }
 
     [Fact]

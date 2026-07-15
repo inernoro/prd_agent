@@ -131,7 +131,6 @@ public class LlmRequestLog
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
 
     /// <summary>
     /// 入口适配器或 Provider adapter 丢弃的参数名。
