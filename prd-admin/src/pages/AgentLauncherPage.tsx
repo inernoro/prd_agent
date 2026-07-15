@@ -262,8 +262,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               </div>
               <ArrowRight
                 size={15}
-                className="shrink-0 opacity-50 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:opacity-90"
-                style={{ color: 'var(--media-card-task)' }}
+                className="shrink-0 opacity-30 transition-[transform,opacity] duration-200 group-hover:translate-x-0.5 group-hover:opacity-[0.65]"
+                style={{ color: 'var(--media-card-task-muted)' }}
               />
             </div>
           </div>

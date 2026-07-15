@@ -79,19 +79,20 @@
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
-  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.26) 0%, rgba(20, 20, 24, 0.64) 100%);
+  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.18) 0%, rgba(20, 20, 24, 0.52) 100%);
   --media-card-glass: rgba(20, 20, 24, 0.76);
-  --media-card-tag-bg: rgba(247, 247, 251, 0.10);
-  --media-card-tag-border: rgba(247, 247, 251, 0.18);
-  --media-card-tag-text: rgba(247, 247, 251, 0.86);
-  --media-card-border: rgba(247, 247, 251, 0.18);
-  --media-card-edge: rgba(247, 247, 251, 0.12);
+  --media-card-tag-bg: rgba(247, 247, 251, 0.06);
+  --media-card-tag-border: rgba(247, 247, 251, 0.10);
+  --media-card-tag-text: rgba(247, 247, 251, 0.68);
+  --media-card-border: rgba(247, 247, 251, 0.13);
+  --media-card-edge: rgba(247, 247, 251, 0.08);
   --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32);
   --media-card-task: #7cfc00;
+  --media-card-task-muted: rgba(124, 252, 0, 0.62);
   --text-on-media: #f7f7fb;
-  --text-on-media-muted: rgba(247, 247, 251, 0.76);
+  --text-on-media-muted: rgba(247, 247, 251, 0.66);
 
   --accent-green: #7cfc00;
   --accent-gold: #818cf8;
@@ -234,19 +235,20 @@
   --media-card-base: #141418 !important;
   --media-card-panel: rgba(20, 20, 24, 0.92) !important;
   --media-card-panel-strong: rgba(20, 20, 24, 0.97) !important;
-  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.26) 0%, rgba(20, 20, 24, 0.64) 100%) !important;
+  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.18) 0%, rgba(20, 20, 24, 0.52) 100%) !important;
   --media-card-glass: rgba(20, 20, 24, 0.76) !important;
-  --media-card-tag-bg: rgba(247, 247, 251, 0.10) !important;
-  --media-card-tag-border: rgba(247, 247, 251, 0.18) !important;
-  --media-card-tag-text: rgba(247, 247, 251, 0.86) !important;
-  --media-card-border: rgba(247, 247, 251, 0.18) !important;
-  --media-card-edge: rgba(247, 247, 251, 0.12) !important;
+  --media-card-tag-bg: rgba(247, 247, 251, 0.06) !important;
+  --media-card-tag-border: rgba(247, 247, 251, 0.10) !important;
+  --media-card-tag-text: rgba(247, 247, 251, 0.68) !important;
+  --media-card-border: rgba(247, 247, 251, 0.13) !important;
+  --media-card-edge: rgba(247, 247, 251, 0.08) !important;
   --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%) !important;
   --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%) !important;
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32) !important;
   --media-card-task: #7cfc00 !important;
+  --media-card-task-muted: rgba(124, 252, 0, 0.62) !important;
   --text-on-media: #f7f7fb !important;
-  --text-on-media-muted: rgba(247, 247, 251, 0.76) !important;
+  --text-on-media-muted: rgba(247, 247, 251, 0.66) !important;
 
   /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),

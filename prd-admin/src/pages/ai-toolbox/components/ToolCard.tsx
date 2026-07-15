@@ -459,8 +459,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
             <ArrowUpRight
               size={15}
-              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
-              style={{ color: hasArtwork ? 'var(--media-card-task)' : 'var(--text-muted)' }}
+              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-[0.45] group-hover:translate-x-0 transition-all duration-200"
+              style={{ color: hasArtwork ? 'var(--media-card-task-muted)' : 'var(--text-muted)' }}
             />
             </div>
           </div>

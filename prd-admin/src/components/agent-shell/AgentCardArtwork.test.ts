@@ -46,6 +46,8 @@ describe('AgentCardArtwork', () => {
 
     expect(html).toContain('aria-label="任务：完成视觉创作"');
     expect(html).not.toContain('>任务</span>');
+    expect(html).toContain('var(--text-on-media-muted)');
+    expect(html).toContain('var(--media-card-task-muted)');
   });
 
   it('卡片边缘层统一基础与悬浮描边的裁切边界', () => {

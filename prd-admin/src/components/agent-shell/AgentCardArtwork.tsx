@@ -91,7 +91,7 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: Age
         draggable={false}
         loading="lazy"
         decoding="async"
-        className="absolute inset-0 h-full w-full object-cover object-center transition-transform duration-500 group-hover:scale-[1.015]"
+        className="absolute inset-0 h-full w-full object-cover object-center opacity-[0.86] transition-[transform,opacity] duration-500 group-hover:scale-[1.015] group-hover:opacity-[0.92]"
       />
       <div
         className="absolute inset-0"
@@ -151,12 +151,12 @@ export function AgentCardTask({
       <span
         aria-label={`任务：${task}`}
         className="inline-flex shrink-0 items-center justify-end gap-1.5 whitespace-nowrap"
-        style={{ color: 'var(--text-on-media)' }}
+        style={{ color: 'var(--text-on-media-muted)' }}
       >
         <span
           aria-hidden
           className="block h-px w-3"
-          style={{ background: 'var(--media-card-task)' }}
+          style={{ background: 'var(--media-card-task-muted)' }}
         />
         <span className="text-[11px] font-medium leading-none">{task}</span>
       </span>
@@ -167,18 +167,18 @@ export function AgentCardTask({
     <span className={`inline-flex items-center justify-end whitespace-nowrap ${compact ? 'gap-1' : 'gap-1.5'}`}>
       <span
         className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-[0.14em]"
-        style={{ color: 'var(--media-card-task)' }}
+        style={{ color: 'var(--media-card-task-muted)' }}
       >
         <span
           aria-hidden
           className="block h-px w-4"
-          style={{ background: 'var(--media-card-task)' }}
+          style={{ background: 'var(--media-card-task-muted)' }}
         />
         任务
       </span>
       <span
         className={compact ? 'text-[12px] font-medium leading-none' : 'text-[13px] font-medium leading-none'}
-        style={{ color: 'var(--text-on-media)' }}
+        style={{ color: 'var(--text-on-media-muted)' }}
       >
         {task}
       </span>
