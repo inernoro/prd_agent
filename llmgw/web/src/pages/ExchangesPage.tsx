@@ -130,11 +130,17 @@ export function ExchangesPage() {
     setForm(emptyForm());
   }
 
+  function updateForm(nextForm: ExchangeFormState) {
+    setForm(nextForm);
+    setNotice(null);
+  }
+
   function updateModel(index: number, patch: Partial<ExchangeModelWriteRequest>) {
     setForm((current) => ({
       ...current,
       models: current.models.map((model, modelIndex) => modelIndex === index ? { ...model, ...patch } : model),
     }));
+    setNotice(null);
   }
 
   async function saveExchange() {
@@ -318,8 +324,10 @@ export function ExchangesPage() {
           form={form}
           meta={meta}
           isInternalTenant={tenant?.isInternal === true}
-          busy={busyId === 'create-exchange' || busyId === editingId}
-          onChange={setForm}
+          busy={formMode === 'create'
+            ? busyId === 'create-exchange'
+            : editingId !== null && busyId === editingId}
+          onChange={updateForm}
           onUpdateModel={updateModel}
           onSave={() => void saveExchange()}
           onCancel={closeForm}
