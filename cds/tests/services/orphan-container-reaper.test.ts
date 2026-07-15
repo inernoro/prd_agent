@@ -17,11 +17,13 @@ function makeState(overrides: Partial<{
   projects: Array<{ id: string }>;
   branches: Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
   infra: Array<{ containerName: string }>;
+  activeProxies: string[];
 }> = {}) {
   return {
     getProjects: () => overrides.projects ?? [{ id: 'p1' }],
     getAllBranches: () => overrides.branches ?? [],
     getInfraServices: () => overrides.infra ?? [],
+    getActiveExternalAccessProxyContainerNames: () => new Set(overrides.activeProxies ?? []),
     getContainerTeardownTombstones: () => [],
     removeContainerTeardownTombstone: () => {},
   };
@@ -289,21 +291,25 @@ describe('instance isolation (multi-master same host)', () => {
 });
 
 describe('external-access proxy sweep', () => {
-  it('stops proxy containers whose branch is gone, spares live-branch proxies', async () => {
+  it('spares only proxies with an active policy; stops disabled/expired/orphaned ones even if branch lives', async () => {
     const shell = new MockShellExecutor();
     mockPs(shell, [], [], [
-      `cds-ext-live|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=live-branch,cds.resource.id=mysql`,
+      // 有启用策略 → 有主，放过
+      `cds-ext-active|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=live-branch,cds.resource.id=mysql`,
+      // 分支还在但 access 已关/过期(不在 active 集合) → 僵尸公网代理，停掉
+      `cds-ext-disabled|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=live-branch,cds.resource.id=redis`,
+      // 分支已删 → 停掉
       `cds-ext-dead|running|${OLD_CREATED}|cds.managed=true,cds.type=resource-external-access,cds.branch.id=deleted-branch,cds.resource.id=mysql`,
     ]);
     shell.addResponsePattern(/^docker stop /, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
     const result = await sweepOrphanCdsContainers({
       shell,
-      state: makeState({ branches: [{ id: 'live-branch', services: {} }] }),
+      state: makeState({ branches: [{ id: 'live-branch', services: {} }], activeProxies: ['cds-ext-active'] }),
       env: {},
     });
     const stopped = result.actions.filter((a) => a.action === 'stopped');
-    expect(stopped.map((a) => a.containerName)).toEqual(['cds-ext-dead']);
-    expect(stopped[0].kind).toBe('proxy');
-    expect(shell.commands.join('\n')).not.toContain('cds-ext-live');
+    expect(stopped.map((a) => a.containerName).sort()).toEqual(['cds-ext-dead', 'cds-ext-disabled']);
+    expect(stopped.every((a) => a.kind === 'proxy')).toBe(true);
+    expect(shell.commands.join('\n')).not.toContain('cds-ext-active');
   });
 });

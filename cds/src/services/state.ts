@@ -3667,6 +3667,21 @@ export class StateService {
       .map(([, policy]) => policy);
   }
 
+  /**
+   * 启用中的外部访问代理容器名集合（供孤儿收割器判定，Codex P1）。
+   * 只有 enabled 且未过期的策略才算「代理在正当运行」；access 被关/过期后
+   * 若 docker rm 失败留下的代理容器不在此集合，收割器据此断掉公网暴露。
+   */
+  getActiveExternalAccessProxyContainerNames(nowIso = new Date().toISOString()): Set<string> {
+    const active = new Set<string>();
+    for (const policy of Object.values(this.state.resourceExternalAccess || {})) {
+      if (!policy.enabled || !policy.proxyContainerName) continue;
+      if (policy.expiresAt && policy.expiresAt <= nowIso) continue;
+      active.add(policy.proxyContainerName);
+    }
+    return active;
+  }
+
   upsertResourceExternalAccess(policy: Omit<ResourceExternalAccessPolicy, 'id' | 'createdAt' | 'updatedAt'>): ResourceExternalAccessPolicy {
     if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
     const key = this.resourcePolicyKey(policy.projectId, policy.branchId, policy.resourceId);

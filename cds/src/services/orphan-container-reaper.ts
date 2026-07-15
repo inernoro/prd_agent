@@ -48,6 +48,8 @@ export interface OrphanReaperStateView extends TombstoneStateView {
   getProjects(): Array<{ id: string }>;
   getAllBranches(): Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
   getInfraServices(): Array<{ containerName: string }>;
+  /** 启用中的外部访问代理容器名（缺省视为无启用策略）。 */
+  getActiveExternalAccessProxyContainerNames?(): Set<string>;
 }
 
 /**
@@ -344,15 +346,17 @@ export async function sweepOrphanCdsContainers(opts: {
     if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'app', branchId);
   }
-  // 外部访问代理容器（cds.type=resource-external-access，Codex P1）：删分支/项目
-  // 会移除策略 owner 但不停代理，公网端口会一直暴露已删资源。按 branchId 判归属
-  // （代理无 profileId，挂在分支上）——分支还在则保留，分支已删即孤儿，停掉即断
-  // 公网暴露。收割器只停不删，与其它类型一致。
+  // 外部访问代理容器（cds.type=resource-external-access，Codex P1）：公网 TCP
+  // 端口暴露，判归属必须严格——不是「分支还在就算有主」，而是「有一条**启用中**
+  // 的策略引用这个代理容器名」才算有主。删分支/项目会移除策略；access 被关/过期
+  // 但 docker rm 失败也会留下代理容器——两种情况分支都可能仍存活，只看 branchId
+  // 会把仍在公网暴露的僵尸代理误判成有主。按 active proxy 集合判定后停掉即断暴露。
+  const activeProxyNames = state.getActiveExternalAccessProxyContainerNames?.() ?? new Set<string>();
   for (const c of proxyContainers) {
     if (belongsToOtherInstance(c)) continue;
-    const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
-    if (branchId && knownBranchIds.has(branchId)) continue;
+    if (activeProxyNames.has(c.name)) continue;
     if (withinGracePeriod(c, nowMs)) continue;
+    const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
     await stopOne(c, 'proxy', branchId);
   }
 
