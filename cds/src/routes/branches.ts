@@ -14476,6 +14476,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-logs', async (req, res) => {
     const { id } = req.params;
+    // 预览实例守卫（Codex P2，2026-07-15）：不加这条，isRunning/docker inspect 会先被
+    // 拦截 executor 打成 exitCode 1，路由返回误导性的「容器不存在，请重新部署」，
+    // 预览实例的中文拒绝语永远到不了 UI。在入口直接给准确说明。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例没有真实容器，无法查看容器日志。此实例仅用于验收 CDS 自身的界面与交互。',
+      });
+      return;
+    }
     const { profileId } = req.body as { profileId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
