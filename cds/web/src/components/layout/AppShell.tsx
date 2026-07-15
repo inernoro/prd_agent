@@ -12,7 +12,7 @@ import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
-import { apiUrl, fetchInstanceMode } from '@/lib/api';
+import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -229,8 +229,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
-  // 预览实例（CDS 托管 CDS）提示条。探针失败按「非预览实例」处理，不打扰生产。
-  const [previewInstance, setPreviewInstance] = useState(false);
+  // 预览实例（CDS 托管 CDS）提示条。初值取服务端注入的 window 标记（预览域名下
+  // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
+  // 实例」处理，不打扰生产。
+  const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
   useEffect(() => {
     let cancelled = false;
     fetchInstanceMode()

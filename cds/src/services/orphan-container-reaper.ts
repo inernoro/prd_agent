@@ -28,9 +28,17 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 /** 收割器状态视图的窄接口（便于单测注入，不拖整个 StateService）。 */
 export interface OrphanReaperStateView {
   getProjects(): Array<{ id: string }>;
-  getAllBranches(): Array<{ id: string }>;
+  getAllBranches(): Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
   getInfraServices(): Array<{ containerName: string }>;
 }
+
+/**
+ * 新容器宽限期（Codex P2，2026-07-15）：app 归属判定精确到 branchId/profileId 后，
+ * 「分支已建、services 条目尚未落库」的部署中窗口会让新容器短暂无 owner。
+ * 创建时间在宽限期内的容器一律不动，跨过宽限期仍无 owner 才算真孤儿。
+ * CreatedAt 解析失败同样按「宽限期内」处理（宁漏勿误）。
+ */
+const ORPHAN_CONTAINER_MIN_AGE_MS = 30 * 60_000;
 
 export interface OrphanContainerAction {
   containerName: string;
@@ -62,7 +70,15 @@ const PROTECTED_CONTAINER_NAMES = new Set(['cds-infra-cds-state-mongo']);
 interface DiscoveredContainer {
   name: string;
   running: boolean;
+  /** docker `{{.CreatedAt}}` 解析结果；解析失败为 NaN（按宽限期内处理）。 */
+  createdAtMs: number;
   labels: string;
+}
+
+/** docker `{{.CreatedAt}}` 形如 "2026-07-15 09:00:00 +0000 UTC"，去掉尾部时区名后交给 Date.parse。 */
+export function parseDockerCreatedAt(raw: string): number {
+  const cleaned = (raw || '').replace(/\s+[A-Z]{2,5}$/, '').trim();
+  return Date.parse(cleaned);
 }
 
 async function listCdsContainers(
@@ -70,17 +86,28 @@ async function listCdsContainers(
   type: 'infra' | 'app',
 ): Promise<DiscoveredContainer[] | null> {
   const result = await shell.exec(
-    `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=${type}" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+    `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=${type}" --format '{{.Names}}|{{.State}}|{{.CreatedAt}}|{{.Labels}}'`,
   );
   if (result.exitCode !== 0) return null;
   const out: DiscoveredContainer[] = [];
   for (const line of result.stdout.trim().split('\n')) {
     if (!line) continue;
-    const [name, state, labels] = line.split('|');
+    const [name, state, createdAt, labels] = line.split('|');
     if (!name) continue;
-    out.push({ name, running: state === 'running', labels: labels || '' });
+    out.push({
+      name,
+      running: state === 'running',
+      createdAtMs: parseDockerCreatedAt(createdAt || ''),
+      labels: labels || '',
+    });
   }
   return out;
+}
+
+/** 宽限期判定：创建时间未知（NaN）或距今不足 MIN_AGE 都算「太新，不动」。 */
+function withinGracePeriod(container: DiscoveredContainer, nowMs: number): boolean {
+  if (!Number.isFinite(container.createdAtMs)) return true;
+  return nowMs - container.createdAtMs < ORPHAN_CONTAINER_MIN_AGE_MS;
 }
 
 /**
@@ -113,8 +140,20 @@ export async function sweepOrphanCdsContainers(opts: {
   }
 
   const knownInfraNames = new Set(infraServices.map((s) => s.containerName).filter(Boolean));
+  // app 归属精确到 branchId/profileId（Codex P2）：分支还在但某个 profile 被删/改名时，
+  // 旧 profile 的容器同样是孤儿。containerName 集合作为第二道匹配（label 异常但 state
+  // 仍引用该容器名时不误杀）。
+  const knownAppPairs = new Set<string>();
+  const knownAppContainerNames = new Set<string>();
+  for (const b of branches) {
+    for (const [profileId, svc] of Object.entries(b.services || {})) {
+      knownAppPairs.add(`${b.id}/${profileId}`);
+      if (svc?.containerName) knownAppContainerNames.add(svc.containerName);
+    }
+  }
   const knownBranchIds = new Set(branches.map((b) => b.id));
 
+  const nowMs = Date.now();
   const actions: OrphanContainerAction[] = [];
 
   const stopOne = async (
@@ -156,13 +195,19 @@ export async function sweepOrphanCdsContainers(opts: {
   for (const c of infraContainers) {
     if (PROTECTED_CONTAINER_NAMES.has(c.name)) continue;
     if (knownInfraNames.has(c.name)) continue;
+    if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'infra', undefined);
   }
   for (const c of appContainers) {
-    const branchMatch = c.labels.match(/cds\.branch\.id=([^,]+)/);
-    const branchId = branchMatch?.[1];
-    // 没有 branch label 的 app 容器视为异常孤儿；有 label 的按 branch 是否存活判定。
-    if (branchId && knownBranchIds.has(branchId)) continue;
+    const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
+    const profileId = c.labels.match(/cds\.profile\.id=([^,]+)/)?.[1];
+    // 归属判定（任一命中即有主）：branchId/profileId 配对在 state、或 state 的某个
+    // 分支服务仍引用该容器名。分支在但 profile 已删 → 孤儿（Codex P2）。
+    if (branchId && profileId && knownAppPairs.has(`${branchId}/${profileId}`)) continue;
+    if (knownAppContainerNames.has(c.name)) continue;
+    // 兼容旧容器缺 profile label：分支还活着就不动（信息不全宁漏勿误）。
+    if (branchId && !profileId && knownBranchIds.has(branchId)) continue;
+    if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'app', branchId);
   }
 

@@ -47,7 +47,19 @@ export function apiUrl(path: string, hostname = currentHostname()): string {
   return shouldPreferCdsPassthrough(hostname) ? `/_cds${url}` : url;
 }
 
+/**
+ * 子 CDS 预览实例标记（Codex P1，2026-07-15）。预览实例的服务端在 index.html
+ * 注入 window.__CDS_PREVIEW_INSTANCE__=true（server.ts sendReactIndex）：此时
+ * dashboard 由子实例自己服务，`/_cds` 直通会被 forwarder 送回**父** CDS，必须关闭，
+ * 让 /api/* 走同源直达子实例。
+ */
+export function isChildPreviewCdsInstance(): boolean {
+  return typeof window !== 'undefined' &&
+    (window as { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ === true;
+}
+
 export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolean {
+  if (isChildPreviewCdsInstance()) return false;
   if (!hostname) return false;
   const normalized = hostname.toLowerCase();
   return !['localhost', '127.0.0.1', '::1'].includes(normalized);
