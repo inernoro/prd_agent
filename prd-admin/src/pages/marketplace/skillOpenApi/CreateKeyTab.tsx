@@ -142,15 +142,22 @@ export function CreateKeyTab({
    *  - 仅 document-store → 文档空间 API 提示词（真实端点，不装 marketplace 技能）
    *
    * 安全考量：
-   *  - 明确要求"不要把 Key 写进仓库代码或 git 追踪的文件"
-   *  - 推荐用 ~/.zshrc / ~/.bashrc（gitignore 安全区）或 macOS Keychain / pass
-   *  - 不使用 ~/.env 之类容易被 git commit 的文件
+   *  - 明确要求"不要把 Key 写进仓库、Agent 本地设置、PR、验收报告或日志"
+   *  - 默认写入本机 secrets 文件并 chmod 600；shell 里只临时读取
+   *  - 不使用 ~/.env / .claude/settings.local.json / shell 启动文件这类容易被复制或提交的位置
    */
   const buildAgentPrompt = (key: string) => {
     const base = typeof window !== 'undefined' ? window.location.origin : '';
-    const keyBlock = `① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
+    const keyBlock = `① 把 Key 保存到本机 secrets 文件。不要写进仓库、.claude/settings.local.json、PR、验收报告或公开日志：
 
-export PRD_AGENT_API_KEY="${key}"
+mkdir -p ~/.codex/secrets
+umask 077
+printf '%s\\n' '${key}' > ~/.codex/secrets/prd-agent-api-key
+chmod 600 ~/.codex/secrets/prd-agent-api-key
+
+② 当前 shell 临时导入环境变量：
+
+export PRD_AGENT_API_KEY="$(cat ~/.codex/secrets/prd-agent-api-key)"
 export PRD_AGENT_BASE="${base}"`;
 
     // 仅文档空间权限（无 marketplace）→ 文档空间 API 指令，不引用 findmapskills。
@@ -159,7 +166,7 @@ export PRD_AGENT_BASE="${base}"`;
 
 ${keyBlock}
 
-② 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
+③ 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
 - 列出我的知识库：GET  $PRD_AGENT_BASE/api/document-store/stores
 - 读取某篇文章：  GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}
 - 新建知识库：    POST $PRD_AGENT_BASE/api/document-store/stores
@@ -176,13 +183,13 @@ ${keyBlock}
 
 ${keyBlock}
 
-② 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
+③ 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
 curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
  && mkdir -p ~/.claude/skills && unzip -o /tmp/findmapskills.zip -d ~/.claude/skills/ \\
  && rm /tmp/findmapskills.zip
 
-③ 读一下 ~/.claude/skills/findmapskills/SKILL.md —— 里面有海鲜市场全部操作（搜索 / 下载 / 上传 / 订阅 / Key 过期处理），后续我说"找个做 X 的技能"或"把这个上传到市场"都按那份文档操作即可。
+④ 读一下 ~/.claude/skills/findmapskills/SKILL.md —— 里面有海鲜市场全部操作（搜索 / 下载 / 上传 / 订阅 / Key 过期处理），后续我说"找个做 X 的技能"或"把这个上传到市场"都按那份文档操作即可。
 `;
   };
 

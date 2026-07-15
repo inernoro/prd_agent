@@ -22,6 +22,7 @@ import { Router } from 'express';
 import { spawn } from 'node:child_process';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
+import { isPreviewInstance, previewInstanceBlockedMessage } from '../services/preview-instance.js';
 
 export interface InfraDataRouterDeps {
   stateService: StateService;
@@ -138,6 +139,17 @@ export interface DockerExecResult {
 }
 
 export function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000, maxBytes = 256 * 1024): Promise<DockerExecResult> {
+  // 预览实例守卫（Codex P2，2026-07-15）：本函数绕过 IShellExecutor 直接 spawn docker，
+  // PreviewInstanceShellExecutor 的拦截罩不住它。数据面板 / init-sql / branches.ts 的
+  // 数据库初始化全走这里，必须在唯一咽喉处补同一句拒绝，保证「预览实例禁 docker」完整。
+  if (isPreviewInstance()) {
+    return Promise.resolve({
+      stdout: '',
+      stderr: previewInstanceBlockedMessage('docker'),
+      code: 1,
+      truncated: false,
+    });
+  }
   return new Promise((resolve) => {
     const proc = spawn('docker', argv, { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';

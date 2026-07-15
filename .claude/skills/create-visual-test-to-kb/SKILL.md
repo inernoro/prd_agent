@@ -23,7 +23,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 | **Playwright + Chromium** | harness 跑无头浏览器取证 | `npm i -g playwright && npx playwright install chromium`;运行时设 `PWPATH=$(npm root -g)/playwright` |
 | **Python 3** | 跑 `archive_report.py` | 系统自带 |
 | **登录凭据 env** | harness 表单登录(被验收应用) | `MAP_AI_USER`(用户名)、`MAP_ACCEPT_PASS`(密码)。**禁止写进文件**,运行时 export |
-| **CDS 归档 env**(默认 cds 模式) | 落 CDS 验收中心鉴权 | `CDS_HOST`(如 cds.miduo.org) + (`CDS_PROJECT_KEY`=项目级 cdsp_* 最小权限,推荐;或 `AI_ACCESS_KEY`=全局)。**禁止写进文件**,运行时 export |
+| **CDS 归档 env**(默认 cds 模式) | 落 CDS 验收中心鉴权 | `CDS_HOST`(CDS 服务地址) + (`CDS_PROJECT_KEY`=项目级最小权限 key,推荐;或 `AI_ACCESS_KEY`=全局)。**禁止写进文件**,运行时 export |
 | **cdscli** | 取预览域名 + report/report-folder 命令 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
 `report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
@@ -112,7 +112,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 每日验收开始取证前必须证明被测预览环境真的可测:
 
-- 预览域名和 branch 信息只能来自 `python3 .claude/skills/cds/cli/cdscli.py --human preview-url` 及 cdscli/API 查询结果;禁止手拼 `miduo.org`。
+- 预览域名和 branch 信息只能来自 `python3 .claude/skills/cds/cli/cdscli.py --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
 - 必须检查目标 branch 的部署状态和 smoke 结果。状态为 building、starting、stopped、error、missing,或 smoke 非 0 时,最多每 30 秒重试一次,总等待不超过 15 分钟。
 - 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
 - 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
@@ -291,7 +291,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 ```bash
 SKILL=.claude/skills/create-visual-test-to-kb
 export PWPATH=$(npm root -g)/playwright
-export MAP_AI_USER=inernoro MAP_ACCEPT_PASS='***' AI_ACCESS_KEY='***'
+export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'
 
 # 1. 复制示例 driver,按本次验收改 gotoByClick/click/shot 步骤
 cp $SKILL/scripts/example-driver.mjs /tmp/my-driver.mjs

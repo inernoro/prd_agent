@@ -528,6 +528,7 @@ public class PeerSyncController : ControllerBase
 
         var results = new List<object>();
         var anyFail = false;
+        var cancelledMidway = false;
         // PR #742 review Medium fix：跟踪是否真的与对端发生过成功的 HTTP 通信。
         // 之前总是 bump LastContactAt，即便全部 itemId 在本地（无权访问 / Export 返回 null）就失败、
         // 一次都没真正联系对端。LastContactAt 语义是"最近成功通信"（与 admin ping test 对齐），不该被误更新。
@@ -535,8 +536,10 @@ public class PeerSyncController : ControllerBase
         // 本次手动 transfer 的租约持有者标识（区别于 worker 的实例 id）。
         var manualLeaseOwner = $"manual:{this.GetRequiredUserId()}:{Guid.NewGuid():N}";
         var isDocStore = string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal);
-        foreach (var itemId in request.ItemIds.Distinct())
+        var distinctItemIds = request.ItemIds.Distinct().ToList();
+        for (var idx = 0; idx < distinctItemIds.Count; idx++)
         {
+            var itemId = distinctItemIds[idx];
             if (!allowedSet.Contains(itemId))
             {
                 results.Add(new { itemId, ok = false, message = "无权访问该条目（不在你的可访问范围内）" });
@@ -563,11 +566,23 @@ public class PeerSyncController : ControllerBase
                     request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl, ct);
                 if (r.AnyPeerContact) anyPeerContact = true;
                 if (!r.Ok) anyFail = true;
-                results.Add(new { itemId, ok = r.Ok, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
+                results.Add(new { itemId, ok = r.Ok, cancelled = r.Cancelled, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
+                // 用户在批量同步途中点了「停止」：无论当前条目被中断落 cancelled，还是 push-only 已成功收尾
+                // 但期间检测到取消请求（CancelRequested），都要停掉后续未开始的条目，不再继续写对端（Codex P2）。
+                if (r.Cancelled || r.CancelRequested) { cancelledMidway = true; }
             }
             finally
             {
                 if (isDocStore) await _transfer.ReleaseStoreSyncLeaseAsync(itemId, manualLeaseOwner, ct);
+            }
+            if (cancelledMidway)
+            {
+                // 批量途中被停止：为剩余「未开始」的条目补 cancelled 结果行，否则这些条目不进 results，
+                // 批量响应看起来「全部成功」，SendToPeerDialog 里它们停留在「已选中」态，用户看不出哪些库没同步。
+                // 这些条目未真正尝试（未联系对端、未改数据），anyFail 不置——它们不是失败，是被主动停在门外（Codex P2）。
+                foreach (var pendingId in distinctItemIds.Skip(idx + 1))
+                    results.Add(new { itemId = pendingId, ok = false, cancelled = true, message = "已取消（批量已停止，未开始同步）" });
+                break;
             }
         }
 
@@ -608,7 +623,58 @@ public class PeerSyncController : ControllerBase
             filter &= Builders<PeerSyncRun>.Filter.In(r => r.ItemId, allowed);
         }
         var runs = await _db.PeerSyncRuns.Find(filter).SortByDescending(r => r.StartedAt).Limit(take).ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items = runs }));
+
+        // 单库场景额外返回「已建立关系」标志：前端 everSynced 只看 capped(80) 的 runs 列表，长命库当年建立关系的
+        // 成功 run 可能早已滚出 80 条窗口，导致自动开关被误禁。此处对「当前保存的对端 + 方向」跑一次全量历史门
+        // （与 SetAutoSync gate 完全同口径：saved peer + acceptableDirs(saved direction) + status∈{synced,skipped}），
+        // 让前端在选中的组合==已保存关系时据此放行，不再依赖被截断的列表推断（Codex PR#1144 P2）。
+        bool? established = null;
+        if (!string.IsNullOrWhiteSpace(itemId) && string.Equals(resourceType, "document-store", StringComparison.Ordinal))
+        {
+            established = false;
+            var store = await _db.DocumentStores.Find(s => s.Id == itemId).FirstOrDefaultAsync(ct);
+            if (store != null && !string.IsNullOrWhiteSpace(store.PeerSyncNodeId))
+            {
+                var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
+                var hit = await _db.PeerSyncRuns
+                    .Find(r => r.ResourceType == resourceType && r.ItemId == itemId
+                        && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == store.PeerSyncNodeId
+                        && acceptableDirs.Contains(r.Direction)
+                        && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                    .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+                established = !string.IsNullOrEmpty(hit);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { items = runs, established }));
+    }
+
+    /// <summary>
+    /// 请求取消一个进行中的同步 run：置 CancelRequested 位，执行体（SyncItemAsync）在阶段检查点轮询后
+    /// 主动中断并落 cancelled 终态。只能取消 status=syncing 的 run，且调用者须对该 run 的条目有访问权限。
+    /// 对「前端已断开但后端仍在跑」的 run（server-authority：客户端断开不取消服务器任务）尤其有用。
+    /// </summary>
+    [Authorize]
+    [HttpPost("runs/{id}/cancel")]
+    public async Task<IActionResult> CancelRun(string id, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 run id"));
+        var run = await _db.PeerSyncRuns.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
+        if (run == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步记录不存在"));
+        if (!string.Equals(run.Status, PeerSyncRunStatus.Syncing, StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该同步已结束，无法取消"));
+
+        var resource = _registry.Resolve(run.ResourceType);
+        if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        // 归属校验：run 的条目必须在调用者可访问范围内（与 transfer / runs 同口径）。
+        var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var allowed = (await resource.ListItemsAsync(actor, ct)).Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+        if (!allowed.Contains(run.ItemId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步记录不存在或无权访问"));
+
+        await _db.PeerSyncRuns.UpdateOneAsync(r => r.Id == id,
+            Builders<PeerSyncRun>.Update.Set(r => r.CancelRequested, true), cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { requested = true }));
     }
 
     /// <summary>
@@ -637,9 +703,32 @@ public class PeerSyncController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == request.ItemId).FirstOrDefaultAsync(ct);
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
-        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                "请先手动选择发送或拉回方向后，再开启后台自动同步"));
+        // 「可开启自动同步」= 这个库确实成功同步过一次。判定用「有过成功的 outgoing run」而非
+        // store.PeerSyncStatus（最后一次状态）——否则：① 从未成功的首次同步（失败/取消，syncing 阶段
+        // 已写 direction+node）会被误判为已建立；② 反过来，之前成功建立、最近一次手动同步被取消/失败
+        // 的库（status=cancelled/error 但关系仍在）会被误拒，连改自动同步周期都 400（Codex P2 两向）。
+        if (request.Enabled)
+        {
+            // 绑定「当前保存的对端」：只认发往 store.PeerSyncNodeId 的成功 run。否则切换对端 A→B 失败/取消时
+            // （syncing 阶段已把 B 写入 store），A 的旧成功会误放行，worker 却用未成功建立的 B 关系（Codex P2）。
+            // 方向不绑：run.Direction 存 runDirection（对齐为 align-*），与 store.PeerSyncDirection（push/pull/both）
+            // 口径不同，绑方向会在对齐场景误判；方向不一致由前端 directionDirty 门 + worker 复用 store 方向兜底。
+            var savedNodeId = store.PeerSyncNodeId ?? string.Empty;
+            // 绑定当前保存的对端 + 方向（等价集合，对齐 run.Direction=align-* 归一）：只认发往同一对端、
+            // 且方向等价于当前 store.PeerSyncDirection 的成功 run，避免同 peer 换方向未成功也被放行（Codex P2）。
+            var acceptableDirs = PeerSyncSchedule.AcceptableRunDirections(store.PeerSyncDirection);
+            var hasSuccessfulSync = await _db.PeerSyncRuns
+                .Find(r => r.ResourceType == request.ResourceType && r.ItemId == request.ItemId
+                    && r.Origin == PeerSyncOrigin.Outgoing && r.PeerNodeId == savedNodeId
+                    && acceptableDirs.Contains(r.Direction)
+                    && (r.Status == PeerSyncRunStatus.Synced || r.Status == PeerSyncRunStatus.Skipped))
+                .Limit(1).Project(r => r.Id).FirstOrDefaultAsync(ct);
+            if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId)
+                || !IsUserConfirmedAutoDirection(store.PeerSyncDirection)
+                || string.IsNullOrEmpty(hasSuccessfulSync))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "请先成功手动同步一次（确定对端与方向）后，再开启后台自动同步"));
+        }
 
         var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
         var mode = PeerSyncSchedule.NormalizeMode(request.Mode);

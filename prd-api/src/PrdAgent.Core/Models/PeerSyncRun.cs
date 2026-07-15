@@ -39,8 +39,15 @@ public class PeerSyncRun
     /// <summary>对端节点地址（冗余）。</summary>
     public string? PeerNodeBaseUrl { get; set; }
 
-    /// <summary>状态：syncing / synced / skipped / error。</summary>
+    /// <summary>状态：syncing / synced / skipped / error / cancelled。</summary>
     public string Status { get; set; } = PeerSyncRunStatus.Syncing;
+
+    /// <summary>
+    /// 用户请求取消标志。POST runs/{id}/cancel 置 true；同步执行体（PeerSyncTransferService.SyncItemAsync）
+    /// 在阶段检查点轮询此位，为 true 时主动中断当前 run 并落 cancelled 终态。
+    /// 只对 status=syncing 的在途 run 有意义；已是终态的 run 不受影响。
+    /// </summary>
+    public bool CancelRequested { get; set; }
 
     public int Created { get; set; }
     public int Updated { get; set; }
@@ -95,4 +102,6 @@ public static class PeerSyncRunStatus
     public const string Synced = "synced";
     public const string Skipped = "skipped";
     public const string Error = "error";
+    /// <summary>用户主动取消（区别于 error：不是失败，是有意中止）。</summary>
+    public const string Cancelled = "cancelled";
 }

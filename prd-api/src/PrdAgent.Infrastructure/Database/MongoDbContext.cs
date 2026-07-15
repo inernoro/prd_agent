@@ -260,7 +260,9 @@ public class MongoDbContext
     public IMongoCollection<AccountDataTransfer> AccountDataTransfers => _database.GetCollection<AccountDataTransfer>("account_data_transfers");
 
     // Video Agent 文章转视频
+    public IMongoCollection<VideoProject> VideoProjects => _database.GetCollection<VideoProject>("video_projects");
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
+    public IMongoCollection<VideoExportTask> VideoExportTasks => _database.GetCollection<VideoExportTask>("video_export_tasks");
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");

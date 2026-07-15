@@ -25,6 +25,7 @@ public class VideoAgentController : ControllerBase
     private readonly IVideoGenService _videoGenService;
     private readonly IRunEventStore _runStore;
     private readonly MongoDbContext _db;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<VideoAgentController> _logger;
 
@@ -35,6 +36,7 @@ public class VideoAgentController : ControllerBase
         IVideoGenService videoGenService,
         IRunEventStore runStore,
         MongoDbContext db,
+        IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<VideoAgentController> logger)
@@ -42,6 +44,7 @@ public class VideoAgentController : ControllerBase
         _videoGenService = videoGenService;
         _runStore = runStore;
         _db = db;
+        _modelPoolQuery = modelPoolQuery;
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
@@ -50,6 +53,128 @@ public class VideoAgentController : ControllerBase
     private readonly IOpenRouterVideoClient _videoClient;
 
     private string GetAdminId() => this.GetRequiredUserId();
+
+    [HttpGet("models")]
+    public async Task<IActionResult> ListVideoModels(CancellationToken ct)
+    {
+        var pools = await _modelPoolQuery.GetModelPoolsAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            ModelTypes.VideoGen,
+            ct);
+        var poolItems = pools.SelectMany(pool => pool.Models)
+            .OrderBy(item => item.Priority)
+            .GroupBy(item => item.ModelId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        if (poolItems.Count == 0)
+            return Ok(ApiResponse<List<VideoModelOption>>.Ok([]));
+
+        var modelIds = poolItems.Select(item => item.ModelId).ToList();
+        var models = await _db.LLMModels.Find(model =>
+                modelIds.Contains(model.Id) || modelIds.Contains(model.ModelName))
+            .ToListAsync(ct);
+        var groupIds = pools.Select(pool => pool.Id).ToList();
+        var groups = await _db.ModelGroups.Find(group => groupIds.Contains(group.Id)).ToListAsync(ct);
+
+        var result = poolItems.Select(item =>
+        {
+            var config = models.FirstOrDefault(model =>
+                string.Equals(model.Id, item.ModelId, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(model.ModelName, item.ModelId, StringComparison.OrdinalIgnoreCase));
+            var pricing = groups.SelectMany(group => group.Models)
+                .FirstOrDefault(model => string.Equals(model.ModelId, item.ModelId, StringComparison.OrdinalIgnoreCase));
+            return BuildVideoModelOption(item.ModelId, config?.ModelName, config?.Name, item.HealthStatus, pricing);
+        }).ToList();
+
+        return Ok(ApiResponse<List<VideoModelOption>>.Ok(result));
+    }
+
+    private static VideoModelOption BuildVideoModelOption(
+        string id,
+        string? providerModelName,
+        string? displayName,
+        string healthStatus,
+        ModelGroupItem? pricing)
+    {
+        var key = $"{id} {providerModelName}".ToLowerInvariant();
+        var isSeedance20 = key.Contains("seedance-2");
+        var isSeedance15 = key.Contains("seedance-1-5") || key.Contains("seedance-1.5");
+        var isSeedance = key.Contains("seedance");
+        var isWan = key.Contains("wan-") || key.Contains("wan2");
+        var isVeo = key.Contains("veo-3");
+        var durations = isSeedance20
+            ? new List<int> { 5, 10, 15 }
+            : isSeedance15
+                ? new List<int> { 4, 5, 8, 10, 12 }
+                : isWan
+                    ? new List<int> { 5, 10 }
+                    : new List<int> { 5, 8, 10 };
+        return new VideoModelOption
+        {
+            Id = id,
+            Name = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
+            HealthStatus = healthStatus,
+            SupportsAudio = isSeedance15 || isSeedance20 || isVeo,
+            SupportsFirstFrame = true,
+            SupportsLastFrame = isSeedance || isWan,
+            SupportsReferenceAssets = isSeedance20,
+            AspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+            Resolutions = isSeedance || isWan || isVeo ? ["720p", "1080p"] : ["720p"],
+            Durations = durations,
+            PricePerCall = pricing?.PricePerCall,
+            PriceCurrency = pricing?.PriceCurrency,
+        };
+    }
+
+    [HttpGet("projects")]
+    public async Task<IActionResult> ListProjects(CancellationToken ct)
+    {
+        var projects = await _videoGenService.ListProjectsAsync(GetAdminId(), AppKey, ct);
+        return Ok(ApiResponse<List<VideoProject>>.Ok(projects));
+    }
+
+    [HttpPost("projects")]
+    public async Task<IActionResult> CreateProject([FromBody] CreateVideoProjectRequest request, CancellationToken ct)
+    {
+        var project = await _videoGenService.CreateProjectAsync(AppKey, GetAdminId(), request, ct);
+        return Ok(ApiResponse<VideoProject>.Ok(project));
+    }
+
+    [HttpGet("projects/{projectId}")]
+    public async Task<IActionResult> GetProject(string projectId, CancellationToken ct)
+    {
+        var project = await _videoGenService.GetProjectAsync(projectId, GetAdminId(), AppKey, ct);
+        return project == null
+            ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频项目不存在"))
+            : Ok(ApiResponse<VideoProject>.Ok(project));
+    }
+
+    [HttpPut("projects/{projectId}")]
+    public async Task<IActionResult> UpdateProject(
+        string projectId,
+        [FromBody] UpdateVideoProjectRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var project = await _videoGenService.UpdateProjectAsync(projectId, GetAdminId(), request, AppKey, ct);
+            return Ok(ApiResponse<VideoProject>.Ok(project));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
+    [HttpGet("projects/{projectId}/exports")]
+    public async Task<IActionResult> ListProjectExports(string projectId, CancellationToken ct)
+    {
+        var project = await _videoGenService.GetProjectAsync(projectId, GetAdminId(), AppKey, ct);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频项目不存在"));
+        var tasks = await _videoGenService.ListExportTasksAsync(projectId, GetAdminId(), AppKey, ct);
+        return Ok(ApiResponse<List<VideoExportTask>>.Ok(tasks));
+    }
 
     /// <summary>
     /// 直出视频（绕过 Worker，直接同步走 Gateway + OpenRouter）
@@ -70,7 +195,7 @@ public class VideoAgentController : ControllerBase
             AspectRatio = req.AspectRatio ?? "16:9",
             Resolution = req.Resolution ?? "720p",
             DurationSeconds = req.DurationSeconds ?? 5,
-            GenerateAudio = true,
+            GenerateAudio = req.GenerateAudio ?? true,
             UserId = GetAdminId()
         }, ct);
 
@@ -116,6 +241,7 @@ public class VideoAgentController : ControllerBase
         {
             r.Id,
             r.Status,
+            r.Mode,
             r.ArticleTitle,
             r.CurrentPhase,
             r.PhaseProgress,
@@ -125,9 +251,10 @@ public class VideoAgentController : ControllerBase
             r.StartedAt,
             r.EndedAt,
             r.ErrorMessage,
-            // 兼容旧前端：scenes 字段已废弃，保留 0 / 0 让前端不崩
-            ScenesCount = 0,
-            ScenesReady = 0,
+            r.ExportErrorMessage,
+            ScenesCount = r.Scenes.Count,
+            ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
+            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Rendering),
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
@@ -190,6 +317,73 @@ public class VideoAgentController : ControllerBase
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>批量触发未完成分镜渲染，worker 按顺序处理</summary>
+    [HttpPost("runs/{runId}/scenes/render-batch")]
+    public async Task<IActionResult> RenderScenes(
+        string runId,
+        [FromBody] BatchRenderVideoScenesRequest? request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var count = await _videoGenService.RenderScenesAsync(
+                runId, GetAdminId(), request?.SceneIndexes, ct: ct);
+            return Ok(ApiResponse<object>.Ok(new { count }));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    [HttpPost("runs/{runId}/scenes/reorder")]
+    public async Task<IActionResult> ReorderScenes(
+        string runId,
+        [FromBody] ReorderVideoScenesRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>选择一个历史生成版本作为当前分镜产物</summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/versions/{versionId}/activate")]
+    public async Task<IActionResult> ActivateSceneVersion(
+        string runId,
+        int sceneIndex,
+        string versionId,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.ActivateSceneVersionAsync(
+                runId, GetAdminId(), sceneIndex, versionId, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>把全部已完成分镜合成为完整 MP4</summary>
+    [HttpPost("runs/{runId}/export")]
+    public async Task<IActionResult> ExportRun(string runId, CancellationToken ct)
+    {
+        try
+        {
+            var task = await _videoGenService.RequestExportAsync(runId, GetAdminId(), ct: ct);
+            return Ok(ApiResponse<VideoExportTask>.Ok(task));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (InvalidOperationException ex)
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 
@@ -531,4 +725,5 @@ public class VideoGenDirectRequest
     public string? AspectRatio { get; set; }
     public string? Resolution { get; set; }
     public int? DurationSeconds { get; set; }
+    public bool? GenerateAudio { get; set; }
 }

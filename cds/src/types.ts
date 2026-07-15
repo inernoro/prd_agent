@@ -1264,6 +1264,26 @@ export interface BranchDeployEstimate {
   sourceSamples: number;
 }
 
+/**
+ * 项目删除的容器清理墓碑（2026-07-15，Codex 两条 P2 的共同解）。
+ *
+ * DELETE /projects/:id 的容器物理清理是响应后异步执行的，存在两个竞态：
+ *   1. 删的是最后一个项目时 state 变空，若异步段崩溃/docker 暂不可用，
+ *      收割器的空库守卫会永远跳过 → 残留永不回收；
+ *   2. 同 slug 项目被快速重建时，确定性容器名相同，迟到的 rm -f 会误删
+ *      新项目的容器。
+ * 墓碑把「要清理哪些容器」持久化进 state（显式意图，不依赖扫描推断），
+ * 消费方在 rm 前用 docker inspect 的 Created 时间与 requestedAt 比对——
+ * 容器比墓碑新 = 属于重建的后继项目，丢弃墓碑不动容器。
+ */
+export interface ContainerTeardownTombstone {
+  containerName: string;
+  /** 被删项目 id（审计用） */
+  projectId: string;
+  /** 墓碑写入时刻（ISO）。晚于此刻创建的同名容器属于后继项目，不许动。 */
+  requestedAt: string;
+}
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -1457,6 +1477,12 @@ export interface CdsState {
    * one-shot move don't repeatedly re-scan the legacy layout.
    */
   worktreeLayoutVersion?: number;
+  /**
+   * 项目删除的容器清理墓碑队列（见 ContainerTeardownTombstone 注释）。
+   * 写入于 DELETE /projects/:id 的 state cascade 之前；异步清理成功 /
+   * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
+   */
+  pendingContainerTeardowns?: ContainerTeardownTombstone[];
   /**
    * User-customisable settings for the GitHub PR preview comment that
    * CDS posts on PR open / refreshes on every deploy
