@@ -71,6 +71,13 @@ const DIRECTION_OPTS: { key: ManualDirection; label: string; seg: string; arrow:
 
 const DIRECTION_VERB: Record<ManualDirection, string> = { push: '发送', pull: '拉回', both: '双向同步' };
 
+/** 归一方向 -> 算作「该方向成功过」的 run.direction 取值（对齐 align-* 归一，与后端 AcceptableRunDirections 同口径）。 */
+const DIRECTION_ALIGN_EQUIV: Record<ManualDirection, string[]> = {
+  push: ['push', 'align-local'],
+  pull: ['pull', 'align-remote'],
+  both: ['both', 'align-both'],
+};
+
 const ALIGN_OPTS: { key: PeerAlign; label: string; desc: string; danger: boolean; icon: ReactNode }[] = [
   { key: 'remote', label: '远端为准', desc: '本地对齐对端：对端没有的本地删掉', danger: true, icon: <ArrowLeft size={15} /> },
   { key: 'local', label: '本地为准', desc: '对端对齐本地：本地没有的对端删掉', danger: true, icon: <ArrowRight size={15} /> },
@@ -107,9 +114,16 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   // 「需要处理」首次出现时自动展开失败记录一次；之后尊重用户手动折叠。
   const autoOpenedProblems = useRef(false);
 
-  // 真正成功同步过一次（有成功的 outgoing 台账）才算「已建立关系」——和后端 auto-sync gate 同口径。
-  // 仅写过方向（首次失败/取消也会写 direction）不算，避免取消的首次同步被误判为已建立（Codex P2）。
-  const everSynced = runs.some(r => r.origin === 'outgoing' && (r.status === 'synced' || r.status === 'skipped'));
+  const activeNode = nodes.find(n => n.id === nodeId) || null;
+  // 「已建立关系」= 当前选中的对端 + 方向组合确实成功同步过一次——与后端 auto-sync gate/worker 守护同口径。
+  // 不是「该库任意成功过」：切对端 A→B 或换方向未成功时，旧组合的成功不能算作新组合已建立（Codex P2）。
+  // run.direction 对齐存 align-*，用等价集合归一（align-remote≈pull / align-local≈push / align-both≈both）。
+  const acceptableRunDirs = direction ? DIRECTION_ALIGN_EQUIV[direction] : [];
+  const everSynced = !!activeNode && runs.some(r =>
+    r.origin === 'outgoing'
+    && (r.status === 'synced' || r.status === 'skipped')
+    && r.peerNodeId === activeNode.remoteNodeId
+    && acceptableRunDirs.includes(r.direction));
 
   useEffect(() => {
     // React StrictMode 开发态会执行一次 setup -> cleanup -> setup；第二次 setup 必须恢复存活标记，
@@ -201,7 +215,6 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     failed: runs.filter(r => isProblemRun(r, runs)).length,
   }), [runs]);
 
-  const activeNode = nodes.find(n => n.id === nodeId) || null;
   const progressRun = activeRuns.find(r => (r.progressTotal ?? 0) > 0) || activeRuns[0] || null;
 
   const tone: SyncTone = problemRuns.length > 0 ? 'red' : activeRuns.length > 0 ? 'gold' : everSynced ? 'teal' : 'none';

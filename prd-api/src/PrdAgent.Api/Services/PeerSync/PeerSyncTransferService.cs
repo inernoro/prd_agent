@@ -66,6 +66,8 @@ public sealed class PeerItemSyncResult
     public bool Ok { get; set; }
     /// <summary>本条目是否至少与对端成功 HTTP 通信过一次（用于 bump LastContactAt）。</summary>
     public bool AnyPeerContact { get; set; }
+    /// <summary>本条目是否因用户主动取消而中止（供批量调用方据此停止后续条目，不再继续写对端）。</summary>
+    public bool Cancelled { get; set; }
     public int Created { get; set; }
     public int Updated { get; set; }
     public int Skipped { get; set; }
@@ -279,6 +281,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             await MarkPeerSyncAsync(resource.ResourceType, itemId, "cancelled", direction, node, "已被用户取消", ct, updateDirection: false);
             await FinishRunAsync(runId, PeerSyncRunStatus.Cancelled, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed, "已被用户取消", itemStartedAt, ct);
             result.Ok = false;
+            result.Cancelled = true;
             result.Created = created; result.Updated = updated; result.Skipped = skipped;
             result.Deleted = deleted; result.Failed = failed;
             result.AssetsRewritten = assetsRewritten; result.AssetRewriteFailed = assetRewriteFailed;

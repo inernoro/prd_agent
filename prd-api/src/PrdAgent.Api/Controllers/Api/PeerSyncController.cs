@@ -528,6 +528,7 @@ public class PeerSyncController : ControllerBase
 
         var results = new List<object>();
         var anyFail = false;
+        var cancelledMidway = false;
         // PR #742 review Medium fix：跟踪是否真的与对端发生过成功的 HTTP 通信。
         // 之前总是 bump LastContactAt，即便全部 itemId 在本地（无权访问 / Export 返回 null）就失败、
         // 一次都没真正联系对端。LastContactAt 语义是"最近成功通信"（与 admin ping test 对齐），不该被误更新。
@@ -564,11 +565,14 @@ public class PeerSyncController : ControllerBase
                 if (r.AnyPeerContact) anyPeerContact = true;
                 if (!r.Ok) anyFail = true;
                 results.Add(new { itemId, ok = r.Ok, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
+                // 用户在批量同步途中点了「停止」：当前条目已落 cancelled，后续未开始的条目不应再继续写对端（Codex P2）。
+                if (r.Cancelled) { cancelledMidway = true; }
             }
             finally
             {
                 if (isDocStore) await _transfer.ReleaseStoreSyncLeaseAsync(itemId, manualLeaseOwner, ct);
             }
+            if (cancelledMidway) break;
         }
 
         // 仅在至少有一次真正与对端 HTTP 通信成功时才 bump LastContactAt（与 admin ping test 同口径），
