@@ -163,6 +163,7 @@ docs:
   guide.platform.development-guide: PRD Agent 开发文档
   guide.cds.cloud-dev-tutorial: Claude Code 云开发教程
   guide.cds.managed-delivery: CDS 托管交付使用指南
+  guide.cds.host-migration: CDS 宿主迁移 Runbook（拉取/构建/性能检查单：必迁三样、调度器与并发闸核对、缓存预热、极速版首拉限流）
   guide.platform.init-strategy: 初始化策略实现总结
   guide.prd-agent: PRD Agent 使用教程
   guide.visual-agent: 视觉创作 Agent 使用教程

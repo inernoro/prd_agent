@@ -404,6 +404,9 @@
 - [CDS 托管交付使用指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
   > 面向普通用户介绍新增功能、3 分钟 Quick Start、日常上线、失败处理和版本恢复
 
+- [CDS 宿主迁移 Runbook](guide.cds.host-migration) `guide.cds.host-migration`
+  > 迁移前/中/后检查单：必迁三样（mongo-split 库、.cds.env 的 CDS_JWT_SECRET、TLS 证书）、repos/worktree/缓存不迁重建、调度器与并发闸核对、缓存预热、极速版首拉限流、选机 CPU 优先
+
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
 
