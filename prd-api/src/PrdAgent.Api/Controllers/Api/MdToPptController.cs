@@ -347,10 +347,10 @@ public class MdToPptController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Content))
             return BadRequest(new { error = "内容不能为空" });
 
-        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var targetPages = ResolveTargetPages(req);
         var systemPrompt =
             "你是专业 PPT 策划师。根据用户内容，输出一份 PPT 大纲（纯 JSON，不要其他任何解释和代码围栏）。\n" +
-            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，实际可根据内容增减 1-2 页）。\n" +
+            $"目标页数：严格 {targetPages} 页，不得增减页数；totalPages 必须等于 {targetPages}，outline 数组长度也必须等于 {targetPages}。\n" +
             "输出格式：\n" +
             "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}],\"clarify\":[{\"id\":\"q1\",\"question\":\"面向投资人还是内部团队？\",\"type\":\"single\",\"options\":[\"投资人\",\"内部团队\"]}]}\n\n" +
             "严格规则：\n" +
@@ -442,8 +442,8 @@ public class MdToPptController : ControllerBase
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
-            return Ok(doc.RootElement.Clone());
+            var normalized = NormalizeOutlinePayload(raw, targetPages);
+            return Ok(normalized);
         }
         catch (JsonException)
         {
@@ -476,11 +476,11 @@ public class MdToPptController : ControllerBase
             return;
         }
 
-        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var targetPages = ResolveTargetPages(req);
         var systemPrompt =
             "你是顶级演示设计总监。根据用户内容输出 PPT 大纲，格式为 JSONL（每行一个独立 JSON 对象，行内禁止换行，输出完一行立即换行）。" +
             "不得有 markdown 围栏、前后缀解释。\n" +
-            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，可按内容增减 1-2 页）。\n" +
+            $"目标页数：严格 {targetPages} 页，不得增减页数；meta.totalPages 必须等于 {targetPages}，page 行总数也必须等于 {targetPages}。\n" +
             "第 1 行必须是 meta：\n" +
             "{\"type\":\"meta\",\"totalPages\":8,\"summary\":\"一句话总结\",\"design\":{\"palette\":\"整体配色策略（主色/强调色/底色气质，一句话）\",\"typography\":\"字体与排字策略（标题字重/正文密度/对齐，一句话）\",\"mood\":\"3-5 个气质关键词\"},\"clarify\":[{\"id\":\"q1\",\"question\":\"...\",\"type\":\"single\",\"options\":[\"...\"]}]}\n" +
             "随后每页一行：\n" +
@@ -565,13 +565,20 @@ public class MdToPptController : ControllerBase
                 {
                     emittedMeta = true;
                     metaObj = JsonNode.Parse(root.GetRawText()) as JsonObject;
-                    await WriteEventAsync("meta", root.Clone());
+                    if (metaObj != null) metaObj["totalPages"] = targetPages;
+                    if (metaObj != null) await WriteEventAsync("meta", metaObj);
+                    else await WriteEventAsync("meta", root.Clone());
                 }
                 else if (type == "page")
                 {
+                    if (emittedPages >= targetPages) return;
                     emittedPages++;
-                    if (JsonNode.Parse(root.GetRawText()) is JsonObject pg) pageArr.Add(pg);
-                    await WriteEventAsync("page", root.Clone());
+                    if (JsonNode.Parse(root.GetRawText()) is JsonObject pg)
+                    {
+                        pg["index"] = emittedPages;
+                        pageArr.Add(pg.DeepClone());
+                        await WriteEventAsync("page", pg);
+                    }
                 }
             }
             catch (JsonException)
@@ -657,7 +664,7 @@ public class MdToPptController : ControllerBase
                         var meta = new JsonObject
                         {
                             ["type"] = "meta",
-                            ["totalPages"] = root.TryGetProperty("totalPages", out var tpEl) ? tpEl.GetInt32() : 0,
+                            ["totalPages"] = targetPages,
                             ["summary"] = root.TryGetProperty("summary", out var smEl) ? smEl.GetString() : null,
                         };
                         if (root.TryGetProperty("clarify", out var clEl)) meta["clarify"] = JsonNode.Parse(clEl.GetRawText());
@@ -668,7 +675,7 @@ public class MdToPptController : ControllerBase
                     if (root.TryGetProperty("outline", out var olEl) && olEl.ValueKind == JsonValueKind.Array)
                     {
                         var idx = 0;
-                        foreach (var pg in olEl.EnumerateArray())
+                        foreach (var pg in olEl.EnumerateArray().Take(targetPages))
                         {
                             idx++;
                             var page = new JsonObject
@@ -722,6 +729,63 @@ public class MdToPptController : ControllerBase
             if (last > 0) raw = raw[..last].TrimEnd();
         }
         return raw.Trim();
+    }
+
+    internal static int ResolveTargetPages(MdToPptOutlineRequest req)
+    {
+        if (req.TargetPages is > 0)
+            return Math.Clamp(req.TargetPages.Value, 1, 30);
+        var text = string.Join("\n", new[] { req.Content, req.AttachmentText, req.KbContext, req.ChatHistory }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+        var explicitPages = ParseExplicitPageCount(text);
+        return explicitPages.HasValue ? Math.Clamp(explicitPages.Value, 1, 30) : 8;
+    }
+
+    internal static int? ParseExplicitPageCount(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(text,
+            "(?:严格|共|生成|做|制作|输出|约|大约|总共)?\\s*(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*(?:页|p|P)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var raw = m.Groups[1].Value;
+        if (int.TryParse(raw, out var n)) return n;
+        return ParseChineseSmallNumber(raw);
+    }
+
+    private static int? ParseChineseSmallNumber(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (raw == "十") return 10;
+        var digits = new Dictionary<char, int>
+        {
+            ['一'] = 1, ['二'] = 2, ['两'] = 2, ['三'] = 3, ['四'] = 4, ['五'] = 5,
+            ['六'] = 6, ['七'] = 7, ['八'] = 8, ['九'] = 9,
+        };
+        var tenIdx = raw.IndexOf('十');
+        if (tenIdx >= 0)
+        {
+            var tens = tenIdx == 0 ? 1 : digits.GetValueOrDefault(raw[0], 0);
+            var ones = tenIdx == raw.Length - 1 ? 0 : digits.GetValueOrDefault(raw[^1], 0);
+            var value = tens * 10 + ones;
+            return value > 0 ? value : null;
+        }
+        if (raw.Length == 1 && digits.TryGetValue(raw[0], out var single)) return single;
+        return null;
+    }
+
+    internal static JsonObject NormalizeOutlinePayload(string rawJson, int targetPages)
+    {
+        var root = JsonNode.Parse(rawJson) as JsonObject ?? throw new JsonException("outline root must be object");
+        var outline = root["outline"] as JsonArray ?? new JsonArray();
+        var normalized = new JsonArray();
+        foreach (var item in outline.Take(Math.Clamp(targetPages, 1, 30)))
+        {
+            if (item is JsonObject obj) normalized.Add(obj.DeepClone());
+        }
+        root["totalPages"] = normalized.Count;
+        root["outline"] = normalized;
+        return root;
     }
 
     // ─────────────────────────────────────────────
@@ -1359,6 +1423,34 @@ public class MdToPptController : ControllerBase
     // 并行逐页编排：壳子确定 → 子智能体并行各画一页 → page 事件实时进度 → 拼装
     // ─────────────────────────────────────────────
 
+    internal static bool IsConsoleDashboardBrief(string? content, string? summary = null)
+    {
+        var text = ((content ?? string.Empty) + "\n" + (summary ?? string.Empty)).ToLowerInvariant();
+        return text.Contains("控制台")
+            || text.Contains("操作面板")
+            || text.Contains("仪表盘")
+            || text.Contains("dashboard")
+            || text.Contains("console")
+            || text.Contains("工作台");
+    }
+
+    internal static string EffectiveThemeForRequest(string? theme, string? content, string? summary = null)
+    {
+        var t = (theme ?? string.Empty).Trim().ToLowerInvariant();
+        if (!IsConsoleDashboardBrief(content, summary)) return theme ?? "tech-dark";
+        if (t is "aurora-gradient" or "ocean-glass" or "tech-dark" or "cobalt-grid") return t;
+        return "ocean-glass";
+    }
+
+    private static string BuildConsoleDashboardGuard(string? content, string? summary)
+    {
+        if (!IsConsoleDashboardBrief(content, summary)) return string.Empty;
+        return "控制台/操作面板硬约束：本页必须像成熟 SaaS dashboard 或产品控制台，不像海报、书法、报刊或白皮书。" +
+               "可见结构至少包含两类：顶部状态栏、侧边导航、数据指标卡、任务队列、流程轨道、预览画布、发布状态、操作按钮组、日志/版本面板。" +
+               "标题字体必须使用清晰无衬线或等宽产品字体语气，禁止手写感、书法感、cursive 展示字、复古报刊标题；" +
+               "信息层级要适合反复操作和扫描，避免大段抒情文案。\n";
+    }
+
     private static readonly string[] PageLayoutHints =
     {
         "数据看板 Big Numbers（.stat 大数字格 + kicker），数字压住版面",
@@ -1432,6 +1524,8 @@ public class MdToPptController : ControllerBase
         if (next != null) sb.Append($"下一页标题：「{next}」\n");
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("本页设计意图（大纲阶段已与用户确认，优先遵循）：").Append(page.Design.Trim()).Append('\n');
+        var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
+        if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
         sb.Append("版式建议（可不采纳，但必须与相邻页差异化）：").Append(hint);
         return sb.ToString();
     }
@@ -1486,6 +1580,8 @@ public class MdToPptController : ControllerBase
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
+        var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
+        if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
         sb.Append("创意与质量要求：把用户意图转成具体发布会文案、数字、对比标签或流程节点；");
         sb.Append("可在范本同构区域内调整词序和标签，但不得输出泛化标题“封面/目录/总结/标题”；");
         sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
@@ -2146,7 +2242,8 @@ public class MdToPptController : ControllerBase
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
         // 锚定资产缺失时回落旧 reveal 壳子（不应发生，保险）
-        var anchor = MdToPptAnchors.Resolve(req.Theme);
+        var effectiveTheme = EffectiveThemeForRequest(req.Theme, req.Content, req.Summary);
+        var anchor = MdToPptAnchors.Resolve(effectiveTheme);
         string head, suffix;
         if (anchor != null)
         {
@@ -2155,7 +2252,7 @@ public class MdToPptController : ControllerBase
         }
         else
         {
-            (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
+            (head, suffix) = BuildDeckShell(effectiveTheme, deckTitle);
         }
         await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name, skill = "github-html-ppt" });
         await EmitAsync("diag", new
@@ -2223,7 +2320,7 @@ public class MdToPptController : ControllerBase
                     }
                     else
                     {
-                        sys = BuildPageSystemPrompt(req.Theme, i, total);
+                        sys = BuildPageSystemPrompt(effectiveTheme, i, total);
                         usr = BuildPageUserPrompt(req, i, total);
                     }
                     await EmitAsync("diag", new

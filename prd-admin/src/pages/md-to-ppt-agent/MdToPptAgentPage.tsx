@@ -355,8 +355,34 @@ function formatDiagStage(stage?: string): string {
   }
 }
 
-// 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
-function estimatePages(content: string): number {
+export function parseChineseSmallNumber(raw: string): number | null {
+  if (!raw) return null;
+  const digits: Record<string, number> = {
+    一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+  };
+  if (raw === '十') return 10;
+  const tenIdx = raw.indexOf('十');
+  if (tenIdx >= 0) {
+    const tens = tenIdx === 0 ? 1 : (digits[raw[0]] ?? 0);
+    const ones = tenIdx === raw.length - 1 ? 0 : (digits[raw[raw.length - 1]] ?? 0);
+    const value = tens * 10 + ones;
+    return value > 0 ? value : null;
+  }
+  return raw.length === 1 ? (digits[raw] ?? null) : null;
+}
+
+export function parseExplicitPages(content: string): number | null {
+  const match = content.match(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p)/i);
+  if (!match) return null;
+  const raw = match[1];
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
+  return parsed && parsed > 0 ? Math.max(1, Math.min(30, parsed)) : null;
+}
+
+// 按显式页数优先，其次按内容长度估算页数（约 700 字/页，夹在 4~20 页）
+export function estimatePages(content: string): number {
+  const explicit = parseExplicitPages(content);
+  if (explicit) return explicit;
   const len = content.trim().length;
   if (len === 0) return 8;
   return Math.max(4, Math.min(20, Math.round(len / 700)));

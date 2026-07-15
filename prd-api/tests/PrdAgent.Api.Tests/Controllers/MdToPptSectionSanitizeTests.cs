@@ -192,4 +192,34 @@ public class MdToPptSectionSanitizeTests
         Assert.Equal("req1", request.Context?.RequestId);
         Assert.Equal("u1", request.Context?.UserId);
     }
+
+    [Fact]
+    public void ResolveTargetPages_UsesExplicitPageCountBeforeDefault()
+    {
+        var req = new MdToPptOutlineRequest { Content = "严格生成 2 页高级产品发布会 PPT" };
+        Assert.Equal(2, MdToPptController.ResolveTargetPages(req));
+        Assert.Equal(12, MdToPptController.ParseExplicitPageCount("输出十二页技术方案"));
+    }
+
+    [Fact]
+    public void NormalizeOutlinePayload_TrimsExtraPages()
+    {
+        var raw = "{\"totalPages\":4,\"summary\":\"x\",\"outline\":[" +
+                  "{\"title\":\"A\",\"bullets\":[]}," +
+                  "{\"title\":\"B\",\"bullets\":[]}," +
+                  "{\"title\":\"C\",\"bullets\":[]}]}";
+        var normalized = MdToPptController.NormalizeOutlinePayload(raw, 2);
+        Assert.Equal(2, normalized["totalPages"]?.GetValue<int>());
+        Assert.Equal(2, normalized["outline"]?.AsArray().Count);
+    }
+
+    [Fact]
+    public void ConsoleDashboardBrief_AvoidsPosterTheme()
+    {
+        var theme = MdToPptController.EffectiveThemeForRequest(
+            "sunset-bold",
+            "严格生成 2 页高级控制台操作面板 PPT",
+            null);
+        Assert.Equal("ocean-glass", theme);
+    }
 }
