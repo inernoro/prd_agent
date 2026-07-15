@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 
 type Protocol = 'native' | 'openai' | 'claude' | 'gemini';
+type RequestType = 'chat' | 'vision';
 type SnippetTab = 'curl' | 'env' | 'skill';
 
 type ProtocolDefinition = {
@@ -21,7 +22,9 @@ type AccessBundle = {
   key: string;
   keyId: string;
   keyPrefix: string;
+  appCallerId: string;
   appCallerCode: string;
+  requestType: RequestType;
   clientCode: string;
   environment: string;
   teamId: string;
@@ -39,10 +42,19 @@ const PROTOCOLS: ProtocolDefinition[] = [
   { id: 'gemini', label: 'Gemini', path: '/v1beta/models/auto:generateContent', ingressProtocol: 'gemini-compatible' },
 ];
 
+const REQUEST_TYPES: Array<{ id: RequestType; label: string; description: string }> = [
+  { id: 'chat', label: '文字对话', description: '发送普通文字消息，适合问答、总结和 Agent 推理。' },
+  { id: 'vision', label: '图片理解', description: '发送一张内嵌测试图片，验证多模态请求与 vision 策略链。' },
+];
+
+const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 export function QuickstartPage() {
   const { tenant } = useAuth();
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
+  const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
   const [protocol, setProtocol] = useState<Protocol>('openai');
+  const [requestType, setRequestType] = useState<RequestType>('chat');
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-agent.quickstart::chat');
   const [clientCode, setClientCode] = useState('my-agent');
@@ -61,6 +73,7 @@ export function QuickstartPage() {
 
   const selectedProtocol = protocolDefinition(protocol);
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
+  const identityLocked = Boolean(bundle) || creatingStage !== null;
 
   useEffect(() => {
     let active = true;
@@ -85,18 +98,20 @@ export function QuickstartPage() {
     key: bundle?.key ?? '',
     keyId: bundle?.keyId ?? '',
     keyPrefix: bundle?.keyPrefix ?? 'gwk_',
+    appCallerId: bundle?.appCallerId ?? '',
     protocol,
     baseUrl: baseUrl.replace(/\/$/, ''),
     appCallerCode: bundle?.appCallerCode ?? (appCallerCode.trim() || 'my-agent.quickstart::chat'),
+    requestType: bundle?.requestType ?? requestType,
     clientCode: bundle?.clientCode ?? (clientCode.trim() || 'my-agent'),
     environment: bundle?.environment ?? environment,
     teamId: bundle?.teamId ?? teamId,
   };
   const snippets = useMemo(() => ({
-    curl: exampleFor(displayBundle.protocol, displayBundle.baseUrl, displayBundle.appCallerCode),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle),
-  }), [displayBundle.protocol, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment]);
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment]);
   const visibleSnippet = snippets[snippetTab];
 
   const copyText = async (name: string, value: string) => {
@@ -109,8 +124,8 @@ export function QuickstartPage() {
     const normalizedCode = appCallerCode.trim();
     const normalizedClient = clientCode.trim().toLowerCase();
     const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
-    if (!teamId || !normalizedBaseUrl || !isValidAppCaller(normalizedCode) || !/^[a-z][a-z0-9._-]{1,79}$/.test(normalizedClient)) {
-      setActionError('请确认团队、Gateway 地址、appCallerCode 和 clientCode 均有效。');
+    if (!teamId || !normalizedBaseUrl || !isValidAppCaller(normalizedCode, requestType) || !/^[a-z][a-z0-9._-]{1,79}$/.test(normalizedClient)) {
+      setActionError(`请确认团队、Gateway 地址和 clientCode 有效，并让 appCallerCode 以 ::${requestType} 结尾。`);
       return;
     }
     if (bundle && !window.confirm('将签发一把新密钥，现有密钥不会自动撤销。确认继续？')) return;
@@ -121,8 +136,8 @@ export function QuickstartPage() {
     const callerResponse = await createGatewayAppCaller({
       teamId,
       appCallerCode: normalizedCode,
-      requestType: 'chat',
-      title: `${normalizedClient} Quickstart`,
+      requestType,
+      title: `${normalizedClient} ${requestType === 'vision' ? '图片理解' : '文字对话'} Quickstart`,
       ingressProtocol: selectedProtocol.ingressProtocol,
     });
     if (!callerResponse.success) {
@@ -154,7 +169,9 @@ export function QuickstartPage() {
       key: keyResponse.data.key,
       keyId: keyResponse.data.id,
       keyPrefix: keyResponse.data.keyPrefix,
+      appCallerId: callerResponse.data.id,
       appCallerCode: normalizedCode,
+      requestType,
       clientCode: normalizedClient,
       environment,
       teamId,
@@ -181,7 +198,7 @@ export function QuickstartPage() {
           'X-Gateway-Dry-Run': 'quickstart',
           'X-Request-Id': requestId,
         },
-        body: JSON.stringify(dryRunBody(protocol, bundle.appCallerCode, requestId)),
+        body: JSON.stringify(dryRunBody(protocol, bundle.requestType, bundle.appCallerCode, requestId)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -190,7 +207,7 @@ export function QuickstartPage() {
       if (!response.ok) {
         setTestResult({ ok: false, message: readErrorMessage(payload) || `dry-run 失败，HTTP ${response.status}`, requestId: actualRequestId });
       } else if (upstreamCalled === false) {
-        setTestResult({ ok: true, message: `${definition.label} 协议、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
+        setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(bundle.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
       } else {
         setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
       }
@@ -209,8 +226,19 @@ export function QuickstartPage() {
     setSnippetTab('curl');
   };
 
+  const changeRequestType = (next: RequestType) => {
+    setRequestType(next);
+    setAppCallerCode((current) => {
+      const trimmed = current.trim();
+      if (/::(?:chat|vision)$/.test(trimmed)) return trimmed.replace(/::(?:chat|vision)$/, `::${next}`);
+      if (!trimmed.includes('::')) return `${trimmed}::${next}`;
+      return trimmed;
+    });
+    setTestResult(null);
+  };
+
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain' }}>
       <div style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <header>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Rocket size={18} /><h1 style={{ margin: 0, fontSize: 18 }}>Quickstart</h1></div>
@@ -218,7 +246,7 @@ export function QuickstartPage() {
         </header>
 
         <section className="lg-quickstart-steps" style={{ ...gridStyle, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-          <Step number="1" title="确认用途" text="选择团队、协议和 appCallerCode。appCaller 表示为什么调用，密钥表示谁在调用。" />
+          <Step number="1" title="确认用途" text="选择文字对话或图片理解、团队、协议和 appCallerCode。appCaller 表示为什么调用，密钥表示谁在调用。" />
           <Step number="2" title="生成配置" text="同页创建 appCaller 并签发团队密钥。明文只保存在本页内存，刷新后不可找回。" />
           <Step number="3" title="测试并回查" text="点击测试当前协议，Gateway 不访问上游，但会返回 requestId 并写入租户请求记录。" />
         </section>
@@ -230,13 +258,31 @@ export function QuickstartPage() {
           {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
           {!organizationLoading ? (
             <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || Boolean(bundle)} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div style={labelStyle}>调用类型</div>
+                <div className="lg-quickstart-request-types" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 5 }}>
+                  {REQUEST_TYPES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      disabled={identityLocked}
+                      onClick={() => changeRequestType(item.id)}
+                      aria-pressed={requestType === item.id}
+                      style={{ padding: '10px 12px', textAlign: 'left', cursor: identityLocked ? 'not-allowed' : 'pointer', borderRadius: 'var(--radius-sm)', border: requestType === item.id ? '1px solid var(--accent)' : '1px solid var(--border-subtle)', background: requestType === item.id ? 'var(--accent-soft)' : 'var(--bg-input)', color: 'var(--text-primary)', opacity: identityLocked ? 0.7 : 1 }}
+                    >
+                      <strong style={{ display: 'block', fontSize: 12 }}>{item.label}</strong>
+                      <span style={{ display: 'block', marginTop: 3, color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45 }}>{item.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
                 <option value="">选择团队</option>
                 {activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select></label>
-              <Field label="appCallerCode" value={appCallerCode} onChange={setAppCallerCode} placeholder="my-agent.quickstart::chat" disabled={!canCreateAccess || Boolean(bundle)} />
-              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || Boolean(bundle)} />
-              <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || Boolean(bundle)} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
+              <Field label={`appCallerCode（必须以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
+              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
+              <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
                 <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
               </select></label>
             </div>
@@ -253,7 +299,7 @@ export function QuickstartPage() {
           <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={setBaseUrl} /></details>
 
           <div className="lg-quickstart-actions">
-            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 appCaller 和上方四种协议；切换协议后可直接测试。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
+            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议；切换协议后可直接测试。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {canCreateAccess && bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
               {canCreateAccess ? <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : '一键生成 appCaller 与 key'}</Button> : null}
@@ -269,11 +315,28 @@ export function QuickstartPage() {
           ) : null}
           {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
 
+          {bundle ? (
+            <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <div><strong style={{ fontSize: 12 }}>下一步：给这个 {requestTypeLabel(bundle.requestType)} appCaller 配置提示词策略</strong><small style={{ display: 'block', marginTop: 4, color: 'var(--text-muted)', fontSize: 11 }}>策略预览不保存、不调用模型；保存后日志只记录 policy id、version 和 hash。</small></div>
+              {canManagePromptPolicy ? <Link to={`/app-callers/${encodeURIComponent(bundle.appCallerId)}/prompt-policy`} style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 650 }}>打开提示词策略</Link> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>请由 Owner 或 Admin 配置策略</span>}
+            </div>
+          ) : null}
+
           <div className="lg-safe-test-panel" style={{ marginTop: 12 }}>
-            <div><Play size={17} /><span><strong>测试当前协议</strong><small>请求会发送到 {selectedProtocol.path}，经过 service key 与团队治理后写日志，并在模型解析前结束。</small></span></div>
+            <div><Play size={17} /><span><strong>测试当前协议与调用类型</strong><small>请求会发送到 {selectedProtocol.path}，按 {requestTypeLabel(displayBundle.requestType)} 的真实请求形状通过 service key 与团队治理，并在模型解析前结束。</small></span></div>
             <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing} onClick={() => void runDryRun()}>{testing ? '正在测试并写日志' : '点击测试'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{canCreateAccess ? '明确返回 upstreamCalled=false 才算通过' : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
             {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
           </div>
+
+          <details className="lg-quickstart-safety" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, fontWeight: 650 }}>展开安全测试选项</summary>
+            <dl style={{ ...dlStyle, marginTop: 10 }}>
+              <RouteRow name="固定安全模式" text="始终发送 X-Gateway-Dry-Run: quickstart；本页不提供关闭开关，也不会访问付费上游。" />
+              <RouteRow name="调用类型" text={displayBundle.requestType === 'vision' ? '图片理解：使用内嵌的 1×1 测试图片，只验证多模态协议形状，不读取用户文件。' : '文字对话：使用固定的测试文字，只验证 chat 协议形状。'} />
+              <RouteRow name="通过标准" text="HTTP 成功、返回 requestId，并且 Gateway 明确返回 upstreamCalled=false；缺少任一项都不算通过。" />
+              <RouteRow name="审计边界" text="日志记录服务端解析的 tenant、team、service key、client 和 environment；不记录密钥明文，费用保持 unknown。" />
+            </dl>
+          </details>
 
           <div className="lg-snippet-tabs">
             <Button size="sm" variant={snippetTab === 'curl' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('curl')}>cURL</Button>
@@ -310,8 +373,7 @@ export function QuickstartPage() {
         <section style={cardStyle}>
           <h2 style={headingStyle}><KeyRound size={15} />能力边界</h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            <Chip label="本页一键测试: chat 四协议" color="#3fb950" bg="rgba(63,185,80,0.14)" />
-            <Chip label="vision: 同一治理链，需多模态请求体" color="#8b949e" bg="rgba(139,148,158,0.14)" />
+            <Chip label="本页一键测试: chat/vision 四协议" color="#3fb950" bg="rgba(63,185,80,0.14)" />
             <Chip label="dry-run: 不访问上游" color="#58a6ff" bg="rgba(88,166,255,0.14)" />
             <Chip label="费用: dry-run 保持未知" color="#d29922" bg="rgba(210,153,34,0.14)" />
           </div>
@@ -337,8 +399,12 @@ function normalizeClientCode(value: string) {
   return normalized.length >= 2 ? `${normalized}-agent`.slice(0, 80) : 'my-agent';
 }
 
-function isValidAppCaller(value: string) {
-  return /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+::chat$/.test(value) && value.length <= 200;
+function isValidAppCaller(value: string, requestType: RequestType) {
+  return new RegExp(`^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+::${requestType}$`).test(value) && value.length <= 200;
+}
+
+function requestTypeLabel(requestType: RequestType) {
+  return requestType === 'vision' ? '图片理解' : '文字对话';
 }
 
 function createRequestId() {
@@ -348,16 +414,37 @@ function createRequestId() {
   return `quickstart-${suffix.slice(0, 24)}`;
 }
 
-function dryRunBody(protocol: Protocol, appCallerCode: string, requestId: string) {
+function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string) {
   if (protocol === 'native') return {
     appCallerCode,
-    modelType: 'chat',
-    requestBody: { messages: [{ role: 'user', content: 'Reply with OK' }] },
+    modelType: requestType,
+    requestBody: { messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }] },
     context: { requestId, sourceSystem: 'external', modelPolicy: 'auto' },
   };
-  if (protocol === 'claude') return { model: 'auto', model_policy: 'auto', max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK' }] };
-  if (protocol === 'gemini') return { model_policy: 'auto', contents: [{ role: 'user', parts: [{ text: 'Reply with OK' }] }] };
-  return { model: 'auto', model_policy: 'auto', messages: [{ role: 'user', content: 'Reply with OK' }], stream: false };
+  if (protocol === 'claude') return { model: 'auto', model_policy: 'auto', max_tokens: 64, messages: [{ role: 'user', content: requestType === 'vision' ? visionClaudeContent() : 'Reply with OK' }] };
+  if (protocol === 'gemini') return { model_policy: 'auto', contents: [{ role: 'user', parts: requestType === 'vision' ? visionGeminiParts() : [{ text: 'Reply with OK' }] }] };
+  return { model: 'auto', model_policy: 'auto', messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }], stream: false };
+}
+
+function visionOpenAiContent() {
+  return [
+    { type: 'text', text: 'Describe this test image' },
+    { type: 'image_url', image_url: { url: `data:image/png;base64,${TEST_IMAGE_BASE64}` } },
+  ];
+}
+
+function visionClaudeContent() {
+  return [
+    { type: 'text', text: 'Describe this test image' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TEST_IMAGE_BASE64 } },
+  ];
+}
+
+function visionGeminiParts() {
+  return [
+    { text: 'Describe this test image' },
+    { inlineData: { mimeType: 'image/png', data: TEST_IMAGE_BASE64 } },
+  ];
 }
 
 function readRequestId(response: Response, payload: Record<string, unknown> | null) {
@@ -391,6 +478,7 @@ function environmentSnippet(bundle: DisplayBundle) {
   return `export LLMGW_BASE_URL="${bundle.baseUrl}"
 export LLMGW_API_KEY="${bundle.key || 'YOUR_ONE_TIME_LLMGW_KEY'}"
 export LLMGW_APP_CALLER="${bundle.appCallerCode}"
+export LLMGW_REQUEST_TYPE="${bundle.requestType}"
 export LLMGW_PROTOCOL="${protocolDefinition(bundle.protocol).ingressProtocol}"
 export LLMGW_CLIENT_CODE="${bundle.clientCode}"
 export LLMGW_ENVIRONMENT="${bundle.environment}"`;
@@ -410,6 +498,7 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - LLMGW_BASE_URL=${bundle.baseUrl}
 - LLMGW_API_KEY 由部署 Secret 注入，禁止写入仓库
 - LLMGW_APP_CALLER=${bundle.appCallerCode}
+- LLMGW_REQUEST_TYPE=${bundle.requestType}
 
 ## 执行规则
 
@@ -427,14 +516,14 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - 401 时轮换密钥；403 时检查 team、appCaller、协议和 scope，禁止通过扩大到通配 key 绕过。`;
 }
 
-function exampleFor(protocol: Protocol, baseUrl: string, appCaller: string) {
+function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string) {
   const definition = protocolDefinition(protocol);
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\
   -H "X-Gateway-Dry-Run: quickstart" \\
   -H "X-Request-Id: quickstart-\$(date +%s)"`;
-  const body = JSON.stringify(dryRunBody(protocol, appCaller, 'quickstart-curl'), null, 2);
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, 'quickstart-curl'), null, 2);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `curl "${baseUrl}${definition.path}" \\
   ${common}${extra} \\

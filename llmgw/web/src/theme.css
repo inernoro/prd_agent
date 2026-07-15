@@ -194,7 +194,8 @@ a:focus-visible {
 
   .lg-quickstart-steps,
   .lg-quickstart-detail-grid,
-  .lg-quickstart-inputs {
+  .lg-quickstart-inputs,
+  .lg-quickstart-request-types {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
