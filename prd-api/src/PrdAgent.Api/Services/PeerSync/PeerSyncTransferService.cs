@@ -68,6 +68,11 @@ public sealed class PeerItemSyncResult
     public bool AnyPeerContact { get; set; }
     /// <summary>本条目是否因用户主动取消而中止（供批量调用方据此停止后续条目，不再继续写对端）。</summary>
     public bool Cancelled { get; set; }
+    /// <summary>
+    /// 本条目虽已成功收尾、但期间/收尾时检测到取消请求（典型：push-only 在网络推送途中被点停，
+    /// 推送已完成落 synced 无法回滚，Cancelled 保持 false 以保留成功结果，但需据此标志停掉批量后续条目）。
+    /// </summary>
+    public bool CancelRequested { get; set; }
     public int Created { get; set; }
     public int Updated { get; set; }
     public int Skipped { get; set; }
@@ -271,6 +276,9 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             result.Deleted = deleted; result.Failed = failed;
             result.AssetsRewritten = assetsRewritten; result.AssetRewriteFailed = assetRewriteFailed;
             result.Message = summary;
+            // push-only 在网络推送途中被点停：推送已完成、无后续检查点可抛，条目如实收尾为成功；
+            // 但取消位仍在，非抛出式再查一次，让批量调用方据此停掉后续未开始的条目（Codex P2）。
+            result.CancelRequested = await IsCancelRequestedAsync(runId, ct);
             return result;
         }
         catch (PeerSyncRunCancelledException cancelEx)
@@ -384,6 +392,18 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             .FirstOrDefaultAsync(ct);
         if (!string.IsNullOrEmpty(cancelled))
             throw new PeerSyncRunCancelledException();
+    }
+
+    /// <summary>非抛出式读取某 run 的 CancelRequested 位（成功收尾后判断是否仍需停掉批量后续条目）。</summary>
+    private async Task<bool> IsCancelRequestedAsync(string? runId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(runId)) return false;
+        var cancelled = await _db.PeerSyncRuns
+            .Find(r => r.Id == runId && r.CancelRequested)
+            .Limit(1)
+            .Project(r => r.Id)
+            .FirstOrDefaultAsync(ct);
+        return !string.IsNullOrEmpty(cancelled);
     }
 
     private async Task<string> StartRunAsync(

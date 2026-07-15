@@ -565,8 +565,9 @@ public class PeerSyncController : ControllerBase
                 if (r.AnyPeerContact) anyPeerContact = true;
                 if (!r.Ok) anyFail = true;
                 results.Add(new { itemId, ok = r.Ok, cancelled = r.Cancelled, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
-                // 用户在批量同步途中点了「停止」：当前条目已落 cancelled，后续未开始的条目不应再继续写对端（Codex P2）。
-                if (r.Cancelled) { cancelledMidway = true; }
+                // 用户在批量同步途中点了「停止」：无论当前条目被中断落 cancelled，还是 push-only 已成功收尾
+                // 但期间检测到取消请求（CancelRequested），都要停掉后续未开始的条目，不再继续写对端（Codex P2）。
+                if (r.Cancelled || r.CancelRequested) { cancelledMidway = true; }
             }
             finally
             {

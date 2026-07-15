@@ -19,3 +19,4 @@
 | fix | prd-api | 取消时保留 apply 已提交的部分增删改计数：PeerSyncRunCancelledException 带回本次 apply 已处理数，SyncItemAsync 累加落 cancelled run，避免 pull/align 写入一半被停时历史显示删除0/计数陈旧与实际不符（Codex PR#1144 P2） |
 | fix | prd-api | 取消状态回传给 transfer 调用方：批量 results 每项带 cancelled 标志（Codex PR#1144 P2） |
 | fix | prd-admin | 用户主动取消不再被渲染成失败：单库 getTransferFailureMessage 跳过 cancelled 项（不报 error），批量列表 cancelled 显示中性「已取消」而非红色失败（Codex PR#1144 P2） |
+| fix | prd-api | push-only 传输在对端已收尾后点停也停整批：PeerItemSyncResult 加 CancelRequested 标志，成功收尾前非抛出式再查一次取消位，条目仍如实记成功、但 Controller 批量 loop 据此 break 停掉后续未开始的库（Codex PR#1144 P2） |
