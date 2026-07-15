@@ -965,9 +965,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
   const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>(undefined);
-  /** 同步中心 / 发送到对端弹窗（本库范围） */
+  /** 统一同步面板（本库范围）：方向 + 自动 + 对齐 + 记录，全部在这一个面板里 */
   const [showSyncCenter, setShowSyncCenter] = useState(false);
-  const [showSendToPeerDetail, setShowSendToPeerDetail] = useState(false);
   /** 本库是否有进行中的同步（轮询运行台账得出，驱动「同步」按钮动起来） */
   const [syncActive, setSyncActive] = useState(false);
   /** 顶栏「更多」下拉 */
@@ -1535,6 +1534,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 不再叠加 store.peerSyncStatus==='syncing'——后端 IsDue 已不用该字段判在途，
   // 崩溃残留的 syncing 会让按钮永久脉冲（Bugbot: Stale syncing status pins UI）。
   const syncBusy = syncActive;
+  // 「同步」按钮文案即状态：同步中 > 需要处理 > 已同步·对端 > 同步（还没建立关系）。
+  // 「已建立」= 真正成功同步过一次（status=synced）。失败(error)/取消(cancelled)/未同步都算未建立，
+  // 顶栏只显示「同步」，不显示「已同步·对端」（Codex P2：取消的首次同步不应显示为 synced）。
+  const syncEstablished = !syncBusy && store.peerSyncStatus === 'synced'
+    && ['push', 'pull', 'both', 'align-remote', 'align-local', 'align-both'].includes(store.peerSyncDirection ?? '');
+  const syncButtonLabel = syncBusy ? (isMobile ? '同步中' : '同步中…')
+    : store.peerSyncStatus === 'error' ? '需要处理'
+      : syncEstablished ? (isMobile || !store.peerSyncNodeName ? '已同步' : `已同步 · ${store.peerSyncNodeName}`)
+        : '同步';
+  const syncButtonTitle = syncEstablished
+    ? `同步面板：与「${store.peerSyncNodeName ?? '对端'}」的同步关系、立即同步、自动同步与记录`
+    : '同步面板：选择方向（发送 / 拉回 / 双向）建立与对端节点的同步关系';
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -1573,26 +1584,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
         actions={
           <div className="flex items-center gap-2">
-            {/* 同步中心入口：有任务进行中时转圈 + 脉冲 + 文案「同步中…」，点击进入四视图 + 强制对齐 */}
+            {/* 统一同步入口（唯一）：文案即状态——同步中 / 需要处理 / 已同步·对端 / 同步（未建立）。
+                原「发送到」按钮已合并进面板：发送只是方向为 push 的同步，不再独立成门面。 */}
             <button
               onClick={() => setShowSyncCenter(true)}
               className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all ${syncBusy ? 'animate-pulse' : ''}`}
               style={syncBusy
                 ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
-                : store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : undefined}
-              title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
+                : store.peerSyncStatus === 'error'
+                  ? { color: 'rgba(252,165,165,0.96)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
+                  : syncEstablished
+                    ? { color: 'rgba(94,234,212,0.96)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
+                    : undefined}
+              title={syncButtonTitle}
             >
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              {syncBusy ? (isMobile ? '同步中' : '同步中…') : '同步'}
+              {syncButtonLabel}
             </button>
-            <Button
-              variant="secondary"
-              size="xs"
-              onClick={() => setShowSendToPeerDetail(true)}
-              title="把当前知识库发送到已配对的 MAP 节点"
-            >
-              <Send size={13} /> 发送到
-            </Button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
             {!isMobile && <StoreSyncBadge
               storeId={store.id}
@@ -1928,7 +1936,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         <WikilinkHoverCard />
       </div>
 
-      {/* 同步中心（本库）：进行中 / 发出去 / 收进来 / 历史 + 强制对齐 */}
+      {/* 统一同步面板（本库）：状态 + 立即同步 + 方向/自动关系设定 + 强制对齐 + 记录 */}
       {showSyncCenter && (
         <SyncCenterDialog
           storeId={store.id}
@@ -1937,19 +1945,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           autoIntervalMinutes={store.peerSyncIntervalMinutes}
           autoMode={store.peerSyncAutoMode}
           peerSyncDirection={store.peerSyncDirection}
+          peerNodeId={store.peerSyncNodeId}
           peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
-          onOpenSend={() => { setShowSyncCenter(false); setShowSendToPeerDetail(true); }}
-        />
-      )}
-      {/* 发送到对端（本库预选） */}
-      {showSendToPeerDetail && (
-        <SendToPeerDialog
-          resourceType="document-store"
-          presetItemIds={[store.id]}
-          onClose={() => setShowSendToPeerDetail(false)}
-          onDone={() => { void loadStore(); void loadEntries(); }}
         />
       )}
 
@@ -3134,9 +3133,9 @@ export function DocumentStorePage() {
               variant="secondary"
               size="xs"
               onClick={() => setShowSendToPeer(true)}
-              title="把知识库发送到 / 双向同步到另一个 MAP 节点（如正式环境），由管理员预先在「设置 → 系统互联」配好"
+              title="一次选多个知识库，批量同步到另一个 MAP 节点（如正式环境）；单库同步请进库内右上角「同步」。对端节点由管理员预先在「设置 → 系统互联」配好"
             >
-              <Send size={13} /> 发送到
+              <ArrowLeftRight size={13} /> 批量同步
             </Button>
           )}
           {!isMobile && tab === 'mine' && (
@@ -3267,8 +3266,8 @@ export function DocumentStorePage() {
                     className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
                     style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
                   >
-                    <Send size={17} />
-                    <span className="text-[12px]">发送到</span>
+                    <ArrowLeftRight size={17} />
+                    <span className="text-[12px]">批量同步</span>
                   </button>
                   <button
                     type="button"

@@ -2,10 +2,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
 import type { CreateModelRequest, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
-import { Button, Chip, SectionLoader } from '@/components/ui';
+import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { boolChip } from '@/components/poolsHelpers';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 export function ModelsPage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ModelItem[] | null>(null);
   const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
   const [capabilityTemplates, setCapabilityTemplates] = useState<ParameterCapabilityTemplateItem[]>([]);
@@ -277,13 +281,13 @@ export function ModelsPage() {
               不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
             </div>
           </div>
-          {ownedPlatforms.length > 0 ? (
+          {canWrite && ownedPlatforms.length > 0 ? (
             <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
-          ) : (
+          ) : canWrite ? (
             <a href="/platforms" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
-          )}
+          ) : null}
         </div>
-        {showCreate && ownedPlatforms.length > 0 ? (
+        {showCreate && canWrite && ownedPlatforms.length > 0 ? (
           <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
             <label style={fieldStyle}>
               <span style={labelStyle}>Provider</span>
@@ -341,6 +345,7 @@ export function ModelsPage() {
           </form>
         ) : null}
       </section>
+      {!canWrite ? <ReadOnlyNotice /> : null}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>
           <option value="">全部平台</option>
@@ -355,7 +360,7 @@ export function ModelsPage() {
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      {items && items.length > 0 ? (
+      {items && items.length > 0 && canWrite ? (
       <details style={{ flexShrink: 0 }}>
         <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量维护已有模型</summary>
       <div style={{ ...toolbarStyle, marginTop: 6 }}>
@@ -414,7 +419,7 @@ export function ModelsPage() {
       </div>
       </details>
       ) : null}
-      {!items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
+      {!items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
         <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
@@ -461,7 +466,7 @@ export function ModelsPage() {
                     <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                     <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         {keyEditId === m.id ? (
                           <>
                             <input
@@ -502,7 +507,7 @@ export function ModelsPage() {
                             </Button>
                           </>
                         )}
-                      </span>
+                      </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                     </td>
                   </tr>
                 );
