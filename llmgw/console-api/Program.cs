@@ -4962,6 +4962,22 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         { "CreatedByUserId", access.UserId },
         { "CreatedAt", createdAt },
     };
+
+    async Task ApplyMatchedRequestLogAsync()
+    {
+        if (matchedLog is null) return;
+        await logs.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", matchedLog.GetStringOrEmpty("_id"))),
+            new BsonDocument("$set", new BsonDocument
+            {
+                { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
+                { "ProviderCostCurrency", actualCurrency },
+                { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
+                { "ReconciliationStatus", reconciliationStatus },
+                { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
+            }));
+    }
+
     try
     {
         await costReconciliations.InsertOneAsync(record);
@@ -4975,7 +4991,12 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         if (existing is not null && existing.AsNullableString("ImportHash") != importHash)
             return Json(ApiEnvelope<object>.Fail("COST_IMPORT_CONFLICT", "同一供应商账单记录已用不同内容导入"), jsonOptions, 409);
         if (existing is not null)
+        {
+            // 首次导入可能已写入对账记录、但在请求日志投影前进程退出。
+            // 同内容重试必须补写日志，不能把幂等成功变成永久不一致。
+            await ApplyMatchedRequestLogAsync();
             return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(existing)), jsonOptions);
+        }
         if (providerRequestId is not null)
         {
             var requestExisting = await costReconciliations.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
@@ -4989,19 +5010,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
         throw;
     }
 
-    if (matchedLog is not null)
-    {
-        await logs.UpdateOneAsync(
-            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", matchedLog.GetStringOrEmpty("_id"))),
-            new BsonDocument("$set", new BsonDocument
-            {
-                { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
-                { "ProviderCostCurrency", actualCurrency },
-                { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
-                { "ReconciliationStatus", reconciliationStatus },
-                { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
-            }));
-    }
+    await ApplyMatchedRequestLogAsync();
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5101,6 +5110,9 @@ app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
         .ToListAsync();
     var successorIds = policy?.AsStringList("SuccessorServiceKeyIds") ?? [];
     var requiredIngressProtocols = policy?.AsStringList("RequiredIngressProtocols") ?? [];
+    var requiredScopes = policy?.AsStringList("RequiredScopes") ?? [];
+    if (requiredScopes.Count == 0)
+        requiredScopes = LegacySuccessorScopePolicy.RequiredRuntimeScopes.ToList();
     var successorCounts = ReadSuccessorObservationCounts(policy);
     var requiredObservations = policy?.AsNullableLong("RequiredSuccessorObservations") ?? 1;
     var minimumObserved = successorIds.Count == 0
@@ -5114,6 +5126,7 @@ app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
         allowedAppCallerCodes = policy?.AsStringList("AllowedAppCallerCodes") ?? [],
         successorServiceKeyIds = successorIds,
         requiredIngressProtocols,
+        requiredScopes,
         requiredSuccessorObservations = requiredObservations,
         successorObservedCount = minimumObserved,
         successorObservationCounts = successorCounts,
@@ -5147,6 +5160,7 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
     var allowedCallers = NormalizeDistinct(body.AllowedAppCallerCodes ?? [], 500);
     var successorIds = NormalizeDistinct(body.SuccessorServiceKeyIds ?? [], 100);
     var requiredIngressProtocols = TargetIngressProtocols().Select(protocol => protocol.Key).ToList();
+    var requiredScopes = LegacySuccessorScopePolicy.RequiredRuntimeScopes.ToList();
     var required = Math.Clamp(body.RequiredSuccessorObservations, 1, 1000000);
     if (body.DeadlineAt is null)
         return Json(ApiEnvelope<object>.Fail("LEGACY_DEADLINE_REQUIRED", "必须设置 legacy key 截止时间"), jsonOptions, 400);
@@ -5158,19 +5172,21 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
                 Builders<BsonDocument>.Filter.In("_id", successorIds),
                 Builders<BsonDocument>.Filter.Eq("Enabled", true),
                 Builders<BsonDocument>.Filter.Regex("Environment", new BsonRegularExpression("^production$", "i")),
+                Builders<BsonDocument>.Filter.Regex("Purpose", new BsonRegularExpression("^runtime$", "i")),
                 Builders<BsonDocument>.Filter.Regex("SourceSystem", new BsonRegularExpression("^map$", "i")))))
             .ToListAsync();
         if (successorDocs.Count != successorIds.Count)
-            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 production MAP scoped key"), jsonOptions, 409);
+            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 production MAP runtime scoped key"), jsonOptions, 409);
         foreach (var successor in successorDocs)
         {
             var missingCallers = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("AppCallerCodes"), allowedCallers);
             var missingProtocols = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("IngressProtocols"), requiredIngressProtocols);
-            if (missingCallers.Count > 0 || missingProtocols.Count > 0)
+            var missingScopes = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("Scopes"), requiredScopes);
+            if (missingCallers.Count > 0 || missingProtocols.Count > 0 || missingScopes.Count > 0)
             {
                 return Json(ApiEnvelope<object>.Fail(
                     "LEGACY_SUCCESSOR_SCOPE_INCOMPLETE",
-                    $"后继 key {successor.GetStringOrEmpty("_id")} 未覆盖 legacy 调用方或四协议范围"), jsonOptions, 409);
+                    $"后继 key {successor.GetStringOrEmpty("_id")} 未覆盖 legacy 调用方、四协议或运行时 scope"), jsonOptions, 409);
             }
         }
     }
@@ -5205,6 +5221,7 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         .Set("AllowedAppCallerCodes", new BsonArray(allowedCallers))
         .Set("SuccessorServiceKeyIds", new BsonArray(successorIds))
         .Set("RequiredIngressProtocols", new BsonArray(requiredIngressProtocols))
+        .Set("RequiredScopes", new BsonArray(requiredScopes))
         .Set("RequiredSuccessorObservations", required)
         .Set("UpdatedAt", now);
     if (!successorSetUnchanged)

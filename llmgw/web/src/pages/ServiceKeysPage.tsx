@@ -285,7 +285,8 @@ export function ServiceKeysPage() {
           <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
           <div style={{ display: 'flex', alignItems: 'end', justifyContent: 'flex-end' }}><Button variant="primary" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button></div>
         </div>
-        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 11 }}>外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。只有后继 scoped key 观测达标才能显式撤销。</div>
+        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 11 }}>外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；只有真实业务调用观测达标才能显式撤销。</div>
+        <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 11 }}>必需协议：{legacy.requiredIngressProtocols.join(', ')}；必需 scope：{legacy.requiredScopes.join(', ')}</div>
         {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: 10 }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
       </details> : null}
       {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (

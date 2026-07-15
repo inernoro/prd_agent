@@ -10,3 +10,5 @@
 | security | llmgw | legacy 生产退场只接受 production MAP 后继 key，并拒绝非生产流量累计观测次数 |
 | security | llmgw | 后继密钥必须完整覆盖 legacy 调用方与四协议，且仅相关流量累计退场观测证据 |
 | fix | llmgw | 保留 legacy 退场期只读 preflight，继续执行截止与撤销门，且禁止预检累计切流证据 |
+| security | llmgw | legacy 后继 key 必须使用 production MAP runtime 身份并覆盖全部运行时 scope |
+| fix | llmgw | 逐请求费用幂等重试会补写请求日志投影，修复中断后的对账不一致 |

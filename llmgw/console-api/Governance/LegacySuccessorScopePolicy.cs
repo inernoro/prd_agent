@@ -2,6 +2,17 @@ namespace PrdAgent.LlmGw.Governance;
 
 public static class LegacySuccessorScopePolicy
 {
+    public static IReadOnlyList<string> RequiredRuntimeScopes { get; } =
+    [
+        "invoke",
+        "stream:invoke",
+        "raw:invoke",
+        "route:read",
+        "readiness:read",
+        "request:cancel",
+        "request:read",
+    ];
+
     public static IReadOnlyList<string> FindMissing(
         IEnumerable<string>? configuredValues,
         IEnumerable<string>? requiredValues)

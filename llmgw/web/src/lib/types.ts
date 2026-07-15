@@ -955,6 +955,8 @@ export type LegacyKeyCutoverData = {
   deadlineAt?: string | null;
   allowedAppCallerCodes: string[];
   successorServiceKeyIds: string[];
+  requiredIngressProtocols: string[];
+  requiredScopes: string[];
   requiredSuccessorObservations: number;
   successorObservedCount: number;
   successorObservationCounts: Record<string, number>;

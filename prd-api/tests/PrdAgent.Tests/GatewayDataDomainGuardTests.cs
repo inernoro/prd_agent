@@ -67,6 +67,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST", console);
         Assert.Contains("var actualAggregate = await costReconciliations.Aggregate()", console);
         Assert.Contains("var statusAggregate = await costReconciliations.Aggregate()", console);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "await ApplyMatchedRequestLogAsync\\(\\);").Count >= 2);
         Assert.Contains("Filter.Type(\"ProviderReportedCost\", BsonType.Decimal128)", console);
         Assert.Contains("{ \"TenantId\", access.TenantId }", console);
         Assert.Contains("{ \"TeamId\", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId }", console);
@@ -87,7 +88,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Inc($\"SuccessorObservationCounts.{record.Id}\", 1)", runtime);
         Assert.Contains("SuccessorObservationCounts.{successorId}", console);
         Assert.Contains("new BsonRegularExpression(\"^production$\", \"i\")", console);
+        Assert.Contains("new BsonRegularExpression(\"^runtime$\", \"i\")", console);
+        Assert.Contains("LegacySuccessorScopePolicy.FindMissing(successor.AsStringList(\"Scopes\"), requiredScopes)", console);
+        Assert.Contains(".Set(\"RequiredScopes\", new BsonArray(requiredScopes))", console);
         Assert.Contains("record.Environment, \"production\"", runtime);
+        Assert.Contains("record.Purpose, \"runtime\"", runtime);
         Assert.Contains("LEGACY_REVOCATION_FINAL", console);
         Assert.Contains("TenantAccess.Filter(http)", console);
     }

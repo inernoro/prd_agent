@@ -880,6 +880,51 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ProductionCanaryKey_DoesNotIncrementRuntimeCutoverObservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_canary_successor_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-canary",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_canary",
+            SourceSystem = "map",
+            ClientCode = "map-canary",
+            Environment = "production",
+            Purpose = "canary",
+            AppCallerCodes = ["map.chat::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["map.chat::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["openai-compatible"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "map.chat::chat",
+            "openai-compatible", "invoke", null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task SuccessorObservation_IgnoresTrafficOutsideLegacyCallerInventory()
     {
         var testDatabase = await TryCreateDatabaseAsync();

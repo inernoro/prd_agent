@@ -26,4 +26,28 @@ public sealed class LegacySuccessorScopePolicyTests
         LegacySuccessorScopePolicy.FindMissing(["*"], ["caller-a", "caller-b"])
             .ShouldBeEmpty();
     }
+
+    [Fact]
+    public void RequiredRuntimeScopes_CoverStreamingRawPreflightAndRequestControl()
+    {
+        LegacySuccessorScopePolicy.RequiredRuntimeScopes.ShouldBe(
+        [
+            "invoke",
+            "stream:invoke",
+            "raw:invoke",
+            "route:read",
+            "readiness:read",
+            "request:cancel",
+            "request:read",
+        ]);
+
+        LegacySuccessorScopePolicy.FindMissing(
+                ["invoke", "route:read"],
+                LegacySuccessorScopePolicy.RequiredRuntimeScopes)
+            .ShouldContain("stream:invoke");
+        LegacySuccessorScopePolicy.FindMissing(
+                ["invoke", "route:read"],
+                LegacySuccessorScopePolicy.RequiredRuntimeScopes)
+            .ShouldContain("raw:invoke");
+    }
 }

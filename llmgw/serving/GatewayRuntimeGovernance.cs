@@ -383,7 +383,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string ingressProtocol,
         CancellationToken ct)
     {
-        if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(record.Environment, "production", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(record.Purpose, "runtime", StringComparison.OrdinalIgnoreCase))
             return Task.CompletedTask;
 
         var normalizedCaller = appCallerCode.Trim();
