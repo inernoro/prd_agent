@@ -653,10 +653,35 @@ export type ExchangeItem = {
   sourceCollection: string;
   authority: string;
   claimedAt?: string | null;
+  version: number;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
 export type ExchangesData = { items: ExchangeItem[]; total: number };
+export type ExchangeOptionItem = { value: string; label: string; description?: string | null };
+export type ExchangeMetaData = {
+  transformerTypes: ExchangeOptionItem[];
+  authSchemes: ExchangeOptionItem[];
+  modelTypes: ExchangeOptionItem[];
+};
+export type ExchangeModelWriteRequest = {
+  modelId: string;
+  displayName?: string | null;
+  modelType: string;
+  description?: string | null;
+  enabled: boolean;
+};
+export type CreateExchangeRequest = {
+  name: string;
+  models: ExchangeModelWriteRequest[];
+  targetUrl: string;
+  apiKey: string;
+  targetAuthScheme: string;
+  transformerType: string;
+  enabled: boolean;
+  description?: string | null;
+};
+export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
 
 // ── GW-owned API key 健康自检 ──
 export type KeyHealthSummary = {

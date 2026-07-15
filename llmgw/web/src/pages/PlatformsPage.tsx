@@ -3,10 +3,14 @@
 import { useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
-import { Chip, SectionLoader, Button } from '@/components/ui';
+import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { boolChip } from '@/components/poolsHelpers';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 export function PlatformsPage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<PlatformItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -170,11 +174,11 @@ export function PlatformsPage() {
               第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
             </div>
           </div>
-          <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
+          {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
             {showCreate ? '收起配置' : '添加 Provider'}
-          </Button>
+          </Button> : null}
         </div>
-        {showCreate ? (
+        {showCreate && canWrite ? (
           <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
             <label style={fieldStyle}>
               <span style={labelStyle}>名称</span>
@@ -214,10 +218,11 @@ export function PlatformsPage() {
           </form>
         ) : null}
       </section>
+      {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      {items.length > 0 ? (
+      {items.length > 0 && canWrite ? (
         <details style={{ flexShrink: 0 }}>
           <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
           <div style={toolbarStyle}>
@@ -232,7 +237,7 @@ export function PlatformsPage() {
         </details>
       ) : null}
       {items.length === 0 ? (
-        <Empty text="还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。" />
+        <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
       <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 160, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -268,7 +273,7 @@ export function PlatformsPage() {
                   <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                   <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       {keyEditId === p.id ? (
                         <>
                           <input
@@ -309,7 +314,7 @@ export function PlatformsPage() {
                           </Button>
                         </>
                       )}
-                    </span>
+                    </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
               );

@@ -5,6 +5,8 @@ import {
   KeyRound, Network, Rocket, Server, Shuffle, UsersRound,
 } from 'lucide-react';
 import { Card } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
+import { canAccessPage, type ConsolePage } from '@/lib/access';
 
 type Topic = {
   id: string;
@@ -14,6 +16,7 @@ type Topic = {
   icon: ReactNode;
   link: string;
   action: string;
+  page: ConsolePage;
 };
 
 const TOPICS: Topic[] = [
@@ -25,6 +28,7 @@ const TOPICS: Topic[] = [
     icon: <Building2 size={18} />,
     link: '/organization',
     action: '查看当前组织',
+    page: 'organization',
   },
   {
     id: 'team-user',
@@ -34,6 +38,7 @@ const TOPICS: Topic[] = [
     icon: <UsersRound size={18} />,
     link: '/organization',
     action: '管理团队与成员',
+    page: 'organization',
   },
   {
     id: 'app-caller',
@@ -43,6 +48,7 @@ const TOPICS: Topic[] = [
     icon: <Bot size={18} />,
     link: '/app-callers',
     action: '查看 appCaller',
+    page: 'appCallers',
   },
   {
     id: 'service-key',
@@ -52,6 +58,7 @@ const TOPICS: Topic[] = [
     icon: <KeyRound size={18} />,
     link: '/service-keys',
     action: '管理接入密钥',
+    page: 'serviceKeys',
   },
   {
     id: 'model-pool',
@@ -61,6 +68,7 @@ const TOPICS: Topic[] = [
     icon: <Boxes size={18} />,
     link: '/pools',
     action: '查看模型池',
+    page: 'routeConfig',
   },
   {
     id: 'model',
@@ -70,6 +78,7 @@ const TOPICS: Topic[] = [
     icon: <Cpu size={18} />,
     link: '/models',
     action: '查看模型',
+    page: 'routeConfig',
   },
   {
     id: 'provider',
@@ -79,6 +88,7 @@ const TOPICS: Topic[] = [
     icon: <Server size={18} />,
     link: '/platforms',
     action: '查看 Provider',
+    page: 'routeConfig',
   },
   {
     id: 'exchange',
@@ -88,6 +98,7 @@ const TOPICS: Topic[] = [
     icon: <Shuffle size={18} />,
     link: '/exchanges',
     action: '查看 Exchange',
+    page: 'routeConfig',
   },
   {
     id: 'request-log',
@@ -97,6 +108,7 @@ const TOPICS: Topic[] = [
     icon: <FileSearch size={18} />,
     link: '/logs',
     action: '打开请求记录',
+    page: 'logs',
   },
   {
     id: 'cost',
@@ -106,10 +118,15 @@ const TOPICS: Topic[] = [
     icon: <CircleDollarSign size={18} />,
     link: '/usage',
     action: '查看预算与用量',
+    page: 'usage',
   },
 ];
 
 export function LearningCenterPage() {
+  const { tenant } = useAuth();
+  const canUseQuickstart = canAccessPage(tenant, 'quickstart');
+  const canManageKeys = canAccessPage(tenant, 'serviceKeys');
+  const canReadLogs = canAccessPage(tenant, 'logs');
   return (
     <div className="lg-simple-page lg-learn-page">
       <div className="lg-page-heading">
@@ -118,7 +135,7 @@ export function LearningCenterPage() {
           <h1>学习中心</h1>
           <p>先理解一条请求如何穿过 Gateway，再按术语定位配置、记录和费用。</p>
         </div>
-        <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> 直接开始接入</Link>
+        {canUseQuickstart ? <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> 直接开始接入</Link> : null}
       </div>
 
       <section id="first-request" className="lg-anchor-section">
@@ -128,9 +145,9 @@ export function LearningCenterPage() {
             <span>建议按顺序完成</span>
           </div>
           <div className="lg-learning-steps">
-            <div><b>1</b><span><strong>创建租户接入密钥</strong><small>选择 appCaller、四协议和调用 scope，明文只保存到你的安全系统。</small><Link to="/service-keys">创建密钥 <ArrowRight size={13} /></Link></span></div>
-            <div><b>2</b><span><strong>选择协议并安全直测</strong><small>Gateway 地址由部署配置自动提供；安全直测只验证鉴权与路由，不调用付费上游。</small><Link to="/quickstart">打开 Quickstart <ArrowRight size={13} /></Link></span></div>
-            <div><b>3</b><span><strong>用 requestId 回查</strong><small>真实请求完成后，在请求记录中查看模型、Provider、耗时、错误和费用覆盖。</small><Link to="/logs">查看请求记录 <ArrowRight size={13} /></Link></span></div>
+            <div><b>1</b><span><strong>创建租户接入密钥</strong><small>选择 appCaller、四协议和调用 scope，明文只保存到你的安全系统。</small>{canManageKeys ? <Link to="/service-keys">创建密钥 <ArrowRight size={13} /></Link> : <em>当前角色只需了解，由密钥管理员执行</em>}</span></div>
+            <div><b>2</b><span><strong>选择协议并安全直测</strong><small>Gateway 地址由部署配置自动提供；安全直测只验证鉴权与路由，不调用付费上游。</small>{canUseQuickstart ? <Link to="/quickstart">打开 Quickstart <ArrowRight size={13} /></Link> : <em>当前角色不承担接入操作</em>}</span></div>
+            <div><b>3</b><span><strong>用 requestId 回查</strong><small>真实请求完成后，在请求记录中查看模型、Provider、耗时、错误和费用覆盖。</small>{canReadLogs ? <Link to="/logs">查看请求记录 <ArrowRight size={13} /></Link> : <em>当前角色仅查看聚合用量</em>}</span></div>
           </div>
         </Card>
       </section>
@@ -158,7 +175,7 @@ export function LearningCenterPage() {
                 <h2>{topic.title}</h2>
                 <strong>{topic.summary}</strong>
                 <p>{topic.detail}</p>
-                <Link className="lg-secondary-link" to={topic.link}>{topic.action} <ArrowRight size={13} /></Link>
+                {canAccessPage(tenant, topic.page) ? <Link className="lg-secondary-link" to={topic.link}>{topic.action} <ArrowRight size={13} /></Link> : <span className="lg-secondary-link" aria-disabled="true">当前角色无需进入该页面</span>}
               </div>
             </Card>
           </section>
@@ -167,7 +184,7 @@ export function LearningCenterPage() {
 
       <Card className="lg-learning-troubleshoot">
         <div><Network size={19} /><span><strong>请求没有按预期执行时</strong><small>先复制 requestId，再按“请求记录 → appCaller → 模型池 → 模型与 Provider → Exchange”的顺序排查。不要通过修改 tenantId 或绕过 Gateway 来验证。</small></span></div>
-        <Link className="lg-primary-link" to="/logs">按 requestId 定位 <Activity size={14} /></Link>
+        {canReadLogs ? <Link className="lg-primary-link" to="/logs">按 requestId 定位 <Activity size={14} /></Link> : null}
       </Card>
     </div>
   );

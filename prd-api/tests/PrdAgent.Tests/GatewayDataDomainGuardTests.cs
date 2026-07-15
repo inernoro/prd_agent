@@ -445,6 +445,7 @@ public class GatewayDataDomainGuardTests
         var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         var organizationPage = ReadRepoFile("llmgw/web/src/pages/OrganizationPage.tsx");
         var consoleLayout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
         var changePasswordPage = ReadRepoFile("llmgw/web/src/pages/ChangePasswordPage.tsx");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var membershipPolicy = ReadRepoFile("llmgw/console-api/Organization/MembershipPolicy.cs");
@@ -460,13 +461,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("已创建；首次登录时必须设置自己的密码", organizationPage);
         Assert.Contains("强制重新登录", organizationPage);
         Assert.Contains("只有 Owner 可以修改 Owner", organizationPage);
-        Assert.Contains("currentRole === 'owner' || currentRole === 'admin'", organizationPage);
+        Assert.Contains("canUseCapability(sessionTenant?.role, 'organizationWrite')", organizationPage);
         Assert.Contains("expectedVersion: member.version", organizationPage);
         Assert.Contains("memberInitialPassword.length < 12", organizationPage);
         Assert.Contains("memberRole === 'developer' && memberTeamIds.length === 0", organizationPage);
         Assert.Contains("team.status === 'active' || selected.includes(team.id)", organizationPage);
         Assert.Contains("不能在这里修改自己", organizationPage);
-        Assert.Contains("hiddenRoles: ['billing']", consoleLayout);
+        Assert.Contains("canAccessPage(tenant, item.page)", consoleLayout);
+        Assert.Contains("organization: { capability: 'logsRead' }", accessRules);
         Assert.DoesNotContain("tenantId:", organizationPage);
         Assert.Contains("新口令至少 12 位", changePasswordPage);
         Assert.DoesNotContain("admin/admin", changePasswordPage);
@@ -784,6 +786,102 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("个本次生效字符", promptPolicyPage);
         Assert.Contains("缺价格保持“未知”，不会显示成 0", usagePage);
         Assert.Contains("CNY 与 USD 不会直接相加", usagePage);
+    }
+
+    [Fact]
+    public void UsageCostStates_AreTraceableAndNeverInventFxOrZeroUnknownCost()
+    {
+        var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
+
+        foreach (var label in new[] { "费用四状态", "可估算", "供应商实际", "估算未知", "已对账" })
+        {
+            Assert.Contains(label, usagePage);
+        }
+
+        Assert.Contains("reconciliation.items.map", usagePage);
+        Assert.Contains("/logs?requestId=", usagePage);
+        Assert.Contains("逐条查看 Gateway 估算、供应商实际、差额依据和匹配粒度", usagePage);
+        Assert.Contains("汇总记录没有单条 requestId", usagePage);
+        Assert.Contains("value == null ? unknownLabel", usagePage);
+        Assert.Contains("item.reconciliationStatus !== 'reconciled' || item.reconciliationDelta == null", usagePage);
+        Assert.Contains("币种不同且没有可审计 FX，禁止计算差额", usagePage);
+        Assert.Contains("前端不猜测汇率", usagePage);
+        Assert.DoesNotContain("providerToEstimatedFxRate *", usagePage);
+        Assert.DoesNotContain("* item.providerToEstimatedFxRate", usagePage);
+    }
+
+    [Fact]
+    public void ExchangeSelfService_IsTenantScopedAuditedAndKeepsSecretsWriteOnly()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ExchangesPage.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var serving = ReadRepoFile("llmgw/serving/Program.cs");
+
+        Assert.Contains("app.MapPost(\"/gw/exchanges\"", console);
+        Assert.Contains("app.MapPut(\"/gw/exchanges/{id}\"", console);
+        Assert.Contains("TenantAccess.Filter(http, fb.Eq(\"_id\", id))", console);
+        Assert.Contains("action: \"exchange.create\"", console);
+        Assert.Contains("action: \"exchange.update\"", console);
+        Assert.Contains("BeginRequiredOperationAuditAsync", console);
+        Assert.Contains("EXCHANGE_AUDIT_PENDING", console);
+        Assert.Contains("无法先建立 Exchange 审计意图，本次未写入配置", console);
+        Assert.Contains("无法先建立 Exchange 审计意图，本次未修改配置", console);
+        var exchangeCreateStart = console.IndexOf("app.MapPost(\"/gw/exchanges\"", StringComparison.Ordinal);
+        var exchangeUpdateStart = console.IndexOf("app.MapPut(\"/gw/exchanges/{id}\"", exchangeCreateStart, StringComparison.Ordinal);
+        var exchangeClaimStart = console.IndexOf("app.MapPut(\"/gw/exchanges/{id}/claim\"", exchangeUpdateStart, StringComparison.Ordinal);
+        var exchangeCreateSection = console[exchangeCreateStart..exchangeUpdateStart];
+        var exchangeUpdateSection = console[exchangeUpdateStart..exchangeClaimStart];
+        Assert.True(
+            exchangeCreateSection.IndexOf("BeginRequiredOperationAuditAsync", StringComparison.Ordinal)
+            < exchangeCreateSection.IndexOf("gwModelExchanges.InsertOneAsync", StringComparison.Ordinal),
+            "Exchange 创建必须先写 pending 审计意图，再写业务配置");
+        Assert.True(
+            exchangeUpdateSection.IndexOf("BeginRequiredOperationAuditAsync", StringComparison.Ordinal)
+            < exchangeUpdateSection.IndexOf("gwModelExchanges.UpdateOneAsync", StringComparison.Ordinal),
+            "Exchange 修改必须先写 pending 审计意图，再写业务配置");
+        Assert.Contains("EXCHANGE_READBACK_FAILED", console);
+        Assert.Contains("EXCHANGE_CONCURRENTLY_MODIFIED", console);
+        Assert.Contains("ValidateExternalExchangeTargetAsync(draft.TargetUrl", console);
+        Assert.Contains("Dns.GetHostAddressesAsync(host, ct)", console);
+        Assert.Contains("UNSAFE_TARGET_URL", console);
+        Assert.Contains("gwModelExchanges.Find(TenantAccess.Filter(http", console);
+        Assert.Contains("BuildExchangePoolModelDocument(platformId, exchangeModel)", console);
+        Assert.Contains("GwApiKeyCrypto.Encrypt(draft.ApiKey!, config)", console);
+        var exchangeItemStart = dtos.IndexOf("public sealed class ExchangeItem", StringComparison.Ordinal);
+        var exchangeItemEnd = dtos.IndexOf("public sealed class ExchangeModelItem", exchangeItemStart, StringComparison.Ordinal);
+        var writeRequestStart = dtos.IndexOf("public sealed class CreateExchangeRequest", StringComparison.Ordinal);
+        var writeRequestEnd = dtos.IndexOf("// ── GW-owned API key", writeRequestStart, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApiKey", dtos[exchangeItemStart..exchangeItemEnd]);
+        Assert.DoesNotContain("TenantId", dtos[writeRequestStart..writeRequestEnd]);
+        Assert.Contains("Exchange 通讯密钥不能为空", provisioning);
+        Assert.Contains("uniq_llmgw_exchange_tenant_name", initializer);
+        Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
+        Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
+        Assert.Contains("createExchange({ ...common, apiKey: form.apiKey.trim() }", page);
+        Assert.Contains("updateExchange(editingId!", page);
+        Assert.Contains("上游接口类型", page);
+        Assert.Contains("上游模型标识重复", page);
+        Assert.Contains("当前填写的内容仍保留", page);
+        Assert.Contains("option.value !== 'doubao-asr-stream'", page);
+        Assert.Contains("transformerType === 'fal-image'", page);
+        Assert.Contains("transformerType === 'doubao-asr'", page);
+        Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
+        Assert.DoesNotContain("tenantId:", page);
+        Assert.Contains("body: req", api);
+        Assert.Contains("IsExternalTenant(tenantId)", gateway);
+        Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
+        Assert.Contains("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", gateway);
+        Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
+        Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
+        var poolsPage = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        Assert.Contains("getExchanges({ enabled: true })", poolsPage);
+        Assert.Contains("toExchangeModelCandidates", poolsPage);
+        Assert.Contains("llmgw_model_exchanges", poolsPage);
     }
 
     [Fact]
@@ -3005,17 +3103,60 @@ public class GatewayDataDomainGuardTests
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var app = ReadRepoFile("llmgw/web/src/App.tsx");
-        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
 
         Assert.Contains("public bool IsInternal { get; set; }", tenantModel);
         Assert.Contains("bool IsInternalTenant", access);
         Assert.Contains("tenant.IsInternal", access);
         Assert.Contains("IsInternal = access.IsInternalTenant", consoleProgram);
         Assert.Contains("IsInternal = tenant.IsInternal", consoleProgram);
-        Assert.Contains("function RequireInternalTenant", app);
-        Assert.Contains("tenant?.isInternal ?", app);
-        Assert.Contains("internalOnly: true", layout);
+        Assert.Contains("function RequirePageAccess", app);
+        Assert.Contains("if (!isTenantRole(tenant?.role))", app);
+        Assert.Contains("控制台不会加载导航或业务接口", app);
+        Assert.Contains("<RequirePageAccess page=\"home\"><OverviewPage", app);
+        Assert.Contains("<RequirePageAccess page=\"learn\"><LearningCenterPage", app);
+        Assert.Contains("<RequirePageAccess page=\"settings\"><SettingsPage", app);
+        Assert.Contains("canAccessPage(tenant, page)", app);
+        Assert.Contains("internalOnly: true", accessRules);
+        Assert.Contains("if (rule.internalOnly && !tenant.isInternal) return false", accessRules);
         Assert.DoesNotContain("TenantId", app);
+    }
+
+    [Fact]
+    public void Console_RbacVisibility_MirrorsServerPermissionsAndFailsClosed()
+    {
+        var serverAccess = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
+        var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var pools = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+        var serviceKeys = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
+        var governance = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+
+        Assert.Contains("LlmGwTenantRoles.Owner => true", serverAccess);
+        Assert.Contains("LlmGwTenantRoles.Billing => permission is UsageRead", serverAccess);
+        Assert.Contains("logsRead: ['owner', 'admin', 'developer', 'viewer']", accessRules);
+        Assert.Contains("usageRead: ALL_ROLES", accessRules);
+        Assert.Contains("configWrite: ['owner', 'admin']", accessRules);
+        Assert.Contains("appCallerWrite: ['owner', 'admin', 'developer']", accessRules);
+        Assert.Contains("serviceKeyWrite: ['owner', 'admin', 'developer']", accessRules);
+        Assert.Contains("home: { capability: 'usageRead' }", accessRules);
+        Assert.Contains("governance: { capability: 'logsRead', internalOnly: true }", accessRules);
+        Assert.Contains("return isTenantRole(role)", accessRules);
+        Assert.Contains("function RequirePageAccess", app);
+        Assert.Contains("不会再发起注定失败的请求", app);
+        Assert.Contains("items: group.items.filter((item) => canAccessPage(tenant, item.page))", layout);
+        Assert.Contains("const canSearchRequests = canUseCapability(tenant?.role, 'logsRead')", layout);
+        Assert.Contains("canWrite={canWrite}", pools);
+        Assert.Contains("当前角色可以查看模型池、成员健康和路由使用情况", pools);
+        Assert.Contains("const canCreateAccess = canUseCapability", quickstart);
+        Assert.Contains("不能创建 appCaller、签发密钥或执行安全直测", quickstart);
+        Assert.Contains("const canCreateWildcard = canCreateWildcardServiceKey(tenant?.role)", serviceKeys);
+        Assert.Contains("Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥", serviceKeys);
+        Assert.Contains("if (canManageLegacyCutover)", serviceKeys);
+        Assert.Contains("const canWrite = canUseCapability(tenant?.role, 'configWrite')", governance);
+        Assert.Contains("当前角色可以查看运行状态、配置权威和容器拓扑", governance);
     }
 
     [Fact]
@@ -3100,7 +3241,17 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("scopes: ['invoke']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
-        Assert.Contains("disabled={Boolean(bundle)}", quickstart);
+        Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);
+        Assert.Contains("requestType,", quickstart);
+        Assert.DoesNotContain("requestType: 'chat'", quickstart);
+        Assert.Contains("visionOpenAiContent", quickstart);
+        Assert.Contains("visionClaudeContent", quickstart);
+        Assert.Contains("visionGeminiParts", quickstart);
+        Assert.Contains("upstreamCalled=false", quickstart);
+        Assert.Contains("本页不提供关闭开关", quickstart);
+        Assert.Contains("/prompt-policy", quickstart);
+        Assert.Contains("const identityLocked = Boolean(bundle) || creatingStage !== null", quickstart);
+        Assert.Contains("disabled={!canCreateAccess || identityLocked}", quickstart);
         Assert.Contains("修改身份", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);
