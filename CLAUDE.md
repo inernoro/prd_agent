@@ -372,6 +372,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `miduo-review-lens.md` | 任何 UI 交付 / 截图 / 验收前 | 米多审查镜头：等待期产物感 / 比例美感 / 交互成本 / 变化可感知（过渡动画义务）/ AI 最小惊讶（未点名内容逐字保留）/ 证据闭环——交付前用用户的眼睛六连问 |
 | `expectation-management.md` | 任何用户感知的交互/反馈/产物/等待 + AI 回复 | 预期管理总纲：让用户任何时刻都知道「在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么」。四种失控（不知在干嘛/不知多久/没料到/白等）逐一消灭；多数体验规则都是它的切面 |
 | `content-fills-canvas.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx`, `cds/web/src/**` | 内容填满画布：主产物（预览/详情/结果/画布）必须 flex-1 填满并占视觉主导，禁内容尺寸小盒子 + 大片留白；高度必须从外壳一路传到产物，断一层就塌；主从布局产物是主角 |
+| `deterministic-rendering.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx`, `cds/web/src/**/*.tsx`（集合→坐标的可视化布局） | 确定性渲染：可视化输出只由内容决定、与条目返回/插入顺序无关；按下标定位前必须确定性排序（同数据打乱重渲染必须逐像素一致）；配套诊断纪律「同代码不同结果先拿真实数据（key + X-AI-Impersonate）复现，别改代码猜」 |
 | `report-design-system.md` | 报告模板（daily/weekly/验收技能的 HTML 模板与生成脚本） | 米多刊系：四种汇报产物共享纸墨基因（暖纸 + 油墨 + 衬线标题 + mono 小标 + 硬投影），一刊一身份色一版式（日报报纸赭红 / 周刊靛蓝 / 验收档案青碧 / 巡检特刊钢蓝）；移动端必可见；验收模板契约 class 与标记不许动 |
 
 ---

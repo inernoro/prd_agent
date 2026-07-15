@@ -901,6 +901,8 @@
 
 - [知识库引用网络 · 债务台账](debt.knowledge-base.mention-network) `debt.knowledge-base.mention-network`
   > 双链/反向链接/宇宙图 MVP 后续债务：跨实体引用、AI 自动补链、时间轴回放等候选项
+- [文档星系「不均匀/头重脚轻」根因台账](debt.knowledge-base.galaxy-layout) `debt.knowledge-base.galaxy-layout`
+  > 布局对条目返回顺序敏感（同内容不同顺序渲染出不同图）：真实两库数据对比坐实 + 登录态控制台自测脚本 + 六条复盘；配套规则 deterministic-rendering.md
 - [知识星球 与 宇宙图 并存 · 债务台账](debt.knowledge-base.galaxy-vs-universe) `debt.knowledge-base.galaxy-vs-universe`
   > 星系(3D)与 obsidian 宇宙图两套图谱并存：本轮默认只展示星系 + 星系返回回库详情；智能判别该库展示哪一个待做
 

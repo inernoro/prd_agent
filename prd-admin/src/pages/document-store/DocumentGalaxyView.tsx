@@ -174,9 +174,17 @@ function layoutGalaxy(root: GalaxyNode): {
   // 根在原点
   placed.set(root.id, { node: root, pos: new THREE.Vector3(0, 0, 0), depth: 0 });
 
+  // 布局必须与「条目返回顺序」无关：渲染前对每一层子节点做确定性排序。
+  // 位置由 distributeDirections / spreadInCone 按数组下标分配，若沿用插入顺序，
+  // 同样内容的库因条目返回顺序不同（如老库按创建序、重订阅库按导入序）会渲染成
+  // 完全不同的图（实测两库内容 337/338 相同、顶层分布一致，仅顺序差 12% → 一个匀一个头重脚轻）。
+  // 排序键：文档多的枢纽在前（占赤道/主位）、同级按名字稳定兜底。详见 .claude/rules/deterministic-rendering.md
+  const orderKids = (nodes: GalaxyNode[]): GalaxyNode[] =>
+    [...nodes].sort((a, b) => b.docCount - a.docCount || a.name.localeCompare(b.name, 'zh'));
+
   // 沿父方向递归铺开子树（演示版 layoutChildren）
   const layoutChildren = (parent: GalaxyNode, parentPos: THREE.Vector3, parentDir: THREE.Vector3, depth: number) => {
-    const kids = parent.children;
+    const kids = orderKids(parent.children);
     if (!kids.length) return;
     const spread = depth <= 2 ? 0.95 : 0.75;
     const dirs = spreadInCone(parentDir, kids.length, spread);
@@ -190,8 +198,8 @@ function layoutGalaxy(root: GalaxyNode): {
     });
   };
 
-  // 顶级分类（depth=1）用斐波那契球铺满整个球面
-  const cats = root.children;
+  // 顶级分类（depth=1）用斐波那契球铺满整个球面（同样先确定性排序，与返回顺序无关）
+  const cats = orderKids(root.children);
   const catDirs = distributeDirections(cats.length);
   cats.forEach((c, i) => {
     const dir = catDirs[i];
