@@ -54,19 +54,35 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             ["model"] = resolution.ActualModel,
             ["prompt"] = request.Prompt
         };
-        // 图生视频：把首帧图作为 first_frame 传给视频模型（OpenRouter /videos frame_images 协议）
+        var frameImages = new JsonArray();
         if (!string.IsNullOrWhiteSpace(request.FirstFrameImageUrl))
         {
-            body["frame_images"] = new JsonArray
+            frameImages.Add(new JsonObject
             {
-                new JsonObject
-                {
-                    ["type"] = "image_url",
-                    ["image_url"] = new JsonObject { ["url"] = request.FirstFrameImageUrl },
-                    ["frame_type"] = "first_frame"
-                }
-            };
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = request.FirstFrameImageUrl },
+                ["frame_type"] = "first_frame"
+            });
         }
+        if (!string.IsNullOrWhiteSpace(request.LastFrameImageUrl))
+        {
+            frameImages.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = request.LastFrameImageUrl },
+                ["frame_type"] = "last_frame"
+            });
+        }
+        foreach (var url in request.ReferenceImageUrls?.Where(url => !string.IsNullOrWhiteSpace(url)).Take(9) ?? [])
+        {
+            frameImages.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = url },
+                ["frame_type"] = "reference_image"
+            });
+        }
+        if (frameImages.Count > 0) body["frame_images"] = frameImages;
         if (!string.IsNullOrWhiteSpace(request.AspectRatio)) body["aspect_ratio"] = request.AspectRatio;
         if (!string.IsNullOrWhiteSpace(request.Resolution)) body["resolution"] = request.Resolution;
         if (request.DurationSeconds.HasValue) body["duration"] = request.DurationSeconds.Value;

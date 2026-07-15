@@ -1,70 +1,40 @@
-# 视频生成 Agent · 债务台账
+# 视频生成 Agent 债务台账
 
-> **版本**：v2.0 | **日期**：2026-04-27 | **状态**：维护中
+> **版本**：v3.0 | **日期**：2026-07-13 | **状态**：维护中
 
-## 总览
+## 当前架构
 
-| 指标 | 当前值 |
-|------|--------|
-| open | 0 |
-| in-progress | 0 |
-| paid | 4（Remotion 砍掉后整体 obsolete） |
+视频创作支持两条正式路径：
 
-模块范围：`prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs`、
-`prd-admin/src/pages/video-agent/`、纯 OpenRouter 直出路径。
+1. 直出模式：提示词或首帧图片经 LLM Gateway 路由到视频模型，异步提交、轮询、下载并保存到资产存储。
+2. 分镜模式：文学稿经聊天模型拆分为镜头，用户在制作台逐镜编辑、批量生成、保留历史版本，最后由 ffmpeg 统一画幅和编码并合成为完整 MP4。
 
----
+火山方舟 Seedance 通过 `volcengine-video` Exchange 转换器适配原生异步任务协议。OpenRouter 兼容协议仍由原视频客户端处理，两者共用 `video-agent.videogen::video-gen` 调用方和模型池治理。
 
-## 当前架构（2026-04-27 起）
+## 已完成
 
-视频生成只走 **OpenRouter 视频大模型直出**：用户输入 prompt → Worker 调
-`/api/openrouter/v1/videos` 提交 → 轮询 → 拿到视频 URL 写回 `Run.VideoAssetUrl`。
+| ID | 状态 | 结果 |
+|----|------|------|
+| professional-console | paid | 四区制作台：镜头与版本、中央播放器、镜头控制器、多轨时间线 |
+| scene-version-history | paid | 重新生成不覆盖旧视频，可切换采用版本 |
+| batch-render | paid | 批量提交未完成和失败镜头，Worker 顺序执行并持续推送事件 |
+| full-export | paid | ffmpeg 统一画幅、帧率和编码，合成后上传资产存储 |
+| export-recovery | paid | 导出失败回到编辑态，可修改和重试；导出后继续编辑会使旧成片失效 |
+| seedance-protocol | paid | 火山 Seedance submit、status、download 协议转换已有自动化回归 |
 
-支持模型：Veo 3.1、Sora 2 Pro、Kling、Wan 2.6/2.7、Seedance 1.5/2.0。
+## 未完成边界
 
----
+| ID | 优先级 | 触发场景 | 当前行为 | 后续方案 |
+|----|--------|----------|----------|----------|
+| audio-subtitle-tracks | high | 需要配音、音乐、字幕和转场 | 制作台显示音频轨道但明确标注尚未接入；当前分镜生成关闭音频，导出只合成视频轨 | 复用现有 TTS、字幕与 ASR 能力，新增音频资产和时间线片段，再扩展 ffmpeg filter graph |
+| scene-reference-controls | high | 需要角色一致性、首尾帧和参考素材 | 直出支持首帧图；分镜控制器暂未暴露镜头级参考资产 | 为 VideoGenScene 增加受模型能力约束的参考资产字段，并由 Gateway 返回 capability schema |
+| project-run-separation | medium | 一个项目产生大量生成尝试和多条时间线 | 当前仍以 VideoGenRun 兼容承载项目和任务，镜头版本嵌入文档 | 使用真实生产数据确认粒度后，再拆分 VideoProject、GenerationAttempt 和 ExportRun，避免提前迁移线上集合 |
+| model-capability-schema | medium | 不同视频模型支持不同参数 | 前端展示公共参数，模型特有控制暂不出现 | 由模型池 API 返回视频 capability schema，控制器按后端描述渲染 |
+| upstream-availability | critical | 正式模型余额、授权或渠道变化 | 代码和协议可用不等于上游随时可用；模型池健康状态仍是最终权威 | 正式发布前运行 scoped video canary，失败时阻止提交并展示供应商健康原因 |
 
-## 已废弃路径（关键变更）
+## 验收约束
 
-2026-04-27 彻底砍掉 Remotion 拆分镜路径。原因：
-
-1. CDS dev 模式（image: + volumes: + 容器 runtime apt install chromium）跟 Remotion
-   + Chromium 部署反复踩坑：bullseye dpkg 崩溃、bookworm apt 锁死、puppeteer 镜像
-   `Permission denied` 写 `/usr/local/bin/`，多个尝试都失败
-2. 维护成本远高于价值：用户实际需求是"输入描述生成视频"，分镜模板编辑/字幕生成属于
-   过度设计；OpenRouter 视频模型已能一段直出满足核心需求
-3. 架构混合度高：dotnet 容器 + Node 容器 + Chromium + Remotion 项目源码挂载
-   + ffmpeg concat 任意一环挂掉都不能交付
-
-随之删除的代码：
-- `prd-video/` 整个 Remotion 项目
-- `prd-video-renderer/` 微服务（短暂存在过的过渡方案）
-- `VideoGenRunWorker` 的 Remotion 相关方法（`ProcessScenePreviewRenderAsync`、
-  `ProcessRenderingAsync`、`ProcessSceneRegenerationAsync`、
-  `ProcessSceneBgImageGenerationAsync`、`ProcessSceneAudioGenerationAsync`、
-  `ProcessSceneCodegenAsync`、`RunRemotionRenderAsync` 等）
-- `VideoGenScene` 模型 + `Scenes`、`SceneItemStatus`、`VideoRenderMode`、
-  `VideoInputSourceType` 字段
-- 分镜相关 API 端点（`PUT/POST /scenes/*` 一系列）
-- 前端：`UnifiedInputHero`、`videoModeDetect`、`VideoAgentPage` 分镜编辑 UI
-- compose：video-renderer service、VideoRenderer__Url 等
-
----
-
-## 已还的债务（归档）
-
-| ID | 修复 PR / commit | 修复日期 | 备注 |
-|----|------------------|---------|------|
-| 2026-04-26-openrouter-cdn-expiry | 2026-04-27 整段砍掉 Remotion 后 obsolete | 2026-04-27 | 直出视频 7 天 CDN 过期问题仍存在，但因为现在唯一就是 OpenRouter URL，新债务记下面 |
-| 2026-04-26-mixed-ffmpeg-normalize | obsolete | 2026-04-27 | 不再有混合渲染，无需 normalize |
-| 2026-04-26-direct-heartbeat-copy | obsolete | 2026-04-27 | 单次直出心跳分级原本想做但用户没催，简单 spinner 够用 |
-| 2026-04-26-cost-preview-tooltip | obsolete | 2026-04-27 | 直出 chip 已固定就一种模式，不再需要切换时显示成本 |
-
----
-
-## 历史背景
-
-| 日期 | 事件 |
-|------|------|
-| 2026-04-26 | 落地"分镜级渲染模式覆盖 + 混合渲染"功能（commit 73d4e5a），4 条已知边界录入 |
-| 2026-04-27 | CDS dev 模式部署 Remotion 反复失败（apt install / puppeteer 镜像），用户决定彻底砍掉 Remotion 路径，只保留 OpenRouter 直出 |
+- 不以 API 返回成功代替视频产物验收。
+- 正式闭环必须覆盖提交、轮询、下载、资产保存、分镜合成和公开播放。
+- 生产 canary 必须限制视频提交数量，避免重复生成造成真实费用。
+- 音频、字幕和模型特有能力未接入前必须在界面明确展示边界，不允许静默假装可用。

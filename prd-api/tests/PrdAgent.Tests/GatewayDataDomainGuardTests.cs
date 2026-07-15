@@ -963,6 +963,16 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VideoSceneWorker_SynchronizesProjectStatusAfterSceneTerminalStates()
+    {
+        var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+
+        Assert.Contains("await SyncProjectSceneActivityAsync(run.Id);", videoWorker);
+        Assert.Contains("await SyncProjectSceneActivityAsync(runId);", videoWorker);
+        Assert.Contains("ResolveProjectStatusForScenes(run.Scenes)", videoWorker);
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");
@@ -979,6 +989,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Release intent: matched fast.sh warmup", script);
         Assert.Contains("LLMGW_HTTP_APP_CALLER_ALLOWLIST", script);
         Assert.Contains("read_dotenv_value", script);
+        Assert.Contains("compose_dotenv_file=\"${PRD_AGENT_DOTENV_FILE:-.env}\"", script);
+        Assert.Contains("docker compose --env-file \"$compose_dotenv_file\"", script);
+        Assert.Contains("docker-compose --env-file \"$compose_dotenv_file\"", script);
+        Assert.Contains("compose_run up -d --force-recreate", script);
         Assert.Contains("config_value LLMGW_MODE LlmGateway__Mode", script);
         Assert.Contains("config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist", script);
         Assert.Contains("config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent", script);
@@ -1211,6 +1225,8 @@ public class GatewayDataDomainGuardTests
         var ledger = ReadRepoFile("scripts/llmgw-rollout-ledger.py");
 
         Assert.Contains("--maintenance-from-commit", stage);
+        Assert.Contains("maintenance_baseline_json=\"\"", stage);
+        Assert.Contains("if [ -n \"$maintenance_from_commit\" ]; then\n  maintenance_baseline_json=\"${evidence_prefix}.maintenance-baseline.json\"", stage);
         Assert.Contains("llmgw-rollout-ledger.py maintenance-baseline", stage);
         Assert.Contains("--json-out \"$maintenance_baseline_json\"", stage);
         Assert.Contains("maintenance evidence commit must differ from the new release commit", stage);
@@ -2060,7 +2076,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("actions/download-artifact@v4", workflow);
         Assert.Contains("Restore previous rollout evidence", workflow);
         Assert.Contains("Restore trusted production maintenance evidence", workflow);
+        Assert.Contains("Prepare production runtime inputs", workflow);
+        Assert.Contains("PRODUCTION_RUNTIME_SOURCE: /root/inernoro/prd_agent", workflow);
         Assert.Contains("PRODUCTION_EVIDENCE_SOURCE: /root/inernoro/prd_agent/.llmgw-release-evidence", workflow);
+        Assert.Contains("PRD_AGENT_DOTENV_FILE: /root/inernoro/prd_agent/.env", workflow);
+        Assert.Contains("stat -c '%u' \"$env_source\"", workflow);
+        Assert.Contains("reuse_existing_static_dist", workflow);
+        Assert.Contains("INPUT_REUSE_EXISTING_STATIC_DIST", workflow);
+        Assert.Matches("reuse_existing_static_dist:\\s+description:.*\\s+required: true\\s+default: false\\s+type: boolean", workflow);
+        Assert.Contains("INPUT_REUSE_EXISTING_STATIC_DIST: ${{ github.event.inputs.reuse_existing_static_dist || 'false' }}", workflow);
+        Assert.Contains("cp -a \"$dist_source/.\" deploy/web/dist/", workflow);
+        Assert.Contains("export PRD_AGENT_REUSE_EXISTING_STATIC_DIST=0", workflow);
         Assert.DoesNotContain("production_evidence_source:", workflow);
         Assert.Contains("scripts/llmgw-prod-evidence-restore.py", workflow);
         Assert.Contains("--require-owner-uid 0", workflow);

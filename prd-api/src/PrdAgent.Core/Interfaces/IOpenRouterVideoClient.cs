@@ -45,6 +45,12 @@ public class OpenRouterVideoSubmitRequest
     /// </summary>
     public string? FirstFrameImageUrl { get; set; }
 
+    /// <summary>图生视频尾帧图 URL，支持首尾帧的模型会以此约束结束画面。</summary>
+    public string? LastFrameImageUrl { get; set; }
+
+    /// <summary>多模态参考图 URL；Seedance 2.0 等模型用于保持角色、场景和道具一致性。</summary>
+    public List<string>? ReferenceImageUrls { get; set; }
+
     /// <summary>宽高比：16:9, 9:16, 1:1, 4:3, 3:4, 21:9, 9:21</summary>
     public string? AspectRatio { get; set; }
 
