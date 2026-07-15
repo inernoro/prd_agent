@@ -12,7 +12,7 @@ import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, fetchInstanceMode } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -229,6 +229,15 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
+  // 预览实例（CDS 托管 CDS）提示条。探针失败按「非预览实例」处理，不打扰生产。
+  const [previewInstance, setPreviewInstance] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchInstanceMode()
+      .then((mode) => { if (!cancelled) setPreviewInstance(Boolean(mode.previewInstance)); })
+      .catch(() => { /* 老后端无此端点 / 网络抖动 → 视为生产实例 */ });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -313,6 +322,19 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       <div className="cds-shell-body">
         {children}
       </div>
+      {/* 预览实例提示条（CDS 托管 CDS，2026-07-15）:固定顶部居中 pill，
+          提醒这是分支预览出来的子 CDS，宿主/docker 操作已禁用。
+          遵守 mobile-layout-fallback:限宽 + truncate，不用 whitespace-nowrap 溢出。 */}
+      {previewInstance && (
+        <div className="pointer-events-none fixed left-1/2 top-2 z-[120] w-max max-w-[calc(100vw-1rem)] -translate-x-1/2">
+          <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            <span className="truncate text-xs text-muted-foreground">
+              CDS 预览实例 — 仅用于验收 CDS 自身改动，部署 / docker 操作已禁用
+            </span>
+          </div>
+        </div>
+      )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* 2026-05-04 fix(用户反馈"更新看不出真假"):全局浮动徽章,任何页面
           都能看到 CDS 更新状态(GitHub 有新版本 / CDS 重启中 / 后端已更新等待

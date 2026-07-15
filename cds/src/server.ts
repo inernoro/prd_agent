@@ -79,6 +79,7 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
@@ -834,6 +835,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
     'GET /auth/public-status': '获取公开认证能力',
+    'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
@@ -1764,6 +1766,12 @@ export function createServer(deps: ServerDeps): express.Express {
         local: authMode === 'basic' || authMode === 'github',
       },
     });
+  });
+
+  // ── 实例模式（公开，登录前后都可读）──
+  // 预览实例（CDS 托管 CDS）时前端据此渲染顶部提示，避免用户把演示实例当生产。
+  app.get('/api/instance-mode', (_req, res) => {
+    res.json({ previewInstance: isPreviewInstance() });
   });
 
   // ── AI pairing endpoints (before auth, some are public) ──

@@ -1,0 +1,70 @@
+# CDS Self-Hosting（CDS 托管 CDS）— 独立项目 compose
+#
+# 用途：把 CDS 自己注册成 CDS 的第二个项目（cds-self），任何 CDS 相关分支
+# 部署后得到一个「预览实例」子 CDS —— 通过标准 v3 预览域名打开 dashboard，
+# 验收 CDS 自身的 UI / API 改动，生产 CDS 从此不再为测试而 self-update。
+#
+# 导入方式：CDS Dashboard → 项目列表 → 新建项目（clone 同一仓库）→
+#           项目设置 → 一键导入 → 粘贴本文件内容。
+#
+# 关键取舍（详见 doc/design.cds.self-hosting.md）：
+#   1. 独立项目而非塞进根 cds-compose.yml —— 否则每个 MAP 业务分支都会
+#      白白构建一遍 CDS（「一个仓库多个 CDS 构建」的多构建挑战）。
+#   2. 本项目**不 link GitHub webhook**：webhook 按 repoFullName 只解析到
+#      第一个项目（主项目 prd_agent 会赢），二期再做 fan-out / 分支过滤。
+#      MVP 的部署方式 = Dashboard / cdscli 手动建分支 + 部署。
+#   3. 预览实例不复刻宿主能力：CDS_PREVIEW_INSTANCE=1 会禁用 docker /
+#      systemd / nginx 操作与 self-update，首启 seed 演示数据。
+#
+# 安全提示：预览域名是公网可达的。建议在「项目环境变量」（CDS env scope，
+# 勿写进本文件）配置：
+#   CDS_AUTH_MODE=basic
+#   CDS_USERNAME=<自定>
+#   CDS_PASSWORD=<自定>
+# 不配置时子 CDS 认证是 disabled（仅演示数据 + 宿主操作已禁用，风险低但可见）。
+
+x-cds-project:
+  name: cds-self
+  description: "CDS 预览实例（CDS 托管 CDS）：验收 CDS 自身改动，不执行真实部署"
+  repo: https://github.com/inernoro/prd_agent.git
+
+services:
+  cds:
+    image: node:20-slim
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - cds-self-pnpm-store:/pnpm/store
+    ports:
+      - "9900"
+    # 后端 tsc 构建 + 前端 vite 构建 + node 直启（不走 exec_cds.sh：
+    # 那是宿主入口脚本，会去装依赖 / 渲染 nginx / 起 daemon，容器内全不适用）。
+    command: >-
+      cd cds &&
+      corepack enable &&
+      corepack prepare pnpm@10.28.2 --activate &&
+      pnpm config set store-dir /pnpm/store &&
+      pnpm install --frozen-lockfile &&
+      pnpm build &&
+      cd web &&
+      pnpm install --frozen-lockfile &&
+      pnpm build &&
+      cd .. &&
+      node dist/index.js
+    environment:
+      # 预览实例模式：禁宿主操作 + 跳后台服务 + seed 演示数据（SSOT：
+      # cds/src/services/preview-instance.ts）
+      CDS_PREVIEW_INSTANCE: "1"
+      # 钉死 JSON 存储：绝不让子 CDS 连上父 CDS 的 mongo-split 库
+      #（cross-project-isolation 通道 4：共享库写坏即穿透）。
+      CDS_STORAGE_MODE: "json"
+    labels:
+      cds.path-prefix: "/"
+      # /api/instance-mode 是公开端点，无需登录即可 200，适合做就绪探针。
+      cds.readiness-path: "/api/instance-mode"
+      # 冷构建 = 两次 pnpm install + tsc + vite build，给足窗口。
+      cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
+
+volumes:
+  cds-self-pnpm-store:

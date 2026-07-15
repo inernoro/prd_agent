@@ -240,6 +240,9 @@
 - [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
   > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
 
+- [CDS Self-Hosting（CDS 托管 CDS）](design.cds.self-hosting) `design.cds.self-hosting`
+  > 预览实例模式（CDS_PREVIEW_INSTANCE=1）：宿主操作统一拦截 + 越界服务跳过 + JSON store + seed 演示数据；cds-self 独立项目 compose 解「同仓库多构建」；验收 CDS 改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 

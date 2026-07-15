@@ -55,6 +55,7 @@ import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
+import { isPreviewInstance } from '../services/preview-instance.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
 import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
@@ -11044,6 +11045,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;
+    // 预览实例（CDS 托管 CDS）不执行真实部署：没有 docker，与其让流程跑到
+    // git/docker 处抛裸错误，不如在入口给一句用户看得懂的话。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不执行部署。此实例仅用于验收 CDS 自身的界面与交互；真实部署请回到生产 CDS 操作。',
+      });
+      return;
+    }
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
@@ -20175,6 +20185,14 @@ cdscli project list --human
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
+    // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持自更新。此实例随分支部署，推送新 commit 即自动重建；生产更新请到生产 CDS 执行。',
+      });
+      return;
+    }
     // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
     let { branch, force } = req.body as { branch?: string; force?: boolean };
@@ -20976,6 +20994,14 @@ cdscli project list --human
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
+    // 预览实例不支持自更新（同 /self-update）。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持强制同步。此实例随分支部署，推送新 commit 即自动重建。',
+      });
+      return;
+    }
     // 2026-05-08 用户反馈"强制更新一秒过 → 没法重复测试":body.force=true 强制
     // 跳过 no-op fast-path,即使 HEAD === origin 且 dist .build-sha 都已对上,
     // 也走完整 fetch + reset + analyze + (热/冷/web-only) 流程。这样测试人员

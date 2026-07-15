@@ -46,6 +46,8 @@ import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
+import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
+import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -70,7 +72,15 @@ import type { BranchEntry } from './types.js';
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
-const shell = new ShellExecutor();
+// 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
+// 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
+const shell = isPreviewInstance()
+  ? new PreviewInstanceShellExecutor(new ShellExecutor())
+  : new ShellExecutor();
+if (isPreviewInstance()) {
+  console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
+  console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
+}
 
 const MASTER_MEMORY_MONITOR_INTERVAL_MS = Math.max(
   10_000,
@@ -981,10 +991,25 @@ try {
 // 与 repo 模板有实质 drift 时,以 root 身份自动备份 + 重写 + daemon-reload,
 // forwarder 还会立即 systemctl restart 让新 ExecStart 生效。
 // 详细策略 + 跳过条件见 services/systemd-sync.ts 头部注释。
-try {
-  syncAllSystemdUnits(config.repoRoot);
-} catch (err) {
-  console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+// 预览实例不碰宿主 systemd（写 /etc/systemd + daemon-reload 全是宿主操作）。
+if (isPreviewInstance()) {
+  console.log('  [systemd-sync] 预览实例模式，跳过 systemd 单元同步');
+} else {
+  try {
+    syncAllSystemdUnits(config.repoRoot);
+  } catch (err) {
+    console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+  }
+}
+
+// 预览实例首启 seed 演示数据（空库才 seed，幂等），保证 dashboard 各页有内容可验收。
+if (isPreviewInstance()) {
+  try {
+    const seeded = seedPreviewInstanceDemoData(stateService);
+    if (seeded) console.log('  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+  } catch (err) {
+    console.warn(`  [preview-instance] 演示数据 seed 失败: ${(err as Error).message}`);
+  }
 }
 
 // 2026-05-07 一次性迁移:hotReload.mode === 'dotnet-watch' 的 BuildProfile 全部
@@ -1029,7 +1054,8 @@ const containerService = new ContainerService(shell, config, {
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
 // executor 节点的分支容器在远端，本地采样无意义，跳过。
-const resourceUsageSampler = config.mode === 'executor'
+// 预览实例没有 docker，docker stats 采样只会持续报错，直接跳过。
+const resourceUsageSampler = (config.mode === 'executor' || isPreviewInstance())
   ? null
   : new ResourceUsageSampler(stateService, containerService);
 resourceUsageSampler?.start();
@@ -1183,7 +1209,7 @@ if (process.env.CDS_USE_FORWARDER === '1') {
   }
 }
 
-if (config.mode !== 'executor') {
+if (config.mode !== 'executor' && !isPreviewInstance()) {
   const explicitCanaryUrls = parseCsv(process.env.CDS_PREVIEW_CANARY_URLS || '') ?? [];
   previewCanaryService = new PreviewCanaryService({
     getTargets: (): PreviewCanaryTarget[] => {
@@ -2125,6 +2151,12 @@ janitorService.setRemoveFn(async (slug: string) => {
 
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
+  // 预览实例没有 docker，跳过启动对账：否则 discover 拿到空集会把 seed 的
+  // 演示分支（status=running）误判成「容器丢失」翻成 error。
+  if (isPreviewInstance()) {
+    console.log('  [preview-instance] 跳过 docker 启动对账（infra/app 容器 reconcile）');
+    return;
+  }
   try {
     const discovered = await containerService.discoverInfraContainers();
     const stateServices = stateService.getInfraServices();
@@ -2761,6 +2793,12 @@ janitorService.setRemoveFn(async (slug: string) => {
   // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
   // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
   function startBackgroundServices(): void {
+    // 预览实例：所有依赖 docker / 宿主的后台服务整体跳过（docker events、
+    // janitor 清 worktree、auto-lifecycle 停容器、infra 重启循环都属宿主操作）。
+    if (isPreviewInstance()) {
+      console.log('[preview-instance] 跳过后台服务：docker-events / janitor / scheduler / auto-lifecycle / infra-watchdog');
+      return;
+    }
     dockerEventMonitor.start();
     void systemLogMonitor.start();
     if (schedulerService.isEnabled()) {

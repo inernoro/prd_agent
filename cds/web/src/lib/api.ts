@@ -422,6 +422,16 @@ export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
   return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
 }
 
+export interface CdsInstanceMode {
+  /** true = 预览实例（CDS 托管 CDS 的分支预览），宿主/docker 操作已禁用。 */
+  previewInstance: boolean;
+}
+
+/** 实例模式探针（公开）。预览实例时 Shell 顶部渲染提示条。 */
+export async function fetchInstanceMode(): Promise<CdsInstanceMode> {
+  return apiRequest<CdsInstanceMode>('/api/instance-mode');
+}
+
 /** Whether the system needs first-run bootstrap (zero users). Public. */
 export async function fetchBootstrapStatus(): Promise<{ needsBootstrap: boolean }> {
   return apiRequest<{ needsBootstrap: boolean }>('/api/auth/bootstrap-status');
