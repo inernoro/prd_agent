@@ -240,6 +240,12 @@
 - [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
   > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
 
+- [CDS Self-Hosting（CDS 托管 CDS）](design.cds.self-hosting) `design.cds.self-hosting`
+  > 预览实例模式（CDS_PREVIEW_INSTANCE=1）：宿主操作统一拦截 + 越界服务跳过 + JSON store + seed 演示数据；cds-self 独立项目 compose 解「同仓库多构建」；验收 CDS 改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
+
+- [CDS 生命周期原子性](design.cds.lifecycle-atomicity) `design.cds.lifecycle-atomicity`
+  > 对账收敛取代命令式级联：state 是唯一权威，孤儿容器收割器每小时把无 owner 的 cds-managed 容器停掉；项目删除连带容器物理清理（先容器后网络）；五类原子性问题分类 + 68 孤儿容器日志实证；安全阀（label 过滤/空库守卫/系统容器免死/逃生阀）
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
@@ -400,6 +406,9 @@
 
 - [CDS 自动交付与 Agent 接入 · 指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
   > 从页面批准 Agent 到自动识别、部署、预览、版本复用和恢复的主用户指南
+
+- [CDS 宿主迁移 Runbook](guide.cds.host-migration) `guide.cds.host-migration`
+  > 迁移前/中/后检查单：必迁三样（mongo-split 库、.cds.env 的 CDS_JWT_SECRET、TLS 证书）、repos/worktree/缓存不迁重建、调度器与并发闸核对、缓存预热、极速版首拉限流、选机 CPU 优先
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明

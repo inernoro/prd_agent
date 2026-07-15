@@ -18,6 +18,7 @@ import { Router } from 'express';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { isPreviewInstance } from '../services/preview-instance.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
@@ -48,6 +49,21 @@ function extractMongoAuth(env: Record<string, string>): { user?: string; passwor
 export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   const { stateService, shell, assertProjectAccess } = deps;
   const router = Router();
+
+  // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
+  // 绕过 PreviewInstanceShellExecutor。预览实例没有真实 infra 容器，路由器级
+  // 一次罩住本文件全部端点（backup / restore / backup-history）。
+  router.use((req, res, next) => {
+    // 注意按路径过滤:本 router 可能与其他 /api 路由共用挂载点,裸 use 会误伤。
+    if (!isPreviewInstance() || !/^\/infra\/[^/]+\/(backup|restore|backup-history)/.test(req.path)) {
+      next();
+      return;
+    }
+    res.status(403).json({
+      error: 'preview_instance',
+      message: 'CDS 预览实例没有真实基础设施容器，无法执行备份/恢复。此实例仅用于验收 CDS 自身的界面与交互。',
+    });
+  });
 
   /**
    * Resolve a project-owned infra service for this request and enforce that a
