@@ -220,6 +220,17 @@ describe('processTeardownTombstones', () => {
     expect(shell.commands.filter((c) => c.startsWith('docker rm'))).toHaveLength(0);
   });
 
+  it('spares a same-name container owned by another CDS instance (label mismatch)', async () => {
+    const shell = new MockShellExecutor();
+    // inspect 返回 Created|cds.instance；实例 label 与本实例不符
+    shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-07-15T09:00:00.000000000Z|other-instance', stderr: '', exitCode: 0 }));
+    const state = makeTombstoneState([T('cds-shared-name-api')]);
+    const result = await processTeardownTombstones({ shell, state, instanceId: 'my-instance' });
+    expect(result.superseded).toEqual(['cds-shared-name-api']);
+    expect(state.remaining()).toEqual([]);
+    expect(shell.commands.filter((c) => c.startsWith('docker rm'))).toHaveLength(0);
+  });
+
   it('clears the tombstone when the container is already gone', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '', stderr: 'Error: No such object: cds-gone', exitCode: 1 }));

@@ -29,7 +29,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
-import { processTeardownTombstones } from '../services/orphan-container-reaper.js';
+import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -3527,7 +3527,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const dockerNetwork = project.dockerNetwork;
     void (async () => {
       try {
-        await processTeardownTombstones({ shell, state: stateService });
+        await processTeardownTombstones({ shell, state: stateService, instanceId: config?.repoRoot ? computeCdsInstanceId(config.repoRoot) : undefined });
       } catch (err) {
         console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }

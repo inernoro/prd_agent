@@ -151,12 +151,19 @@ export async function processTeardownTombstones(opts: {
   shell: IShellExecutor;
   state: TombstoneStateView;
   eventLog?: ServerEventLogSink | null;
+  /** 本实例 id：传入后墓碑 rm 前也校验 cds.instance，异实例容器放生（Codex P2）。 */
+  instanceId?: string;
 }): Promise<TombstoneProcessResult> {
   const { shell, state, eventLog } = opts;
   const result: TombstoneProcessResult = { removed: [], superseded: [], pending: [] };
   for (const tombstone of state.getContainerTeardownTombstones()) {
     const name = tombstone.containerName;
-    const inspect = await shell.exec(`docker inspect -f '{{.Created}}' ${quote(name)}`, { timeout: 15_000 });
+    // 同时取 Created 与 cds.instance label：多 master 共宿主时，同名容器可能已被
+    // 别的实例占用（确定性容器名），只比时间不够，还要比实例身份（Codex P2）。
+    const inspect = await shell.exec(
+      `docker inspect -f '{{.Created}}|{{index .Config.Labels "cds.instance"}}' ${quote(name)}`,
+      { timeout: 15_000 },
+    );
     if (inspect.exitCode !== 0) {
       if (/no such (object|container)/i.test(inspect.stderr || '')) {
         state.removeContainerTeardownTombstone(name);
@@ -166,7 +173,24 @@ export async function processTeardownTombstones(opts: {
       result.pending.push(name);
       continue;
     }
-    const createdMs = Date.parse(inspect.stdout.trim());
+    const [createdRaw, instanceRaw] = inspect.stdout.trim().split('|');
+    const containerInstance = (instanceRaw || '').trim();
+    // 异实例容器（label 存在且不等于本实例）：绝不动，放生并消墓碑。
+    if (opts.instanceId && containerInstance && containerInstance !== opts.instanceId) {
+      state.removeContainerTeardownTombstone(name);
+      result.superseded.push(name);
+      eventLog?.record({
+        category: 'container',
+        severity: 'info',
+        source: 'orphan-container-reaper',
+        action: 'container.teardown.superseded',
+        message: `同名容器属于另一个 CDS 实例，放生: ${name}`,
+        containerName: name,
+        details: { projectId: tombstone.projectId, containerInstance },
+      });
+      continue;
+    }
+    const createdMs = Date.parse((createdRaw || '').trim());
     const requestedMs = Date.parse(tombstone.requestedAt);
     if (Number.isFinite(createdMs) && Number.isFinite(requestedMs) && createdMs > requestedMs) {
       state.removeContainerTeardownTombstone(name);
@@ -219,7 +243,7 @@ export async function sweepOrphanCdsContainers(opts: {
 
   // 墓碑补偿先于一切守卫（Codex P2）：删除最后一个项目后 state 为空，但墓碑是
   // 持久化的显式意图，不依赖「扫描推断」，即使空库也必须重试。
-  await processTeardownTombstones({ shell, state, eventLog });
+  await processTeardownTombstones({ shell, state, eventLog, instanceId: opts.instanceId });
 
   const projects = state.getProjects();
   const branches = state.getAllBranches();
