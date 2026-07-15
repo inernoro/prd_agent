@@ -73,7 +73,7 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { Reveal } from '@/pages/home/components/Reveal';
-import { hueAccent, getAccent, glassTileStyle } from '@/lib/tileAccent';
+import { getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
@@ -131,8 +131,6 @@ type HomeQuickLink = {
   label: string;
   desc: string;
   path: string;
-  /** 色阶尺色相（同一饱和度/明度档位，只换 H），配色纪律与 ICON_HUE 一致 */
-  hue: number;
 };
 
 /**
@@ -142,10 +140,10 @@ type HomeQuickLink = {
  * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
  */
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
-  { id: 'marketplace', icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', hue: 38 },
-  { id: 'library', icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', hue: 217 },
-  { id: 'showcase', icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', hue: 271 },
-  { id: 'updates', icon: Sparkles, label: '更新中心', desc: '代码级周报 · 本周仓库变更速览', path: '/changelog', hue: 43 },
+  { id: 'marketplace', icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace' },
+  { id: 'library', icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library' },
+  { id: 'showcase', icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase' },
+  { id: 'updates', icon: Sparkles, label: '更新中心', desc: '代码级周报 · 本周仓库变更速览', path: '/changelog' },
 ];
 
 const VOC_QUICK_LINK: HomeQuickLink = {
@@ -154,7 +152,6 @@ const VOC_QUICK_LINK: HomeQuickLink = {
   label: 'VOC',
   desc: '用户原声闭环 · 行为洞察与 AI 根因诊断',
   path: '/team-activity',
-  hue: 239,
 };
 
 const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> = {
@@ -163,13 +160,13 @@ const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> = {
   voc: VOC_QUICK_LINK,
   showcase: QUICK_LINKS_BASE[2],
   updates: QUICK_LINKS_BASE[3],
-  'document-store': { id: 'document-store', icon: Library, label: '知识库', desc: '文档存储与知识管理，支持文件夹、GitHub 同步', path: '/document-store', hue: 217 },
-  'my-assets': { id: 'my-assets', icon: FolderHeart, label: '我的资源', desc: '图片、附件、素材等个人资源统一管理', path: '/visual-agent?tab=assets', hue: 330 },
-  'workflow-agent': { id: 'workflow-agent', icon: Workflow, label: '工作流引擎', desc: '可视化工作流编排，自动化多步骤任务串联', path: '/workflow-agent', hue: 173 },
-  'web-pages': { id: 'web-pages', icon: Globe, label: '网页托管', desc: '上传 HTML 或 ZIP，托管并分享你的网页', path: '/web-pages', hue: 199 },
-  'open-platform': { id: 'open-platform', icon: Code2, label: '开放平台', desc: 'API 签发、应用接入与调用监控', path: '/open-platform', hue: 160 },
-  models: { id: 'models', icon: Cpu, label: '模型中心', desc: '大模型与模型池配置、健康监控', path: '/mds', hue: 239 },
-  teams: { id: 'teams', icon: Users, label: '团队协作', desc: '团队成员、用户组、分享与协作', path: '/users', hue: 215 },
+  'document-store': { id: 'document-store', icon: Library, label: '知识库', desc: '文档存储与知识管理，支持文件夹、GitHub 同步', path: '/document-store' },
+  'my-assets': { id: 'my-assets', icon: FolderHeart, label: '我的资源', desc: '图片、附件、素材等个人资源统一管理', path: '/visual-agent?tab=assets' },
+  'workflow-agent': { id: 'workflow-agent', icon: Workflow, label: '工作流引擎', desc: '可视化工作流编排，自动化多步骤任务串联', path: '/workflow-agent' },
+  'web-pages': { id: 'web-pages', icon: Globe, label: '网页托管', desc: '上传 HTML 或 ZIP，托管并分享你的网页', path: '/web-pages' },
+  'open-platform': { id: 'open-platform', icon: Code2, label: '开放平台', desc: 'API 签发、应用接入与调用监控', path: '/open-platform' },
+  models: { id: 'models', icon: Cpu, label: '模型中心', desc: '大模型与模型池配置、健康监控', path: '/mds' },
+  teams: { id: 'teams', icon: Users, label: '团队协作', desc: '团队成员、用户组、分享与协作', path: '/users' },
 };
 
 function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
@@ -216,7 +213,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
     >
       <AgentCardArtwork agentKey={item.agentKey} compact />
       {hasArtwork ? (
-        <AgentCardFrame hoverBorder={accent.border} />
+        <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
       ) : (
         <div
           className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
@@ -412,7 +409,7 @@ interface SectionHeaderProps {
   accent?: string;
 }
 
-function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--media-card-task, #7CFC00)' }: SectionHeaderProps) {
+function SectionHeader({ eyebrow, title, subtitle, count, accent = 'rgba(214, 216, 212, 0.72)' }: SectionHeaderProps) {
   return (
     <div className="mb-4 flex items-end justify-between gap-4">
       <div className="min-w-0">
@@ -641,7 +638,7 @@ export default function AgentLauncherPage() {
             width: isMobile ? '140%' : 520,
             height: isMobile ? 260 : 340,
             background:
-              'radial-gradient(ellipse at 30% 50%, rgba(124, 252, 0, 0.055) 0%, rgba(247, 247, 251, 0.035) 36%, transparent 66%)',
+              'radial-gradient(ellipse at 30% 50%, rgba(214, 216, 212, 0.05) 0%, rgba(247, 247, 251, 0.025) 36%, transparent 66%)',
             filter: 'blur(40px)',
             opacity: 0.68,
             zIndex: 0,
@@ -662,9 +659,9 @@ export default function AgentLauncherPage() {
                     <div
                       className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
                       style={{
-                        background: 'rgba(124, 252, 0, 0.07)',
-                        border: '1px solid rgba(124, 252, 0, 0.22)',
-                        color: 'var(--media-card-task)',
+                        background: 'rgba(247, 247, 251, 0.045)',
+                        border: '1px solid rgba(247, 247, 251, 0.13)',
+                        color: 'rgba(214, 216, 212, 0.78)',
                         textShadow: 'none',
                       }}
                     >
@@ -686,7 +683,7 @@ export default function AgentLauncherPage() {
                       {displayName && (
                         <span
                           style={{
-                            background: 'linear-gradient(100deg, #F7F7FB 0%, #B8E986 100%)',
+                            background: 'linear-gradient(100deg, #F7F7FB 0%, #C8C5BE 100%)',
                             WebkitBackgroundClip: 'text',
                             WebkitTextFillColor: 'transparent',
                             backgroundClip: 'text',
@@ -739,7 +736,7 @@ export default function AgentLauncherPage() {
                           WebkitBackdropFilter: 'blur(12px)',
                         }}
                         onFocus={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(124,252,0,0.58)';
+                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.30)';
                           e.currentTarget.style.background = 'rgba(20,20,24,0.78)';
                         }}
                         onBlur={(e) => {
@@ -767,7 +764,6 @@ export default function AgentLauncherPage() {
                 <div className={`relative z-10 flex flex-wrap items-center ${isMobile ? 'px-5 pb-4 gap-2' : 'px-5 pb-4 gap-2.5'}`}>
                   {quickLinks.map((link) => {
                     const Icon = link.icon;
-                    const qa = hueAccent(link.hue);
                     const isUpdates = link.id === 'updates';
                     const showUnread = isUpdates && changelogUnread > 0;
                     return (
@@ -783,22 +779,22 @@ export default function AgentLauncherPage() {
                           border: '1px solid rgba(255,255,255,0.08)',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = qa.soft;
-                          e.currentTarget.style.borderColor = qa.border;
+                          e.currentTarget.style.background = 'rgba(247,247,251,0.075)';
+                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.16)';
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.background = 'var(--bg-elevated, rgba(255,255,255,0.04))';
                           e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
                         }}
                       >
-                        <Icon size={15} style={{ color: qa.color }} />
+                        <Icon size={15} style={{ color: 'rgba(214,216,212,0.66)' }} />
                         <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))' }}>
                           {link.label}
                         </span>
                         {showUnread && (
                           <span
                             className="px-1.5 h-[18px] min-w-[18px] rounded-full inline-flex items-center justify-center text-[10px] font-bold"
-                            style={{ background: 'hsl(43 68% 60%)', color: '#1a1a1a' }}
+                            style={{ background: 'rgba(232,233,230,0.82)', color: '#18191b' }}
                           >
                             {changelogUnread > 9 ? '9+' : changelogUnread}
                           </span>

@@ -338,7 +338,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           />
         )}
         {hasArtwork ? (
-          <AgentCardFrame hoverBorder={accent.border} />
+          <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
         ) : (
           <div
             className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"

@@ -9,20 +9,20 @@ import { useDailyTipsStore } from '@/stores/dailyTipsStore';
  * 数据走 dailyTipsStore.progress（挂载自动拉一次）。
  *
  * 等级→帽子（2026-06-23 用户确认保留「徽章环」一套）：后端 LevelTable 共 7 级（新手/入门/进阶/
- * 熟手/高手/大师/宗师）。每级对应一顶配色递进的学士帽（`HAT_TIERS` + `<LevelHat/>` 内联 SVG，
- * 禁止 emoji）：低阶素色、中阶亮色、高阶（大师/宗师）加皇冠，嵌进环形进度圈。
+ * 熟手/高手/大师/宗师）。每级对应一顶明度递进的学士帽（`HAT_TIERS` + `<LevelHat/>` 内联 SVG，
+ * 禁止 emoji）：统一石墨与暖银色相，高阶（大师/宗师）加皇冠，嵌进环形进度圈。
  */
 
 // ── 等级帽子分级表（index 0 = 1 级，对齐后端 LevelTable）──
 type HatTier = { name: string; board: string; cap: string; tassel: string; glow: string; crown: boolean };
 const HAT_TIERS: HatTier[] = [
-  { name: '新手', board: '#64748b', cap: '#475569', tassel: '#cbd5e1', glow: 'rgba(100,116,139,0.45)', crown: false },
-  { name: '入门', board: '#10b981', cap: '#059669', tassel: '#6ee7b7', glow: 'rgba(16,185,129,0.45)', crown: false },
-  { name: '进阶', board: '#0ea5e9', cap: '#0284c7', tassel: '#7dd3fc', glow: 'rgba(14,165,233,0.45)', crown: false },
-  { name: '熟手', board: '#8b5cf6', cap: '#7c3aed', tassel: '#c4b5fd', glow: 'rgba(139,92,246,0.45)', crown: false },
-  { name: '高手', board: '#f59e0b', cap: '#d97706', tassel: '#fcd34d', glow: 'rgba(245,158,11,0.5)', crown: false },
-  { name: '大师', board: '#f97316', cap: '#ea580c', tassel: '#fdba74', glow: 'rgba(249,115,22,0.55)', crown: true },
-  { name: '宗师', board: '#fbbf24', cap: '#f59e0b', tassel: '#fff7cd', glow: 'rgba(251,191,36,0.65)', crown: true },
+  { name: '新手', board: '#70747a', cap: '#50545a', tassel: '#c8cbd0', glow: 'rgba(200,203,208,0.12)', crown: false },
+  { name: '入门', board: '#7b7f84', cap: '#595d62', tassel: '#ced0d3', glow: 'rgba(206,208,211,0.13)', crown: false },
+  { name: '进阶', board: '#888b8f', cap: '#64676b', tassel: '#d3d4d5', glow: 'rgba(211,212,213,0.14)', crown: false },
+  { name: '熟手', board: '#96989a', cap: '#707274', tassel: '#d8d8d6', glow: 'rgba(216,216,214,0.15)', crown: false },
+  { name: '高手', board: '#a6a39d', cap: '#7c7974', tassel: '#dedbd4', glow: 'rgba(222,219,212,0.16)', crown: false },
+  { name: '大师', board: '#b6b0a7', cap: '#89837c', tassel: '#e4ded4', glow: 'rgba(228,222,212,0.17)', crown: true },
+  { name: '宗师', board: '#c6beb2', cap: '#969087', tassel: '#eee8de', glow: 'rgba(238,232,222,0.18)', crown: true },
 ];
 
 function hatTier(level: number): HatTier {
@@ -81,8 +81,8 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
       className="w-full text-left rounded-xl flex items-center gap-3"
       style={{
         padding: '11px 13px',
-        background: 'linear-gradient(120deg, rgba(168,85,247,0.16), rgba(99,102,241,0.10) 55%, rgba(251,191,36,0.08))',
-        border: '1px solid rgba(196,181,253,0.28)',
+        background: 'linear-gradient(120deg, rgba(247,247,251,0.055), rgba(247,247,251,0.025))',
+        border: '1px solid rgba(247,247,251,0.13)',
         cursor: 'pointer',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
@@ -104,7 +104,7 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
           {levelName} · 经验 {xp}{total > 0 ? ` · ${learned}/${total} 套` : ''}
         </div>
       </div>
-      <ArrowRight size={14} className="shrink-0" style={{ color: '#c4b5fd' }} />
+      <ArrowRight size={14} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
     </button>
   );
 }

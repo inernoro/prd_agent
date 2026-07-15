@@ -53,27 +53,27 @@
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.60);
 
-  /* 登录页固定暗色视觉：石墨、暖银与单点荧光绿，不跟随应用内容主题反相。 */
-  --login-bg: #0d0f0e;
-  --login-backdrop-overlay: radial-gradient(ellipse 82% 58% at 50% -8%, rgba(184, 201, 168, 0.14) 0%, rgba(98, 116, 88, 0.07) 34%, rgba(13, 15, 14, 0.22) 66%, rgba(13, 15, 14, 0.82) 100%);
-  --login-panel-bg: rgba(20, 22, 20, 0.76);
-  --login-field-bg: rgba(25, 28, 25, 0.68);
-  --login-border: rgba(224, 232, 218, 0.14);
-  --login-border-strong: rgba(205, 218, 195, 0.22);
-  --login-title-shadow: 0 0 30px rgba(224, 232, 218, 0.24), 0 0 90px rgba(124, 252, 0, 0.10), 0 0 140px rgba(103, 125, 91, 0.08);
-  --login-title-shadow-strong: 0 0 40px rgba(239, 243, 235, 0.34), 0 0 110px rgba(124, 252, 0, 0.14), 0 0 160px rgba(103, 125, 91, 0.11);
-  --login-hud-shadow: 0 0 28px rgba(178, 192, 168, 0.14), inset 0 0 14px rgba(178, 192, 168, 0.05);
-  --login-hud-shadow-strong: 0 0 38px rgba(205, 218, 195, 0.20), inset 0 0 20px rgba(205, 218, 195, 0.07);
-  --login-horizon: linear-gradient(90deg, transparent 0%, rgba(124, 252, 0, 0.20) 30%, rgba(226, 232, 220, 0.78) 50%, rgba(139, 164, 124, 0.24) 70%, transparent 100%);
-  --login-horizon-shadow: 0 0 24px rgba(226, 232, 220, 0.30), 0 -1px 34px rgba(124, 252, 0, 0.12);
-  --login-sun: radial-gradient(circle at center, rgba(124, 252, 0, 0.10) 0%, rgba(205, 218, 195, 0.12) 35%, rgba(103, 125, 91, 0.05) 60%, transparent 75%);
-  --login-grid-horizontal: rgba(205, 218, 195, 0.24);
-  --login-grid-vertical: rgba(124, 252, 0, 0.14);
-  --login-mark-start: #30352f;
-  --login-mark-mid: #56634d;
-  --login-mark-end: #89a873;
-  --login-cta-gradient: linear-gradient(115deg, #30352f 0%, #56634d 58%, #7cfc00 150%);
-  --login-cta-shadow: 0 0 44px rgba(124, 252, 0, 0.15), 0 0 90px rgba(103, 125, 91, 0.13), 0 10px 32px rgba(0, 0, 0, 0.50);
+  /* 登录页固定暗色视觉：石墨、暖银、冷白，不跟随应用内容主题反相。 */
+  --login-bg: #0e0f11;
+  --login-backdrop-overlay: radial-gradient(ellipse 82% 58% at 50% -8%, rgba(222, 224, 220, 0.10) 0%, rgba(143, 146, 142, 0.045) 34%, rgba(14, 15, 17, 0.24) 66%, rgba(14, 15, 17, 0.84) 100%);
+  --login-panel-bg: rgba(23, 24, 27, 0.78);
+  --login-field-bg: rgba(28, 29, 32, 0.70);
+  --login-border: rgba(247, 247, 251, 0.12);
+  --login-border-strong: rgba(247, 247, 251, 0.18);
+  --login-title-shadow: 0 0 30px rgba(232, 233, 230, 0.18), 0 0 90px rgba(188, 190, 186, 0.06);
+  --login-title-shadow-strong: 0 0 40px rgba(247, 247, 251, 0.27), 0 0 110px rgba(188, 190, 186, 0.09);
+  --login-hud-shadow: 0 0 28px rgba(210, 212, 208, 0.10), inset 0 0 14px rgba(210, 212, 208, 0.035);
+  --login-hud-shadow-strong: 0 0 38px rgba(230, 231, 228, 0.15), inset 0 0 20px rgba(230, 231, 228, 0.05);
+  --login-horizon: linear-gradient(90deg, transparent 0%, rgba(205, 207, 203, 0.14) 30%, rgba(240, 241, 238, 0.68) 50%, rgba(181, 183, 179, 0.16) 70%, transparent 100%);
+  --login-horizon-shadow: 0 0 24px rgba(232, 233, 230, 0.20), 0 -1px 34px rgba(188, 190, 186, 0.07);
+  --login-sun: radial-gradient(circle at center, rgba(232, 233, 230, 0.08) 0%, rgba(196, 198, 194, 0.09) 35%, rgba(137, 139, 136, 0.04) 60%, transparent 75%);
+  --login-grid-horizontal: rgba(215, 217, 213, 0.16);
+  --login-grid-vertical: rgba(215, 217, 213, 0.075);
+  --login-mark-start: #292a2d;
+  --login-mark-mid: #4a4b50;
+  --login-mark-end: #8d8f94;
+  --login-cta-gradient: linear-gradient(115deg, #303136 0%, #4d4f54 58%, #71737a 100%);
+  --login-cta-shadow: 0 0 32px rgba(214, 216, 212, 0.08), 0 10px 32px rgba(0, 0, 0, 0.50);
 
   /* 图片封面上的跨主题语义色：明暗主题都必须保持高对比，不跟随页面正文反转。 */
   --media-card-base: #141418;
@@ -85,12 +85,13 @@
   --media-card-tag-border: rgba(247, 247, 251, 0.10);
   --media-card-tag-text: rgba(247, 247, 251, 0.68);
   --media-card-border: rgba(247, 247, 251, 0.13);
+  --media-card-border-hover: rgba(247, 247, 251, 0.24);
   --media-card-edge: rgba(247, 247, 251, 0.08);
   --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32);
   --media-card-task: #7cfc00;
-  --media-card-task-muted: rgba(124, 252, 0, 0.62);
+  --media-card-task-muted: rgba(214, 216, 212, 0.62);
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.66);
 
@@ -241,12 +242,13 @@
   --media-card-tag-border: rgba(247, 247, 251, 0.10) !important;
   --media-card-tag-text: rgba(247, 247, 251, 0.68) !important;
   --media-card-border: rgba(247, 247, 251, 0.13) !important;
+  --media-card-border-hover: rgba(247, 247, 251, 0.24) !important;
   --media-card-edge: rgba(247, 247, 251, 0.08) !important;
   --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%) !important;
   --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%) !important;
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32) !important;
   --media-card-task: #7cfc00 !important;
-  --media-card-task-muted: rgba(124, 252, 0, 0.62) !important;
+  --media-card-task-muted: rgba(214, 216, 212, 0.62) !important;
   --text-on-media: #f7f7fb !important;
   --text-on-media-muted: rgba(247, 247, 251, 0.66) !important;
 
