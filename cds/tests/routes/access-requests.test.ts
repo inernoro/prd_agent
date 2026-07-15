@@ -83,6 +83,8 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     app.use((req, _res, next) => {
       if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return next();
       if (req.method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(req.path)) return next();
+      if (req.method === 'POST' && req.path === '/api/bootstrap-access-requests') return next();
+      if (req.method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(req.path)) return next();
       // 默认模拟人类 cookie 登录;带 x-machine-key 头时模拟「机器密钥通过全局鉴权
       // 但不是人」—— 用于验证 approve/reject 拒绝机器密钥。
       if (req.headers['x-machine-key'] !== '1') (req as any)._cdsCookieAuth = true;
@@ -155,6 +157,38 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     // 再轮询 → 无明文(一次性交付)
     const deliver2 = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': token });
     expect(deliver2.body).toEqual({ status: 'approved', delivered: true });
+  });
+
+  it('首次接入:免密申请 → 人类批准 → 只交付一次性 create-only key', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'Codex', purpose: '部署一个新仓库',
+    });
+    expect(init.status).toBe(201);
+    const reqId = init.body.requestId as string;
+    const token = init.body.pollToken as string;
+
+    const list = await request(server, 'GET', '/api/access-requests');
+    const item = list.body.requests.find((entry: any) => entry.id === reqId);
+    expect(item).toMatchObject({ kind: 'bootstrap', projectId: '__new_project__' });
+    expect(item).not.toHaveProperty('pollTokenHash');
+
+    const approve = await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {});
+    expect(approve.status).toBe(200);
+    expect(JSON.stringify(approve.body)).not.toContain('cdsg_');
+
+    const deliver = await request(server, 'GET', `/api/bootstrap-access-requests/${reqId}`, undefined, {
+      'X-Poll-Token': token,
+    });
+    expect(deliver.body.authorizationKey).toMatch(/^cdsg_/);
+    const match = stateService.findGlobalAgentKeyForAuth(deliver.body.authorizationKey);
+    expect(match?.access).toEqual({ canCreateProjects: true, projects: [] });
+    const entry = stateService.getGlobalAgentKeys().find((key) => key.id === match?.keyId);
+    expect(entry?.oneTime).toBe(true);
+
+    const deliverAgain = await request(server, 'GET', `/api/bootstrap-access-requests/${reqId}`, undefined, {
+      'X-Poll-Token': token,
+    });
+    expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
   });
 
   it('拒绝路径:发起方凭 token 轮询看到 rejected + 原因', async () => {

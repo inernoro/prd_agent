@@ -2889,7 +2889,9 @@ export interface AgentKey {
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
-  /** 目标项目 id(单项目)。 */
+  /** 授权类型；存量记录缺省为 project。 */
+  kind?: 'project' | 'bootstrap';
+  /** 目标项目 id；bootstrap 使用保留值 __new_project__。 */
   projectId: string;
   /** sha256 of the one-time pollToken issued at submit. Only the submitter holds the plaintext. */
   pollTokenHash: string;
@@ -2989,6 +2991,8 @@ export interface GlobalAgentKey {
    * state.ts resolveGlobalAgentKeyAccess()。
    */
   access?: AgentKeyAccess;
+  /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
+  oneTime?: boolean;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

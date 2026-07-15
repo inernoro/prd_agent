@@ -52,7 +52,7 @@ CDS 目前**临时住在** `prd_agent/cds/` 下，未来会搬出成独立仓库
 
 CDS 独立仓库后，你在 cds 仓库内跑 `cdscli sync-from-cds`，git root 推断
 自动就是 cds 仓库根 → 找 `./src/routes` 即可（改一下 3 号兜底逻辑）。
-或者维护者在 `~/.cdsrc` 或 `.cds.env` 里写死 `CDS_ROUTES_DIR`。
+或者维护者仅在当前进程显式传 `CDS_ROUTES_DIR`；不要为了该参数修改终端启动文件。
 
 整个流程：
 
@@ -184,7 +184,7 @@ VERSION 字符串现在住在两个地方，**都要 bump**：
 - [ ] python3 cdscli.py <new-cmd> --help 子 help 正常
 - [ ] python3 cdscli.py <new-cmd> <args> 真连 noroenrn 成功
 - [ ] tar -czf /tmp/t.tar.gz -C /tmp/fake-root .claude/
-      然后解到别的目录 → cdscli.py 独立跑得通（测 drop-in 完整性）
+      然后解到别的目录 → cdscli.py 独立跑得通（测通用 skills/ 包结构）
 
 push 前：
 - [ ] changelogs/YYYY-MM-DD_cds-skill-xxx.md 加碎片
@@ -192,7 +192,8 @@ push 前：
 
 push 后：
 - [ ] noroenrn 手动 self-update 验证新 cdscli 生效
-- [ ] 点一次 (zip) 下载 tar.gz 抽查内容
+- [ ] 点一次下载 tar.gz，确认根目录是 `skills/` + `manifest.json`
+- [ ] 用 `connect` 验证页面批准，确认没有修改 shell profile 或输出密钥
 - [ ] 没有惊吓 → 收工
 ```
 

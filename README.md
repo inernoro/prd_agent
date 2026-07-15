@@ -65,7 +65,7 @@ Root directory policy:
 | Report and review agents | Weekly reports, review workflows, webhook feedback, and team reporting |
 | Visual and literary workflows | Image generation, visual analysis, article illustration, and watermark support |
 | Workflow automation | Visual workflow builder, scheduled execution, secrets, and run history |
-| CDS branch previews | Branch builds, preview routing, deployment logs, and CI/CD support |
+| CDS branch previews | Branch builds, preview routing, resumable deployment records, reusable versions, rollback, and failure guidance |
 | LLM gateway | Centralized model routing, model pools, logging, health scoring, and fallback strategy |
 
 ## Development Commands
@@ -140,6 +140,7 @@ Docs in `doc/` use strict prefixes:
 Good entry points:
 
 - [AGENTS.md](AGENTS.md) for repository rules.
+- [cds/README.md](cds/README.md) for the CDS managed-delivery quick start and user acceptance checklist.
 - [doc/design.platform.peer-sync.md](doc/design.platform.peer-sync.md) for system interconnection.
 - [doc/design.cds.md](doc/design.cds.md) for branch previews.
 - [doc/design.platform.llm-gateway.md](doc/design.platform.llm-gateway.md) for model routing.

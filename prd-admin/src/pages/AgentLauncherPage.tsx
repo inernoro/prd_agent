@@ -77,6 +77,7 @@ import { hueAccent, getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
+import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -199,49 +200,95 @@ function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
   const Icon = getIcon(item.icon);
-  const isPaAgent = item.agentKey === 'pa-agent';
-  const cardDescription = isPaAgent
-    ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
-    : item.description;
+  const hasArtwork = hasAgentCardArtwork(item.agentKey);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group relative w-full h-full text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
-      style={glassTileStyle(accent)}
+      className={`group relative w-full h-full overflow-hidden text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col ${hasArtwork ? '' : 'justify-between gap-3 p-4'}`}
+      style={{
+        ...glassTileStyle(accent),
+        minHeight: hasArtwork ? 188 : undefined,
+        background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
+      }}
     >
+      <AgentCardArtwork agentKey={item.agentKey} compact />
       {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸） */}
       <div
         className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
         style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
       />
 
-      <div className="flex items-start justify-between">
-        <div
-          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-          style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
-        >
-          <Icon size={19} style={{ color: accent.color }} />
-        </div>
-        <ArrowRight
-          size={15}
-          className="shrink-0 mt-1 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
-          style={{ color: 'var(--text-muted)' }}
-        />
-      </div>
+      {hasArtwork ? (
+        <>
+          <div className="relative z-10 flex items-start justify-between gap-2 px-3 pt-3">
+            <div
+              className="max-w-[58%] text-[17px] font-semibold leading-[1.2] tracking-[-0.02em]"
+              style={{ color: 'var(--text-on-media)' }}
+            >
+              {item.name}
+            </div>
+            <AgentCardTask agentKey={item.agentKey} dense />
+          </div>
 
-      <div className="min-w-0">
-        <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
-          {item.name}
-        </div>
-        <p
-          className="text-[12px] mt-1 leading-relaxed line-clamp-2"
-          style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
-        >
-          {cardDescription}
-        </p>
-      </div>
+          <div
+            className="relative z-10 mt-auto px-2.5 pb-2.5 pt-2.5"
+            style={{
+              background: 'var(--media-card-panel-translucent)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }}
+          >
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                {item.tags.slice(0, 3).map((tag) => (
+                  <span
+                    key={tag}
+                    className="shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium leading-none"
+                    style={{
+                      color: 'var(--media-card-tag-text)',
+                      background: 'var(--media-card-tag-bg)',
+                      borderColor: 'var(--media-card-tag-border)',
+                    }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <ArrowRight
+                size={15}
+                className="shrink-0 opacity-50 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:opacity-90"
+                style={{ color: 'var(--media-card-task)' }}
+              />
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="relative z-10 flex items-start justify-between">
+            <div
+              className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+              style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
+            >
+              <Icon size={19} style={{ color: accent.color }} />
+            </div>
+            <ArrowRight
+              size={15}
+              className="shrink-0 mt-1 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
+              style={{ color: 'var(--text-muted)' }}
+            />
+          </div>
+          <div className="relative z-10 min-w-0">
+            <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              {item.name}
+            </div>
+            <p className="text-[12px] mt-1 leading-relaxed line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+              {item.description}
+            </p>
+          </div>
+        </>
+      )}
     </button>
   );
 }
@@ -361,7 +408,7 @@ interface SectionHeaderProps {
   accent?: string;
 }
 
-function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--accent-primary, #818CF8)' }: SectionHeaderProps) {
+function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--media-card-task, #7CFC00)' }: SectionHeaderProps) {
   return (
     <div className="mb-4 flex items-end justify-between gap-4">
       <div className="min-w-0">
@@ -377,14 +424,14 @@ function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--accent
         </div>
         <div className="flex items-baseline gap-2.5">
           <h2
-            className="text-[17px] font-semibold tracking-tight"
+            className="text-[19px] font-semibold tracking-tight"
             style={{ color: 'var(--text-primary, #fff)' }}
           >
             {title}
           </h2>
           {typeof count === 'number' && (
             <span
-              className="px-1.5 py-0.5 rounded-md text-[11px] font-medium tabular-nums"
+              className="px-1.5 py-0.5 rounded-md text-[12px] font-medium tabular-nums"
               style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
             >
               {count}
@@ -404,13 +451,11 @@ function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--accent
   );
 }
 
-// ── Auto-fill grid style helper ──
-
+// 高密度自适应：1440px 约五列；21:9 带鱼屏继续增列，同时随视口适度放宽卡片下限。
 const AUTO_GRID_FEATURED: React.CSSProperties = {
   display: 'grid',
-  gap: 10,
-  gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))',
-  // 等高：短描述的瓦片与两行描述的瓦片在同一行保持齐平
+  gap: 6,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, clamp(228px, 12vw, 278px)), 1fr))',
   alignItems: 'stretch',
 };
 
@@ -563,21 +608,21 @@ export default function AgentLauncherPage() {
         <div
           className="absolute inset-x-0 top-0 pointer-events-none overflow-hidden"
           style={{
-            height: isMobile ? 260 : 440,
+            height: isMobile ? 220 : 300,
             zIndex: 0,
-            opacity: 0.55,
+            opacity: 0.34,
             // screen 提亮混合：极光只加光不压暗。液态玻璃等浅色底下，
             // 普通 alpha 覆盖会把暗色端画成黑块并在画布边缘露出分界线（2026-07-05 用户反馈），
             // screen 模式下暗部趋近无操作，边界自然消失
             mixBlendMode: 'screen',
-            maskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
-            WebkitMaskImage: 'linear-gradient(180deg, black 0%, black 45%, transparent 96%)',
+            maskImage: 'linear-gradient(180deg, black 0%, black 34%, transparent 94%)',
+            WebkitMaskImage: 'linear-gradient(180deg, black 0%, black 34%, transparent 94%)',
           }}
         >
           <AuroraBackground
-            colorStops={['#2E2A55', '#6E56CF', '#5B8DEF']}
-            amplitude={0.9}
-            blend={0.55}
+            colorStops={['#3A4238', '#4B5745', '#68745E']}
+            amplitude={0.6}
+            blend={0.38}
             speed={0.35}
             style={{ width: '100%', height: '100%' }}
           />
@@ -587,14 +632,14 @@ export default function AgentLauncherPage() {
         <div
           className="absolute pointer-events-none"
           style={{
-            top: '5%',
+            top: '2%',
             left: isMobile ? '-20%' : '2%',
             width: isMobile ? '140%' : 520,
             height: isMobile ? 260 : 340,
             background:
-              'radial-gradient(ellipse at 30% 50%, rgba(255, 255, 255, 0.10) 0%, rgba(226, 232, 240, 0.045) 36%, transparent 66%)',
+              'radial-gradient(ellipse at 30% 50%, rgba(124, 252, 0, 0.055) 0%, rgba(247, 247, 251, 0.035) 36%, transparent 66%)',
             filter: 'blur(40px)',
-            opacity: 0.82,
+            opacity: 0.68,
             zIndex: 0,
           }}
         />
@@ -603,7 +648,7 @@ export default function AgentLauncherPage() {
         <div className="relative z-10">
 
             {/* Hero content */}
-            <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
+            <div className={`relative ${isMobile ? 'px-5 pt-7 pb-4' : 'px-5 pt-7 pb-5'}`}>
               {/* flex-wrap：中等宽度(1024-1190px,非 mobile)下让右栏整体换行落到问候语下方，
                   避免「左列 + 搜索 280 + 教程 280」单行不换挤爆视口(Codex) */}
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-x-8 gap-y-6 flex-wrap'}`}>
@@ -613,9 +658,9 @@ export default function AgentLauncherPage() {
                     <div
                       className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
                       style={{
-                        background: 'rgba(129, 140, 248, 0.10)',
-                        border: '1px solid rgba(129, 140, 248, 0.26)',
-                        color: '#A5B4FC',
+                        background: 'rgba(124, 252, 0, 0.07)',
+                        border: '1px solid rgba(124, 252, 0, 0.22)',
+                        color: 'var(--media-card-task)',
                         textShadow: 'none',
                       }}
                     >
@@ -637,7 +682,7 @@ export default function AgentLauncherPage() {
                       {displayName && (
                         <span
                           style={{
-                            background: 'linear-gradient(100deg, #8B95F6 0%, #B7A5F0 100%)',
+                            background: 'linear-gradient(100deg, #F7F7FB 0%, #B8E986 100%)',
                             WebkitBackgroundClip: 'text',
                             WebkitTextFillColor: 'transparent',
                             backgroundClip: 'text',
@@ -653,7 +698,7 @@ export default function AgentLauncherPage() {
                       data-tour-id="home-subtitle"
                       className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
-                        color: 'var(--text-muted, rgba(255,255,255,0.6))',
+                          color: 'rgba(247, 247, 251, 0.72)',
                         textShadow: '0 1px 4px rgba(0,0,0,0.2)',
                         maxWidth: 520,
                       }}
@@ -683,19 +728,19 @@ export default function AgentLauncherPage() {
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
                         style={{
-                          background: 'rgba(255,255,255,0.06)',
-                          border: '1px solid rgba(255,255,255,0.1)',
+                          background: 'rgba(20,20,24,0.54)',
+                          border: '1px solid rgba(247,247,251,0.14)',
                           color: 'var(--text-primary, #fff)',
                           backdropFilter: 'blur(12px)',
                           WebkitBackdropFilter: 'blur(12px)',
                         }}
                         onFocus={(e) => {
-                          e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                          e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                          e.currentTarget.style.borderColor = 'rgba(124,252,0,0.58)';
+                          e.currentTarget.style.background = 'rgba(20,20,24,0.78)';
                         }}
                         onBlur={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.14)';
+                          e.currentTarget.style.background = 'rgba(20,20,24,0.54)';
                         }}
                       />
                     </div>
@@ -715,7 +760,7 @@ export default function AgentLauncherPage() {
             {/* ── 置顶入口 — 平台级快捷方式（胶囊行：零封面零横幅，入口就长得像入口） ── */}
             {!searchQuery.trim() && quickLinks.length > 0 && (
               <Reveal delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 flex flex-wrap items-center ${isMobile ? 'px-5 pb-5 gap-2' : 'px-8 pb-6 gap-2.5'}`}>
+                <div className={`relative z-10 flex flex-wrap items-center ${isMobile ? 'px-5 pb-4 gap-2' : 'px-5 pb-4 gap-2.5'}`}>
                   {quickLinks.map((link) => {
                     const Icon = link.icon;
                     const qa = hueAccent(link.hue);
@@ -764,7 +809,7 @@ export default function AgentLauncherPage() {
             {/* ── 继续上次 — 回到最近的工作现场（无数据时整体不渲染，新用户不见空壳） ── */}
             {!searchQuery.trim() && recentWorkItems.length > 0 && (
               <Reveal delay={REVEAL.recent} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-8'}`}>
+                <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-5 pb-8'}`}>
                   <SectionHeader eyebrow="CONTINUE" title="继续上次" />
                   {/* 履历胶囊条：flex-wrap 铺满整行；默认露一批（桌面 8 条），展开看全部 */}
                   <div className="flex flex-wrap items-center gap-2">
@@ -812,7 +857,7 @@ export default function AgentLauncherPage() {
           </div>
           {/* end expansive hero banner */}
 
-        <div className={isMobile ? 'px-4 pt-2 pb-8' : 'px-8 pt-4 pb-12'}>
+        <div className={isMobile ? 'px-4 pt-1 pb-8' : 'px-5 pt-1 pb-12'}>
           {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">

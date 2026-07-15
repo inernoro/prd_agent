@@ -4,6 +4,8 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
+import { AS_FONT_FAMILY } from '@/lib/appStoreTokens';
+import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 
 /* ── Tab 定义 ── */
 type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage';
@@ -22,6 +24,7 @@ const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
  * 数据来自 GET /api/mobile/assets 聚合 API。
  */
 export default function MobileAssetsPage() {
+  const C = useAppStoreColors();
   const [activeTab, setActiveTab] = useState<AssetTab>('all');
   const [loading, setLoading] = useState(true);
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);
@@ -47,8 +50,18 @@ export default function MobileAssetsPage() {
     return assets.filter((a) => a.type === activeTab);
   }, [assets, activeTab]);
 
+  // 类型徽章语义色（走 iOS 系统色，随双皮肤切换）。彩色档用 hex+alpha 底，附件用中性 pillBg。
+  const typeMeta = (t: string): { label: string; color: string; bg: string } => {
+    switch (t) {
+      case 'image': return { label: '图片', color: C.orange, bg: `${C.orange}26` };
+      case 'document': return { label: '文档', color: C.indigo, bg: `${C.indigo}26` };
+      case 'webpage': return { label: '网页', color: C.green, bg: `${C.green}26` };
+      default: return { label: '附件', color: C.labelSecondary, bg: C.pillBg };
+    }
+  };
+
   return (
-    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
+    <div className="h-full min-h-0 flex flex-col" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
       {/* ── Tab 栏 ── */}
       <div className="flex items-center gap-1 px-4 pt-4 pb-2 shrink-0">
         {TABS.map((tab) => {
@@ -60,9 +73,9 @@ export default function MobileAssetsPage() {
               onClick={() => setActiveTab(tab.key)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
               style={{
-                background: active ? 'rgba(255,255,255,0.10)' : 'transparent',
-                color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                border: active ? '1px solid rgba(255,255,255,0.10)' : '1px solid transparent',
+                background: active ? C.pillBg : 'transparent',
+                color: active ? C.label : C.labelSecondary,
+                border: active ? `1px solid ${C.hairline}` : '1px solid transparent',
               }}
             >
               <TabIcon size={14} />
@@ -78,26 +91,28 @@ export default function MobileAssetsPage() {
           <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
-            <FolderOpen size={32} style={{ color: 'rgba(255,255,255,0.15)' }} />
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <FolderOpen size={32} style={{ color: C.labelTertiary }} />
+            <div className="text-sm" style={{ color: C.labelSecondary }}>
               {activeTab === 'all' ? '还没有任何资产' : '该分类下暂无内容'}
             </div>
-            <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <div className="text-[11px]" style={{ color: C.labelTertiary }}>
               使用 Agent 创作后，产出物会自动出现在这里
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 pt-2">
-            {filtered.map((asset) => (
+            {filtered.map((asset) => {
+              const meta = typeMeta(asset.type);
+              return (
               <div
                 key={asset.id}
                 className="flex flex-col rounded-xl overflow-hidden"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                style={{ background: C.card, border: `1px solid ${C.hairline}` }}
               >
                 {/* 缩略图 */}
                 <div
                   className="w-full aspect-[4/3] flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.02)' }}
+                  style={{ background: C.surface }}
                 >
                   {asset.thumbnailUrl ? (
                     <img
@@ -109,32 +124,29 @@ export default function MobileAssetsPage() {
                   ) : asset.type === 'webpage' && asset.url ? (
                     <SitePreview url={asset.url} className="w-full h-full" />
                   ) : asset.type === 'image' ? (
-                    <Image size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <Image size={24} style={{ color: C.labelTertiary }} />
                   ) : asset.type === 'document' ? (
-                    <FileText size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <FileText size={24} style={{ color: C.labelTertiary }} />
                   ) : asset.type === 'webpage' ? (
-                    <Globe size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <Globe size={24} style={{ color: C.labelTertiary }} />
                   ) : (
-                    <Paperclip size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <Paperclip size={24} style={{ color: C.labelTertiary }} />
                   )}
                 </div>
                 {/* 信息 */}
                 <div className="p-2.5">
-                  <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-xs font-medium truncate" style={{ color: C.label }}>
                     {asset.title}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span
                       className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
-                      style={{
-                        background: asset.type === 'image' ? 'rgba(251,146,60,0.15)' : asset.type === 'document' ? 'rgba(129,140,248,0.15)' : asset.type === 'webpage' ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.08)',
-                        color: asset.type === 'image' ? '#FB923C' : asset.type === 'document' ? '#818CF8' : asset.type === 'webpage' ? '#34D399' : 'var(--text-muted)',
-                      }}
+                      style={{ background: meta.bg, color: meta.color }}
                     >
-                      {asset.type === 'image' ? '图片' : asset.type === 'document' ? '文档' : asset.type === 'webpage' ? '网页' : '附件'}
+                      {meta.label}
                     </span>
                     {asset.sizeBytes > 0 && (
-                      <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[9px]" style={{ color: C.labelSecondary }}>
                         {asset.sizeBytes > 1024 * 1024
                           ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)}MB`
                           : `${(asset.sizeBytes / 1024).toFixed(0)}KB`}
@@ -143,7 +155,8 @@ export default function MobileAssetsPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

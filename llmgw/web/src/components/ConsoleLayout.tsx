@@ -10,7 +10,7 @@ import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { useThemePreference } from '@/lib/theme';
 
-type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; internalOnly?: boolean };
+type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; internalOnly?: boolean; hiddenRoles?: string[] };
 type NavGroup = { label: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
@@ -31,7 +31,7 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/learn', label: '学习中心', icon: <BookOpen size={16} /> },
   ] },
   { label: '组织', items: [
-    { to: '/organization', label: '团队与成员', icon: <Building2 size={16} /> },
+    { to: '/organization', label: '团队与成员', icon: <Building2 size={16} />, hiddenRoles: ['billing'] },
   ] },
   { label: '治理', items: [
     { to: '/usage', label: '预算与用量', icon: <CircleDollarSign size={16} /> },
@@ -55,7 +55,7 @@ export function ConsoleLayout() {
   const who = user?.displayName || user?.username || '已登录';
   const navGroups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.internalOnly || tenant?.isInternal),
+    items: group.items.filter((item) => (!item.internalOnly || tenant?.isInternal) && !item.hiddenRoles?.includes(tenant?.role ?? '')),
   })).filter((group) => group.items.length > 0);
 
   useEffect(() => {

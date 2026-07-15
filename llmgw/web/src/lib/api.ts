@@ -77,6 +77,9 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  CreateMemberRequest,
+  CreatedMember,
+  UpdateMemberRequest,
   PromptPolicyData,
   PromptPolicyDraft,
   PromptPolicyPreview,
@@ -384,6 +387,15 @@ export function createTenant(req: { name: string; slug: string }): Promise<ApiRe
 }
 export function createTeam(req: { name: string }): Promise<ApiResponse<CreatedTeam>> {
   return apiRequest<CreatedTeam>('/teams', { method: 'POST', body: req });
+}
+export function createMember(req: CreateMemberRequest): Promise<ApiResponse<CreatedMember>> {
+  return apiRequest<CreatedMember>('/members', { method: 'POST', body: req });
+}
+export function updateMember(id: string, req: UpdateMemberRequest): Promise<ApiResponse<{ id: string; role: string; status: string; teamIds: string[]; version: number }>> {
+  return apiRequest(`/members/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function invalidateMemberSessions(id: string): Promise<ApiResponse<{ id: string; userId: string; version: number; invalidated: boolean }>> {
+  return apiRequest(`/members/${encodeURIComponent(id)}/invalidate-sessions`, { method: 'POST' });
 }
 export function switchTenant(tenantId: string): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/switch-tenant', { method: 'POST', body: { tenantId } });

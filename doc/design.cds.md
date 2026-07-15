@@ -1,524 +1,284 @@
-# CDS (Cloud Development Suite) · 设计
+# CDS 总体架构 · 设计
 
-> **版本**：v3.2 | **日期**：2026-04-10 | **状态**：已落地
->
-> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离（含跨机负载均衡）见 `doc/design.cds.resilience.md`。
->
-> **v3.2 关键变更**：运维入口统一为单一 `cds/exec_cds.sh init|start|stop|restart` 脚本；Nginx 配置改为启动时按 `.cds.env` 幂等渲染，支持 `CDS_ROOT_DOMAINS` 逗号分隔的多根域名，无需域名迁移即可同时承载 `miduo.org` / `mycds.net` 等多套入口。
+> **版本**：v4.0 | **日期**：2026-07-15 | **状态**：开发中
 
-## 一、管理摘要
+## 管理摘要
 
-- **解决什么问题**：多分支并行开发时缺乏隔离的测试环境，开发者需手动管理 Docker 容器、端口、路由
-- **方案概述**：基于 Node.js + TypeScript 构建云开发套件，自动管理 Git worktree + Docker 容器编排 + 请求代理路由，每个分支独立环境
-- **业务价值**：一键创建分支级隔离环境，支持多分支并行测试，消除环境冲突和手动运维成本
-- **影响范围**：独立 cds/ 模块,对主项目仅改动 vite.config.ts 的 proxy target 支持环境变量
-- **预计风险**：低 — 已落地运行，88+ 个测试用例覆盖核心服务层
+- **解决什么问题**：把代码仓库变成可持续部署、预览、验收和恢复的运行环境，同时减少用户配置、权限接入和故障排查负担。
+- **方案概述**：CDS 用项目作为权限和资源边界，用分支作为预览环境，用部署记录保存过程，用不可变部署版本保存可重复运行的结果；普通项目走托管模式，复杂项目保留 Compose。
+- **业务价值**：用户选择项目并批准后即可开始，部署过程可续看，成功版本可复用，新版本异常可恢复，失败可以先判断归属再处理。
+- **影响范围**：CDS 服务端、Dashboard、项目与分支模型、GitHub App、Agent 接入、部署执行器、预览代理、任务调度、验收中心和运维体系。
+- **主要风险**：部署和版本是核心链路，必须保持 Compose、远端执行器和旧自动化兼容；凭据、环境变量和仓库授权必须继续按项目隔离。
 
----
+## 问题背景
 
-## 0. 核心思想（Why CDS）
+CDS 最初解决“Git 分支如何快速变成独立容器环境”。随着多项目、GitHub 自动部署、远端执行器、任务调度和验收报告进入系统，原来的“分支加容器”定义已经不足。
 
-### 一句话定义
+用户真正遇到的困难集中在五处：
 
-> **CDS 是"Git 分支即环境"的单机编排器**。它把一条 Git 分支自动映射为一组隔离的 Docker 容器（API + Web + 基础设施），通过内置反向代理让同一个域名按 Header/Cookie/域名在多个分支间瞬时切换。目标是让 4 人以下小团队在**一台小型服务器**上就能跑起 5-10 个并行特性分支的验收环境，无需 K8s、无需多机集群。
+1. 第一次使用需要先准备技能、Key 和电脑环境；
+2. 项目运行配置需要用户完整填写，普通项目也承担高级项目的复杂度；
+3. 部署状态、日志、服务状态和触发来源分散；
+4. 相同代码重复构建，新版本失败后难以快速恢复；
+5. 私有仓库、项目变量、Agent 凭据和系统配置容易混用。
 
-### 和同类方案的区别
+因此 CDS 的总体设计从“分支环境管理器”升级为“项目授权后的自动交付平台”。
 
-| 维度 | docker-compose | K8s / Argo | Gitpod / Coder | **CDS** |
-|---|---|---|---|---|
-| 分支即环境 | 手动多份 compose | Helm + 命名空间 | ✅ | ✅ |
-| 单机可用 | ✅ | ❌ 至少 3 节点 | ❌ 需托管 | ✅ |
-| 切换分支 | 改配置 + 重启 | 改 Ingress | 切 workspace | **Header/Cookie 实时切** |
-| 运维成本 | 高 | 极高 | 中（有托管费） | **近零** |
-| 生产可用 | ❌ | ✅ | ⚠️ | ❌ 定位为开发/验收 |
+## 设计目标
 
-### 三大设计 DNA
+| 目标 | 判定标准 |
+| --- | --- |
+| 零侵入接入 | 新用户不复制长期密钥，不修改系统环境和 Shell 配置 |
+| 普通项目低配置 | 自动识别后，用户只确认无法安全推断的部分 |
+| 过程可恢复 | 刷新、离开或短暂断线后仍可读取同一部署过程 |
+| 结果可重复 | 成功版本具备明确复用状态，可重新部署或回滚 |
+| 高级能力兼容 | Compose、特殊网络、远端执行器和旧自动化继续工作 |
+| 项目级安全 | 仓库、凭据、环境、网络和部署历史按项目隔离 |
+| 用户验收闭环 | 通过最终预览地址完成真实核心操作，不以容器运行代替验收 |
 
-1. **分支隔离 ≠ 基础设施隔离**：MongoDB/Redis 全局共享（单实例），业务容器按分支隔离——用最小的资源代价获得最大的隔离收益
-2. **动态路由 > 域名分发**：一个主域名 + Header 解析，避免证书通配 + DNS 泛解析的运维负担
-3. **状态可见即可控**：JSON + Dashboard，人类可读可改，不上数据库
+## 核心决策
 
-### 适用场景
+### 项目是权限和资源边界
 
-- ✅ 多团队并行特性开发、QA 验收环境、CI/CD 分支预览
-- ✅ 目标用户：开发者、QA、产品经理（需要快速切换多分支）
-- ❌ 不适合：生产环境高可用、跨地域部署、大规模微服务
+仓库授权、Agent 凭据、环境变量、分支、网络、运行服务、部署历史和验收报告都必须能归属到一个项目。
 
----
+全局配置只用于 CDS 服务本身或明确的管理员默认值，不能成为跨项目读取业务信息的捷径。
 
-## 0.5 文档地图
+### 部署记录是过程事实
 
-CDS 的文档按职责划分，推荐按以下顺序阅读：
+每次部署在实际执行前创建一条持久记录。准备、构建、启动、检查、完成或失败都追加到同一记录。
 
-```
-主入口：design.cds.md  ← 你在这里
-    │
-    ├─ 一分钟起步      → guide.platform.quickstart.md
-    ├─ 环境变量与多域名 → guide.cds.env.md
-    ├─ 功能是什么      → spec.cds.md
-    ├─ 怎么不宕机      → design.cds.resilience.md
-    ├─ 当前状态        → plan.cds.status.md (我在哪)
-    ├─ 怎么部署        → plan.cds.deployment.md
-    ├─ 长期路线图      → plan.cds.roadmap.md
-    ├─ 一键导入配置    → design.cds.onboarding.md
-    ├─ 数据迁移        → design.cds.data-migration.md
-    ├─ 认证陷阱        → guide.cds.ai-auth.md
-    └─ Onboarding 验收 → report.cds.onboarding-uat.md (18 friction + 41 契约对照)
-```
+Dashboard、CLI、GitHub Check 和诊断能力读取同一事实，不再各自推导一套结果。
 
-| 文档 | 类型 | 什么时候读 |
-|---|---|---|
-| **design.cds.md** | design | 首次了解 CDS、理解整体架构 |
-| **guide.platform.quickstart.md** | guide | 立刻上手 init/start/stop/restart + 多根域名 |
-| **guide.cds.env.md** | guide | 配置 .cds.env、理解 CDS_ROOT_DOMAINS 的路由生成规则 |
-| **spec.cds.md** | spec | 想知道 CDS 具体能做什么（功能清单 F1-F11） |
-| **design.cds.resilience.md** | design | 在小服务器部署、关心容量/温池调度/跨机负载均衡 |
-| **plan.cds.deployment.md** | plan | 要真实上线一台服务器，需要部署步骤 |
-| **guide.cds.ai-auth.md** | guide | 遇到认证/JWT 问题排查 |
-| **design.cds.onboarding.md** | design | 要做"一键从项目导入 CDS 配置"的功能 |
-| **design.cds.data-migration.md** | design | 涉及跨环境数据迁移 |
-| **plan.cds.roadmap.md** | plan | 规划下一阶段做什么 |
+### 部署版本是可重复运行的结果
 
----
+构建成功后生成不可变部署版本，记录代码提交、配置摘要、产物、依赖和验证结果。
 
-## 1. Quickstart
+重新部署和回滚消费已有版本；只有产物缺失或执行环境不兼容时才重新构建，并明确告诉用户原因。
 
-### 前置条件
+### 托管模式和 Compose 双车道
 
-- Node.js >= 20
-- pnpm
-- Docker（用于管理分支容器 + 宿主 nginx 容器）
-- Git（用于 worktree 管理）
+托管模式面向常规项目，CDS 负责识别和准备运行方案；Compose 模式面向复杂项目，保留服务编排、网络、镜像和启动顺序控制。
 
-### 一键启动（v3.2 统一入口）
+两种模式共享部署记录、版本、预览、诊断和回滚，切换模式不删除另一车道的配置。
 
-```bash
-cd cds
+### 页面批准替代长期 Key 复制
 
-./exec_cds.sh init        # 首次初始化：交互式写 .cds.env + 渲染 nginx 配置
-./exec_cds.sh start       # 默认后台启动 (等同 daemon / --background / -d)
-./exec_cds.sh start --fg  # 前台启动 (调试)
-./exec_cds.sh stop        # 停止 CDS + Nginx
-./exec_cds.sh restart     # 重启
-./exec_cds.sh status      # 查看 CDS / Nginx 运行状态
-./exec_cds.sh logs        # 跟随 cds.log (Ctrl+C 退出)
-./exec_cds.sh cert        # 为 CDS_ROOT_DOMAINS 的每个域名签发 Let's Encrypt 证书
+Codex、Cursor 和 Claude Code 使用同一申请协议。用户在 CDS 页面批准项目访问，凭据只保存到当前项目。
+
+首次创建项目使用一次性授权，项目创建完成后自动失效并切换到项目专属权限。
+
+### 确定性诊断优先
+
+失败阶段、错误分类和基础建议由部署事实与规则生成。AI 解释只负责进一步翻译和补充，不得成为用户理解失败的唯一入口。
+
+## 整体架构
+
+```text
+人类用户与 Agent
+        |
+        v
+CDS 控制面
+  - 登录与项目授权
+  - 项目、仓库和交付模式
+  - 部署记录与部署版本
+  - 任务调度与验收中心
+  - Dashboard、CLI、GitHub 状态回写
+        |
+        v
+执行与数据面
+  - 本地或远端执行器
+  - Git 工作区与构建环境
+  - 应用和基础设施容器
+  - 分支网络与项目变量
+  - 预览代理与健康检查
+        |
+        v
+持久事实
+  - 项目、分支、运行服务
+  - 部署事件和版本
+  - 任务与运行记录
+  - 报告、审计和系统事件
 ```
 
-根目录下的 `prd_agent/exec_cds.sh` 是转发器，等价于 `cds/exec_cds.sh`——无需 `cd cds/` 也能调用。
-
-所有命令都会 source `cds/.cds.env`（唯一用户配置入口），不再依赖 `.bashrc` 或环境变量。`daemon` / `--background` / `-d` 保留为 `start` 的历史别名，供 CDS 自更新（`branches.ts` 里 spawn `./exec_cds.sh daemon`）继续使用。
-
-### 运行测试
-
-```bash
-cd cds && npx vitest run    # 88 tests, 6 files
-```
-
----
-
-## 2. 系统架构
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│  Host Machine                                                  │
-│                                                                │
-│  cds/ (Node.js + TypeScript)                                   │
-│  ├── :9900 Dashboard API + Web UI                              │
-│  ├── git worktree 管理 (~/.cds-worktrees/)                     │
-│  ├── docker 容器编排                                           │
-│  ├── 代理路由（分支解析 + 请求转发）                            │
-│  └── state.json 状态持久化                                     │
-│                                                                │
-│  ═══════════════ docker (prdagent-network) ════════════════     │
-│                                                                │
-│  infra-mongodb   │  infra-redis   │  branch-a/api  :9001       │
-│  :27017          │  :6379         │  branch-a/web  :9002       │
-│                  │                │  branch-b/api  :9003       │
-│                  │                │  branch-b/web  :9004       │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### 请求路由原理
-
-所有分支容器运行在同一 Docker 网络。代理服务根据请求头/Cookie/域名/路径规则解析目标分支，按 `pathPrefixes` 匹配目标服务，将请求转发到对应的 `localhost:{hostPort}`。
-
-分支解析优先级：`X-Branch` header → `cds_branch` cookie → 域名路由规则 → 默认分支
+控制面决定“谁可以对哪个项目做什么、应该运行哪个版本”；执行面负责实际拉取、构建、启动和检查。执行器可以变化，部署记录和版本语义保持一致。
 
----
-
-## 3. 技术栈
+## 关键用户链路
 
-| 层面 | 选择 | 理由 |
-|------|------|------|
-| 语言 | TypeScript (Node.js 22) | 团队已有 TS 技术栈 |
-| 测试 | Vitest | 快速、TS 原生支持 |
-| Web 框架 | Express | 轻量 REST API |
-| 进程执行 | child_process.exec | 通过 ShellExecutor 抽象可 mock |
-| 状态存储 | JSON 文件 | 简单可靠，无需数据库 |
+### Agent 接入
 
----
+1. 页面选择 Agent 和项目；
+2. 页面生成不含密钥的接入口令；
+3. Agent 发起短期申请；
+4. 用户在 CDS 批准；
+5. CDS 签发项目级权限；
+6. Agent 保存到当前项目并验证；
+7. 后续操作进入活动记录。
 
-## 4. 项目结构
+短暂网络波动不会生成新的长期权限。等待过程继续复用原申请，取消或超时后清理临时状态。
 
-```
-cds/
-├── src/
-│   ├── index.ts              # 入口，基础设施发现
-│   ├── server.ts             # Express 服务器，JWT 认证，静态文件
-│   ├── config.ts             # 配置加载
-│   ├── types.ts              # 类型定义
-│   ├── services/
-│   │   ├── shell-executor.ts # Shell 命令执行 (可 mock)
-│   │   ├── state.ts          # 状态持久化 + 端口分配
-│   │   ├── worktree.ts       # Git worktree 管理
-│   │   ├── container.ts      # Docker 容器生命周期
-│   │   ├── proxy.ts          # 路由代理 + 分支解析
-│   │   ├── compose-parser.ts # Compose YAML 解析
-│   │   └── topo-sort.ts      # 依赖拓扑排序
-│   ├── routes/
-│   │   └── branches.ts       # API 路由 (~600 行)
-│   └── templates/
-│       └── nginx.conf.ts     # Nginx 配置模板
-├── web/                      # Dashboard 前端
-├── tests/                    # 88 tests, 6 files
-├── nginx/                    # Nginx 配置模板
-└── Dockerfile
-```
+### 新项目创建
 
----
+1. 用户选择 Git 仓库；
+2. 私有仓库使用 GitHub App 单仓库授权；
+3. CDS 读取真实默认分支并检测项目；
+4. 用户确认服务、命令、端口和依赖；
+5. 可选试运行验证；
+6. 创建项目并生成首次部署记录；
+7. 部署成功后产生可复用版本和预览地址。
 
-## 5. 服务层设计
+### 日常部署
 
-### 5.1 ShellExecutor
+1. GitHub 推送或用户手动触发；
+2. CDS 创建部署记录并绑定项目、分支和提交；
+3. 规划器决定复用已有版本还是构建新版本；
+4. 执行器依次准备、构建、启动和检查；
+5. 事件持续持久化并推送到页面；
+6. 成功后更新当前运行版本；
+7. 用户通过最终预览地址验收。
 
-可 mock 的 shell 命令执行层，所有外部命令（git/docker）通过此接口调用。
+### 版本恢复
 
-```typescript
-interface IShellExecutor {
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
-}
-```
+1. 用户选择以前的成功版本；
+2. CDS 检查产物是否可复用；
+3. 创建新的恢复部署记录；
+4. 启动目标版本并完成健康检查；
+5. 当前运行版本指向目标版本；
+6. 用户重新完成核心操作验收。
 
-### 5.2 StateService
+## 项目识别与配置合并
 
-状态持久化 + 端口分配 + 环境变量管理。
+CDS 的自动识别结果必须可解释、可编辑，并保留来源。
 
-- `load()` / `save()` — JSON 文件读写（v3.1 起为**原子写 + 滚动备份**，见 `design.cds.resilience.md §5`）
-- `addBranch()` / `removeBranch()` — 分支 CRUD
-- `allocatePort()` — 动态端口分配
-- `getCdsEnvVars()` — 自动生成 CDS_* 系统变量
-- `getMirrorEnvVars()` — 镜像加速变量
-- `getCustomEnv()` — 用户自定义变量
+| 来源 | 用途 | 优先级原则 |
+| --- | --- | --- |
+| 项目清单和锁文件 | 判断语言、包管理器、脚本和目录 | 作为确定性证据 |
+| Dockerfile 和 Compose | 读取镜像、构建、启动和依赖 | 复杂项目优先保留声明 |
+| CDS 托管默认值 | 填补常见网站和后台服务配置 | 只填安全可推断部分 |
+| 用户最小声明 | 修正自动识别或特殊项目要求 | 明确覆盖推导值 |
 
-### 5.3 WorktreeService
+标准 Compose 缺少启动命令时，可以从同一服务目录的项目清单继续推导。复杂启动逻辑、特殊网络和自定义镜像不得被默认值静默覆盖。
 
-Git worktree 管理。
+## 身份、凭据与环境
 
-- `create(branch, targetDir)` — `git worktree add`
-- `remove(targetDir)` — `git worktree remove`
-- `list()` — `git worktree list`
-- `branchExists(branch)` — 验证远程分支
+| 信息 | 作用域 | 保存位置 |
+| --- | --- | --- |
+| CDS 系统配置 | 整个 CDS 环境 | `cds/.cds.env` 或系统设置 |
+| 项目运行变量 | 单个项目的业务容器 | 项目配置存储 |
+| Agent 项目凭据 | 当前项目中的 Agent | `.cds/credentials.json` |
+| GitHub App 私钥 | CDS 平台 | CDS 系统配置 |
+| GitHub 仓库安装授权 | 被选择仓库 | GitHub App installation |
 
-### 5.4 ContainerService
+Agent 项目凭据不能注入业务容器，GitHub App 私钥不能下发到项目，项目运行变量不能跨项目读取。
 
-Docker 容器生命周期。
+## GitHub 集成
 
-- `start(entry, profile, env, config)` — 创建并启动容器
-- `stop(containerName)` — `docker stop && docker rm`
-- `isRunning(containerName)` — `docker inspect` 检查
-- `getContainerNetwork()` — 网络连接检查
-- 环境变量合并：`CDS_*` 自动变量 → 镜像加速变量 → 自定义变量 → Profile 专属变量
+GitHub App 是私有仓库和 push 即部署的统一入口：
 
-### 5.5 ProxyService
+- Contents 只读用于拉取代码；
+- Pull requests、Checks 和 Issues 权限用于回写预览状态与评论；
+- Webhook 经过签名验证后映射到项目和分支；
+- owner 白名单提供平台级附加约束；
+- 安装范围优先限制为被选择仓库；
+- CI 预构建模式额外消费 Workflow run 事件。
 
-请求路由核心。
+项目关联、安装授权和事件记录必须可追踪，不能依赖个人 Token 作为长期主路径。
 
-- `resolveBranch(req)` — 从请求解析目标分支
-- `handleRequest(req, res)` — 代理转发
-- 路径匹配：按 `pathPrefixes` 分发到不同服务
-- 域名路由：支持 switch domain、preview subdomain
+## 隔离模型
 
-### 5.6 ComposeParser
+### 项目隔离
 
-CDS Compose YAML 解析与生成。
+- 独立仓库关联和工作区；
+- 独立 Docker 网络；
+- 独立项目变量和凭据；
+- 独立分支、版本、任务和报告；
+- 所有项目级 API 校验目标项目。
 
-- `parseComposeFile()` / `parseComposeString()` — 解析标准 compose
-- `parseCdsCompose()` — 解析含 `x-cds-*` 扩展的 compose
-- `toCdsCompose()` — 生成 CDS Compose YAML
-- `discoverComposeFiles()` — 自动发现项目中的 compose 文件
+### 分支隔离
 
-### 5.7 TopoSort
+- 每个分支拥有独立应用容器和预览路由；
+- 基础设施可按项目共享，也可按分支隔离；
+- 数据库分支隔离策略由专项配置决定；
+- 端口和容器名称由 CDS 统一分配，避免冲突。
 
-按 `dependsOn` 关系计算服务启动顺序，使用拓扑排序保证依赖先启动。
+## 可观测性
 
-### 5.8 SchedulerService（v3.1 新增）
+CDS 同时记录：
 
-分支温池调度器，在小服务器上按需唤醒/休眠分支，避免资源超售。详见 `doc/design.cds.resilience.md`。
+- 部署阶段和事件；
+- 构建与容器日志；
+- HTTP 慢请求和错误；
+- GitHub Webhook 投递与派发结果；
+- 服务端系统事件；
+- Agent 和人类活动记录。
 
-- `start()` / `stop()` — 启动/停止后台 tick
-- `touch(slug)` — 代理命中分支时更新 lastAccess
-- `markHot(slug)` / `markCold(slug)` — 手动状态迁移
-- `evictLruIfOverCapacity()` — 容量超标时驱逐 LRU 分支
-- `pin(slug)` / `unpin(slug)` — 保护指定分支不被驱逐
-- `getSnapshot()` — Dashboard 展示用的当前状态
+所有用户可见长任务必须持续更新。重新打开页面后从持久事件恢复，实时流只负责传递新变化，不承担唯一事实源。
 
-默认 `enabled: false`，保持与老版本完全一致的行为。启用后按 `maxHotBranches` / `idleTTLSeconds` / `pinnedBranches` 配置工作。
+## 任务调度与验收中心
 
-### 5.9 ScheduledJobService（项目级任务调度，2026-06-29 新增）
+任务调度属于项目能力，支持每天、间隔和手动触发，以及 HTTP 和受控命令动作。创建前可以测试目标，命令在隔离环境执行。
 
-项目级定时任务 MVP，`cds/src/services/scheduled-job-service.ts` + `cds/src/scheduler/`（`dispatcher.ts` / `executor-registry.ts`）+ `cds/src/routes/scheduled-jobs.ts`。
+验收中心保存 HTML 或 Markdown 报告，支持按项目和文件夹归类，并提供直达深链。验收报告与部署记录通过项目、分支、版本和预览地址形成证据链。
 
-- **配置模型**：一个 `ScheduledJob` = 触发器（`schedule`：cron/interval/manual）+ 一串按顺序执行的 `ScheduledJobAction`（动作步骤，支持 HTTP 请求或命令目标），纵向配置流，非单一目标。
-- **执行方式**：30s tick（`DEFAULT_TICK_MS`）扫描到期任务；命令类动作在 Docker sandbox（默认镜像 `alpine:3`）中执行，隔离宿主文件系统，透传 CDS Docker network 使其可访问项目内服务；每次执行整体共享一个超时预算（`DEFAULT_TIMEOUT_SECONDS=300`），避免多动作/重试突破任务总超时。
-- **API**：`GET /scheduled-jobs`、`GET /scheduled-jobs/runs`、`POST /scheduled-jobs/check-target`（执行前检测）、`POST /scheduled-jobs`、`PATCH /scheduled-jobs/:id`、`DELETE /scheduled-jobs/:id`、`POST /scheduled-jobs/:id/run`（手动触发）。
-- **安全**：项目级 key 的读权限已收敛到自己项目范围（修复过「项目级 key 可无范围读取任务列表与运行日志」的越权问题）；命令动作强制走 sandbox，不直接触达宿主。
-- **已知修复**：按 `retryCount` 重试失败动作；长时间任务不再因重复 tick 产生假跳过记录并覆盖运行状态；编辑非调度字段不再误触发 `nextRunAt` 重算；同一轮 tick 内任务被禁用后不再继续执行；tick 认领逻辑加固（防坏调度阻断启动、空 `nextRunAt` 重复执行、手动运行误挪动自动计划）。
+## CDS Agent 工作台
 
----
+CDS Agent 工作台在独立工作区执行代码任务，并持续展示步骤、工具调用、审批和结果。
 
-## 6. 环境变量体系
+完整运行时不可用时，可以降级为明确标记的只读审查。只读模式不得修改文件、执行命令或假装完成可写任务。
 
-### 两层架构
+## 单机、集群与维护
 
-| 层 | 存储位置 | 用途 | 变量前缀 |
-|----|----------|------|----------|
-| 系统层 | `cds/.cds.env` | CDS 自身配置 | `CDS_` |
-| 项目层 | `.cds/state.json` | 注入业务容器 | 无限制 |
+CDS 支持从单机逐步扩展：
 
-**v3.2 变更**：系统层变量统一收拢到 `cds/.cds.env`，由 `./exec_cds.sh init` 交互式生成；**不再使用 `.bashrc`**，避免与宿主其他 CDS_* 环境变量冲突。所有命令启动时自动 `source` 这一个文件，保证开发机和 systemd 服务的行为一致。
+| 形态 | 适用场景 | 核心能力 |
+| --- | --- | --- |
+| 单机 | 本地和小团队 | 控制面与执行面同机，启动简单 |
+| 温池单机 | 分支较多的小服务器 | 按需唤醒、容量限制和闲置回收 |
+| 调度端加执行端 | 多机或容量增长 | 控制面统一派发，执行节点报告容量和心跳 |
 
-### 系统层变量（收敛为 4 个）
+`exec_cds.sh` 是单机运维入口，负责初始化、启动、停止、状态、日志和证书。集群引导、容量和故障隔离以专项设计为准。
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `CDS_USERNAME` | — | Dashboard 登录用户名（设置后启用认证） |
-| `CDS_PASSWORD` | — | Dashboard 登录密码 |
-| `CDS_JWT_SECRET` | init 自动生成 | JWT 签名密钥（>= 32 字节，首次运行自动 `openssl rand -base64 32`） |
-| `CDS_ROOT_DOMAINS` | — | 根域名列表，逗号分隔（如 `miduo.org,mycds.net`） |
+CDS 自更新必须记录目标分支、更新时间、重启结果和恢复状态。控制面短暂重启不能破坏已运行的业务容器和持久部署事实。
 
-旧的 `CDS_SWITCH_DOMAIN` / `CDS_MAIN_DOMAIN` / `CDS_PREVIEW_DOMAIN` / `CDS_DASHBOARD_DOMAIN` / `CDS_NGINX_ENABLE` 均已废弃。`src/config.ts` 保留对它们的读取作为临时兼容，但 `.cds.env` 只写 4 个变量；新的部署推荐只认 `CDS_ROOT_DOMAINS`。
+## 数据与兼容策略
 
-详细配置指南见 `doc/guide.cds.env.md`，Quickstart 另见 `doc/guide.platform.quickstart.md`。
+- 新字段和新实体采用可选、增量和可迁移设计；
+- 旧分支状态和操作日志保留兼容读取；
+- 部署记录与版本成为新流程主事实，但不一次性删除旧数据；
+- JSON 与 MongoDB 存储后端遵循相同领域语义；
+- Compose、旧 Key 自动化和远端执行器协议保持兼容；
+- 不完整旧版本明确标记能力边界，不伪造可复用状态。
 
----
+## 验收标准
 
-## 7. 配置文件 (cds.config.json)
+| 目标 | 机器验证 | 用户验证 |
+| --- | --- | --- |
+| 安全接入 | 凭据权限、项目隔离和网络波动续连测试 | 不复制 Key、不修改系统环境完成连接 |
+| 托管交付 | 识别、计划、部署和兼容测试 | 普通项目只确认结果即可打开预览 |
+| 过程恢复 | 事件持久化和续传测试 | 刷新后继续查看同一次部署 |
+| 版本复用 | 相同版本跳过构建测试 | 重新部署后核心功能正常 |
+| 回滚 | 版本切换和状态一致性测试 | 恢复后预览与目标版本一致 |
+| 私有仓库 | GitHub App 授权和拉取测试 | 单仓库授权后不再粘贴 Token |
+| 高级兼容 | Compose、远端执行器回归 | 原复杂项目行为不被覆盖 |
 
-```json
-{
-  "repoRoot": "/home/user/prd_agent",
-  "worktreeBase": "/home/user/.cds-worktrees",
-  "masterPort": 9900,
-  "workerPort": 5500,
-  "dockerNetwork": "prdagent-network",
-  "portStart": 9001,
-  "jwt": { "secret": "${CDS_JWT_SECRET}", "issuer": "prdagent" },
-  "scheduler": {
-    "enabled": true,
-    "maxHotBranches": 3,
-    "idleTTLSeconds": 900,
-    "tickIntervalSeconds": 60,
-    "pinnedBranches": ["main"]
-  }
-}
-```
+## 已知边界
 
-`scheduler` 段为 v3.1 新增，用于启用分支温池调度器。详见 `doc/design.cds.resilience.md §四、八`。
+- 跨执行节点复用本地产物需要外部镜像仓库或产物搬运能力；
+- 旧部署记录可能只能合成部分历史信息；
+- 自动识别不能覆盖所有自定义构建体系；
+- 私有仓库授权仍依赖 GitHub App 正确安装；
+- 托管模式不会替代复杂 Compose 的全部表达能力。
 
----
+这些边界分别在现有 `debt.cds.*` 台账中维护，不在本文重复创建新欠项。
 
-## 7.5 运维入口与 Nginx 渲染（v3.2 新增）
+## 相关文档
 
-### 7.5.1 为什么只留一个脚本
-
-v3.1 之前 CDS 的运维脚本散落成：
-
-```
-prd_agent/exec_cds.sh          # 根目录旧转发器，init/daemon 分叉
-cds/exec_cds.sh                # cds/ 里另一个 start/daemon 实现
-cds/exec_setup.sh              # 交互式配置写 .cds.env
-cds/nginx/init_domain.sh       # 从 domain.env 生成 nginx 配置
-cds/nginx/start_nginx.sh       # 起 nginx compose 容器
-cds/nginx/acme_apply.sh        # 证书签发
-cds/host-env.example.sh        # 遗留的环境变量样板
-```
-
-三个配置源（`.cds.env` / `domain.env` / `.bashrc`）相互覆盖、命令行参数十几种、每个命令调用链要跨 2-3 个脚本——自更新日志里出现任何 nginx/配置相关字样都无法判断是正常还是异常。
-
-**v3.2 统一为**：
-
-```
-cds/exec_cds.sh    # 唯一运维入口，包含 init/start/stop/restart/status/logs/cert
-cds/.cds.env       # 唯一用户配置 (只有 4 个变量)
-cds/nginx/*.conf   # 纯生成产物，gitignore
-```
-
-根目录 `prd_agent/exec_cds.sh` 只是一条 `exec "$SCRIPT_DIR/cds/exec_cds.sh" "$@"` 的转发器，不含任何业务逻辑。
-
-### 7.5.2 Nginx 多根域名路由规则
-
-**硬性规则**：对 `CDS_ROOT_DOMAINS` 中的每一个根域名 `D`，自动生成三条固定路由：
-
-| Host | 目标 | 说明 |
-|------|------|------|
-| `D` | Dashboard (master) | 例如 `miduo.org` → `http://127.0.0.1:9900` |
-| `cds.D` | Dashboard (master) | 别名，例如 `cds.miduo.org` 同样到 Dashboard |
-| `*.D` | Preview (worker) | 任意子域名 → `http://127.0.0.1:5500`，典型 `feat-abc.miduo.org` |
-
-nginx 的精确匹配优先级天然高于通配符，`cds.D` 不会被 `*.D` 误吞。多个根域名相互独立，配置 `CDS_ROOT_DOMAINS="miduo.org,mycds.net"` 即**同时**承载 6 组入口，无需域名迁移。
-
-```
-                         ┌────────────────┐
-  miduo.org ──────┐      │                │
-  cds.miduo.org ──┤      │                │
-  mycds.net ──────┼──────┤  cds_master    ├──► 127.0.0.1:9900 (Dashboard)
-  cds.mycds.net ──┘      │                │
-                         └────────────────┘
-
-                         ┌────────────────┐
-  *.miduo.org ────┐      │                │
-  *.mycds.net ────┼──────┤  cds_worker    ├──► 127.0.0.1:5500 (Preview)
-                  │      │                │
-                         └────────────────┘
-```
-
-### 7.5.3 TLS：每根域名独立签发 + 渐进式 HTTPS
-
-- `cds/nginx/certs/<D>.crt` + `<D>.key` 存在 → 该域名 server block 同时监听 80 和 443
-- 不存在 → 该域名只监听 80（HTTP-only 兜底）
-- `./exec_cds.sh cert` 遍历 `CDS_ROOT_DOMAINS`，对每个 `D` 用 `acme.sh` webroot 模式签发 `D + cds.D`
-- 一个根域名签发失败不影响其它根域名继续用 HTTP；已签发的域名下次 `restart` 自动升级到 HTTPS
-
-通配符 `*.D` 的 HTTPS 需要 DNS 挑战（本脚本未内置）。需要子域名 HTTPS 时，可自行用 DNS API 签发后把证书落到 `cds/nginx/certs/`，渲染器会自动捡起来。
-
-### 7.5.4 幂等渲染：自更新不噪音、不丢配置
-
-`render_nginx()` 的 3 个产物（`nginx.conf` / `cds-site.conf` / `nginx.compose.yml`）都走 `write_if_changed` 对比写入：
-
-```bash
-write_if_changed() {
-  local target="$1" content="$2"
-  if [ -f "$target" ] && printf '%s' "$content" | cmp -s - "$target"; then
-    return 0                                 # 内容无变化 → 不触碰文件
-  fi
-  printf '%s' "$content" > "$target"
-  NGINX_CHANGED_FILES+="$(basename "$target") "
-}
-```
-
-`nginx_up()` 根据 `NGINX_CHANGED_FILES` 的内容分三档响应：
-
-| 变化范围 | 动作 | 用户影响 |
-|---------|------|---------|
-| 容器未运行 **或** `nginx.compose.yml` 变了 | `docker compose up -d` | 约 1 秒停机（容器重建） |
-| 仅 `cds-site.conf` / `nginx.conf` 变了（容器在跑） | `docker exec … nginx -t && nginx -s reload` | 零停机热重载 |
-| 什么都没变 | 静默跳过 | 零影响 |
-
-这直接服务于 CDS 自更新：`branches.ts:3341` 里 spawn 的 `./exec_cds.sh daemon` 每次启动都会走 `nginx_up`，但在配置无变化时**完全不打印**任何 nginx 相关日志、也不触碰 nginx 容器，自更新窗口的影响仅限于 `npx tsc` + `node dist/index.js` 的几秒内核切换。
-
-### 7.5.5 单节点 nginx 与跨机 dispatcher 的边界
-
-v3.2 的 `exec_cds.sh` 只解决**单节点 Layer 3 入口**问题，与 v3.3 Phase 3 的分布式 `nginx-template.ts` 互为补充、互不替代：
-
-| 层次 | 由谁生成 | 何时用 |
-|------|----------|-------|
-| **单节点入口** | `exec_cds.sh render_nginx` | 单机部署；本地/小团队；每根域名 = 一组固定 server block | 
-| **跨机入口** | `src/scheduler/nginx-template.ts` | Phase 3 集群调度；Master + N 个 Executor；按 `$http_x_branch` 在 executors 间路由 | 
-
-两者生成的配置文件**不会同时存在**：单机模式下 `exec_cds.sh` 输出 `cds-site.conf`，集群模式下由 dispatcher 下发的 `nginx-template.ts` 结果由运维贴到边缘网关。升级到集群时，只需在边缘网关改用后者即可，CDS 内部的调度器逻辑（Phase 1 的 `SchedulerService`）不变。
-
-详见：
-
-- 单节点入口设计 → 本节
-- 温池调度与容量算法 → `doc/design.cds.resilience.md §二、四`
-- 跨机 dispatcher + Layer 3 edge nginx 生成器 → `doc/design.cds.resilience.md §八`
-
----
-
-## 8. 高可用、容量与分布式（v3.1 / v3.2 / v3.3）
-
-小服务器场景下 CDS 有几个致命风险：单分支 runaway、state.json 损坏、Master 崩溃、磁盘爆满、单点宕机。这一块通过**分支温池 + cgroup 限制 + Janitor + Master 容器化 + 分布式调度**逐层解决，详见：
-
-- **设计文档**：`doc/design.cds.resilience.md`（Phase 1-3 完整方案）
-- **落地进度**：`doc/plan.cds.resilience-rollout.md`（可续传 checklist）
-
-三个层次的改造：
-
-| 层次 | 内容 | 状态 |
-|---|---|---|
-| **v3.1 Phase 1** | 调度器（温池 + LRU） + state 原子写 + API | ✅ 已发布 |
-| **v3.2 Phase 2** | 容器 cgroup + Janitor + CDS Master 容器化 + `/healthz` + systemd unit | ✅ 代码已落地 |
-| **v3.3 Phase 3** | BranchDispatcher（跨机容量派发） + Nginx upstream 模板生成器 + POST /api/executors/dispatch/:branch | ✅ 代码已落地 |
-| Phase 3 后续 | 分支迁移 + 共享状态存储 + Webhook 预热 | ⏳ 待规划 |
-
-核心理念：
-- **单机层**："CDS 不追求所有分支常驻,而追求按需唤醒、快速命中、永不超载"。`maxHotBranches=3` + LRU 驱逐
-- **集群层**："Master 不做单机决策,只做派发决策。它读每个 executor 的 `/api/scheduler/state`,按 `capacityUsage.current/max` 比率选最空闲的"
-- **三层独立演进**：Layer 1（per-node warm pool）/ Layer 2（cluster scheduler）/ Layer 3（edge nginx）各自有接口,上层不假设下层实现
-
-**Phase 1 的 SchedulerService 就是 Layer 1**——把它部署到每个 executor 节点,集群能力自动浮现。这是 Phase 1+2+3 一次性交付的战略价值：代码层面三层 ready,运维可以只用单机 Phase 1+2 起步,等团队壮大时无缝升级到 Phase 3 分布式,不需要重写。
-
----
-
-## 9. 对主项目的改动
-
-唯一改动：`prd-admin/vite.config.ts` 中 proxy target 支持环境变量（向后兼容）。
-
-```typescript
-target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
-```
-
----
-
-## 10. 测试覆盖
-
-88+ tests / 7 files，覆盖：state、worktree、container、proxy、compose-parser、topo-sort、scheduler（v3.1 新增）。
-
----
-
-## 11. 技术债
-
-| 类别 | 优先级 |
-|------|--------|
-| WebSocket 替代 10s 轮询 | P2 |
-| 部署日志持久化 | P3 |
-| 前端 E2E 测试 | P2 |
-| 容器 cgroup 限制 | P1（见 resilience Phase 2）|
-| Master 容器化 + 自愈 | P1（见 resilience Phase 2）|
-| worktree/磁盘 janitor | P2（见 resilience Phase 2）|
-| 双实例 + 共享状态 | P3（见 resilience Phase 3）|
-
----
-
-## 12. 关联文档
-
-| 文档 | 内容 |
-|---|---|
-| `guide.platform.quickstart.md` | init/start/stop/restart 快速上手 + 多根域名速查 |
-| `guide.cds.env.md` | `.cds.env` 配置、`CDS_ROOT_DOMAINS` 多域名路由规则 |
-| `spec.cds.md` | 功能规格 F1-F11 |
-| `design.cds.resilience.md` | 容量预算、LRU 调度、故障矩阵、跨机负载均衡 |
-| `design.cds.onboarding.md` | 一键导入配置 + AI 项目扫描 |
-| `design.cds.data-migration.md` | 跨环境数据迁移 |
-| `plan.cds.deployment.md` | 三种部署模式对比 + 端口分配 |
-| `plan.cds.roadmap.md` | Phase 0-3 里程碑 |
-| `plan.cds.resilience-rollout.md` | 高可用改造落地进度（可续传）|
-| `guide.cds.ai-auth.md` | 认证问题故障排查 |
-
----
-
-## 13. 近期变更记录（2026-05-13）
-
-| 类型 | 模块 | 说明 |
-|------|------|------|
-| fix | cds | 将分支搜索命中提示改为稳定选中态，避免短暂闪烁后用户找不到目标卡片 |
-| fix | cds | 分支列表首屏使用缓存态快速渲染，后台再同步 Docker 实时状态 |
-| fix | cds | 分支列表首屏快路径跳过 worktree git log，进一步缩短首屏等待 |
-| fix | cds | 扩大提交实时流记录点击热区，并为提交标签增加状态图标 |
-| fix | cds | 优化提交实时流面板信息密度，折叠态显示最新分支与精确更新时间 |
-| fix | cds | 将项目卡片 Nacos 单字母标识改为更清晰的 Na 专用标识 |
-| fix | cds | 修复预览等待页误把模块资源请求返回为 HTML 导致 MIME 报错的问题 |
-| fix | cds | 修复失败分支访问预览页会反复触发自动部署的问题，并同步失败服务与错误信息到分支卡片 |
-| fix | cds | 统一分支页项目切换器显示口径，优先展示项目名并保留 slug 辅助识别 |
-| fix | cds | 使用 React Bits ShinyText 优化左侧 CDS 标识，加入克制的银白扫光动效 |
+- [CDS 产品能力规格](spec.cds.md)
+- [CDS 自动交付与 Agent 接入指南](guide.cds.managed-delivery.md)
+- [CDS 托管交付设计](design.cds.managed-delivery.md)
+- [CDS 项目模型](spec.cds.project-model.md)
+- [CDS Compose 契约](spec.cds.compose-contract.md)
+- [CDS 容量与故障隔离](design.cds.resilience.md)
+- [CDS 集群引导](design.cds.cluster-bootstrap.md)
+- [CDS 环境与凭据](guide.cds.env.md)
+- [CDS GitHub App 接入](guide.cds.github-app.md)
