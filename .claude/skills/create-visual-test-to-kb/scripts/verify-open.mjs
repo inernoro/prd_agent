@@ -7,7 +7,7 @@
 //     或改用 cds/cli/acceptance 的 proxyroute harness 认证打开）。
 //   - 旧 MAP 知识库分享链 /s/lib/<token>（mode=doc-store 向后兼容路径）。
 // 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <url> "<标题或正文里必现的一段文字>" [最少图片数=1]
-//   例：node verify-open.mjs https://cds.miduo.org/r/abc123 "SaaS空间模型" 4
+//   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);

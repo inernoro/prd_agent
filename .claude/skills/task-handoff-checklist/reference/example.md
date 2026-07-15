@@ -71,12 +71,12 @@
 | 冒烟测试 | 未完成 | 模板 CRUD + 缺陷提交 |
 | 页面测试 | 需人工 | 模板管理页 + 缺陷列表页 |
 
-**预览验收地址**: https://claude-add-defect-agent-abcde.miduo.org/
+**预览验收地址**: https://<preview-host>/
 
 **验收路径**:
-1. 打开 https://claude-add-defect-agent-abcde.miduo.org/defect-agent/templates
+1. 打开 https://<preview-host>/defect-agent/templates
 2. 创建/编辑缺陷模板 → 期望正常保存
-3. 打开 https://claude-add-defect-agent-abcde.miduo.org/defect-agent/reports
+3. 打开 https://<preview-host>/defect-agent/reports
 4. 查看缺陷列表 → 期望显示已提交的缺陷
 
 **顺序**: 单元测试 → `/smoke defect-agent` → 预览地址手动验证 → 权限测试

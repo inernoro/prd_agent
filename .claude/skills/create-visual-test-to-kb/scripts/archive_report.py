@@ -229,7 +229,7 @@ def _html_id(text, fallback):
 
 
 GITHUB_COMMIT_BASE = "https://github.com/inernoro/prd_agent/commit/"
-METHOD_FOLDER_BASE = "https://cds.miduo.org/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
+METHOD_FOLDER_BASE = "/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
 METHOD_DOC_ENTERPRISE = METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"
 METHOD_DOC_DAILY = METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996"
 METHOD_DOC_SSOT = METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"
@@ -1048,14 +1048,14 @@ CDS_REPORT_CAP = 10 * 1024 * 1024  # 与 cds/src/routes/reports.ts MAX_CONTENT_B
 def _cds_base():
     host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
     if not host:
-        raise RuntimeError("CDS_HOST 未设置（export CDS_HOST=cds.miduo.org）")
+        raise RuntimeError("CDS_HOST 未设置（export CDS_HOST=<cds-host>）")
     if not host.startswith("http"):
         host = "https://" + host
     return host
 
 
 def _cds_auth_headers():
-    """与 cdscli._auth_headers 一致：项目级 cdsp_* 优先，否则全局 AI_ACCESS_KEY。"""
+    """与 cdscli._auth_headers 一致：项目级 key 优先，否则全局 AI_ACCESS_KEY。"""
     pk = os.environ.get("CDS_PROJECT_KEY", "").strip()
     if pk:
         return ["-H", f"X-AI-Access-Key: {pk}"]
@@ -1189,7 +1189,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
 
 def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
     api = cfg["auth"]["api"]
-    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
+    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=<scoped-agent-key>（带 document-store:write scope 的最小权限长效 Key），
     # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
     # 正式环境临时兜底可设 MAP_DOC_STORE_JWT=ey...（登录态 Bearer）。
     # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
