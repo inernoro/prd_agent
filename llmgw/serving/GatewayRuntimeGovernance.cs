@@ -259,8 +259,10 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Builders<GatewayServiceKeyRecord>.Filter.Eq(x => x.Id, record.Id)),
             Builders<GatewayServiceKeyRecord>.Update.Set(x => x.LastUsedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        // 退场判断依赖可持久化的 successor 观察证据，不能用 fire-and-forget 丢失计数。
-        await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
+        // 退场判断依赖真实生产调用的可持久化 successor 观察证据。只读 preflight
+        // 只能证明密钥可鉴权，不能证明业务流量已经从 legacy 切换。
+        if (!readOnlyProbe)
+            await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
         return new(
             true,
             true,

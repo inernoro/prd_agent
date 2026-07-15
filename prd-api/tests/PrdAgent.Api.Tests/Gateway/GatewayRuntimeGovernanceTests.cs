@@ -736,6 +736,52 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ScopedSuccessorKey_ReadOnlyPreflightDoesNotIncrementCutoverEvidence()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "llmgw_scoped_successor_probe_key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "map-runtime-probe",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            KeyPrefix = "gwk_probe",
+            SourceSystem = "map",
+            ClientCode = "map-runtime",
+            Environment = "production",
+            Purpose = "runtime",
+            AppCallerCodes = ["weekly-report::chat"],
+            IngressProtocols = ["gw-native"],
+            Scopes = ["route:read"],
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .InsertOneAsync(new GatewayLegacyKeyCutoverRecord
+            {
+                TenantId = "tenant-a",
+                Status = "observing",
+                AllowedAppCallerCodes = ["weekly-report::chat"],
+                SuccessorServiceKeyIds = [record.Id],
+                RequiredIngressProtocols = ["gw-native"],
+                RequiredSuccessorObservations = 1,
+            });
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key, "legacy-key", "map", "weekly-report::chat",
+            "gw-native", GatewayLegacyProbeScopes.Route, null, CancellationToken.None);
+
+        result.Allowed.ShouldBeTrue();
+        var cutover = await scope.Context.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
+            .Find(x => x.TenantId == "tenant-a")
+            .SingleAsync();
+        cutover.SuccessorObservedCount.ShouldBe(0);
+        cutover.SuccessorObservationCounts.ContainsKey(record.Id).ShouldBeFalse();
+        cutover.LastSuccessorUsedAt.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ScopedSuccessorKey_IncrementsDualKeyObservationWithoutChangingIdentity()
     {
         var testDatabase = await TryCreateDatabaseAsync();
