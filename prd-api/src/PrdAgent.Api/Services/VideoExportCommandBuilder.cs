@@ -80,9 +80,10 @@ public static class VideoExportCommandBuilder
         {
             var inputIndex = videoClips.Count + index;
             var clip = audioClips[index];
-            var duration = Math.Max(0.1, clip.DurationSeconds - Math.Max(0, clip.TrimEndSeconds));
+            var trimStart = Math.Max(0, clip.TrimStartSeconds);
+            var duration = Math.Max(0.1, clip.DurationSeconds - trimStart - Math.Max(0, clip.TrimEndSeconds));
             var delay = (int)Math.Round(Math.Max(0, clip.StartSeconds) * 1000);
-            filters.Add($"[{inputIndex}:a]atrim=start={Number(Math.Max(0, clip.TrimStartSeconds))}:duration={Number(duration)}," +
+            filters.Add($"[{inputIndex}:a]atrim=start={Number(trimStart)}:duration={Number(duration)}," +
                         $"asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo," +
                         $"volume={Number(Math.Clamp(clip.Volume, 0, 4))},adelay={delay}|{delay}[mix{index}]");
             mixedAudioInputs.Add($"[mix{index}]");

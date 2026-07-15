@@ -33,9 +33,9 @@ on:
         default: false
         type: boolean
       reuse_existing_static_dist:
-        description: "Reuse the production static site for gateway-only stages. Disable for a paired API and web release."
+        description: "Reuse the production static site only for gateway-only stages. Opt in explicitly when needed."
         required: true
-        default: true
+        default: false
         type: boolean
       repo:
         description: "GitHub owner/repo passed to fast.sh and exec_dep.sh."
@@ -173,7 +173,7 @@ jobs:
       INPUT_STAGE: ${{ github.event.inputs.stage || '' }}
       INPUT_COMMIT: ${{ github.event.inputs.commit || '' }}
       INPUT_EXECUTE: ${{ github.event.inputs.execute || 'false' }}
-      INPUT_REUSE_EXISTING_STATIC_DIST: ${{ github.event.inputs.reuse_existing_static_dist || 'true' }}
+      INPUT_REUSE_EXISTING_STATIC_DIST: ${{ github.event.inputs.reuse_existing_static_dist || 'false' }}
       INPUT_REPO: ${{ github.event.inputs.repo || 'inernoro/prd_agent' }}
       INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}

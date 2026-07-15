@@ -2073,6 +2073,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("stat -c '%u' \"$env_source\"", workflow);
         Assert.Contains("reuse_existing_static_dist", workflow);
         Assert.Contains("INPUT_REUSE_EXISTING_STATIC_DIST", workflow);
+        Assert.Matches("reuse_existing_static_dist:\\s+description:.*\\s+required: true\\s+default: false\\s+type: boolean", workflow);
+        Assert.Contains("INPUT_REUSE_EXISTING_STATIC_DIST: ${{ github.event.inputs.reuse_existing_static_dist || 'false' }}", workflow);
         Assert.Contains("cp -a \"$dist_source/.\" deploy/web/dist/", workflow);
         Assert.Contains("export PRD_AGENT_REUSE_EXISTING_STATIC_DIST=0", workflow);
         Assert.DoesNotContain("production_evidence_source:", workflow);

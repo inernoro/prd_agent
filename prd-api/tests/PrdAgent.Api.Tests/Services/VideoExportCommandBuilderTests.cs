@@ -44,6 +44,20 @@ public class VideoExportCommandBuilderTests
         args.ShouldContain("mov_text");
     }
 
+    [Fact]
+    public void Build_ShouldSubtractBothAudioTrimBoundsFromEffectiveDuration()
+    {
+        var args = VideoExportCommandBuilder.Build(
+            [new VideoExportClipSource("scene.mp4", 10, false)],
+            [new VideoExportAudioSource("voice.mp3", 0, 10, TrimStartSeconds: 3, TrimEndSeconds: 2)],
+            null,
+            "export.mp4",
+            "16:9");
+
+        var filter = args[args.ToList().IndexOf("-filter_complex") + 1];
+        filter.ShouldContain("[1:a]atrim=start=3:duration=5");
+    }
+
     [Theory]
     [InlineData("16:9", 1280, 720)]
     [InlineData("9:16", 720, 1280)]
