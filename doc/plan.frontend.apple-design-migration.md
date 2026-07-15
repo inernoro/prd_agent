@@ -6,7 +6,9 @@
 
 ---
 
-**最后更新**:2026-07-14 · 3 个品牌决策已拍板(见 §5) · **距离可发布**:Phase 0 手机底座开工中(先做底座0a appStore.tsx 双皮肤破口)。
+**最后更新**:2026-07-15 · **PR #1133 已合并进 main(手机轨第一波全部落地)** · 距离全量完成:手机轨剩 ToolboxView 魔数/VisualAgentEditor/chrome 收尾;PC 底座轨整条待开(决策已齐,无阻塞),剩余项见 `doc/debt.frontend.apple-design-migration.md`。
+
+**已合并范围(PR #1133,merge commit 3280cd0)**:底座0/1/2(双皮肤破口+4 原语+TabBar iOS 蓝)、首页「摘要」仪表盘(含七日迷你柱/缺陷进度条/AI 调用与缺陷指标口径)、Assets/Profile/Notifications 三页、squircle 图标、白卡体系、后端 stats daily 序列与 recent-work 进度、Codex 两条 P2 修复。下表「已部署」各行状态升级为**已合并**,后续在 main 上生效。
 
 **已拍板决策(2026-07-14)**:Q1 PC 强调色**统一改 iOS 系统蓝**(gold-gradient 全收 systemBlue);Q2 --font-display 后台内页回 SF、landing/hero 保留 Space Grotesk 作品牌例外;Q3 移动端暗底**一律强制纯黑 #000**(含 MobileHomePage/Editor 的微灰 #08090a/#101014)。
 
