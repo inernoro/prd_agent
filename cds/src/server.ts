@@ -79,6 +79,7 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
@@ -834,6 +835,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
     'GET /auth/public-status': '获取公开认证能力',
+    'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
@@ -1768,6 +1770,12 @@ export function createServer(deps: ServerDeps): express.Express {
         local: authMode === 'basic' || authMode === 'github',
       },
     });
+  });
+
+  // ── 实例模式（公开，登录前后都可读）──
+  // 预览实例（CDS 托管 CDS）时前端据此渲染顶部提示，避免用户把演示实例当生产。
+  app.get('/api/instance-mode', (_req, res) => {
+    res.json({ previewInstance: isPreviewInstance() });
   });
 
   // ── AI pairing endpoints (before auth, some are public) ──
@@ -4020,18 +4028,49 @@ export function installSpaFallback(
       res.end(body);
     });
     // favicon and any other root-level files that Vite emits next to index.html
-    app.use(
-      express.static(reactDist, {
-        index: false,
-        setHeaders: (res, filePath) => {
-          if (filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-          }
-        },
-      })
-    );
+    const reactStatic = express.static(reactDist, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      },
+    });
+    // /index.html 不许走裸文件（Codex P2）：express.static 的 index:false 只关目录
+    // 索引，显式请求 /index.html 仍会吐原始文件，绕过 sendReactIndex 的预览实例
+    // 标记注入。跳过它让请求落到下方 catch-all 的 301 → /branch-list（注入版）。
+    app.use((req, res, next) => {
+      if (req.path === '/index.html') {
+        next();
+        return;
+      }
+      reactStatic(req, res, next);
+    });
+    // 预览实例标记注入（Codex P1，2026-07-15）：子 CDS 的 dashboard 通过分支预览
+    // 域名访问时，web 端 apiUrl() 的 `/_cds` 直通会把 /api/* 送回**父** CDS（forwarder
+    // 对任意 host 都把 /_cds 路由到 master）——子实例的 API 被整体绕过。服务端在
+    // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
+    // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
+    // 生产实例走原 sendFile 路径，零改动。
+    let previewInstanceIndexHtml: string | null = null;
+    const sendReactIndex = (res: express.Response): void => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      if (!isPreviewInstance()) {
+        res.sendFile(reactIndex);
+        return;
+      }
+      if (previewInstanceIndexHtml === null) {
+        const raw = fs.readFileSync(reactIndex, 'utf-8');
+        previewInstanceIndexHtml = raw.replace(
+          '<head>',
+          '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+        );
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(previewInstanceIndexHtml);
+    };
     app.get('*', (req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/')) return next();
@@ -4048,8 +4087,7 @@ export function installSpaFallback(
           : res.redirect(302, '/project-list');
       }
       if (req.path === '/settings') return res.redirect(302, '/project-list');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      res.sendFile(reactIndex);
+      sendReactIndex(res);
     });
   } else {
     console.warn(

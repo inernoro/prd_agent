@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { warnLegacyCdsEnvKeys } from './config/known-env-keys.js';
+import { scrubParentSecretsFromEnv } from './services/preview-instance.js';
 
 /**
  * `.cds.env` self-loader —— 在 Node 启动最早期把磁盘上的 env 注入 process.env。
@@ -79,3 +80,8 @@ function loadCdsEnvFile(): void {
 // 模块加载时自动执行——任何 `import './load-env.js'` 都触发一次。
 // 重复 import 不会重复执行（ES module 缓存），所以幂等。
 loadCdsEnvFile();
+
+// 预览实例（CDS 托管 CDS）secret 自清洗：必须发生在 config.ts 模块级求值
+// 之前（与 loadCdsEnvFile 同一时机），保证 DEFAULT_CONFIG 读不到父实例密钥。
+// 非预览实例为 no-op。详见 services/preview-instance.ts。
+scrubParentSecretsFromEnv();

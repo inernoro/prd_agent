@@ -1316,9 +1316,11 @@ async function postSse(
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
     const message =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `${path} -> ${res.status}`;
+      typeof parsed === 'object' && parsed !== null && 'message' in parsed && (parsed as { message: unknown }).message
+        ? String((parsed as { message: unknown }).message)
+        : typeof parsed === 'object' && parsed !== null && 'error' in parsed
+          ? String((parsed as { error: unknown }).error)
+          : `${path} -> ${res.status}`;
     throw new ApiError(res.status, parsed, message);
   }
 

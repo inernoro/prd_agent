@@ -29,6 +29,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
+import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -3458,39 +3459,91 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    // Drop the docker network first so that even if state save fails,
-    // the operator can retry and succeed without network collisions.
-    if (project.dockerNetwork) {
-      const result = await removeDockerNetwork(project.dockerNetwork);
-      if (!result.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[projects] failed to remove docker network ${project.dockerNetwork}: ${result.detail}`,
-        );
-        // Continue anyway — zombie network is less harmful than zombie
-        // project entry. State cascade will clean up the rest.
-      }
+    // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
+    // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个
+    // 孤儿容器）。顺序修正：**先收容器、后删网络**——网络上还挂着容器时
+    // `docker network rm` 必然失败（active endpoints），旧实现先删网络等于
+    // 僵尸网络 + 僵尸容器双输。
+    //
+    // 在 state cascade 之前先抄下本项目的全部容器名（cascade 之后就查不到了）。
+    const projectBranches = stateService
+      .getAllBranches()
+      .filter((b) => (b.projectId || 'default') === project.id);
+    const appContainerNames = projectBranches
+      .flatMap((b) => Object.values(b.services || {}).map((s) => s.containerName))
+      .filter((n): n is string => Boolean(n));
+    // getInfraServicesForProject 已排除系统级 infra（如 cds-state-mongo，CDS
+    // 自身状态库）——removeProject 的 cascade 同样保护它，物理清理必须镜像该口径。
+    const infraContainerNames = stateService
+      .getInfraServicesForProject(project.id)
+      .map((s) => s.containerName)
+      .filter((n): n is string => Boolean(n));
+    // 外部访问代理容器（Codex P1）：删项目也要停掉，否则公网端口一直暴露已删资源。
+    const proxyContainerNames = projectBranches
+      .flatMap((b) => stateService.getResourceExternalAccessForBranch(project.id, b.id))
+      .map((p) => p.proxyContainerName)
+      .filter((n): n is string => Boolean(n));
+    const teardownContainers = [...new Set([...appContainerNames, ...infraContainerNames, ...proxyContainerNames])];
+
+    // 墓碑必须**先于** removeProject 落库（Codex P2）：若 tombstone 写在
+    // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
+    // 也无墓碑，收割器的补偿路径彻底断（删最后一个项目时尤其致命）。先写墓碑，
+    // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
+    const requestedAt = new Date().toISOString();
+    if (teardownContainers.length > 0) {
+      stateService.addContainerTeardownTombstones(
+        teardownContainers.map((containerName) => ({
+          containerName,
+          projectId: project.id,
+          requestedAt,
+        })),
+      );
     }
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
     // orphans in state.json. The state service returns a summary so we
     // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost). Container teardown is intentionally NOT
-    // done here — the previous list view's per-branch DELETE already
-    // handles that, and chasing it from a project DELETE would slow the
-    // request to multi-second territory. We log the cascade summary so
-    // operators can run `docker ps` and see the leftovers.
+    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
       summary = stateService.removeProject(project.id);
     } catch (err) {
+      // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
+      // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
+      for (const containerName of teardownContainers) {
+        try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
+      }
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,
       });
       return;
     }
+
+    // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
+    // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
+    // 按墓碑补偿重试（含「删最后一个项目、state 已空」的场景）。
+    const dockerNetwork = project.dockerNetwork;
+    void (async () => {
+      try {
+        await processTeardownTombstones({ shell, state: stateService, instanceId: config?.repoRoot ? computeCdsInstanceId(config.repoRoot) : undefined });
+      } catch (err) {
+        console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
+      }
+      if (dockerNetwork) {
+        const result = await removeDockerNetwork(dockerNetwork);
+        if (!result.ok) {
+          console.warn(
+            `[projects] failed to remove docker network ${dockerNetwork}: ${result.detail}`,
+          );
+        }
+      }
+      console.log(
+        `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
+        (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
+      );
+    })();
 
     const totalCascade =
       summary.branches.length +
@@ -3512,6 +3565,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ok: true,
       projectId: project.id,
       cascade: summary,
+      // 容器/网络物理清理在后台进行；这里如实告知调度了哪些（expectation-management）。
+      containerTeardown: {
+        scheduled: teardownContainers,
+        network: dockerNetwork ?? null,
+      },
     });
   });
 
