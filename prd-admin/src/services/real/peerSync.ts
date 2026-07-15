@@ -110,7 +110,9 @@ export interface PeerSyncRun {
   peerNodeId: string;
   peerNodeName: string;
   peerNodeBaseUrl?: string | null;
-  status: 'syncing' | 'synced' | 'skipped' | 'error' | string;
+  status: 'syncing' | 'synced' | 'skipped' | 'error' | 'cancelled' | string;
+  /** 是否已被请求取消（true 表示取消信号已下发，执行体会在检查点中断落 cancelled）。 */
+  cancelRequested?: boolean;
   created: number;
   updated: number;
   skipped: number;
@@ -135,6 +137,14 @@ export async function listPeerSyncRuns(resourceType: string, itemId?: string) {
   return await apiRequest<{ items: PeerSyncRun[] }>(
     api.peerSync.runs(resourceType, itemId),
     { method: 'GET' },
+  );
+}
+
+/** 请求取消一个进行中的同步 run（仅 status=syncing 可取消；置取消位，执行体在检查点中断落 cancelled）。 */
+export async function cancelPeerSyncRun(runId: string) {
+  return await apiRequest<{ requested: boolean }>(
+    api.peerSync.cancelRun(runId),
+    { method: 'POST' },
   );
 }
 

@@ -612,6 +612,35 @@ public class PeerSyncController : ControllerBase
     }
 
     /// <summary>
+    /// 请求取消一个进行中的同步 run：置 CancelRequested 位，执行体（SyncItemAsync）在阶段检查点轮询后
+    /// 主动中断并落 cancelled 终态。只能取消 status=syncing 的 run，且调用者须对该 run 的条目有访问权限。
+    /// 对「前端已断开但后端仍在跑」的 run（server-authority：客户端断开不取消服务器任务）尤其有用。
+    /// </summary>
+    [Authorize]
+    [HttpPost("runs/{id}/cancel")]
+    public async Task<IActionResult> CancelRun(string id, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 run id"));
+        var run = await _db.PeerSyncRuns.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
+        if (run == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步记录不存在"));
+        if (!string.Equals(run.Status, PeerSyncRunStatus.Syncing, StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该同步已结束，无法取消"));
+
+        var resource = _registry.Resolve(run.ResourceType);
+        if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        // 归属校验：run 的条目必须在调用者可访问范围内（与 transfer / runs 同口径）。
+        var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var allowed = (await resource.ListItemsAsync(actor, ct)).Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+        if (!allowed.Contains(run.ItemId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步记录不存在或无权访问"));
+
+        await _db.PeerSyncRuns.UpdateOneAsync(r => r.Id == id,
+            Builders<PeerSyncRun>.Update.Set(r => r.CancelRequested, true), cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { requested = true }));
+    }
+
+    /// <summary>
     /// 开/关某知识库的「后台自动同步」。开启后 PeerSyncScheduleWorker 按周期复用该库最近一次同步的
     /// 对端 + 方向，自动跑 push/pull/both（非破坏性，绝不删条目）。仅 document-store 支持。
     /// 必须先手动同步过一次（确定对端 + 方向）才能开启 —— 避免凭空向某个对端发流量。

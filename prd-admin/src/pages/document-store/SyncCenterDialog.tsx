@@ -14,12 +14,12 @@ import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight, ArrowRight, ArrowLeft, AlertTriangle, CheckCircle2, Clock3,
   Globe, RefreshCw, Scale, Send, X, ChevronDown, ChevronRight, FileText,
-  Library, History, SlidersHorizontal,
+  Library, History, SlidersHorizontal, Ban, Square,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
-  listPeerNodes, listPeerSyncRuns, transferToPeer, setAutoSync,
+  listPeerNodes, listPeerSyncRuns, transferToPeer, setAutoSync, cancelPeerSyncRun,
   type PeerNode, type PeerSyncRun, type PeerAlign, type TransferItemResult,
 } from '@/services/real/peerSync';
 
@@ -52,7 +52,7 @@ type RecordFilter = 'all' | 'mine' | 'received' | 'failed';
 /** 同步方式（关系方向）：发送 / 拉回 / 双向，选一次长期生效 */
 type ManualDirection = 'push' | 'pull' | 'both';
 /** 状态色调：需处理 > 同步中 > 已建立 > 未建立 */
-type SyncTone = 'red' | 'gold' | 'teal' | 'none';
+export type SyncTone = 'red' | 'gold' | 'teal' | 'none';
 
 const RECORD_FILTERS: { key: RecordFilter; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -75,8 +75,8 @@ const ALIGN_OPTS: { key: PeerAlign; label: string; desc: string; danger: boolean
   { key: 'both', label: '同时对准', desc: '两边合并，各自新增都保留，不删任何一边', danger: false, icon: <ArrowLeftRight size={15} /> },
 ];
 
-/** 状态色调 -> 连线/端点视觉（青=已同步呼吸 / 金=同步中流动 / 红=需处理 / 灰=未建立）。 */
-const TONE_WIRE: Record<SyncTone, { wire: string; strong: string; bg: string; anim: 'flowing' | 'breathing' | 'none' }> = {
+/** 状态色调 -> 连线/端点视觉（青=已同步呼吸 / 金=同步中流动 / 红=需处理 / 灰=未建立）。批量弹窗复用同一 SSOT。 */
+export const TONE_WIRE: Record<SyncTone, { wire: string; strong: string; bg: string; anim: 'flowing' | 'breathing' | 'none' }> = {
   none: { wire: 'rgba(148,163,184,0.30)', strong: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.08)', anim: 'none' },
   teal: { wire: 'rgba(45,212,191,0.42)', strong: 'rgb(94,234,212)', bg: 'rgba(20,184,166,0.12)', anim: 'breathing' },
   gold: { wire: 'rgba(245,158,11,0.50)', strong: 'rgb(252,211,77)', bg: 'rgba(245,158,11,0.12)', anim: 'flowing' },
@@ -222,6 +222,15 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     } else {
       setError(res.error?.message || '同步失败');
     }
+  };
+
+  // 停止一个进行中的同步 run（置取消位，后端在检查点中断落 cancelled）。
+  const handleCancelRun = async (run: PeerSyncRun) => {
+    setError(null);
+    const res = await cancelPeerSyncRun(run.id);
+    if (!mounted.current) return;
+    if (res.success) await loadRuns();
+    else setError(res.error?.message || '取消失败');
   };
 
   const runAlign = async (align: PeerAlign) => {
@@ -433,9 +442,9 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                 </div>
               )}
 
-              {/* 进度条（同步中） */}
+              {/* 进度条（同步中）：可停止 */}
               {activeRuns.length > 0 && (
-                <ProgressStrip run={progressRun} />
+                <ProgressStrip run={progressRun} onCancel={handleCancelRun} />
               )}
 
               {nodes.length === 0 && (
@@ -618,19 +627,33 @@ function TopoNode({ icon, name, role, style, muted }: { icon: ReactNode; name: s
   );
 }
 
-/** 同步中的进度条：逐文章推进，取带进度的活动 run。 */
-function ProgressStrip({ run }: { run: PeerSyncRun | null }) {
+/** 同步中的进度条：逐文章推进，取带进度的活动 run。可停止。 */
+function ProgressStrip({ run, onCancel }: { run: PeerSyncRun | null; onCancel?: (run: PeerSyncRun) => void }) {
   const total = Math.max(0, run?.progressTotal ?? 0);
   const current = total > 0 ? Math.min(Math.max(0, run?.progressCurrent ?? 0), total) : 0;
   const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  const cancelling = !!run?.cancelRequested;
   return (
     <div className="mt-3">
       <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span className="min-w-0 truncate">
-          {run?.progressPhase || '同步中'}
+          {cancelling ? '正在停止…' : run?.progressPhase || '同步中'}
           {run?.currentRecordTitle && <span className="ml-1" style={{ color: 'var(--text-primary)' }}>《{run.currentRecordTitle}》</span>}
         </span>
-        {total > 0 && <span className="shrink-0 tabular-nums">{current}/{total}</span>}
+        <div className="flex shrink-0 items-center gap-2">
+          {total > 0 && <span className="tabular-nums">{current}/{total}</span>}
+          {run && onCancel && (
+            <button
+              onClick={() => !cancelling && onCancel(run)}
+              disabled={cancelling}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold transition disabled:opacity-50"
+              style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
+              title="停止这次同步"
+            >
+              <Square size={10} /> {cancelling ? '停止中' : '停止'}
+            </button>
+          )}
+        </div>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.16)' }}>
         <div className="h-full rounded-full transition-all duration-300"
@@ -640,7 +663,7 @@ function ProgressStrip({ run }: { run: PeerSyncRun | null }) {
   );
 }
 
-function RunCard({ run, forceExpanded = false }: { run: PeerSyncRun; forceExpanded?: boolean }) {
+export function RunCard({ run, forceExpanded = false, onCancel }: { run: PeerSyncRun; forceExpanded?: boolean; onCancel?: (run: PeerSyncRun) => void }) {
   const [expanded, setExpanded] = useState(forceExpanded || run.status === 'error');
   const incoming = run.origin === 'incoming';
   const dirLabel = directionLabel(run.direction);
@@ -673,9 +696,22 @@ function RunCard({ run, forceExpanded = false }: { run: PeerSyncRun; forceExpand
           <span className="text-sm font-semibold truncate">{run.itemName || run.itemId}</span>
           <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: incoming ? 'rgb(147,180,255)' : 'rgb(94,234,212)', background: incoming ? 'rgba(59,130,246,0.12)' : 'rgba(20,184,166,0.12)', border: `1px solid ${incoming ? 'rgba(59,130,246,0.3)' : 'rgba(45,212,191,0.34)'}` }}>{dirLabel}</span>
         </div>
-        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]" style={{ color: st.color, background: st.bg, border: `1px solid ${st.border}` }}>
-          {active ? <MapSpinner size={11} /> : st.icon}{st.label}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {active && onCancel && (
+            <button
+              onClick={() => !run.cancelRequested && onCancel(run)}
+              disabled={!!run.cancelRequested}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition disabled:opacity-50"
+              style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
+              title="停止这次同步"
+            >
+              <Square size={10} /> {run.cancelRequested ? '停止中' : '停止'}
+            </button>
+          )}
+          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]" style={{ color: st.color, background: st.bg, border: `1px solid ${st.border}` }}>
+            {active ? <MapSpinner size={11} /> : st.icon}{st.label}
+          </span>
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         {run.created > 0 && <span style={{ color: 'rgb(134,239,172)' }}>新增 {run.created}</span>}
@@ -749,7 +785,7 @@ function RunCard({ run, forceExpanded = false }: { run: PeerSyncRun; forceExpand
 // 「进行中」判定：syncing 且开始于近 30 分钟内（与详情页 + 后端租约 TTL 同口径）。
 // 崩溃残留的陈旧 syncing 台账超过此窗口即视为非活动，不再让 UI 永久脉冲。
 const RUN_FRESH_MS = 30 * 60 * 1000;
-function isRunActive(r: PeerSyncRun): boolean {
+export function isRunActive(r: PeerSyncRun): boolean {
   return r.status === 'syncing' && Date.now() - new Date(r.startedAt).getTime() < RUN_FRESH_MS;
 }
 
@@ -826,6 +862,8 @@ function statusMeta(s: string): { label: string; color: string; bg: string; bord
   if (s === 'synced') return { label: '完成', color: 'rgb(134,239,172)', bg: 'rgba(22,101,52,0.18)', border: 'rgba(34,197,94,0.3)', icon: <CheckCircle2 size={12} /> };
   if (s === 'skipped') return { label: '已同步', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <CheckCircle2 size={12} /> };
   if (s === 'error') return { label: '失败', color: 'rgb(252,165,165)', bg: 'rgba(127,29,29,0.18)', border: 'rgba(248,113,113,0.34)', icon: <AlertTriangle size={12} /> };
+  // 已取消：用户主动中止，中性灰（区别于失败的红），禁行图标。
+  if (s === 'cancelled') return { label: '已取消', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <Ban size={12} /> };
   // 陈旧：标记 syncing 但超 30min 未收尾（多为进程中断），按中性「未完成」展示，不再金色脉冲。
   if (s === 'stale') return { label: '未完成', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <AlertTriangle size={12} /> };
   return { label: '进行中', color: 'rgb(252,211,77)', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.34)', icon: <Clock3 size={12} /> };
@@ -882,6 +920,7 @@ export function syncRouteText(direction: string | null | undefined, nodeName: st
 
 export function statusText(run: Pick<PeerSyncRun, 'status' | 'origin' | 'startedAt'>): string {
   if (run.status === 'error') return '失败';
+  if (run.status === 'cancelled') return '已取消';
   if (run.status === 'syncing') return Date.now() - new Date(run.startedAt).getTime() < RUN_FRESH_MS ? '进行中' : '未完成';
   if (run.status === 'skipped') return '两边已一致';
   if (run.status === 'synced') return run.origin === 'incoming' ? '已接收对端推送' : '已完成';
