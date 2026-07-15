@@ -32,6 +32,7 @@ import { accentFor, iconFor } from '@/lib/agentAccent';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import {
   formatCompactNumber,
   formatRelativeTime,
@@ -317,18 +318,61 @@ export default function MobileHomePage() {
             >
               {agentChips.map((t) => {
                 const Icon = iconFor(t.icon);
+                const hasArtwork = hasAgentCardArtwork(t.agentKey);
                 return (
                   <button
                     key={t.id}
                     type="button"
                     onClick={() => navigate(t.routePath ?? `/ai-toolbox?item=${t.id}`)}
-                    className="shrink-0 flex items-center text-left active:opacity-60 transition-opacity"
-                    style={{ ...cardStyle, gap: 10, padding: '10px 14px 10px 10px' }}
+                    className={`group relative shrink-0 overflow-hidden text-left active:opacity-60 transition-opacity ${hasArtwork ? 'flex flex-col justify-between' : 'flex items-center'}`}
+                    style={hasArtwork
+                      ? {
+                          width: 196,
+                          height: 126,
+                          padding: 11,
+                          borderRadius: 16,
+                          border: '1px solid var(--media-card-border)',
+                          background: 'var(--media-card-base)',
+                        }
+                      : { ...cardStyle, gap: 10, padding: '10px 14px 10px 10px' }}
                   >
-                    <AppStoreAppIcon Icon={Icon} accent={accentFor(t.agentKey)} size={36} />
-                    <span className="whitespace-nowrap" style={{ ...AS_TYPE.itemSubtitle, fontWeight: 600, color: C.label }}>
-                      {t.name}
-                    </span>
+                    {hasArtwork ? (
+                      <>
+                        <AgentCardArtwork agentKey={t.agentKey} compact />
+                        <span className="relative z-10 flex w-full items-start justify-between gap-2">
+                          <span
+                            className="line-clamp-2"
+                            style={{ maxWidth: '54%', fontSize: 15, fontWeight: 700, lineHeight: 1.18, color: 'var(--text-on-media)' }}
+                          >
+                            {t.name}
+                          </span>
+                          <AgentCardTask agentKey={t.agentKey} compact dense />
+                        </span>
+                        <span className="relative z-10 flex min-w-0 items-center gap-1 overflow-hidden">
+                          {t.tags.slice(0, 2).map((tag) => (
+                            <span
+                              key={tag}
+                              className="shrink-0 rounded-full border px-2 py-1 font-medium leading-none"
+                              style={{
+                                fontSize: 10,
+                                color: 'var(--media-card-tag-text)',
+                                background: 'var(--media-card-tag-bg)',
+                                borderColor: 'var(--media-card-tag-border)',
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <AppStoreAppIcon Icon={Icon} accent={accentFor(t.agentKey)} size={36} />
+                        <span className="whitespace-nowrap" style={{ ...AS_TYPE.itemSubtitle, fontWeight: 600, color: C.label }}>
+                          {t.name}
+                        </span>
+                      </>
+                    )}
                   </button>
                 );
               })}
