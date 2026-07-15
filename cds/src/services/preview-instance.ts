@@ -78,7 +78,15 @@ export function previewInstanceBlockedMessage(binary: string): string {
  * LLMGW_ADMIN_PASSWORD 被注入子实例容器）。子实例根本不需要这些密钥，
  * 启动最早期整体清除，任何后续信息泄露漏洞都摸不到父实例的秘密。
  */
-const SECRET_ENV_KEY_PATTERN = /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)/i;
+/**
+ * 两类都要清（Codex P1）：
+ *   1. 显式密钥（PASSWORD/SECRET/TOKEN/...）；
+ *   2. URI 型连接串与连接信息（MONGO/REDIS/DATABASE/CONNECTION/_URI/_URL/_DSN）——
+ *      CDS_MONGO_URI 不含 PASSWORD 字样，但 httpLogStoreFromEnv/serverEventLogStoreFromEnv
+ *      等启动助手直接读它，留着 = 子实例的未合并代码可以写进父实例的 Mongo/Redis。
+ */
+const SECRET_ENV_KEY_PATTERN =
+  /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|MONGO|REDIS|DATABASE|CONNECTION|_URI$|_URL$|_DSN$)/i;
 
 /** 子实例自用、不许清除的键（basic auth 门用）。 */
 const SCRUB_KEEP_KEYS: ReadonlySet<string> = new Set(['CDS_PASSWORD']);

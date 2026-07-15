@@ -47,6 +47,12 @@ describe('scrubParentSecretsFromEnv', () => {
       AI_ACCESS_KEY: 'leak',
       GITHUB_TOKEN: 'leak',
       TENCENT_COS_SECRET_KEY: 'leak',
+      // URI 型连接串同样是父实例入口（Codex P1）：不含 PASSWORD 字样但
+      // httpLogStoreFromEnv 等直接消费
+      CDS_MONGO_URI: 'mongodb://parent:27017',
+      DATABASE_URL: 'postgres://parent/db',
+      CDS_REDIS_HOST: 'parent-redis',
+      ConnectionStrings__Default: 'Server=parent',
       CDS_PASSWORD: 'child-gate',
       CDS_USERNAME: 'child',
       CDS_HOST: 'keep',
@@ -54,9 +60,11 @@ describe('scrubParentSecretsFromEnv', () => {
     };
     const scrubbed = scrubParentSecretsFromEnv(env);
     expect(scrubbed.sort()).toEqual([
-      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'GITHUB_TOKEN', 'JWT_SECRET',
+      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_URI', 'CDS_REDIS_HOST',
+      'ConnectionStrings__Default', 'DATABASE_URL', 'GITHUB_TOKEN', 'JWT_SECRET',
       'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
     ]);
+    expect(env.CDS_MONGO_URI).toBeUndefined();
     expect(env.CDS_PASSWORD).toBe('child-gate');
     expect(env.CDS_USERNAME).toBe('child');
     expect(env.CDS_HOST).toBe('keep');
