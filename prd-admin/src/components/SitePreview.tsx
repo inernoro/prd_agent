@@ -17,8 +17,12 @@ import { Globe } from 'lucide-react';
  * 这里加超时兜底 + onError：到点仍未加载完就带 retry 参数重挂 iframe 触发重新拉取，
  * 最多 MAX_RETRIES 次；对象一旦传播就绪，重试即可成功显示真实预览。
  */
-const MAX_RETRIES = 3;
-const LOAD_TIMEOUT_MS = 7000;
+// 递增退避窗口（毫秒）。刻意取较长的首个窗口：合法但加载慢的页面（大图/大脚本/慢网）
+// 应在被打断前就自己加载完，避免「每 7s 重挂一次 → 每次从零重新下载 → 慢页永远加载不完」
+// （Codex P2）。窗口用尽后不再起定时器，最后一次挂载的 iframe 会被留着不打断地一直加载，
+// 保证慢页最终仍能渲染。数组长度即最大重挂次数。
+const RETRY_DELAYS_MS = [12000, 20000];
+const MAX_RETRIES = RETRY_DELAYS_MS.length;
 
 export function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,11 +61,14 @@ export function SitePreview({ url, className, style }: { url: string; className?
     return () => io.disconnect();
   }, []);
 
-  // 加载超时自愈：在视口内且未加载完、且未耗尽重试次数时起一个超时兜底，
-  // 到点仍未 onLoad（多为新上传对象 CDN 传播中导致 iframe 一直 pending）就重挂重试
+  // 加载超时自愈：在视口内且未加载完、且未耗尽重挂次数时起一个退避超时兜底，
+  // 到点仍未 onLoad（多为新上传对象 CDN 传播中导致 iframe 一直 pending）就重挂重试。
+  // attempt 达到 MAX_RETRIES 后本 effect 提前返回、不再起定时器 → 最后一次挂载的
+  // iframe 不会被打断，慢页可继续加载直到 onLoad，不会因超时被永久卡在占位符。
   useEffect(() => {
     if (!inView || loaded || attempt >= MAX_RETRIES) return;
-    const timer = setTimeout(() => setAttempt((a) => a + 1), LOAD_TIMEOUT_MS);
+    const delay = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+    const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
     return () => clearTimeout(timer);
   }, [inView, loaded, attempt]);
 
