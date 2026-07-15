@@ -265,6 +265,9 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     setSubmitting(false);
     const businessError = getTransferFailureMessage(res.success ? res.data : undefined);
     if (res.success && !businessError) {
+      // 对齐成功即建立/更新了关系方向：把本地 direction 同步为对齐的归一方向（remote≈pull / local≈push / both≈both），
+      // 否则首次对齐后本地仍 direction=null → everSynced 恒 false，面板一直说未建立、禁自动，直到重开（Codex P2）。
+      setDirection(align === 'remote' ? 'pull' : align === 'local' ? 'push' : 'both');
       setRecordFilter('all');
       await loadRuns();
       onAfterSync?.();

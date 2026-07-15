@@ -12,3 +12,4 @@
 | fix | prd-admin | 单库同步面板多对端时选了未同步过的新对端（≠已保存 peerNodeId）也禁用自动开关（peerDirty，与 directionDirty 对称），避免「对 saved peer A 开了自动、面板却显示 peer B」的对端不一致（Codex PR#1144 P2） |
 | fix | prd-api | 批量同步途中点停止时停整批：PeerItemSyncResult 加 Cancelled 标志，取消落 cancelled 后 Controller 批量 loop break，不再继续同步后续未开始的库（Codex PR#1144 P2） |
 | fix | prd-admin | 「已建立关系」（everSynced）收口为「当前选中对端+方向组合成功过」，不再认「该库任意成功 run」：切对端/换方向未成功时不再误显示为已建立、不再误开自动开关（与后端 gate 同口径，Codex PR#1144 P2） |
+| fix | prd-admin | 强制对齐成功后同步本地 direction（对齐归一方向），避免首次对齐后 everSynced 恒 false、面板一直说未建立/禁自动直到重开；批量弹窗改选时清掉上一轮 results，避免取消选中的行仍按旧结果显示（Codex PR#1144 P2） |

@@ -134,12 +134,16 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const canSubmit = Boolean(nodeId && selected.size > 0 && !submitting);
   const tone: SyncTone = submitting ? 'gold' : selected.size > 0 ? 'teal' : 'none';
 
+  // 改选后上一轮的 results 已过时：清掉，避免取消选中的行仍按旧 result 显示「已完成/失败」，
+  // 而「再次同步」只发当前 selected，造成弹窗看起来在重同步已不在 payload 里的条目（Codex P2）。
   const toggleItem = (id: string) => {
     if (submitting) return;
+    setResults(null);
     setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   };
   const toggleAll = () => {
     if (submitting) return;
+    setResults(null);
     setSelected(prev => prev.size === items.length ? new Set() : new Set(items.map(i => i.itemId)));
   };
 
