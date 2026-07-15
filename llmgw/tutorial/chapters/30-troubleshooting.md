@@ -25,6 +25,12 @@
 7. 遇到 unknown cost，核对请求价格快照、模型价格与币种。未知不是调用失败，也绝不能改成 0。
 8. 每次只改变一个因素，再用一条安全请求验证。修复后保留新的 requestId 与旧证据对照。
 
+## 看图核对
+
+无密钥时先停在红框提示，不要通过扩大 scope、复用其他平台 key 或重置控制台密码来绕过。
+
+![红框提示 Exchange 缺少通讯密钥时必须拒绝保存](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/reyipw3mxpdjb6ikxic4fxasre.png)
+
 ## 看到什么算成功
 
 每个故障都有明确层级和证据：401 到 key，403 到权限，404 到租户内对象，409 到版本，429 到限流或预算，5xx 到路由或上游，unknown 到价格证据。修复只改变必要配置，回归请求留下新 requestId。

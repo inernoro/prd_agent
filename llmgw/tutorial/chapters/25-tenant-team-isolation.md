@@ -38,6 +38,16 @@ dotnet test prd-api/PrdAgent.sln --no-restore \
 
 7. 保存测试总数和通过结果，不保存 MongoDB 连接串。任何一项失败都不能宣称租户隔离验收完成。
 
+## 看图核对
+
+切换租户前后，先看红框中的服务端边界说明；页面不能提供通过自报 tenantId 改变范围的入口。
+
+![红框说明租户范围只能由服务端会话确定](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/czjcj3a46fwh73qd65mew6apcm.png)
+
+未知角色出现时，页面必须停在红框提示并要求重新登录或联系 Owner，不能继续加载业务接口。
+
+![红框提示未知租户角色被默认拒绝](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/j6eidk3kkblwmkohmkcit7ndae.png)
+
 ## 看到什么算成功
 
 页面切换只展示当前会话租户和团队范围；隔离数据库中的 `GatewayConsoleTenantAccessTests` 与 `GatewayDataDomainGuardTests` 全部通过，自动证明跨租户详情不可读取、跨边界写入会被拒绝、同名对象按租户隔离、失效会话不能继续操作。
