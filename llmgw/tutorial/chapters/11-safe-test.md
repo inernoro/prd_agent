@@ -24,6 +24,16 @@
 6. 在个人核对清单分别标清 chat requestId 与 vision requestId，并记录各自协议、时间和“未访问上游”，不要记录 key。
 7. 保持控制台标签不刷新、不跳转，只在教程标签进入第 12 章。两条请求的详情统一留到第 13 章核对。
 
+## 看图核对
+
+OpenAI vision 通过时，红框结果必须同时写明团队边界和密钥鉴权通过、请求记录已写入、未访问上游，并提供 requestId 入口。
+
+![红框标出 OpenAI vision 安全测试通过结果](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/shlwkwyqya7xswmvni6yyhlduq.png)
+
+切换到 Gemini 后仍要看到同样四个通过条件；只看到 HTTP 成功不够。
+
+![红框标出 Gemini vision 安全测试通过结果](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/7d2vkbkxg2co7fuvj43ogdle24.png)
+
 ## 看到什么算成功
 
 vision 测试结果为成功，包含 requestId 和“未访问上游”说明。个人核对清单已把 chat 与 vision 两个 requestId 分开标记；Quickstart 仍停留在 vision 的已生成配置，没有因提前跳转而丢失。费用保持 unknown，不显示为 0。

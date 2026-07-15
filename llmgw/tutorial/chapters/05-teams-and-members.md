@@ -24,6 +24,16 @@
 6. 在“成员与角色”列表核对角色、所属团队和状态。Developer 必须至少有一个活动团队。
 7. 让新成员首次登录并设置自己的密码。回到本页时只核对账号状态，不会看到初始密码。
 
+## 看图核对
+
+先看红框 3：Developer 没有选择团队时不能创建，避免成员脱离工作范围。
+
+![红框提示 Developer 至少选择一个团队](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/zhoif3mzpkfpcj7csz3xsxclkm.png)
+
+再看红框 8：当前会话自己的 Owner 权限不能被随手改掉，避免把自己锁在租户外。
+
+![红框标出最后管理身份的自锁保护](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/rqr526zuuyjyfpiaf6vmpc4n44.png)
+
 ## 看到什么算成功
 
 团队列表同时出现“客服组”和“内容组”。Developer 行显示“客服组”，Viewer 行显示“内容组”。Developer 登录后能管理所属团队的 appCaller 和限定密钥，但看不到通配密钥、PromptPolicy 写入口或其他团队的写操作；Viewer 只能查看允许的页面。
