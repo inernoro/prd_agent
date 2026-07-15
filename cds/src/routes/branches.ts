@@ -56,6 +56,7 @@ import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bo
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
+import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
 import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
@@ -7958,6 +7959,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const labels = [
       'cds.managed=true',
       'cds.type=resource-external-access',
+      // 实例身份：与 app/infra 容器一致，同宿主多 CDS master 时收割器据此互不
+      // 触碰（Codex P1；缺此 label 时无标记代理会被别的实例误停）。
+      `cds.instance=${computeCdsInstanceId(config.repoRoot)}`,
       `cds.project.id=${input.projectId}`,
       `cds.branch.id=${input.branch.id}`,
       `cds.resource.id=${input.resourceId}`,

@@ -3509,6 +3509,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     try {
       summary = stateService.removeProject(project.id);
     } catch (err) {
+      // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
+      // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
+      for (const containerName of teardownContainers) {
+        try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
+      }
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,
