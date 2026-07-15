@@ -811,6 +811,80 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ExchangeSelfService_IsTenantScopedAuditedAndKeepsSecretsWriteOnly()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/ExchangesPage.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        var serving = ReadRepoFile("llmgw/serving/Program.cs");
+
+        Assert.Contains("app.MapPost(\"/gw/exchanges\"", console);
+        Assert.Contains("app.MapPut(\"/gw/exchanges/{id}\"", console);
+        Assert.Contains("TenantAccess.Filter(http, fb.Eq(\"_id\", id))", console);
+        Assert.Contains("action: \"exchange.create\"", console);
+        Assert.Contains("action: \"exchange.update\"", console);
+        Assert.Contains("BeginRequiredOperationAuditAsync", console);
+        Assert.Contains("EXCHANGE_AUDIT_PENDING", console);
+        Assert.Contains("无法先建立 Exchange 审计意图，本次未写入配置", console);
+        Assert.Contains("无法先建立 Exchange 审计意图，本次未修改配置", console);
+        var exchangeCreateStart = console.IndexOf("app.MapPost(\"/gw/exchanges\"", StringComparison.Ordinal);
+        var exchangeUpdateStart = console.IndexOf("app.MapPut(\"/gw/exchanges/{id}\"", exchangeCreateStart, StringComparison.Ordinal);
+        var exchangeClaimStart = console.IndexOf("app.MapPut(\"/gw/exchanges/{id}/claim\"", exchangeUpdateStart, StringComparison.Ordinal);
+        var exchangeCreateSection = console[exchangeCreateStart..exchangeUpdateStart];
+        var exchangeUpdateSection = console[exchangeUpdateStart..exchangeClaimStart];
+        Assert.True(
+            exchangeCreateSection.IndexOf("BeginRequiredOperationAuditAsync", StringComparison.Ordinal)
+            < exchangeCreateSection.IndexOf("gwModelExchanges.InsertOneAsync", StringComparison.Ordinal),
+            "Exchange 创建必须先写 pending 审计意图，再写业务配置");
+        Assert.True(
+            exchangeUpdateSection.IndexOf("BeginRequiredOperationAuditAsync", StringComparison.Ordinal)
+            < exchangeUpdateSection.IndexOf("gwModelExchanges.UpdateOneAsync", StringComparison.Ordinal),
+            "Exchange 修改必须先写 pending 审计意图，再写业务配置");
+        Assert.Contains("EXCHANGE_READBACK_FAILED", console);
+        Assert.Contains("EXCHANGE_CONCURRENTLY_MODIFIED", console);
+        Assert.Contains("ValidateExternalExchangeTargetAsync(draft.TargetUrl", console);
+        Assert.Contains("Dns.GetHostAddressesAsync(host, ct)", console);
+        Assert.Contains("UNSAFE_TARGET_URL", console);
+        Assert.Contains("gwModelExchanges.Find(TenantAccess.Filter(http", console);
+        Assert.Contains("BuildExchangePoolModelDocument(platformId, exchangeModel)", console);
+        Assert.Contains("GwApiKeyCrypto.Encrypt(draft.ApiKey!, config)", console);
+        var exchangeItemStart = dtos.IndexOf("public sealed class ExchangeItem", StringComparison.Ordinal);
+        var exchangeItemEnd = dtos.IndexOf("public sealed class ExchangeModelItem", exchangeItemStart, StringComparison.Ordinal);
+        var writeRequestStart = dtos.IndexOf("public sealed class CreateExchangeRequest", StringComparison.Ordinal);
+        var writeRequestEnd = dtos.IndexOf("// ── GW-owned API key", writeRequestStart, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApiKey", dtos[exchangeItemStart..exchangeItemEnd]);
+        Assert.DoesNotContain("TenantId", dtos[writeRequestStart..writeRequestEnd]);
+        Assert.Contains("Exchange 通讯密钥不能为空", provisioning);
+        Assert.Contains("uniq_llmgw_exchange_tenant_name", initializer);
+        Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
+        Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
+        Assert.Contains("createExchange({ ...common, apiKey: form.apiKey.trim() }", page);
+        Assert.Contains("updateExchange(editingId!", page);
+        Assert.Contains("上游接口类型", page);
+        Assert.Contains("上游模型标识重复", page);
+        Assert.Contains("当前填写的内容仍保留", page);
+        Assert.Contains("option.value !== 'doubao-asr-stream'", page);
+        Assert.Contains("transformerType === 'fal-image'", page);
+        Assert.Contains("transformerType === 'doubao-asr'", page);
+        Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
+        Assert.DoesNotContain("tenantId:", page);
+        Assert.Contains("body: req", api);
+        Assert.Contains("IsExternalTenant(tenantId)", gateway);
+        Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
+        Assert.Contains("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", gateway);
+        Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
+        Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
+        var poolsPage = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        Assert.Contains("getExchanges({ enabled: true })", poolsPage);
+        Assert.Contains("toExchangeModelCandidates", poolsPage);
+        Assert.Contains("llmgw_model_exchanges", poolsPage);
+    }
+
+    [Fact]
     public void Compose_DeclaresGatewayDatabaseName_ForApiAndServing()
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
