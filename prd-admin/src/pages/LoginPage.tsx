@@ -478,17 +478,18 @@ function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
       }}
     >
       <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-20" />
         <span
-          className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"
-          style={{ boxShadow: '0 0 10px #34d399' }}
+          className="relative inline-flex h-2 w-2 rounded-full"
+          style={{ background: 'rgba(226,228,232,0.82)', boxShadow: '0 0 10px rgba(226,228,232,0.28)' }}
         />
       </span>
       <span
-        className="text-[14px] text-emerald-300"
+        className="text-[14px]"
         style={{
+          color: 'rgba(226,228,232,0.78)',
           letterSpacing: '0.14em',
-          textShadow: '0 0 8px rgba(52, 211, 153, 0.6)',
+          textShadow: '0 0 8px rgba(226,228,232,0.20)',
         }}
       >
         {label}
@@ -597,7 +598,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- *  主 CTA —— 登录页石墨绿渐变 pill
+ *  主 CTA —— 登录页石墨银渐变 pill
  * ────────────────────────────────────────────────────────────────────────── */
 function PrimaryPill({
   children,
