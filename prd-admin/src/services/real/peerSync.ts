@@ -37,6 +37,8 @@ export interface TransferItemResult {
   itemId: string;
   name?: string;
   ok: boolean;
+  /** 是否因用户主动取消而中止（前端应显示为中性「已取消」，而非失败）。 */
+  cancelled?: boolean;
   message?: string;
   created?: number;
   updated?: number;

@@ -30,7 +30,7 @@ interface Props {
 }
 
 type Tab = 'send' | 'history';
-type ItemStatus = 'unselected' | 'selected' | 'running' | 'done' | 'skipped' | 'failed';
+type ItemStatus = 'unselected' | 'selected' | 'running' | 'done' | 'skipped' | 'failed' | 'cancelled';
 
 const DIRECTIONS: { key: PeerTransferDirection; label: string; seg: string }[] = [
   { key: 'push', label: '发送', seg: '选中 → 对端' },
@@ -151,6 +151,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     if (results) {
       const r = results.find(x => x.itemId === id);
       if (!r) return selected.has(id) ? 'selected' : 'unselected';
+      if (r.cancelled) return 'cancelled'; // 用户主动取消 → 中性「已取消」，不是失败（Codex P2）
       return r.ok ? (isSkippedResult(r) ? 'skipped' : 'done') : 'failed';
     }
     if (transferError && selected.has(id)) return 'failed';
@@ -435,6 +436,7 @@ const STATUS_META: Record<ItemStatus, { label: string; color: string }> = {
   done: { label: '完成', color: 'rgb(134,239,172)' },
   skipped: { label: '已一致', color: 'rgb(148,163,184)' },
   failed: { label: '失败', color: 'rgb(252,165,165)' },
+  cancelled: { label: '已取消', color: 'rgb(148,163,184)' },
 };
 
 function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; desc: string }) {

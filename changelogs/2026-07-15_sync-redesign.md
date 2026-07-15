@@ -17,3 +17,5 @@
 | fix | prd-admin | 「已建立关系」（everSynced）收口为「当前选中对端+方向组合成功过」，不再认「该库任意成功 run」：切对端/换方向未成功时不再误显示为已建立、不再误开自动开关（与后端 gate 同口径，Codex PR#1144 P2） |
 | fix | prd-admin | 强制对齐成功后同步本地 direction（对齐归一方向），避免首次对齐后 everSynced 恒 false、面板一直说未建立/禁自动直到重开；批量弹窗改选时清掉上一轮 results，避免取消选中的行仍按旧结果显示（Codex PR#1144 P2） |
 | fix | prd-api | 取消时保留 apply 已提交的部分增删改计数：PeerSyncRunCancelledException 带回本次 apply 已处理数，SyncItemAsync 累加落 cancelled run，避免 pull/align 写入一半被停时历史显示删除0/计数陈旧与实际不符（Codex PR#1144 P2） |
+| fix | prd-api | 取消状态回传给 transfer 调用方：批量 results 每项带 cancelled 标志（Codex PR#1144 P2） |
+| fix | prd-admin | 用户主动取消不再被渲染成失败：单库 getTransferFailureMessage 跳过 cancelled 项（不报 error），批量列表 cancelled 显示中性「已取消」而非红色失败（Codex PR#1144 P2） |

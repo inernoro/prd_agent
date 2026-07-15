@@ -930,8 +930,10 @@ export function isProblemRun(run: PeerSyncRun, allRuns: PeerSyncRun[]): boolean 
 
 export function getTransferFailureMessage(data: { anyFail?: boolean; results?: TransferItemResult[] } | null | undefined): string | null {
   if (!data?.anyFail) return null;
-  const failed = data.results?.find(r => !r.ok);
-  if (!failed) return '同步未完成，部分条目失败';
+  // 用户主动取消（cancelled）不是失败：ok=false 但历史落 cancelled，不能报成 error（Codex P2）。
+  // 只挑「真失败」项；若失败项全是取消，返回 null，调用方走正常收尾（刷新历史，历史里显示已取消）。
+  const failed = data.results?.find(r => !r.ok && !r.cancelled);
+  if (!failed) return null;
   const name = failed.name || failed.itemId || '当前知识库';
   return failed.message ? `${name}：${failed.message}` : `${name}：同步未完成`;
 }
