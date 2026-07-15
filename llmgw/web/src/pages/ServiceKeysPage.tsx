@@ -5,6 +5,7 @@ import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers,
 import { useAuth } from '@/lib/auth';
 import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 
 const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemini-compatible';
 const DEFAULT_SCOPES = 'invoke, route:read';
@@ -12,6 +13,7 @@ const DEFAULT_SCOPES = 'invoke, route:read';
 export function ServiceKeysPage() {
   const { tenant } = useAuth();
   const isInternalTenant = tenant?.isInternal === true;
+  const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -47,16 +49,18 @@ export function ServiceKeysPage() {
     const res = await getServiceKeys();
     if (res.success) setItems(res.data);
     else setError(res.error?.message || '加载接入密钥失败');
-    const legacyRes = await getLegacyKeyCutover();
-    if (legacyRes.success && legacyRes.data.applicable) {
-      setLegacy(legacyRes.data);
-      setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
-      setLegacyDeadline(legacyRes.data.deadlineAt ? toLocalInput(legacyRes.data.deadlineAt) : '');
-      setLegacyAllowedCallers(legacyRes.data.allowedAppCallerCodes.join(', '));
-      setLegacySuccessorIds(legacyRes.data.successorServiceKeyIds.join(', '));
-      setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
+    if (canManageLegacyCutover) {
+      const legacyRes = await getLegacyKeyCutover();
+      if (legacyRes.success && legacyRes.data.applicable) {
+        setLegacy(legacyRes.data);
+        setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
+        setLegacyDeadline(legacyRes.data.deadlineAt ? toLocalInput(legacyRes.data.deadlineAt) : '');
+        setLegacyAllowedCallers(legacyRes.data.allowedAppCallerCodes.join(', '));
+        setLegacySuccessorIds(legacyRes.data.successorServiceKeyIds.join(', '));
+        setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
+      }
     }
-  }, []);
+  }, [canManageLegacyCutover]);
 
   useEffect(() => {
     void load();
@@ -158,9 +162,10 @@ export function ServiceKeysPage() {
   const sourceIsMap = sourceSystem.trim().toLowerCase() === 'map';
   const purposeMatchesSource = sourceIsMap ? purpose !== 'external-platform' : purpose === 'external-platform';
   const purposeMatchesTenant = isInternalTenant || (!sourceIsMap && purpose === 'external-platform');
+  const canCreateWildcard = canCreateWildcardServiceKey(tenant?.role);
   const canSubmit = name.trim() && sourceSystem.trim() && /^[a-z][a-z0-9._-]{1,79}$/.test(clientCode.trim().toLowerCase()) && environment && splitValues(appCallerCodes).length
     && splitValues(ingressProtocols).length && splitValues(scopes).length
-    && purposeMatchesSource && purposeMatchesTenant && (!usesWildcard || confirmWildcardRisk);
+    && purposeMatchesSource && purposeMatchesTenant && (!usesWildcard || canCreateWildcard && confirmWildcardRisk);
   const updateSourceSystem = (value: string) => {
     setSourceSystem(value);
     const nextIsMap = value.trim().toLowerCase() === 'map';
@@ -177,7 +182,7 @@ export function ServiceKeysPage() {
     .map((item) => `${item.clientCode} · ${item.environment}`)));
 
   const saveLegacyCutover = async () => {
-    if (!legacyDeadline) return;
+    if (!canManageLegacyCutover || !legacyDeadline) return;
     if (legacyStatus === 'revoked' && !window.confirm('确认撤销 legacy shared key？撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。')) return;
     setLegacyBusy(true);
     const res = await updateLegacyKeyCutover({
@@ -257,12 +262,13 @@ export function ServiceKeysPage() {
           <Field label="来源 CIDR（可选）" value={allowedCidrs} onChange={setAllowedCidrs} placeholder="10.20.0.0/16, 2001:db8::/32" />
           <Field label="每分钟上限（可选）" value={rateLimitPerMinute} onChange={setRateLimitPerMinute} placeholder="例如 60" type="number" />
           <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
-          {usesWildcard ? (
+          {usesWildcard && canCreateWildcard ? (
             <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
               <input type="checkbox" checked={confirmWildcardRisk} onChange={(event) => setConfirmWildcardRisk(event.target.checked)} />
-              <span><strong>确认创建通配密钥</strong><br />该密钥的来源、appCaller、协议或 scope 含通配符，权限范围明显扩大。Developer 即使确认也不能创建。</span>
+              <span><strong>确认创建通配密钥</strong><br />该密钥的来源、appCaller、协议或 scope 含通配符，权限范围明显扩大。</span>
             </label>
           ) : null}
+          {usesWildcard && !canCreateWildcard ? <div style={{ gridColumn: '1 / -1', color: 'var(--danger)', fontSize: 12 }}>Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥，不能创建通配密钥。</div> : null}
           {rotatesKeyId ? <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 12 }}>正在轮换 {rotatesKeyId}。新旧密钥会并行有效，完成客户端切换后再撤销旧密钥。</div> : null}
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
             <Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '创建密钥'}</Button>

@@ -109,6 +109,14 @@ export function Card({ children, style, className }: { children: ReactNode; styl
   );
 }
 
+export function ReadOnlyNotice({ children = '当前角色可以查看这些配置，但不能修改。需要变更时请联系 Owner 或 Admin。' }: { children?: ReactNode }) {
+  return (
+    <div role="status" style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
+      {children}
+    </div>
+  );
+}
+
 export function TabBar<K extends string>({
   items,
   activeKey,
