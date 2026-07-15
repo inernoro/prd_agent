@@ -1,4 +1,4 @@
-// 首登强制改密页：缺省 admin/admin 账号登录后强制在此设置新口令，改密成功前无法进入日志页。
+// 首登强制改密页：使用管理员提供的初始口令验证，改密成功前无法进入控制台。
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, Lock, ShieldAlert } from 'lucide-react';
@@ -21,8 +21,8 @@ export function ChangePasswordPage() {
       setError('请填写旧口令与新口令');
       return;
     }
-    if (newPassword.length < 6) {
-      setError('新口令至少 6 位');
+    if (newPassword.length < 12) {
+      setError('新口令至少 12 位');
       return;
     }
     if (newPassword === oldPassword) {
@@ -122,7 +122,7 @@ export function ChangePasswordPage() {
           }}
         >
           <ShieldAlert size={16} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-          <span>该控制台默认口令为 admin/admin。为避免公网弱口令暴露，请立即设置一个新口令。</span>
+          <span>请使用管理员单独提供的初始口令完成验证，再设置只属于你自己的新口令。不要共享口令，也不要把应用接入密钥当作登录口令。</span>
         </div>
 
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 18 }}>
@@ -142,7 +142,7 @@ export function ChangePasswordPage() {
             <input
               style={inputStyle}
               type="password"
-              placeholder="新口令（至少 6 位）"
+              placeholder="新口令（至少 12 位）"
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
