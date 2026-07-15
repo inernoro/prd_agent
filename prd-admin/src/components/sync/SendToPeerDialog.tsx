@@ -1,7 +1,9 @@
 /**
- * 「发送到对端节点」通用弹窗。
+ * 「批量同步到对端节点」弹窗（知识库列表页多选形态）。
  *
- * 知识库支持双向同步、保留原时间、覆盖修复、图片重传到目标域名。
+ * 单库的同步入口已统一到 SyncCenterDialog（同步面板）；本弹窗只服务「一次选多个库」的批量场景。
+ * 策略不再询问用户，收敛为固定默认值：保留原时间、覆盖同名条目、图片重传到目标域名（奥卡姆：
+ * 三个开关默认全开且关掉基本都是错的，不该问人类）。
  * 遵守 frontend-modal 约束：createPortal 到 body、inline 高度、min-h:0 滚动、ESC + 蒙版关闭。
  */
 
@@ -66,9 +68,6 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const [nodeId, setNodeId] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set(presetItemIds ?? []));
   const [direction, setDirection] = useState<PeerTransferDirection>('both');
-  const [preserveTimestamps, setPreserveTimestamps] = useState(true);
-  const [allowOverwrite, setAllowOverwrite] = useState(true);
-  const [rewriteAssetLinks, setRewriteAssetLinks] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<TransferItemResult[] | null>(null);
@@ -179,14 +178,15 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
       window.setTimeout(() => setProgress({ step: 3, stage: '正在按血缘合并内容', startedAt }), 3200),
       window.setTimeout(() => setProgress({ step: 4, stage: '正在回写同步状态', startedAt }), 6200),
     ];
+    // 策略固定默认值：保留原时间 / 覆盖同名 / 图片重传，与单库同步面板同口径。
     const res = await transferToPeer({
       nodeId,
       resourceType,
       itemIds: runItemIds,
       direction,
-      mode: allowOverwrite ? 'overwrite' : 'add-only',
-      preserveTimestamps,
-      rewriteAssetLinks,
+      mode: 'overwrite',
+      preserveTimestamps: true,
+      rewriteAssetLinks: true,
     });
     timers.forEach((t) => window.clearTimeout(t));
     if (!isMountedRef.current) return;
@@ -245,7 +245,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
               <Send size={18} style={{ color: 'rgb(94,234,212)' }} />
             </div>
             <div>
-              <div className="text-base font-semibold">发送到对端节点</div>
+              <div className="text-base font-semibold">批量同步到对端节点</div>
               <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 实时监听知识库同步进度，关闭面板即可停止监听
               </div>
@@ -297,26 +297,8 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                     ))}
                   </div>
 
-                  <SectionTitle label="同步策略" />
-                  <div className="grid grid-cols-3 gap-1 rounded-xl border p-1" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.30)' }}>
-                    <CompactToggle
-                      label="原时间"
-                      checked={preserveTimestamps}
-                      onChange={setPreserveTimestamps}
-                    />
-                    <CompactToggle
-                      label="覆盖"
-                      checked={allowOverwrite}
-                      onChange={setAllowOverwrite}
-                    />
-                    <CompactToggle
-                      label="重传"
-                      checked={rewriteAssetLinks}
-                      onChange={setRewriteAssetLinks}
-                    />
-                  </div>
                   <div className="rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: 'rgba(45,212,191,0.18)', background: 'rgba(15,23,42,0.36)', color: 'rgb(203,213,225)' }}>
-                    使用策略：{preserveTimestamps ? '保留原时间' : '使用同步时间'}、{allowOverwrite ? '覆盖同名条目' : '仅新增'}、{rewriteAssetLinks ? '图片重传' : '跳过图片'}，完成后回读校验。
+                    默认策略，无需设置：保留原时间、覆盖同名条目、图片重传到目标域名，完成后回读校验。
                   </div>
                 </div>
               </>
@@ -455,23 +437,6 @@ function CompactChoiceCard({ active, icon, label, onClick }: { active: boolean; 
     >
       {icon}
       <span>{label}</span>
-    </button>
-  );
-}
-
-function CompactToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className="flex h-8 items-center justify-center gap-1.5 rounded-lg px-2 text-center text-xs font-semibold transition"
-      style={{
-        background: checked ? 'rgba(20,184,166,0.14)' : 'transparent',
-        color: checked ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
-        boxShadow: checked ? 'inset 0 0 0 1px rgba(45,212,191,0.26)' : 'none',
-      }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: checked ? 'rgb(94,234,212)' : 'rgba(148,163,184,0.40)' }} />
-      {label}
     </button>
   );
 }
@@ -680,8 +645,6 @@ function QueueItemCard({ item, onToggle, state, progress, result, active }: {
           {item.description && <div className="mt-1 text-xs leading-5" style={{ color: 'rgb(174,187,201)' }}>{item.description}</div>}
           <div className="mt-2 flex flex-wrap gap-3 text-[11px]" style={{ color: 'rgb(174,187,201)' }}>
             {item.updatedAt && <span>更新 {formatShortTime(item.updatedAt)}</span>}
-            <span>保留原时间</span>
-            <span>允许覆盖</span>
           </div>
         </div>
         <div className="min-w-0">
