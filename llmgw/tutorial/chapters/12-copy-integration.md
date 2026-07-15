@@ -25,6 +25,16 @@
 6. 用复制结果再次核对 Gateway 地址：默认来自当前页面 URL 前缀或部署配置，不应仍是 `gateway.example.com`。
 7. 完成测试后仍保留 dry-run header。只有生产清单批准真实调用时才删除。
 
+## 看图核对
+
+整页核对时，Gateway 地址应来自当前部署，协议标签、测试入口和“一键生成 appCaller 与 key”应在同一流程内。
+
+![Quickstart 同屏提供自动 Gateway 地址、协议标签、生成和测试](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/3bo2a6hgv3a6zvtepm4a5thbdi.png)
+
+移动端展开安全测试选项后，红框中的“固定安全模式”不能消失；底部仍能切换 cURL、环境变量和 Agent Skill。
+
+![移动端红框标出固定安全模式并保留三种复制方式](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/rhcw2gbbvwdmlqvysdlxnh6qpm.png)
+
 ## 看到什么算成功
 
 三种标签都能一键复制，四协议各有正确路径和请求形状。示例不要求用户输入 tenantId，也不暴露 Provider 通讯密钥。Agent 能从环境变量读取 Gateway 地址和 key，并知道用 requestId 在“请求记录”回查。

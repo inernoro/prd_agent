@@ -57,6 +57,12 @@ unset LLMGW_VISION_KEY LLMGW_BASE_URL
 
 11. 用输出的 vision requestId 打开请求详情，核对它使用 vision appCaller，并且只显示 vision policy id、刚保存的 version 与 hash。chat 和 vision 各自只有一次公开教程桩应用验证；不要把策略扩展到 image generation、speech 或其他请求类型。
 
+## 看图核对
+
+Developer 在 Quickstart 生成配置后会看到下一步提示，但红框中的策略入口要求 Owner 或 Admin；Developer 不能绕过权限修改 PromptPolicy。
+
+![红框说明只有 Owner 或 Admin 能配置 PromptPolicy](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/idlhugxghyv7nnvwtbmjl76hy4.png)
+
 ## 看到什么算成功
 
 chat 与 vision 页面各自有当前版本和历史版本，预览结果符合预期；两条公开教程桩请求分别命中自己的 appCaller 和策略证据。请求详情或审计只显示 policy id、version、hash，没有策略正文；chat 回滚后还生成了可审计的新当前版本。

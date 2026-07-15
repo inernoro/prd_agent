@@ -28,6 +28,16 @@
 10. 调用类型改为“图片理解”，团队选择“内容组”，确认 code 自动变为 `tutorial.gateway-book::vision`，环境仍为“测试”，再点击“一键生成 appCaller 与 key”。把 vision key 保存为另一条 Secret，不覆盖 chat key。
 11. 保持 vision 配置停留在页面，不要刷新；第 11 章先完成 vision 安全测试，再用 chat requestId 学会回查。
 
+## 看图核对
+
+Developer 的密钥页面会明确告诉你：只能创建限定 appCaller、协议和 scope 的团队密钥，不能创建通配密钥。
+
+![红框说明 Developer 只能创建明确限定的团队密钥](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/bjbi5orhawg4eldqlymwyaxyka.png)
+
+Viewer 打开 Quickstart 时可以学习三步接入和复制方式，但红框说明其不能签发密钥或执行安全直测。
+
+![红框说明 Viewer 的 Quickstart 保持只读](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/pocxlvuedir4vkcuil3gpy7ymm.png)
+
 ## 看到什么算成功
 
 chat 已完成一次安全测试，vision 停留在“接入配置已生成”并等待测试。左侧“接入密钥”列表出现两条不同工作负载身份：test/chat 属于客服组，test/vision 属于内容组；两者只显示前缀，不回显完整 key。

@@ -26,6 +26,12 @@ Gateway 的估算来自价格快照，供应商扣费来自账单。两边可能
 6. 只有将来真实供应商提供请求编号时，才在“供应商请求编号”填写 Provider 返回的编号并执行逐请求对账；Gateway requestId 不能顶替它。
 7. 跨币种和 reconciled 的边界留到第 28 章用隔离测试验证，不在当前汇总样例上编造 FX。
 
+## 看图核对
+
+导入完成后看红框回执：它会明确显示供应商账单已导入及处理结果，不能只靠按钮变灰猜测是否成功。
+
+![红框标出供应商账单导入成功回执](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/adkgxapclxbxviscjxlyezhq2a.png)
+
 ## 看到什么算成功
 
 回执和最近记录都明确标为时间窗汇总；actual 为 `0.01 CNY`，Gateway 估算保持未知，没有伪造 requestId 或差额。你也知道真实供应商编号出现后才可走逐请求路径。

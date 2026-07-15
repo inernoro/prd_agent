@@ -34,6 +34,20 @@ dotnet test prd-api/PrdAgent.sln --no-restore \
 8. 只有页面八格和合同套件都通过，才可写“协议保真通过”。本章不执行真实付费协议；若另有上线批准，仍遵守每类最多一次。
 9. 保存八个 requestId 后，到“接入密钥”按 Client code 找到 `tutorial-protocol-chat` 和 `tutorial-protocol-vision`，分别点击“撤销”并确认。它们只是本章临时 bundle，不得长期留存；第 16 章轮换后的 chat key 和第 10 章 vision key不受影响。
 
+## 看图核对
+
+OpenAI vision 的红框结果必须写明请求记录已写入、未访问上游，并能打开 requestId 记录。
+
+![红框标出 OpenAI vision dry-run 的完整通过条件](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/shlwkwyqya7xswmvni6yyhlduq.png)
+
+Gemini vision 要出现同样的结果结构，证明不是只把协议标签换了名字。
+
+![红框标出 Gemini vision dry-run 的完整通过条件](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/7d2vkbkxg2co7fuvj43ogdle24.png)
+
+移动端的红框“固定安全模式”必须保留，避免窄屏让用户误以为测试会访问付费上游。
+
+![移动端红框标出固定安全模式和审计边界](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/rhcw2gbbvwdmlqvysdlxnh6qpm.png)
+
 ## 看到什么算成功
 
 chat 与 vision 共八次 dry-run 都返回独立 requestId、`upstreamCalled=false`；合同套件全部通过，证明内容、流式、vision、工具和允许参数语义。页面只核对团队、ServiceKeyId、appCaller 和协议，不虚构 TenantId 可见字段；两把临时协议验收 key 已撤销。

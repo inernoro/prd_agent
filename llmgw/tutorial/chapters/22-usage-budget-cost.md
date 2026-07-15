@@ -24,6 +24,16 @@
 6. 点击“打开请求记录”，再按 `tutorial.gateway-book::chat`、团队权限范围和时间筛选。费用页自身展示最近 30 天当前租户汇总，不要把请求记录筛选误认为改写了汇总。
 7. 回到 appCaller 页面查看已配置的月预算和速率限制，再与当前用量对照。预算是治理边界，不应通过删除日志或把 unknown 写成 0 来“降低使用量”。
 
+## 看图核对
+
+红框中的四张卡必须分开显示可估算、供应商实际、结果未知和已对账，先看证据阶段，再看上方金额。
+
+![红框标出 exact、estimated、unknown、reconciled 四种费用状态](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/d7ihg2wgzlftfvtmtvuiwsh64y.png)
+
+跨币种账单没有汇率凭证时，红框内的“对账差额”和“汇算凭证”都应写明不计算，而不是给出虚假合计。
+
+![红框说明 CNY 与 USD 无汇率时不计算合计和差额](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/s2h2d3ynvhmwwuoozu5batpowa.png)
+
 ## 看到什么算成功
 
 四种状态各自有记录数或明确空状态；unknown 用文字表达而不是 0 元；不同币种分别展示。筛选后只出现当前租户数据，能从用量记录回到 requestId。
