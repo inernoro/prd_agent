@@ -48,6 +48,9 @@ import type {
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
+  ExchangeMetaData,
+  CreateExchangeRequest,
+  UpdateExchangeRequest,
   UpsertPoolModelRequest,
   KeyHealthData,
   CreatePoolRequest,
@@ -77,6 +80,9 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  CreateMemberRequest,
+  CreatedMember,
+  UpdateMemberRequest,
   PromptPolicyData,
   PromptPolicyDraft,
   PromptPolicyPreview,
@@ -385,6 +391,15 @@ export function createTenant(req: { name: string; slug: string }): Promise<ApiRe
 export function createTeam(req: { name: string }): Promise<ApiResponse<CreatedTeam>> {
   return apiRequest<CreatedTeam>('/teams', { method: 'POST', body: req });
 }
+export function createMember(req: CreateMemberRequest): Promise<ApiResponse<CreatedMember>> {
+  return apiRequest<CreatedMember>('/members', { method: 'POST', body: req });
+}
+export function updateMember(id: string, req: UpdateMemberRequest): Promise<ApiResponse<{ id: string; role: string; status: string; teamIds: string[]; version: number }>> {
+  return apiRequest(`/members/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function invalidateMemberSessions(id: string): Promise<ApiResponse<{ id: string; userId: string; version: number; invalidated: boolean }>> {
+  return apiRequest(`/members/${encodeURIComponent(id)}/invalidate-sessions`, { method: 'POST' });
+}
 export function switchTenant(tenantId: string): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/switch-tenant', { method: 'POST', body: { tenantId } });
 }
@@ -461,6 +476,15 @@ export function bulkUpdateModelCapabilities(req: BulkUpdateModelCapabilitiesRequ
 }
 export function claimExchangeToGateway(id: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
+}
+export function getExchangeMeta(): Promise<ApiResponse<ExchangeMetaData>> {
+  return apiRequest<ExchangeMetaData>('/exchanges/meta');
+}
+export function createExchange(req: CreateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>('/exchanges', { method: 'POST', body: req });
+}
+export function updateExchange(id: string, req: UpdateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
 }
 export function rotateExchangeApiKey(id: string, apiKey: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });

@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 
 namespace PrdAgent.LlmGw.Provisioning;
@@ -31,6 +32,25 @@ public sealed record NormalizedModelDraft(
     string? PriceCurrency,
     string? Remark);
 
+public sealed record NormalizedExchangeModelDraft(
+    string ModelId,
+    string? DisplayName,
+    string ModelType,
+    string? Description,
+    bool Enabled);
+
+public sealed record NormalizedExchangeDraft(
+    string Name,
+    string NameNormalized,
+    IReadOnlyList<NormalizedExchangeModelDraft> Models,
+    string TargetUrl,
+    string? ApiKey,
+    string TargetAuthScheme,
+    string TransformerType,
+    bool Enabled,
+    string? Description,
+    long? Version);
+
 public static class GatewayConfigurationProvisioning
 {
     private static readonly HashSet<string> SupportedModelTypes =
@@ -38,6 +58,48 @@ public static class GatewayConfigurationProvisioning
         "chat", "intent", "vision", "generation", "code", "long-context", "embedding",
         "rerank", "asr", "tts", "video-gen", "audio-gen", "moderation",
     ];
+    private static readonly IReadOnlyDictionary<string, string> ExchangeAuthSchemes =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["bearer"] = "Bearer",
+            ["key"] = "Key",
+            ["xapikey"] = "XApiKey",
+            ["x-api-key"] = "XApiKey",
+            ["x-goog-api-key"] = "x-goog-api-key",
+        };
+    private static readonly HashSet<string> ExchangeTransformerTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "passthrough",
+        "fal-image",
+        "fal-image-edit",
+        "doubao-asr",
+        "doubao-asr-stream",
+        "volcengine-video",
+        "gemini-native",
+    };
+
+    public static IReadOnlyList<ExchangeOptionItem> GetExchangeTransformerOptions() =>
+    [
+        new() { Value = "passthrough", Label = "直接转发", Description = "上游已经接近目标请求格式" },
+        new() { Value = "gemini-native", Label = "Gemini 原生", Description = "转换 Gemini 原生请求与响应" },
+        new() { Value = "fal-image", Label = "fal.ai 图片", Description = "适配 fal.ai 图片生成与编辑" },
+        new() { Value = "doubao-asr", Label = "豆包语音识别", Description = "适配豆包异步语音识别" },
+        new() { Value = "doubao-asr-stream", Label = "豆包流式语音识别", Description = "适配豆包 WebSocket 流式语音识别" },
+        new() { Value = "volcengine-video", Label = "火山视频生成", Description = "适配火山方舟视频任务协议" },
+    ];
+
+    public static IReadOnlyList<ExchangeOptionItem> GetExchangeAuthSchemeOptions() =>
+    [
+        new() { Value = "Bearer", Label = "Bearer", Description = "Authorization: Bearer" },
+        new() { Value = "Key", Label = "Key", Description = "Authorization: Key" },
+        new() { Value = "XApiKey", Label = "x-api-key", Description = "x-api-key 请求头" },
+        new() { Value = "x-goog-api-key", Label = "Google API Key", Description = "x-goog-api-key 请求头" },
+    ];
+
+    public static IReadOnlyList<ExchangeOptionItem> GetExchangeModelTypeOptions() =>
+        GatewayModelPoolTypeRegistry.All
+            .Select(item => new ExchangeOptionItem { Value = item.Code, Label = item.Name, Description = item.Purpose })
+            .ToList();
 
     public static bool TryNormalizePlatform(
         CreatePlatformRequest? request,
@@ -163,6 +225,120 @@ public static class GatewayConfigurationProvisioning
         return true;
     }
 
+    public static bool TryNormalizeExchange(
+        CreateExchangeRequest? request,
+        out NormalizedExchangeDraft? draft,
+        out string error)
+    {
+        if (request is null)
+        {
+            draft = null;
+            return Fail("请求体不能为空", out error);
+        }
+        return TryNormalizeExchangeCore(
+            request.Name,
+            request.Models,
+            request.TargetUrl,
+            request.ApiKey,
+            request.TargetAuthScheme,
+            request.TransformerType,
+            request.Enabled,
+            request.Description,
+            version: null,
+            requireApiKey: true,
+            out draft,
+            out error);
+    }
+
+    public static bool TryNormalizeExchange(
+        UpdateExchangeRequest? request,
+        out NormalizedExchangeDraft? draft,
+        out string error)
+    {
+        if (request is null)
+        {
+            draft = null;
+            return Fail("请求体不能为空", out error);
+        }
+        if (request.Version is null or < 0)
+        {
+            draft = null;
+            return Fail("缺少有效的 version，无法防止覆盖他人的修改", out error);
+        }
+        return TryNormalizeExchangeCore(
+            request.Name,
+            request.Models,
+            request.TargetUrl,
+            apiKey: null,
+            request.TargetAuthScheme,
+            request.TransformerType,
+            request.Enabled,
+            request.Description,
+            request.Version,
+            requireApiKey: false,
+            out draft,
+            out error);
+    }
+
+    public static BsonDocument BuildExchangeDocument(
+        NormalizedExchangeDraft draft,
+        string tenantId,
+        string id,
+        string encryptedApiKey,
+        DateTime now) => new()
+    {
+        ["_id"] = id,
+        ["TenantId"] = tenantId,
+        ["Name"] = draft.Name,
+        ["NameNormalized"] = draft.NameNormalized,
+        ["Models"] = BuildExchangeModels(draft.Models),
+        ["TargetUrl"] = draft.TargetUrl,
+        ["TargetApiKeyEncrypted"] = encryptedApiKey,
+        ["TargetAuthScheme"] = draft.TargetAuthScheme,
+        ["TransformerType"] = draft.TransformerType,
+        ["Enabled"] = draft.Enabled,
+        ["Description"] = ToBsonValue(draft.Description),
+        ["Authority"] = "llm_gateway",
+        ["SourceCollection"] = "llmgw_model_exchanges",
+        ["ClaimedAt"] = now,
+        ["CreatedAt"] = now,
+        ["UpdatedAt"] = now,
+        ["Version"] = 1L,
+    };
+
+    public static BsonArray BuildExchangeModels(IReadOnlyList<NormalizedExchangeModelDraft> models) =>
+        new(models.Select(model => new BsonDocument
+        {
+            ["ModelId"] = model.ModelId,
+            ["DisplayName"] = ToBsonValue(model.DisplayName),
+            ["ModelType"] = model.ModelType,
+            ["Description"] = ToBsonValue(model.Description),
+            ["Enabled"] = model.Enabled,
+        }));
+
+    public static BsonDocument BuildExchangePoolModelDocument(string exchangeId, BsonDocument exchangeModel)
+    {
+        var modelId = exchangeModel.GetValue("ModelId", string.Empty).AsString;
+        var modelType = exchangeModel.GetValue("ModelType", "chat").AsString.Trim().ToLowerInvariant();
+        return new BsonDocument
+        {
+            ["_id"] = $"{exchangeId}:{modelId}",
+            ["PlatformId"] = exchangeId,
+            ["Name"] = exchangeModel.TryGetValue("DisplayName", out var displayName) && displayName.IsString
+                ? displayName.AsString
+                : modelId,
+            ["ModelName"] = modelId,
+            ["Enabled"] = exchangeModel.TryGetValue("Enabled", out var enabled) ? enabled : true,
+            ["IsMain"] = modelType == "chat",
+            ["IsIntent"] = modelType == "intent",
+            ["IsVision"] = modelType == "vision",
+            ["IsImageGen"] = modelType == "generation",
+            ["Capabilities"] = new BsonArray([ToCapabilityDocument(modelType)]),
+            ["Authority"] = "llm_gateway",
+            ["SourceCollection"] = "llmgw_model_exchanges",
+        };
+    }
+
     public static BsonDocument BuildPlatformDocument(
         NormalizedPlatformDraft draft,
         string tenantId,
@@ -241,6 +417,79 @@ public static class GatewayConfigurationProvisioning
         return new BsonDocument { ["Type"] = capability, ["Source"] = "user", ["Value"] = true };
     }
 
+    private static bool TryNormalizeExchangeCore(
+        string? rawName,
+        IReadOnlyList<ExchangeModelWriteRequest>? rawModels,
+        string? rawTargetUrl,
+        string? apiKey,
+        string? rawAuthScheme,
+        string? rawTransformerType,
+        bool? enabled,
+        string? rawDescription,
+        long? version,
+        bool requireApiKey,
+        out NormalizedExchangeDraft? draft,
+        out string error)
+    {
+        draft = null;
+        error = string.Empty;
+        var name = rawName?.Trim() ?? string.Empty;
+        if (name.Length == 0) return Fail("Exchange 名称不能为空", out error);
+        if (name.Length > 120) return Fail("Exchange 名称不能超过 120 个字符", out error);
+
+        if (rawModels is null || rawModels.Count == 0)
+            return Fail("请至少添加一个模型映射", out error);
+        if (rawModels.Count > 50) return Fail("单个 Exchange 最多包含 50 个模型映射", out error);
+        var models = new List<NormalizedExchangeModelDraft>();
+        var modelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in rawModels)
+        {
+            var modelId = item.ModelId?.Trim() ?? string.Empty;
+            if (modelId.Length == 0) return Fail("模型标识不能为空", out error);
+            if (modelId.Length > 240) return Fail("模型标识不能超过 240 个字符", out error);
+            if (!modelIds.Add(modelId)) return Fail($"模型标识重复：{modelId}", out error);
+            var modelType = item.ModelType?.Trim().ToLowerInvariant() ?? "chat";
+            if (GatewayModelPoolTypeRegistry.Find(modelType) is null)
+                return Fail($"不支持的模型用途：{modelType}", out error);
+            var displayName = TrimToNull(item.DisplayName, 160, "模型显示名称", out error);
+            if (error.Length > 0) return false;
+            var modelDescription = TrimToNull(item.Description, 500, "模型说明", out error);
+            if (error.Length > 0) return false;
+            models.Add(new NormalizedExchangeModelDraft(modelId, displayName, modelType, modelDescription, item.Enabled ?? true));
+        }
+
+        var targetUrl = rawTargetUrl?.Trim() ?? string.Empty;
+        if (!TryNormalizeExchangeUrl(targetUrl, out var normalizedUrl))
+            return Fail("目标地址必须是完整的 http、https、ws 或 wss 地址，不能包含用户名、密码或密钥查询参数", out error);
+
+        var normalizedApiKey = apiKey?.Trim();
+        if (requireApiKey && string.IsNullOrWhiteSpace(normalizedApiKey))
+            return Fail("Exchange 通讯密钥不能为空", out error);
+        if (normalizedApiKey?.Length > 20000) return Fail("Exchange 通讯密钥长度超出限制", out error);
+
+        var authInput = rawAuthScheme?.Trim() ?? "Bearer";
+        if (!ExchangeAuthSchemes.TryGetValue(authInput, out var authScheme))
+            return Fail("不支持的认证方式", out error);
+        var transformerType = rawTransformerType?.Trim().ToLowerInvariant() ?? "passthrough";
+        if (!ExchangeTransformerTypes.Contains(transformerType))
+            return Fail($"未知的转换器类型：{transformerType}", out error);
+        var description = TrimToNull(rawDescription, 1000, "Exchange 说明", out error);
+        if (error.Length > 0) return false;
+
+        draft = new NormalizedExchangeDraft(
+            name,
+            name.ToLowerInvariant(),
+            models,
+            normalizedUrl,
+            string.IsNullOrWhiteSpace(normalizedApiKey) ? null : normalizedApiKey,
+            authScheme,
+            transformerType,
+            enabled ?? true,
+            description,
+            version);
+        return true;
+    }
+
     private static string? NormalizePlatformType(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         "openai" or "openrouter" or "openai-compatible" => "openai",
@@ -266,6 +515,43 @@ public static class GatewayConfigurationProvisioning
             || !string.IsNullOrEmpty(uri.UserInfo)) return false;
         normalized = value.TrimEnd('/');
         return true;
+    }
+
+    private static bool TryNormalizeExchangeUrl(string value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (value.Length is 0 or > 2048
+            || !Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https" or "ws" or "wss")
+            || string.IsNullOrWhiteSpace(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !string.IsNullOrEmpty(uri.Fragment)
+            || ContainsSensitiveQueryParameter(uri)) return false;
+        normalized = value.TrimEnd('/');
+        return true;
+    }
+
+    private static bool ContainsSensitiveQueryParameter(Uri uri)
+    {
+        if (string.IsNullOrEmpty(uri.Query)) return false;
+        string[] sensitiveNames =
+        [
+            "key", "apikey", "xapikey", "accesskey", "accesskeyid",
+            "token", "accesstoken", "authtoken", "refreshtoken",
+            "secret", "clientsecret", "signature", "xamzsignature",
+            "password", "auth", "authorization",
+        ];
+        foreach (var part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = part.IndexOf('=');
+            var rawName = separator >= 0 ? part[..separator] : part;
+            var name = new string(Uri.UnescapeDataString(rawName.Replace('+', ' '))
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+            if (sensitiveNames.Contains(name, StringComparer.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     private static string? TrimToNull(string? value, int maxLength, string label, out string error)

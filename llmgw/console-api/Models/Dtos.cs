@@ -943,12 +943,55 @@ public sealed class ExchangeItem
     public bool Enabled { get; set; } public string? Description { get; set; } public bool HasKey { get; set; }
     public string SourceCollection { get; set; } = "model_exchanges"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
+    public long Version { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 public sealed class ExchangeModelItem
 {
     public string ModelId { get; set; } = ""; public string? DisplayName { get; set; } public string ModelType { get; set; } = "";
     public string? Description { get; set; } public bool Enabled { get; set; }
+}
+public sealed class ExchangeOptionItem
+{
+    public string Value { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string? Description { get; set; }
+}
+public sealed class ExchangeMetaData
+{
+    public List<ExchangeOptionItem> TransformerTypes { get; set; } = new();
+    public List<ExchangeOptionItem> AuthSchemes { get; set; } = new();
+    public List<ExchangeOptionItem> ModelTypes { get; set; } = new();
+}
+public sealed class ExchangeModelWriteRequest
+{
+    public string? ModelId { get; set; }
+    public string? DisplayName { get; set; }
+    public string? ModelType { get; set; }
+    public string? Description { get; set; }
+    public bool? Enabled { get; set; }
+}
+public sealed class CreateExchangeRequest
+{
+    public string? Name { get; set; }
+    public List<ExchangeModelWriteRequest> Models { get; set; } = new();
+    public string? TargetUrl { get; set; }
+    public string? ApiKey { get; set; }
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public bool? Enabled { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class UpdateExchangeRequest
+{
+    public string? Name { get; set; }
+    public List<ExchangeModelWriteRequest> Models { get; set; } = new();
+    public string? TargetUrl { get; set; }
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public bool? Enabled { get; set; }
+    public string? Description { get; set; }
+    public long? Version { get; set; }
 }
 
 // ── GW-owned API key 健康自检（不返回明文/密文/脱敏 key）──
@@ -1209,6 +1252,7 @@ public sealed class CreateMemberRequest
 
 public sealed class UpdateMemberRequest
 {
+    public int ExpectedVersion { get; set; }
     public string? Role { get; set; }
     public string? Status { get; set; }
     public List<string>? TeamIds { get; set; }

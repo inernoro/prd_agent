@@ -255,6 +255,16 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         await CreateBsonIndexesAsync("llmgw_model_exchanges", new[]
         {
             new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("NameNormalized"),
+                new CreateIndexOptions<BsonDocument>
+                {
+                    Name = "uniq_llmgw_exchange_tenant_name",
+                    Unique = true,
+                    PartialFilterExpression = Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Type("TenantId", BsonType.String),
+                        Builders<BsonDocument>.Filter.Type("NameNormalized", BsonType.String)),
+                }),
+            new CreateIndexModel<BsonDocument>(
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Enabled").Ascending("Name"),
                 new CreateIndexOptions { Name = "idx_llmgw_exchange_tenant_enabled_name" }),
         }, ct);

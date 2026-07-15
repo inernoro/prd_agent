@@ -653,10 +653,35 @@ export type ExchangeItem = {
   sourceCollection: string;
   authority: string;
   claimedAt?: string | null;
+  version: number;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
 export type ExchangesData = { items: ExchangeItem[]; total: number };
+export type ExchangeOptionItem = { value: string; label: string; description?: string | null };
+export type ExchangeMetaData = {
+  transformerTypes: ExchangeOptionItem[];
+  authSchemes: ExchangeOptionItem[];
+  modelTypes: ExchangeOptionItem[];
+};
+export type ExchangeModelWriteRequest = {
+  modelId: string;
+  displayName?: string | null;
+  modelType: string;
+  description?: string | null;
+  enabled: boolean;
+};
+export type CreateExchangeRequest = {
+  name: string;
+  models: ExchangeModelWriteRequest[];
+  targetUrl: string;
+  apiKey: string;
+  targetAuthScheme: string;
+  transformerType: string;
+  enabled: boolean;
+  description?: string | null;
+};
+export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
 
 // ── GW-owned API key 健康自检 ──
 export type KeyHealthSummary = {
@@ -1007,6 +1032,27 @@ export type OrganizationData = {
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
 export type CreatedTeam = { id: string; name: string; status: string };
+export type CreateMemberRequest = {
+  username: string;
+  displayName?: string;
+  initialPassword?: string;
+  role: 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
+  teamIds: string[];
+};
+export type CreatedMember = {
+  id: string;
+  userId: string;
+  username: string;
+  role: string;
+  teamIds: string[];
+  idempotentReplay?: boolean;
+};
+export type UpdateMemberRequest = {
+  expectedVersion: number;
+  role?: 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
+  status?: 'active' | 'disabled';
+  teamIds?: string[];
+};
 
 // ── 影子比对（只读）──
 export type ShadowSnapshot = {
