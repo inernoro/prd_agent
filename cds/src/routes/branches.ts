@@ -2010,6 +2010,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
+  // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
+  // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
+  // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
+  // 只拦这组容器动作，只读端点与非容器写操作（备注/标签等）不受影响。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST' || !isPreviewInstance()) {
+      next();
+      return;
+    }
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|stop|restart|pull)$/.test(req.path)) {
+      next();
+      return;
+    }
+    res.status(403).json({
+      error: 'preview_instance',
+      message: 'CDS 预览实例不执行容器操作（部署/停止/重启/拉取）。此实例仅用于验收 CDS 自身的界面与交互；真实操作请回到生产 CDS。',
+    });
+  });
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -11045,15 +11064,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;
-    // 预览实例（CDS 托管 CDS）不执行真实部署：没有 docker，与其让流程跑到
-    // git/docker 处抛裸错误，不如在入口给一句用户看得懂的话。
-    if (isPreviewInstance()) {
-      res.status(403).json({
-        error: 'preview_instance',
-        message: 'CDS 预览实例不执行部署。此实例仅用于验收 CDS 自身的界面与交互；真实部署请回到生产 CDS 操作。',
-      });
-      return;
-    }
+    // 预览实例的容器动作拒绝已由 createBranchRouter 顶部的统一守卫中间件处理
+    //（deploy / deploy/:profileId / stop / restart / pull 一并覆盖）。
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
