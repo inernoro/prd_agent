@@ -178,9 +178,14 @@ function layoutGalaxy(root: GalaxyNode): {
   // 位置由 distributeDirections / spreadInCone 按数组下标分配，若沿用插入顺序，
   // 同样内容的库因条目返回顺序不同（如老库按创建序、重订阅库按导入序）会渲染成
   // 完全不同的图（实测两库内容 337/338 相同、顶层分布一致，仅顺序差 12% → 一个匀一个头重脚轻）。
-  // 排序键：文档多的枢纽在前（占赤道/主位）、同级按名字稳定兜底。详见 .claude/rules/deterministic-rendering.md
+  // 排序键：文档多的枢纽在前（占赤道/主位）、同级按名字，最后用唯一 id 兜底。
+  // id 兜底不可省：叶名来自标题/派生名可能同名（docCount 也相同），仅靠 docCount+name 会返回 0，
+  // 稳定排序会退回后端返回顺序 → 同名并列节点仍随顺序变位置。id（'e:'+entryId / 'g:'+path）恒唯一。
+  // 详见 .claude/rules/deterministic-rendering.md
   const orderKids = (nodes: GalaxyNode[]): GalaxyNode[] =>
-    [...nodes].sort((a, b) => b.docCount - a.docCount || a.name.localeCompare(b.name, 'zh'));
+    [...nodes].sort(
+      (a, b) => b.docCount - a.docCount || a.name.localeCompare(b.name, 'zh') || a.id.localeCompare(b.id),
+    );
 
   // 沿父方向递归铺开子树（演示版 layoutChildren）
   const layoutChildren = (parent: GalaxyNode, parentPos: THREE.Vector3, parentDir: THREE.Vector3, depth: number) => {

@@ -33,14 +33,15 @@ globs: ["prd-admin/src/**/*.tsx", "prd-desktop/src/**/*.tsx", "cds/web/src/**/*.
 按下标定位（Fibonacci 球、锥形铺开、网格、径向树等）时，取子节点**必须先排序**，禁止直接用插入顺序：
 
 ```ts
-// 排序键：主次可按需，但必须是「纯内容函数」+ 稳定兜底（名字/id），不得依赖到达顺序。
+// 排序键：主次可按需，但必须是「纯内容函数」+ **唯一 id 兜底**，不得依赖到达顺序。
+// id 兜底不可省：docCount + name 都相同的并列节点会返回 0，稳定排序会退回后端返回顺序 → 仍随顺序变位置。
 const orderKids = (nodes: Node[]): Node[] =>
-  [...nodes].sort((a, b) => b.docCount - a.docCount || a.name.localeCompare(b.name, 'zh'));
+  [...nodes].sort((a, b) => b.docCount - a.docCount || a.name.localeCompare(b.name, 'zh') || a.id.localeCompare(b.id));
 
-// ❌ 错误：位置随返回顺序变
+// 反例（错误）：位置随返回顺序变
 kids.forEach((k, i) => place(k, dirs[i]));
 
-// ✅ 正确：先确定性排序，位置只由内容决定
+// 正解（正确）：先确定性排序，位置只由内容决定
 orderKids(kids).forEach((k, i) => place(k, dirs[i]));
 ```
 
