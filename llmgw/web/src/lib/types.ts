@@ -50,6 +50,11 @@ export type LlmLogListItem = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  teamId?: string | null;
+  serviceKeyId?: string | null;
+  clientCode?: string | null;
+  environment?: string | null;
+  serviceKeyPrefix?: string | null;
   username?: string | null;
   displayName?: string | null;
   requestType?: string | null;
@@ -69,6 +74,13 @@ export type LlmLogListItem = {
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  priceSnapshotHash?: string | null;
+  providerRequestId?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
+  fxSnapshotId?: string | null;
+  reconciliationStatus?: string | null;
+  reconciliationDelta?: number | null;
   error?: string | null;
   isFallback?: boolean | null;
   expectedModel?: string | null;
@@ -91,6 +103,11 @@ export type LlmLogDetail = {
   sessionId?: string | null;
   runId?: string | null;
   userId?: string | null;
+  teamId?: string | null;
+  serviceKeyId?: string | null;
+  clientCode?: string | null;
+  environment?: string | null;
+  serviceKeyPrefix?: string | null;
   requestType?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
@@ -122,6 +139,13 @@ export type LlmLogDetail = {
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  priceSnapshotHash?: string | null;
+  providerRequestId?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
+  fxSnapshotId?: string | null;
+  reconciliationStatus?: string | null;
+  reconciliationDelta?: number | null;
   startedAt: string;
   firstByteAt?: string | null;
   endedAt?: string | null;
@@ -212,6 +236,9 @@ export type LogsMeta = {
   sourceSystems: string[];
   ingressProtocols: string[];
   modelPolicies: string[];
+  serviceKeyIds: string[];
+  clientCodes: string[];
+  environments: string[];
 };
 
 export type LogsBucketItem = {
@@ -342,6 +369,9 @@ export type LogsListParams = {
   requestId?: string;
   sessionId?: string;
   modelPoolId?: string;
+  serviceKeyId?: string;
+  clientCode?: string;
+  environment?: string;
 };
 
 export type LogsListData = {
@@ -396,8 +426,15 @@ export type ModelPool = {
   recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
   health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
   healthyMembers: number; degradedMembers: number; unavailableMembers: number;
+  managedByRegistry: boolean; appendOnly: boolean; poolRole?: string | null;
 };
 export type PoolsData = { items: ModelPool[]; total: number };
+export type PoolTypeItem = {
+  code: string; name: string; purpose: string; sortOrder: number; defaultPoolId: string;
+  modelCount: number; ready: boolean; version: number;
+};
+export type PoolTypesData = { items: PoolTypeItem[]; total: number; ready: number; waiting: number };
+export type EnsurePoolTypesResult = { typesCreated: number; poolsCreated: number; modelsAppended: number; types: PoolTypesData };
 export type CreatePoolRequest = {
   name: string;
   code?: string;
@@ -530,6 +567,15 @@ export type PlatformItem = {
   createdAt?: string | null; updatedAt?: string | null;
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
+export type CreatePlatformRequest = {
+  name: string;
+  platformType: 'openai' | 'claude';
+  providerId?: string;
+  apiUrl: string;
+  apiKey: string;
+  maxConcurrency?: number;
+  remark?: string;
+};
 
 // ── 模型（无密钥，仅 hasKey）──
 export type ModelCapability = { type: string; source: string; value: boolean };
@@ -555,9 +601,35 @@ export type ModelItem = {
   enablePromptCache?: boolean | null; remark?: string | null; hasKey: boolean;
   sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
-  capabilities: ModelCapability[]; createdAt?: string | null; updatedAt?: string | null;
+  capabilities: ModelCapability[];
+  inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
+  pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
+  createdAt?: string | null; updatedAt?: string | null;
 };
 export type ModelsData = { items: ModelItem[]; total: number };
+export type CreateModelRequest = {
+  platformId: string;
+  name?: string;
+  modelName: string;
+  protocol?: 'inherit' | 'openai' | 'claude';
+  capabilities: string[];
+  apiKey?: string;
+  timeout?: number;
+  maxRetries?: number;
+  maxConcurrency?: number;
+  maxTokens?: number;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: 'CNY' | 'USD';
+  remark?: string;
+};
+export type CreateModelResult = {
+  item: ModelItem;
+  poolTypesCreated: number;
+  poolsCreated: number;
+  modelsAppended: number;
+};
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {
@@ -682,9 +754,13 @@ export type RuntimeGatesData = {
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
 export type GatewayAppCaller = {
   id: string;
+  teamId?: string | null;
   appCallerCode: string;
   requestType: string;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   ingressProtocol: string;
   observedIngressProtocols?: string[];
   title?: string | null;
@@ -707,7 +783,18 @@ export type GatewayAppCaller = {
   firstSeenAt?: string | null;
   lastSeenAt?: string | null;
   createdAt?: string | null;
+  rotatesKeyId?: string | null;
+  rotatedByKeyId?: string | null;
+  rotationState: string;
   updatedAt?: string | null;
+};
+
+export type CreateGatewayAppCallerRequest = {
+  teamId: string;
+  appCallerCode: string;
+  requestType: 'chat' | 'vision';
+  title?: string;
+  ingressProtocol: 'gw-native' | 'openai-compatible' | 'claude-compatible' | 'gemini-compatible';
 };
 
 export type UpdateGatewayAppCallerRequest = {
@@ -808,6 +895,9 @@ export type ServiceKeyItem = {
   teamId?: string | null;
   createdByUsername?: string | null;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
@@ -816,11 +906,17 @@ export type ServiceKeyItem = {
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   createdAt?: string | null;
+  rotatesKeyId?: string | null;
+  rotatedByKeyId?: string | null;
+  rotationState: string;
 };
 
 export type CreateServiceKeyRequest = {
   name: string;
   sourceSystem: string;
+  clientCode: string;
+  environment: string;
+  purpose: 'runtime' | 'release-gate' | 'canary' | 'external-platform';
   appCallerCodes: string[];
   ingressProtocols: string[];
   scopes: string[];
@@ -829,6 +925,7 @@ export type CreateServiceKeyRequest = {
   rateLimitPerMinute?: number;
   rotatesKeyId?: string;
   expiresAt?: string;
+  confirmWildcardRisk?: boolean;
 };
 
 export type CreatedServiceKey = CreateServiceKeyRequest & {
@@ -836,6 +933,71 @@ export type CreatedServiceKey = CreateServiceKeyRequest & {
   key: string;
   warning: string;
   keyPrefix: string;
+};
+
+export type CostReconciliationItem = {
+  id: string;
+  teamId?: string | null;
+  provider: string;
+  externalRecordId: string;
+  granularity: 'request' | 'window';
+  requestId?: string | null;
+  providerRequestId?: string | null;
+  serviceKeyId?: string | null;
+  model?: string | null;
+  estimatedCost?: number | null;
+  estimatedCostCurrency?: string | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency: string;
+  fxSnapshotId?: string | null;
+  providerToEstimatedFxRate?: number | null;
+  reconciliationDelta?: number | null;
+  deltaCurrency?: string | null;
+  reconciliationStatus: string;
+  windowFrom?: string | null;
+  windowTo?: string | null;
+  billedAt?: string | null;
+  createdAt?: string | null;
+};
+
+export type CostReconciliationSummary = {
+  totalRecords: number;
+  requestRecords: number;
+  windowRecords: number;
+  actualUnavailableRequests: number;
+  providerActualCosts: { currency: string; amount: number; requests: number }[];
+  statusDistribution: { key: string; count: number }[];
+  items: CostReconciliationItem[];
+};
+
+export type CostReconciliationImportRequest = {
+  provider: string;
+  externalRecordId: string;
+  providerRequestId?: string;
+  serviceKeyId?: string;
+  windowFrom?: string;
+  windowTo?: string;
+  providerReportedCost: number;
+  providerCostCurrency: string;
+  billedAt?: string;
+  fxSnapshotId?: string;
+  providerToEstimatedFxRate?: number;
+};
+
+export type LegacyKeyCutoverData = {
+  applicable: boolean;
+  status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
+  deadlineAt?: string | null;
+  allowedAppCallerCodes: string[];
+  successorServiceKeyIds: string[];
+  requiredIngressProtocols: string[];
+  requiredScopes: string[];
+  requiredSuccessorObservations: number;
+  successorObservedCount: number;
+  successorObservationCounts: Record<string, number>;
+  lastSuccessorUsedAt?: string | null;
+  readyToRevoke: boolean;
+  usage: { sourceSystem: string; appCallerCode: string; ingressProtocol: string; totalCount: number; allowedCount: number; rejectedCount: number; firstSeenAt?: string | null; lastSeenAt?: string | null; lastDecision?: string | null }[];
 };
 
 export type OrganizationData = {

@@ -155,6 +155,7 @@ export interface TranslationShape {
     title: string;
     subtitle: string;
     footer: string;
+    action: string;
   };
   pulse: {
     eyebrow: string;
@@ -484,6 +485,7 @@ const zh: TranslationShape = {
     subtitle:
       '通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，支持健康度监控、配额管理、失败回退。',
     footer: '以及任何兼容 OpenAI 接口规范的自建 / 第三方服务',
+    action: '打开模型网关控制台',
   },
   pulse: {
     eyebrow: 'Live · Pulse',
@@ -844,6 +846,7 @@ const en: TranslationShape = {
     subtitle:
       'Through a unified ILlmGateway, MAP connects 12 major platforms with task-type routing, health monitoring, quota management, and automatic fallback.',
     footer: 'Plus any OpenAI-compatible self-hosted or third-party service',
+    action: 'Open LLM Gateway Console',
   },
   pulse: {
     eyebrow: 'Live · Pulse',

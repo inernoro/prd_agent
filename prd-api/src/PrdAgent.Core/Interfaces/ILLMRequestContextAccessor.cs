@@ -39,7 +39,11 @@ public record LlmRequestContext(
     string? RunId = null,
     /// <summary>由服务端会话或 service key 解析，禁止相信请求自报值。</summary>
     string? TenantId = null,
-    string? TeamId = null);
+    string? TeamId = null,
+    string? ServiceKeyId = null,
+    string? ClientCode = null,
+    string? Environment = null,
+    string? ServiceKeyPrefix = null);
 
 public interface ILLMRequestContextAccessor
 {

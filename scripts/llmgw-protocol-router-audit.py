@@ -244,7 +244,7 @@ def build_report() -> dict[str, Any]:
     ok, detail = _contains_all(
         endpoints + "\n" + gateway_core,
         [
-            "private static async Task RecordDiscoveredAppCallerAsync",
+            "private static async Task<bool> RecordDiscoveredAppCallerAsync",
             "GetCollection<GatewayAppCallerRecord>(\"llmgw_app_callers\")",
             "SetOnInsert(x => x.Status, \"discovered\")",
             "Set(x => x.SourceSystem",
