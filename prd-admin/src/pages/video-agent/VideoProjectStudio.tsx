@@ -7,6 +7,7 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Paperclip,
+  Play,
   Plus,
   Save,
   Settings2,
@@ -66,19 +67,49 @@ const runSubtitle = (run: VideoGenRunListItem) => {
 };
 
 interface ProjectCoverProps {
-  mediaUrl?: string;
+  imageUrl?: string;
+  videoUrl?: string;
   status: string;
 }
 
-const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, status }) => (
-  <span className="video-create-project-cover">
-    <span className="video-create-project-placeholder"><Film size={24} /><span>视频作品</span></span>
-    {mediaUrl && (
-      <img src={mediaUrl} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />
-    )}
-    <i>{statusLabel(status)}</i>
-  </span>
-);
+const ProjectCover: React.FC<ProjectCoverProps> = ({ imageUrl, videoUrl, status }) => {
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+  const hasPreview = Boolean((videoUrl && !videoFailed) || (imageUrl && !imageFailed));
+
+  return (
+    <span className="video-create-project-cover">
+      <span className={`video-create-project-placeholder ${videoFailed ? 'is-error' : ''}`}>
+        <Film size={24} />
+        <span>{videoFailed ? '视频暂不可预览' : '视频作品'}</span>
+      </span>
+      {videoUrl && !videoFailed && (
+        <video
+          src={videoUrl}
+          muted
+          playsInline
+          preload="metadata"
+          aria-label="作品视频预览"
+          onError={() => setVideoFailed(true)}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime === 0) {
+              video.currentTime = Math.min(0.1, video.duration / 2);
+            }
+          }}
+          onPointerEnter={(event) => { void event.currentTarget.play().catch(() => undefined); }}
+          onPointerLeave={(event) => { event.currentTarget.pause(); }}
+        />
+      )}
+      {!videoUrl && imageUrl && !imageFailed && (
+        <img src={imageUrl} alt="" onError={() => setImageFailed(true)} />
+      )}
+      {videoUrl && !videoFailed && <span className="video-create-project-play"><Play size={14} fill="currentColor" /></span>}
+      <i>{statusLabel(status)}</i>
+      {!hasPreview && videoFailed && <span className="video-create-project-error">重新打开作品查看详情</span>}
+    </span>
+  );
+};
 
 const createTimelineTracks = (): VideoTimelineTrack[] => [
   { id: crypto.randomUUID().replaceAll('-', ''), type: 'video', name: '视频', muted: false, locked: false, clips: [] },
@@ -157,10 +188,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const availableAspectRatios = selectedModel?.aspectRatios.length ? selectedModel.aspectRatios : ['16:9'];
   const availableDurations = selectedModel?.durations.length ? selectedModel.durations : [5];
   const availableResolutions = selectedModel?.resolutions.length ? selectedModel.resolutions : ['720p'];
-  const recentRuns = runs
-    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status) || (run.status === 'Completed' && Boolean(run.videoAssetUrl)))
-    .slice(0, 6);
-  const recentWorkCount = projects.length + recentRuns.length;
+  const eligibleRuns = runs
+    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status) || (run.status === 'Completed' && Boolean(run.videoAssetUrl)));
+  const recentRuns = eligibleRuns.slice(0, 6);
+  const projectRunIds = new Set(projects.map((item) => item.latestRunId).filter(Boolean));
+  const standaloneRuns = recentRuns.filter((run) => !projectRunIds.has(run.id));
+  const visibleProjects = projects.slice(0, 6);
+  const visibleRuns = standaloneRuns.slice(0, Math.max(0, 6 - visibleProjects.length));
+  const recentWorkCount = visibleProjects.length + visibleRuns.length;
 
   const readFile = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) return;
@@ -194,7 +229,17 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setAssetDescription('');
   };
 
-  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const mediaForProject = (item: VideoProject) => {
+    const latestRun = item.latestRunId ? eligibleRuns.find((run) => run.id === item.latestRunId) : undefined;
+    const timelineVideo = item.timelineTracks
+      .find((track) => track.type === 'video')
+      ?.clips.find((clip) => clip.assetUrl)?.assetUrl;
+    return {
+      videoUrl: latestRun?.videoAssetUrl ?? timelineVideo,
+      imageUrl: item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url,
+      status: latestRun?.videoAssetUrl ? latestRun.status : item.status,
+    };
+  };
 
   const scrollToSection = (section: 'create' | 'works') => {
     setActiveSection(section);
@@ -328,16 +373,19 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
           {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
-              {projects.slice(0, 6).map((item) => (
-                <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
-                  <ProjectCover mediaUrl={coverForProject(item)} status={item.status} />
-                  <span className="video-create-project-copy"><strong>{resolveVideoTitle(item.title, item.updatedAt, 28)}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
-                  <ArrowUpRight size={15} />
-                </button>
-              ))}
-              {recentRuns.slice(0, Math.max(0, 6 - projects.length)).map((run) => (
+              {visibleProjects.map((item) => {
+                const media = mediaForProject(item);
+                return (
+                  <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
+                    <ProjectCover imageUrl={media.imageUrl} videoUrl={media.videoUrl} status={media.status} />
+                    <span className="video-create-project-copy"><strong>{resolveVideoTitle(item.title, item.updatedAt, 28)}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
+                    <ArrowUpRight size={15} />
+                  </button>
+                );
+              })}
+              {visibleRuns.map((run) => (
                 <button key={run.id} onClick={() => onOpenRun(run.id)}>
-                  <ProjectCover status={run.status} />
+                  <ProjectCover videoUrl={run.videoAssetUrl} status={run.status} />
                   <span className="video-create-project-copy"><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 28)}</strong><small>{runSubtitle(run)}</small></span>
                   <ArrowUpRight size={15} />
                 </button>

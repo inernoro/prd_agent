@@ -79,8 +79,8 @@ describe('VideoProjectStudio', () => {
     expect(html).not.toContain('Cancelled task');
   });
 
-  it('renders active legacy runs with a built-in cover and localized status', () => {
-    const html = renderStudio([createRun('Rendering', { videoAssetUrl: 'https://cdn.example.com/output.mp4' })]);
+  it('renders active runs with a built-in cover and localized status', () => {
+    const html = renderStudio([createRun('Rendering')]);
 
     expect(html).toContain('最近作品');
     expect(html).toContain('1 个作品');
@@ -89,7 +89,47 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('视频作品');
     expect(html).not.toContain('/icon/backups/agent/video-agent.png');
     expect(html).not.toContain('<video');
-    expect(html).not.toContain('output.mp4');
+  });
+
+  it('renders a completed work with its real video URL', () => {
+    const html = renderStudio([createRun('Completed', { videoAssetUrl: 'https://cdn.example.com/output.mp4' })]);
+
+    expect(html).toContain('<video');
+    expect(html).toContain('src="https://cdn.example.com/output.mp4"');
+    expect(html).toContain('preload="metadata"');
+    expect(html).toContain('aria-label="作品视频预览"');
+    expect(html).toContain('已完成');
+  });
+
+  it('uses the latest completed run as the project preview without duplicating the run card', () => {
+    const run = createRun('Completed', {
+      id: 'run-project-latest',
+      articleTitle: '同一作品',
+      videoAssetUrl: 'https://cdn.example.com/project-output.mp4',
+    });
+    const project: VideoProject = {
+      id: 'project-latest',
+      appKey: 'video-agent',
+      ownerAdminId: 'admin-1',
+      title: '同一作品',
+      sourceMarkdown: '正文',
+      defaultAspectRatio: '16:9',
+      defaultResolution: '1080p',
+      defaultDuration: 5,
+      generateAudio: true,
+      latestRunId: run.id,
+      status: 'Draft',
+      assets: [],
+      timelineTracks: [],
+      createdAt: '2026-07-14T00:00:00Z',
+      updatedAt: '2026-07-14T00:00:00Z',
+    };
+    const html = renderStudio([run], [project]);
+
+    expect(html).toContain('1 个作品');
+    expect(html).toContain('project-output.mp4');
+    expect(html.match(/同一作品/g)).toHaveLength(1);
+    expect(html).toContain('已完成');
   });
 
   it('sanitizes malformed project titles before rendering recent cards', () => {
