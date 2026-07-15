@@ -19,4 +19,11 @@ describe('resolveGatewayConsoleHref', () => {
       protocol: 'https:',
     })).toBe('/');
   });
+
+  it('超长预览分支不生成超过 DNS 上限的失效入口', () => {
+    expect(resolveGatewayConsoleHref({
+      hostname: `${'a'.repeat(54)}.miduo.org`,
+      protocol: 'https:',
+    })).toBeNull();
+  });
 });

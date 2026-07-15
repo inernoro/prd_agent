@@ -5,14 +5,16 @@ import { useLanguage } from '../contexts/LanguageContext';
 
 type GatewayLocation = Pick<Location, 'hostname' | 'protocol'>;
 
-export function resolveGatewayConsoleHref(location: GatewayLocation = window.location): string {
+export function resolveGatewayConsoleHref(location: GatewayLocation = window.location): string | null {
   const previewSuffix = '.miduo.org';
   if (!location.hostname.endsWith(previewSuffix)) return '/llmgw/';
 
   if (location.hostname.endsWith(`-llmgw-web${previewSuffix}`)) return '/';
 
   const previewSlug = location.hostname.slice(0, -previewSuffix.length);
-  return `${location.protocol}//${previewSlug}-llmgw-web${previewSuffix}/`;
+  const serviceLabel = `${previewSlug}-llmgw-web`;
+  if (serviceLabel.length > 63) return null;
+  return `${location.protocol}//${serviceLabel}${previewSuffix}/`;
 }
 
 /**
@@ -40,6 +42,7 @@ const PROVIDERS = [
 export function CompatibilityStack() {
   const { t, lang } = useLanguage();
   const titleParts = t.compat.title.split('\n');
+  const gatewayConsoleHref = resolveGatewayConsoleHref();
 
   const getProviderName = (p: (typeof PROVIDERS)[number]) =>
     'name' in p ? p.name : lang === 'en' ? p.en : p.zh;
@@ -88,15 +91,17 @@ export function CompatibilityStack() {
         <div className="mt-12 text-center text-[11px] text-white/35">
           {t.compat.footer}
         </div>
-        <div className="mt-6 flex justify-center">
-          <a
-            href={resolveGatewayConsoleHref()}
-            className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
-          >
-            {t.compat.action}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </a>
-        </div>
+        {gatewayConsoleHref ? (
+          <div className="mt-6 flex justify-center">
+            <a
+              href={gatewayConsoleHref}
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
+            >
+              {t.compat.action}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        ) : null}
       </div>
     </section>
   );
