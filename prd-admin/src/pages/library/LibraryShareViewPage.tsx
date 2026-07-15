@@ -30,7 +30,14 @@ import {
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { parseLibraryShareViewMode, withLibraryShareViewMode, type LibraryShareViewMode } from './libraryShareViewMode';
+import { setWikilinkEntries } from '@/lib/wikilinkCache';
+import {
+  parseLibraryShareViewMode,
+  resolveSharedWikilinkEntryId,
+  withLibraryShareEntry,
+  withLibraryShareViewMode,
+  type LibraryShareViewMode,
+} from './libraryShareViewMode';
 
 const PAGE_BG = '#0a0a0a';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -91,8 +98,42 @@ export function LibraryShareViewPage() {
   }, [view, entries, entryFromUrl]);
 
   useEffect(() => {
-    if (initialSelectedId && !selectedEntryId) setSelectedEntryId(initialSelectedId);
-  }, [initialSelectedId, selectedEntryId]);
+    if (!initialSelectedId) return;
+    if (entryFromUrl) {
+      if (selectedEntryId !== initialSelectedId) setSelectedEntryId(initialSelectedId);
+      return;
+    }
+    if (!selectedEntryId) setSelectedEntryId(initialSelectedId);
+  }, [entryFromUrl, initialSelectedId, selectedEntryId]);
+
+  // 公开阅读页与后台知识库共用 MarkdownViewer，因此也必须装载当前分享范围的双链索引。
+  // 这里只写入匿名端点已经返回的条目，任何未被分享的文档都无法被解析或跳转。
+  useEffect(() => {
+    setWikilinkEntries(entries.filter((entry) => !entry.isFolder).map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      summary: entry.summary,
+      updatedAt: entry.updatedAt,
+    })));
+    return () => setWikilinkEntries([]);
+  }, [entries]);
+
+  const selectSharedEntry = useCallback((entryId: string) => {
+    setSelectedEntryId(entryId);
+    setSearchParams((current) => withLibraryShareEntry(current, entryId));
+  }, [setSearchParams]);
+
+  // MarkdownViewer 把 [[章节标题]] 派发为全局事件。公开页只在当前分享列表内解析，
+  // 命中后同步内容和 URL，保证刷新、复制链接及浏览器前进后退都可复现。
+  useEffect(() => {
+    const handleWikilinkClick = (event: Event) => {
+      const detail = (event as CustomEvent<{ title?: string; entryId?: string }>).detail ?? {};
+      const entryId = resolveSharedWikilinkEntryId(entries, detail);
+      if (entryId) selectSharedEntry(entryId);
+    };
+    document.addEventListener('wikilink:click', handleWikilinkClick);
+    return () => document.removeEventListener('wikilink:click', handleWikilinkClick);
+  }, [entries, selectSharedEntry]);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     if (!token) return null;
@@ -275,7 +316,7 @@ export function LibraryShareViewPage() {
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             selectedEntryId={selectedEntryId}
-            onSelectEntry={setSelectedEntryId}
+            onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
             sortMode="created-desc"
             inlineCommentShareToken={token ?? undefined}
