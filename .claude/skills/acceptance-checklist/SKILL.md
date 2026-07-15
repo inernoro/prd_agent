@@ -76,7 +76,7 @@ UAT 生成进度：
 | 必填项 | 示例 |
 |---|---|
 | **功能描述**：这次验收的是什么 | "CDS 集群引导：一条命令让 B 加入 A" |
-| **入口**：真人从哪开始操作 | CLI：`./exec_cds.sh connect` / Web：`https://x.miduo.org/review` |
+| **入口**：真人从哪开始操作 | CLI：`./exec_cds.sh connect` / Web：`https://<preview-host>/review` |
 | **场景类型**：CLI / Web UI / 混合 | 混合（先 CLI 建集群，再 Web 验证容量）|
 
 **可选项**（有会更好，没有 AI 自己推断）：
