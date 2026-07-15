@@ -82,7 +82,7 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: Age
   return (
     <div
       aria-hidden
-      className="absolute inset-0 overflow-hidden rounded-[inherit] pointer-events-none"
+      className="absolute inset-0 pointer-events-none"
       style={imageHeight ? { clipPath: `inset(0 0 calc(100% - ${imageHeight}) 0)` } : undefined}
     >
       <img
@@ -106,6 +106,29 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: Age
         style={{ boxShadow: 'var(--media-card-inset)' }}
       />
     </div>
+  );
+}
+
+/**
+ * 大图卡片共用的边缘层。
+ *
+ * 基础描边与悬浮描边都在同一个最上层边界内绘制，避免父级真实 border、
+ * 图片圆角和悬浮 box-shadow 在页面缩放后落到不同亚像素，形成单边漏光。
+ */
+export function AgentCardFrame({ hoverBorder }: { hoverBorder: string }) {
+  return (
+    <>
+      <div
+        aria-hidden
+        className="absolute inset-0 z-20 rounded-[inherit] pointer-events-none"
+        style={{ boxShadow: 'inset 0 0 0 1px var(--media-card-border)' }}
+      />
+      <div
+        aria-hidden
+        className="absolute inset-0 z-20 rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+        style={{ boxShadow: `inset 0 0 0 1px ${hoverBorder}` }}
+      />
+    </>
   );
 }
 

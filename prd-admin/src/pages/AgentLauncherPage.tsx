@@ -77,7 +77,7 @@ import { hueAccent, getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
-import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -211,14 +211,18 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         ...glassTileStyle(accent),
         minHeight: hasArtwork ? 188 : undefined,
         background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
+        border: hasArtwork ? 'none' : glassTileStyle(accent).border,
       }}
     >
       <AgentCardArtwork agentKey={item.agentKey} compact />
-      {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸） */}
-      <div
-        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
-      />
+      {hasArtwork ? (
+        <AgentCardFrame hoverBorder={accent.border} />
+      ) : (
+        <div
+          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
+        />
+      )}
 
       {hasArtwork ? (
         <>
