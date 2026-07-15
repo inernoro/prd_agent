@@ -21,4 +21,5 @@
 | fix | prd-admin | 用户主动取消不再被渲染成失败：单库 getTransferFailureMessage 跳过 cancelled 项（不报 error），批量列表 cancelled 显示中性「已取消」而非红色失败（Codex PR#1144 P2） |
 | fix | prd-api | push-only 传输在对端已收尾后点停也停整批：PeerItemSyncResult 加 CancelRequested 标志，成功收尾前非抛出式再查一次取消位，条目仍如实记成功、但 Controller 批量 loop 据此 break 停掉后续未开始的库（Codex PR#1144 P2） |
 | fix | prd-api | 取消 pull/align 时校正知识库摘要：逐篇写入/镜像删除已提交部分条目增删，但 rethrow 跳过收尾的 DocumentCount/UpdatedAt 重算会留下陈旧文档数——两处取消 catch 先按实际条目数校正库摘要再抛（不套用未完成 bundle 的库级元数据）（Codex PR#1144 P2） |
+| fix | prd-api | 文件夹应用阶段点停也保全审计与摘要：文件夹 parent-first 多趟扫描的 progress 回调会触发取消检查点，此前该阶段取消会以零计数逃逸、跳过库摘要重算——补齐与文件记录/镜像删除同款 try-catch，取消时先校正 DocumentCount 再带部分计数抛出（Codex PR#1144 P2） |
 | fix | prd-api,prd-admin | 「已建立关系」不再从被截断到 80 条的 runs 列表推断：ListRuns 单库场景返回服务端全量历史 established 标志（与 SetAutoSync gate 同口径），前端 everSynced 在选中组合==已保存关系时据此兜底，修复长命库当年成功 run 滚出窗口后自动开关被误禁（Codex PR#1144 P2） |

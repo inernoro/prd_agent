@@ -452,15 +452,36 @@ public class DocumentStoreSyncResource : ISyncableResource
         var processed = 0;
         var total = records.Count;
         var guard = 0;
-        while (pendingFolders.Count > 0 && guard++ < 5000)
+        // 文件夹应用阶段（先于文件记录 / 镜像删除）也接入取消：progress 回调会触发取消检查点，若此时点「停止」，
+        // 默认零计数的取消异常会逃逸并跳过成功收尾的库摘要重算，且已插入/更新的文件夹不计入 cancelled run 审计。
+        // 与文件记录 / 镜像删除同款：先按实际条目数校正库摘要，再带上此刻部分计数抛出（Codex PR#1144 P2）。
+        try
         {
-            var progressed = false;
-            foreach (var f in pendingFolders.ToList())
+            while (pendingFolders.Count > 0 && guard++ < 5000)
             {
-                if (!string.IsNullOrEmpty(f.ParentLineageId)
-                    && !lineageToTargetId.ContainsKey(f.ParentLineageId)
-                    && !byLineage.ContainsKey(f.ParentLineageId))
-                    continue;
+                var progressed = false;
+                foreach (var f in pendingFolders.ToList())
+                {
+                    if (!string.IsNullOrEmpty(f.ParentLineageId)
+                        && !lineageToTargetId.ContainsKey(f.ParentLineageId)
+                        && !byLineage.ContainsKey(f.ParentLineageId))
+                        continue;
+                    await actor.ReportProgressAsync(new SyncProgressUpdate
+                    {
+                        Phase = "本地写入",
+                        Current = processed,
+                        Total = total,
+                        CurrentRecordTitle = f.Title,
+                    }, ct);
+                    await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
+                    processed++;
+                    pendingFolders.Remove(f);
+                    progressed = true;
+                }
+                if (!progressed) break;
+            }
+            foreach (var f in pendingFolders)
+            {
                 await actor.ReportProgressAsync(new SyncProgressUpdate
                 {
                     Phase = "本地写入",
@@ -470,22 +491,12 @@ public class DocumentStoreSyncResource : ISyncableResource
                 }, ct);
                 await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
                 processed++;
-                pendingFolders.Remove(f);
-                progressed = true;
             }
-            if (!progressed) break;
         }
-        foreach (var f in pendingFolders)
+        catch (PeerSyncRunCancelledException)
         {
-            await actor.ReportProgressAsync(new SyncProgressUpdate
-            {
-                Phase = "本地写入",
-                Current = processed,
-                Total = total,
-                CurrentRecordTitle = f.Title,
-            }, ct);
-            await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
-            processed++;
+            await RefreshStoreSummaryOnCancelAsync(target.Id, ct);
+            throw new PeerSyncRunCancelledException(created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed);
         }
 
         // 文件类记录
