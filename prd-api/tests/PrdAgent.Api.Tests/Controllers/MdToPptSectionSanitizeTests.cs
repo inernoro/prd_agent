@@ -220,6 +220,28 @@ public class MdToPptSectionSanitizeTests
             "sunset-bold",
             "严格生成 2 页高级控制台操作面板 PPT",
             null);
-        Assert.Equal("ocean-glass", theme);
+        Assert.Equal("cobalt-grid", theme);
+        Assert.Equal("cobalt-grid", MdToPptController.EffectiveThemeForRequest(
+            "ocean-glass",
+            "高级控制台 dashboard",
+            null));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1 style=\"font-family:Playfair Display;font-style:italic\">控制台总览</h1></div>",
+            "soft-editorial"));
+    }
+
+    [Fact]
+    public void ConsoleDashboardFallbackSlide_UsesOperationalPanels()
+    {
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "控制台总览",
+            Bullets = new List<string> { "知识库引用", "生成海报教程文案 HTML", "自动发布到网页托管", "可预览可编辑" },
+        };
+        var html = MdToPptController.ConsoleDashboardFallbackSlide(null, page, 0, 2);
+        Assert.Contains("console-dashboard", html);
+        Assert.Contains("任务队列", html);
+        Assert.Contains("网页托管预览", html);
+        Assert.Contains("知识库引用", html);
     }
 }

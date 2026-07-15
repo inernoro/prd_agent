@@ -1438,8 +1438,23 @@ public class MdToPptController : ControllerBase
     {
         var t = (theme ?? string.Empty).Trim().ToLowerInvariant();
         if (!IsConsoleDashboardBrief(content, summary)) return theme ?? "tech-dark";
-        if (t is "aurora-gradient" or "ocean-glass" or "tech-dark" or "cobalt-grid") return t;
-        return "ocean-glass";
+        if (t is "aurora-gradient" or "tech-dark" or "cobalt-grid") return t;
+        return "cobalt-grid";
+    }
+
+    internal static bool LooksLikeConsoleVisualMismatch(string fragment, string? anchorName = null)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return true;
+        var anchor = (anchorName ?? string.Empty).Trim().ToLowerInvariant();
+        if (anchor is "soft-editorial" or "vellum" or "bold-poster" or "retro-zine" or "grove" or "coral" or "monochrome")
+            return true;
+
+        var t = fragment.ToLowerInvariant();
+        if (System.Text.RegularExpressions.Regex.IsMatch(t,
+                "(playfair|newsreader|cursive|calligraphy|handwriting|font-style\\s*:\\s*italic|poster|zine|vellum|editorial)"))
+            return true;
+
+        return false;
     }
 
     private static string BuildConsoleDashboardGuard(string? content, string? summary)
@@ -1448,7 +1463,7 @@ public class MdToPptController : ControllerBase
         return "控制台/操作面板硬约束：本页必须像成熟 SaaS dashboard 或产品控制台，不像海报、书法、报刊或白皮书。" +
                "可见结构至少包含两类：顶部状态栏、侧边导航、数据指标卡、任务队列、流程轨道、预览画布、发布状态、操作按钮组、日志/版本面板。" +
                "标题字体必须使用清晰无衬线或等宽产品字体语气，禁止手写感、书法感、cursive 展示字、复古报刊标题；" +
-               "信息层级要适合反复操作和扫描，避免大段抒情文案。\n";
+               "一级标题不许占满整页，不许使用大号斜体衬线；信息层级要适合反复操作和扫描，避免大段抒情文案。\n";
     }
 
     private static readonly string[] PageLayoutHints =
@@ -1958,6 +1973,60 @@ public class MdToPptController : ControllerBase
                "</section>";
     }
 
+    internal static string ConsoleDashboardFallbackSlide(MdToPptAnchors.AnchorSlide? layout, MdToPptOutlinePageDto page, int index, int total)
+    {
+        var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
+        var bullets = (page.Bullets ?? new List<string>())
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .Take(5)
+            .ToList();
+        while (bullets.Count < 4) bullets.Add("把知识库内容转成可预览、可编辑、可发布的结构化产物");
+
+        var metricCards = string.Join("", bullets.Take(3).Select((b, n) =>
+            "<div class=\"panel metric\" style=\"border:1px solid currentColor;border-radius:10px;padding:16px;background:rgba(255,255,255,.08)\">" +
+            $"<div style=\"font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.62\">STEP {(n + 1):00}</div>" +
+            $"<div style=\"font-size:24px;font-weight:850;line-height:1.05;margin-top:10px\">{enc(b.Length > 12 ? b[..12] : b)}</div>" +
+            $"<div style=\"font-size:12px;line-height:1.45;opacity:.68;margin-top:8px\">{enc(b)}</div>" +
+            "</div>"));
+        var queueRows = string.Join("", bullets.Take(4).Select((b, n) =>
+            "<div style=\"display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.12);padding:10px 0\">" +
+            $"<span style=\"width:22px;height:22px;border-radius:7px;border:1px solid currentColor;display:grid;place-items:center;font-size:11px;opacity:.72\">{n + 1}</span>" +
+            $"<span style=\"font-size:13px;line-height:1.35;opacity:.82\">{enc(b)}</span>" +
+            "</div>"));
+        var flow = string.Join("", new[] { "知识库引用", "内容生成", "实时预览", "人工精修", "网页发布" }.Select((b, n) =>
+            "<div style=\"display:flex;align-items:center;gap:8px;min-width:0\">" +
+            $"<span style=\"width:26px;height:26px;border-radius:999px;background:currentColor;color:#101624;display:grid;place-items:center;font-size:11px;font-weight:800\">{n + 1}</span>" +
+            $"<span style=\"font-size:12px;white-space:nowrap;opacity:.8\">{b}</span>" +
+            "</div>"));
+
+        var dashboard =
+            "<div class=\"console-dashboard\" style=\"padding:42px 50px;display:grid;grid-template-rows:auto 1fr auto;gap:24px;min-height:620px;font-family:Inter,'PingFang SC',system-ui,sans-serif\">" +
+            "<div style=\"display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.18);padding-bottom:16px\">" +
+            $"<div><div style=\"font-size:11px;letter-spacing:.22em;text-transform:uppercase;opacity:.58\">CONTROL PANEL / {index + 1:00} OF {total:00}</div>" +
+            $"<h1 style=\"margin:8px 0 0;font-size:38px;line-height:1.08;font-weight:880;letter-spacing:0;color:currentColor\">{enc(page.Title)}</h1></div>" +
+            "<div style=\"display:flex;gap:8px\"><span style=\"border:1px solid currentColor;border-radius:999px;padding:7px 10px;font-size:12px;opacity:.78\">HTML 校验</span><span style=\"border:1px solid currentColor;border-radius:999px;padding:7px 10px;font-size:12px;opacity:.78\">自动发布</span></div>" +
+            "</div>" +
+            "<div style=\"display:grid;grid-template-columns:1fr 1.08fr;gap:22px;min-height:0\">" +
+            "<div style=\"display:grid;grid-template-rows:auto 1fr;gap:16px\">" +
+            $"<div style=\"display:grid;grid-template-columns:repeat(3,1fr);gap:12px\">{metricCards}</div>" +
+            "<div class=\"panel queue\" style=\"border:1px solid currentColor;border-radius:12px;padding:18px 20px;background:rgba(255,255,255,.06)\">" +
+            "<div style=\"font-size:13px;font-weight:800;margin-bottom:6px\">任务队列</div>" + queueRows + "</div></div>" +
+            "<div class=\"panel preview\" style=\"border:1px solid currentColor;border-radius:14px;padding:18px;background:rgba(255,255,255,.05);display:grid;grid-template-rows:auto 1fr auto;gap:14px\">" +
+            "<div style=\"display:flex;justify-content:space-between;align-items:center\"><strong style=\"font-size:14px\">网页托管预览</strong><span style=\"font-size:12px;opacity:.7\">ready to publish</span></div>" +
+            "<div style=\"border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(0,0,0,.18);display:grid;place-items:center;min-height:210px\">" +
+            $"<div style=\"text-align:center;max-width:26em\"><div style=\"font-size:46px;font-weight:900;line-height:1\">{Math.Max(2, total):00}</div><p style=\"font-size:14px;line-height:1.55;opacity:.76;margin:12px 0 0\">{enc(bullets[0])}</p></div></div>" +
+            $"<div style=\"display:flex;justify-content:space-between;gap:10px\">{flow}</div></div></div>" +
+            "<div style=\"display:flex;justify-content:space-between;align-items:center;font-size:12px;opacity:.62;border-top:1px solid rgba(255,255,255,.14);padding-top:14px\"><span>runtime: LLM Gateway</span><span>publish target: web hosting</span></div>" +
+            "</div>";
+
+        if (layout == null) return "<section>" + dashboard + "</section>";
+        var rootOpen = System.Text.RegularExpressions.Regex.Match(layout.Html,
+            "<(div|section|article)\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!rootOpen.Success) return "<section>" + dashboard + "</section>";
+        var tag = rootOpen.Groups[1].Value.ToLowerInvariant();
+        return rootOpen.Value + dashboard + $"</{tag}>";
+    }
+
     internal static bool ShouldUseGatewayDirect(InfraAgentRuntimeProfile profile)
     {
         var runtime = string.IsNullOrWhiteSpace(profile.Runtime)
@@ -2243,6 +2312,7 @@ public class MdToPptController : ControllerBase
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
         // 锚定资产缺失时回落旧 reveal 壳子（不应发生，保险）
         var effectiveTheme = EffectiveThemeForRequest(req.Theme, req.Content, req.Summary);
+        var consoleDashboardMode = IsConsoleDashboardBrief(req.Content, req.Summary);
         var anchor = MdToPptAnchors.Resolve(effectiveTheme);
         string head, suffix;
         if (anchor != null)
@@ -2334,6 +2404,11 @@ public class MdToPptController : ControllerBase
                     var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
                     var section = NormalizeGeneratedSlideFragment(text, anchor != null);
+                    if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
+                    {
+                        _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch anchor={Anchor}, retrying", i, anchor?.Name);
+                        section = string.Empty;
+                    }
                     if (string.IsNullOrEmpty(section))
                     {
                         // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
@@ -2342,10 +2417,17 @@ public class MdToPptController : ControllerBase
                         var (text2, _) = await RunPageOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
                         section = NormalizeGeneratedSlideFragment(text2, anchor != null);
+                        if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
+                        {
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch after retry anchor={Anchor}, using dashboard fallback", i, anchor?.Name);
+                            section = string.Empty;
+                        }
                         if (string.IsNullOrEmpty(section))
                         {
                             fallbackFlags[i] = true;
-                            section = anchor != null && layout != null
+                            section = consoleDashboardMode
+                                ? ConsoleDashboardFallbackSlide(layout, pages[i], i, total)
+                                : anchor != null && layout != null
                                 ? AnchoredFallbackSlide(layout, pages[i], i)
                                 : SanitizeSection(FallbackSection(pages[i], i));
                         }
@@ -2361,7 +2443,9 @@ public class MdToPptController : ControllerBase
                       // 单页全链路兜底：任何异常都不许杀整本
                       _logger.LogError(pageEx, "[MdToPpt-Pages] page {Idx} hard-failed, fallback slide", i);
                       fallbackFlags[i] = true;
-                      var fb = anchor != null
+                      var fb = consoleDashboardMode
+                          ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null, pages[i], i, total)
+                          : anchor != null
                           ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i)
                           : SanitizeSection(FallbackSection(pages[i], i));
                       sections[i] = fb;
