@@ -99,12 +99,14 @@ export default function MobileHomePage() {
   const feedTint = (type: string): string =>
     type === 'visual-workspace' ? C.purple : type === 'defect' ? C.red : C.blue;
 
-  // 近7日:聚合大数 + 真实按日序列(后端 /api/mobile/stats 的 daily,按用户时区切日)
+  // 近7日:聚合大数 + 真实按日序列(后端 /api/mobile/stats 的 daily,按用户时区切日)。
+  // 指标口径 2026-07-15 用户拍板:会话/消息是桌面 PRD 解读时代的死指标(恒 0),
+  // 换成当前真实用量——AI 调用(LLM 请求)/ 生图 / 缺陷 / Token。
   const daily = data.stats?.daily ?? [];
   const stats = [
-    { label: '会话', value: data.stats?.sessions ?? 0, color: C.blue, series: daily.map((d) => d.sessions) },
-    { label: '消息', value: data.stats?.messages ?? 0, color: C.green, series: daily.map((d) => d.messages) },
+    { label: 'AI 调用', value: data.stats?.aiCalls ?? 0, color: C.blue, series: daily.map((d) => d.aiCalls ?? 0) },
     { label: '生图', value: data.stats?.imageGenerations ?? 0, color: C.purple, series: daily.map((d) => d.imageGenerations) },
+    { label: '缺陷', value: data.stats?.defects ?? 0, color: C.red, series: daily.map((d) => d.defects ?? 0) },
     { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange, series: daily.map((d) => d.tokens) },
   ];
 
@@ -123,29 +125,38 @@ export default function MobileHomePage() {
     >
       <main style={{ padding: '4px 0 112px', maxWidth: 720, margin: '0 auto' }}>
 
-        {/* ── 继续上次（主角;标题行右侧带主题切换,规则:首页可切换明暗） ── */}
-        {headline && (
+        {/* ── 主题切换必须无条件可达(Codex P2:不能被 recentWork 空态吞掉唯一的明暗开关) ── */}
+        {(() => {
+          const themeToggle = (
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={isDark ? '切换到浅色' : '切换到暗色'}
+              className="flex items-center justify-center active:opacity-60 transition-opacity"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 999,
+                border: `1px solid ${C.hairline}`,
+                background: C.card,
+                color: C.labelSecondary,
+              }}
+            >
+              {isDark ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+          );
+          if (!headline) {
+            return (
+              <div className="flex justify-end" style={{ padding: `8px ${AS_SPACE.gutter}px 0` }}>
+                {themeToggle}
+              </div>
+            );
+          }
+          return (
           <Section
             C={C}
             title="继续上次"
-            right={
-              <button
-                type="button"
-                onClick={toggleTheme}
-                aria-label={isDark ? '切换到浅色' : '切换到暗色'}
-                className="flex items-center justify-center active:opacity-60 transition-opacity"
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 999,
-                  border: `1px solid ${C.hairline}`,
-                  background: C.card,
-                  color: C.labelSecondary,
-                }}
-              >
-                {isDark ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-            }
+            right={themeToggle}
           >
             <div style={{ ...cardStyle, padding: 14 }}>
               <button
@@ -211,7 +222,8 @@ export default function MobileHomePage() {
               })}
             </div>
           </Section>
-        )}
+          );
+        })()}
 
         {/* ── 常用应用 ── */}
         <Section C={C} title="常用应用" action={{ label: '全部', onClick: () => navigate('/ai-toolbox') }}>

@@ -19,3 +19,6 @@
 | fix | prd-admin | 修复继续上次卡 button 嵌套 button 非法 DOM(Codex P2):导出 span 版 AppStorePillLabel,headline 药丸改非交互(整卡本身可点) |
 | docs | prd-admin | 新增 doc/debt.frontend.apple-design-migration.md 债务台账(手机轨剩余/PC 底座轨/刻意取舍),同步 index.yml 与 guide.list |
 | merge | prd-admin | 预合并 main(35 commits)进 apple-design 分支,零冲突,tsc+守卫测试绿 |
+| fix | prd-admin | 主题切换按钮移出 recentWork 门(Codex P2):继续上次为空的新用户不再失去全站唯一明暗开关,空态下单独右对齐渲染 |
+| feat | prd-api | /api/mobile/stats 新增 aiCalls(LLM 请求次数,复用 token 日志查询)与 defects(缺陷提报数)及对应按日桶;sessions/messages 字段保留兼容 |
+| feat | prd-admin | 近7日指标口径切换(用户拍板):会话/消息为桌面 PRD 解读时代死指标(恒 0),首页与米多早报统一换为 AI 调用/生图/缺陷/Token |

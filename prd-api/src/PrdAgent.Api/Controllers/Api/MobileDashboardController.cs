@@ -180,7 +180,7 @@ public class MobileDashboardController : ControllerBase
             .Project(r => new { r.CreatedAt })
             .ToListAsync();
 
-        // Token 使用量（LLM 请求日志）
+        // Token 使用量 + AI 调用次数（LLM 请求日志,一次查询两用）
         var tokenFilter = Builders<LlmRequestLog>.Filter.Eq(l => l.UserId, userId)
                         & Builders<LlmRequestLog>.Filter.Gte(l => l.StartedAt, since);
         var tokenAgg = await _db.LlmRequestLogs
@@ -189,10 +189,18 @@ public class MobileDashboardController : ControllerBase
             .ToListAsync();
         var totalTokens = tokenAgg.Sum(t => (long)t.input + t.output);
 
+        // 缺陷提报（当前高频使用的模块;会话/消息是桌面 PRD 解读时代口径,保留字段兼容但前端已换指标）
+        var defectTimes = await _db.DefectReports
+            .Find(d => d.ReporterId == userId && d.CreatedAt >= since && !d.IsDeleted)
+            .Project(d => new { d.CreatedAt })
+            .ToListAsync();
+
         // 按本地日分桶,补零成完整 days 天(旧→新)
         var sessionsByDay = sessionTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
         var messagesByDay = messageTimes.GroupBy(x => LocalDay(x.Timestamp)).ToDictionary(g => g.Key, g => g.Count());
         var imageGensByDay = imageGenTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
+        var aiCallsByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Count());
+        var defectsByDay = defectTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
         var tokensByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Sum(t => (long)t.input + t.output));
 
         var daily = Enumerable.Range(0, days)
@@ -205,6 +213,8 @@ public class MobileDashboardController : ControllerBase
                     sessions = sessionsByDay.GetValueOrDefault(day),
                     messages = messagesByDay.GetValueOrDefault(day),
                     imageGenerations = imageGensByDay.GetValueOrDefault(day),
+                    aiCalls = aiCallsByDay.GetValueOrDefault(day),
+                    defects = defectsByDay.GetValueOrDefault(day),
                     tokens = tokensByDay.GetValueOrDefault(day),
                 };
             })
@@ -216,6 +226,8 @@ public class MobileDashboardController : ControllerBase
             sessions = sessionTimes.Count,
             messages = messageTimes.Count,
             imageGenerations = imageGenTimes.Count,
+            aiCalls = tokenAgg.Count,
+            defects = defectTimes.Count,
             totalTokens,
             daily,
         }));

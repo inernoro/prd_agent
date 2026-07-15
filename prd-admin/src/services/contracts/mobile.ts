@@ -22,17 +22,27 @@ export type GetMobileFeedContract = (args?: {
 export interface MobileStatsDay {
   /** yyyy-MM-dd（用户本地时区） */
   date: string;
+  /** PRD 解读会话/消息(桌面时代口径,保留兼容;前端展示已换 aiCalls/defects) */
   sessions: number;
   messages: number;
   imageGenerations: number;
+  /** LLM 请求次数(AI 调用) */
+  aiCalls?: number;
+  /** 缺陷提报数 */
+  defects?: number;
   tokens: number;
 }
 
 export interface MobileStats {
   days: number;
+  /** PRD 解读会话/消息(桌面时代口径,保留兼容;前端展示已换 aiCalls/defects) */
   sessions: number;
   messages: number;
   imageGenerations: number;
+  /** LLM 请求次数(AI 调用) */
+  aiCalls?: number;
+  /** 缺陷提报数 */
+  defects?: number;
   totalTokens: number;
   /** 按日序列（供首页迷你趋势柱）;旧后端无此字段,消费端需容错 */
   daily?: MobileStatsDay[];
