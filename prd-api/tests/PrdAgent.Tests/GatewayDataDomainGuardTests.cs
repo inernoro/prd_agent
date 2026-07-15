@@ -2951,7 +2951,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("createGatewayAppCaller", quickstart);
         Assert.Contains("createServiceKey", quickstart);
         Assert.Contains("X-Gateway-Dry-Run", quickstart);
-        Assert.Contains("protocolDefinition(bundle.protocol).path", quickstart);
+        Assert.Contains("const definition = protocolDefinition(protocol);", quickstart);
+        Assert.Contains("PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
+        var quickstartTestStart = quickstart.IndexOf("const runDryRun", StringComparison.Ordinal);
+        var quickstartTestEnd = quickstart.IndexOf("const editIdentity", quickstartTestStart, StringComparison.Ordinal);
+        Assert.True(quickstartTestStart >= 0 && quickstartTestEnd > quickstartTestStart);
+        Assert.DoesNotContain("bundle.protocol", quickstart[quickstartTestStart..quickstartTestEnd]);
         Assert.Contains("upstreamCalled === false", quickstart);
         Assert.Contains("/logs?requestId=", quickstart);
         Assert.Contains("Agent Skill", quickstart);
@@ -3014,7 +3019,9 @@ public class GatewayDataDomainGuardTests
         Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
 
         Assert.Contains("scopes: ['invoke']", quickstart);
-        Assert.Contains("ingressProtocols: [selectedProtocol.ingressProtocol]", quickstart);
+        Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
+        Assert.Contains("disabled={Boolean(bundle)}", quickstart);
+        Assert.Contains("修改身份", quickstart);
         Assert.DoesNotContain("tenantId:", quickstart);
         Assert.DoesNotContain("['*']", quickstart);
         Assert.Contains("location ^~ /gw/v1/", webNginx);

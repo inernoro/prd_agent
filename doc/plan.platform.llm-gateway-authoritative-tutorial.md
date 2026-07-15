@@ -90,7 +90,7 @@
 | Provider | 教程假上游 | 不付费完成配置与故障测试 |
 | 模型 | 教程聊天模型、教程视觉模型 | 演示 chat/vision 与价格覆盖 |
 | 默认池 | 默认对话池、默认视觉池 | 演示程序池类型与 append-only |
-| appCaller | `G-tutorial-support`、`G-tutorial-content` | 演示业务身份、策略和费用归属 |
+| appCaller | `tutorial.gateway-book::chat`、`tutorial.gateway-book::vision` | 演示业务身份、策略和费用归属；OpenRouter 的 App 列显示为 `G-{appCallerCode}`，前缀不是 Gateway 内部 code 的一部分 |
 | key | test / prod 两组临时测试 key | 演示环境隔离、轮换、撤销和审计 |
 
 所有名称在运行时增加唯一后缀，避免并发验收冲突；教程正文只显示稳定的人类名称。
@@ -100,8 +100,8 @@
 | 批次 | 范围 | 进入条件 | 完成门 |
 |---|---|---|---|
 | T0 | 公开入口、登录说明、账号来源、返回入口 | 公开页面可访问 | 新手知道从哪里来、账号从哪里得、登录后能做什么 |
-| T1 | 空租户、Provider、模型、默认池、appCaller | 隔离预览可写 | 从空状态建立最小可用路由，失败可恢复 |
-| T2 | 一键 key、四协议安全测试、curl、Agent 技能 | T1 可用 | 无 key 不能测试；4/4 安全直测产生可定位 requestId |
+| T1 | 空租户、Provider、模型、默认池 | 隔离预览可写 | 从空状态建立最小可用路由，失败可恢复 |
+| T2 | appCaller、一键 key、四协议安全测试、curl、Agent 技能 | T1 可用 | 无 key 不能测试；4/4 安全直测产生可定位 requestId |
 | T3 | PromptPolicy、日志、费用、审计、组织 | T2 有测试日志 | chat/vision、生效证据、费用口径和审计完整 |
 | T4 | 双主题、移动端、负面路径、低理解力复验 | 正文与截图完成 | 新手独立完成首请求和至少一条故障排查 |
 | T5 | MAP 教程库与 CDS L2 报告发布 | T4 通过 | 分享页、章节、图片、验收报告均可打开 |
@@ -124,8 +124,8 @@
 |---|---|---|---|
 | 事实审计 | 已完成 | 已确认 17 个页面、6 组导航、页面—API 关系和公开登录断点 | 在后续实测中持续记录新增断点 |
 | 教程设计 | 已完成 | 33 章三级目录、连续测试数据和截图合同已冻结 | 随实测补齐每章异常树，不改变连续主线 |
-| 产品修复 | 进行中 | T0 已补公开入口与登录说明；T1 已实现租户内 Provider、模型自助创建，并复用 13 类 append-only 默认池 | T1 独立 PR 通过后进入 appCaller、key 与安全直测 |
-| 连续实测 | 进行中 | 隔离租户已完成 Provider、聊天模型创建；13 个默认池中仅 chat 追加 1 个模型；同租户重复被拒、跨租户同名互不冲突 | 从 chat 默认池继续创建 appCaller 和第一把测试 key |
+| 产品修复 | 进行中 | T0、T1 已合并；T2 修正一键 key 只绑单协议与页面切换协议后仍使用旧 bundle 的断点，改为一把非通配 scoped key 精确覆盖四协议 | T2 独立 PR 通过后进入 PromptPolicy、费用与审计 |
+| 连续实测 | 进行中 | 隔离租户已从 chat 默认池继续创建 `tutorial.gateway-book::chat` 与 test key；无 key 返回 401；OpenAI 与 Claude 共用同一四协议 key 均 dry-run 成功，日志为 0 token、unknown cost、provider=`gateway-dry-run` | 用既有四协议集成测试补齐 GW Native、Gemini 证据，并核验 Agent Skill 文案 |
 | 低理解力复验 | 基线完成 | 无背景智能体无法从公开入口完成首请求 | 教程发布后重新复验 |
 | MAP 发布 | 已建空库 | 已创建私有知识库“模型网关权威教程”，正文完成前不对外分享 | T4 通过后写入章节、图片并创建分享入口 |
 | CDS 验收归档 | 待开始 | L2、双主题、移动端、负面路径合同已冻结 | 完成后发布验收报告并验证可开 |
