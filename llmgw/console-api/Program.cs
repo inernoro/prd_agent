@@ -335,6 +335,34 @@ await gwModelPools.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
 await gwModelPoolTypes.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
     Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Code"),
     new CreateIndexOptions { Name = "uniq_llmgw_pool_type_tenant_code", Unique = true }));
+await gwPlatforms.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("NameNormalized"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_platform_tenant_name_normalized",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("NameNormalized", BsonType.String),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("UpdatedAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_platform_tenant_updated" }),
+});
+await gwModels.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PlatformId").Ascending("ModelNameNormalized"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_model_tenant_platform_name_normalized",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("ModelNameNormalized", BsonType.String),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PlatformId").Descending("UpdatedAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_model_tenant_platform_updated" }),
+});
 
 app.Use(async (http, next) =>
 {
@@ -5376,10 +5404,164 @@ app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string
     return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// ─────────────── 网关配置面（可写，腿 B 第二刀）───────────────
-// 让控制台不只能看还能配置。当前开放最安全的写操作：启用态、默认标记、认领到 GW 自有集合。
-// 均为定点字段更新（不碰密钥、不删数据）：已认领对象写 llm_gateway；未认领对象仍写 MAP 兼容集合。
-// 密钥轮换 / 新建平台 / 编辑 transformer 等更重的写操作后续再开。
+// ─────────────── 网关配置面（可写）───────────────
+// 外部租户只写 llm_gateway 自有集合；TenantId 永远来自服务端会话，不接受请求体自报。
+// 内部租户继续保留 MAP 来源对象的认领兼容路径，不重做既有迁移和运行时发布流程。
+
+// 创建 Provider：上游通讯密钥是必填项，只加密落库，不进入响应或审计。
+app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizePlatform(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwPlatforms.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
+
+    string encryptedApiKey;
+    try
+    {
+        encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey, config);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Json(ApiEnvelope<PlatformItem>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+    }
+
+    var id = $"gw-platform-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildPlatformDocument(draft, tenantId, id, encryptedApiKey, now);
+    try
+    {
+        await gwPlatforms.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.create",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: draft.Name,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "platformType", draft.PlatformType },
+            { "apiUrl", draft.ApiUrl },
+            { "maxConcurrency", draft.MaxConcurrency },
+            { "hasKey", true },
+        });
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document)), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+// 创建模型：Provider 必须属于当前租户；缺少模型 key 时继承 Provider key。
+// 创建成功后只调用现有默认池注册表做 append-only 补齐：匹配则追加，不匹配则保持不变。
+app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeModel(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var platformFilter = TenantAccess.Filter(http, fb.Eq("_id", draft.PlatformId));
+    var platform = await gwPlatforms.Find(platformFilter).FirstOrDefaultAsync();
+    if (platform is null)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+    if (platform.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_DISABLED", "Provider 已停用，请先启用后再添加模型"), jsonOptions, 409);
+
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("PlatformId", draft.PlatformId),
+        fb.Or(
+            fb.Eq("ModelNameNormalized", draft.ModelNameNormalized),
+            fb.Regex("ModelName", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.ModelName)}$", "i"))));
+    if (await gwModels.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
+
+    string? encryptedApiKey = null;
+    if (!string.IsNullOrWhiteSpace(draft.ApiKey))
+    {
+        try
+        {
+            encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey, config);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Json(ApiEnvelope<CreateModelResult>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+        }
+    }
+
+    var id = $"gw-model-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildModelDocument(draft, tenantId, id, encryptedApiKey, now);
+    try
+    {
+        await gwModels.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
+    }
+
+    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured;
+    try
+    {
+        ensured = await EnsureGatewayModelPoolTypesAsync(
+            gwModelPoolTypes,
+            gwModelPools,
+            gwModels,
+            gwPlatforms,
+            models,
+            platforms,
+            tenantId,
+            internalTenantId,
+            appendModels: true);
+    }
+    catch
+    {
+        await gwModels.DeleteOneAsync(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id)));
+        return Json(ApiEnvelope<CreateModelResult>.Fail("MODEL_POOL_SYNC_FAILED", "默认模型池同步失败，模型未保存，请稍后重试"), jsonOptions, 500);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.create",
+        targetType: "llmgw_model",
+        targetId: id,
+        targetName: draft.Name,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "platformId", draft.PlatformId },
+            { "modelName", draft.ModelName },
+            { "protocol", ToBsonAuditValue(draft.Protocol) },
+            { "capabilities", new BsonArray(draft.Capabilities) },
+            { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
+            { "hasDedicatedKey", encryptedApiKey is not null },
+            { "modelsAppended", ensured.ModelsAppended },
+        });
+    return Json(ApiEnvelope<CreateModelResult>.Ok(new CreateModelResult
+    {
+        Item = MapModel(document),
+        PoolTypesCreated = ensured.TypesCreated,
+        PoolsCreated = ensured.PoolsCreated,
+        ModelsAppended = ensured.ModelsAppended,
+    }), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
 
 // 平台启用/停用
 app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
@@ -8715,6 +8897,10 @@ static ModelItem MapModel(BsonDocument d)
         FailCount = d.AsNullableLong("FailCount") ?? 0,
         TotalDuration = d.AsNullableLong("TotalDuration") ?? 0,
         Capabilities = caps,
+        InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
+        OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
+        PricePerCall = d.AsNullableDecimal("PricePerCall"),
+        PriceCurrency = d.AsNullableString("PriceCurrency"),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
