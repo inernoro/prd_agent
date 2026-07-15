@@ -1454,7 +1454,10 @@ public class MdToPptController : ControllerBase
                 "(playfair|newsreader|cursive|calligraphy|handwriting|font-style\\s*:\\s*italic|poster|zine|vellum|editorial)"))
             return true;
 
-        return false;
+        var operationalTokens = System.Text.RegularExpressions.Regex.Matches(t,
+            "(console-dashboard|panel|metric|kpi|queue|task|status|preview|card|grid|flow|step|progress|publish|任务队列|预览|发布状态|指标|流程)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        return operationalTokens < 3;
     }
 
     private static string BuildConsoleDashboardGuard(string? content, string? summary)

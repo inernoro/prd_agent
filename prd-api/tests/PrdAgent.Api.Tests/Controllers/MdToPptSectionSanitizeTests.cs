@@ -228,6 +228,9 @@ public class MdToPptSectionSanitizeTests
         Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
             "<div class=\"slide\"><h1 style=\"font-family:Playfair Display;font-style:italic\">控制台总览</h1></div>",
             "soft-editorial"));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1>CONTROL PANEL KNOWLEDGE PUBLISHER</h1><p>今日生成 342 次</p></div>",
+            "cyber-terminal"));
     }
 
     [Fact]
