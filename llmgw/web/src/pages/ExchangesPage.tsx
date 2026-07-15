@@ -3,10 +3,14 @@
 import { useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimExchangeToGateway, deleteExchangeApiKey, getExchanges, rotateExchangeApiKey } from '@/lib/api';
 import type { ExchangeItem } from '@/lib/types';
-import { Button, Chip, SectionLoader } from '@/components/ui';
+import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { boolChip } from '@/components/poolsHelpers';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 export function ExchangesPage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ExchangeItem[] | null>(null);
   const [enabledOnly, setEnabledOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +135,8 @@ export function ExchangesPage() {
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      <div style={toolbarStyle}>
+      {!canWrite ? <ReadOnlyNotice /> : null}
+      {canWrite ? <div style={toolbarStyle}>
         <span style={toolbarTitleStyle}>批量维护 Exchange 密钥</span>
         <input
           type="password"
@@ -152,7 +157,7 @@ export function ExchangesPage() {
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-exchange-api-key'} onClick={() => void applyBulkApiKey()}>
           {busyId === 'bulk-exchange-api-key' ? '处理中…' : '批量轮换密钥'}
         </Button>
-      </div>
+      </div> : null}
       {!items ? <SectionLoader text="正在加载 Exchange…" /> : items.length === 0 ? <Empty text="暂无 Exchange" /> : (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -205,7 +210,7 @@ export function ExchangesPage() {
                     <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                     <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         {keyEditId === x.id ? (
                           <>
                             <input
@@ -239,7 +244,7 @@ export function ExchangesPage() {
                             {busyId === x.id ? '处理中…' : '导入到平台'}
                           </Button>
                         )}
-                      </span>
+                      </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                     </td>
                   </tr>
                 );

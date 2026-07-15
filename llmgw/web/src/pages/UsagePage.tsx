@@ -6,6 +6,7 @@ import type { CostReconciliationSummary, LogsSummaryData } from '@/lib/types';
 import { Button, Card, SectionLoader } from '@/components/ui';
 import { fmtCost, fmtCompact } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 export function UsagePage() {
   const { tenant } = useAuth();
@@ -24,7 +25,8 @@ export function UsagePage() {
   const [actualCurrency, setActualCurrency] = useState('USD');
   const [fxSnapshotId, setFxSnapshotId] = useState('');
   const [fxRate, setFxRate] = useState('');
-  const canImportActual = tenant?.role === 'owner' || tenant?.role === 'admin';
+  const canImportActual = canUseCapability(tenant?.role, 'configWrite');
+  const canReadLogs = canUseCapability(tenant?.role, 'logsRead');
 
   useEffect(() => {
     const to = new Date();
@@ -75,7 +77,7 @@ export function UsagePage() {
     <div className="lg-simple-page">
       <div className="lg-page-heading">
         <div><div className="lg-eyebrow">治理</div><h1>预算与用量</h1><p>最近 30 天的请求用量、费用估算和供应商账单对照。</p></div>
-        <Link className="lg-text-link" to="/logs">打开请求记录 <ArrowRight size={14} /></Link>
+        {canReadLogs ? <Link className="lg-text-link" to="/logs">打开请求记录 <ArrowRight size={14} /></Link> : null}
         {canImportActual ? <Button size="sm" variant="ghost" onClick={() => setShowImport((value) => !value)}>{showImport ? '取消导入' : '导入供应商账单'}</Button> : null}
       </div>
       {error ? <div className="lg-inline-alert">{error}</div> : null}

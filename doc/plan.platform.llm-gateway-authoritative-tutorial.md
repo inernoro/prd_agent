@@ -119,7 +119,9 @@ T4-G2 只读逐页审计确认模型池规则和 PromptPolicy 数据边界无需
 | G2-E | Exchange 自助创建与映射编辑 | 重做路由算法或模型迁移 | 空租户能建立第一条映射、读回、修改并在审计中定位 |
 | G2-F | 33 章源文件、离线校验、幂等发布器、隔离库双发布与整书连续测试 | 生产共享池变更、真实密钥入库 | 第 0 至 32 章齐全；第二次发布为 noop；人工漂移触发 conflict；无未解析图片占位符 |
 
-G2-A 当前已完成本地实现和安全门禁：标准非集成套件 1654 项通过、4 项跳过；publisher 定向与真实 Mongo 行为测试 26 项通过；三轮独立对抗复审最终结论为 0 个 P0、0 个未关闭 P1。尚未完成 PR、CI、CDS 和公网 API 验收，因此不得标记为已关闭，也不得提前开始 G2-B 代码。
+G2-A 已关闭：PR #1143 正常合并为 `6f4d4937dfc795a8703c94ecbafbda08d7273df9`；标准非集成套件 1654 项通过、4 项跳过，publisher 定向与真实 Mongo 行为测试 26 项通过，三轮独立对抗复审最终为 0 个 P0、0 个未关闭 P1。CDS 单 profile 使用目标提交镜像通过 TCP/HTTP 探测；公网验收覆盖 401、403、created、noop、陈旧 CAS 409、安全回滚 200，临时知识库与 Key 清理回查均为 0。
+
+G2-B 当前进入发布验证阶段：前端以 `llmgw/console-api/Auth/TenantAccessContext.cs` 为服务端权威镜像五角色权限，未知角色在控制台布局与业务 API 挂载前失败关闭；导航、顶部 requestId 搜索、旧深链和配置写控件统一走中央能力表。Viewer 的 Quickstart 保留教程与示例但不创建 appCaller/key、不执行直测；Developer 可管理团队内 appCaller 与 scoped key，但不能创建通配 key、进入 PromptPolicy、审计或修改路由配置；Billing 只保留概览、用量、学习中心和本地设置。前端生产构建通过，Gateway 数据域与 RBAC 合同 79/79、CI 同口径标准测试 675/675 通过；独立复审最终为 0 个 P0、0 个 P1。PR、CI、CDS 与浏览器五角色负向取证完成前仍不得关闭 G2-B。
 
 逐页审计同时确认：Quickstart 的四协议 dry-run 只证明地址、鉴权、团队、appCaller、协议形状、日志和 requestId，不证明真实模型路由、流式、vision 或参数语义保真。第 27 章必须另用假上游契约测试覆盖这些内容，每类真实协议最多一次。
 
