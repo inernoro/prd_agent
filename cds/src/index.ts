@@ -29,6 +29,7 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
+import { setMaxConcurrentBuildsProvider } from './services/build-gate.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
@@ -787,7 +788,9 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     headers: {
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
-      'X-CDS-Trigger': 'webhook',
+      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
+      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
+      'X-CDS-Trigger': pending.request.trigger,
       'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
@@ -4024,6 +4027,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // the node between standalone and "hot-joined hybrid" states without a
   // restart. See `cds/src/routes/cluster.ts` for the flow doc.
   let hotJoinAgent: ExecutorAgent | null = null;
+  // 全局构建并发上限的运行时供给（CDS 系统设置 → CdsState.maxConcurrentBuilds）。
+  // env CDS_MAX_CONCURRENT_BUILDS 在 build-gate 内部仍优先于本供给器。
+  setMaxConcurrentBuildsProvider(() => stateService.getMaxConcurrentBuilds());
   app.use('/api/cluster', createClusterRouter({
     config,
     stateService,

@@ -123,6 +123,20 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
   return req.trigger === 'webhook' && (req.kind === 'deploy' || req.kind === 'deploy-profile');
 }
 
+/**
+ * manual 整分支 deploy 也可合并（2026-07-16 队列堵死复盘）：此前 manual deploy
+ * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
+ * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
+ * 现在与 webhook 同样合并为「当前部署完成后自动执行的最新待部署请求」
+ * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
+ * restart 语义按单服务隔离，合并归属不明确，维持 409。
+ * 注意：仅在 incoming **不能**压过（supersede）在途操作时才走合并——优先级
+ * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
+ */
+function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
+  return req.trigger === 'manual' && req.kind === 'deploy';
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -189,6 +203,38 @@ export class BranchOperationCoordinator {
         this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
       }
       return this.start(request);
+    }
+
+    // manual 整分支 deploy 压不过在途操作时不再 409，而是与 webhook 同通道
+    // 合并为最新待部署请求（治重试风暴：agent 重试不再叠加新部署/新排队）。
+    if (isMergeableManualDeploy(request)) {
+      const existing = this.pendingWebhookDeploys.get(branchId);
+      const generation = this.nextGeneration(branchId);
+      const operationId = existing?.operationId || this.createOperationId();
+      this.pendingWebhookDeploys.set(branchId, {
+        operationId,
+        branchId,
+        generation,
+        request,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        updatedAt: nowIso(),
+      });
+      this.record('branch.operation.merged', request, operationId, generation, 'info', {
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        commitSha: request.commitSha || null,
+        manualMerge: true,
+      });
+      return {
+        status: 'merged',
+        operationId,
+        generation,
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        pendingCommitSha: request.commitSha || null,
+        reason: 'manual deploy merged into latest pending operation',
+      };
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(branchId), 'warn', {

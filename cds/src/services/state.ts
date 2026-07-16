@@ -1390,6 +1390,21 @@ export class StateService {
     }
   }
 
+  // ── 全局构建并发上限（build-gate，系统级）──
+  // 2026-07-16：运行时可调，随 CdsState 持久化跨重启生效；env
+  // CDS_MAX_CONCURRENT_BUILDS 在 build-gate 读取端仍优先于本值。
+  getMaxConcurrentBuilds(): number | undefined {
+    return this.state.maxConcurrentBuilds;
+  }
+
+  setMaxConcurrentBuilds(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.maxConcurrentBuilds;
+    } else {
+      this.state.maxConcurrentBuilds = value;
+    }
+  }
+
   // ── Janitor runtime override ──
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to

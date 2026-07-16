@@ -38,7 +38,7 @@ import type { StateService } from '../services/state.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import { ExecutorAgent } from '../executor/agent.js';
 import { updateEnvFile, defaultEnvFilePath } from '../services/env-file.js';
-import { buildGateStatus } from '../services/build-gate.js';
+import { buildGateStatus, pumpWaiters } from '../services/build-gate.js';
 
 /**
  * Shape of a cluster connection code after base64+JSON decoding. The UI
@@ -427,6 +427,46 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       // 全局构建并发闸快照：active 个正在构建 / queued 个排队中 / 上限 max。
       // 供运维面板展示「构建排队」，让用户区分「在排队」与「卡死」。
       buildGate: buildGateStatus(),
+    });
+  });
+
+  // ── GET/PUT /api/cluster/build-gate — 全局构建并发闸（系统级）──
+  //
+  // 2026-07-16 队列堵死复盘：上限此前只能改 .cds.env + 重启。这里把它挂到
+  // CdsState.maxConcurrentBuilds，运行时调整立即生效；上调后 pumpWaiters()
+  // 直接唤醒排队者（旧闸只在 release 时唤醒，上调不生效）。
+  // 环境变量 CDS_MAX_CONCURRENT_BUILDS 仍是运维最终 override（优先于本值），
+  // 设了 env 时 UI 值不生效——响应里用 envOverride 标明，避免静默失效。
+  router.get('/build-gate', (_req, res) => {
+    res.json({
+      ...buildGateStatus(),
+      stateValue: stateService.getMaxConcurrentBuilds() ?? null,
+      envOverride: !!(process.env.CDS_MAX_CONCURRENT_BUILDS || '').trim(),
+    });
+  });
+
+  router.put('/build-gate', (req, res) => {
+    const raw = (req.body as { maxConcurrentBuilds?: unknown } | undefined)?.maxConcurrentBuilds;
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num < 1 || num > 32) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'maxConcurrentBuilds',
+        message: '全局构建并发上限必须是 1~32 的整数',
+      });
+      return;
+    }
+    stateService.setMaxConcurrentBuilds(Math.floor(num));
+    stateService.save();
+    // 上调后立即放行排队者（下调不踢正在构建的，只影响后续授予）。
+    const woken = pumpWaiters();
+    console.log(`  [build-gate] 并发上限调整为 ${Math.floor(num)}，唤醒 ${woken} 个排队构建`);
+    res.json({
+      ok: true,
+      ...buildGateStatus(),
+      stateValue: stateService.getMaxConcurrentBuilds() ?? null,
+      woken,
+      envOverride: !!(process.env.CDS_MAX_CONCURRENT_BUILDS || '').trim(),
     });
   });
 

@@ -1569,6 +1569,12 @@ export interface CdsState {
    */
   deployReadinessFloorSeconds?: number;
   /**
+   * 2026-07-16：系统级「全局构建并发上限」（build-gate）。未设时默认 3。
+   * 运行时经「CDS 系统设置」调整立即生效（含唤醒排队者），无需重启；
+   * 环境变量 CDS_MAX_CONCURRENT_BUILDS 是运维最终 override（优先于本值）。
+   */
+  maxConcurrentBuilds?: number;
+  /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
    * webhook 都进同一队列(每条带 repoFullName 区分),前端「CDS 系统设置」→
