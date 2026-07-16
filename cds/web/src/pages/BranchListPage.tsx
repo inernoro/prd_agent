@@ -1299,6 +1299,18 @@ function parseSseBlock(raw: string): { event: string; data: unknown } | null {
   }
 }
 
+/**
+ * 部署请求被合并（同分支已有在途操作，manual/webhook deploy 转入待部署队列，
+ * 当前操作完成后自动执行）时后端 SSE complete 事件带 operationStatus='merged'。
+ * 调用方据此把结果显示为「已合并为待部署」而非「部署完成」——合并只是排上号，
+ * 后续那次部署仍可能失败（Codex P2，2026-07-16）。
+ */
+function isMergedDeployComplete(event: string, data: unknown): boolean {
+  return event === 'complete'
+    && typeof data === 'object' && data !== null
+    && (data as { operationStatus?: unknown }).operationStatus === 'merged';
+}
+
 async function postSse(
   path: string,
   body: unknown,
@@ -2299,9 +2311,21 @@ export function BranchListPage(): JSX.Element {
     setAction(key, createAction(kind, '正在部署'));
     openBranchDetail(branch.id);
     try {
+      let mergedIntoPending = false;
       await postSse(`/api/branches/${encodeURIComponent(branch.id)}/deploy`, {}, (event, data) => {
         appendActionLog(key, eventMessage(event, data));
+        if (isMergedDeployComplete(event, data)) mergedIntoPending = true;
       });
+      if (mergedIntoPending) {
+        // 请求被合并进待部署队列：不是部署成功，如实显示待执行状态（Codex P2）。
+        setAction(key, finishAction(actionRef.current[key], kind, '已合并为最新待部署请求，当前部署完成后自动执行', 'success'));
+        await refresh(false);
+        setToast(`${branch.branch} 部署请求已合并，当前部署完成后自动执行`);
+        if (openAfterDeploy) {
+          await openRunningPreview(branch, previewTarget);
+        }
+        return;
+      }
       let latestBranch: BranchSummary | undefined;
       if (projectId) {
         const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
@@ -2705,15 +2729,20 @@ export function BranchListPage(): JSX.Element {
           const endpoint = profileId
             ? `/api/branches/${encodeURIComponent(branch.id)}/deploy/${encodeURIComponent(profileId)}`
             : `/api/branches/${encodeURIComponent(branch.id)}/deploy`;
+          let mergedIntoPending = false;
           await postSse(endpoint, {}, (event, data) => {
             appendActionLog(branch.id, eventMessage(event, data));
             if (event === 'complete' && typeof data === 'object' && data !== null && 'ok' in data) {
               ok = Boolean((data as { ok?: unknown }).ok);
             }
+            if (isMergedDeployComplete(event, data)) mergedIntoPending = true;
             if (event === 'error') ok = false;
           });
 
-          if (ok) {
+          if (mergedIntoPending) {
+            // 合并进待部署队列 = 已排上号但尚未执行，不计成功也不计失败（Codex P2）。
+            setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `已合并为待部署请求 ${label}（当前部署完成后自动执行）`, 'success'));
+          } else if (ok) {
             successCount += 1;
             setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `队列重部署完成 ${label}`, 'success'));
           } else {

@@ -13758,6 +13758,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (failed.length === 0) {
         assertBranchOperationCurrent(branchOperationLease, 'restart before success save');
+        // 记录热重启耗时进 restart 样本桶（预览等待页真实进度的历史数据源）。
+        stateService.recordDeployDuration(entry.projectId || 'default', 'restart', Date.now() - Date.parse(restartStartedAt), 10 * 60 * 1000);
         entry.status = 'running';
         // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
         // （Codex P2）。

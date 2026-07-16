@@ -268,6 +268,38 @@ describe('build-gate 全局构建并发闸', () => {
     expect(buildGateStatus().active).toBe(0);
   });
 
+  it('上限下调后 release 不再转移槽位，active 逐步缩到新上限（Codex P1）', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '3';
+    const s1 = await acquireBuildSlot();
+    const s2 = await acquireBuildSlot();
+    const s3 = await acquireBuildSlot();
+    const order: number[] = [];
+    const p4 = acquireBuildSlot().then((s) => { order.push(4); return s; });
+    await tick();
+    expect(buildGateStatus()).toMatchObject({ active: 3, queued: 1 });
+
+    // 紧急节流：上限下调到 1。此后每次 release 都应缩减 active 而不是唤醒排队者，
+    // 直到 active 降到新上限才恢复槽位转移。
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    s1.release();
+    await tick();
+    expect(buildGateStatus()).toMatchObject({ active: 2, queued: 1 });
+    expect(order).toEqual([]); // 排队者未被过早唤醒
+
+    s2.release();
+    await tick();
+    expect(buildGateStatus()).toMatchObject({ active: 1, queued: 1 });
+    expect(order).toEqual([]);
+
+    // active 已到新上限：最后一次 release 恢复正常槽位转移
+    s3.release();
+    const s4 = await p4;
+    expect(order).toEqual([4]);
+    expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
+    s4.release();
+    expect(buildGateStatus().active).toBe(0);
+  });
+
   it('运行时供给器生效且 env 优先于供给器', () => {
     delete process.env.CDS_MAX_CONCURRENT_BUILDS;
     setMaxConcurrentBuildsProvider(() => 6);

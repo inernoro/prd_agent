@@ -127,6 +127,13 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
       if (released) return;
       released = true;
       holders.delete(token);
+      // 上限可能在持有期间被下调（紧急节流，Codex P1）：active 仍高于当前
+      // max 时本次释放不转移槽位，直接缩减 active——否则每个完成的构建都会
+      // 立刻唤醒下一个排队者，下调的上限要等队列彻底排空才生效。
+      if (active > maxConcurrentBuilds()) {
+        active -= 1;
+        return;
+      }
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
       let next = waiters.shift();
       while (next) {

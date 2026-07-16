@@ -1224,7 +1224,7 @@ export const GLOBAL_ENV_SCOPE = '_global';
  *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
  * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
  */
-export type DeployDurationMode = 'release' | 'source';
+export type DeployDurationMode = 'release' | 'source' | 'restart';
 
 /**
  * 部署耗时样本桶（2026-06-20）。

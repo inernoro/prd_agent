@@ -9,3 +9,6 @@
 | test | cds | build-gate 取消/身份/pump、deploy-layer-runner、coordinator manual 合并、reconcileInterrupted 周期语义、waitForReadiness 活性早退共 5 个套件新增或扩展 |
 | feat | cds | 构建队列健康判定常态化：evaluateBuildGateHealth 纯函数（积压/持槽超时/幽灵 run/账目不变量四类退化）+ GET /api/cluster/build-gate/health（健康 200 / 退化 503，供任务调度定时回归探测）+ 进程内 build-gate-watchdog 每 60s 采样、退化写系统事件告警、恢复留痕 |
 | test | cds | build-gate-health 回归门禁套件（8 例：四类退化 + 阈值边界 + 多退化并存 + 坏时间戳容错），随 CI cds-build job 门禁 PR |
+| fix | cds | 回应 Codex P1：构建并发上限下调后 release 不再无条件转移槽位，active 高于新上限时先缩减，紧急节流即时生效 |
+| fix | cds | 回应 Codex P2：manual 部署被合并（merged）时 BranchListPage/BranchDetailPage 如实显示「已合并为待部署请求」，不再误报「部署完成」 |
+| fix | cds | 分支预览「热重启」等待页卡 86% 修复：热重启改用独立 restart 历史耗时样本桶（auto-wake/手动 restart 成功时记录），进度条按 elapsed/median 真实推进，无样本时按重启时长曲线持续移动；唤醒的启动信号等待收紧到 120s + 就绪探测启用容器活性早退，等待上限从最坏 40 分钟降到分钟级 |

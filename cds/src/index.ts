@@ -1709,10 +1709,13 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         const profile = profiles.find((p) => p.id === svc.profileId);
         let ready = false;
         if (profile?.startupSignal) {
-          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+          // 唤醒是 docker restart 级操作：启动信号等待收紧到 120s（默认 300s 是给
+          // 全量构建用的），避免等待页在静止进度上挂几分钟（2026-07-16「卡 86%」修复）。
+          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, undefined, 120);
         }
         if (!profile?.startupSignal || ready) {
-          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe);
+          // 传 containerName 启用容器活性早退：容器崩了秒级失败，不空等探测超时。
+          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe, undefined, undefined, svc.containerName);
         }
         lease?.assertCurrent(`auto-wake readiness ${svc.profileId}`);
         if (ready) {
@@ -1727,6 +1730,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 
       if (failed.length === 0) {
         lease?.assertCurrent('auto-wake before success save');
+        // 记录本次热重启耗时进 restart 样本桶：预览等待页据此显示真实进度与
+        // 「预计还需」（上界 10 分钟防离谱样本污染中位）。
+        {
+          const wakeElapsedMs = Date.now() - Date.parse(wakeStartedAt);
+          stateService.recordDeployDuration(branch.projectId || 'default', 'restart', wakeElapsedMs, 10 * 60 * 1000);
+        }
         branch.status = 'running';
         branch.errorMessage = undefined;
         branch.lastStoppedAt = undefined;
