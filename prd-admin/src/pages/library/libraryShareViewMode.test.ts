@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseLibraryShareViewMode,
+  resolveControlledSharedEntryId,
   resolveSharedWikilinkEntryId,
   withLibraryShareEntry,
   withLibraryShareViewMode,
 } from './libraryShareViewMode';
 
 describe('libraryShareViewMode', () => {
+  it('controls the first reader render with a valid entry deep link', () => {
+    expect(resolveControlledSharedEntryId(undefined, 'chapter-22', true)).toBe('chapter-22');
+  });
+
+  it('lets browser history replace stale local selection before effects run', () => {
+    expect(resolveControlledSharedEntryId('chapter-23', 'chapter-22', true)).toBe('chapter-22');
+  });
+
+  it('preserves manual selection when the URL has no entry parameter', () => {
+    expect(resolveControlledSharedEntryId('chapter-23', 'readme', false)).toBe('chapter-23');
+    expect(resolveControlledSharedEntryId(undefined, 'readme', false)).toBe('readme');
+  });
+
   it('keeps graph modes as query-only views on the same share token', () => {
     const params = new URLSearchParams('entry=doc-1');
     const next = withLibraryShareViewMode(params, 'galaxy');

@@ -11,6 +11,15 @@ export interface SharedWikilinkTarget {
   title?: string;
 }
 
+export function resolveControlledSharedEntryId(
+  selectedEntryId: string | undefined,
+  initialSelectedId: string | undefined,
+  hasEntryParam: boolean,
+): string | undefined {
+  if (hasEntryParam && initialSelectedId) return initialSelectedId;
+  return selectedEntryId ?? initialSelectedId;
+}
+
 export function parseLibraryShareViewMode(raw: string | null, isSingleDoc: boolean): LibraryShareViewMode {
   const mode: LibraryShareViewMode = raw === 'galaxy' || raw === 'universe' ? raw : 'read';
   return isSingleDoc && mode !== 'read' ? 'read' : mode;

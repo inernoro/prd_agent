@@ -33,6 +33,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import {
   parseLibraryShareViewMode,
+  resolveControlledSharedEntryId,
   resolveSharedWikilinkEntryId,
   withLibraryShareEntry,
   withLibraryShareViewMode,
@@ -105,6 +106,15 @@ export function LibraryShareViewPage() {
     }
     if (!selectedEntryId) setSelectedEntryId(initialSelectedId);
   }, [entryFromUrl, initialSelectedId, selectedEntryId]);
+
+  // DocBrowser 会在自己的首次 effect 中选择默认文档，而父组件同步 URL 的 effect
+  // 要到提交后才执行。直接把有效深链作为受控值传下去，避免子 effect 抢先把
+  // ?entry= 覆盖成 README；浏览器前进/后退时也由 URL 在首帧取得优先级。
+  const controlledSelectedEntryId = resolveControlledSharedEntryId(
+    selectedEntryId,
+    initialSelectedId,
+    Boolean(entryFromUrl),
+  );
 
   // 公开阅读页与后台知识库共用 MarkdownViewer，因此也必须装载当前分享范围的双链索引。
   // 这里只写入匿名端点已经返回的条目，任何未被分享的文档都无法被解析或跳转。
@@ -315,7 +325,7 @@ export function LibraryShareViewPage() {
             entries={browserEntries}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
-            selectedEntryId={selectedEntryId}
+            selectedEntryId={controlledSelectedEntryId}
             onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
             sortMode="created-desc"
