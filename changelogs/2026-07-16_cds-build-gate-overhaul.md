@@ -15,3 +15,6 @@
 | fix | cds | 回应 Codex P2：上限下调后的自然收敛（active>max 且账目一致）不再被健康探针误报 503，账目不变量改为 active 与持有者明细数一致性 |
 | fix | cds | 回应 Codex P2：部署静默阶段（构建输出/启动信号/就绪探测最长 1200s）打 30s 节流 run 心跳，周期收割器不再误杀活着的慢启动部署 |
 | fix | cds | 回应 Codex P2 x3：manual 合并仅限部署类在途操作（stop/reset/delete 在途维持 409，防停止后被自动重启）；带 versionId 的版本重部署不合并（防重放丢版本配置）；极速版 pre-run docker rm 后移到拉取/回退闸之后（排队期旧预览不再白宕机） |
+| fix | cds | 回应 Codex P2：merged 部署请求不再打开旧版本预览（BranchListPage 合并分支改为关闭预览占位窗口，消除「已部署完成」假象） |
+| rule | cds | 新增 .claude/rules/concurrency-gate-discipline.md：并发闸/队列组件五件套设计纪律（等待可取消/持有者身份/只锁真实资源/周期收敛/健康不变量+常态回归），固化本次队列堵死事故教训 |
+| docs | cds | 新增 doc/debt.cds.build-gate.md 债务台账（pending 队列更名/排队心跳拆分/holders 运维 UI/健康阈值可配等延期项），同步 index.yml 与 guide.list.directory.md |

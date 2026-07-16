@@ -848,6 +848,8 @@
   > 首版已落地（share_target + VLM 追加填充 + 移动全屏面板）；边界：iOS 无 share_target、需先装 PWA、冷启重登录、全局弹窗未接填充
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
 - [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
+- [CDS 构建闸 · 债务台账](debt.cds.build-gate) `debt.cds.build-gate`
+  > 2026-07-16 队列堵死事故修复后的延期项：pending 队列更名 / 排队心跳拆分 / holders 运维 UI / 健康阈值可配 / merged 完成通知
 - [CDS 自更新极速版（预构建产物）· 债务台账](debt.cds.selfupdate-prebuilt) `debt.cds.selfupdate-prebuilt`
   > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base.versioning) `debt.knowledge-base.versioning`
@@ -1234,3 +1236,4 @@
 | 2026-06-26 | 新增 | `report.daily-tips.tutorial-coverage` | 页面教程小技巧 全量路由覆盖审计报告 |
 | 2026-06-26 | 新增 | `report.frontend.prd-admin-surface-style-migration` | prd-admin 样式统一统计报表 |
 | 2026-07-10 | 新增 | `debt.cds.reports` | CDS 验收中心报告治理债务台账（存量未归类迁移 / 保留策略 / 批量操作 / 日期文件夹归并） |
+| 2026-07-16 | 新增 | `debt.cds.build-gate` | CDS 构建闸债务台账（队列堵死事故修复后的延期项 + 修复主线回溯） |

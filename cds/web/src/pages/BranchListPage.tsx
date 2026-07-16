@@ -2321,9 +2321,9 @@ export function BranchListPage(): JSX.Element {
         setAction(key, finishAction(actionRef.current[key], kind, '已合并为最新待部署请求，当前部署完成后自动执行', 'success'));
         await refresh(false);
         setToast(`${branch.branch} 部署请求已合并，当前部署完成后自动执行`);
-        if (openAfterDeploy) {
-          await openRunningPreview(branch, previewTarget);
-        }
+        // 合并 = 排上号未执行，此刻打开的还是旧版本预览，会造成「已部署完成」假象；
+        // 等待重放的那次部署真正完成后由用户再开（Codex P2，2026-07-16）。
+        closePreviewTarget(previewTarget || null);
         return;
       }
       let latestBranch: BranchSummary | undefined;
