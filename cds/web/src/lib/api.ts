@@ -47,7 +47,19 @@ export function apiUrl(path: string, hostname = currentHostname()): string {
   return shouldPreferCdsPassthrough(hostname) ? `/_cds${url}` : url;
 }
 
+/**
+ * 子 CDS 预览实例标记（Codex P1，2026-07-15）。预览实例的服务端在 index.html
+ * 注入 window.__CDS_PREVIEW_INSTANCE__=true（server.ts sendReactIndex）：此时
+ * dashboard 由子实例自己服务，`/_cds` 直通会被 forwarder 送回**父** CDS，必须关闭，
+ * 让 /api/* 走同源直达子实例。
+ */
+export function isChildPreviewCdsInstance(): boolean {
+  return typeof window !== 'undefined' &&
+    (window as { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ === true;
+}
+
 export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolean {
+  if (isChildPreviewCdsInstance()) return false;
   if (!hostname) return false;
   const normalized = hostname.toLowerCase();
   return !['localhost', '127.0.0.1', '::1'].includes(normalized);
@@ -113,6 +125,9 @@ export async function apiRequest<T = unknown>(
 
 function alternateApiUrl(rawUrl: string, primaryUrl: string): string | null {
   if (!rawUrl.startsWith('/api/')) return null;
+  // 子 CDS 预览实例（Codex P2）：transient 兜底重试也不许切 /_cds——那会被
+  // forwarder 送回父实例，把父数据当成子实例数据渲染。子实例只有同源一条路。
+  if (isChildPreviewCdsInstance()) return null;
   if (shouldPreferCdsPassthrough() && primaryUrl.startsWith('/_cds/api/')) return null;
   if (primaryUrl.startsWith('/_cds/api/')) return rawUrl;
   if (primaryUrl.startsWith('/api/')) return `/_cds${primaryUrl}`;
@@ -420,6 +435,16 @@ export interface CdsAuthPublicStatus {
 /** Public auth capability probe for the login page. Does not expose current user details. */
 export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
   return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+}
+
+export interface CdsInstanceMode {
+  /** true = 预览实例（CDS 托管 CDS 的分支预览），宿主/docker 操作已禁用。 */
+  previewInstance: boolean;
+}
+
+/** 实例模式探针（公开）。预览实例时 Shell 顶部渲染提示条。 */
+export async function fetchInstanceMode(): Promise<CdsInstanceMode> {
+  return apiRequest<CdsInstanceMode>('/api/instance-mode');
 }
 
 /** Whether the system needs first-run bootstrap (zero users). Public. */

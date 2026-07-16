@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import { useDataTheme } from '@/hooks/useDataTheme';
+import { AS_COLOR, AS_COLOR_LIGHT } from '@/lib/appStoreTokens';
 import {
   Home,
   Compass,
@@ -106,9 +107,10 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         barBg: 'linear-gradient(0deg, rgba(255,255,255,0.98) 0%, rgba(250,250,251,0.94) 100%)',
         barBorder: '1px solid rgba(20,21,26,0.08)',
         barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(20,21,26,0.05) 50%, transparent 100%)',
-        iconActive: '#18191c',
+        // iOS tab bar 激活项整体染 systemBlue,idle 走中性灰
+        iconActive: AS_COLOR_LIGHT.blue,
         iconIdle: 'rgba(24,25,28,0.38)',
-        labelActive: '#18191c',
+        labelActive: AS_COLOR_LIGHT.blue,
         labelIdle: 'rgba(24,25,28,0.36)',
         centerBg: 'rgba(20,21,26,0.06)',
         centerBgOpen: 'rgba(20,21,26,0.12)',
@@ -137,9 +139,10 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
         barBg: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
         barBorder: '1px solid rgba(255, 255, 255, 0.06)',
         barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%)',
-        iconActive: 'rgba(255, 255, 255, 0.95)',
+        // iOS tab bar 激活项整体染 systemBlue,idle 走中性灰
+        iconActive: AS_COLOR.blue,
         iconIdle: 'rgba(255, 255, 255, 0.35)',
-        labelActive: 'rgba(255, 255, 255, 0.88)',
+        labelActive: AS_COLOR.blue,
         labelIdle: 'rgba(255, 255, 255, 0.30)',
         centerBg: 'rgba(255, 255, 255, 0.12)',
         centerBgOpen: 'rgba(255, 255, 255, 0.18)',
@@ -467,7 +470,6 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   style={{
                     color: active ? T.iconActive : T.iconIdle,
                     transition: 'color 0.2s ease',
-                    filter: active && !light ? 'drop-shadow(0 0 4px rgba(255,255,255,0.15))' : 'none',
                   }}
                 />
                 <span
@@ -485,10 +487,8 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
                   style={{
                     width: active ? 14 : 0,
                     height: 2.5,
-                    background: active
-                      ? 'linear-gradient(90deg, rgba(245,178,40,0.7), rgba(255,220,100,0.95), rgba(245,178,40,0.7))'
-                      : 'transparent',
-                    boxShadow: active ? '0 0 6px 1px rgba(245,178,40,0.35)' : 'none',
+                    background: active ? T.iconActive : 'transparent',
+                    boxShadow: active ? `0 0 6px 1px ${T.iconActive}59` : 'none',
                     opacity: active ? 1 : 0,
                   }}
                 />

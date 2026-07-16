@@ -35,18 +35,25 @@ function buildAgentPrompt(key: string): string {
   const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS, base);
   return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
 
-① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc，然后 source 生效。不要写进仓库：
+① 把 Key 保存到本机 secrets 文件。不要写进仓库、.claude/settings.local.json、PR、验收报告或公开日志：
 
-export PRD_AGENT_API_KEY="${key}"
+mkdir -p ~/.codex/secrets
+umask 077
+printf '%s\\n' '${key}' > ~/.codex/secrets/prd-agent-api-key
+chmod 600 ~/.codex/secrets/prd-agent-api-key
+
+② 当前 shell 临时导入环境变量：
+
+export PRD_AGENT_API_KEY="$(cat ~/.codex/secrets/prd-agent-api-key)"
 export PRD_AGENT_BASE="${base}"
 
-② 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
+③ 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
 curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
  && mkdir -p ~/.claude/skills && unzip -o /tmp/findmapskills.zip -d ~/.claude/skills/ \\
  && rm /tmp/findmapskills.zip
 
-③ 读一下 ~/.claude/skills/findmapskills/SKILL.md —— 里面有全部操作说明（搜索 / 下载 / 上传 / 订阅）。`;
+④ 读一下 ~/.claude/skills/findmapskills/SKILL.md —— 里面有全部操作说明（搜索 / 下载 / 上传 / 订阅）。`;
 }
 
 export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {

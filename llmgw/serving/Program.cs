@@ -50,11 +50,25 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 const string BrowserDryRunCors = "llmgw-browser-dry-run";
 builder.Services.AddCors(options => options.AddPolicy(BrowserDryRunCors, policy =>
     policy.AllowAnyOrigin()
-        .WithMethods(HttpMethods.Get)
-        .WithHeaders("Authorization", "X-Gateway-Source", "X-Gateway-App-Caller")));
+        .WithMethods(HttpMethods.Get, HttpMethods.Post)
+        .WithHeaders(
+            "Authorization",
+            "Content-Type",
+            "X-Gateway-Source",
+            "X-Gateway-App-Caller",
+            "X-Gateway-Dry-Run",
+            "X-Request-Id")
+        .WithExposedHeaders("X-Request-Id", "X-Gateway-Upstream-Called")));
 
-// IHttpClientFactory（LlmGateway 发 HTTP 用）
+// 外部租户上游使用安全出站连接器：DNS 解析后固定连接，拒绝内网/保留地址并关闭自动跳转。
+// 内部租户保留既有默认客户端，以兼容现有私网拓扑。
+builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
+    PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("SafeOutbound")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 
 // 内存缓存（AppSettingsService 依赖）
 builder.Services.AddMemoryCache();
@@ -72,7 +86,8 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<LlmRequestLogBackground>(),
         sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
         sp.GetRequiredService<IAssetStorage>(),
-        sp.GetRequiredService<IConfiguration>()));
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<IHttpContextAccessor>()));
 builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
     new LlmShadowComparisonWriter(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,

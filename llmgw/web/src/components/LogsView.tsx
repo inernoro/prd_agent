@@ -71,6 +71,9 @@ export function LogsView() {
   const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
   const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
   const [filterModelPoolId, setFilterModelPoolId] = useState(() => initialQueryValue('modelPoolId'));
+  const [filterServiceKeyId, setFilterServiceKeyId] = useState(() => initialQueryValue('serviceKeyId'));
+  const [filterClientCode, setFilterClientCode] = useState(() => initialQueryValue('clientCode'));
+  const [filterEnvironment, setFilterEnvironment] = useState(() => initialQueryValue('environment'));
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -82,6 +85,9 @@ export function LogsView() {
     sourceSystems: string[];
     ingressProtocols: string[];
     modelPolicies: string[];
+    serviceKeyIds: string[];
+    clientCodes: string[];
+    environments: string[];
   }>({
     models: [],
     statuses: [],
@@ -92,6 +98,9 @@ export function LogsView() {
     sourceSystems: [],
     ingressProtocols: [],
     modelPolicies: [],
+    serviceKeyIds: [],
+    clientCodes: [],
+    environments: [],
   });
   const [metaError, setMetaError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -124,6 +133,9 @@ export function LogsView() {
     setFilterModelPoolId(query.get('modelPoolId') ?? '');
     setFilterStatus(query.get('status') ?? '');
     setFilterAppCaller(query.get('appCallerCode') ?? '');
+    setFilterServiceKeyId(query.get('serviceKeyId') ?? '');
+    setFilterClientCode(query.get('clientCode') ?? '');
+    setFilterEnvironment(query.get('environment') ?? '');
   }, [location.search]);
 
   const range = useMemo(() => {
@@ -149,8 +161,11 @@ export function LogsView() {
       requestId: filterRequestId.trim() || undefined,
       sessionId: filterSessionId.trim() || undefined,
       modelPoolId: filterModelPoolId.trim() || undefined,
+      serviceKeyId: filterServiceKeyId || undefined,
+      clientCode: filterClientCode || undefined,
+      environment: filterEnvironment || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId],
+    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment],
   );
 
   useEffect(() => {
@@ -166,6 +181,9 @@ export function LogsView() {
           sourceSystems: res.data.sourceSystems ?? [],
           ingressProtocols: res.data.ingressProtocols ?? [],
           modelPolicies: res.data.modelPolicies ?? [],
+          serviceKeyIds: res.data.serviceKeyIds ?? [],
+          clientCodes: res.data.clientCodes ?? [],
+          environments: res.data.environments ?? [],
         });
         setMetaError(null);
       } else {
@@ -309,12 +327,9 @@ export function LogsView() {
         );
       case 'app':
         return (
-          <span
-            className="lg-truncate"
-            style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}
-            title={it.appCallerCode || ''}
-          >
-            {it.appCallerCodeDisplayName || it.appCallerCode || DASH}
+          <span style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: 2 }} title={`调用身份：${it.clientCode || '历史未标注'}；业务用途：${it.appCallerCode || '未标注'}`}>
+            <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }}>{it.clientCode || DASH}</span>
+            <span className="lg-truncate" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{it.appCallerCodeDisplayName || it.appCallerCode || DASH}</span>
           </span>
         );
       case 'input':
@@ -585,6 +600,9 @@ export function LogsView() {
     filterRequestId.trim(),
     filterSessionId.trim(),
     filterModelPoolId.trim(),
+    filterServiceKeyId,
+    filterClientCode,
+    filterEnvironment,
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -601,6 +619,9 @@ export function LogsView() {
     setFilterRequestId('');
     setFilterSessionId('');
     setFilterModelPoolId('');
+    setFilterServiceKeyId('');
+    setFilterClientCode('');
+    setFilterEnvironment('');
   };
 
   function SummaryTile({
@@ -738,6 +759,18 @@ export function LogsView() {
           background: 'var(--bg-surface)',
         }}
       >
+          <select value={filterClientCode} onChange={(e) => setFilterClientCode(e.target.value)} style={selectStyle}>
+            <option value="">全部调用方</option>
+            {meta.clientCodes.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select value={filterEnvironment} onChange={(e) => setFilterEnvironment(e.target.value)} style={selectStyle}>
+            <option value="">全部环境</option>
+            {meta.environments.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select value={filterServiceKeyId} onChange={(e) => setFilterServiceKeyId(e.target.value)} style={selectStyle}>
+            <option value="">全部接入密钥</option>
+            {meta.serviceKeyIds.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
           <select value={filterSourceSystem} onChange={(e) => setFilterSourceSystem(e.target.value)} style={selectStyle}>
             <option value="">全部来源系统</option>
             {meta.sourceSystems.map((s) => (

@@ -77,14 +77,29 @@ def slugify(s):
 
 
 def build_meta(report_id, now, reviewer, a, preview):
+    generated_at = now.isoformat(timespec="seconds")
     return (
         "\n\n<!-- acceptance-meta\n"
         "type: acceptance-report\nstandard: MAP-Acceptance-v2\n"
-        f"report_id: {report_id}\ndate: {now.strftime('%Y-%m-%d')}\n"
+        f"report_id: {report_id}\ndate: {generated_at}\n"
         f"reviewer: {reviewer}\nverdict: {a.verdict}\ntier: {a.tier}\n"
         f"target_ref: {a.target}\npreview_url: {preview}\n"
         f"branch: {a.branch}\ncommit: {a.commit}\n-->\n"
     )
+
+
+def ensure_report_time(body, generated_at):
+    """Every acceptance report must render the current system time.
+
+    Authors may still provide their own time block. If they do not, inject a
+    visible section before Verdict so CDS/HTML/doc-store outputs are all covered.
+    """
+    text = body or ""
+    if re.search(r"^##\s*(验收时间|报告时间|生成时间)\s*$", text, re.M):
+        return text
+    if re.search(r"\|\s*(验收时间|报告时间|生成时间)\s*\|", text):
+        return text
+    return f"## 验收时间\n\n{generated_at}\n\n" + text
 
 
 def repo_root():
@@ -214,7 +229,7 @@ def _html_id(text, fallback):
 
 
 GITHUB_COMMIT_BASE = "https://github.com/inernoro/prd_agent/commit/"
-METHOD_FOLDER_BASE = "https://cds.miduo.org/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
+METHOD_FOLDER_BASE = "/reports?project=prd-agent&folder=b01a432f519541dbbd387286018e6721&report="
 METHOD_DOC_ENTERPRISE = METHOD_FOLDER_BASE + "0efbef7c40fc4d94a8b14e60113524a9"
 METHOD_DOC_DAILY = METHOD_FOLDER_BASE + "cf097d19b4b649ad92b15546bf13d996"
 METHOD_DOC_SSOT = METHOD_FOLDER_BASE + "3992cb728a9c4a23958b4ec92933f59b"
@@ -393,9 +408,10 @@ def _render_table(rows):
     for row in body_rows:
         row_text = " ".join(row)
         cls = []
-        if re.search(r"\bP0\b|未通过|\bfail\b|阻断", row_text, re.I):
+        severity = _severity_from_text(row_text)
+        if severity == "P0":
             cls.append("row-fail")
-        elif re.search(r"P1|有缺陷|conditional|风险", row_text, re.I):
+        elif severity in {"P1", "P2"} or re.search(r"P1|有缺陷|conditional|风险", _strip_negated_problem_phrases(row_text), re.I):
             cls.append("row-risk")
         elif re.search(r"未覆盖|not-run|未深测|弱相关|无关", row_text, re.I):
             cls.append("row-gap")
@@ -423,15 +439,32 @@ def _figure_src_map(markdown):
     return srcs
 
 
+NEGATED_PROBLEM_PAT = re.compile(
+    r"(?:无|没有|未发现|未出现|未再|不再|未检测到|不存在|没有发现|没有检测到)"
+    r"[^。；;，,\n]{0,32}"
+    r"(?:撑破|挤出|超出|溢出|错位|遮挡|阻断|失败|错误|空白|崩溃|不通过|未通过)",
+    re.I,
+)
+
+
+def _strip_negated_problem_phrases(text):
+    """Remove negative success statements before severity extraction.
+
+    Example: "没有文字挤出或面板撑破" is a pass statement, not a P0.
+    """
+    return NEGATED_PROBLEM_PAT.sub(" ", text or "")
+
+
 def _severity_from_text(text):
     raw = text or ""
-    if re.search(r"\bP0\b|阻断|未通过|\bfail\b|撑破", raw, re.I):
+    stripped = _strip_negated_problem_phrases(raw)
+    if re.search(r"\bP0\b|阻断|未通过|不通过|\bfail\b|撑破|挤出|超出|溢出", stripped, re.I):
         return "P0"
-    if re.search(r"\bP1\b|必修|高风险", raw, re.I):
+    if re.search(r"\bP1\b|必修|高风险", stripped, re.I):
         return "P1"
-    if re.search(r"\bP2\b|有缺陷|风险|conditional|弱相关", raw, re.I):
+    if re.search(r"\bP2\b|有缺陷|风险|conditional|弱相关", stripped, re.I):
         return "P2"
-    if re.search(r"\bP3\b|优化建议", raw, re.I):
+    if re.search(r"\bP3\b|优化建议", stripped, re.I):
         return "P3"
     return ""
 
@@ -588,6 +621,26 @@ def markdown_to_html(markdown):
     return "\n".join(out) + (meta or "")
 
 
+def _decorate_problem_figures(body_html, problem_anchors):
+    """Stamp real failed evidence images only.
+
+    Pass evidence may mention "no overflow" or "no breakage" in captions; those
+    must not turn red. Failure styling is driven by defect rows or automated
+    warnings mapped to anchors.
+    """
+    for anchor, severity in (problem_anchors or {}).items():
+        if severity not in {"P0", "P1", "P2"}:
+            continue
+        marker = f'<span id="{anchor}" class="figure-anchor"></span>'
+        if marker in body_html:
+            body_html = body_html.replace(
+                marker,
+                marker + '<div class="figure-fail-banner" aria-label="验收失败">验收失败</div>',
+                1,
+            )
+    return body_html
+
+
 def build_interactive_html(title, verdict, markdown_content, manifest, flavor="acceptance"):
     """交互式验收 HTML（模板契约 interactive-html-v2 不变，皮肤为「米多刊系」检验档案风）。
 
@@ -612,7 +665,6 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
-    body_html = markdown_to_html(markdown_content)
     figure_srcs = _figure_src_map(markdown_content)
     problem_items = _collect_problem_items(markdown_content, manifest)
     problem_anchors = {
@@ -620,6 +672,7 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
         for it in problem_items
         if it.get("anchor")
     }
+    body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
         "conditional": ("有条件通过", "conditional"),
@@ -648,7 +701,7 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
             thumb = '<div class="thumb-placeholder">无缩略图</div>'
             nav_thumb = '<div class="nav-thumb thumb-placeholder">无图</div>'
         warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
-        severity = problem_anchors.get(anchor) or _severity_from_text(" ".join([shot.get("caption") or "", warnings]))
+        severity = problem_anchors.get(anchor) or _severity_from_text(warnings)
         status_class = _severity_class(severity)
         nav_class = f' class="is-{status_class}"' if status_class else ""
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
@@ -826,6 +879,10 @@ tr.filter-empty-row td{{background:rgba(33,29,24,.035);color:var(--ink-3);font-s
 figure{{margin:18px 0 28px}}
 img{{max-width:100%;height:auto;border:1.5px solid var(--ink);border-radius:3px;display:block;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 figcaption{{color:var(--ink-3);font-size:12.5px;margin-top:8px;line-height:1.7}}
+.figure-fail-banner{{display:none}}
+.figure-fail-banner + p{{position:relative;display:inline-block;max-width:100%}}
+.figure-fail-banner + p::before{{content:"验收失败";position:absolute;left:10px;top:10px;z-index:2;padding:5px 10px;background:var(--fail);color:#fff7ee;border:2px solid #fff7ee;border-radius:2px;font-family:var(--mono);font-size:12px;font-weight:800;letter-spacing:.08em;box-shadow:2px 2px 0 rgba(33,29,24,.45)}}
+.figure-fail-banner + p img{{border:4px solid var(--fail);box-shadow:0 0 0 3px rgba(180,35,24,.20),4px 4px 0 rgba(33,29,24,.10)}}
 .section-toggle{{float:right;font-size:11px;padding:3px 8px}}
 .figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}
 :target{{outline:3px solid var(--accent);outline-offset:3px;border-radius:3px}}
@@ -991,14 +1048,14 @@ CDS_REPORT_CAP = 10 * 1024 * 1024  # 与 cds/src/routes/reports.ts MAX_CONTENT_B
 def _cds_base():
     host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
     if not host:
-        raise RuntimeError("CDS_HOST 未设置（export CDS_HOST=cds.miduo.org）")
+        raise RuntimeError("CDS_HOST 未设置（export CDS_HOST=<cds-host>）")
     if not host.startswith("http"):
         host = "https://" + host
     return host
 
 
 def _cds_auth_headers():
-    """与 cdscli._auth_headers 一致：项目级 cdsp_* 优先，否则全局 AI_ACCESS_KEY。"""
+    """与 cdscli._auth_headers 一致：项目级 key 优先，否则全局 AI_ACCESS_KEY。"""
     pk = os.environ.get("CDS_PROJECT_KEY", "").strip()
     if pk:
         return ["-H", f"X-AI-Access-Key: {pk}"]
@@ -1132,7 +1189,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
 
 def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
     api = cfg["auth"]["api"]
-    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
+    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=<scoped-agent-key>（带 document-store:write scope 的最小权限长效 Key），
     # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
     # 正式环境临时兜底可设 MAP_DOC_STORE_JWT=ey...（登录态 Bearer）。
     # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
@@ -1817,8 +1874,8 @@ def main():
     # 职责分离（2026-06-25）：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。
     # local 仍作离线兜底；旧 doc-store 仅在 config 显式保留时走（向后兼容，不推荐）。
     mode = cfg.get("report", {}).get("mode", "cds")
-    now = datetime.datetime.now()
-    dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M"))
+    now = datetime.datetime.now().astimezone()
+    dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
     # 命名固定结构：项目 · 模块 · 功能 · 操作方式 · 验收报告（用户定，2026-05-27）。
     # verdict（通过/不通过）不进标题——走 tags 标记，不靠改名表达状态。空段自动跳过。
@@ -1827,7 +1884,7 @@ def main():
     # 标签：状态 + 操作方式 + 档位（取代旧的「标题前缀 [通过]」）
     tags = [t for t in [verdict_cn, a.type, a.tier] if (t or "").strip()]
     report_id = f"acc-{cfg['project']}-{now.strftime('%Y%m%d%H%M')}-{slugify(a.target)}"
-    body = open(a.report_md, encoding="utf-8").read().lstrip()
+    body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
     manifest = json.load(open(a.manifest))
 
     # 准入校验：不达标直接拒收，不写库（--force 越权但告警）

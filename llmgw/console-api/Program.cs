@@ -18,8 +18,13 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
+using PrdAgent.LlmGw.Costs;
+using PrdAgent.LlmGw.Governance;
+using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
+using PrdAgent.LlmGw.Organization;
+using PrdAgent.LlmGw.Provisioning;
 using PrdAgent.LlmGw.Security;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -124,6 +129,10 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
                 && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.ConfigWrite)));
+    options.AddPolicy("AppCallerWrite", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
+                && TenantAccess.HasPermission(ctx.User, LlmGwPermissions.AppCallerWrite)));
     options.AddPolicy("ServiceKeyWrite", policy =>
         policy.RequireAuthenticatedUser()
             .RequireAssertion(ctx => !ctx.User.HasClaim(c => c.Type == "mcp" && c.Value == "1")
@@ -189,12 +198,17 @@ var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
 var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pools");
+var gwModelPoolTypes = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool_types");
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
 var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
+var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_reconciliations");
+var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
+var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
+var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -218,7 +232,26 @@ await serviceKeys.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("CreatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_created" }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ClientCode").Ascending("Environment").Ascending("Purpose"),
+        // 存量库已有不含 Purpose 的同名索引；用途扩维必须用新名字做纯加法迁移。
+        new CreateIndexOptions { Name = "idx_llmgw_service_key_tenant_workload_purpose" }),
 });
+await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("TeamId")
+        .Ascending("ServiceKeyId")
+        .Ascending("ClientCode")
+        .Ascending("Environment")
+        .Descending("StartedAt"),
+    new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_workload_started" }));
+await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("Provider")
+        .Ascending("ProviderRequestId"),
+    new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }));
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -228,6 +261,50 @@ await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
         Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
         new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
 });
+await costReconciliations.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ExternalRecordId"),
+        new CreateIndexOptions { Name = "uniq_llmgw_cost_tenant_provider_external", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("ProviderRequestId"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_cost_tenant_provider_request",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Granularity", "request"),
+                Builders<BsonDocument>.Filter.Type("ProviderRequestId", BsonType.String)),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("ServiceKeyId").Descending("BilledAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_cost_tenant_key_billed" }),
+});
+await costImportScopeLocks.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Provider").Ascending("TeamId"),
+        new CreateIndexOptions { Name = "uniq_llmgw_cost_import_lock_tenant_provider_team", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_cost_import_scope_locks", ExpireAfter = TimeSpan.Zero }),
+});
+await legacyKeyCutovers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId"),
+    new CreateIndexOptions { Name = "uniq_llmgw_legacy_cutover_tenant", Unique = true }));
+await legacyKeyUsage.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys
+            .Ascending("TenantId")
+            .Ascending("SourceSystem")
+            .Ascending("AppCallerCode")
+            .Ascending("IngressProtocol"),
+        new CreateIndexOptions { Name = "uniq_llmgw_legacy_usage_tenant_identity", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("LastSeenAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_legacy_usage_tenant_seen" }),
+});
 await promptPolicies.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -236,6 +313,56 @@ await promptPolicies.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("TeamId").Ascending("UpdatedAt"),
         new CreateIndexOptions { Name = "idx_llmgw_prompt_policy_tenant_team_updated" }),
+});
+await gwAppCallers.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("AppCallerCode")
+        .Ascending("RequestType"),
+    new CreateIndexOptions<BsonDocument>
+    {
+        Name = "uniq_llmgw_app_callers_tenant_code_request_type",
+        Unique = true,
+        Collation = new Collation("en", strength: CollationStrength.Secondary),
+    }));
+await gwModelPools.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Code"),
+    new CreateIndexOptions<BsonDocument>
+    {
+        Name = "uniq_llmgw_managed_pool_tenant_code",
+        Unique = true,
+        PartialFilterExpression = Builders<BsonDocument>.Filter.Eq("ManagedByRegistry", true),
+    }));
+await gwModelPoolTypes.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Code"),
+    new CreateIndexOptions { Name = "uniq_llmgw_pool_type_tenant_code", Unique = true }));
+await gwPlatforms.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("NameNormalized"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_platform_tenant_name_normalized",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("NameNormalized", BsonType.String),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("UpdatedAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_platform_tenant_updated" }),
+});
+await gwModels.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PlatformId").Ascending("ModelNameNormalized"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_model_tenant_platform_name_normalized",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("ModelNameNormalized", BsonType.String),
+        }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PlatformId").Descending("UpdatedAt"),
+        new CreateIndexOptions { Name = "idx_llmgw_model_tenant_platform_updated" }),
 });
 
 app.Use(async (http, next) =>
@@ -249,8 +376,10 @@ app.Use(async (http, next) =>
 
     var tenantAccess = await TenantAccess.ResolveAsync(
         http,
+        users,
         memberships,
         tenants,
+        teams,
         CancellationToken.None);
     if (tenantAccess is null)
     {
@@ -418,6 +547,11 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "账号没有可用的租户成员关系"), jsonOptions, 403);
     }
 
+    await users.UpdateOneAsync(
+        Builders<LlmGwUser>.Filter.And(
+            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+            Builders<LlmGwUser>.Filter.Exists(nameof(LlmGwUser.SecurityVersion), false)),
+        Builders<LlmGwUser>.Update.Set(u => u.SecurityVersion, 1));
     await users.UpdateOneAsync(u => u.Id == user.Id,
         Builders<LlmGwUser>.Update.Set(u => u.LastLoginAt, DateTime.UtcNow));
     await WriteLoginAuditAsync(loginAudits, http, tenant.Id, username, user.Id, true, null);
@@ -446,9 +580,9 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < 6)
+    if (newPwd.Length < 12)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 6 位"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 12 位"), jsonOptions);
     }
     if (newPwd == oldPwd)
     {
@@ -483,13 +617,24 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     }
 
     var wasMustChangePassword = user.MustChangePassword;
+    var wasPasswordChangedByUser = user.PasswordChangedByUser;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
         .Set(u => u.PasswordChangedByUser, true)
+        .Inc(u => u.SecurityVersion, 1)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
-    await users.UpdateOneAsync(u => u.Id == user.Id, update);
+    var changedUser = await users.FindOneAndUpdateAsync(
+        Builders<LlmGwUser>.Filter.And(
+            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+            Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
+            Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
+            Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
+        update,
+        new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    if (changedUser is null)
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("PASSWORD_CHANGE_CONFLICT", "账号口令已被其他操作更新，请重新登录"), jsonOptions, 409);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -502,22 +647,21 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         changes: new BsonDocument
         {
             { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
-            { "passwordChangedByUser", new BsonDocument { { "from", user.PasswordChangedByUser }, { "to", true } } },
+            { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
         });
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
-    user.MustChangePassword = false;
     var tenantAccess = TenantAccess.GetRequired(http);
-    var membership = await memberships.Find(x => x.Id == tenantAccess.MembershipId && x.TenantId == tenantAccess.TenantId && x.UserId == user.Id && x.Status == "active").FirstOrDefaultAsync();
+    var membership = await memberships.Find(x => x.Id == tenantAccess.MembershipId && x.TenantId == tenantAccess.TenantId && x.UserId == changedUser.Id && x.Status == "active").FirstOrDefaultAsync();
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership);
+    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership);
     var data = new ChangePasswordResultDto
     {
         Token = token,
-        Username = user.Username,
-        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        Username = changedUser.Username,
+        DisplayName = string.IsNullOrEmpty(changedUser.DisplayName) ? changedUser.Username : changedUser.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
         Tenant = ToTenantSession(tenant, membership),
     };
@@ -600,13 +744,27 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         || slug.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '-')))
         return Json(ApiEnvelope<object>.Fail("INVALID_TENANT", "名称需为 2-120 字符，slug 仅支持 2-64 位小写字母、数字和连字符"), jsonOptions, 400);
 
+    var normalizedSlug = slug.ToUpperInvariant();
+    var existingTenant = await tenants.Find(x => x.NormalizedSlug == normalizedSlug).FirstOrDefaultAsync();
+    if (existingTenant is not null)
+    {
+        var replay = await FindTenantCreationReplayAsync(teams, memberships, existingTenant, access.UserId);
+        if (replay is not null)
+        {
+            await EnsureGatewayModelPoolTypesAsync(
+                gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
+            return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+        }
+        return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+    }
+
     var now = DateTime.UtcNow;
     var tenant = new LlmGwTenant
     {
         Name = name,
         NormalizedName = name.ToUpperInvariant(),
         Slug = slug,
-        NormalizedSlug = slug.ToUpperInvariant(),
+        NormalizedSlug = normalizedSlug,
         CreatedAt = now,
         UpdatedAt = now,
     };
@@ -635,12 +793,43 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         await users.UpdateOneAsync(x => x.Id == access.UserId,
             Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, tenant.Id).Set(x => x.UpdatedAt, now));
     }
-    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    catch (Exception ex)
     {
-        await tenants.DeleteOneAsync(x => x.Id == tenant.Id);
-        await teams.DeleteOneAsync(x => x.Id == team.Id && x.TenantId == tenant.Id);
-        await memberships.DeleteOneAsync(x => x.Id == membership.Id && x.TenantId == tenant.Id);
-        return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+        await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
+        if (ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey })
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                var winner = await tenants.Find(x => x.NormalizedSlug == normalizedSlug && x.Status == "active").FirstOrDefaultAsync();
+                if (winner is not null)
+                {
+                    var replay = await FindTenantCreationReplayAsync(teams, memberships, winner, access.UserId);
+                    if (replay is not null)
+                    {
+                        await EnsureGatewayModelPoolTypesAsync(
+                            gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
+                        return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
+                    }
+                }
+                await Task.Delay(25);
+            }
+            return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
+        }
+        throw;
+    }
+    try
+    {
+        await EnsureGatewayModelPoolTypesAsync(
+            gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenant.Id, internalTenantId, appendModels: false);
+    }
+    catch
+    {
+        await gwModelPoolTypes.DeleteManyAsync(Builders<BsonDocument>.Filter.Eq("TenantId", tenant.Id));
+        await gwModelPools.DeleteManyAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.Id),
+            Builders<BsonDocument>.Filter.Eq("ManagedByRegistry", true)));
+        await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
+        throw;
     }
     await WriteOperationAuditAsync(operationAudits, http, "tenant.create", "llmgw_tenant", tenant.Id, tenant.Name, true, null,
         new BsonDocument { { "slug", tenant.Slug } });
@@ -651,9 +840,17 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
 {
     var access = TenantAccess.GetRequired(http);
     var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
-    var tenantTeams = await teams.Find(x => x.TenantId == access.TenantId)
+    var canReadEntireOrganization = access.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin;
+    var teamFilter = Builders<LlmGwTeam>.Filter.Eq(x => x.TenantId, access.TenantId);
+    var membershipFilter = Builders<LlmGwMembership>.Filter.Eq(x => x.TenantId, access.TenantId);
+    if (!canReadEntireOrganization)
+    {
+        teamFilter &= Builders<LlmGwTeam>.Filter.In(x => x.Id, access.TeamIds);
+        membershipFilter &= Builders<LlmGwMembership>.Filter.AnyIn(x => x.TeamIds, access.TeamIds);
+    }
+    var tenantTeams = await teams.Find(teamFilter)
         .SortBy(x => x.Name).ToListAsync();
-    var tenantMemberships = await memberships.Find(x => x.TenantId == access.TenantId)
+    var tenantMemberships = await memberships.Find(membershipFilter)
         .SortBy(x => x.CreatedAt).ToListAsync();
     var userIds = tenantMemberships.Select(x => x.UserId).Distinct(StringComparer.Ordinal).ToList();
     var tenantUsers = await users.Find(Builders<LlmGwUser>.Filter.In(x => x.Id, userIds)).ToListAsync();
@@ -669,7 +866,9 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
             username = userById.GetValueOrDefault(x.UserId)?.Username,
             displayName = userById.GetValueOrDefault(x.UserId)?.DisplayName,
             x.Role,
-            x.TeamIds,
+            teamIds = canReadEntireOrganization
+                ? x.TeamIds
+                : x.TeamIds.Where(teamId => access.TeamIds.Contains(teamId, StringComparer.Ordinal)).ToList(),
             x.Status,
             x.Version,
             x.CreatedAt,
@@ -708,6 +907,7 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
     var team = await teams.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
     if (team is null) return Json(ApiEnvelope<object>.Fail("TEAM_NOT_FOUND", "团队不存在"), jsonOptions, 404);
     var updates = new List<UpdateDefinition<LlmGwTeam>>();
+    string? nextStatus = null;
     if (body.Name is not null)
     {
         var name = body.Name.Trim();
@@ -719,6 +919,7 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
         var status = body.Status.Trim().ToLowerInvariant();
         if (status is not ("active" or "disabled")) return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "status 仅支持 active/disabled"), jsonOptions, 400);
         updates.Add(Builders<LlmGwTeam>.Update.Set(x => x.Status, status));
+        nextStatus = status;
     }
     if (updates.Count == 0) return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<LlmGwTeam>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
@@ -730,42 +931,115 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
     {
         return Json(ApiEnvelope<object>.Fail("TEAM_CONFLICT", "当前租户已存在同名团队"), jsonOptions, 409);
     }
-    await WriteOperationAuditAsync(operationAudits, http, "team.update", "llmgw_team", id, team.Name, true, null);
-    return Json(ApiEnvelope<object>.Ok(new { id, updated = true }), jsonOptions);
+    long invalidatedMemberships = 0;
+    long revokedServiceKeys = 0;
+    long disabledAppCallers = 0;
+    if (nextStatus == "disabled")
+    {
+        invalidatedMemberships = (await memberships.UpdateManyAsync(
+            x => x.TenantId == access.TenantId && x.TeamIds.Contains(id),
+            Builders<LlmGwMembership>.Update
+                .Inc(x => x.Version, 1)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow))).ModifiedCount;
+        revokedServiceKeys = (await serviceKeys.UpdateManyAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TeamId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true))),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("UpdatedAt", DateTime.UtcNow))).ModifiedCount;
+        disabledAppCallers = (await gwAppCallers.UpdateManyAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TeamId", id),
+                Builders<BsonDocument>.Filter.Ne("Status", "disabled"))),
+            Builders<BsonDocument>.Update
+                .Set("Status", "disabled")
+                .Set("UpdatedAt", DateTime.UtcNow))).ModifiedCount;
+    }
+    await WriteOperationAuditAsync(operationAudits, http, "team.update", "llmgw_team", id, team.Name, true, null,
+        new BsonDocument
+        {
+            { "status", nextStatus is null ? BsonNull.Value : nextStatus },
+            { "invalidatedMemberships", invalidatedMemberships },
+            { "revokedServiceKeys", revokedServiceKeys },
+            { "disabledAppCallers", disabledAppCallers },
+        });
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        updated = true,
+        invalidatedMemberships,
+        revokedServiceKeys,
+        disabledAppCallers,
+    }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberRequest body) =>
 {
     var access = TenantAccess.GetRequired(http);
-    var username = (body.Username ?? string.Empty).Trim();
+    var currentTenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
+    if (currentTenant is null)
+        return Json(ApiEnvelope<object>.Fail("TENANT_NOT_FOUND", "当前租户不存在"), jsonOptions, 404);
+    if (!MembershipPolicy.TryCanonicalizeUsername(currentTenant.Slug, body.Username ?? string.Empty, out var username))
+        return Json(ApiEnvelope<object>.Fail("INVALID_MEMBER", "账号短名需为 3-48 位小写字母、数字、点、下划线或连字符"), jsonOptions, 400);
     var role = (body.Role ?? LlmGwTenantRoles.Viewer).Trim().ToLowerInvariant();
     var teamIds = (body.TeamIds ?? []).Distinct(StringComparer.Ordinal).ToList();
-    if (username.Length is < 3 or > 80 || !LlmGwTenantRoles.All.Contains(role))
-        return Json(ApiEnvelope<object>.Fail("INVALID_MEMBER", "用户名或角色无效"), jsonOptions, 400);
+    if (!LlmGwTenantRoles.All.Contains(role))
+        return Json(ApiEnvelope<object>.Fail("INVALID_MEMBER", "角色无效"), jsonOptions, 400);
+    if (role == LlmGwTenantRoles.Developer && teamIds.Count == 0)
+        return Json(ApiEnvelope<object>.Fail("DEVELOPER_TEAM_REQUIRED", "Developer 至少需要一个团队"), jsonOptions, 400);
     if (role == LlmGwTenantRoles.Owner && access.Role != LlmGwTenantRoles.Owner)
         return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以授予 owner 角色"), jsonOptions, 403);
     if (teamIds.Count > 0 && await teams.CountDocumentsAsync(x => x.TenantId == access.TenantId && teamIds.Contains(x.Id) && x.Status == "active") != teamIds.Count)
         return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户的团队"), jsonOptions, 400);
 
     var memberUser = await users.Find(x => x.Username == username).FirstOrDefaultAsync();
-    if (memberUser is null)
+    if (memberUser is not null)
     {
-        var initialPassword = body.InitialPassword ?? string.Empty;
-        if (initialPassword.Length < 12)
-            return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
-        memberUser = new LlmGwUser
+        var existingMembership = await memberships.Find(x => x.TenantId == access.TenantId && x.UserId == memberUser.Id).FirstOrDefaultAsync();
+        if (existingMembership is not null)
         {
-            Username = username,
-            DisplayName = string.IsNullOrWhiteSpace(body.DisplayName) ? username : body.DisplayName.Trim(),
-            PasswordHash = PasswordHasher.Hash(initialPassword),
-            MustChangePassword = true,
-            TenantIds = new List<string> { access.TenantId },
-            DefaultTenantId = access.TenantId,
-        };
+            if (MembershipMatches(existingMembership, role, teamIds))
+            {
+                var completedCreateAudit = await operationAudits.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+                        Builders<BsonDocument>.Filter.Eq("Action", "membership.create"),
+                        Builders<BsonDocument>.Filter.Eq("TargetId", existingMembership.Id)))
+                    .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+                    .FirstOrDefaultAsync();
+                if (MembershipPolicy.AllowsIdempotentReplay(
+                        completedCreateAudit?.AsNullableString("State"),
+                        completedCreateAudit?.AsNullableBool("Success") == true))
+                    return Json(ApiEnvelope<object>.Ok(new { existingMembership.Id, existingMembership.UserId, memberUser.Username, existingMembership.Role, existingMembership.TeamIds, idempotentReplay = true }), jsonOptions);
+                return Json(ApiEnvelope<object>.Fail(
+                    "MEMBERSHIP_PROVISIONING_INCOMPLETE",
+                    "成员关系已写入但审计尚未完成，请稍后重试或联系管理员检查 pending 审计"), jsonOptions, 409);
+            }
+            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "用户已是当前租户成员，现有角色或团队范围与本次请求不同"), jsonOptions, 409);
+        }
+        return Json(ApiEnvelope<object>.Fail("USERNAME_UNAVAILABLE", "该用户名不可用于创建新成员，请换一个租户专用用户名"), jsonOptions, 409);
+    }
+
+    var initialPassword = body.InitialPassword ?? string.Empty;
+    if (initialPassword.Length < 12)
+        return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
+    memberUser = new LlmGwUser
+    {
+        Username = username,
+        DisplayName = string.IsNullOrWhiteSpace(body.DisplayName) ? username : body.DisplayName.Trim(),
+        PasswordHash = PasswordHasher.Hash(initialPassword),
+        MustChangePassword = true,
+        TenantIds = new List<string> { access.TenantId },
+        DefaultTenantId = access.TenantId,
+    };
+    try
+    {
         await users.InsertOneAsync(memberUser);
     }
-    if (await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.UserId == memberUser.Id) > 0)
-        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_CONFLICT", "用户已是当前租户成员"), jsonOptions, 409);
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<object>.Fail("USERNAME_UNAVAILABLE", "该账号已被占用，请换一个账号短名"), jsonOptions, 409);
+    }
 
     var membership = new LlmGwMembership
     {
@@ -774,11 +1048,49 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         Role = role,
         TeamIds = teamIds,
     };
-    await memberships.InsertOneAsync(membership);
-    await users.UpdateOneAsync(x => x.Id == memberUser.Id,
-        Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, access.TenantId).Set(x => x.UpdatedAt, DateTime.UtcNow));
-    await WriteOperationAuditAsync(operationAudits, http, "membership.create", "llmgw_membership", membership.Id, memberUser.Username, true, null,
-        new BsonDocument { { "role", membership.Role }, { "userId", membership.UserId } });
+    string requiredAuditId;
+    try
+    {
+        requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            "membership.create",
+            "llmgw_membership",
+            membership.Id,
+            memberUser.Username,
+            new BsonDocument
+            {
+                { "role", membership.Role },
+                { "userId", membership.UserId },
+                { "teamIds", new BsonArray(membership.TeamIds) },
+            });
+    }
+    catch
+    {
+        await users.DeleteOneAsync(x => x.Id == memberUser.Id && x.Username == memberUser.Username);
+        throw;
+    }
+
+    try
+    {
+        await memberships.InsertOneAsync(membership);
+        await users.UpdateOneAsync(x => x.Id == memberUser.Id,
+            Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, access.TenantId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+    }
+    catch
+    {
+        await ProvisioningCompensation.RollbackMemberCreationAsync(
+            users,
+            memberships,
+            access.TenantId,
+            memberUser.Id,
+            membership.Id,
+            createdUser: true,
+            hadTenantDirectoryEntry: false);
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+        throw;
+    }
+    await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
     return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.UserId, memberUser.Username, membership.Role, membership.TeamIds }), jsonOptions, 201);
 }).RequireAuthorization("OrganizationWrite");
 
@@ -787,6 +1099,10 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
     var access = TenantAccess.GetRequired(http);
     var membership = await memberships.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
     if (membership is null) return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_NOT_FOUND", "成员关系不存在"), jsonOptions, 404);
+    if (body.ExpectedVersion != membership.Version)
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
+    if (membership.UserId == access.UserId)
+        return Json(ApiEnvelope<object>.Fail("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", "不能在当前会话中修改自己的成员关系，请由另一位管理员操作"), jsonOptions, 409);
     var role = body.Role?.Trim().ToLowerInvariant();
     var status = body.Status?.Trim().ToLowerInvariant();
     if (role is not null && !LlmGwTenantRoles.All.Contains(role)) return Json(ApiEnvelope<object>.Fail("INVALID_ROLE", "角色无效"), jsonOptions, 400);
@@ -794,25 +1110,131 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
     if ((membership.Role == LlmGwTenantRoles.Owner || role == LlmGwTenantRoles.Owner)
         && access.Role != LlmGwTenantRoles.Owner)
         return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以修改 owner 成员关系"), jsonOptions, 403);
-    var removesOwner = membership.Role == LlmGwTenantRoles.Owner
-        && (role is not null && role != LlmGwTenantRoles.Owner || status == "disabled");
-    if (removesOwner && await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.Role == LlmGwTenantRoles.Owner && x.Status == "active") <= 1)
-        return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
-    if (body.TeamIds is not null)
+    var requestedTeamIds = body.TeamIds?.Distinct(StringComparer.Ordinal).ToList();
+    var nextTeamIds = requestedTeamIds ?? membership.TeamIds;
+    if (requestedTeamIds is not null
+        && requestedTeamIds.Count > 0
+        && await teams.CountDocumentsAsync(x => x.TenantId == access.TenantId && requestedTeamIds.Contains(x.Id) && x.Status == "active") != requestedTeamIds.Count)
+        return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户或已停用的团队"), jsonOptions, 400);
+    var activeNextTeamIds = nextTeamIds.Count == 0
+        ? new HashSet<string>(StringComparer.Ordinal)
+        : (await teams.Find(x => x.TenantId == access.TenantId && nextTeamIds.Contains(x.Id) && x.Status == "active")
+            .Project(x => x.Id)
+            .ToListAsync()).ToHashSet(StringComparer.Ordinal);
+    if (!MembershipPolicy.HasUsableDeveloperScope(role ?? membership.Role, nextTeamIds, activeNextTeamIds))
+        return Json(ApiEnvelope<object>.Fail("DEVELOPER_TEAM_REQUIRED", "Developer 至少需要一个有效团队"), jsonOptions, 400);
+    var removesOwner = MembershipPolicy.RemovesActiveOwner(membership.Role, membership.Status, role, status);
+    var ownerMutationToken = removesOwner
+        ? await TryAcquireTenantOwnerMutationLockAsync(tenants, access.TenantId)
+        : null;
+    if (removesOwner && ownerMutationToken is null)
+        return Json(ApiEnvelope<object>.Fail("ORGANIZATION_UPDATE_BUSY", "另一个 owner 变更正在执行，请重试"), jsonOptions, 409);
+    try
     {
-        var teamIds = body.TeamIds.Distinct(StringComparer.Ordinal).ToList();
-        if (teamIds.Count > 0 && await teams.CountDocumentsAsync(x => x.TenantId == access.TenantId && teamIds.Contains(x.Id) && x.Status == "active") != teamIds.Count)
-            return Json(ApiEnvelope<object>.Fail("INVALID_TEAM", "包含不属于当前租户的团队"), jsonOptions, 400);
-        membership.TeamIds = teamIds;
+        if (removesOwner && await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.Role == LlmGwTenantRoles.Owner && x.Status == "active") <= 1)
+            return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
+        var previousRole = membership.Role;
+        var previousStatus = membership.Status;
+        var previousTeamIds = membership.TeamIds.ToList();
+        if (requestedTeamIds is not null) membership.TeamIds = requestedTeamIds;
+        if (role is not null) membership.Role = role;
+        if (status is not null) membership.Status = status;
+        var previousVersion = body.ExpectedVersion;
+        membership.Version++;
+        membership.UpdatedAt = DateTime.UtcNow;
+        var requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            "membership.update",
+            "llmgw_membership",
+            membership.Id,
+            membership.UserId,
+            new BsonDocument
+            {
+                { "beforeRole", previousRole },
+                { "role", membership.Role },
+                { "beforeStatus", previousStatus },
+                { "status", membership.Status },
+                { "beforeTeamIds", new BsonArray(previousTeamIds) },
+                { "teamIds", new BsonArray(membership.TeamIds) },
+                { "beforeVersion", previousVersion },
+                { "version", membership.Version },
+            });
+        ReplaceOneResult replaced;
+        try
+        {
+            replaced = await memberships.ReplaceOneAsync(
+                x => x.Id == id && x.TenantId == access.TenantId && x.Version == previousVersion,
+                membership);
+        }
+        catch
+        {
+            await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+            throw;
+        }
+        if (replaced.ModifiedCount != 1)
+        {
+            await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "version_conflict");
+            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
+        }
+        await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
+        return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version }), jsonOptions);
     }
-    if (role is not null) membership.Role = role;
-    if (status is not null) membership.Status = status;
-    membership.Version++;
-    membership.UpdatedAt = DateTime.UtcNow;
-    await memberships.ReplaceOneAsync(x => x.Id == id && x.TenantId == access.TenantId, membership);
-    await WriteOperationAuditAsync(operationAudits, http, "membership.update", "llmgw_membership", membership.Id, membership.UserId, true, null,
-        new BsonDocument { { "role", membership.Role }, { "status", membership.Status }, { "version", membership.Version } });
-    return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version }), jsonOptions);
+    finally
+    {
+        if (ownerMutationToken is not null)
+            await ReleaseTenantOwnerMutationLockAsync(tenants, access.TenantId, ownerMutationToken);
+    }
+}).RequireAuthorization("OrganizationWrite");
+
+app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var current = await memberships.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
+    if (current is null)
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_NOT_FOUND", "成员关系不存在"), jsonOptions, 404);
+    if (current.Role == LlmGwTenantRoles.Owner && access.Role != LlmGwTenantRoles.Owner)
+        return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以强制 owner 重新登录"), jsonOptions, 403);
+    if (current.UserId == access.UserId)
+        return Json(ApiEnvelope<object>.Fail("SELF_SESSION_INVALIDATION_FORBIDDEN", "不能强制当前会话重新登录，请使用退出登录"), jsonOptions, 409);
+
+    var requiredAuditId = await BeginRequiredOperationAuditAsync(
+        operationAudits,
+        http,
+        "membership.invalidate_sessions",
+        "llmgw_membership",
+        current.Id,
+        current.UserId,
+        new BsonDocument
+        {
+            { "beforeVersion", current.Version },
+            { "version", current.Version + 1 },
+        });
+    LlmGwMembership? updated;
+    try
+    {
+        updated = await memberships.FindOneAndUpdateAsync(
+            Builders<LlmGwMembership>.Filter.And(
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Id, id),
+                Builders<LlmGwMembership>.Filter.Eq(x => x.TenantId, access.TenantId),
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Version, current.Version)),
+            Builders<LlmGwMembership>.Update
+                .Inc(x => x.Version, 1)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+        throw;
+    }
+    if (updated is null)
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "version_conflict");
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请重试"), jsonOptions, 409);
+    }
+    await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
+    return Json(ApiEnvelope<object>.Ok(new { updated.Id, updated.UserId, updated.Version, invalidated = true }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
@@ -821,13 +1243,14 @@ app.MapGet("/gw/logs", async (
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -850,7 +1273,7 @@ app.MapGet("/gw/logs", async (
 app.MapGet("/gw/logs/meta", async (HttpContext http) =>
 {
     var since = DateTime.UtcNow.AddDays(-30);
-    var recent = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Gte("StartedAt", since));
+    var recent = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Gte("StartedAt", since));
 
     var modelsRaw = await logs.Distinct<string>("Model", recent).ToListAsync();
     var statusesRaw = await logs.Distinct<string>("Status", recent).ToListAsync();
@@ -861,6 +1284,9 @@ app.MapGet("/gw/logs/meta", async (HttpContext http) =>
     var sourceSystemsRaw = await logs.Distinct<string>("SourceSystem", recent).ToListAsync();
     var ingressProtocolsRaw = await logs.Distinct<string>("IngressProtocol", recent).ToListAsync();
     var modelPoliciesRaw = await logs.Distinct<string>("ModelPolicy", recent).ToListAsync();
+    var serviceKeyIdsRaw = await logs.Distinct<string>("ServiceKeyId", recent).ToListAsync();
+    var clientCodesRaw = await logs.Distinct<string>("ClientCode", recent).ToListAsync();
+    var environmentsRaw = await logs.Distinct<string>("Environment", recent).ToListAsync();
 
     return Json(ApiEnvelope<LogsMeta>.Ok(new LogsMeta
     {
@@ -873,6 +1299,9 @@ app.MapGet("/gw/logs/meta", async (HttpContext http) =>
         SourceSystems = NormalizeDistinct(sourceSystemsRaw, 80),
         IngressProtocols = NormalizeDistinct(ingressProtocolsRaw, 80),
         ModelPolicies = NormalizeDistinct(modelPoliciesRaw, 40),
+        ServiceKeyIds = NormalizeDistinct(serviceKeyIdsRaw, 300),
+        ClientCodes = NormalizeDistinct(clientCodesRaw, 300),
+        Environments = NormalizeDistinct(environmentsRaw, 20),
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -882,10 +1311,11 @@ app.MapGet("/gw/logs/timeseries", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -914,10 +1344,11 @@ app.MapGet("/gw/logs/summary", async (
     string? from, string? to, string? model, string? status,
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -1001,7 +1432,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
     }
 
     var fb = Builders<BsonDocument>.Filter;
-    var overviewFilter = TenantAccess.Filter(http, fb.And(
+    var overviewFilter = TenantAccess.FilterTeamScope(http, fb.And(
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
         fb.Ne("IsHealthProbe", true)));
@@ -1028,7 +1459,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Include("Enabled")
         .Include("ExpiresAt")
         .Include("LastUsedAt");
-    var keyDocs = await serviceKeys.Find(TenantAccess.Filter(http)).Project(keyProjection).ToListAsync();
+    var keyDocs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty)).Project(keyProjection).ToListAsync();
 
     var canReadRecentRequests = TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead);
     var recentRequests = new List<LlmLogListItem>();
@@ -1158,7 +1589,7 @@ app.MapGet("/gw/protocol-coverage", async (HttpContext http, string? releaseComm
     var logFilter = runtimeCommit is null
         ? Builders<BsonDocument>.Filter.Gte("StartedAt", since)
         : Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit);
-    logFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+    logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
         logFilter,
         Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
 
@@ -1171,7 +1602,9 @@ app.MapGet("/gw/protocol-coverage", async (HttpContext http, string? releaseComm
         .Include("StartedAt")
         .Include("DroppedParameters");
     var logDocs = await logs.Find(logFilter).Project(logProjection).ToListAsync();
-    var appCallerDocs = await gwAppCallers.Find(TenantAccess.Filter(http)).ToListAsync();
+    var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(
+        http,
+        Builders<BsonDocument>.Filter.Empty)).ToListAsync();
 
     var items = TargetIngressProtocols().Select(protocol =>
     {
@@ -1257,13 +1690,14 @@ app.MapGet("/gw/logs/sessions", async (
     string? from, string? to, int? page, int? pageSize,
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
-    string? runId, string? requestId, string? sessionId, string? modelPoolId) =>
+    string? runId, string? requestId, string? sessionId, string? modelPoolId,
+    string? serviceKeyId, string? clientCode, string? environment) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.Filter(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -1303,7 +1737,7 @@ app.MapGet("/gw/logs/sessions", async (
 // ───────────────────────────── 日志详情（需鉴权）─────────────────────────────
 app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var filter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var doc = await logs.Find(filter).FirstOrDefaultAsync();
     if (doc is null)
     {
@@ -1316,8 +1750,48 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 // 让网关控制台不只有日志，还能看模型池 / 平台 / 模型 / 影子比对。密钥字段一律不返回（只回 hasKey）。
 
 // 模型池列表
+app.MapGet("/gw/pool-types", async (HttpContext http) =>
+{
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var data = await BuildPoolTypesDataAsync(gwModelPoolTypes, gwModelPools, gwPlatforms, gwModels, gwModelExchanges, tenantId);
+    return Json(ApiEnvelope<PoolTypesData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 程序池类型初始化遵循“有则增加，无则不变”：只补缺失类型、缺失默认池和兼容的新成员。
+app.MapPost("/gw/pool-types/ensure", async (HttpContext http) =>
+{
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var ensured = await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: true);
+    var data = await BuildPoolTypesDataAsync(gwModelPoolTypes, gwModelPools, gwPlatforms, gwModels, gwModelExchanges, tenantId);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "pool_type.ensure_defaults",
+        targetType: "llmgw_model_pool_type",
+        targetId: "all",
+        targetName: "program pool types",
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "typesCreated", ensured.TypesCreated },
+            { "poolsCreated", ensured.PoolsCreated },
+            { "modelsAppended", ensured.ModelsAppended },
+            { "appendOnly", true },
+        });
+    return Json(ApiEnvelope<EnsurePoolTypesResult>.Ok(new EnsurePoolTypesResult
+    {
+        TypesCreated = ensured.TypesCreated,
+        PoolsCreated = ensured.PoolsCreated,
+        ModelsAppended = ensured.ModelsAppended,
+        Types = data,
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
     var fb = Builders<BsonDocument>.Filter;
     var filter = string.IsNullOrWhiteSpace(modelType) ? fb.Empty : fb.Eq("ModelType", modelType);
     var mapDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
@@ -1328,7 +1802,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
     var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
     var since = DateTime.UtcNow.AddHours(-hours);
-    var appCallerDocs = await gwAppCallers.Find(TenantAccess.Filter(http))
+    var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(http, fb.Empty))
         .Project(Builders<BsonDocument>.Projection
             .Include("_id")
             .Include("AppCallerCode")
@@ -1338,7 +1812,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
         .ToListAsync();
     var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
     var logStatsDocs = await logs.Aggregate()
-        .Match(TenantAccess.Filter(http, logFilter))
+        .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
         {
             { "_id", "$ModelPoolId" },
@@ -1357,9 +1831,17 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var logStatsByPool = logStatsDocs
         .Where(d => !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
         .ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var defaultPointers = (await gwModelPoolTypes.Find(Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)).ToListAsync())
+        .Where(d => !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("DefaultPoolId")))
+        .ToDictionary(d => d.GetStringOrEmpty("Code"), d => d.GetStringOrEmpty("DefaultPoolId"), StringComparer.OrdinalIgnoreCase);
     var items = docs.Select(MapPool).ToList();
     foreach (var item in items)
     {
+        if (string.Equals(item.Authority, "llm_gateway", StringComparison.OrdinalIgnoreCase)
+            && defaultPointers.TryGetValue(item.ModelType, out var defaultPoolId))
+        {
+            item.IsDefaultForType = string.Equals(item.Id, defaultPoolId, StringComparison.Ordinal);
+        }
         var bound = appCallerDocs
             .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), item.Id, StringComparison.Ordinal))
             .OrderByDescending(d => string.Equals(d.AsNullableString("Status"), "active", StringComparison.OrdinalIgnoreCase))
@@ -1472,6 +1954,17 @@ app.MapGet("/gw/exchanges", async (HttpContext http, bool? enabled) =>
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
     var data = new ExchangesData { Items = docs.Select(MapExchange).ToList(), Total = docs.Count };
     return Json(ApiEnvelope<ExchangesData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapGet("/gw/exchanges/meta", () =>
+{
+    var data = new ExchangeMetaData
+    {
+        TransformerTypes = GatewayConfigurationProvisioning.GetExchangeTransformerOptions().ToList(),
+        AuthSchemes = GatewayConfigurationProvisioning.GetExchangeAuthSchemeOptions().ToList(),
+        ModelTypes = GatewayConfigurationProvisioning.GetExchangeModelTypeOptions().ToList(),
+    };
+    return Json(ApiEnvelope<ExchangeMetaData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
 // GW-owned key 健康自检：只解密验证，不返回明文/密文/脱敏 key，不打上游，避免产生成本。
@@ -2424,7 +2917,8 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
     async Task<(int claimed, int skipped)> ClaimCollectionAsync(
         IMongoCollection<BsonDocument> sourceCollection,
         IMongoCollection<BsonDocument> targetCollection,
-        string sourceName)
+        string sourceName,
+        bool isPool = false)
     {
         var sourceDocs = await sourceCollection.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
         var claimed = 0;
@@ -2439,6 +2933,12 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
             }
             var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
             var existing = await targetCollection.Find(filter).FirstOrDefaultAsync();
+            if (isPool && existing is not null
+                && (IsManagedAppendOnlyPool(existing) || await IsCurrentDefaultPoolAsync(gwModelPoolTypes, existing)))
+            {
+                skipped++;
+                continue;
+            }
             if (existing is not null && !overwrite)
             {
                 skipped++;
@@ -2451,13 +2951,31 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
             cloned["Authority"] = "llm_gateway";
             cloned["ClaimedAt"] = existing?.AsNullableUtcDateTime("ClaimedAt") ?? now;
             cloned["UpdatedAt"] = now;
-            await targetCollection.ReplaceOneAsync(filter, cloned, new ReplaceOptions { IsUpsert = true });
+            if (isPool) cloned["Version"] = (existing?.AsNullableLong("Version") ?? 0) + 1;
+            if (isPool && existing is not null)
+            {
+                var replaceResult = await targetCollection.ReplaceOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        filter,
+                        PoolVersionGuard(Builders<BsonDocument>.Filter, existing),
+                        PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+                    cloned);
+                if (replaceResult.ModifiedCount != 1)
+                {
+                    skipped++;
+                    continue;
+                }
+            }
+            else
+            {
+                await targetCollection.ReplaceOneAsync(filter, cloned, new ReplaceOptions { IsUpsert = true });
+            }
             claimed++;
         }
         return (claimed, skipped);
     }
 
-    var poolsResult = await ClaimCollectionAsync(modelGroups, gwModelPools, "model_groups");
+    var poolsResult = await ClaimCollectionAsync(modelGroups, gwModelPools, "model_groups", isPool: true);
     var platformsResult = await ClaimCollectionAsync(platforms, gwPlatforms, "llmplatforms");
     var modelsResult = await ClaimCollectionAsync(models, gwModels, "llmmodels");
     var exchangesResult = await ClaimCollectionAsync(modelExchanges, gwModelExchanges, "model_exchanges");
@@ -2501,6 +3019,8 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
         return Json(ApiEnvelope<BindActiveAppCallerPoolsResult>.Fail("INTERNAL_GOVERNANCE_ONLY", "配置权威迁移仅供内部租户使用"), jsonOptions, 403);
     var now = DateTime.UtcNow;
+    await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, internalTenantId, internalTenantId, appendModels: false);
     var gwPoolDocs = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
     var gwPoolIds = gwPoolDocs
         .Select(d => d.GetStringOrEmpty("_id"))
@@ -2515,17 +3035,23 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
             usableGwPoolIds.Add(poolId);
         }
     }
-    var defaultPoolByType = gwPoolDocs
-        .Where(d => d.AsNullableBool("IsDefaultForType") == true)
-        .Select(d => new
-        {
-            Id = d.GetStringOrEmpty("_id"),
-            Type = d.GetStringOrEmpty("ModelType").Trim(),
-            Name = d.AsNullableString("Name") ?? d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"),
-        })
-        .Where(x => x.Id.Length > 0 && x.Type.Length > 0 && usableGwPoolIds.Contains(x.Id))
-        .GroupBy(x => x.Type, StringComparer.OrdinalIgnoreCase)
-        .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Name, StringComparer.Ordinal).First(), StringComparer.OrdinalIgnoreCase);
+    var poolById = gwPoolDocs.ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var poolTypeDocs = await gwModelPoolTypes.Find(Builders<BsonDocument>.Filter.Eq("TenantId", internalTenantId)).ToListAsync();
+    var defaultPoolByType = new Dictionary<string, (string Id, string Name)>(StringComparer.OrdinalIgnoreCase);
+    foreach (var type in poolTypeDocs)
+    {
+        var typeCode = type.GetStringOrEmpty("Code").Trim();
+        var poolId = type.GetStringOrEmpty("DefaultPoolId");
+        if (typeCode.Length == 0
+            || poolId.Length == 0
+            || !usableGwPoolIds.Contains(poolId)
+            || !poolById.TryGetValue(poolId, out var pool)
+            || !string.Equals(pool.GetStringOrEmpty("ModelType"), typeCode, StringComparison.OrdinalIgnoreCase))
+            continue;
+        defaultPoolByType[typeCode] = (
+            poolId,
+            pool.AsNullableString("Name") ?? pool.AsNullableString("Code") ?? poolId);
+    }
 
     var activeAppCallers = await gwAppCallers
         .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("Status", "active")))
@@ -2701,7 +3227,7 @@ app.MapGet("/gw/app-callers", async (
             fb.Regex("LastObservedSessionId", pattern),
             fb.Regex("LastObservedRunId", pattern)));
     }
-    var filter = TenantAccess.Filter(http, filters.Count > 0 ? fb.And(filters) : fb.Empty);
+    var filter = TenantAccess.FilterTeamScope(http, filters.Count > 0 ? fb.And(filters) : fb.Empty);
     var total = await gwAppCallers.CountDocumentsAsync(filter);
     var docs = await gwAppCallers.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("LastSeenAt").Ascending("AppCallerCode"))
@@ -2709,7 +3235,7 @@ app.MapGet("/gw/app-callers", async (
         .Limit(ps)
         .ToListAsync();
 
-    var recent = TenantAccess.Filter(http);
+    var recent = TenantAccess.FilterTeamScope(http, fb.Empty);
     var statuses = NormalizeDistinct(await gwAppCallers.Distinct<string>("Status", recent).ToListAsync(), 80);
     var sourceSystems = NormalizeDistinct(await gwAppCallers.Distinct<string>("SourceSystem", recent).ToListAsync(), 80);
     var protocolDocs = await gwAppCallers.Find(recent)
@@ -2730,6 +3256,119 @@ app.MapGet("/gw/app-callers", async (
     };
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// 外部接入自助创建 appCaller。租户和团队边界只取服务端会话，调用方不能在请求中声明 TenantId。
+// 同一 TenantId + AppCallerCode + RequestType 已存在时只允许同团队幂等复用，禁止跨团队抢占身份。
+app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGatewayAppCallerRequest body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+
+    var access = TenantAccess.GetRequired(http);
+    var appCallerCode = (body.AppCallerCode ?? string.Empty).Trim();
+    var requestType = (body.RequestType ?? string.Empty).Trim().ToLowerInvariant();
+    var title = (body.Title ?? string.Empty).Trim();
+    var ingressProtocol = NormalizeIngressProtocol(body.IngressProtocol ?? string.Empty);
+    if (!IsValidSelfServiceAppCaller(appCallerCode, requestType))
+    {
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+            "INVALID_APP_CALLER",
+            "appCallerCode 必须使用小写 {app-key}.{feature}::chat 或 ::vision 格式，且后缀与 requestType 一致"), jsonOptions, 400);
+    }
+    if (title.Length > 160)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "title 最多 160 字符"), jsonOptions, 400);
+    if (ingressProtocol is not ("gw-native" or "openai-compatible" or "claude-compatible" or "gemini-compatible"))
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INGRESS_PROTOCOL", "不支持的入口协议"), jsonOptions, 400);
+
+    var teamId = string.IsNullOrWhiteSpace(body.TeamId) ? null : body.TeamId.Trim();
+    if (teamId is null && access.TeamIds.Count == 1)
+        teamId = access.TeamIds[0];
+    if (teamId is null)
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("TEAM_SCOPE_REQUIRED", "请选择当前租户中的团队"), jsonOptions, 400);
+
+    var teamExists = await teams.CountDocumentsAsync(x => x.Id == teamId && x.TenantId == access.TenantId && x.Status == "active") == 1;
+    if (!teamExists || access.Role == LlmGwTenantRoles.Developer && !access.TeamIds.Contains(teamId, StringComparer.Ordinal))
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("TEAM_SCOPE_DENIED", "不能为该团队创建 appCaller"), jsonOptions, 403);
+
+    var identity = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+        Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+    var tenantIdentity = TenantAccess.Filter(http, identity);
+    var identityOptions = new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) };
+    var existing = await gwAppCallers.Find(tenantIdentity, identityOptions).FirstOrDefaultAsync();
+    if (existing is not null)
+    {
+        if (!string.Equals(existing.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已归属当前租户中的其他团队"), jsonOptions, 409);
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(existing)), jsonOptions);
+    }
+
+    var now = DateTime.UtcNow;
+    var id = Guid.NewGuid().ToString("N");
+    var document = new BsonDocument
+    {
+        { "_id", id },
+        { "TenantId", access.TenantId },
+        { "TeamId", teamId },
+        { "AppCallerCode", appCallerCode },
+        { "RequestType", requestType },
+        { "SourceSystem", "external" },
+        { "IngressProtocol", ingressProtocol },
+        { "ObservedIngressProtocols", new BsonArray() },
+        { "Title", title.Length == 0 ? appCallerCode : title },
+        { "Status", "configured" },
+        { "ModelPolicy", "auto" },
+        { "ParameterPolicy", "default-drop" },
+        { "ObservedModelPoolIds", new BsonArray() },
+        { "ObservedModelPolicies", new BsonArray() },
+        { "ObservedParameterPolicies", new BsonArray() },
+        { "TotalSeen", 0L },
+        { "FirstSeenAt", now },
+        { "LastSeenAt", now },
+        { "CreatedAt", now },
+        { "UpdatedAt", now },
+    };
+    try
+    {
+        await gwAppCallers.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var winner = await gwAppCallers.Find(tenantIdentity, identityOptions).FirstOrDefaultAsync();
+        if (winner is not null && string.Equals(winner.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(winner)), jsonOptions);
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已被并发创建，请刷新后重试"), jsonOptions, 409);
+    }
+
+    try
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "app_caller.create",
+            targetType: "llmgw_app_caller",
+            targetId: id,
+            targetName: appCallerCode,
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "teamId", teamId },
+                { "requestType", requestType },
+                { "ingressProtocol", ingressProtocol },
+            },
+            throwOnFailure: true);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "创建 appCaller 后写入审计失败，执行补偿删除。TenantId={TenantId}, AppCallerId={AppCallerId}", access.TenantId, id);
+        await gwAppCallers.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+            "APP_CALLER_AUDIT_FAILED",
+            "appCaller 审计写入失败，本次创建已撤销，请稍后重试"), jsonOptions, 503);
+    }
+    return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(document)), jsonOptions, 201);
+}).RequireAuthorization("AppCallerWrite");
 
 // GW appCaller 配置：状态、模型池绑定与参数策略落 GW 自有库；active 状态必须绑定可用的 GW 权威池。
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
@@ -3439,7 +4078,17 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
     var ownScope = access.Role == LlmGwTenantRoles.Developer
         ? Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId)
         : Builders<BsonDocument>.Filter.Empty;
-    var docs = await serviceKeys.Find(TenantAccess.Filter(http, ownScope))
+    await serviceKeys.UpdateManyAsync(
+        TenantAccess.FilterTeamScope(http, ownScope
+            & Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering")
+            & Builders<BsonDocument>.Filter.Lte("UpdatedAt", DateTime.UtcNow.AddSeconds(-30))),
+        Builders<BsonDocument>.Update
+            .Set("IssuanceState", "issued")
+            .Set("UpdatedAt", DateTime.UtcNow));
+    var issuanceScope = Builders<BsonDocument>.Filter.Or(
+        Builders<BsonDocument>.Filter.Exists("IssuanceState", false),
+        Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued"));
+    var docs = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, ownScope & issuanceScope))
         .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
         .Limit(500)
         .ToListAsync();
@@ -3452,6 +4101,9 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
         TeamId = d.AsNullableString("TeamId"),
         CreatedByUsername = d.AsNullableString("CreatedByUsername"),
         SourceSystem = d.AsNullableString("SourceSystem") ?? "external",
+        ClientCode = d.AsNullableString("ClientCode") ?? d.AsNullableString("SourceSystem") ?? "历史未标注",
+        Environment = d.AsNullableString("Environment") ?? "unknown",
+        Purpose = d.AsNullableString("Purpose") ?? (string.Equals(d.AsNullableString("SourceSystem"), "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform"),
         AppCallerCodes = d.AsStringList("AppCallerCodes"),
         IngressProtocols = d.AsStringList("IngressProtocols"),
         Scopes = d.AsStringList("Scopes"),
@@ -3460,6 +4112,9 @@ app.MapGet("/gw/service-keys", async (HttpContext http) =>
         ExpiresAt = d.AsNullableUtcDateTime("ExpiresAt").ToIso(),
         LastUsedAt = d.AsNullableUtcDateTime("LastUsedAt").ToIso(),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        RotatesKeyId = d.AsNullableString("RotatesKeyId"),
+        RotatedByKeyId = d.AsNullableString("RotatedByKeyId"),
+        RotationState = d.AsNullableString("RotationState") ?? (d.AsNullableBool("Enabled") == false ? "revoked" : "active"),
     }).ToList();
     return Json(ApiEnvelope<List<ServiceKeyItem>>.Ok(items), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
@@ -3469,13 +4124,55 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     var tenant = TenantAccess.GetRequired(http);
     var name = (body.Name ?? string.Empty).Trim();
     var sourceSystem = (body.SourceSystem ?? "external").Trim();
+    var clientCode = (body.ClientCode ?? string.Empty).Trim().ToLowerInvariant();
+    var environment = (body.Environment ?? string.Empty).Trim().ToLowerInvariant();
+    var purpose = (body.Purpose ?? (string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform")).Trim().ToLowerInvariant();
     var appCallerCodes = NormalizeDistinct(body.AppCallerCodes ?? [], 200);
     var protocols = NormalizeDistinct(body.IngressProtocols ?? [], 20);
     var scopes = NormalizeDistinct(body.Scopes ?? [], 20);
     var allowedCidrs = NormalizeDistinct(body.AllowedCidrs ?? [], 50);
-    if (name.Length == 0 || sourceSystem.Length == 0 || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
+    if (name.Length == 0 || sourceSystem.Length == 0 || clientCode.Length == 0 || environment.Length == 0
+        || appCallerCodes.Count == 0 || protocols.Count == 0 || scopes.Count == 0)
     {
-        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+        return Json(ApiEnvelope<object>.Fail("INVALID_SERVICE_KEY_SCOPE", "name、sourceSystem、clientCode、environment、appCallerCodes、ingressProtocols、scopes 均为必填"), jsonOptions, 400);
+    }
+    if (!System.Text.RegularExpressions.Regex.IsMatch(clientCode, "^[a-z][a-z0-9._-]{1,79}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_CLIENT_CODE", "clientCode 必须以小写字母开头，只能包含小写字母、数字、点、下划线和短横线，长度 2 至 80"), jsonOptions, 400);
+    }
+    var allowedEnvironments = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "development", "test", "staging", "production",
+    };
+    if (!allowedEnvironments.Contains(environment))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_KEY_ENVIRONMENT", "environment 仅支持 development、test、staging、production"), jsonOptions, 400);
+    }
+    var allowedPurposes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "runtime", "release-gate", "canary", "external-platform",
+    };
+    if (!allowedPurposes.Contains(purpose))
+    {
+        return Json(ApiEnvelope<object>.Fail("INVALID_KEY_PURPOSE", "purpose 仅支持 runtime、release-gate、canary、external-platform"), jsonOptions, 400);
+    }
+    if (sourceSystem == "*")
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_KEY_SOURCE",
+            "sourceSystem 必须是明确来源，不能使用通配符"), jsonOptions, 400);
+    }
+    var isMapSource = string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase);
+    if (!tenant.IsInternalTenant && (isMapSource || purpose != "external-platform"))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INTERNAL_KEY_PURPOSE_FORBIDDEN",
+            "外部租户只能创建 external-platform key；MAP runtime、release-gate 与 canary 仅属于 internal tenant"), jsonOptions, 403);
+    }
+    if (isMapSource && purpose == "external-platform"
+        || !isMapSource && purpose != "external-platform")
+    {
+        return Json(ApiEnvelope<object>.Fail("KEY_PURPOSE_SOURCE_MISMATCH", "MAP key 使用 runtime、release-gate 或 canary；外部平台 key 使用 external-platform"), jsonOptions, 400);
     }
     var allowedProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -3518,15 +4215,107 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         teamId = tenant.TeamIds[0];
     }
 
+    var usesWildcard = sourceSystem == "*"
+        || appCallerCodes.Contains("*", StringComparer.Ordinal)
+        || protocols.Contains("*", StringComparer.Ordinal)
+        || scopes.Contains("*", StringComparer.Ordinal);
+    if (tenant.Role == LlmGwTenantRoles.Developer && usesWildcard)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "WILDCARD_SCOPE_DENIED",
+            "Developer 只能创建绑定具体来源、appCaller、协议和 scope 的 service key"), jsonOptions, 403);
+    }
+    if (usesWildcard
+        && tenant.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin
+        && !body.ConfirmWildcardRisk)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "WILDCARD_CONFIRMATION_REQUIRED",
+            "通配密钥可访问更大范围，必须显式确认高风险后才能创建"), jsonOptions, 409);
+    }
+    if (tenant.Role == LlmGwTenantRoles.Developer && teamId is null)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "TEAM_SCOPE_REQUIRED",
+            "Developer 创建 service key 时必须绑定所属团队"), jsonOptions, 403);
+    }
+    if (teamId is not null && appCallerCodes.Contains("*", StringComparer.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "TEAM_WILDCARD_DENIED",
+            "团队 service key 不能使用通配 appCaller"), jsonOptions, 400);
+    }
+    if (teamId is not null)
+    {
+        var callerCandidates = await gwAppCallers.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("AppCallerCode").Include("TeamId"))
+            .ToListAsync();
+        foreach (var appCallerCode in appCallerCodes)
+        {
+            var matches = callerCandidates
+                .Where(x => string.Equals(
+                    x.AsNullableString("AppCallerCode")?.Trim(),
+                    appCallerCode.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (matches.Count > 0
+                && matches.Any(x => !string.Equals(x.AsNullableString("TeamId"), teamId, StringComparison.Ordinal)))
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "APP_CALLER_TEAM_MISMATCH",
+                    $"appCaller {appCallerCode} 不属于所选团队"), jsonOptions, 403);
+            }
+        }
+    }
+
     BsonDocument? rotatedKey = null;
+    string? predecessorRotationState = null;
     if (!string.IsNullOrWhiteSpace(body.RotatesKeyId))
     {
         var rotationFilter = Builders<BsonDocument>.Filter.Eq("_id", body.RotatesKeyId.Trim());
         if (tenant.Role == LlmGwTenantRoles.Developer)
             rotationFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", tenant.UserId);
-        rotatedKey = await serviceKeys.Find(TenantAccess.Filter(http, rotationFilter)).FirstOrDefaultAsync();
+        rotatedKey = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, rotationFilter)).FirstOrDefaultAsync();
         if (rotatedKey is null)
             return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_NOT_FOUND", "待轮换密钥不存在或不在当前管理范围"), jsonOptions, 404);
+        if (rotatedKey.AsNullableBool("Enabled") != true)
+            return Json(ApiEnvelope<object>.Fail("ROTATION_SOURCE_REVOKED", "已撤销密钥不能发起轮换"), jsonOptions, 409);
+        if (!string.IsNullOrWhiteSpace(rotatedKey.AsNullableString("RotatedByKeyId")))
+            return Json(ApiEnvelope<object>.Fail("ROTATION_ALREADY_ACTIVE", "该密钥已有未完成轮换"), jsonOptions, 409);
+        predecessorRotationState = rotatedKey.AsNullableString("RotationState");
+        if (!string.IsNullOrWhiteSpace(predecessorRotationState)
+            && !string.Equals(predecessorRotationState, "active", StringComparison.Ordinal)
+            && !string.Equals(predecessorRotationState, "completed", StringComparison.Ordinal))
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_SOURCE_STAGE_INVALID",
+                "上一轮密钥轮换尚未完成，不能再次发起轮换"), jsonOptions, 409);
+        }
+        if (string.IsNullOrWhiteSpace(predecessorRotationState))
+        {
+            predecessorRotationState = !string.IsNullOrWhiteSpace(rotatedKey.AsNullableString("RotatesKeyId"))
+                ? "completed"
+                : "active";
+        }
+        var rotatedClientCode = rotatedKey.AsNullableString("ClientCode");
+        var legacySourceClientCode = rotatedKey.AsNullableString("SourceSystem");
+        var expectedClientCode = !string.IsNullOrWhiteSpace(rotatedClientCode)
+            ? rotatedClientCode
+            : !string.IsNullOrWhiteSpace(legacySourceClientCode)
+              && System.Text.RegularExpressions.Regex.IsMatch(legacySourceClientCode, "^[a-z][a-z0-9._-]{1,79}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+                ? legacySourceClientCode
+                : null;
+        var rotatedEnvironment = rotatedKey.AsNullableString("Environment");
+        var rotatedPurpose = rotatedKey.AsNullableString("Purpose")
+            ?? (string.Equals(rotatedKey.AsNullableString("SourceSystem"), "map", StringComparison.OrdinalIgnoreCase) ? "runtime" : "external-platform");
+        // 历史 key 可能没有 ClientCode，且 SourceSystem 允许使用 "*"。当旧来源不能作为合法
+        // clientCode 时，轮换承担一次性身份升级；否则仍要求沿用可验证的历史身份。
+        if ((expectedClientCode is not null && !string.Equals(expectedClientCode, clientCode, StringComparison.OrdinalIgnoreCase))
+            || (rotatedEnvironment is not null && !string.Equals(rotatedEnvironment, environment, StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(rotatedPurpose, purpose, StringComparison.OrdinalIgnoreCase))
+        {
+            return Json(ApiEnvelope<object>.Fail("ROTATION_IDENTITY_MISMATCH", "轮换不能修改 clientCode、environment 或 purpose"), jsonOptions, 409);
+        }
     }
 
     var secretBytes = RandomNumberGenerator.GetBytes(32);
@@ -3546,14 +4335,21 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         { "KeyHash", keyHash },
         { "CreatedByUserId", tenant.UserId },
         { "CreatedByUsername", tenant.Username },
-        { "Enabled", true },
+        { "Enabled", false },
         { "SourceSystem", sourceSystem },
+        { "ClientCode", clientCode },
+        { "Environment", environment },
+        { "Purpose", purpose },
         { "AppCallerCodes", new BsonArray(appCallerCodes) },
         { "IngressProtocols", new BsonArray(protocols) },
         { "Scopes", new BsonArray(scopes) },
         { "AllowedCidrs", new BsonArray(allowedCidrs) },
         { "RateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
         { "RotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+        { "PredecessorRotationState", predecessorRotationState is null ? BsonNull.Value : predecessorRotationState },
+        { "RotatedByKeyId", BsonNull.Value },
+        { "RotationState", rotatedKey is null ? "issuance-pending" : "rotation-initializing" },
+        { "IssuanceState", "creating" },
         { "ExpiresAt", expiresAt is null ? BsonNull.Value : new BsonDateTime(expiresAt.Value) },
         { "CreatedAt", now },
         { "UpdatedAt", now },
@@ -3574,26 +4370,196 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
         throw;
     }
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        "service_key.create",
-        "llmgw_service_key",
-        id,
-        name,
-        true,
-        null,
-        new BsonDocument
+    BsonDocument? stableSuccessor = null;
+    if (rotatedKey is not null)
+    {
+        var sourceId = rotatedKey.GetStringOrEmpty("_id");
+        var rotationUpdate = await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", sourceId),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Exists("RotatedByKeyId", false),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", BsonNull.Value)),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Exists("RotationState", false),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", BsonNull.Value),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "active"),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "completed")))),
+            Builders<BsonDocument>.Update
+                .Set("RotatedByKeyId", id)
+                .Set("RotationState", "awaiting-client-cutover")
+                .Set("ClientCode", clientCode)
+                .Set("Environment", environment)
+                .Set("UpdatedAt", now));
+        if (rotationUpdate.ModifiedCount != 1)
         {
-            { "sourceSystem", sourceSystem },
-            { "appCallerCount", appCallerCodes.Count },
-            { "protocolCount", protocols.Count },
-            { "scopeCount", scopes.Count },
-            { "teamId", teamId is null ? BsonNull.Value : teamId },
-            { "allowedCidrCount", allowedCidrs.Count },
-            { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
-            { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
-        });
+            await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+            await serviceKeys.DeleteOneAsync(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)));
+            return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+        stableSuccessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", id),
+                Builders<BsonDocument>.Filter.Eq("RotatesKeyId", sourceId),
+                Builders<BsonDocument>.Filter.Eq("Enabled", false),
+                Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
+                Builders<BsonDocument>.Filter.Eq("RotationState", "rotation-initializing"))))
+            .FirstOrDefaultAsync();
+        if (stableSuccessor is null)
+        {
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", sourceId),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+                Builders<BsonDocument>.Update
+                    .Set("RotatedByKeyId", BsonNull.Value)
+                    .Set("RotationState", predecessorRotationState ?? "active")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", false)
+                    .Set("RotationState", "revoked")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            return Json(ApiEnvelope<object>.Fail("ROTATION_CONFLICT", "轮换新密钥已被并发撤销，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    var pendingRotationState = rotatedKey is null ? "issuance-pending" : "rotation-initializing";
+    var publishedRotationState = rotatedKey is null ? "active" : "new-key-created";
+    var issuanceLogger = http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ServiceKeyIssuance");
+    async Task RollbackIssuanceAsync()
+    {
+        if (rotatedKey is not null)
+        {
+            await serviceKeys.UpdateOneAsync(
+                TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rotatedKey.GetStringOrEmpty("_id")),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+                Builders<BsonDocument>.Update
+                    .Set("RotatedByKeyId", BsonNull.Value)
+                    .Set("RotationState", predecessorRotationState ?? "active")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+        }
+        await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+        await serviceKeys.UpdateOneAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("IssuanceState", "failed")
+                .Set("RotationState", "revoked")
+                .Set("UpdatedAt", DateTime.UtcNow));
+    }
+    var deliveryReady = await serviceKeys.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", id),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("Enabled", false),
+            Builders<BsonDocument>.Filter.Eq("IssuanceState", "creating"),
+            Builders<BsonDocument>.Filter.Eq("RotationState", pendingRotationState)),
+        Builders<BsonDocument>.Update
+            .Set("Enabled", true)
+            .Set("IssuanceState", "delivering")
+            .Set("RotationState", publishedRotationState)
+            .Set("UpdatedAt", DateTime.UtcNow));
+    if (deliveryReady.ModifiedCount != 1)
+    {
+        await RollbackIssuanceAsync();
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_ISSUANCE_CONFLICT",
+            "密钥签发状态已变化，请刷新后重试"), jsonOptions, 409);
+    }
+    try
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            usesWildcard ? "service_key.create_wildcard" : "service_key.create",
+            "llmgw_service_key",
+            id,
+            name,
+            true,
+            null,
+            new BsonDocument
+            {
+                { "sourceSystem", sourceSystem },
+                { "clientCode", clientCode },
+                { "environment", environment },
+                { "purpose", purpose },
+                { "appCallerCount", appCallerCodes.Count },
+                { "protocolCount", protocols.Count },
+                { "scopeCount", scopes.Count },
+                { "teamId", teamId is null ? BsonNull.Value : teamId },
+                { "allowedCidrCount", allowedCidrs.Count },
+                { "rateLimitPerMinute", body.RateLimitPerMinute is null ? BsonNull.Value : body.RateLimitPerMinute.Value },
+                { "rotatesKeyId", rotatedKey is null ? BsonNull.Value : rotatedKey.GetStringOrEmpty("_id") },
+                { "usesWildcard", usesWildcard },
+            },
+            throwOnFailure: true);
+    }
+    catch (Exception ex)
+    {
+        issuanceLogger?.LogError(
+            ex,
+            "service key 创建审计失败，回滚签发。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
+        await RollbackIssuanceAsync();
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_AUDIT_FAILED",
+            "密钥创建审计失败，本次签发已回滚"), jsonOptions, 503);
+    }
+    http.Response.OnCompleted(async () =>
+    {
+        Exception? lastError = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                var published = await serviceKeys.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+                        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                        Builders<BsonDocument>.Filter.Eq("IssuanceState", "delivering"),
+                        Builders<BsonDocument>.Filter.Eq("RotationState", publishedRotationState)),
+                    Builders<BsonDocument>.Update
+                        .Set("IssuanceState", "issued")
+                        .Set("UpdatedAt", DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (published.ModifiedCount == 1)
+                    return;
+                var current = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId)))
+                    .Project(Builders<BsonDocument>.Projection.Include("IssuanceState"))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (string.Equals(current?.AsNullableString("IssuanceState"), "issued", StringComparison.Ordinal))
+                    return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+            if (attempt < 3)
+                await Task.Delay(attempt * 100, CancellationToken.None);
+        }
+        issuanceLogger?.LogError(
+            lastError,
+            "service key 响应完成后三次尝试仍未收口签发状态，将由租户列表自愈。TenantId={TenantId} ServiceKeyId={ServiceKeyId}",
+            tenant.TenantId,
+            id);
+    });
     return Json(ApiEnvelope<object>.Ok(new
     {
         id,
@@ -3602,6 +4568,9 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         key = plainKey,
         warning = "该 key 只显示一次；数据库未保存明文",
         sourceSystem,
+        clientCode,
+        environment,
+        purpose,
         appCallerCodes,
         ingressProtocols = protocols,
         scopes,
@@ -3610,7 +4579,89 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
         rateLimitPerMinute = body.RateLimitPerMinute,
         rotatesKeyId = rotatedKey?.GetStringOrEmpty("_id"),
         expiresAt,
+        rotationState = publishedRotationState,
     }), jsonOptions, 201);
+}).RequireAuthorization("ServiceKeyWrite");
+
+app.MapPost("/gw/service-keys/{id}/rotation/client-cutover", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    if (access.Role == LlmGwTenantRoles.Developer)
+        scopeFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId);
+    var keyFilter = TenantAccess.FilterTeamScope(http, scopeFilter);
+    var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    var successorId = existing.AsNullableString("RotatedByKeyId");
+    if (!string.Equals(existing.AsNullableString("RotationState"), "awaiting-client-cutover", StringComparison.Ordinal)
+        || string.IsNullOrWhiteSpace(successorId))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_STAGE_INVALID", "当前密钥不处于等待客户端切换阶段"), jsonOptions, 409);
+    }
+    var successorIdentityFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", successorId),
+        Builders<BsonDocument>.Filter.Eq("RotatesKeyId", id),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued")));
+    var successor = await serviceKeys.Find(successorIdentityFilter).FirstOrDefaultAsync();
+    if (successor is null)
+        return Json(ApiEnvelope<object>.Fail("ROTATION_SUCCESSOR_INVALID", "轮换新密钥不存在或已撤销"), jsonOptions, 409);
+
+    var now = DateTime.UtcNow;
+    var successorState = successor.AsNullableString("RotationState");
+    if (string.Equals(successorState, "new-key-created", StringComparison.Ordinal))
+    {
+        var successorCutover = await serviceKeys.UpdateOneAsync(
+            successorIdentityFilter & Builders<BsonDocument>.Filter.Eq("RotationState", "new-key-created"),
+            Builders<BsonDocument>.Update
+                .Set("RotationState", "client-switched")
+                .Set("UpdatedAt", now));
+        if (successorCutover.ModifiedCount != 1)
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    else if (!string.Equals(successorState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "ROTATION_SUCCESSOR_STAGE_INVALID",
+            "轮换新密钥状态无效，请刷新后重试"), jsonOptions, 409);
+    }
+
+    var sourceCutover = await serviceKeys.UpdateOneAsync(
+        keyFilter
+        & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+        & Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", successorId)
+        & Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"),
+        Builders<BsonDocument>.Update
+        .Set("RotationState", "client-switched")
+        .Set("UpdatedAt", now));
+    if (sourceCutover.ModifiedCount != 1)
+    {
+        var currentSource = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
+        if (currentSource is null
+            || !string.Equals(currentSource.AsNullableString("RotatedByKeyId"), successorId, StringComparison.Ordinal)
+            || !string.Equals(currentSource.AsNullableString("RotationState"), "client-switched", StringComparison.Ordinal))
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+    }
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "service_key.rotation_client_cutover",
+        "llmgw_service_key",
+        id,
+        existing.AsNullableString("Name"),
+        true,
+        null,
+        new BsonDocument { { "successorKeyId", successorId } });
+    return Json(ApiEnvelope<object>.Ok(new { id, successorKeyId = successorId, rotationState = "client-switched" }), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
 
 app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
@@ -3619,13 +4670,140 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
     var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
     if (access.Role == LlmGwTenantRoles.Developer)
         scopeFilter &= Builders<BsonDocument>.Filter.Eq("CreatedByUserId", access.UserId);
-    var keyFilter = TenantAccess.Filter(http, scopeFilter);
+    var keyFilter = TenantAccess.FilterTeamScope(http, scopeFilter);
     var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
+    var issuanceState = existing.AsNullableString("IssuanceState");
+    if (!string.IsNullOrWhiteSpace(issuanceState)
+        && !string.Equals(issuanceState, "issued", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "SERVICE_KEY_ISSUANCE_PENDING",
+            "密钥仍在签发中，不能撤销"), jsonOptions, 409);
+    }
+    var successorId = existing.AsNullableString("RotatedByKeyId");
+    var predecessorId = existing.AsNullableString("RotatesKeyId");
+    var rotationState = existing.AsNullableString("RotationState") ?? "active";
+    if (!string.IsNullOrWhiteSpace(successorId)
+        && !string.Equals(rotationState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_CLIENT_SWITCH_REQUIRED", "请先确认客户端已切换到新密钥，再撤销旧密钥"), jsonOptions, 409);
+    }
+    if (string.IsNullOrWhiteSpace(successorId)
+        && !string.IsNullOrWhiteSpace(predecessorId)
+        && string.Equals(rotationState, "client-switched", StringComparison.Ordinal))
+    {
+        return Json(ApiEnvelope<object>.Fail("ROTATION_OLD_KEY_REVOKE_REQUIRED", "客户端已切换后必须撤销旧密钥完成轮换，不能撤销新密钥"), jsonOptions, 409);
+    }
+
+    var now = DateTime.UtcNow;
+    if (string.IsNullOrWhiteSpace(successorId)
+        && !string.IsNullOrWhiteSpace(predecessorId)
+        && string.Equals(rotationState, "new-key-created", StringComparison.Ordinal))
+    {
+        var abortClaim = await serviceKeys.UpdateOneAsync(
+            keyFilter
+            & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+            & Builders<BsonDocument>.Filter.Eq("IssuanceState", "issued")
+            & Builders<BsonDocument>.Filter.Eq("RotatesKeyId", predecessorId)
+            & Builders<BsonDocument>.Filter.Eq("RotationState", "new-key-created"),
+            Builders<BsonDocument>.Update
+                .Set("RotationState", "abort-in-progress")
+                .Set("UpdatedAt", now));
+        if (abortClaim.ModifiedCount != 1)
+        {
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var restoreState = existing.AsNullableString("PredecessorRotationState");
+        if (!string.Equals(restoreState, "active", StringComparison.Ordinal)
+            && !string.Equals(restoreState, "completed", StringComparison.Ordinal))
+        {
+            var predecessor = await serviceKeys.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
+                    Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                    Builders<BsonDocument>.Filter.Eq("Enabled", true))))
+                .FirstOrDefaultAsync();
+            restoreState = !string.IsNullOrWhiteSpace(predecessor?.AsNullableString("RotatesKeyId"))
+                ? "completed"
+                : "active";
+        }
+        var predecessorRestore = await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", predecessorId),
+                Builders<BsonDocument>.Filter.Eq("RotatedByKeyId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Eq("RotationState", "awaiting-client-cutover"))),
+            Builders<BsonDocument>.Update
+                .Set("RotatedByKeyId", BsonNull.Value)
+                .Set("RotationState", restoreState)
+                .Set("UpdatedAt", now));
+        if (predecessorRestore.ModifiedCount != 1)
+        {
+            await serviceKeys.UpdateOneAsync(
+                keyFilter & Builders<BsonDocument>.Filter.Eq("RotationState", "abort-in-progress"),
+                Builders<BsonDocument>.Update
+                    .Set("RotationState", "new-key-created")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            return Json(ApiEnvelope<object>.Fail(
+                "ROTATION_CONFLICT",
+                "轮换状态已变化，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var successorRevoke = await serviceKeys.UpdateOneAsync(
+            keyFilter
+            & Builders<BsonDocument>.Filter.Eq("Enabled", true)
+            & Builders<BsonDocument>.Filter.Eq("RotationState", "abort-in-progress"),
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("RotationState", "revoked")
+                .Set("UpdatedAt", DateTime.UtcNow));
+        if (successorRevoke.ModifiedCount != 1)
+            throw new InvalidOperationException("轮换中止已取得仲裁权，但新密钥撤销失败");
+        await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ServiceKeyId", id)));
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            "service_key.rotation_abort",
+            "llmgw_service_key",
+            id,
+            existing.AsNullableString("Name"),
+            true,
+            null,
+            new BsonDocument
+            {
+                { "predecessorKeyId", predecessorId },
+                { "predecessorRotationState", restoreState },
+            });
+        return Json(ApiEnvelope<object>.Ok(new
+        {
+            id,
+            revoked = true,
+            rotationState = "revoked",
+            predecessorKeyId = predecessorId,
+        }), jsonOptions);
+    }
+
     await serviceKeys.UpdateOneAsync(
         keyFilter,
-        Builders<BsonDocument>.Update.Set("Enabled", false).Set("UpdatedAt", DateTime.UtcNow));
+        Builders<BsonDocument>.Update
+            .Set("Enabled", false)
+            .Set("RotationState", !string.IsNullOrWhiteSpace(successorId) ? "old-key-revoked" : "revoked")
+            .Set("UpdatedAt", now));
+    if (!string.IsNullOrWhiteSpace(successorId))
+    {
+        await serviceKeys.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", successorId),
+                Builders<BsonDocument>.Filter.Eq("RotatesKeyId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true))),
+            Builders<BsonDocument>.Update.Set("RotationState", "completed").Set("UpdatedAt", now));
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -3635,8 +4813,642 @@ app.MapDelete("/gw/service-keys/{id}", async (HttpContext http, string id) =>
         existing.AsNullableString("Name"),
         true,
         null);
-    return Json(ApiEnvelope<object>.Ok(new { id, revoked = true }), jsonOptions);
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        id,
+        revoked = true,
+        rotationState = !string.IsNullOrWhiteSpace(successorId) ? "old-key-revoked" : "revoked",
+        successorKeyId = successorId,
+    }), jsonOptions);
 }).RequireAuthorization("ServiceKeyWrite");
+
+// 供应商账单导入：只接受会话解析出的当前租户，不允许请求体自报 TenantId。
+app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReconciliationImportRequest body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var provider = (body.Provider ?? string.Empty).Trim().ToLowerInvariant();
+    var externalRecordId = (body.ExternalRecordId ?? string.Empty).Trim();
+    var providerRequestId = string.IsNullOrWhiteSpace(body.ProviderRequestId) ? null : body.ProviderRequestId.Trim();
+    var serviceKeyId = string.IsNullOrWhiteSpace(body.ServiceKeyId) ? null : body.ServiceKeyId.Trim();
+    var actualCurrency = CostReconciliationPolicy.NormalizeCurrency(body.ProviderCostCurrency);
+    var providerReportedCost = body.ProviderReportedCost;
+    if (provider.Length is < 2 or > 100
+        || externalRecordId.Length is < 2 or > 160
+        || providerReportedCost is null
+        || providerReportedCost < 0
+        || actualCurrency is null)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_PROVIDER_COST",
+            "provider、externalRecordId、非负 providerReportedCost 与三字母币种均为必填"), jsonOptions, 400);
+    }
+    if (body.ProviderToEstimatedFxRate is not null
+        && (body.ProviderToEstimatedFxRate <= 0 || string.IsNullOrWhiteSpace(body.FxSnapshotId)))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "INVALID_FX_SNAPSHOT",
+            "提供汇率时必须同时提供正数 providerToEstimatedFxRate 与 fxSnapshotId"), jsonOptions, 400);
+    }
+
+    var granularity = providerRequestId is null ? "window" : "request";
+    BsonDocument? matchedLog = null;
+    List<BsonDocument> windowLogs = [];
+    string? reconciliationTeamId = null;
+    DateTime? windowFrom = null;
+    DateTime? windowTo = null;
+    CostImportScopeLease? costImportLease = null;
+    try
+    {
+    if (granularity == "request")
+    {
+        var requestMatches = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ProviderRequestId", providerRequestId),
+                Builders<BsonDocument>.Filter.Regex("Provider", new BsonRegularExpression(
+                    $"^{System.Text.RegularExpressions.Regex.Escape(provider)}$", "i")))))
+            .Limit(2)
+            .ToListAsync();
+        if (requestMatches.Count == 0)
+            return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_NOT_FOUND", "当前租户没有匹配的 provider request id"), jsonOptions, 404);
+        if (requestMatches.Count > 1)
+            return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_AMBIGUOUS", "provider request id 在当前租户命中多条日志，不能自动对账"), jsonOptions, 409);
+        matchedLog = requestMatches[0];
+        serviceKeyId = matchedLog.AsNullableString("ServiceKeyId");
+        reconciliationTeamId = matchedLog.AsNullableString("TeamId");
+        costImportLease = await CostImportScopeLock.TryAcquireAsync(
+            costImportScopeLocks,
+            access.TenantId,
+            provider,
+            reconciliationTeamId,
+            http.RequestAborted);
+        if (costImportLease is null)
+            return Json(ApiEnvelope<object>.Fail(
+                "COST_IMPORT_SCOPE_BUSY",
+                "当前租户、供应商和团队正在导入费用，请稍后重试"), jsonOptions, 409);
+        if (matchedLog.AsNullableUtcDateTime("StartedAt") is { } matchedStartedAt)
+        {
+            BsonValue requestTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
+            var coveringWindowFilters = new List<FilterDefinition<BsonDocument>>
+            {
+                Builders<BsonDocument>.Filter.Eq("Granularity", "window"),
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.Eq("TeamId", requestTeamValue),
+                Builders<BsonDocument>.Filter.Lte("WindowFrom", matchedStartedAt),
+                Builders<BsonDocument>.Filter.Gt("WindowTo", matchedStartedAt),
+            };
+            if (serviceKeyId is not null)
+            {
+                coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value),
+                    Builders<BsonDocument>.Filter.Eq("ServiceKeyId", serviceKeyId)));
+            }
+            else
+            {
+                coveringWindowFilters.Add(Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value));
+            }
+            if (await costReconciliations.CountDocumentsAsync(
+                    TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(coveringWindowFilters)),
+                    new CountOptions { Limit = 1 }) > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "PROVIDER_REQUEST_COVERED_BY_WINDOW",
+                    "该 provider request id 已包含在供应商汇总账单窗口中，不能重复导入逐请求费用"), jsonOptions, 409);
+            }
+        }
+    }
+    else
+    {
+        windowFrom = body.WindowFrom?.ToUniversalTime();
+        windowTo = body.WindowTo?.ToUniversalTime();
+        if (windowFrom is null || windowTo is null || windowFrom >= windowTo || windowTo - windowFrom > TimeSpan.FromDays(31))
+            return Json(ApiEnvelope<object>.Fail("INVALID_BILLING_WINDOW", "window 粒度必须提供不超过 31 天的有效 windowFrom/windowTo"), jsonOptions, 400);
+        BsonDocument? matchedServiceKey = null;
+        if (serviceKeyId is not null)
+        {
+            matchedServiceKey = await serviceKeys.Find(TenantAccess.FilterTeamScope(
+                    http,
+                    Builders<BsonDocument>.Filter.Eq("_id", serviceKeyId)))
+                .FirstOrDefaultAsync();
+            if (matchedServiceKey is null)
+                return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "当前租户没有匹配的 service key"), jsonOptions, 404);
+            reconciliationTeamId = matchedServiceKey.AsNullableString("TeamId");
+        }
+        var windowFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Gte("StartedAt", windowFrom.Value),
+            Builders<BsonDocument>.Filter.Lt("StartedAt", windowTo.Value),
+            Builders<BsonDocument>.Filter.Regex("Provider", new BsonRegularExpression(
+                $"^{System.Text.RegularExpressions.Regex.Escape(provider)}$", "i")));
+        if (serviceKeyId is not null) windowFilter &= Builders<BsonDocument>.Filter.Eq("ServiceKeyId", serviceKeyId);
+        var windowCount = await logs.CountDocumentsAsync(TenantAccess.FilterTeamScope(http, windowFilter));
+        if (windowCount == 0)
+            return Json(ApiEnvelope<object>.Fail("BILLING_WINDOW_EMPTY", "当前租户时间窗没有匹配请求"), jsonOptions, 404);
+        if (windowCount > 100000)
+            return Json(ApiEnvelope<object>.Fail("BILLING_WINDOW_TOO_LARGE", "单次时间窗最多对账 100000 条请求"), jsonOptions, 413);
+        windowLogs = await logs.Find(TenantAccess.FilterTeamScope(http, windowFilter))
+            .Project(Builders<BsonDocument>.Projection
+                .Include("EstimatedCost")
+                .Include("EstimatedCostCurrency")
+                .Include("Model")
+                .Include("ServiceKeyId")
+                .Include("TeamId")
+                .Include("ProviderRequestId")
+                .Include("ReconciliationStatus"))
+            .ToListAsync();
+        if (windowLogs.Any(x => !string.IsNullOrWhiteSpace(x.AsNullableString("ReconciliationStatus"))))
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST",
+                "账单窗口包含已逐请求对账的请求，请缩小窗口或改用原逐请求账单记录"), jsonOptions, 409);
+        var windowProviderRequestIds = windowLogs
+            .Select(x => x.AsNullableString("ProviderRequestId"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        foreach (var requestIdChunk in windowProviderRequestIds.Chunk(1000))
+        {
+            var reconciledRequestFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Granularity", "request"),
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.In("ProviderRequestId", requestIdChunk));
+            if (await costReconciliations.CountDocumentsAsync(
+                    TenantAccess.FilterTeamScope(http, reconciledRequestFilter),
+                    new CountOptions { Limit = 1 }) > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST",
+                    "账单窗口包含已逐请求对账的请求，请缩小窗口或改用原逐请求账单记录"), jsonOptions, 409);
+            }
+        }
+        var windowTeamIds = windowLogs
+            .Select(x => x.AsNullableString("TeamId"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var containsUnscopedLog = windowLogs.Any(x => string.IsNullOrWhiteSpace(x.AsNullableString("TeamId")));
+        if (windowTeamIds.Count > 1 || serviceKeyId is null && containsUnscopedLog && windowTeamIds.Count > 0)
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_TEAM_AMBIGUOUS",
+                "时间窗跨越多个团队，请按 service key 或团队拆分账单记录"), jsonOptions, 409);
+        if (reconciliationTeamId is null) reconciliationTeamId = windowTeamIds.SingleOrDefault();
+        costImportLease = await CostImportScopeLock.TryAcquireAsync(
+            costImportScopeLocks,
+            access.TenantId,
+            provider,
+            reconciliationTeamId,
+            http.RequestAborted);
+        if (costImportLease is null)
+            return Json(ApiEnvelope<object>.Fail(
+                "COST_IMPORT_SCOPE_BUSY",
+                "当前租户、供应商和团队正在导入费用，请稍后重试"), jsonOptions, 409);
+        BsonValue reconciliationTeamValue = reconciliationTeamId is null ? BsonNull.Value : new BsonString(reconciliationTeamId);
+        BsonValue reconciliationKeyValue = serviceKeyId is null ? BsonNull.Value : new BsonString(serviceKeyId);
+        var overlapFilters = new List<FilterDefinition<BsonDocument>>
+        {
+            Builders<BsonDocument>.Filter.Eq("Granularity", "window"),
+            Builders<BsonDocument>.Filter.Eq("Provider", provider),
+            Builders<BsonDocument>.Filter.Eq("TeamId", reconciliationTeamValue),
+            Builders<BsonDocument>.Filter.Ne("ExternalRecordId", externalRecordId),
+            Builders<BsonDocument>.Filter.Lt("WindowFrom", windowTo.Value),
+            Builders<BsonDocument>.Filter.Gt("WindowTo", windowFrom.Value),
+        };
+        if (serviceKeyId is not null)
+        {
+            overlapFilters.Add(Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", BsonNull.Value),
+                Builders<BsonDocument>.Filter.Eq("ServiceKeyId", reconciliationKeyValue)));
+        }
+        var overlapFilter = Builders<BsonDocument>.Filter.And(overlapFilters);
+        if (await costReconciliations.CountDocumentsAsync(TenantAccess.FilterTeamScope(http, overlapFilter), new CountOptions { Limit = 1 }) > 0)
+            return Json(ApiEnvelope<object>.Fail(
+                "BILLING_WINDOW_OVERLAP",
+                "该供应商与 service key 已存在重叠账单窗口，请使用原 externalRecordId 重试或拆分为不重叠窗口"), jsonOptions, 409);
+    }
+
+    decimal? estimatedCost;
+    string? estimatedCurrency;
+    string? preStatus = null;
+    if (matchedLog is not null)
+    {
+        estimatedCost = matchedLog.AsNullableDecimal("EstimatedCost");
+        estimatedCurrency = CostReconciliationPolicy.NormalizeCurrency(matchedLog.AsNullableString("EstimatedCostCurrency"));
+    }
+    else
+    {
+        var currencies = windowLogs
+            .Select(x => CostReconciliationPolicy.NormalizeCurrency(x.AsNullableString("EstimatedCostCurrency")))
+            .Where(x => x is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var complete = windowLogs.All(x => x.AsNullableDecimal("EstimatedCost") is not null
+                                           && CostReconciliationPolicy.NormalizeCurrency(x.AsNullableString("EstimatedCostCurrency")) is not null);
+        if (!complete)
+        {
+            estimatedCost = null;
+            estimatedCurrency = null;
+            preStatus = "estimated-incomplete";
+        }
+        else if (currencies.Count != 1)
+        {
+            estimatedCost = null;
+            estimatedCurrency = null;
+            preStatus = "estimated-mixed-currency";
+        }
+        else
+        {
+            estimatedCost = windowLogs.Sum(x => x.AsNullableDecimal("EstimatedCost")!.Value);
+            estimatedCurrency = currencies[0];
+        }
+    }
+
+    var decision = CostReconciliationPolicy.Evaluate(
+        estimatedCost,
+        estimatedCurrency,
+        providerReportedCost.Value,
+        actualCurrency,
+        body.FxSnapshotId,
+        body.ProviderToEstimatedFxRate);
+    var reconciliationStatus = preStatus ?? decision.Status;
+    var createdAt = DateTime.UtcNow;
+    var suppliedBilledAt = body.BilledAt?.ToUniversalTime();
+    var billedAt = suppliedBilledAt ?? createdAt;
+    var importCanonical = JsonSerializer.Serialize(new
+    {
+        provider = provider.ToLowerInvariant(),
+        externalRecordId,
+        providerRequestId,
+        serviceKeyId,
+        windowFrom,
+        windowTo,
+        providerReportedCost = providerReportedCost.Value,
+        providerCostCurrency = actualCurrency,
+        billedAt = suppliedBilledAt,
+        fxSnapshotId = body.FxSnapshotId?.Trim(),
+        body.ProviderToEstimatedFxRate,
+    });
+    var importHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(importCanonical))).ToLowerInvariant();
+    var id = Guid.NewGuid().ToString("N");
+    var reconciliationModel = matchedLog?.AsNullableString("Model")
+        ?? (windowLogs.Select(x => x.AsNullableString("Model")).Distinct(StringComparer.Ordinal).Count() == 1
+            ? windowLogs.FirstOrDefault()?.AsNullableString("Model")
+            : null);
+    var record = new BsonDocument
+    {
+        { "_id", id },
+        { "TenantId", access.TenantId },
+        { "TeamId", reconciliationTeamId is null ? BsonNull.Value : reconciliationTeamId },
+        { "Provider", provider },
+        { "ExternalRecordId", externalRecordId },
+        { "Granularity", granularity },
+        { "RequestId", matchedLog?.AsNullableString("RequestId") is { } requestId ? requestId : BsonNull.Value },
+        { "ProviderRequestId", providerRequestId is null ? BsonNull.Value : providerRequestId },
+        { "ServiceKeyId", serviceKeyId is null ? BsonNull.Value : serviceKeyId },
+        { "Model", reconciliationModel is null ? BsonNull.Value : reconciliationModel },
+        { "EstimatedCost", estimatedCost is null ? BsonNull.Value : new BsonDecimal128(estimatedCost.Value) },
+        { "EstimatedCostCurrency", estimatedCurrency is null ? BsonNull.Value : estimatedCurrency },
+        { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
+        { "ProviderCostCurrency", actualCurrency },
+        { "ProviderCostInEstimatedCurrency", decision.ProviderCostInEstimatedCurrency is null ? BsonNull.Value : new BsonDecimal128(decision.ProviderCostInEstimatedCurrency.Value) },
+        { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
+        { "ProviderToEstimatedFxRate", body.ProviderToEstimatedFxRate is null ? BsonNull.Value : new BsonDecimal128(body.ProviderToEstimatedFxRate.Value) },
+        { "ReconciliationStatus", reconciliationStatus },
+        { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
+        { "DeltaCurrency", decision.DeltaCurrency is null ? BsonNull.Value : decision.DeltaCurrency },
+        { "WindowFrom", windowFrom is null ? BsonNull.Value : new BsonDateTime(windowFrom.Value) },
+        { "WindowTo", windowTo is null ? BsonNull.Value : new BsonDateTime(windowTo.Value) },
+        { "BilledAt", billedAt },
+        { "ImportHash", importHash },
+        { "CreatedByUserId", access.UserId },
+        { "CreatedAt", createdAt },
+    };
+
+    async Task ApplyMatchedRequestLogAsync()
+    {
+        if (matchedLog is null) return;
+        await logs.UpdateOneAsync(
+            TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.Eq("_id", matchedLog.GetStringOrEmpty("_id"))),
+            new BsonDocument("$set", new BsonDocument
+            {
+                { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
+                { "ProviderCostCurrency", actualCurrency },
+                { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
+                { "ReconciliationStatus", reconciliationStatus },
+                { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
+            }));
+    }
+
+    if (costImportLease is null
+        || !await CostImportScopeLock.TryRenewAsync(
+            costImportScopeLocks,
+            costImportLease,
+            http.RequestAborted))
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "COST_IMPORT_SCOPE_LOST",
+            "费用导入租约已失效，未写入账单，请重试"), jsonOptions, 409);
+    }
+
+    try
+    {
+        await costReconciliations.InsertOneAsync(record);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var existing = await costReconciliations.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                Builders<BsonDocument>.Filter.Eq("ExternalRecordId", externalRecordId))))
+            .FirstOrDefaultAsync();
+        if (existing is not null && existing.AsNullableString("ImportHash") != importHash)
+            return Json(ApiEnvelope<object>.Fail("COST_IMPORT_CONFLICT", "同一供应商账单记录已用不同内容导入"), jsonOptions, 409);
+        if (existing is not null)
+        {
+            // 首次导入可能已写入对账记录、但在请求日志投影前进程退出。
+            // 同内容重试必须补写日志，不能把幂等成功变成永久不一致。
+            await ApplyMatchedRequestLogAsync();
+            return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(existing)), jsonOptions);
+        }
+        if (providerRequestId is not null)
+        {
+            var requestExisting = await costReconciliations.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("Provider", provider),
+                    Builders<BsonDocument>.Filter.Eq("ProviderRequestId", providerRequestId),
+                    Builders<BsonDocument>.Filter.Eq("Granularity", "request"))))
+                .FirstOrDefaultAsync();
+            if (requestExisting is not null)
+                return Json(ApiEnvelope<object>.Fail("PROVIDER_REQUEST_ALREADY_RECONCILED", "该 provider request id 已关联另一条供应商账单记录"), jsonOptions, 409);
+        }
+        throw;
+    }
+
+    await ApplyMatchedRequestLogAsync();
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "cost.reconciliation.import",
+        "llmgw_cost_reconciliation",
+        id,
+        externalRecordId,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "provider", provider },
+            { "granularity", granularity },
+            { "status", reconciliationStatus },
+            { "currency", actualCurrency },
+        });
+    return Json(ApiEnvelope<CostReconciliationItem>.Ok(MapCostReconciliation(record)), jsonOptions, 201);
+    }
+    finally
+    {
+        if (costImportLease is not null)
+        {
+            try
+            {
+                await CostImportScopeLock.ReleaseAsync(
+                    costImportScopeLocks,
+                    costImportLease,
+                    CancellationToken.None);
+            }
+            catch (MongoException)
+            {
+                // 账单已写入时不能让锁释放故障把成功响应改为 500；短租约会由 TTL 回收。
+            }
+        }
+    }
+}).RequireAuthorization("ConfigWrite");
+
+app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, string? to) =>
+{
+    var range = ResolveRange(from, to, 30);
+    var recordFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Gte("BilledAt", range.From),
+        Builders<BsonDocument>.Filter.Lt("BilledAt", range.To)));
+    var docs = await costReconciliations.Find(recordFilter)
+        .Sort(Builders<BsonDocument>.Sort.Descending("BilledAt"))
+        .Limit(500)
+        .ToListAsync();
+    var actualAggregate = await costReconciliations.Aggregate()
+        .Match(recordFilter & Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Ne("ProviderReportedCost", BsonNull.Value),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Decimal128),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Double),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Int32),
+                Builders<BsonDocument>.Filter.Type("ProviderReportedCost", BsonType.Int64)),
+            Builders<BsonDocument>.Filter.Type("ProviderCostCurrency", BsonType.String)))
+        .Group(new BsonDocument
+        {
+            { "_id", "$ProviderCostCurrency" },
+            { "Amount", new BsonDocument("$sum", "$ProviderReportedCost") },
+            { "Requests", new BsonDocument("$sum", 1) },
+        })
+        .Sort(new BsonDocument("_id", 1))
+        .ToListAsync();
+    var actualCosts = actualAggregate
+        .Where(x => x.AsNullableDecimal("Amount") is not null)
+        .Select(x => new EstimatedCostBucket
+        {
+            Currency = x.GetStringOrEmpty("_id"),
+            Amount = x.AsNullableDecimal("Amount")!.Value,
+            Requests = x.AsNullableLong("Requests") ?? 0,
+        }).ToList();
+    var statusAggregate = await costReconciliations.Aggregate()
+        .Match(recordFilter)
+        .Group(new BsonDocument
+        {
+            { "_id", new BsonDocument("$ifNull", new BsonArray { "$ReconciliationStatus", "unknown" }) },
+            { "Count", new BsonDocument("$sum", 1) },
+        })
+        .Sort(new BsonDocument("Count", -1))
+        .ToListAsync();
+    var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
+        Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("ReconciliationStatus", false),
+            Builders<BsonDocument>.Filter.Eq("ReconciliationStatus", BsonNull.Value))));
+    var totalRecords = await costReconciliations.CountDocumentsAsync(recordFilter);
+    var result = new CostReconciliationSummary
+    {
+        TotalRecords = totalRecords,
+        RequestRecords = await costReconciliations.CountDocumentsAsync(recordFilter & Builders<BsonDocument>.Filter.Eq("Granularity", "request")),
+        WindowRecords = await costReconciliations.CountDocumentsAsync(recordFilter & Builders<BsonDocument>.Filter.Eq("Granularity", "window")),
+        ActualUnavailableRequests = await logs.CountDocumentsAsync(logFilter),
+        ProviderActualCosts = actualCosts,
+        StatusDistribution = statusAggregate.Select(x => new LogsBucketItem
+        {
+            Key = string.IsNullOrWhiteSpace(x.GetStringOrEmpty("_id")) ? "unknown" : x.GetStringOrEmpty("_id"),
+            Count = x.AsNullableLong("Count") ?? 0,
+        }).ToList(),
+        Items = docs.Select(MapCostReconciliation).ToList(),
+    };
+    return Json(ApiEnvelope<CostReconciliationSummary>.Ok(result), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
+app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    if (!string.Equals(access.TenantId, internalTenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<object>.Ok(new { applicable = false, status = "not-applicable", usage = Array.Empty<object>() }), jsonOptions);
+    var policy = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
+    var usage = await legacyKeyUsage.Find(TenantAccess.Filter(http))
+        .Sort(Builders<BsonDocument>.Sort.Descending("LastSeenAt"))
+        .Limit(500)
+        .ToListAsync();
+    var successorIds = policy?.AsStringList("SuccessorServiceKeyIds") ?? [];
+    var requiredIngressProtocols = policy?.AsStringList("RequiredIngressProtocols") ?? [];
+    var requiredScopes = policy?.AsStringList("RequiredScopes") ?? [];
+    if (requiredScopes.Count == 0)
+        requiredScopes = LegacySuccessorScopePolicy.RequiredRuntimeScopes.ToList();
+    var successorCounts = ReadSuccessorObservationCounts(policy);
+    var requiredObservations = policy?.AsNullableLong("RequiredSuccessorObservations") ?? 1;
+    var minimumObserved = successorIds.Count == 0
+        ? 0
+        : successorIds.Min(id => successorCounts.GetValueOrDefault(id));
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        applicable = true,
+        status = policy?.AsNullableString("Status") ?? "observing",
+        deadlineAt = policy?.AsNullableUtcDateTime("DeadlineAt").ToIso(),
+        allowedAppCallerCodes = policy?.AsStringList("AllowedAppCallerCodes") ?? [],
+        successorServiceKeyIds = successorIds,
+        requiredIngressProtocols,
+        requiredScopes,
+        requiredSuccessorObservations = requiredObservations,
+        successorObservedCount = minimumObserved,
+        successorObservationCounts = successorCounts,
+        lastSuccessorUsedAt = policy?.AsNullableUtcDateTime("LastSuccessorUsedAt").ToIso(),
+        readyToRevoke = policy is not null
+                        && successorIds.Count > 0
+                        && successorIds.All(id => successorCounts.GetValueOrDefault(id) >= requiredObservations),
+        usage = usage.Select(x => new
+        {
+            sourceSystem = x.AsNullableString("SourceSystem"),
+            appCallerCode = x.AsNullableString("AppCallerCode"),
+            ingressProtocol = x.AsNullableString("IngressProtocol"),
+            totalCount = x.AsNullableLong("TotalCount") ?? 0,
+            allowedCount = x.AsNullableLong("AllowedCount") ?? 0,
+            rejectedCount = x.AsNullableLong("RejectedCount") ?? 0,
+            firstSeenAt = x.AsNullableUtcDateTime("FirstSeenAt").ToIso(),
+            lastSeenAt = x.AsNullableUtcDateTime("LastSeenAt").ToIso(),
+            lastDecision = x.AsNullableString("LastDecision"),
+        }),
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUpdateRequest body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    if (!string.Equals(access.TenantId, internalTenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<object>.Fail("LEGACY_KEY_NOT_APPLICABLE", "legacy shared key 只属于内部租户"), jsonOptions, 404);
+    var status = (body.Status ?? "observing").Trim().ToLowerInvariant();
+    if (status is not ("observing" or "ready" or "revoked"))
+        return Json(ApiEnvelope<object>.Fail("INVALID_LEGACY_CUTOVER_STATUS", "status 仅支持 observing、ready、revoked"), jsonOptions, 400);
+    var allowedCallers = NormalizeDistinct(body.AllowedAppCallerCodes ?? [], 500);
+    var successorIds = NormalizeDistinct(body.SuccessorServiceKeyIds ?? [], 100);
+    var requiredIngressProtocols = TargetIngressProtocols().Select(protocol => protocol.Key).ToList();
+    var requiredScopes = LegacySuccessorScopePolicy.RequiredRuntimeScopes.ToList();
+    var required = Math.Clamp(body.RequiredSuccessorObservations, 1, 1000000);
+    if (body.DeadlineAt is null)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DEADLINE_REQUIRED", "必须设置 legacy key 截止时间"), jsonOptions, 400);
+    if (successorIds.Count > 0)
+    {
+        if (allowedCallers.Count == 0)
+            return Json(ApiEnvelope<object>.Fail("LEGACY_CALLER_INVENTORY_REQUIRED", "配置后继 key 前必须列出 legacy key 的允许调用方"), jsonOptions, 409);
+        var successorDocs = await serviceKeys.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.In("_id", successorIds),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Regex("Environment", new BsonRegularExpression("^production$", "i")),
+                Builders<BsonDocument>.Filter.Regex("Purpose", new BsonRegularExpression("^runtime$", "i")),
+                Builders<BsonDocument>.Filter.Regex("SourceSystem", new BsonRegularExpression("^map$", "i")))))
+            .ToListAsync();
+        if (successorDocs.Count != successorIds.Count)
+            return Json(ApiEnvelope<object>.Fail("LEGACY_SUCCESSOR_INVALID", "所有后继 key 必须是当前内部租户启用的 production MAP runtime scoped key"), jsonOptions, 409);
+        foreach (var successor in successorDocs)
+        {
+            var missingCallers = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("AppCallerCodes"), allowedCallers);
+            var missingProtocols = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("IngressProtocols"), requiredIngressProtocols);
+            var missingScopes = LegacySuccessorScopePolicy.FindMissing(successor.AsStringList("Scopes"), requiredScopes);
+            if (missingCallers.Count > 0 || missingProtocols.Count > 0 || missingScopes.Count > 0)
+            {
+                return Json(ApiEnvelope<object>.Fail(
+                    "LEGACY_SUCCESSOR_SCOPE_INCOMPLETE",
+                    $"后继 key {successor.GetStringOrEmpty("_id")} 未覆盖 legacy 调用方、四协议或运行时 scope"), jsonOptions, 409);
+            }
+        }
+    }
+    var current = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
+    if (string.Equals(current?.AsNullableString("Status"), "revoked", StringComparison.OrdinalIgnoreCase)
+        && status != "revoked")
+        return Json(ApiEnvelope<object>.Fail("LEGACY_REVOCATION_FINAL", "legacy shared key 已永久撤销，不能恢复为可用状态"), jsonOptions, 409);
+    var currentSuccessorIds = current?.AsStringList("SuccessorServiceKeyIds") ?? [];
+    var successorSetUnchanged = currentSuccessorIds.Count == successorIds.Count
+                                && currentSuccessorIds.ToHashSet(StringComparer.Ordinal).SetEquals(successorIds);
+    var currentCounts = ReadSuccessorObservationCounts(current);
+    var retainedCounts = successorIds.ToDictionary(
+        id => id,
+        id => successorSetUnchanged ? currentCounts.GetValueOrDefault(id) : 0L,
+        StringComparer.Ordinal);
+    var minimumObserved = successorIds.Count == 0 ? 0 : successorIds.Min(id => retainedCounts[id]);
+    if (status == "revoked" && (successorIds.Count == 0 || minimumObserved < required))
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测次数达标后才能撤销 legacy key"), jsonOptions, 409);
+    var now = DateTime.UtcNow;
+    var id = current?.GetStringOrEmpty("_id") is { Length: > 0 } currentId ? currentId : Guid.NewGuid().ToString("N");
+    var policyFilter = TenantAccess.Filter(http);
+    if (status == "revoked")
+    {
+        foreach (var successorId in successorIds)
+            policyFilter &= Builders<BsonDocument>.Filter.Gte($"SuccessorObservationCounts.{successorId}", required);
+    }
+    var policyUpdate = Builders<BsonDocument>.Update
+        .SetOnInsert("_id", id)
+        .SetOnInsert("TenantId", access.TenantId)
+        .Set("Status", status)
+        .Set("DeadlineAt", body.DeadlineAt.Value.ToUniversalTime())
+        .Set("AllowedAppCallerCodes", new BsonArray(allowedCallers))
+        .Set("SuccessorServiceKeyIds", new BsonArray(successorIds))
+        .Set("RequiredIngressProtocols", new BsonArray(requiredIngressProtocols))
+        .Set("RequiredScopes", new BsonArray(requiredScopes))
+        .Set("RequiredSuccessorObservations", required)
+        .Set("UpdatedAt", now);
+    if (!successorSetUnchanged)
+    {
+        policyUpdate = policyUpdate
+            .Set("SuccessorObservationCounts", new BsonDocument(retainedCounts.Select(x => new BsonElement(x.Key, x.Value))))
+            .Set("SuccessorObservedCount", 0)
+            .Set("LastSuccessorUsedAt", BsonNull.Value);
+    }
+    UpdateResult updateResult;
+    try
+    {
+        updateResult = await legacyKeyCutovers.UpdateOneAsync(
+            policyFilter,
+            policyUpdate,
+            new UpdateOptions { IsUpsert = current is null });
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<object>.Fail("LEGACY_CUTOVER_CONFLICT", "退场策略已被并发创建，请刷新后重试"), jsonOptions, 409);
+    }
+    if (updateResult.MatchedCount == 0 && current is not null)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测状态已变化，请刷新后重试"), jsonOptions, 409);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        status == "revoked" ? "legacy_key.revoke" : "legacy_key.cutover_update",
+        "llmgw_legacy_key_cutover",
+        id,
+        "legacy-map-shared",
+        true,
+        null,
+        new BsonDocument
+        {
+            { "status", status },
+            { "deadlineAt", body.DeadlineAt.Value.ToUniversalTime() },
+            { "allowedAppCallerCount", allowedCallers.Count },
+            { "successorKeyCount", successorIds.Count },
+            { "requiredSuccessorObservations", required },
+        });
+    return Json(ApiEnvelope<object>.Ok(new { id, status, deadlineAt = body.DeadlineAt.Value.ToUniversalTime(), observed = minimumObserved, required }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 // 影子比对：汇总 + 最近 N 条
 app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
@@ -3650,7 +5462,7 @@ app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
     if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
-    var filter = TenantAccess.Filter(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
+    var filter = TenantAccess.FilterTeamScope(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
     var total = await shadows.CountDocumentsAsync(filter);
     var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
     var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
@@ -3687,10 +5499,164 @@ app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string
     return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// ─────────────── 网关配置面（可写，腿 B 第二刀）───────────────
-// 让控制台不只能看还能配置。当前开放最安全的写操作：启用态、默认标记、认领到 GW 自有集合。
-// 均为定点字段更新（不碰密钥、不删数据）：已认领对象写 llm_gateway；未认领对象仍写 MAP 兼容集合。
-// 密钥轮换 / 新建平台 / 编辑 transformer 等更重的写操作后续再开。
+// ─────────────── 网关配置面（可写）───────────────
+// 外部租户只写 llm_gateway 自有集合；TenantId 永远来自服务端会话，不接受请求体自报。
+// 内部租户继续保留 MAP 来源对象的认领兼容路径，不重做既有迁移和运行时发布流程。
+
+// 创建 Provider：上游通讯密钥是必填项，只加密落库，不进入响应或审计。
+app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizePlatform(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwPlatforms.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
+
+    string encryptedApiKey;
+    try
+    {
+        encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey, config);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Json(ApiEnvelope<PlatformItem>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+    }
+
+    var id = $"gw-platform-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildPlatformDocument(draft, tenantId, id, encryptedApiKey, now);
+    try
+    {
+        await gwPlatforms.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.create",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: draft.Name,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "platformType", draft.PlatformType },
+            { "apiUrl", draft.ApiUrl },
+            { "maxConcurrency", draft.MaxConcurrency },
+            { "hasKey", true },
+        });
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document)), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+// 创建模型：Provider 必须属于当前租户；缺少模型 key 时继承 Provider key。
+// 创建成功后只调用现有默认池注册表做 append-only 补齐：匹配则追加，不匹配则保持不变。
+app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeModel(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var platformFilter = TenantAccess.Filter(http, fb.Eq("_id", draft.PlatformId));
+    var platform = await gwPlatforms.Find(platformFilter).FirstOrDefaultAsync();
+    if (platform is null)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+    if (platform.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_DISABLED", "Provider 已停用，请先启用后再添加模型"), jsonOptions, 409);
+
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("PlatformId", draft.PlatformId),
+        fb.Or(
+            fb.Eq("ModelNameNormalized", draft.ModelNameNormalized),
+            fb.Regex("ModelName", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.ModelName)}$", "i"))));
+    if (await gwModels.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
+
+    string? encryptedApiKey = null;
+    if (!string.IsNullOrWhiteSpace(draft.ApiKey))
+    {
+        try
+        {
+            encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey, config);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Json(ApiEnvelope<CreateModelResult>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+        }
+    }
+
+    var id = $"gw-model-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildModelDocument(draft, tenantId, id, encryptedApiKey, now);
+    try
+    {
+        await gwModels.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
+    }
+
+    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured;
+    try
+    {
+        ensured = await EnsureGatewayModelPoolTypesAsync(
+            gwModelPoolTypes,
+            gwModelPools,
+            gwModels,
+            gwPlatforms,
+            models,
+            platforms,
+            tenantId,
+            internalTenantId,
+            appendModels: true);
+    }
+    catch
+    {
+        await gwModels.DeleteOneAsync(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id)));
+        return Json(ApiEnvelope<CreateModelResult>.Fail("MODEL_POOL_SYNC_FAILED", "默认模型池同步失败，模型未保存，请稍后重试"), jsonOptions, 500);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.create",
+        targetType: "llmgw_model",
+        targetId: id,
+        targetName: draft.Name,
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "platformId", draft.PlatformId },
+            { "modelName", draft.ModelName },
+            { "protocol", ToBsonAuditValue(draft.Protocol) },
+            { "capabilities", new BsonArray(draft.Capabilities) },
+            { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
+            { "hasDedicatedKey", encryptedApiKey is not null },
+            { "modelsAppended", ensured.ModelsAppended },
+        });
+    return Json(ApiEnvelope<CreateModelResult>.Ok(new CreateModelResult
+    {
+        Item = MapModel(document),
+        PoolTypesCreated = ensured.TypesCreated,
+        PoolsCreated = ensured.PoolsCreated,
+        ModelsAppended = ensured.ModelsAppended,
+    }), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
 
 // 平台启用/停用
 app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
@@ -4115,7 +6081,204 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
     return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Ok(result), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// Exchange 认领：先只提供 API，不暴露密钥明文；resolver 会优先读 GW 自有 exchange。
+// 创建 Exchange：外部租户直接写 llm_gateway 自有集合，不再要求先去 MAP 建同名对象。
+// tenantId 永远来自服务端会话；通讯密钥只加密落库，不进入响应或审计。
+app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (tenantId != internalTenantId)
+    {
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
+    var fb = Builders<BsonDocument>.Filter;
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwModelExchanges.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+
+    string encryptedApiKey;
+    try
+    {
+        encryptedApiKey = GwApiKeyCrypto.Encrypt(draft.ApiKey!, config);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+    }
+
+    var id = $"gw-exchange-{Guid.NewGuid():N}";
+    var now = DateTime.UtcNow;
+    var document = GatewayConfigurationProvisioning.BuildExchangeDocument(draft, tenantId, id, encryptedApiKey, now);
+    string requiredAuditId;
+    try
+    {
+        requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "exchange.create",
+            targetType: "llmgw_model_exchange",
+            targetId: id,
+            targetName: draft.Name,
+            changes: new BsonDocument
+            {
+                { "modelCount", draft.Models.Count },
+                { "modelIds", new BsonArray(draft.Models.Select(item => item.ModelId)) },
+                { "targetAuthScheme", draft.TargetAuthScheme },
+                { "transformerType", draft.TransformerType },
+                { "enabled", draft.Enabled },
+                { "hasKey", true },
+                { "authority", "llm_gateway" },
+            });
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_FAILED", "无法先建立 Exchange 审计意图，本次未写入配置"), jsonOptions, 503);
+    }
+
+    try
+    {
+        await gwModelExchanges.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "duplicate_exchange");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "exchange_write_failed");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_WRITE_FAILED", "Exchange 写入失败，审计意图已保留"), jsonOptions, 503);
+    }
+
+    try
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: true, reason: null);
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_PENDING", "Exchange 已写入，审计意图仍待收口；请刷新列表并检查审计"), jsonOptions, 503);
+    }
+
+    var fresh = await gwModelExchanges.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_READBACK_FAILED", "Exchange 已创建，但服务端读回失败，请刷新列表确认"), jsonOptions, 503);
+    return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+// Exchange 映射编辑：完整替换可见映射字段，并用 version 防止旧页面覆盖并发修改。
+app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] UpdateExchangeRequest? body) =>
+{
+    if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (tenantId != internalTenantId)
+    {
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
+    var tenantFilter = TenantAccess.Filter(http, fb.Eq("_id", id));
+    var document = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
+    if (document is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "Exchange 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var currentVersion = document.AsNullableLong("Version") ?? 0;
+    if (draft.Version != currentVersion)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+
+    var duplicateFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Ne("_id", id),
+        fb.Or(
+            fb.Eq("NameNormalized", draft.NameNormalized),
+            fb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.Name)}$", "i"))));
+    if (await gwModelExchanges.Find(duplicateFilter).AnyAsync())
+        return Json(ApiEnvelope<ExchangeItem>.Fail("DUPLICATE_EXCHANGE", "当前租户已存在同名 Exchange"), jsonOptions, 409);
+
+    var versionFilter = document.Contains("Version")
+        ? fb.Eq("Version", currentVersion)
+        : fb.Exists("Version", false);
+    var nextVersion = currentVersion + 1;
+    var update = Builders<BsonDocument>.Update
+        .Set("Name", draft.Name)
+        .Set("NameNormalized", draft.NameNormalized)
+        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(draft.Models))
+        .Set("TargetUrl", draft.TargetUrl)
+        .Set("TargetAuthScheme", draft.TargetAuthScheme)
+        .Set("TransformerType", draft.TransformerType)
+        .Set("Enabled", draft.Enabled)
+        .Set("Description", ToBsonAuditValue(draft.Description))
+        .Set("UpdatedAt", DateTime.UtcNow)
+        .Set("Version", nextVersion);
+    string requiredAuditId;
+    try
+    {
+        requiredAuditId = await BeginRequiredOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "exchange.update",
+            targetType: "llmgw_model_exchange",
+            targetId: id,
+            targetName: draft.Name,
+            changes: new BsonDocument
+            {
+                { "name", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("Name")) }, { "to", draft.Name } } },
+                { "modelCount", new BsonDocument { { "from", MapExchange(document).Models.Count }, { "to", draft.Models.Count } } },
+                { "modelIds", new BsonDocument { { "from", new BsonArray(MapExchange(document).Models.Select(item => item.ModelId)) }, { "to", new BsonArray(draft.Models.Select(item => item.ModelId)) } } },
+                { "targetUrlChanged", !string.Equals(document.AsNullableString("TargetUrl"), draft.TargetUrl, StringComparison.Ordinal) },
+                { "targetAuthScheme", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TargetAuthScheme")) }, { "to", draft.TargetAuthScheme } } },
+                { "transformerType", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TransformerType")) }, { "to", draft.TransformerType } } },
+                { "enabled", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableBool("Enabled")) }, { "to", draft.Enabled } } },
+                { "authority", "llm_gateway" },
+            });
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_FAILED", "无法先建立 Exchange 审计意图，本次未修改配置"), jsonOptions, 503);
+    }
+
+    UpdateResult updateResult;
+    try
+    {
+        updateResult = await gwModelExchanges.UpdateOneAsync(fb.And(tenantFilter, versionFilter), update);
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "exchange_write_failed");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_WRITE_FAILED", "Exchange 修改失败，审计意图已保留"), jsonOptions, 503);
+    }
+    if (updateResult.ModifiedCount != 1)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: false, reason: "version_conflict");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+    }
+
+    try
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, requiredAuditId, success: true, reason: null);
+    }
+    catch
+    {
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_PENDING", "Exchange 已修改，审计意图仍待收口；请刷新列表并检查审计"), jsonOptions, 503);
+    }
+
+    var fresh = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_READBACK_FAILED", "Exchange 已更新，但服务端读回失败，请刷新列表确认"), jsonOptions, 503);
+    return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// Exchange 认领：兼容内部租户迁移；外部租户使用上方自助创建 API。
 app.MapPut("/gw/exchanges/{id}/claim", async (HttpContext http, string id) =>
 {
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
@@ -4386,6 +6549,12 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
     if (description.Length > 1000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "description 最多 1000 字符"), jsonOptions, 400);
     if (body.Priority is < 1 or > 100000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priority 必须在 1 到 100000 之间"), jsonOptions, 400);
     if (body.StrategyType is < 0 or > 5) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "strategyType 仅支持 0 到 5"), jsonOptions, 400);
+    if (body.IsDefaultForType == true)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POINTER_REQUIRED",
+            "请先创建特殊模型池并添加可用成员，再使用“设为默认”；默认池只能通过原子默认指针切换。"), jsonOptions, 409);
+    }
 
     var now = DateTime.UtcNow;
     var doc = new BsonDocument
@@ -4396,7 +6565,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         ["Code"] = code,
         ["Priority"] = body.Priority ?? 50,
         ["ModelType"] = modelType,
-        ["IsDefaultForType"] = body.IsDefaultForType ?? false,
+        ["IsDefaultForType"] = false,
         ["StrategyType"] = body.StrategyType ?? 0,
         ["Models"] = new BsonArray(),
         ["SourceCollection"] = "llmgw_model_pools",
@@ -4404,27 +6573,11 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         ["ClaimedAt"] = now,
         ["CreatedAt"] = now,
         ["UpdatedAt"] = now,
+        ["Version"] = 1L,
     };
     if (description.Length > 0) doc["Description"] = description;
 
-    if (body.IsDefaultForType == true
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "默认模型池必须至少包含一个可用成员；请先创建为非默认池并添加可用模型。"),
-            jsonOptions,
-            400);
-    }
-
     await gwModelPools.InsertOneAsync(doc);
-    if (body.IsDefaultForType == true)
-    {
-        var fb = Builders<BsonDocument>.Filter;
-        await gwModelPools.UpdateManyAsync(
-            TenantAccess.Filter(http, fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", doc.GetStringOrEmpty("_id")))),
-            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
-    }
 
     await WriteOperationAuditAsync(
         operationAudits,
@@ -4439,7 +6592,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
         {
             { "modelType", modelType },
             { "authority", "llm_gateway" },
-            { "isDefaultForType", body.IsDefaultForType ?? false },
+            { "isDefaultForType", false },
         });
 
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(doc)), jsonOptions, 201);
@@ -4464,13 +6617,31 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         }
         return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     }
+    if (body.IsDefaultForType is not null)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POINTER_REQUIRED",
+            "isDefaultForType 不能通过通用编辑修改；请使用“设为默认”进行原子切换。"), jsonOptions, 409);
+    }
+    if (body.ModelType is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "DEFAULT_POOL_TYPE_IMMUTABLE",
+            "当前默认池不能修改 modelType；请先将同类型的另一个可用池设为默认。"), jsonOptions, 409);
+    }
+    var managedAppendOnly = IsManagedAppendOnlyPool(doc);
+    if (managedAppendOnly && (body.Code is not null || body.ModelType is not null))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "MANAGED_POOL_IMMUTABLE",
+            "平台托管默认池的 code 和 modelType 不可修改；可编辑名称、说明和调度策略。"), jsonOptions, 409);
+    }
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
     void AddChange(string field, object? from, object? to) =>
         changes[field] = new BsonDocument { { "from", ToBsonAuditValue(from) }, { "to", ToBsonAuditValue(to) } };
 
-    var nextModelType = doc.GetStringOrEmpty("ModelType");
     if (body.Name is not null)
     {
         var name = body.Name.Trim();
@@ -4492,7 +6663,6 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         var modelType = body.ModelType.Trim().ToLowerInvariant();
         if (modelType.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 不能为空"), jsonOptions, 400);
         if (modelType.Length > 80) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 最多 80 字符"), jsonOptions, 400);
-        nextModelType = modelType;
         updates.Add(Builders<BsonDocument>.Update.Set("ModelType", modelType));
         AddChange("modelType", doc.AsNullableString("ModelType"), modelType);
     }
@@ -4523,12 +6693,6 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
             AddChange("description", doc.AsNullableString("Description"), description);
         }
     }
-    if (body.IsDefaultForType is not null)
-    {
-        updates.Add(Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefaultForType.Value));
-        AddChange("isDefaultForType", doc.AsNullableBool("IsDefaultForType") ?? false, body.IsDefaultForType.Value);
-    }
-
     if (updates.Count == 0)
     {
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
@@ -4537,26 +6701,14 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
     var now = DateTime.UtcNow;
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", now));
 
-    var shouldBeDefault = body.IsDefaultForType ?? (doc.AsNullableBool("IsDefaultForType") ?? false);
-    if (shouldBeDefault
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "默认模型池必须至少包含一个可用成员；请先添加可用模型。"),
-            jsonOptions,
-            400);
-    }
-
-    await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
-
-    if (shouldBeDefault)
-    {
-        var fb = Builders<BsonDocument>.Filter;
-        await gwModelPools.UpdateManyAsync(
-            TenantAccess.Filter(http, fb.And(fb.Eq("ModelType", nextModelType), fb.Ne("_id", id))),
-            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
-    }
+    var updateResult = await gwModelPools.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            filter,
+            PoolVersionGuard(Builders<BsonDocument>.Filter, doc),
+            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+        Builders<BsonDocument>.Update.Combine(updates.Append(Builders<BsonDocument>.Update.Inc("Version", 1))));
+    if (updateResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试属性编辑。"), jsonOptions, 409);
 
     await WriteOperationAuditAsync(
         operationAudits,
@@ -4598,6 +6750,16 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
         }
         var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
         var exists = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+        if (exists is not null && IsManagedAppendOnlyPool(exists))
+        {
+            skipped++;
+            continue;
+        }
+        if (exists is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, exists))
+        {
+            skipped++;
+            continue;
+        }
         if (exists is not null && !overwrite)
         {
             skipped++;
@@ -4610,7 +6772,25 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
         claimedDoc["Authority"] = "llm_gateway";
         claimedDoc["ClaimedAt"] = exists?.AsNullableUtcDateTime("ClaimedAt") ?? now;
         claimedDoc["UpdatedAt"] = now;
-        await gwModelPools.ReplaceOneAsync(filter, claimedDoc, new ReplaceOptions { IsUpsert = true });
+        claimedDoc["Version"] = (exists?.AsNullableLong("Version") ?? 0) + 1;
+        if (exists is null)
+        {
+            await gwModelPools.ReplaceOneAsync(filter, claimedDoc, new ReplaceOptions { IsUpsert = true });
+        }
+        else
+        {
+            var replaceResult = await gwModelPools.ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    filter,
+                    PoolVersionGuard(Builders<BsonDocument>.Filter, exists),
+                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+                claimedDoc);
+            if (replaceResult.ModifiedCount != 1)
+            {
+                skipped++;
+                continue;
+            }
+        }
         claimed++;
         changedItems.Add(MapPool(claimedDoc));
     }
@@ -4664,6 +6844,7 @@ app.MapPost("/gw/pools/price-currency/bulk-calibrate", async (HttpContext http, 
 
     foreach (var poolDoc in poolDocs)
     {
+        if (IsManagedAppendOnlyPool(poolDoc)) continue;
         if (!poolDoc.TryGetValue("Models", out var modelsValue) || !modelsValue.IsBsonArray)
         {
             continue;
@@ -4693,10 +6874,13 @@ app.MapPost("/gw/pools/price-currency/bulk-calibrate", async (HttpContext http, 
         if (!poolChanged) continue;
         touchedPools++;
         await gwModelPools.UpdateOneAsync(
-            Builders<BsonDocument>.Filter.Eq("_id", poolDoc.GetStringOrEmpty("_id")),
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", TenantAccess.GetRequired(http).TenantId),
+                Builders<BsonDocument>.Filter.Eq("_id", poolDoc.GetStringOrEmpty("_id"))),
             Builders<BsonDocument>.Update
                 .Set("Models", modelsArray)
-                .Set("UpdatedAt", now));
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
     }
 
     await WriteOperationAuditAsync(
@@ -4737,8 +6921,16 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再批量导入成员"), jsonOptions, 409);
+    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
+    if (managedAppendOnly && body.OverwriteExisting == true)
+    {
+        return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池只允许追加兼容且未存在的模型，不允许覆盖已有成员。"), jsonOptions, 409);
+    }
 
     var capabilityFilter = (body.CapabilityFilter ?? "compatible").Trim().ToLowerInvariant();
+    if (managedAppendOnly) capabilityFilter = "compatible";
     var allowedFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "compatible", "all", "vision", "image", "function_calling", "parallel_tool_calls",
@@ -4759,13 +6951,30 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var modelFb = Builders<BsonDocument>.Filter;
     var sourceFilters = new List<FilterDefinition<BsonDocument>>();
     if (platformId.Length > 0) sourceFilters.Add(modelFb.Eq("PlatformId", platformId));
-    if (body.EnabledOnly != false) sourceFilters.Add(modelFb.Eq("Enabled", true));
+    if (managedAppendOnly || body.EnabledOnly != false) sourceFilters.Add(modelFb.Ne("Enabled", false));
     var sourceFilter = sourceFilters.Count == 0 ? modelFb.Empty : modelFb.And(sourceFilters);
     var tenantSourceFilter = TenantAccess.Filter(http, sourceFilter);
     var gwModelDocs = await gwModels.Find(tenantSourceFilter).ToListAsync();
     var mapModelDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
         ? await models.Find(sourceFilter).ToListAsync()
         : new List<BsonDocument>();
+    var enabledPlatformIds = new HashSet<string>(StringComparer.Ordinal);
+    if (managedAppendOnly)
+    {
+        enabledPlatformIds.UnionWith((await gwPlatforms.Find(TenantAccess.Filter(http, modelFb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(platform => platform.GetStringOrEmpty("_id"))
+            .Where(id => id.Length > 0));
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+        {
+            enabledPlatformIds.UnionWith((await platforms.Find(modelFb.Ne("Enabled", false))
+                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .ToListAsync())
+                .Select(platform => platform.GetStringOrEmpty("_id"))
+                .Where(id => id.Length > 0));
+        }
+    }
 
     var byKey = new Dictionary<string, BsonDocument>(StringComparer.Ordinal);
     foreach (var modelDoc in gwModelDocs.Concat(mapModelDocs))
@@ -4779,7 +6988,10 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
 
     var poolModelType = pool.GetStringOrEmpty("ModelType");
     var matchedDocs = byKey.Values
-        .Where(modelDoc => DoesModelMatchBulkImportFilter(modelDoc, poolModelType, capabilityFilter))
+        .Where(modelDoc => managedAppendOnly
+            ? enabledPlatformIds.Contains(modelDoc.GetStringOrEmpty("PlatformId"))
+              && GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)
+            : DoesModelMatchBulkImportFilter(modelDoc, poolModelType, capabilityFilter))
         .OrderBy(modelDoc => modelDoc.AsNullableInt("Priority") ?? 100000)
         .ThenBy(modelDoc => modelDoc.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
         .ThenBy(modelDoc => modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id"), StringComparer.Ordinal)
@@ -4794,6 +7006,7 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
     var nextPriority = body.StartPriority ?? ((members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max()) + priorityStep);
     var imported = 0;
     var updated = 0;
+    var appendedMembers = new List<BsonDocument>();
     var skippedExisting = 0;
     var skippedInvalid = byKey.Count - gwModelDocs.Concat(mapModelDocs).Count(modelDoc =>
     {
@@ -4823,32 +7036,74 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
         if (existing is null) nextPriority += priorityStep;
         var member = BuildPoolMemberFromModel(modelDoc, modelId, resolvedPlatformId, priority, existing);
         existingByKey[key] = member;
-        if (existing is null) imported++;
+        if (existing is null)
+        {
+            imported++;
+            appendedMembers.Add(member);
+        }
         else updated++;
     }
 
-    var nextMembers = existingByKey.Values
-        .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-        .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-        .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-        .ToList();
+    var nextMembers = managedAppendOnly
+        ? members.Concat(appendedMembers).ToList()
+        : existingByKey.Values
+            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
+            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
+            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
+            .ToList();
 
     if (imported > 0 || updated > 0)
     {
-        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-            gwPlatforms,
-            gwModels,
-            gwModelExchanges,
-            pool,
-            new BsonArray(nextMembers));
-        if (validationError is not null)
+        if (managedAppendOnly)
         {
-            return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+            imported = 0;
+            foreach (var appended in appendedMembers)
+            {
+                var appendFilter = new BsonDocument
+                {
+                    { "TenantId", TenantAccess.GetRequired(http).TenantId },
+                    { "_id", id },
+                    { "ManagedByRegistry", true },
+                    { "AppendOnly", true },
+                    { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
+                    { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                        {
+                            { "ModelId", appended.GetStringOrEmpty("ModelId") },
+                            { "PlatformId", appended.GetStringOrEmpty("PlatformId") },
+                        })) },
+                };
+                var appendResult = await gwModelPools.UpdateOneAsync(
+                    appendFilter,
+                    Builders<BsonDocument>.Update.Push("Models", appended).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
+                if (appendResult.ModifiedCount == 1) imported++;
+                else skippedExisting++;
+            }
         }
+        else
+        {
+            var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+                gwModelPoolTypes,
+                gwPlatforms,
+                gwModels,
+                gwModelExchanges,
+                pool,
+                new BsonArray(nextMembers));
+            if (validationError is not null)
+            {
+                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+            }
 
-        await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-            .Set("Models", new BsonArray(nextMembers))
-            .Set("UpdatedAt", DateTime.UtcNow));
+            var writeResult = await gwModelPools.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    poolFilter,
+                    PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
+                .Set("Models", new BsonArray(nextMembers))
+                .Set("UpdatedAt", DateTime.UtcNow)
+                .Inc("Version", 1));
+            if (writeResult.ModifiedCount != 1)
+                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试批量导入。"), jsonOptions, 409);
+        }
     }
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
@@ -4895,6 +7150,7 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
+    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
 
     var modelId = (body.ModelId ?? string.Empty).Trim();
@@ -4928,10 +7184,31 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
                    ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
                        ? await models.Find(modelFilter).FirstOrDefaultAsync()
                        : null);
+    BsonDocument? exchangeDoc = null;
+    if (modelDoc is null && platformId.Length > 0)
+    {
+        exchangeDoc = await gwModelExchanges.Find(TenantAccess.Filter(http, modelFb.And(
+            modelFb.Eq("_id", platformId),
+            modelFb.Ne("Enabled", false)))).FirstOrDefaultAsync();
+        var exchangeModels = exchangeDoc is not null
+                             && exchangeDoc.TryGetValue("Models", out var exchangeModelsValue)
+                             && exchangeModelsValue.IsBsonArray
+            ? exchangeModelsValue.AsBsonArray.Where(item => item.IsBsonDocument).Select(item => item.AsBsonDocument)
+            : Enumerable.Empty<BsonDocument>();
+        var exchangeModel = exchangeModels.FirstOrDefault(item =>
+            string.Equals(item.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+            && item.AsNullableBool("Enabled") != false);
+        if (exchangeModel is not null)
+            modelDoc = GatewayConfigurationProvisioning.BuildExchangePoolModelDocument(platformId, exchangeModel);
+    }
     if (modelDoc is null)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型不存在或平台不匹配：{modelId}"), jsonOptions, 400);
+        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型或 Exchange 映射不存在、已停用或平台不匹配：{modelId}"), jsonOptions, 400);
     }
+    if (managedAppendOnly && modelDoc.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<PoolItem>.Fail("MODEL_DISABLED", "停用模型不能加入平台托管默认池。"), jsonOptions, 409);
+    if (managedAppendOnly)
+        modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
 
     var resolvedPlatformId = platformId.Length > 0 ? platformId : modelDoc.GetStringOrEmpty("PlatformId");
     if (resolvedPlatformId.Length == 0)
@@ -4939,14 +7216,19 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型缺少 PlatformId：{modelId}"), jsonOptions, 400);
     }
 
-    var platformFilter = Builders<BsonDocument>.Filter.Eq("_id", resolvedPlatformId);
-    var platformDoc = await gwPlatforms.Find(TenantAccess.Filter(http, platformFilter)).FirstOrDefaultAsync()
-                      ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                          ? await platforms.Find(platformFilter).FirstOrDefaultAsync()
-                          : null);
-    if (platformDoc is null)
+    if (exchangeDoc is null)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
+        var platformFilter = Builders<BsonDocument>.Filter.Eq("_id", resolvedPlatformId);
+        var platformDoc = await gwPlatforms.Find(TenantAccess.Filter(http, platformFilter)).FirstOrDefaultAsync()
+                          ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
+                              ? await platforms.Find(platformFilter).FirstOrDefaultAsync()
+                              : null);
+        if (platformDoc is null)
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
+        }
+        if (managedAppendOnly && platformDoc.AsNullableBool("Enabled") == false)
+            return Json(ApiEnvelope<PoolItem>.Fail("PLATFORM_DISABLED", "停用平台的模型不能加入平台托管默认池。"), jsonOptions, 409);
     }
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -4955,6 +7237,18 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
         string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal));
     var wasExisting = existing is not null;
+    if (managedAppendOnly && wasExisting)
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池中的已有成员不可覆盖或重排；如需特殊配置，请创建专用模型池。"), jsonOptions, 409);
+    }
+    if (managedAppendOnly && !GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, pool.GetStringOrEmpty("ModelType")))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INCOMPATIBLE_MODEL_TYPE",
+            $"模型与程序池类型 {pool.GetStringOrEmpty("ModelType")} 不兼容。"), jsonOptions, 409);
+    }
     var member = existing is not null ? new BsonDocument(existing) : new BsonDocument
     {
         ["HealthStatus"] = 0,
@@ -4963,7 +7257,9 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     };
     member["ModelId"] = modelId;
     member["PlatformId"] = resolvedPlatformId;
-    member["Priority"] = body.Priority ?? (existing?.AsNullableInt("Priority") ?? members.Count + 1);
+    member["Priority"] = managedAppendOnly
+        ? members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10
+        : body.Priority ?? (existing?.AsNullableInt("Priority") ?? members.Count + 1);
 
     var protocol = body.Protocol?.Trim();
     if (string.IsNullOrWhiteSpace(protocol)) member.Remove("Protocol");
@@ -5021,30 +7317,74 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     if (capabilityDocs.Count > 0) member["Capabilities"] = new BsonArray(capabilityDocs);
     else member.Remove("Capabilities");
 
-    members = members
-        .Where(m => !(string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
-                      string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal)))
-        .Append(member)
-        .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-        .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-        .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-        .ToList();
-
-    var nextModels = new BsonArray(members);
-    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-        gwPlatforms,
-        gwModels,
-        gwModelExchanges,
-        pool,
-        nextModels);
-    if (validationError is not null)
+    if (managedAppendOnly)
     {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        member = BuildPoolMemberFromModel(
+            modelDoc,
+            modelId,
+            resolvedPlatformId,
+            members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10,
+            existing: null);
     }
 
-    await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
-        .Set("Models", nextModels)
-        .Set("UpdatedAt", DateTime.UtcNow));
+    members = managedAppendOnly
+        ? members.Append(member).ToList()
+        : members
+            .Where(m => !(string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
+                          string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal)))
+            .Append(member)
+            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
+            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
+            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
+            .ToList();
+
+    if (managedAppendOnly)
+    {
+        var appendFilter = new BsonDocument
+        {
+            { "TenantId", TenantAccess.GetRequired(http).TenantId },
+            { "_id", id },
+            { "ManagedByRegistry", true },
+            { "AppendOnly", true },
+            { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
+            { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                {
+                    { "ModelId", modelId },
+                    { "PlatformId", resolvedPlatformId },
+                })) },
+        };
+        var appendResult = await gwModelPools.UpdateOneAsync(
+            appendFilter,
+            Builders<BsonDocument>.Update.Push("Models", member).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
+        if (appendResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "该模型已存在，未覆盖已有成员。"), jsonOptions, 409);
+    }
+    else
+    {
+        var nextModels = new BsonArray(members);
+        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+            gwModelPoolTypes,
+            gwPlatforms,
+            gwModels,
+            gwModelExchanges,
+            pool,
+            nextModels);
+        if (validationError is not null)
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
+        }
+
+        var writeResult = await gwModelPools.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                poolFilter,
+                PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
+            .Set("Models", nextModels)
+            .Set("UpdatedAt", DateTime.UtcNow)
+            .Inc("Version", 1));
+        if (writeResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试成员更新。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5077,6 +7417,12 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
+    if (IsManagedAppendOnlyPool(pool))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "APPEND_ONLY_POOL",
+            "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+    }
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
     var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
@@ -5091,6 +7437,7 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     members = members.Except(removed).ToList();
     var nextModels = new BsonArray(members);
     var validationError = await ValidateDefaultGatewayPoolMembersAsync(
+        gwModelPoolTypes,
         gwPlatforms,
         gwModels,
         gwModelExchanges,
@@ -5101,9 +7448,16 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
     }
 
-    await gwModelPools.UpdateOneAsync(poolFilter, Builders<BsonDocument>.Update
+    var deleteResult = await gwModelPools.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            poolFilter,
+            PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
         .Set("Models", nextModels)
-        .Set("UpdatedAt", DateTime.UtcNow));
+        .Set("UpdatedAt", DateTime.UtcNow)
+        .Inc("Version", 1));
+    if (deleteResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试删除。"), jsonOptions, 409);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5125,9 +7479,8 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 模型池默认标记：同一 ModelType 下将该池设为默认（互斥）。
-// 非事务环境下的安全次序（Mongo 单实例无跨文档事务）：**先置本池为默认，再清同类型其它池**。
-// 万一第二步失败，失败态是「同类型暂时两个默认」（MAP 调度仍能选到一个）——远好于「先清后置、第二步失败=零默认」（调度失去默认池）。
+// 模型池默认标记：单文档原子更新类型注册表中的 DefaultPoolId。
+// IsDefaultForType 只保留为历史兼容镜像，控制台与运行时均以 DefaultPoolId 为权威。
 app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleDefaultRequest body) =>
 {
     // 缺 isDefault 字段一律拒绝。
@@ -5139,21 +7492,17 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
     var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
     var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    var targetPools = gwModelPools;
-    var targetAuthority = "llm_gateway";
     if (doc is null)
     {
-        if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
-            return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
-        doc = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
-        targetPools = modelGroups;
-        targetAuthority = "map";
-        filter = sourceFilter;
+        var mapDoc = TenantAccess.GetRequired(http).TenantId == internalTenantId
+            ? await modelGroups.Find(sourceFilter).FirstOrDefaultAsync()
+            : null;
+        if (mapDoc is not null)
+            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池导入为平台配置，再设为默认"), jsonOptions, 409);
+        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     }
-    if (doc is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
     var modelType = doc.GetStringOrEmpty("ModelType");
-    if (targetAuthority == "llm_gateway"
-        && !await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
+    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
     {
         return Json(ApiEnvelope<PoolItem>.Fail(
             "INVALID_INPUT",
@@ -5161,31 +7510,66 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             jsonOptions,
             400);
     }
-    // 非事务安全次序：先置本池为默认、再清同类型其它池。第二步万一失败是「暂时两个默认」（MAP 仍能选到一个），
-    // 远好于「先清后置」失败=零默认。
-    await targetPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("IsDefaultForType", true).Set("UpdatedAt", DateTime.UtcNow));
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    await EnsureGatewayModelPoolTypesAsync(
+        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: false);
     var fb = Builders<BsonDocument>.Filter;
-    var others = fb.And(fb.Eq("ModelType", modelType), fb.Ne("_id", id));
-    var scopedOthers = targetAuthority == "llm_gateway" ? TenantAccess.Filter(http, others) : others;
-    var clearOthers = await targetPools.UpdateManyAsync(scopedOthers, Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+    var now = DateTime.UtcNow;
+    var reserveResult = await gwModelPools.UpdateOneAsync(
+        fb.And(filter, PoolVersionGuard(fb, doc), PoolNotSwitchingGuard(fb, now)),
+        Builders<BsonDocument>.Update
+            .Set("DefaultSwitchPendingUntil", now.AddSeconds(30))
+            .Set("UpdatedAt", now)
+            .Inc("Version", 1));
+    if (reserveResult.ModifiedCount != 1)
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试设为默认。"), jsonOptions, 409);
+    var typeFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", modelType));
+    var beforeType = await gwModelPoolTypes.Find(typeFilter).FirstOrDefaultAsync();
+    var updatedType = await gwModelPoolTypes.FindOneAndUpdateAsync(
+        typeFilter,
+        Builders<BsonDocument>.Update
+            .Set("DefaultPoolId", id)
+            .Set("UpdatedAt", now)
+            .Inc("Version", 1),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updatedType is null)
+    {
+        await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Unset("DefaultSwitchPendingUntil").Inc("Version", 1));
+        return Json(ApiEnvelope<PoolItem>.Fail("POOL_TYPE_NOT_REGISTERED", $"程序池类型未注册：{modelType}"), jsonOptions, 409);
+    }
+
+    // 兼容镜像依据原子指针重建；即使并发交错，权威读取也只认类型文档中的单一指针。
+    await gwModelPools.UpdateManyAsync(
+        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("ModelType", modelType)),
+        Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
+    var authoritativePoolId = updatedType.GetStringOrEmpty("DefaultPoolId");
+    await gwModelPools.UpdateOneAsync(
+        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", authoritativePoolId)),
+        Builders<BsonDocument>.Update
+            .Set("IsDefaultForType", true)
+            .Set("UpdatedAt", now)
+            .Unset("DefaultSwitchPendingUntil")
+            .Inc("Version", 1));
     await WriteOperationAuditAsync(
         operationAudits,
         http,
         action: "pool.set_default",
-        targetType: targetAuthority == "llm_gateway" ? "llmgw_model_pool" : "model_group",
+        targetType: "llmgw_model_pool",
         targetId: id,
         targetName: doc.AsNullableString("Name") ?? doc.AsNullableString("Code"),
         success: true,
         reason: null,
         changes: new BsonDocument
         {
-            { "isDefaultForType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("IsDefaultForType")) }, { "to", true } } },
+            { "defaultPoolId", new BsonDocument { { "from", beforeType?.AsNullableString("DefaultPoolId") ?? string.Empty }, { "to", id } } },
             { "modelType", modelType },
-            { "authority", targetAuthority },
-            { "clearedOtherDefaultCount", clearOthers.ModifiedCount },
+            { "authority", "llm_gateway" },
+            { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
         });
-    var fresh = await targetPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    var item = MapPool(fresh);
+    item.IsDefaultForType = string.Equals(authoritativePoolId, id, StringComparison.Ordinal);
+    return Json(ApiEnvelope<PoolItem>.Ok(item), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池认领：把 MAP 现有 model_groups 池复制到 GW 自有 llm_gateway.llmgw_model_pools。
@@ -5202,14 +7586,33 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
 
     var now = DateTime.UtcNow;
     var before = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    if (before is not null && IsManagedAppendOnlyPool(before))
+        return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "平台托管默认池不能被历史 MAP 池覆盖。"), jsonOptions, 409);
+    if (before is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, before))
+        return Json(ApiEnvelope<PoolItem>.Fail("DEFAULT_POOL_CLAIM_BLOCKED", "当前默认池不能被历史 MAP 池覆盖；请先切换默认池。"), jsonOptions, 409);
     var claimed = new BsonDocument(source);
     claimed["TenantId"] = internalTenantId;
     claimed["SourceCollection"] = "model_groups";
     claimed["Authority"] = "llm_gateway";
     claimed["ClaimedAt"] = now;
     claimed["UpdatedAt"] = now;
+    claimed["Version"] = (before?.AsNullableLong("Version") ?? 0) + 1;
 
-    await gwModelPools.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
+    if (before is null)
+    {
+        await gwModelPools.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
+    }
+    else
+    {
+        var replaceResult = await gwModelPools.ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                filter,
+                PoolVersionGuard(Builders<BsonDocument>.Filter, before),
+                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
+            claimed);
+        if (replaceResult.ModifiedCount != 1)
+            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试认领。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -5233,6 +7636,66 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
 
 app.Run();
 
+static async Task<(LlmGwTenant Tenant, string DefaultTeamId)?> FindTenantCreationReplayAsync(
+    IMongoCollection<LlmGwTeam> teams,
+    IMongoCollection<LlmGwMembership> memberships,
+    LlmGwTenant tenant,
+    string userId)
+{
+    if (tenant.Status != "active") return null;
+    var membership = await memberships.Find(x => x.TenantId == tenant.Id
+            && x.UserId == userId
+            && x.Role == LlmGwTenantRoles.Owner
+            && x.Status == "active")
+        .FirstOrDefaultAsync();
+    if (membership is null) return null;
+    var defaultTeam = await teams.Find(x => x.TenantId == tenant.Id
+            && membership.TeamIds.Contains(x.Id)
+            && x.Status == "active")
+        .SortBy(x => x.CreatedAt)
+        .FirstOrDefaultAsync();
+    return defaultTeam is null ? null : (tenant, defaultTeam.Id);
+}
+
+static bool MembershipMatches(
+    LlmGwMembership membership,
+    string role,
+    IReadOnlyCollection<string> teamIds)
+    => membership.Status == "active"
+       && string.Equals(membership.Role, role, StringComparison.OrdinalIgnoreCase)
+       && membership.TeamIds.ToHashSet(StringComparer.Ordinal).SetEquals(teamIds);
+
+static async Task<string?> TryAcquireTenantOwnerMutationLockAsync(
+    IMongoCollection<LlmGwTenant> tenants,
+    string tenantId)
+{
+    var now = DateTime.UtcNow;
+    var token = Guid.NewGuid().ToString("N");
+    var fb = Builders<LlmGwTenant>.Filter;
+    var filter = fb.And(
+        fb.Eq(x => x.Id, tenantId),
+        fb.Or(
+            fb.Exists("OwnerMutationLock", false),
+            fb.Eq("OwnerMutationLock", BsonNull.Value),
+            fb.Lte("OwnerMutationLock.ExpiresAt", now)));
+    var update = Builders<LlmGwTenant>.Update
+        .Set("OwnerMutationLock.Token", token)
+        .Set("OwnerMutationLock.ExpiresAt", now.AddSeconds(30));
+    var result = await tenants.UpdateOneAsync(filter, update);
+    return result.ModifiedCount == 1 ? token : null;
+}
+
+static async Task ReleaseTenantOwnerMutationLockAsync(
+    IMongoCollection<LlmGwTenant> tenants,
+    string tenantId,
+    string token)
+{
+    var filter = Builders<LlmGwTenant>.Filter.And(
+        Builders<LlmGwTenant>.Filter.Eq(x => x.Id, tenantId),
+        Builders<LlmGwTenant>.Filter.Eq("OwnerMutationLock.Token", token));
+    await tenants.UpdateOneAsync(filter, Builders<LlmGwTenant>.Update.Unset("OwnerMutationLock"));
+}
+
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
@@ -5254,6 +7717,7 @@ static async Task BackfillInternalTenantAsync(
     {
         "llmgw_app_callers",
         "llmgw_model_pools",
+        "llmgw_model_pool_types",
         "llmgw_platforms",
         "llmgw_models",
         "llmgw_model_exchanges",
@@ -5273,6 +7737,10 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_provider_concurrency_slots",
         "llmgw_runtime_settings",
         "llmgw_asset_registry",
+        "llmgw_cost_reconciliations",
+        "llmgw_cost_import_scope_locks",
+        "llmgw_legacy_key_cutovers",
+        "llmgw_legacy_key_usage",
     };
     var missingTenant = Builders<BsonDocument>.Filter.Or(
         Builders<BsonDocument>.Filter.Exists("TenantId", false),
@@ -5405,6 +7873,7 @@ static async Task SeedAdminAsync(
                     .Set(u => u.IsActive, true)
                     .Set(u => u.MustChangePassword, resetMustChange)
                     .Set(u => u.PasswordChangedByUser, false)
+                    .Inc(u => u.SecurityVersion, 1)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
@@ -5460,6 +7929,7 @@ static async Task SeedAdminAsync(
             await users.UpdateOneAsync(u => u.Username == username,
                 Builders<LlmGwUser>.Update
                     .Set(u => u.IsActive, true)
+                    .Inc(u => u.SecurityVersion, 1)
                     .Set(u => u.UpdatedAt, DateTime.UtcNow));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
@@ -5542,6 +8012,68 @@ static async Task WriteLoginAuditAsync(
     }
 }
 
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, CancellationToken ct)
+{
+    if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
+        || uri.Scheme is not ("http" or "https"))
+    {
+        return "外部租户 Exchange 只允许 HTTP 或 HTTPS 上游；WebSocket 上游暂不开放";
+    }
+
+    var host = uri.Host.Trim().TrimEnd('.');
+    if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        return "外部租户 Exchange 不能连接 localhost、内网或云元数据地址";
+
+    IPAddress[] addresses;
+    try
+    {
+        addresses = IPAddress.TryParse(host, out var literal)
+            ? [literal]
+            : await Dns.GetHostAddressesAsync(host, ct);
+    }
+    catch (Exception ex) when (ex is System.Net.Sockets.SocketException or OperationCanceledException)
+    {
+        return "目标地址当前无法完成安全 DNS 校验，请检查域名后重试";
+    }
+
+    if (addresses.Length == 0 || addresses.Any(IsBlockedExchangeTargetAddress))
+        return "外部租户 Exchange 不能连接 localhost、内网、链路本地或云元数据地址";
+    return null;
+}
+
+static bool IsBlockedExchangeTargetAddress(IPAddress address)
+{
+    if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+    if (IPAddress.IsLoopback(address)) return true;
+    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+    {
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length != 4) return true;
+        var b0 = bytes[0];
+        var b1 = bytes[1];
+        return b0 == 0
+               || b0 == 10
+               || b0 == 127
+               || (b0 == 100 && b1 is >= 64 and <= 127)
+               || (b0 == 169 && b1 == 254)
+               || (b0 == 172 && b1 is >= 16 and <= 31)
+               || (b0 == 192 && b1 == 168)
+               || b0 >= 224;
+    }
+    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+    {
+        var bytes = address.GetAddressBytes();
+        return address.Equals(IPAddress.IPv6Any)
+               || address.Equals(IPAddress.IPv6Loopback)
+               || address.Equals(IPAddress.IPv6None)
+               || address.IsIPv6LinkLocal
+               || address.IsIPv6SiteLocal
+               || bytes[0] == 0xff
+               || (bytes[0] & 0xfe) == 0xfc;
+    }
+    return true;
+}
+
 static async Task WriteOperationAuditAsync(
     IMongoCollection<BsonDocument> audits,
     HttpContext http,
@@ -5551,7 +8083,8 @@ static async Task WriteOperationAuditAsync(
     string? targetName,
     bool success,
     string? reason,
-    BsonDocument? changes = null)
+    BsonDocument? changes = null,
+    bool throwOnFailure = false)
 {
     try
     {
@@ -5586,6 +8119,83 @@ static async Task WriteOperationAuditAsync(
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[LlmGw] operation audit write failed: {ex.Message}");
+        if (throwOnFailure)
+            throw;
+    }
+}
+
+static async Task<string> BeginRequiredOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    HttpContext http,
+    string action,
+    string targetType,
+    string? targetId,
+    string? targetName,
+    BsonDocument changes)
+{
+    var access = TenantAccess.GetRequired(http);
+    var auditId = Guid.NewGuid().ToString("N");
+    var actorUserId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? http.User.FindFirst("sub")?.Value;
+    var actorUsername = http.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        ?? http.User.Identity?.Name;
+    await audits.InsertOneAsync(new BsonDocument
+    {
+        { "_id", auditId },
+        { "TenantId", access.TenantId },
+        { "TeamId", ToBsonAuditValue(access.TeamIds.Count == 1 ? access.TeamIds[0] : null) },
+        { "Action", action },
+        { "TargetType", targetType },
+        { "TargetId", ToBsonAuditValue(targetId) },
+        { "TargetName", ToBsonAuditValue(targetName) },
+        { "ActorUserId", ToBsonAuditValue(actorUserId) },
+        { "ActorUsername", ToBsonAuditValue(actorUsername) },
+        { "Success", false },
+        { "State", "pending" },
+        { "Reason", "pending" },
+        { "Changes", changes },
+        { "RemoteIp", ToBsonAuditValue(GetClientIp(http)) },
+        { "UserAgent", ToBsonAuditValue(http.Request.Headers.UserAgent.ToString()) },
+        { "CreatedAt", DateTime.UtcNow },
+    });
+    return auditId;
+}
+
+static async Task CompleteRequiredOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    string tenantId,
+    string auditId,
+    bool success,
+    string? reason)
+{
+    var result = await audits.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", auditId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("State", "pending")),
+        Builders<BsonDocument>.Update
+            .Set("Success", success)
+            .Set("State", success ? "completed" : "failed")
+            .Set("Reason", ToBsonAuditValue(reason))
+            .Set("CompletedAt", DateTime.UtcNow));
+    if (result.ModifiedCount != 1)
+        throw new InvalidOperationException($"Required operation audit {auditId} could not be completed.");
+}
+
+static async Task TryCompleteRequiredOperationAuditAsync(
+    IMongoCollection<BsonDocument> audits,
+    string tenantId,
+    string auditId,
+    bool success,
+    string? reason)
+{
+    try
+    {
+        await CompleteRequiredOperationAuditAsync(audits, tenantId, auditId, success, reason);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LlmGw] required operation audit completion failed: {ex.Message}");
     }
 }
 
@@ -5711,7 +8321,10 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? runId,
     string? requestId,
     string? sessionId,
-    string? modelPoolId)
+    string? modelPoolId,
+    string? serviceKeyId,
+    string? clientCode,
+    string? environment)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -5732,6 +8345,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(requestId)) filters.Add(fb.Eq("RequestId", requestId.Trim()));
     if (!string.IsNullOrWhiteSpace(sessionId)) filters.Add(fb.Eq("SessionId", sessionId.Trim()));
     if (!string.IsNullOrWhiteSpace(modelPoolId)) filters.Add(fb.Eq("ModelPoolId", modelPoolId.Trim()));
+    if (!string.IsNullOrWhiteSpace(serviceKeyId)) filters.Add(fb.Eq("ServiceKeyId", serviceKeyId.Trim()));
+    if (!string.IsNullOrWhiteSpace(clientCode)) filters.Add(fb.Eq("ClientCode", clientCode.Trim()));
+    if (!string.IsNullOrWhiteSpace(environment)) filters.Add(fb.Eq("Environment", environment.Trim()));
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
@@ -5754,6 +8370,49 @@ static List<LogsBucketItem> BuildBucket(IEnumerable<BsonDocument> docs, string f
         .OrderByDescending(x => x.Count)
         .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
         .ToList();
+
+static Dictionary<string, long> ReadSuccessorObservationCounts(BsonDocument? document)
+{
+    if (document is null
+        || !document.TryGetValue("SuccessorObservationCounts", out var value)
+        || !value.IsBsonDocument)
+    {
+        return new Dictionary<string, long>(StringComparer.Ordinal);
+    }
+
+    return value.AsBsonDocument.Elements
+        .Where(element => element.Value.IsInt32 || element.Value.IsInt64)
+        .ToDictionary(
+            element => element.Name,
+            element => element.Value.ToInt64(),
+            StringComparer.Ordinal);
+}
+
+static CostReconciliationItem MapCostReconciliation(BsonDocument d) => new()
+{
+    Id = d.GetStringOrEmpty("_id"),
+    TeamId = d.AsNullableString("TeamId"),
+    Provider = d.GetStringOrEmpty("Provider"),
+    ExternalRecordId = d.GetStringOrEmpty("ExternalRecordId"),
+    Granularity = d.GetStringOrEmpty("Granularity"),
+    RequestId = d.AsNullableString("RequestId"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    Model = d.AsNullableString("Model"),
+    EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
+    EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.GetStringOrEmpty("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ProviderToEstimatedFxRate = d.AsNullableDecimal("ProviderToEstimatedFxRate"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
+    DeltaCurrency = d.AsNullableString("DeltaCurrency"),
+    ReconciliationStatus = d.GetStringOrEmpty("ReconciliationStatus"),
+    WindowFrom = d.AsNullableUtcDateTime("WindowFrom").ToIso(),
+    WindowTo = d.AsNullableUtcDateTime("WindowTo").ToIso(),
+    BilledAt = d.AsNullableUtcDateTime("BilledAt").ToIso(),
+    CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+};
 
 static long? Percentile95(IReadOnlyList<long> sortedValues)
 {
@@ -5853,6 +8512,11 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    TeamId = d.AsNullableString("TeamId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    ClientCode = d.AsNullableString("ClientCode"),
+    Environment = d.AsNullableString("Environment"),
+    ServiceKeyPrefix = d.AsNullableString("ServiceKeyPrefix"),
     Username = null,
     DisplayName = null,
     RequestType = d.AsNullableString("RequestType"),
@@ -5872,6 +8536,13 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.AsNullableString("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ReconciliationStatus = d.AsNullableString("ReconciliationStatus"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
     Error = d.AsNullableString("Error"),
     IsFallback = d.AsNullableBool("IsFallback"),
     ExpectedModel = d.AsNullableString("ExpectedModel"),
@@ -5894,6 +8565,11 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
     UserId = d.AsNullableString("UserId"),
+    TeamId = d.AsNullableString("TeamId"),
+    ServiceKeyId = d.AsNullableString("ServiceKeyId"),
+    ClientCode = d.AsNullableString("ClientCode"),
+    Environment = d.AsNullableString("Environment"),
+    ServiceKeyPrefix = d.AsNullableString("ServiceKeyPrefix"),
     RequestType = d.AsNullableString("RequestType"),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
     AppCallerCodeDisplayName = d.AsNullableString("AppCallerCodeDisplayName"),
@@ -5907,7 +8583,6 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     PromptPolicyId = d.AsNullableString("PromptPolicyId"),
     PromptPolicyVersion = d.AsNullableInt("PromptPolicyVersion"),
     PromptPolicyHash = d.AsNullableString("PromptPolicyHash"),
-    PromptPolicyChars = d.AsNullableInt("PromptPolicyChars"),
     QuestionText = d.AsNullableString("QuestionText"),
     AnswerText = d.AsNullableString("AnswerText"),
     ThinkingText = d.AsNullableString("ThinkingText"),
@@ -5925,6 +8600,13 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
+    ProviderRequestId = d.AsNullableString("ProviderRequestId"),
+    ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
+    ProviderCostCurrency = d.AsNullableString("ProviderCostCurrency"),
+    FxSnapshotId = d.AsNullableString("FxSnapshotId"),
+    ReconciliationStatus = d.AsNullableString("ReconciliationStatus"),
+    ReconciliationDelta = d.AsNullableDecimal("ReconciliationDelta"),
     StartedAt = d.AsNullableUtcDateTime("StartedAt").ToIso(),
     FirstByteAt = d.AsNullableUtcDateTime("FirstByteAt").ToIso(),
     EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),
@@ -6294,6 +8976,254 @@ static bool ModelHasParameterCapability(BsonDocument modelDoc)
         .Any(type => type.StartsWith("parameter:", StringComparison.OrdinalIgnoreCase));
 }
 
+static bool IsManagedAppendOnlyPool(BsonDocument pool)
+    => pool.AsNullableBool("ManagedByRegistry") == true
+       && pool.AsNullableBool("AppendOnly") == true
+       && string.Equals(pool.AsNullableString("PoolRole"), "default", StringComparison.OrdinalIgnoreCase);
+
+static FilterDefinition<BsonDocument> PoolVersionGuard(FilterDefinitionBuilder<BsonDocument> fb, BsonDocument pool)
+{
+    var version = pool.AsNullableLong("Version") ?? 0;
+    return pool.Contains("Version") ? fb.Eq("Version", version) : fb.Exists("Version", false);
+}
+
+static FilterDefinition<BsonDocument> PoolNotSwitchingGuard(FilterDefinitionBuilder<BsonDocument> fb, DateTime now)
+    => fb.Or(fb.Exists("DefaultSwitchPendingUntil", false), fb.Lte("DefaultSwitchPendingUntil", now));
+
+static async Task<bool> IsCurrentDefaultPoolAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    BsonDocument pool)
+{
+    var tenantId = pool.AsNullableString("TenantId");
+    var modelType = pool.AsNullableString("ModelType");
+    var poolId = pool.AsNullableString("_id");
+    if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
+        return false;
+    var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Code", modelType))).FirstOrDefaultAsync();
+    return type is null
+        ? pool.AsNullableBool("IsDefaultForType") == true
+        : string.Equals(type.AsNullableString("DefaultPoolId"), poolId, StringComparison.Ordinal);
+}
+
+static async Task<(int TypesCreated, int PoolsCreated, int ModelsAppended)> EnsureGatewayModelPoolTypesAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    IMongoCollection<BsonDocument> pools,
+    IMongoCollection<BsonDocument> gatewayModels,
+    IMongoCollection<BsonDocument> gatewayPlatforms,
+    IMongoCollection<BsonDocument> mapModels,
+    IMongoCollection<BsonDocument> mapPlatforms,
+    string tenantId,
+    string internalTenantId,
+    bool appendModels)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var now = DateTime.UtcNow;
+    var typeDocs = await poolTypes.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var poolDocs = await pools.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var typesCreated = 0;
+    var poolsCreated = 0;
+    var modelsAppended = 0;
+    var candidates = new List<BsonDocument>();
+    if (appendModels)
+    {
+        var enabledPlatformIds = (await gatewayPlatforms.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(platform => platform.GetStringOrEmpty("_id"))
+            .Where(id => id.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        candidates.AddRange((await gatewayModels.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Ne("Enabled", false))).ToListAsync())
+            .Where(model => enabledPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))));
+        if (string.Equals(tenantId, internalTenantId, StringComparison.Ordinal))
+        {
+            var enabledMapPlatformIds = (await mapPlatforms.Find(fb.Ne("Enabled", false))
+                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .ToListAsync())
+                .Select(platform => platform.GetStringOrEmpty("_id"))
+                .Where(id => id.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
+            candidates.AddRange((await mapModels.Find(fb.Ne("Enabled", false)).ToListAsync())
+                .Where(model => enabledPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))
+                                || enabledMapPlatformIds.Contains(model.GetStringOrEmpty("PlatformId"))));
+        }
+    }
+
+    foreach (var definition in GatewayModelPoolTypeRegistry.All.OrderBy(item => item.SortOrder))
+    {
+        var type = typeDocs.FirstOrDefault(d => string.Equals(d.GetStringOrEmpty("Code"), definition.Code, StringComparison.OrdinalIgnoreCase));
+        var defaultPoolId = type?.AsNullableString("DefaultPoolId")?.Trim() ?? string.Empty;
+        var defaultPool = defaultPoolId.Length > 0
+            ? poolDocs.FirstOrDefault(d => string.Equals(d.GetStringOrEmpty("_id"), defaultPoolId, StringComparison.Ordinal)
+                                           && string.Equals(d.GetStringOrEmpty("ModelType"), definition.Code, StringComparison.OrdinalIgnoreCase))
+            : null;
+        defaultPool ??= poolDocs
+            .Where(d => string.Equals(d.GetStringOrEmpty("ModelType"), definition.Code, StringComparison.OrdinalIgnoreCase)
+                        && d.AsNullableBool("IsDefaultForType") == true)
+            .OrderBy(d => d.AsNullableInt("Priority") ?? 50)
+            .FirstOrDefault();
+
+        if (defaultPool is null)
+        {
+            defaultPoolId = $"pool-default:{tenantId}:{definition.Code}";
+            var managedPool = new BsonDocument
+            {
+                ["_id"] = defaultPoolId,
+                ["TenantId"] = tenantId,
+                ["Name"] = definition.DefaultPoolName,
+                ["Code"] = definition.DefaultPoolCode,
+                ["Description"] = definition.Purpose,
+                ["Priority"] = 50,
+                ["ModelType"] = definition.Code,
+                ["IsDefaultForType"] = true,
+                ["StrategyType"] = 0,
+                ["Models"] = new BsonArray(),
+                ["SourceCollection"] = "llmgw_model_pools",
+                ["Authority"] = "llm_gateway",
+                ["ManagedByRegistry"] = true,
+                ["AppendOnly"] = true,
+                ["PoolRole"] = "default",
+                ["CreatedAt"] = now,
+                ["UpdatedAt"] = now,
+                ["Version"] = 1L,
+            };
+            try
+            {
+                var result = await pools.UpdateOneAsync(
+                    fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", defaultPoolId)),
+                    new BsonDocument("$setOnInsert", managedPool),
+                    new UpdateOptions { IsUpsert = true });
+                if (result.UpsertedId is not null) poolsCreated++;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 并发初始化已由另一请求创建同一确定性池，重读并继续。
+            }
+            defaultPool = await pools.Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", defaultPoolId))).FirstAsync();
+            if (!poolDocs.Any(d => string.Equals(d.GetStringOrEmpty("_id"), defaultPoolId, StringComparison.Ordinal)))
+                poolDocs.Add(defaultPool);
+        }
+        else
+        {
+            defaultPoolId = defaultPool.GetStringOrEmpty("_id");
+        }
+
+        var typeId = $"pool-type:{tenantId}:{definition.Code}";
+        var typeFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", definition.Code));
+        try
+        {
+            var typeResult = await poolTypes.UpdateOneAsync(
+                typeFilter,
+                Builders<BsonDocument>.Update
+                    .SetOnInsert("_id", typeId)
+                    .SetOnInsert("TenantId", tenantId)
+                    .SetOnInsert("Code", definition.Code)
+                    .SetOnInsert("Name", definition.Name)
+                    .SetOnInsert("Purpose", definition.Purpose)
+                    .SetOnInsert("SortOrder", definition.SortOrder)
+                    .SetOnInsert("DefaultPoolId", defaultPoolId)
+                    .SetOnInsert("Version", 1L)
+                    .SetOnInsert("CreatedAt", now)
+                    .SetOnInsert("UpdatedAt", now),
+                new UpdateOptions { IsUpsert = true });
+            if (typeResult.UpsertedId is not null) typesCreated++;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发初始化已由另一请求创建同一确定性类型，继续处理剩余类型。
+        }
+        if (type is not null && !string.Equals(type.AsNullableString("DefaultPoolId"), defaultPoolId, StringComparison.Ordinal))
+        {
+            var oldPointer = type.AsNullableString("DefaultPoolId");
+            var oldVersion = type.AsNullableLong("Version") ?? 0;
+            var pointerFilter = oldPointer is null
+                ? fb.Exists("DefaultPoolId", false)
+                : fb.Eq("DefaultPoolId", oldPointer);
+            var versionFilter = type.Contains("Version") ? fb.Eq("Version", oldVersion) : fb.Exists("Version", false);
+            await poolTypes.UpdateOneAsync(fb.And(typeFilter, pointerFilter, versionFilter), Builders<BsonDocument>.Update
+                .Set("DefaultPoolId", defaultPoolId)
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
+        }
+
+        if (!appendModels || !IsManagedAppendOnlyPool(defaultPool)) continue;
+        var maxPriority = defaultPool.TryGetValue("Models", out var membersValue) && membersValue.IsBsonArray
+            ? membersValue.AsBsonArray.Where(v => v.IsBsonDocument).Select(v => v.AsBsonDocument.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max()
+            : 0;
+        foreach (var model in candidates.Where(candidate => GatewayModelPoolTypeRegistry.IsCompatible(candidate, definition.Code)))
+        {
+            var modelId = model.AsNullableString("ModelName") ?? model.AsNullableString("Name") ?? model.GetStringOrEmpty("_id");
+            var platformId = model.GetStringOrEmpty("PlatformId");
+            if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId)) continue;
+            maxPriority += 10;
+            var member = BuildPoolMemberFromModel(model, modelId, platformId, maxPriority, existing: null);
+            var appendFilter = new BsonDocument
+            {
+                { "TenantId", tenantId },
+                { "_id", defaultPoolId },
+                { "ManagedByRegistry", true },
+                { "AppendOnly", true },
+                { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
+                    {
+                        { "ModelId", modelId },
+                        { "PlatformId", platformId },
+                    })) },
+            };
+            var appendResult = await pools.UpdateOneAsync(
+                appendFilter,
+                Builders<BsonDocument>.Update.Push("Models", member).Set("UpdatedAt", now));
+            if (appendResult.ModifiedCount == 1) modelsAppended++;
+        }
+    }
+    return (typesCreated, poolsCreated, modelsAppended);
+}
+
+static async Task<PoolTypesData> BuildPoolTypesDataAsync(
+    IMongoCollection<BsonDocument> poolTypes,
+    IMongoCollection<BsonDocument> pools,
+    IMongoCollection<BsonDocument> platforms,
+    IMongoCollection<BsonDocument> models,
+    IMongoCollection<BsonDocument> exchanges,
+    string tenantId)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var types = await poolTypes.Find(fb.Eq("TenantId", tenantId)).ToListAsync();
+    var typeByCode = types.ToDictionary(d => d.GetStringOrEmpty("Code"), StringComparer.OrdinalIgnoreCase);
+    var poolIds = types.Select(d => d.GetStringOrEmpty("DefaultPoolId")).Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var poolDocs = poolIds.Count == 0
+        ? new List<BsonDocument>()
+        : await pools.Find(fb.And(fb.Eq("TenantId", tenantId), fb.In("_id", poolIds))).ToListAsync();
+    var poolById = poolDocs.ToDictionary(d => d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var items = new List<PoolTypeItem>();
+    foreach (var definition in GatewayModelPoolTypeRegistry.All.OrderBy(item => item.SortOrder))
+    {
+        typeByCode.TryGetValue(definition.Code, out var type);
+        var defaultPoolId = type?.GetStringOrEmpty("DefaultPoolId") ?? string.Empty;
+        poolById.TryGetValue(defaultPoolId, out var pool);
+        var modelCount = pool is not null && pool.TryGetValue("Models", out var value) && value.IsBsonArray ? value.AsBsonArray.Count : 0;
+        var ready = pool is not null && await HasUsableGatewayPoolMemberAsync(platforms, models, exchanges, pool);
+        items.Add(new PoolTypeItem
+        {
+            Code = definition.Code,
+            Name = definition.Name,
+            Purpose = definition.Purpose,
+            SortOrder = definition.SortOrder,
+            DefaultPoolId = defaultPoolId,
+            ModelCount = modelCount,
+            Ready = ready,
+            Version = type?.AsNullableLong("Version") ?? 0,
+        });
+    }
+    return new PoolTypesData
+    {
+        Items = items,
+        Total = items.Count,
+        Ready = items.Count(item => item.Ready),
+        Waiting = items.Count(item => !item.Ready),
+    };
+}
+
 static PoolItem MapPool(BsonDocument d)
 {
     var modelsArr = d.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -6351,6 +9281,9 @@ static PoolItem MapPool(BsonDocument d)
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
         Models = items,
+        ManagedByRegistry = d.AsNullableBool("ManagedByRegistry") == true,
+        AppendOnly = d.AsNullableBool("AppendOnly") == true,
+        PoolRole = d.AsNullableString("PoolRole"),
     };
 }
 
@@ -6412,6 +9345,10 @@ static ModelItem MapModel(BsonDocument d)
         FailCount = d.AsNullableLong("FailCount") ?? 0,
         TotalDuration = d.AsNullableLong("TotalDuration") ?? 0,
         Capabilities = caps,
+        InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
+        OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
+        PricePerCall = d.AsNullableDecimal("PricePerCall"),
+        PriceCurrency = d.AsNullableString("PriceCurrency"),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
@@ -6451,6 +9388,7 @@ static ExchangeItem MapExchange(BsonDocument d)
         SourceCollection = d.AsNullableString("SourceCollection") ?? "model_exchanges",
         Authority = d.AsNullableString("Authority") ?? "map",
         ClaimedAt = d.AsNullableUtcDateTime("ClaimedAt").ToIso(),
+        Version = d.AsNullableLong("Version") ?? 0,
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
@@ -6459,6 +9397,7 @@ static ExchangeItem MapExchange(BsonDocument d)
 static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
 {
     Id = d.GetStringOrEmpty("_id"),
+    TeamId = d.AsNullableString("TeamId"),
     AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
     RequestType = d.GetStringOrEmpty("RequestType"),
     SourceSystem = d.GetStringOrEmpty("SourceSystem"),
@@ -6489,6 +9428,22 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
     UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
 };
+
+static bool IsValidSelfServiceAppCaller(string appCallerCode, string requestType)
+{
+    if (appCallerCode.Length is 0 or > 200 || requestType is not ("chat" or "vision")) return false;
+    var separator = appCallerCode.IndexOf("::", StringComparison.Ordinal);
+    if (separator <= 0 || separator != appCallerCode.LastIndexOf("::", StringComparison.Ordinal)) return false;
+    var declaredType = appCallerCode[(separator + 2)..];
+    if (!string.Equals(declaredType, requestType, StringComparison.Ordinal)) return false;
+    var segments = appCallerCode[..separator].Split('.', StringSplitOptions.None);
+    return segments.Length >= 2 && segments.All(IsKebabCaseAppCallerSegment) && IsKebabCaseAppCallerSegment(declaredType);
+}
+
+static bool IsKebabCaseAppCallerSegment(string value)
+    => value.Length > 0
+       && value[0] is >= 'a' and <= 'z'
+       && value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
 static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
 {
@@ -6606,13 +9561,14 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
 }
 
 static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
+    IMongoCollection<BsonDocument> gwModelPoolTypes,
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
     BsonDocument pool,
     BsonArray nextModels)
 {
-    if (pool.AsNullableBool("IsDefaultForType") != true)
+    if (!await IsCurrentDefaultPoolAsync(gwModelPoolTypes, pool))
     {
         return null;
     }
@@ -7156,10 +10112,7 @@ static PromptPolicyVersionItem MapPromptPolicy(BsonDocument doc) => new()
 static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
 {
     { "version", doc["Version"] },
-    { "enabled", doc["Enabled"] },
     { "policyHash", doc["PolicyHash"] },
-    { "policyChars", doc["PolicyChars"] },
-    { "maxChars", doc["MaxChars"] },
 };
 
 // 统一 JSON 输出（带信封 + 指定状态码）。

@@ -65,7 +65,8 @@ import {
   type BranchResourceProfileInput,
 } from '@/lib/resources';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
 interface ProjectSummary {
   id: string;
@@ -104,12 +105,60 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
   return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
 }
 
-/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。 */
-const APP_CHIP_FOLD_THRESHOLD = 8;
+/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。
+   2026-07-14 从 8 降到 3:让端口行恒为单行(3 个端口 + 「+N」+ 基础托盘在常见
+   3-4 列宽度下不换行),配合卡片固定行高(min-h)消除卡与卡之间的巨大空洞。
+   超出的端口收进「+N」的悬浮浮层(见 portsPopover),不再原地撑开推高整行。 */
+const APP_CHIP_FOLD_THRESHOLD = 3;
 
 /* 稳定的空数组引用：给 memo 化的 BranchCard 当默认值，避免每次渲染新建 [] 打破浅比较。 */
 const EMPTY_RESOURCES: BranchResource[] = [];
 const EMPTY_ACTIVITY: ActivityEvent[] = [];
+
+/** 分支列表加载骨架:逐张镜像真实 BranchCard(min-h-244 + 头/身/尾三段),
+ *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部一行品牌 loader
+ *  说明"在加载什么"。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
+const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
+
+function BranchListSkeleton(): JSX.Element {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <div className="mb-4 flex items-center">
+        <CdsLogoLoader
+          label="加载项目与本地分支列表"
+          size="sm"
+          mineral="iris"
+          className="text-[13px] font-medium text-muted-foreground"
+        />
+      </div>
+      <div className="cds-branch-card-grid">
+        {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
+          <article
+            key={index}
+            className="flex min-h-[244px] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
+          >
+            {/* 头部:分支名 + 状态徽标 */}
+            <div className="flex items-center justify-between gap-3 px-5 pt-5">
+              <div className="cds-loading-skeleton-line h-4" style={{ width }} />
+              <div className="cds-loading-skeleton-line h-5 w-14 shrink-0 rounded-full" />
+            </div>
+            {/* 身体:几行元信息 */}
+            <div className="flex flex-1 flex-col gap-2.5 px-5 py-5">
+              <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: '0.1s' }} />
+              <div className="cds-loading-skeleton-line h-3 w-3/4" style={{ animationDelay: '0.18s' }} />
+              <div className="cds-loading-skeleton-line h-3 w-2/5" style={{ animationDelay: '0.26s' }} />
+            </div>
+            {/* 尾部:操作条 */}
+            <div className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3">
+              <div className="cds-loading-skeleton-line h-3 w-24" />
+              <div className="cds-loading-skeleton-line h-7 w-20 rounded-md" />
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /* 基础容器托盘里的短名:托盘空间金贵,MongoDB → Mongo 这种通行缩写不损失辨识。 */
 const INFRA_RUNTIME_SHORT_NAME: Record<string, string> = {
@@ -1267,9 +1316,11 @@ async function postSse(
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
     const message =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `${path} -> ${res.status}`;
+      typeof parsed === 'object' && parsed !== null && 'message' in parsed && (parsed as { message: unknown }).message
+        ? String((parsed as { message: unknown }).message)
+        : typeof parsed === 'object' && parsed !== null && 'error' in parsed
+          ? String((parsed as { error: unknown }).error)
+          : `${path} -> ${res.status}`;
     throw new ApiError(res.status, parsed, message);
   }
 
@@ -3217,9 +3268,9 @@ export function BranchListPage(): JSX.Element {
             type a few characters, click a row OR press Enter to preview. */}
         {state.status === 'loading' ? (
           <div className="mt-6">
-            {/* Bug A:loading 文案不再说"远程引用",避免误导用户以为还在 git fetch。
-                远程分支区独立 lazy load,主区只等 4 个轻 API。 */}
-            <LoadingBlock label="加载项目与本地分支列表" />
+            {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + min-h-244 卡形状),
+                加载完成时无缝切到真数据;不再用通用的几行横条骨架。 */}
+            <BranchListSkeleton />
           </div>
         ) : null}
         {state.status === 'error' ? (
@@ -4679,11 +4730,15 @@ const BranchCard = memo(function BranchCard({
   const portedResources = resources.filter((resource) => resource.port);
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
-  const [appChipsExpanded, setAppChipsExpanded] = useState(false);
+  const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
   const foldedAppCount = appResources.length > APP_CHIP_FOLD_THRESHOLD
     ? appResources.length - APP_CHIP_FOLD_THRESHOLD
     : 0;
-  const visibleAppResources = foldedAppCount > 0 && !appChipsExpanded
+  // 端口 chip 单行封顶:超过阈值只展示前 N 个,其余收进「+N」的悬浮浮层
+  // (见下方 portsPopover)——保证端口行恒为单行、卡片高度稳定。展开走浮层
+  // (position:absolute,浮在本卡之上)而非原地撑开,不推高本卡、不影响整行,
+  // 复用 commitMenuOpen 的浮层模式(卡片 overflow-visible + 提 z)。
+  const visibleAppResources = foldedAppCount > 0
     ? appResources.slice(0, APP_CHIP_FOLD_THRESHOLD)
     : appResources;
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
@@ -4914,10 +4969,10 @@ const BranchCard = memo(function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex min-h-[244px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
-          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
+          : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
       } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
@@ -5389,19 +5444,83 @@ const BranchCard = memo(function BranchCard({
                 </button>
               );
             })}
-            {foldedAppCount > 0 || appChipsExpanded ? (
-              <button
-                type="button"
-                className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                title={appChipsExpanded ? '收起服务端口' : `还有 ${foldedAppCount} 个服务端口，点击展开`}
-                aria-expanded={appChipsExpanded}
-                onClick={(event) => {
+            {foldedAppCount > 0 ? (
+              // 「+N」折叠气泡:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
+              // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
+              // 交互契约(2026-07-14,修 Codex P2 键盘/触摸可达性):
+              //  - 点击/回车/触摸 = 打开(set true,不 toggle):触摸端 mouseenter+click 会
+              //    连发两次,toggle 会一开一关净关闭 → 改为幂等打开,任何模态都能开。
+              //  - onBlur 挂在 wrapper 上并判 relatedTarget 是否仍在 wrapper 内:
+              //    Tab 进入菜单项时焦点仍在 wrapper 内 → 不关闭,菜单项可被 Tab 逐个聚焦
+              //    (原来 onBlur 挂 button 上,Tab 一离开 button 就 unmount,菜单永远够不到)。
+              //  - 关闭走:鼠标移出 / 焦点离开 wrapper / Esc / 点中某个端口。
+              <span
+                className="relative inline-flex shrink-0"
+                onMouseEnter={() => setPortsPopoverOpen(true)}
+                onMouseLeave={() => setPortsPopoverOpen(false)}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setPortsPopoverOpen(false);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  // 拦掉浮层内的键盘事件,别冒泡到卡片根的 onKeyDown——那里 Enter/Space 会
+                  // preventDefault + 导航到详情,会抢掉「+N」/菜单项的原生 click 激活。
+                  // 只 stopPropagation、不 preventDefault:让原生 button click 照常触发
+                  // onClick(打开浮层 / 打开端口面板)。Esc 关闭浮层。
+                  if (event.key === 'Escape') {
+                    setPortsPopoverOpen(false);
+                  }
                   event.stopPropagation();
-                  setAppChipsExpanded((current) => !current);
                 }}
               >
-                {appChipsExpanded ? '收起' : `+${foldedAppCount}`}
-              </button>
+                <button
+                  type="button"
+                  className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  title={`还有 ${foldedAppCount} 个服务端口，点击或悬浮展开`}
+                  aria-haspopup="menu"
+                  aria-expanded={portsPopoverOpen}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPortsPopoverOpen(true);
+                  }}
+                >
+                  +{foldedAppCount}
+                </button>
+                {portsPopoverOpen ? (
+                  // 外层从 +N 底边(top-full,0 间距)起,用透明 pt-1.5 把可见面板往下推 6px:
+                  // 视觉上仍有 6px 间隙,但这 6px 属于 wrapper 子树、被 hover 覆盖 —— 鼠标从
+                  // +N 移到端口时不再跨越「空隙」触发 wrapper 的 onMouseLeave(Codex P2 悬停桥)。
+                  <div
+                    className="absolute left-0 top-full z-[140] pt-1.5"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div
+                      className="flex max-w-[min(320px,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+                      role="menu"
+                      aria-label="全部服务端口"
+                    >
+                      {appResources.map((resource) => (
+                        <button
+                          key={resource.id}
+                          type="button"
+                          role="menuitem"
+                          className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                          title={`${resource.displayName}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPortsPopoverOpen(false);
+                            onResourcePanel?.(resource);
+                          }}
+                        >
+                          <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                          {typeof resource.port === 'number' ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </span>
             ) : null}
             {/* 方案 C「托盘胶囊」(2026-07-05):基础容器(Mongo/Redis 等分支间共享的
                 基础设施)装进虚线托盘,冠名「基础」+ 实名 + 端口 —— 物理包裹让

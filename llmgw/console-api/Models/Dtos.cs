@@ -83,6 +83,11 @@ public sealed class LlmLogListItem
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? TeamId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
     public string? RequestType { get; set; }
@@ -102,6 +107,13 @@ public sealed class LlmLogListItem
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? PriceSnapshotHash { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
     public string? Error { get; set; }
     public bool? IsFallback { get; set; }
     public string? ExpectedModel { get; set; }
@@ -133,6 +145,11 @@ public sealed class LlmLogDetail
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
     public string? UserId { get; set; }
+    public string? TeamId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
     public string? RequestType { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
@@ -146,7 +163,6 @@ public sealed class LlmLogDetail
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
     public string? QuestionText { get; set; }
     public string? AnswerText { get; set; }
     public string? ThinkingText { get; set; }
@@ -164,6 +180,13 @@ public sealed class LlmLogDetail
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? PriceSnapshotHash { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public string? ReconciliationStatus { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
     public string? StartedAt { get; set; }
     public string? FirstByteAt { get; set; }
     public string? EndedAt { get; set; }
@@ -258,6 +281,9 @@ public sealed class LogsMeta
     public List<string> SourceSystems { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> ModelPolicies { get; set; } = new();
+    public List<string> ServiceKeyIds { get; set; } = new();
+    public List<string> ClientCodes { get; set; } = new();
+    public List<string> Environments { get; set; } = new();
 }
 
 // ── 日志汇总 ──
@@ -290,6 +316,67 @@ public sealed class EstimatedCostBucket
     public string Currency { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public long Requests { get; set; }
+}
+
+public sealed class CostReconciliationImportRequest
+{
+    public string? Provider { get; set; }
+    public string? ExternalRecordId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public DateTime? WindowFrom { get; set; }
+    public DateTime? WindowTo { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+    public DateTime? BilledAt { get; set; }
+    public string? FxSnapshotId { get; set; }
+    public decimal? ProviderToEstimatedFxRate { get; set; }
+}
+
+public sealed class CostReconciliationItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string? TeamId { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string ExternalRecordId { get; set; } = string.Empty;
+    public string Granularity { get; set; } = string.Empty;
+    public string? RequestId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ServiceKeyId { get; set; }
+    public string? Model { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public string? EstimatedCostCurrency { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string ProviderCostCurrency { get; set; } = string.Empty;
+    public string? FxSnapshotId { get; set; }
+    public decimal? ProviderToEstimatedFxRate { get; set; }
+    public decimal? ReconciliationDelta { get; set; }
+    public string? DeltaCurrency { get; set; }
+    public string ReconciliationStatus { get; set; } = string.Empty;
+    public string? WindowFrom { get; set; }
+    public string? WindowTo { get; set; }
+    public string? BilledAt { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+public sealed class CostReconciliationSummary
+{
+    public long TotalRecords { get; set; }
+    public long RequestRecords { get; set; }
+    public long WindowRecords { get; set; }
+    public long ActualUnavailableRequests { get; set; }
+    public List<EstimatedCostBucket> ProviderActualCosts { get; set; } = new();
+    public List<LogsBucketItem> StatusDistribution { get; set; } = new();
+    public List<CostReconciliationItem> Items { get; set; } = new();
+}
+
+public sealed class LegacyKeyCutoverUpdateRequest
+{
+    public string? Status { get; set; }
+    public DateTime? DeadlineAt { get; set; }
+    public List<string>? AllowedAppCallerCodes { get; set; }
+    public List<string>? SuccessorServiceKeyIds { get; set; }
+    public long RequiredSuccessorObservations { get; set; } = 1;
 }
 
 public sealed class LogsBucketItem
@@ -464,6 +551,31 @@ public sealed class BulkClaimPoolsResult
     public int Skipped { get; set; }
     public List<PoolItem> Items { get; set; } = new();
 }
+public sealed class PoolTypesData
+{
+    public List<PoolTypeItem> Items { get; set; } = new();
+    public int Total { get; set; }
+    public int Ready { get; set; }
+    public int Waiting { get; set; }
+}
+public sealed class PoolTypeItem
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Purpose { get; set; } = "";
+    public int SortOrder { get; set; }
+    public string DefaultPoolId { get; set; } = "";
+    public int ModelCount { get; set; }
+    public bool Ready { get; set; }
+    public long Version { get; set; }
+}
+public sealed class EnsurePoolTypesResult
+{
+    public int TypesCreated { get; set; }
+    public int PoolsCreated { get; set; }
+    public int ModelsAppended { get; set; }
+    public PoolTypesData Types { get; set; } = new();
+}
 public sealed class BulkCalibratePoolPriceCurrencyRequest
 {
     public string? ModelType { get; set; }
@@ -565,6 +677,14 @@ public sealed class UpdateGatewayAppCallerRequest
     public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
+}
+public sealed class CreateGatewayAppCallerRequest
+{
+    public string? TeamId { get; set; }
+    public string? AppCallerCode { get; set; }
+    public string? RequestType { get; set; }
+    public string? Title { get; set; }
+    public string? IngressProtocol { get; set; }
 }
 
 public sealed class BulkUpdateGatewayAppCallersRequest
@@ -701,6 +821,9 @@ public sealed class PoolItem
     public int HealthyMembers { get; set; }
     public int DegradedMembers { get; set; }
     public int UnavailableMembers { get; set; }
+    public bool ManagedByRegistry { get; set; }
+    public bool AppendOnly { get; set; }
+    public string? PoolRole { get; set; }
 }
 public sealed class PoolAppCallerItem
 {
@@ -732,8 +855,18 @@ public sealed class PlatformItem
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
+public sealed class CreatePlatformRequest
+{
+    public string? Name { get; set; }
+    public string? PlatformType { get; set; }
+    public string? ProviderId { get; set; }
+    public string? ApiUrl { get; set; }
+    public string? ApiKey { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public string? Remark { get; set; }
+}
 
-// ── 模型（无密钥，仅 hasKey）──
+// ── 模型（密钥只允许写入，读取仅返回 hasKey）──
 public sealed class ModelsData { public List<ModelItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class ModelItem
 {
@@ -747,7 +880,36 @@ public sealed class ModelItem
     public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+}
+public sealed class CreateModelRequest
+{
+    public string? PlatformId { get; set; }
+    public string? Name { get; set; }
+    public string? ModelName { get; set; }
+    public string? Protocol { get; set; }
+    public List<string> Capabilities { get; set; } = new();
+    public string? ApiKey { get; set; }
+    public int? Timeout { get; set; }
+    public int? MaxRetries { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public int? MaxTokens { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public string? Remark { get; set; }
+}
+public sealed class CreateModelResult
+{
+    public ModelItem Item { get; set; } = new();
+    public int PoolTypesCreated { get; set; }
+    public int PoolsCreated { get; set; }
+    public int ModelsAppended { get; set; }
 }
 public sealed class ModelCapabilityItem { public string Type { get; set; } = ""; public string Source { get; set; } = ""; public bool Value { get; set; } }
 public sealed class ParameterCapabilitiesMetaData
@@ -781,12 +943,55 @@ public sealed class ExchangeItem
     public bool Enabled { get; set; } public string? Description { get; set; } public bool HasKey { get; set; }
     public string SourceCollection { get; set; } = "model_exchanges"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
+    public long Version { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 public sealed class ExchangeModelItem
 {
     public string ModelId { get; set; } = ""; public string? DisplayName { get; set; } public string ModelType { get; set; } = "";
     public string? Description { get; set; } public bool Enabled { get; set; }
+}
+public sealed class ExchangeOptionItem
+{
+    public string Value { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string? Description { get; set; }
+}
+public sealed class ExchangeMetaData
+{
+    public List<ExchangeOptionItem> TransformerTypes { get; set; } = new();
+    public List<ExchangeOptionItem> AuthSchemes { get; set; } = new();
+    public List<ExchangeOptionItem> ModelTypes { get; set; } = new();
+}
+public sealed class ExchangeModelWriteRequest
+{
+    public string? ModelId { get; set; }
+    public string? DisplayName { get; set; }
+    public string? ModelType { get; set; }
+    public string? Description { get; set; }
+    public bool? Enabled { get; set; }
+}
+public sealed class CreateExchangeRequest
+{
+    public string? Name { get; set; }
+    public List<ExchangeModelWriteRequest> Models { get; set; } = new();
+    public string? TargetUrl { get; set; }
+    public string? ApiKey { get; set; }
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public bool? Enabled { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class UpdateExchangeRequest
+{
+    public string? Name { get; set; }
+    public List<ExchangeModelWriteRequest> Models { get; set; } = new();
+    public string? TargetUrl { get; set; }
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public bool? Enabled { get; set; }
+    public string? Description { get; set; }
+    public long? Version { get; set; }
 }
 
 // ── GW-owned API key 健康自检（不返回明文/密文/脱敏 key）──
@@ -912,6 +1117,7 @@ public sealed class GatewayAppCallersData
 public sealed class GatewayAppCallerItem
 {
     public string Id { get; set; } = "";
+    public string? TeamId { get; set; }
     public string AppCallerCode { get; set; } = "";
     public string RequestType { get; set; } = "";
     public string SourceSystem { get; set; } = "";
@@ -979,6 +1185,9 @@ public sealed class ServiceKeyCreateRequest
 {
     public string? Name { get; set; }
     public string? SourceSystem { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? Purpose { get; set; }
     public List<string>? AppCallerCodes { get; set; }
     public List<string>? IngressProtocols { get; set; }
     public List<string>? Scopes { get; set; }
@@ -987,6 +1196,7 @@ public sealed class ServiceKeyCreateRequest
     public int? RateLimitPerMinute { get; set; }
     public string? RotatesKeyId { get; set; }
     public DateTime? ExpiresAt { get; set; }
+    public bool ConfirmWildcardRisk { get; set; }
 }
 
 public sealed class ServiceKeyItem
@@ -998,6 +1208,9 @@ public sealed class ServiceKeyItem
     public string? TeamId { get; set; }
     public string? CreatedByUsername { get; set; }
     public string SourceSystem { get; set; } = "";
+    public string ClientCode { get; set; } = "";
+    public string Environment { get; set; } = "";
+    public string Purpose { get; set; } = "runtime";
     public List<string> AppCallerCodes { get; set; } = new();
     public List<string> IngressProtocols { get; set; } = new();
     public List<string> Scopes { get; set; } = new();
@@ -1006,6 +1219,9 @@ public sealed class ServiceKeyItem
     public string? ExpiresAt { get; set; }
     public string? LastUsedAt { get; set; }
     public string? CreatedAt { get; set; }
+    public string? RotatesKeyId { get; set; }
+    public string? RotatedByKeyId { get; set; }
+    public string RotationState { get; set; } = "active";
 }
 
 public sealed class CreateTenantRequest
@@ -1036,6 +1252,7 @@ public sealed class CreateMemberRequest
 
 public sealed class UpdateMemberRequest
 {
+    public int ExpectedVersion { get; set; }
     public string? Role { get; set; }
     public string? Status { get; set; }
     public List<string>? TeamIds { get; set; }

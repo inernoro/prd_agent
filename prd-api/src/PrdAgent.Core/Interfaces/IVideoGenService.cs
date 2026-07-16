@@ -3,11 +3,15 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 视频生成领域服务接口（纯 OpenRouter 直出模式）
-/// 2026-04-27 重构：原本支持 Remotion 拆分镜路径，现已简化为只调 OpenRouter 视频大模型。
+/// 视频项目、生成任务、镜头版本、时间线与导出任务的领域服务接口。
 /// </summary>
 public interface IVideoGenService
 {
+    Task<VideoProject> CreateProjectAsync(string appKey, string ownerAdminId, CreateVideoProjectRequest request, CancellationToken ct = default);
+    Task<VideoProject?> GetProjectAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+    Task<List<VideoProject>> ListProjectsAsync(string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+    Task<VideoProject> UpdateProjectAsync(string projectId, string ownerAdminId, UpdateVideoProjectRequest request, string? appKey = null, CancellationToken ct = default);
+
     /// <summary>
     /// 创建视频生成任务（插入 MongoDB，Worker 自动拾取）
     /// </summary>
@@ -43,4 +47,19 @@ public interface IVideoGenService
 
     /// <summary>标记单镜为 Rendering，触发 worker 调 OpenRouter 生成视频</summary>
     Task RenderSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>批量标记未完成分镜为 Rendering，worker 会按顺序生成</summary>
+    Task<int> RenderScenesAsync(string runId, string ownerAdminId, IReadOnlyCollection<int>? sceneIndexes = null, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>按给定的旧索引排列镜头，并同步项目视频轨。</summary>
+    Task ReorderScenesAsync(string runId, string ownerAdminId, IReadOnlyList<int> sceneIndexes, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>选择一个历史生成版本作为当前分镜产物</summary>
+    Task ActivateSceneVersionAsync(string runId, string ownerAdminId, int sceneIndex, string versionId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>请求把全部已完成分镜合成为完整视频</summary>
+    Task<VideoExportTask> RequestExportAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>列出项目的导出任务。</summary>
+    Task<List<VideoExportTask>> ListExportTasksAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 }

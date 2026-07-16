@@ -129,6 +129,7 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.ResponseToolCalls, toolCalls)
             .Set(l => l.ToolCallCount, done.ToolCallCount)
             .Set(l => l.FinishReason, done.FinishReason)
+            .Set(l => l.ProviderRequestId, LlmCostEvidence.ResolveProviderRequestId(done.ResponseHeaders))
             .Set(l => l.EstimatedInputCost, done.EstimatedInputCost)
             .Set(l => l.EstimatedOutputCost, done.EstimatedOutputCost)
             .Set(l => l.EstimatedCallCost, done.EstimatedCallCost)

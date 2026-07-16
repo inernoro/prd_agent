@@ -66,6 +66,13 @@ public sealed class PeerItemSyncResult
     public bool Ok { get; set; }
     /// <summary>本条目是否至少与对端成功 HTTP 通信过一次（用于 bump LastContactAt）。</summary>
     public bool AnyPeerContact { get; set; }
+    /// <summary>本条目是否因用户主动取消而中止（供批量调用方据此停止后续条目，不再继续写对端）。</summary>
+    public bool Cancelled { get; set; }
+    /// <summary>
+    /// 本条目虽已成功收尾、但期间/收尾时检测到取消请求（典型：push-only 在网络推送途中被点停，
+    /// 推送已完成落 synced 无法回滚，Cancelled 保持 false 以保留成功结果，但需据此标志停掉批量后续条目）。
+    /// </summary>
+    public bool CancelRequested { get; set; }
     public int Created { get; set; }
     public int Updated { get; set; }
     public int Skipped { get; set; }
@@ -129,6 +136,8 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             // 台账方向用 runDirection（区分 align-*），状态回写/网络用 direction（push/pull/both）。
             runId = await StartRunAsync(resource.ResourceType, itemId, itemName, runDirection, node, actor, itemStartedAt, ct);
             await MarkPeerSyncAsync(resource.ResourceType, itemId, "syncing", direction, node, "正在跨系统同步", ct);
+            // 取消检查点 A：开跑前。批量多库时用户停掉当前库后，后续每个库进这里即被拦下，不再白跑网络。
+            await ThrowIfCancelRequestedAsync(runId, ct);
 
             // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
             // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
@@ -150,6 +159,9 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 }
                 AttachPeerApplyOptions(bundle, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl);
                 await UpdateRunProgressAsync(runId, "发送到对端", 0, bundle.Records.Count, FirstRecordTitle(bundle) ?? bundle.Item.Name, ct);
+                // 取消检查点 A2：ExportAsync 构建大 bundle 可能耗时，检查点 A 之后、真正发送到对端之前再查一次，
+                // 避免用户在导出期间点停后整包仍被写到对端并收尾成功（Codex P2）。
+                await ThrowIfCancelRequestedAsync(runId, ct);
                 var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, direction, preserveTimestamps, rewriteAssetLinks, sourceBaseUrl, ct);
                 await UpdateRunProgressAsync(runId, "发送到对端", bundle.Records.Count, bundle.Records.Count, null, ct);
                 // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
@@ -177,6 +189,9 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             // 用户的本地编辑可能被丢。语义应为「先推后拉，推不通就不拉」，避免静默数据丢失。
             if (direction == "pull" || (direction == "both" && pushOk))
             {
+                // 取消检查点 B：仅在还有 pull 阶段要跑时才检查。push-only 走到这里 push 已成功且无后续阶段，
+                // 若在此无条件取消，会把已发到对端的成功 push 误记 cancelled 并跳过成功收尾/签名更新（Codex P2）。
+                await ThrowIfCancelRequestedAsync(runId, ct);
                 await UpdateRunProgressAsync(runId, "从对端拉取", 0, 0, itemName, ct);
                 var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
                 if (bundle == null)
@@ -207,7 +222,8 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 }
                 result.AnyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
                 AttachPeerApplyOptions(bundle, preserveTimestamps, rewriteAssetLinks, node.BaseUrl);
-                await UpdateRunProgressAsync(runId, "本地写入", 0, bundle.Records.Count, FirstRecordTitle(bundle), ct);
+                // 取消检查点 C：本地写入前（拉回大库时避免整包白写）。
+                await ThrowIfCancelRequestedAsync(runId, ct);
                 var progressActor = actor with
                 {
                     ProgressReporter = async (progress, token) =>
@@ -219,8 +235,11 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                             progress.Total,
                             progress.CurrentRecordTitle,
                             token);
+                        // 逐篇检查点：大库写入过程中也能中途停下（回调抛出后由 ApplyAsync 冒泡到本方法 catch）。
+                        await ThrowIfCancelRequestedAsync(runId, token);
                     }
                 };
+                await UpdateRunProgressAsync(runId, "本地写入", 0, bundle.Records.Count, FirstRecordTitle(bundle), ct);
                 var outcome = await resource.ApplyAsync(bundle, progressActor, mode, itemId, ct);
                 await UpdateRunProgressAsync(runId, "本地写入", bundle.Records.Count, bundle.Records.Count, null, ct);
                 perItem.Add("拉取 " + (outcome.Message ?? "完成"));
@@ -257,6 +276,29 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
             result.Deleted = deleted; result.Failed = failed;
             result.AssetsRewritten = assetsRewritten; result.AssetRewriteFailed = assetRewriteFailed;
             result.Message = summary;
+            // push-only 在网络推送途中被点停：推送已完成、无后续检查点可抛，条目如实收尾为成功；
+            // 但取消位仍在，非抛出式再查一次，让批量调用方据此停掉后续未开始的条目（Codex P2）。
+            result.CancelRequested = await IsCancelRequestedAsync(runId, ct);
+            return result;
+        }
+        catch (PeerSyncRunCancelledException cancelEx)
+        {
+            // 用户主动取消：落 cancelled 终态（非失败）。累加取消时 apply 已提交的部分计数——pull/align 写入
+            // 一半被停，DB 已部分改动，异常带回本次 apply 的已处理数，如实记录（否则破坏性 align 取消历史会
+            // 显示删除 0 与实际不符）。非 apply 阶段取消则这些为 0，累加无害。
+            // 库级状态用 updateDirection:false，只清 syncing、不动方向/不重置自动计时。
+            created += cancelEx.Created; updated += cancelEx.Updated; skipped += cancelEx.Skipped;
+            deleted += cancelEx.Deleted; failed += cancelEx.Failed;
+            assetsRewritten += cancelEx.AssetsRewritten; assetRewriteFailed += cancelEx.AssetRewriteFailed;
+            _logger.LogInformation("[peer-sync] transfer item {ItemId} cancelled by user", itemId);
+            await MarkPeerSyncAsync(resource.ResourceType, itemId, "cancelled", direction, node, "已被用户取消", ct, updateDirection: false);
+            await FinishRunAsync(runId, PeerSyncRunStatus.Cancelled, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed, "已被用户取消", itemStartedAt, ct);
+            result.Ok = false;
+            result.Cancelled = true;
+            result.Created = created; result.Updated = updated; result.Skipped = skipped;
+            result.Deleted = deleted; result.Failed = failed;
+            result.AssetsRewritten = assetsRewritten; result.AssetRewriteFailed = assetRewriteFailed;
+            result.Message = "已被用户取消";
             return result;
         }
         catch (Exception ex)
@@ -336,6 +378,34 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         _ => "overwrite",
     };
 
+    /// <summary>
+    /// 轮询某 run 的 CancelRequested 位；为 true 则抛 PeerSyncRunCancelledException 中断同步。
+    /// 每次查一条极小投影文档，检查点稀疏（每库 3-4 次 + 逐篇），DB 开销可忽略。
+    /// </summary>
+    private async Task ThrowIfCancelRequestedAsync(string? runId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(runId)) return;
+        var cancelled = await _db.PeerSyncRuns
+            .Find(r => r.Id == runId && r.CancelRequested)
+            .Limit(1)
+            .Project(r => r.Id)
+            .FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrEmpty(cancelled))
+            throw new PeerSyncRunCancelledException();
+    }
+
+    /// <summary>非抛出式读取某 run 的 CancelRequested 位（成功收尾后判断是否仍需停掉批量后续条目）。</summary>
+    private async Task<bool> IsCancelRequestedAsync(string? runId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(runId)) return false;
+        var cancelled = await _db.PeerSyncRuns
+            .Find(r => r.Id == runId && r.CancelRequested)
+            .Limit(1)
+            .Project(r => r.Id)
+            .FirstOrDefaultAsync(ct);
+        return !string.IsNullOrEmpty(cancelled);
+    }
+
     private async Task<string> StartRunAsync(
         string resourceType, string itemId, string itemName, string direction,
         PeerNode node, SyncActor actor, DateTime startedAt, CancellationToken ct)
@@ -377,7 +447,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
                 .Set(r => r.AssetsRewritten, assetsRewritten)
                 .Set(r => r.AssetRewriteFailed, assetRewriteFailed)
                 .Set(r => r.Message, message)
-                .Set(r => r.ProgressPhase, status == PeerSyncRunStatus.Error ? "失败" : "已完成")
+                .Set(r => r.ProgressPhase, status == PeerSyncRunStatus.Error ? "失败" : status == PeerSyncRunStatus.Cancelled ? "已取消" : "已完成")
                 .Set(r => r.DurationMs, (int)Math.Max(0, (now - startedAt).TotalMilliseconds))
                 .Set(r => r.FinishedAt, now),
             cancellationToken: ct);

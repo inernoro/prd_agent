@@ -9,6 +9,7 @@ import type { OverviewRankItem, TenantOverviewData } from '@/lib/types';
 import { Card, Chip, SectionLoader } from '@/components/ui';
 import { fmtCost, fmtMs, fmtShortTime, statusBadgeStyle } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
+import { canAccessPage } from '@/lib/access';
 
 const RANGE_OPTIONS = [
   { days: 1, label: '24 小时' },
@@ -84,6 +85,10 @@ export function OverviewPage() {
   const costs = overview?.estimatedCosts ?? [];
   const recent = overview?.recentRequests ?? [];
   const keys = overview?.serviceKeys;
+  const canReadLogs = canAccessPage(tenant, 'logs');
+  const canUseQuickstart = canAccessPage(tenant, 'quickstart');
+  const canManageKeys = canAccessPage(tenant, 'serviceKeys');
+  const canOpenGovernance = canAccessPage(tenant, 'governance');
 
   return (
     <div className="lg-home-page">
@@ -118,8 +123,8 @@ export function OverviewPage() {
             <span className={health?.status === 'ok' ? 'lg-status-dot is-ok' : 'lg-status-dot is-warn'} />
             {health?.status === 'ok' ? '网关运行正常' : '状态未知'}
           </div>
-          <p>{health?.status === 'ok' ? '当前租户可以创建密钥并发送请求。' : '健康信息暂不可用，请稍后刷新。'}</p>
-          {tenant?.isInternal ? <Link className="lg-secondary-link" to="/governance">打开系统运维</Link> : null}
+          <p>{health?.status === 'ok' ? (canManageKeys ? '当前租户可以创建密钥并发送请求。' : '网关可用；当前角色不负责签发密钥。') : '健康信息暂不可用，请稍后刷新。'}</p>
+          {canOpenGovernance ? <Link className="lg-secondary-link" to="/governance">打开系统运维</Link> : null}
         </Card>
 
         <Card className="lg-home-quickstart-card">
@@ -130,7 +135,7 @@ export function OverviewPage() {
             {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
           </div>
           <div className="lg-card-actions">
-            <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> 开始接入</Link>
+            {canUseQuickstart ? <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> {canManageKeys ? '开始接入' : '阅读接入教程'}</Link> : null}
             <Link className="lg-secondary-link" to="/learn#first-request"><BookOpen size={14} /> 先了解链路</Link>
           </div>
         </Card>
@@ -156,7 +161,7 @@ export function OverviewPage() {
       <Card className="lg-recent-card">
         <div className="lg-section-heading">
           <div><div className="lg-card-kicker"><Activity size={15} /> 最近请求</div><h2>当前时间范围</h2></div>
-          <Link className="lg-text-link" to="/logs">查看全部 <ArrowRight size={14} /></Link>
+          {canReadLogs ? <Link className="lg-text-link" to="/logs">查看全部 <ArrowRight size={14} /></Link> : null}
         </div>
         {overview && !overview.canReadRecentRequests ? (
           <div className="lg-empty-guidance"><strong>当前角色只显示聚合用量</strong><span>最近请求需要请求记录读取权限。</span><Link to="/learn#request-log">了解权限与请求记录</Link></div>
@@ -174,7 +179,7 @@ export function OverviewPage() {
               );
             })}
           </div>
-        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>先完成 Quickstart，首个 requestId 会出现在这里。</span><Link to="/quickstart">打开接入指南</Link></div>}
+        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>{canUseQuickstart ? '先完成 Quickstart，首个 requestId 会出现在这里。' : '当前时间范围没有可展示的请求。'}</span>{canUseQuickstart ? <Link to="/quickstart">打开接入指南</Link> : null}</div>}
       </Card>
 
       <section className="lg-overview-section" aria-labelledby="usage-heading">
@@ -222,7 +227,7 @@ export function OverviewPage() {
                 <div><strong>{keys.neverUsed}</strong><span>从未使用</span></div>
               </div>
             ) : <div className="lg-overview-empty">当前租户外部密钥为 0</div>}
-            <Link className="lg-secondary-link" to="/service-keys">{keys?.total ? '管理接入密钥' : '创建第一把密钥'} <ArrowRight size={13} /></Link>
+            {canManageKeys ? <Link className="lg-secondary-link" to="/service-keys">{keys?.total ? '管理接入密钥' : '创建第一把密钥'} <ArrowRight size={13} /></Link> : null}
           </Card>
         </div>
       </section>

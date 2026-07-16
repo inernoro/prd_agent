@@ -240,6 +240,12 @@
 - [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
   > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
 
+- [CDS Self-Hosting（CDS 托管 CDS）](design.cds.self-hosting) `design.cds.self-hosting`
+  > 预览实例模式（CDS_PREVIEW_INSTANCE=1）：宿主操作统一拦截 + 越界服务跳过 + JSON store + seed 演示数据；cds-self 独立项目 compose 解「同仓库多构建」；验收 CDS 改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
+
+- [CDS 生命周期原子性](design.cds.lifecycle-atomicity) `design.cds.lifecycle-atomicity`
+  > 对账收敛取代命令式级联：state 是唯一权威，孤儿容器收割器每小时把无 owner 的 cds-managed 容器停掉；项目删除连带容器物理清理（先容器后网络）；五类原子性问题分类 + 68 孤儿容器日志实证；安全阀（label 过滤/空库守卫/系统容器免死/逃生阀）
+
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
@@ -400,6 +406,9 @@
 
 - [CDS 自动交付与 Agent 接入 · 指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
   > 从页面批准 Agent 到自动识别、部署、预览、版本复用和恢复的主用户指南
+
+- [CDS 宿主迁移 Runbook](guide.cds.host-migration) `guide.cds.host-migration`
+  > 迁移前/中/后检查单：必迁三样（mongo-split 库、.cds.env 的 CDS_JWT_SECRET、TLS 证书）、repos/worktree/缓存不迁重建、调度器与并发闸核对、缓存预热、极速版首拉限流、选机 CPU 优先
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
@@ -680,6 +689,9 @@
 - [LLM Gateway 外部平台化与控制台体验收口](plan.platform.llm-gateway-external-platform) `plan.platform.llm-gateway-external-platform`
   > 租户/团队/用户/RBAC、外部接入教程、appCaller 提示词策略、左侧导航、图表与金额可信度的有限五 PR 计划
 
+- [LLM Gateway 模型网关权威教程 · 实施计划](plan.platform.llm-gateway-authoritative-tutorial) `plan.platform.llm-gateway-authoritative-tutorial`
+  > 从全空租户到生产治理的 33 章连续教程、实测修复、低理解力复验与 MAP/CDS 双归档计划
+
 - [LLM Gateway 控制台产品化与独立目录收拢](plan.platform.llm-gateway.console-productization) `plan.platform.llm-gateway.console-productization`
   > 双主题可发现性、请求记录、安全直测、租户首页、学习中心、模型池用户心智与根目录 llmgw 收拢的分阶段计划
 
@@ -720,6 +732,7 @@
   > 页面级路由迁完后,补 12k 行 app.js 里 13 项特色功能模块的功能级迁移(Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG / AI 占用 feed 等),分 3 wave,带状态/效果/测试/工作量字段
 
 - [移动端适配功能规划](plan.frontend.mobile-adaptation) `plan.frontend.mobile-adaptation`
+- [Apple 设计系统双轨迁移 · 活状态看板](plan.frontend.apple-design-migration) `plan.frontend.apple-design-migration`
   > 移动端响应式适配的功能规划
 
 - [移动端布局分析报告](plan.frontend.mobile-layout-review) `plan.frontend.mobile-layout-review`
@@ -828,6 +841,7 @@
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [缺陷管理 手机截图分享提交 · 债务台账](debt.defect-agent.mobile-share) `debt.defect-agent.mobile-share`
+- [Apple 设计系统迁移 · 债务台账](debt.frontend.apple-design-migration) `debt.frontend.apple-design-migration`
 - [移动端全局浅色主题 · 债务台账](debt.frontend.mobile-light-theme) `debt.frontend.mobile-light-theme`
 - [前端导航历史（返回上一页）· 债务台账](debt.frontend.navigation-history) `debt.frontend.navigation-history`
   > useSmartBack 已落地 + 主要污染源已修；边界：教程跨页 push、NavigationBridge push、cds-agent 整页跳转、长尾页面硬编码返回待走到哪修到哪
@@ -1100,6 +1114,7 @@
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
 | 2026-07-15 | 更新 | `spec.cds` `design.cds` `guide.cds.managed-delivery` `guide.cds.tutorial` `guide.cds.deploy-three-paths` `guide.cds.one-click-deploy` `guide.cds.deploy-acceptance` `guide.cds.env` `guide.cds.github-app` `guide.cds.ai-auth` | CDS 重大版本文档体系重构 |
+| 2026-07-15 | 新增 | `plan.platform.llm-gateway-authoritative-tutorial` | LLM Gateway 模型网关权威教程 · 实施计划 |
 | 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
 | 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |

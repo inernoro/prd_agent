@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
-import { Button, Chip, SectionLoader } from '@/components/ui';
+import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 const PAGE_SIZE = 50;
 const STATUSES = ['discovered', 'configured', 'active', 'disabled', 'archived'];
@@ -37,11 +39,23 @@ type BulkDraft = {
 
 function statusChip(status: string) {
   const key = (status || 'discovered').toLowerCase();
-  if (key === 'active') return { label: 'active', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
-  if (key === 'configured') return { label: 'configured', color: '#7aa2ff', bg: 'rgba(122,162,255,0.14)' };
-  if (key === 'disabled') return { label: 'disabled', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
-  if (key === 'archived') return { label: 'archived', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
-  return { label: key || 'discovered', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
+  if (key === 'active') return { label: '已启用', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
+  if (key === 'configured') return { label: '已配置', color: '#7aa2ff', bg: 'rgba(122,162,255,0.14)' };
+  if (key === 'disabled') return { label: '已停用', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
+  if (key === 'archived') return { label: '已归档', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
+  return { label: '待配置', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
+}
+
+function statusLabel(value: string) {
+  return ({ discovered: '待配置', configured: '已配置', active: '已启用', disabled: '已停用', archived: '已归档' } as Record<string, string>)[value] ?? value;
+}
+
+function modelPolicyLabel(value: string) {
+  return ({ auto: '自动选择', pool: '指定模型池', pinned: '固定模型' } as Record<string, string>)[value] ?? value;
+}
+
+function parameterPolicyLabel(value: string) {
+  return ({ 'default-drop': '忽略不支持参数', 'strict-require': '参数不支持就拒绝' } as Record<string, string>)[value] ?? value;
 }
 
 function fmtTime(value?: string | null) {
@@ -57,6 +71,9 @@ function logsHref(key: 'requestId' | 'sessionId' | 'runId', value?: string | nul
 }
 
 export function AppCallersPage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'appCallerWrite');
+  const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
   const [searchParams] = useSearchParams();
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
@@ -245,6 +262,10 @@ export function AppCallersPage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ flexShrink: 0, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+        <strong style={{ fontSize: 14 }}>appCaller 是每类业务调用的身份证</strong>
+        <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.55 }}>Quickstart 先创建 appCaller，系统再按它统计请求、选择模型池、限制预算和速率，并给 chat/vision 绑定提示词策略。密钥回答“谁在调用”，appCaller 回答“为什么调用”，模型池回答“去哪里调用”。</p>
+      </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {modelPoolId ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 11 }}>当前模型池绑定<button type="button" onClick={() => { setPage(1); setModelPoolId(''); }} style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', padding: 0 }}>清除</button></span> : null}
         <input
@@ -266,19 +287,19 @@ export function AppCallersPage() {
         </select>
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>共 {data.total} 个</span>
       </div>
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+      {canWrite ? <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>按当前筛选批量治理</span>
         <select value={bulkDraft.targetStatus} onChange={(e) => setBulkDraft((prev) => ({ ...prev, targetStatus: e.target.value }))} style={{ ...selectStyle, width: 124 }}>
           <option value="">状态不改</option>
-          {STATUSES.map((x) => <option key={x} value={x}>{x}</option>)}
+          {STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}
         </select>
         <select value={bulkDraft.modelPolicy} onChange={(e) => setBulkDraft((prev) => ({ ...prev, modelPolicy: e.target.value }))} style={{ ...selectStyle, width: 112 }}>
           <option value="">路由不改</option>
-          {MODEL_POLICIES.map((x) => <option key={x} value={x}>{x}</option>)}
+          {MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}
         </select>
         <select value={bulkDraft.parameterPolicy} onChange={(e) => setBulkDraft((prev) => ({ ...prev, parameterPolicy: e.target.value }))} style={{ ...selectStyle, width: 156 }}>
           <option value="">参数策略不改</option>
-          {PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{x}</option>)}
+          {PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}
         </select>
         <input
           value={bulkDraft.owner}
@@ -315,7 +336,7 @@ export function AppCallersPage() {
           {bulkSaving ? '应用中' : '应用'}
         </Button>
         {!hasBulkFilter ? <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>先选择至少一个筛选条件</span> : null}
-      </div>
+      </div> : <ReadOnlyNotice>当前角色可以查看 appCaller、路由和最近请求，但不能修改治理配置。</ReadOnlyNotice>}
       {actionError ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: '#f85149', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(248,81,73,0.35)', background: 'rgba(248,81,73,0.08)' }}>
           {actionError}
@@ -355,6 +376,8 @@ export function AppCallersPage() {
                 draft={getDraft(item)}
                 selectStyle={selectStyle}
                 saving={savingId === item.id}
+                canWrite={canWrite}
+                canManagePromptPolicy={canManagePromptPolicy}
                 onDraft={(patch) => patchDraft(item, patch)}
                 onSave={() => saveItem(item)}
               />
@@ -389,6 +412,8 @@ function AppCallerRow({
   draft,
   selectStyle,
   saving,
+  canWrite,
+  canManagePromptPolicy,
   onDraft,
   onSave,
 }: {
@@ -398,6 +423,8 @@ function AppCallerRow({
   draft: Draft;
   selectStyle: React.CSSProperties;
   saving: boolean;
+  canWrite: boolean;
+  canManagePromptPolicy: boolean;
   onDraft: (patch: Partial<Draft>) => void;
   onSave: () => void;
 }) {
@@ -430,23 +457,23 @@ function AppCallerRow({
       </td>
       <td style={td}>{item.sourceSystem || '—'}</td>
       <td style={td}>
-        <select value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={{ ...selectStyle, width: 180 }}>
+        {canWrite ? <select value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={{ ...selectStyle, width: 180 }}>
           <option value="">默认 auto</option>
           {compatiblePools.map((p) => <option key={p.id} value={p.id}>{p.name || p.code || p.id}</option>)}
-        </select>
+        </select> : <span>{compatiblePools.find((pool) => pool.id === item.modelPoolId)?.name || item.modelPoolId || '默认 auto'}</span>}
       </td>
       <td style={td}>
-        <div style={{ display: 'flex', gap: 6 }}>
+        {canWrite ? <div style={{ display: 'flex', gap: 6 }}>
           <select value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={{ ...selectStyle, width: 112 }}>
-            {STATUSES.map((x) => <option key={x} value={x}>{x}</option>)}
+            {STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}
           </select>
           <select value={draft.modelPolicy} onChange={(e) => onDraft({ modelPolicy: e.target.value })} style={{ ...selectStyle, width: 92 }}>
-            {MODEL_POLICIES.map((x) => <option key={x} value={x}>{x}</option>)}
+            {MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}
           </select>
           <select value={draft.parameterPolicy} onChange={(e) => onDraft({ parameterPolicy: e.target.value })} style={{ ...selectStyle, width: 142 }}>
-            {PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{x}</option>)}
+            {PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}
           </select>
-        </div>
+        </div> : <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}><Chip label={statusLabel(item.status || '')} color="var(--text-secondary)" bg="var(--bg-elevated)" /><Chip label={modelPolicyLabel(item.modelPolicy || '')} color="var(--text-secondary)" bg="var(--bg-elevated)" /><Chip label={parameterPolicyLabel(item.parameterPolicy || '')} color="var(--text-secondary)" bg="var(--bg-elevated)" /></div>}
         {observedPolicy || observedParameter ? (
           <div style={{ marginTop: 5, fontSize: 11, color: 'var(--text-muted)', maxWidth: 360, wordBreak: 'break-word' }}>
             最近请求：{[observedPolicy, observedParameter].filter(Boolean).join('；')}
@@ -460,7 +487,7 @@ function AppCallerRow({
         ) : null}
       </td>
       <td style={td}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', minWidth: 420 }}>
+        {canWrite ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', minWidth: 420 }}>
           <input
             value={draft.owner}
             onChange={(e) => onDraft({ owner: e.target.value })}
@@ -492,14 +519,14 @@ function AppCallerRow({
             style={{ ...selectStyle, width: 78 }}
             aria-label="每分钟限流"
           />
-        </div>
+        </div> : <span style={{ color: 'var(--text-secondary)' }}>{[item.owner, item.monthlyBudgetUsd ? `预算 ${item.monthlyBudgetUsd} USD/月` : '', item.rateLimitPerMinute ? `RPM ${item.rateLimitPerMinute}` : ''].filter(Boolean).join('；') || '未配置'}</span>}
       </td>
       <td style={td}>
         <TraceLinks item={item} />
       </td>
       <td style={td}>{item.totalSeen}</td>
       <td style={td}>{fmtTime(item.lastSeenAt)}</td>
-      <td style={td}><div style={{ display: 'flex', gap: 5 }}><Button size="sm" variant="ghost" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存'}</Button>{['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`} style={{ color: 'var(--accent)', fontSize: 11, alignSelf: 'center' }}>提示词</Link> : null}</div></td>
+      <td style={td}><div style={{ display: 'flex', gap: 5 }}>{canWrite ? <Button size="sm" variant="ghost" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存'}</Button> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`} style={{ color: 'var(--accent)', fontSize: 11, alignSelf: 'center' }}>提示词策略</Link> : null}</div></td>
     </tr>
   );
 }

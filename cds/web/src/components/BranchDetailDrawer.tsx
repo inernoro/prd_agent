@@ -775,49 +775,6 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
   };
 }
 
-/**
- * PreviewUrlChip — running 时显示 production URL,一键复制 + 在新窗口打开。
- * 用户 2026-04-30 反馈:成功后 URL 必须在显眼位置,不能让用户去 Drawer
- * 「部署」tab 才看到。Week 4.8 Round 4b 实现。
- */
-function PreviewUrlChip({ url }: { url: string }): JSX.Element {
-  const [copied, setCopied] = useState(false);
-  // 显示用版本:去掉 protocol 前缀,更清爽
-  const display = url.replace(/^https?:\/\//, '');
-  const copy = () => {
-    void navigator.clipboard.writeText(url).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
-  };
-  return (
-    <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
-      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-700 hover:underline dark:text-emerald-400"
-        title={url}
-      >
-        {display}
-      </a>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-6 shrink-0 px-2 text-xs"
-        onClick={copy}
-        aria-label="复制预览地址"
-      >
-        {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        {copied ? '已复制' : '复制'}
-      </Button>
-    </div>
-  );
-}
-
-
 export function BranchDetailDrawer({
   branchId,
   projectId,
@@ -1918,7 +1875,14 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>
-              {branch.status === 'running' && branch.previewUrl ? (
+              {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
+                  set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
+                  原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
+                  (Codex review P2)。
+                  状态判定同时看抽屉内快照 branch.status 与父组件经 SSE 实时透传的
+                  branchStatus —— 抽屉打开期间 building→running 时 branch 快照不刷,
+                  只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
+              {(branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
@@ -1928,7 +1892,7 @@ export function BranchDetailDrawer({
                       每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
                   <div className="flex flex-col gap-1.5">
                     <a
-                      href={branch.previewUrl}
+                      href={previewUrl || branch.previewUrl}
                       target="_blank"
                       rel="noreferrer"
                       title="打开主应用入口"
@@ -1939,7 +1903,7 @@ export function BranchDetailDrawer({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{branch.previewUrl}</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{previewUrl || branch.previewUrl}</span>
                       </span>
                       <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
@@ -2018,11 +1982,24 @@ export function BranchDetailDrawer({
                   return (
                     <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        {/* 状态 / commit / 服务数上移到本卡(原「运行中」卡已删,信息不丢) */}
+                        <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                        {branch.commitSha ? (
+                          <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span>
+                        ) : null}
+                        <span className="text-xs text-muted-foreground">
+                          服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}
+                        </span>
                         <span className={`rounded border px-2 py-0.5 text-xs font-medium ${origin.className}`}>
                           {origin.label}
                         </span>
                         <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
                       </div>
+                      {branch.subject ? (
+                        <div className="mt-1 min-w-0 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
+                          {branch.subject}
+                        </div>
+                      ) : null}
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
                         <span>
                           最近推送：{formatDeployTimestamp(branch.lastPushAt)}
@@ -2072,26 +2049,9 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                    {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
-                    <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
-                    {branch.subject ? (
-                      <span className="min-w-[220px] flex-1 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
-                        {branch.subject}
-                      </span>
-                    ) : null}
-                  </div>
-                  {/*
-                    Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
-                    绿点旁边没有 URL"):running 时显眼显示 production 域名,
-                    hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
-                  */}
-                  {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
-                    <PreviewUrlChip url={previewUrl} />
-                  ) : null}
-                </div>
+                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余):
+                    URL 与顶部「应用已上线 · 主应用入口」重复,状态/commit/服务数
+                    已上移到上方 origin 卡。 */}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">

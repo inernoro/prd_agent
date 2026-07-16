@@ -168,6 +168,12 @@ public class GatewayRequestContext
 
     public string? TeamId { get; set; }
 
+    /// <summary>以下工作负载身份字段只允许 serving 从已验证密钥写入。</summary>
+    public string? ServiceKeyId { get; set; }
+    public string? ClientCode { get; set; }
+    public string? Environment { get; set; }
+    public string? ServiceKeyPrefix { get; set; }
+
     /// <summary>
     /// 请求 ID（用于关联日志）
     /// </summary>
@@ -223,11 +229,10 @@ public class GatewayRequestContext
     /// </summary>
     public string? SystemPromptText { get; init; }
 
-    /// <summary>已应用的提示词策略元数据。正文不进入日志，只传 id/version/hash/字符数。</summary>
+    /// <summary>已应用的提示词策略元数据。正文与字符数不进入日志，只传 id/version/hash。</summary>
     public string? PromptPolicyId { get; set; }
     public int? PromptPolicyVersion { get; set; }
     public string? PromptPolicyHash { get; set; }
-    public int? PromptPolicyChars { get; set; }
 
     /// <summary>
     /// 图片引用列表（参考图 COS URL 等元数据，用于日志页展示）
@@ -288,11 +293,22 @@ public class GatewayRequestContext
     /// 用于 http 模式过线前给请求体的 Context 打上 "http" 传输标记（S2 观测）。
     /// </summary>
     public static GatewayRequestContext WithTransport(GatewayRequestContext? source, string transport)
+        => Copy(source, source?.RequestId, transport);
+
+    /// <summary>返回一份使用服务端确定 requestId 的副本，其余字段保持不变。</summary>
+    public static GatewayRequestContext WithRequestId(GatewayRequestContext? source, string requestId)
+        => Copy(source, requestId, source?.GatewayTransport);
+
+    private static GatewayRequestContext Copy(GatewayRequestContext? source, string? requestId, string? transport)
         => new()
         {
             TenantId = source?.TenantId,
             TeamId = source?.TeamId,
-            RequestId = source?.RequestId,
+            ServiceKeyId = source?.ServiceKeyId,
+            ClientCode = source?.ClientCode,
+            Environment = source?.Environment,
+            ServiceKeyPrefix = source?.ServiceKeyPrefix,
+            RequestId = requestId,
             SessionId = source?.SessionId,
             RunId = source?.RunId,
             GroupId = source?.GroupId,
@@ -306,7 +322,6 @@ public class GatewayRequestContext
             PromptPolicyId = source?.PromptPolicyId,
             PromptPolicyVersion = source?.PromptPolicyVersion,
             PromptPolicyHash = source?.PromptPolicyHash,
-            PromptPolicyChars = source?.PromptPolicyChars,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
             SourceSystem = source?.SourceSystem,
@@ -362,6 +377,10 @@ public sealed class GatewayIngressRequest
             {
                 TenantId = Context?.TenantId,
                 TeamId = Context?.TeamId,
+                ServiceKeyId = Context?.ServiceKeyId,
+                ClientCode = Context?.ClientCode,
+                Environment = Context?.Environment,
+                ServiceKeyPrefix = Context?.ServiceKeyPrefix,
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,
@@ -376,7 +395,6 @@ public sealed class GatewayIngressRequest
                 PromptPolicyId = Context?.PromptPolicyId,
                 PromptPolicyVersion = Context?.PromptPolicyVersion,
                 PromptPolicyHash = Context?.PromptPolicyHash,
-                PromptPolicyChars = Context?.PromptPolicyChars,
                 ImageReferences = Context?.ImageReferences,
                 GatewayTransport = GatewayTransports.Http,
                 SourceSystem = SourceSystem,

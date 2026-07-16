@@ -8,9 +8,35 @@ import type {
   UpdateVideoSceneContract,
   RegenerateVideoSceneContract,
   RenderVideoSceneContract,
+  RenderVideoScenesContract,
+  ActivateVideoSceneVersionContract,
+  ExportVideoGenRunContract,
   VideoGenRun,
   VideoGenRunListItem,
+  VideoProject,
+  VideoProjectInput,
+  VideoModelOption,
+  VideoExportTask,
+  ReorderVideoScenesContract,
 } from '@/services/contracts/videoAgent';
+
+export const listVideoModelsReal = async () =>
+  apiRequest<VideoModelOption[]>(api.videoAgent.models(), { method: 'GET' });
+
+export const listVideoProjectsReal = async () =>
+  apiRequest<VideoProject[]>(api.videoAgent.projects.list(), { method: 'GET' });
+
+export const getVideoProjectReal = async (projectId: string) =>
+  apiRequest<VideoProject>(api.videoAgent.projects.byId(projectId), { method: 'GET' });
+
+export const createVideoProjectReal = async (input: VideoProjectInput) =>
+  apiRequest<VideoProject>(api.videoAgent.projects.create(), { method: 'POST', body: input });
+
+export const updateVideoProjectReal = async (projectId: string, input: VideoProjectInput) =>
+  apiRequest<VideoProject>(api.videoAgent.projects.byId(projectId), { method: 'PUT', body: input });
+
+export const listVideoProjectExportsReal = async (projectId: string) =>
+  apiRequest<VideoExportTask[]>(api.videoAgent.projects.exports(projectId), { method: 'GET' });
 
 export const createVideoGenRunReal: CreateVideoGenRunContract = async (input) => {
   return await apiRequest<{ runId: string }>(api.videoAgent.runs.create(), {
@@ -86,4 +112,32 @@ export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (run
 
 export const renderVideoSceneReal: RenderVideoSceneContract = async (runId, sceneIndex) => {
   return await apiRequest<boolean>(api.videoAgent.scenes.render(runId, sceneIndex), { method: 'POST' });
+};
+
+export const renderVideoScenesReal: RenderVideoScenesContract = async (runId, sceneIndexes) => {
+  return await apiRequest<{ count: number }>(api.videoAgent.scenes.renderBatch(runId), {
+    method: 'POST',
+    body: { sceneIndexes },
+  });
+};
+
+export const reorderVideoScenesReal: ReorderVideoScenesContract = async (runId, sceneIndexes) =>
+  apiRequest<boolean>(api.videoAgent.scenes.reorder(runId), {
+    method: 'POST',
+    body: { sceneIndexes },
+  });
+
+export const activateVideoSceneVersionReal: ActivateVideoSceneVersionContract = async (
+  runId,
+  sceneIndex,
+  versionId,
+) => {
+  return await apiRequest<boolean>(
+    api.videoAgent.scenes.activateVersion(runId, sceneIndex, versionId),
+    { method: 'POST' },
+  );
+};
+
+export const exportVideoGenRunReal: ExportVideoGenRunContract = async (runId) => {
+  return await apiRequest<VideoExportTask>(api.videoAgent.runs.export(runId), { method: 'POST' });
 };

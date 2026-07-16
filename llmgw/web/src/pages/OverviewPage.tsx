@@ -5,7 +5,9 @@ import { Link } from 'react-router-dom';
 import { Boxes, Server, GitCompare, ScrollText, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
 import { bindActiveAppCallerPools, bulkClaimConfigAuthority, getPools, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
 import type { ModelPool, PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
-import { Button, Chip, SectionLoader } from '@/components/ui';
+import { Button, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 // 网关容器拓扑（SSOT：cds-compose.yml 的 services + .claude/rules/cds-dual-exit-topology.md）。
 // 让用户一眼看懂「多只脚」：网关这套本就是 3 个独立容器（控制台后端 + serving 引擎 + 控制台前端），
@@ -34,6 +36,8 @@ const GROUP_META: Record<TopoRole['group'], { label: string; color: string; bg: 
 };
 
 export function GovernancePage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [platforms, setPlatforms] = useState<PlatformItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[] | null>(null);
@@ -206,13 +210,14 @@ export function GovernancePage() {
         <Link to="/pools" style={{ textDecoration: 'none' }}>
           <Chip label={`不可用池 ${unusableActivePools}`} color={unusableActivePools > 0 ? '#f85149' : '#3fb950'} bg={unusableActivePools > 0 ? 'rgba(248,81,73,0.12)' : 'rgba(63,185,80,0.14)'} />
         </Link>
-        <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
+        {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
           {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
-        </Button>
-        <Button size="sm" variant="secondary" disabled={busyAction !== null || configAuthority!.activeMissingGatewayPool === 0} onClick={() => void bindActiveCallers()}>
+        </Button> : null}
+        {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || configAuthority!.activeMissingGatewayPool === 0} onClick={() => void bindActiveCallers()}>
           {busyAction === 'bind-active-callers' ? '处理中…' : '绑定 active 调用方'}
-        </Button>
+        </Button> : null}
       </div>
+      {!canWrite ? <ReadOnlyNotice>当前角色可以查看运行状态、配置权威和容器拓扑，但不能执行配置认领或绑定。</ReadOnlyNotice> : null}
 
       {/* 容器拓扑 */}
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: 16 }}>

@@ -1,12 +1,16 @@
-// 平台：表格展示平台名/类型/API URL/并发/启用/密钥是否已配置。密钥本身绝不展示（只回 hasKey）。
-// 启用态可就地切换：GW 权威平台写 llm_gateway，MAP 来源平台写旧集合。密钥配置不在此页暴露。
+// Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
+// 密钥明文只随创建/轮换请求发送，列表永远只展示 hasKey。
 import { useEffect, useState } from 'react';
-import { bulkRotateApiKeys, claimPlatformToGateway, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
-import type { PlatformItem } from '@/lib/types';
-import { Chip, SectionLoader, Button } from '@/components/ui';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
+import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
+import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { boolChip } from '@/components/poolsHelpers';
+import { useAuth } from '@/lib/auth';
+import { canUseCapability } from '@/lib/access';
 
 export function PlatformsPage() {
+  const { tenant } = useAuth();
+  const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<PlatformItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -16,18 +20,47 @@ export function PlatformsPage() {
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [draft, setDraft] = useState<CreatePlatformRequest>({
+    name: '',
+    platformType: 'openai',
+    apiUrl: '',
+    apiKey: '',
+    maxConcurrency: 20,
+  });
 
   useEffect(() => {
     let alive = true;
     getPlatforms().then((res) => {
       if (!alive) return;
-      if (res.success) setItems(res.data.items);
+      if (res.success) {
+        setItems(res.data.items);
+        setShowCreate(res.data.items.length === 0);
+      }
       else setError(res.error?.message || '加载失败');
     });
     return () => {
       alive = false;
     };
   }, []);
+
+  async function submitCreate(event: React.FormEvent) {
+    event.preventDefault();
+    setCreateBusy(true);
+    setToast(null);
+    const res = await createPlatform(draft);
+    setCreateBusy(false);
+    if (!res.success) {
+      setDraft((value) => ({ ...value, apiKey: '' }));
+      setToast(res.error?.message || '创建失败');
+      return;
+    }
+    setItems((prev) => [...(prev || []), res.data]);
+    setDraft({ name: '', platformType: 'openai', apiUrl: '', apiKey: '', maxConcurrency: 20 });
+    setShowCreate(false);
+    setToast(`Provider「${res.data.name}」已保存，通讯密钥已加密，可继续添加模型`);
+  }
 
   async function toggle(p: PlatformItem) {
     setBusyId(p.id);
@@ -124,39 +157,89 @@ export function PlatformsPage() {
 
   if (error) return <Empty text={error} />;
   if (!items) return <SectionLoader text="正在加载平台…" />;
-  if (items.length === 0) return <Empty text="暂无平台" />;
 
   const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
   const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <section style={createCardStyle}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <div style={{ maxWidth: 720 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Provider（模型供应方）</div>
+            <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+              Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+              第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
+            </div>
+          </div>
+          {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
+            {showCreate ? '收起配置' : '添加 Provider'}
+          </Button> : null}
+        </div>
+        {showCreate && canWrite ? (
+          <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>名称</span>
+              <input required value={draft.name} onChange={(e) => setDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程假上游" style={formInputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>接口类型</span>
+              <select value={draft.platformType} onChange={(e) => setDraft((value) => ({ ...value, platformType: e.target.value as CreatePlatformRequest['platformType'] }))} style={formInputStyle}>
+                <option value="openai">OpenAI 兼容</option>
+                <option value="claude">Claude 兼容</option>
+              </select>
+            </label>
+            <label style={{ ...fieldStyle, gridColumn: '1 / -1' }}>
+              <span style={labelStyle}>API 地址</span>
+              <input required type="url" value={draft.apiUrl} onChange={(e) => setDraft((value) => ({ ...value, apiUrl: e.target.value }))} placeholder="https://provider.example.com/v1" style={formInputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Provider 通讯密钥</span>
+              <input required type="password" autoComplete="new-password" value={draft.apiKey} onChange={(e) => setDraft((value) => ({ ...value, apiKey: e.target.value }))} placeholder="必填，只保存加密结果" style={formInputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>最大并发</span>
+              <input required type="number" min={1} max={10000} value={draft.maxConcurrency ?? 20} onChange={(e) => setDraft((value) => ({ ...value, maxConcurrency: Number(e.target.value) }))} style={formInputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>供应方标识（可选）</span>
+              <input value={draft.providerId || ''} onChange={(e) => setDraft((value) => ({ ...value, providerId: e.target.value }))} placeholder="用于费用或日志归类" style={formInputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>备注（可选）</span>
+              <input value={draft.remark || ''} onChange={(e) => setDraft((value) => ({ ...value, remark: e.target.value }))} placeholder="例如：仅供教程测试" style={formInputStyle} />
+            </label>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并继续添加模型'}</Button>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>保存后列表只显示“已配置”，不会回显密钥。</span>
+            </div>
+          </form>
+        ) : null}
+      </section>
+      {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      <div style={toolbarStyle}>
-        <span style={toolbarTitleStyle}>批量维护平台密钥</span>
-        <input
-          type="password"
-          autoComplete="new-password"
-          value={bulkKeyValue}
-          onChange={(e) => setBulkKeyValue(e.target.value)}
-          placeholder="新 apiKey"
-          style={inputStyle}
-        />
-        <label style={checkStyle}>
-          <input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />
-          只补缺失
-        </label>
-        <label style={checkStyle}>
-          <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
-          确认应用到当前平台配置
-        </label>
-        <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
-          {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
-        </Button>
-      </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+      {items.length > 0 && canWrite ? (
+        <details style={{ flexShrink: 0 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
+          <div style={toolbarStyle}>
+            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
+            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
+            <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
+            <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用到当前 Provider</label>
+            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
+              {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
+            </Button>
+          </div>
+        </details>
+      ) : null}
+      {items.length === 0 ? (
+        <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
+      ) : (
+      <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 160, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
@@ -190,7 +273,7 @@ export function PlatformsPage() {
                   <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                   <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       {keyEditId === p.id ? (
                         <>
                           <input
@@ -231,7 +314,7 @@ export function PlatformsPage() {
                           </Button>
                         </>
                       )}
-                    </span>
+                    </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
               );
@@ -239,6 +322,7 @@ export function PlatformsPage() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -278,6 +362,40 @@ const checkStyle: React.CSSProperties = {
   gap: 6,
   fontSize: 12,
   color: 'var(--text-secondary)',
+};
+
+const createCardStyle: React.CSSProperties = {
+  flexShrink: 0,
+  padding: 14,
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius)',
+};
+
+const fieldStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 5,
+  minWidth: 0,
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: 'var(--text-secondary)',
+};
+
+const formInputStyle: React.CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  height: 34,
+  background: 'var(--bg-input)',
+  color: 'var(--text-primary)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '0 9px',
+  fontSize: 12,
+  boxSizing: 'border-box',
 };
 
 function Empty({ text }: { text: string }) {

@@ -1,0 +1,182 @@
+# LLM Gateway 模型网关权威教程 · 计划
+
+> **版本**：v1.0 | **日期**：2026-07-15 | **状态**：开发中
+
+## 一、目标与完成定义
+
+本计划把 LLM Gateway 已经存在的租户、密钥、模型、模型池、路由、提示词、请求记录、费用和治理能力，串成一本可连续操作的产品教程。教程最终发布到 MAP 全新知识库 **“模型网关权威教程”**；视觉验收证据按 MAP 验收规范归档到 CDS 验收中心。
+
+本计划不重做 full-http、模型迁移、模型池算法或发布 Gate。现有 `plan.platform.llm-gateway.console-productization` 已交付学习中心和术语解释，但它只覆盖“知道这些名词是什么”，没有覆盖“从全空状态一路做到可运营”的书籍级教程；本计划只补这个缺口。
+
+只有同时满足下列条件才算完成：
+
+1. 从空租户开始，能够按教程配置第一个上游、模型、默认模型池、appCaller 和租户密钥。
+2. 四种协议都能完成零费用安全直测；真实协议每类最多一次，其余使用假上游。
+3. 教程从入口开始连续导航，不要求读者猜下一页，不把路由地址或技术字段当操作说明。
+4. 每章包含“你在做什么、为什么做、点哪里、看到什么算成功、失败怎么办、下一章去哪”。
+5. 基础、中级、高级全覆盖，页面能力没有断头入口，教程章节没有指向不存在的操作。
+6. 至少 12 张有效产品截图，关键操作带圈选、编号和中文说明；截图读回确认，双主题和移动端均有证据。
+7. 一个没有项目背景的新手智能体只读教程即可完成首个请求和常见排错；失败步骤必须补写后重测。
+8. MAP 知识库、章节正文、图片和分享入口均可打开；CDS L2 验收报告满足完整证据准入。
+
+## 二、不可突破的边界
+
+- `TenantId` 只能从服务端会话或 service key 解析；教程不得引导用户在请求中自报租户。
+- 所有测试数据使用隔离租户与假上游；不修改生产模型池、生产密钥、生产账号、生产密码或共享池成员。
+- 不保存或展示密钥明文。教程只使用遮盖示例；真实测试 key 用后立即撤销测试副本。
+- PromptPolicy 首版只演示 chat 和 vision；日志只展示 policy id、version、hash，不展示提示词正文。
+- unknown cost 不写成 0；CNY、USD 没有可审计汇率时分别展示。
+- 不批量测试付费模型；每类真实协议最多一次，默认使用安全直测和固定假上游。
+- 截图、验收 HTML、运行清单和临时数据只放 `/tmp` 或验收知识库，不提交仓库。
+
+## 三、读者路径与章节目录
+
+### A. 基础篇：第一次把网关用起来
+
+| 章 | 标题 | 完成后的可见结果 |
+|---:|---|---|
+| 0 | 这本书怎么用 | 知道入口、账号来源、测试数据规则和完整路线 |
+| 1 | 什么是模型网关 | 能区分业务应用、Gateway、模型平台和模型 |
+| 2 | 找到入口并登录 | 从 MAP 导航进入控制台，完成登录或知道如何申请账号 |
+| 3 | 看懂首页 | 能读懂健康、最近请求、费用可信度和下一步 |
+| 4 | 创建第一个租户 | 建立独立数据边界，不在请求里填写 tenantId |
+| 5 | 创建团队和成员 | 建立 Owner、Admin、Developer、Viewer 的最小权限 |
+| 6 | 配置第一个 Provider | 保存上游地址和凭据，明白上游 key 与租户 key 不同 |
+| 7 | 配置第一个模型 | 绑定 Provider、能力、价格与币种，识别 unknown cost |
+| 8 | 准备默认模型池 | 按程序池类型幂等补齐；有匹配模型则追加，无匹配则不变 |
+| 9 | 创建第一个 appCaller | 用业务用途命名并绑定团队、请求类型和模型池 |
+| 10 | 一键生成第一把 key | 选择环境、协议、appCaller、scope 和有效期，只看一次明文 |
+| 11 | 点击安全测试 | 不调用付费上游，验证地址、鉴权、协议、路由和 requestId |
+| 12 | 复制接入方式 | 获取 curl 和 Agent 技能接入说明，完成四协议 Quickstart |
+| 13 | 找到第一条请求 | 用 requestId 查看状态、模型、Provider、耗时和费用状态 |
+
+### B. 中级篇：让团队稳定、安全地使用
+
+| 章 | 标题 | 完成后的可见结果 |
+|---:|---|---|
+| 14 | 理解 key、appCaller 和模型池 | 不再混淆“谁调用、为何调用、去哪里调用” |
+| 15 | 为测试和正式环境分 key | 每个接入方、环境和用途都有独立可撤销身份 |
+| 16 | 轮换、切换和撤销 key | 新旧 key 双轨观察后撤销旧 key，不原地覆盖 |
+| 17 | 给模型池增加成员 | 只追加兼容模型，不覆盖既有优先级、价格和参数能力 |
+| 18 | 看懂健康、优先级和回退 | 能解释命中模型、故障回退和不可用成员 |
+| 19 | 使用 Exchange | 明白请求模型名如何映射到平台模型，并能反向排查 |
+| 20 | 配置 PromptPolicy | 预览、保存新版本、应用 chat/vision、审计和回滚 |
+| 21 | 看懂请求记录和会话 | 用筛选、详情、session 与错误信息定位调用问题 |
+| 22 | 看懂用量、预算和费用 | 区分 estimated、actual、unknown、reconciled 与原币种 |
+| 23 | 导入供应商账单并对账 | 分清逐请求对账和时间窗对账，保留差额证据 |
+| 24 | 审计团队操作 | 回答谁在何时改了租户、key、池、策略或账单 |
+
+### C. 高级篇：治理、验收和故障处理
+
+| 章 | 标题 | 完成后的可见结果 |
+|---:|---|---|
+| 25 | 多租户和团队隔离自检 | 确认跨租户、跨团队列表、详情和写入均被拒绝 |
+| 26 | 高风险权限和会话失效 | 验证通配 key、停用成员、改密和强制退出行为 |
+| 27 | 四协议保真验收 | 用同一业务意图检查 GW Native、OpenAI、Claude、Gemini |
+| 28 | 费用可信度双向校验 | 用价格快照与 Provider actual 复核，跨币种不伪算 |
+| 29 | 运行治理与发布检查 | 仅内部租户查看 runtime、容器、迁移和发布状态 |
+| 30 | 常见故障逐步排查 | 处理 401、403、404、409、429、5xx、超时和 unknown cost |
+| 31 | 生产接入与回滚清单 | 从测试 key 到正式 key，观察 ServiceKeyId 后安全撤销旧 key |
+| 32 | 术语表与下一步 | 能按页面术语找到对应操作、证据和责任人 |
+
+## 四、连续测试数据
+
+整本教程复用同一条故事线，避免每章突然换数据：
+
+| 对象 | 教程示例 | 用途 |
+|---|---|---|
+| 租户 | 教程咖啡店 | 隔离本书全部测试数据 |
+| 团队 | 客服组、内容组 | 演示团队权限和跨团队拒绝 |
+| Provider | 教程假上游 | 不付费完成配置与故障测试 |
+| 模型 | 教程聊天模型、教程视觉模型 | 演示 chat/vision 与价格覆盖 |
+| 默认池 | 默认对话池、默认视觉池 | 演示程序池类型与 append-only |
+| appCaller | `tutorial.gateway-book::chat`、`tutorial.gateway-book::vision` | 演示业务身份、策略和费用归属；OpenRouter 的 App 列显示为 `G-{appCallerCode}`，前缀不是 Gateway 内部 code 的一部分 |
+| key | test / prod 两组临时测试 key | 演示环境隔离、轮换、撤销和审计 |
+
+所有名称在运行时增加唯一后缀，避免并发验收冲突；教程正文只显示稳定的人类名称。
+
+## 五、实测与修复批次
+
+| 批次 | 范围 | 进入条件 | 完成门 |
+|---|---|---|---|
+| T0 | 公开入口、登录说明、账号来源、返回入口 | 公开页面可访问 | 新手知道从哪里来、账号从哪里得、登录后能做什么 |
+| T1 | 空租户、Provider、模型、默认池 | 隔离预览可写 | 从空状态建立最小可用路由，失败可恢复 |
+| T2 | appCaller、一键 key、四协议安全测试、curl、Agent 技能 | T1 可用 | 无 key 不能测试；4/4 安全直测产生可定位 requestId |
+| T3 | PromptPolicy、日志、费用、审计、组织 | T2 有测试日志 | chat/vision、生效证据、费用口径和审计完整 |
+| T4 | 双主题、移动端、负面路径、低理解力复验 | 正文与截图完成 | 新手独立完成首请求和至少一条故障排查 |
+| T5 | MAP 教程库与 CDS L2 报告发布 | T4 通过 | 分享页、章节、图片、验收报告均可打开 |
+
+每个需要代码修复的批次使用独立 PR；本批次本地、CI、CDS 和验收未完成时，不把下一批代码混入。Bugbot 因订阅停止记为不适用，改由 Codex Review 和独立对抗复审留证。
+
+T4-G2 只读逐页审计确认模型池规则和 PromptPolicy 数据边界无需重做，同时找出会让教程断头的剩余产品孤岛。按下列有限子批次处理；一个子批次未合并和验收前，不把下一批代码混入同一 PR：
+
+| 子批次 | 精确范围 | 不包含 | 完成门 |
+|---|---|---|---|
+| G2-A | 最小权限知识库 publisher snapshot、三方 hash、CAS 写入、安全回滚和 foreign 内容保护 | 教程正文、控制台 UI、生产写入 | AgentApiKey 只有 `document-store:write` 也能在隔离库完成 plan/apply/noop/conflict/rollback，不能触碰非受管条目 |
+| G2-B | 角色驱动的导航和写操作可见性 | 后端 RBAC 规则重做 | Owner、Admin、Developer、Viewer、Billing 不再看到注定 403 的入口，直接访问仍由后端拒绝 |
+| G2-C | chat/vision appCaller 自助创建、PromptPolicy 测试入口与 Quickstart 可展开安全选项 | 新协议、批量付费测试 | 外部新租户能分别创建 chat/vision；安全测试仍默认不访问付费上游 |
+| G2-D | 用量页四种费用状态、逐条对账、差额和导入结果反馈 | 汇率猜测、跨币种直接求和 | estimated、actual、unknown、reconciled 能双向追溯；无可信 FX 时保持原币种 |
+| G2-E | Exchange 自助创建与映射编辑 | 重做路由算法或模型迁移 | 空租户能建立第一条映射、读回、修改并在审计中定位 |
+| G2-F | 33 章源文件、离线校验、幂等发布器、隔离库双发布与整书连续测试 | 生产共享池变更、真实密钥入库 | 第 0 至 32 章齐全；第二次发布为 noop；人工漂移触发 conflict；无未解析图片占位符 |
+
+G2-A 已关闭：PR #1143 正常合并为 `6f4d4937dfc795a8703c94ecbafbda08d7273df9`；标准非集成套件 1654 项通过、4 项跳过，publisher 定向与真实 Mongo 行为测试 26 项通过，三轮独立对抗复审最终为 0 个 P0、0 个未关闭 P1。CDS 单 profile 使用目标提交镜像通过 TCP/HTTP 探测；公网验收覆盖 401、403、created、noop、陈旧 CAS 409、安全回滚 200，临时知识库与 Key 清理回查均为 0。
+
+G2-B 已关闭：PR #1145 正常 squash 合并为 `5aae0be79cdef75be17de39918e767a85141e961`。前端以 `llmgw/console-api/Auth/TenantAccessContext.cs` 为服务端权威镜像五角色权限，未知角色在控制台布局与业务 API 挂载前失败关闭；导航、顶部 requestId 搜索、旧深链和配置写控件统一走中央能力表。Viewer 的 Quickstart 保留教程与示例但不创建 appCaller/key、不执行直测；Developer 可管理团队内 appCaller 与 scoped key，但不能创建通配 key、进入 PromptPolicy、审计或修改路由配置；Billing 只保留概览、用量、学习中心和本地设置。前端生产构建、Gateway 数据域与 RBAC 合同 79/79、CI 同口径标准测试 675/675、GitHub CI、四镜像、CDS 完整部署和独立网关子域终验均通过；七张截图、十二项断言、双主题、零截图告警，独立复审为 0 个 P0、0 个 P1。不可变终验报告为 [G2-B 五角色 RBAC 独立子域终验](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb)。
+
+G2-C 精确计划：后端自助创建、PromptPolicy 版本与 serving 注入已经支持 `chat/vision`，本批不重写这些能力。当前断点仅在 Quickstart：`requestType`、appCaller 后缀校验、四协议示例和安全请求体全部写死为 chat，创建完成后也没有直达当前 appCaller 策略预览的入口。本批只做以下四项：第一，增加 chat/vision 调用类型选择，并自动保持 `appCallerCode` 的 `::chat/::vision` 后缀一致，手工输入不一致时在创建前明确拒绝；第二，为 GW Native、OpenAI、Claude、Gemini 分别生成 chat 或 vision 的真实协议形状，vision 仅携带内嵌占位图片并继续使用 `X-Gateway-Dry-Run: quickstart`，必须在模型解析和上游发送前结束；第三，在生成结果中显示 appCaller 类型、策略适用范围和当前角色可用的 PromptPolicy 预览入口，Developer 无配置权限时只说明由 Owner/Admin 管理；第四，把请求体、安全 header、`upstreamCalled=false` 成功门和“本页不提供付费开关”收进默认折叠的安全选项。完成门为 chat/vision 各自四协议共八个合同用例全部返回 requestId、写入同 TenantId/TeamId/ServiceKeyId 日志且无费用字段，上游对象若被调用则测试立即失败；前端生产构建、标准回归、CI、CDS、双主题与负向页面证据全部通过后才合并。
+
+G2-C 本地实现证据：Quickstart 已能选择文字对话或图片理解，自动同步 `::chat/::vision` 后缀；Viewer 可切换两类示例但不能创建，Developer 能创建团队 scoped 身份但只看到由 Owner/Admin 管理策略的说明，Owner/Admin 在生成后可直达对应 appCaller 的 PromptPolicy。创建阶段锁定身份字段，避免 appCaller 已按一种类型创建、界面却切换到另一类型的竞态。前端生产构建通过；chat/vision × GW Native/OpenAI/Claude/Gemini 八格安全测试使用 ThrowingGateway 通过，证明没有调用上游；Gateway 数据域守卫 79/79、协议与 key gate 92/92、标准非集成套件 1654 项通过且 4 项跳过、CI 同口径数据域套件 675/675 通过，解决方案编译 0 error。PR、CDS 和浏览器视觉证据未完成前仍保持进行中。
+
+G2-C 已关闭：PR #1146 正常 squash 合并为 `c346c99768114d4421a2160ca86fa2b94e6b16fe`。GitHub CI、Server Build & Test、四个相关镜像与 CDS Deploy 全绿；独立 `llmgw-web` 子域完成 10 图、33 条行为断言、深浅主题、390px 移动端、Owner/Developer/Viewer 和四协议 vision 安全直测，截图 warning 为 0。浏览器只使用合成角色、合成 key 与假上游；服务端 `ThrowingGateway` 集成测试独立证明没有访问上游。不可变终验报告为 [G2-C chat/vision Quickstart 独立子域终验](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2)。
+
+G2-D 精确计划：PR-10 已经交付 tenant-scoped 供应商账单导入、逐请求与时间窗对账、estimated/actual 分栏、FX 凭证门、唯一索引、审计、汇总和请求详情字段，本批不得重复实现后端算法或数据库结构。当前断点只在 `/usage`：页面有估算与 actual 汇总卡，但没有把 estimated、actual、unknown、reconciled 四种状态放在同一可信度看板；`CostReconciliationSummary.Items` 与 `StatusDistribution` 已由 API 返回却完全未展示，用户无法从导入结果追到 requestId、估算、供应商实际、差额、币种和 FX 证据；导入成功后表单静默关闭，没有明确成功回执。本批只做以下四项：第一，用现有 summary 与 reconciliation 派生四状态看板，estimated 按价格覆盖请求数、actual 按账单记录数、unknown 按缺价格请求数、reconciled 按状态分布计数，金额继续按原币种分卡展示；第二，导入成功后显示粒度、供应商流水、状态、actual、estimated 与差额，并提供 requestId 回查入口，窗口账单明确标为汇总、不得伪装成逐请求；第三，展示最近 500 条现有对账明细，状态使用中文解释，只有 `reconciled` 且 delta 非空时显示差额，`estimated-unavailable` 和 `fx-unavailable` 明确显示未知或缺汇率凭证，不渲染 0；第四，移动端使用纵向卡片而不是横向表格，不增加总币种金额、汇率猜测或前端换算。完成门为前端构建、费用边界守卫、现有服务端回归、GitHub CI、CDS、深浅主题、移动端、同币种对账、跨币种无 FX、unknown 与窗口粒度负向证据全部通过后才合并。
+
+G2-D 本地实现证据：`/usage` 已补费用四状态看板、导入成功回执、最近对账卡片、requestId 回查、窗口账单解释、独立读取失败态和 390px 单列布局；unknown 使用文字而不是 0，只有服务端状态为 `reconciled` 且返回 delta 才显示差额，前端不执行币种换算。Web 生产构建通过；新增费用展示边界守卫 1/1、标准数据域套件 676/676、API 非集成套件 1654 项通过且 4 项既有跳过、解决方案编译 0 error。多角度反向审查和分支范围检查没有未关闭的 P0/P1，也没有后端算法、集合、权限、模型池或发布 gate 越界。PR、GitHub CI、CDS 和正式浏览器视觉报告未完成前仍保持进行中。
+
+G2-D 已关闭：PR #1147 正常合并为 `883d8d81f0dd9b7da998db80072f73b5defab15e`。GitHub CI、Server Build & Test、四个相关镜像与 CDS Deploy 全绿；正式 L2 报告包含 16 张截图与 21 条断言，覆盖四费用状态、unknown 非 0、同币种差额、跨币种无 FX、窗口账单、移动端及双主题，P0/P1/P2/P3 均为 0。不可变终验报告为 [G2-D 费用可信度与对账追溯正式验收](https://cds.miduo.org/reports?project=prd-agent&folder=403bb94fcd9b41aaa9d8676037a49553&report=522e3a6f8e4642ed8bf322de428f0e61)。
+
+G2-E 精确计划：serving 已有 Exchange 解析与模型池消费，`llmgw_model_exchanges` 已经使用 TenantAccess 读取并以加密字段保存通讯密钥，本批不得重做路由算法、模型迁移、模型池或内部 MAP claim。当前断点是外部租户只能查看 Exchange，空租户没有自助创建或修改入口；旧 `prd-api ExchangeController` 写入的是 MAP `model_exchanges`，不能作为外部租户权威写路径。本批只做以下六项：第一，新增 tenant-scoped Exchange 元数据、创建和编辑 API，TenantId 只取服务端会话，名称唯一索引与所有查询都包含 TenantId；第二，创建必须提供只写通讯密钥，密钥只进入加密字段，读回和审计仅返回 `hasKey`，目标 URL 同时拒绝用户凭据和密钥查询参数；第三，模型映射至少一条、同一 Exchange 内大小写不敏感去重，并只接受程序池注册表已有用途、认证方式与转换器；第四，编辑使用 Version 乐观锁，猜测其他租户 ID 返回不存在，同租户重名拒绝但跨租户同名允许；第五，创建和编辑在业务写入前先建立包含 TenantId 的 pending 审计意图，写入后收口完成态，收口异常也保留可对账审计，不允许出现“有配置、无审计”，页面提供三步说明、空状态创建、基础/高级分层、读回回执与按 Exchange id 定位审计的入口，并让已启用映射能直接加入相应用途的既有模型池；第六，外部租户保存 HTTP 上游前执行 DNS 与私网地址校验，实际发送统一复用可固定解析结果、拒绝内网和保留地址且关闭自动跳转的安全出站连接器；外部 WebSocket 首版从选项、保存和执行三层明确拒绝，内部租户保持既有私网拓扑。完成门为配置归一化、租户数据域守卫、安全出站守卫、解决方案构建、标准回归、GitHub CI、CDS、深浅主题、390px 移动端、无 key、重名、陈旧版本、跨租户猜测、私网目标拒绝和审计定位全部通过后才合并。
+
+G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射、基础/高级分层、版本化编辑、服务端读回回执、模型池下一步与 Exchange id 审计入口；上游接口类型、认证方式和对应地址示例均在基础配置中直接可见，Gemini、fal.ai、豆包和火山方舟会给出对应认证推荐，外部租户看不到不可用的 WebSocket 类型；重复模型会在提交前按行定位，版本冲突保留当前表单并说明安全恢复步骤。API 已实现服务端会话 TenantId、租户内同名冲突、跨租户同名隔离、只写加密密钥、Version 乐观锁，以及业务写入前的 pending 审计意图；审计收口异常时仍保留可对账记录，已启用 Exchange 模型可以按声明用途加入既有程序池。对抗审查发现外部租户自定义地址可能形成 SSRF 后，已增加保存前 DNS/私网校验，并将外部租户 HTTP 发送切换到现有安全出站连接器；外部 WebSocket 首版从选项、保存和执行三层拒绝，内部租户仍使用既有客户端。最终解决方案编译 0 error，Exchange、模型池兼容与安全出站定向测试 37/37、租户数据域守卫 1/1、CI 同口径标准套件 API 1669 项通过且 4 项既有跳过、数据域 677/677、Web 生产构建 1619 模块通过；第三轮独立低理解度复核为 P0/P1/P2 全部 0。PR、GitHub CI、CDS 与正式浏览器报告完成前仍保持进行中。
+
+逐页审计同时确认：Quickstart 的四协议 dry-run 只证明地址、鉴权、团队、appCaller、协议形状、日志和 requestId，不证明真实模型路由、流式、vision 或参数语义保真。第 27 章必须另用假上游契约测试覆盖这些内容，每类真实协议最多一次。
+
+## 六、视觉证据合同
+
+每个截图必须先出现真实产物，再截图并读回：
+
+- 图上圈选当前点击目标，编号与正文步骤一致。
+- 图片旁正文同时写“这张图证明什么”和“看到什么算成功”。
+- 至少覆盖登录、空租户、首个 Provider、首个模型、默认池、appCaller、创建 key、安全测试、四协议、第一条日志、PromptPolicy、费用、审计、移动端和浅色主题。
+- 关键失败路径必须包含无 key、错误 key、越权、无匹配模型、unknown cost 和上游错误。
+- 禁止把加载中、空白页、伪造示例或地址栏直达截图作为成功证据。
+
+## 七、进度账本
+
+| 阶段 | 状态 | 当前证据 | 下一步 |
+|---|---|---|---|
+| 事实审计 | 已完成 | 已确认 17 个页面、6 组导航、页面—API 关系和公开登录断点 | 在后续实测中持续记录新增断点 |
+| 教程设计 | 已完成 | 33 章三级目录、连续测试数据和截图合同已冻结 | 随实测补齐每章异常树，不改变连续主线 |
+| 产品修复 | G2-E 进行中 | T0、T1、T2、T3 与 G2-A 至 G2-D 均已独立合并和验收；G2-D 合并提交为 `883d8d81f0` | 在独立 G2-E 分支只补 tenant-scoped Exchange 自助创建与编辑；不重做路由、模型迁移、模型池或 MAP claim |
+| 连续实测 | 进行中 | 四协议同钥、无 key 401、unknown cost 已通过；PromptPolicy 已完成 v1、v2、回滚生成 v3、当前运行态保存 v5；页面和 MongoDB 双向确认 v5 审计只含目标 id、version、policyHash；chat/vision、日志和四种费用状态定向测试 9/9 通过；PR #1134 CI/CDS 全绿，公网 health commit 一致，未登录审计与费用接口均返回 401 | T4 按 33 章顺序生成正文和截图，完成双主题、移动端、负面路径与新手复验 |
+| T4 流程补洞 | G1 已关闭 | 真实编写第 5 章时发现“后端已有成员生命周期、前端只能查看”的功能孤岛；已补齐创建成员、分配团队、改角色与状态、强制重新登录，并修正首次改密页公共默认口令误导和前后端 12 位口令门槛。对抗审查继续找出并修复旧页面并发覆盖、无团队 Developer、隐藏停用团队、自我锁死、Billing 死入口、既有全局账号被无确认挂载、授权范围审计缺失、停用 Owner 无法清理、跨租户用户名抢占、长租户 slug 与账号短名契约冲突、Developer 省略停用团队范围以及 pending 审计幂等误报成功等边界；成员关键变更先写包含 TenantId 的 pending 审计意图，再执行业务写入并收口完成态。隔离租户完成页面、HTTP API、审计集合与 MongoDB 双向验证，23 项行为断言与 91 项成员策略/数据域守卫通过，成功操作没有残留 pending 审计，故障注入下 pending 幂等重放被拒绝；PR #1138、CI、CDS、公网独立网关子域及浏览器复验全部通过，合并提交 `29f4e38e` | G1 已关闭；本地验收账号在证据归档完成后已定向清理。下一步只推进 G2 的 33 章连续实测，不把后续内容混回已合并修复 PR |
+| T4 视觉验收 | G1、G3、G4 已关闭 | 完成 18 张有效标注截图的逐张人工回读；覆盖点击导航、租户边界、Developer 无团队负例、创建与列表读回、自我锁死保护、强制重新登录、成员审计、首次口令、短口令拒绝、Billing 导航、浅色、深色和手机抽屉。manifest 为 18/18 已标注、0 warning，自动捕获 P0/P1 为 0；公网独立网关子域页面与主脚本 200，未登录组织接口 401，health commit 对齐，浏览器跳登录页且页面错误为 0 | 继续 G2 正文与 G5 新手复验；整本教程最终报告仍等待五门全部关闭 |
+| 低理解力复验 | 基线完成 | 无背景智能体无法从公开入口完成首请求 | 教程发布后重新复验 |
+| MAP 发布 | 在途总览已发布 | “模型网关权威教程”已建立唯一在途文档“LLM Gateway 权威教程：实时验收总览”，展示固定权重、PR、证据、问题和未完成项；仓库与本地在途报告已更新为总进度 62%、T4 3/5 | 持续更新同一文档；恢复 MAP SSO 会话后同步同一固定数值，G2 完成后再写入 33 章正文和图片 |
+| CDS 验收归档 | G1、G2-B、G2-C、G2-D 增量报告已完成 | [T4-G1 合并后验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8)、[G2-B 独立子域终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=4fcf98a863dd4b709c1b0a5ab329c9eb)、[G2-C chat/vision Quickstart 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=51a87d1d2be34f39ae755f328f259ef2) 与 [G2-D 费用可信度终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=403bb94fcd9b41aaa9d8676037a49553&report=522e3a6f8e4642ed8bf322de428f0e61) 已归档并完成服务端读回 | 整本教程最终报告仍须等待 G2、G5；增量报告保持内部登录态，不扩大为匿名公开 |
+
+## 八、实时可见与固定进度
+
+当前可实时更新的唯一看板为 [GitHub issue #1139](https://github.com/inernoro/prd_agent/issues/1139)。总进度、门禁、当前证据、阻塞与下一步只更新该 issue，不再创建随机进度记录。MAP 最终目标入口仍为 `https://map.ebcone.net/document-store?store=a406b53735494ac1bcf57c2de34b5b76`；库内“LLM Gateway 权威教程：实时验收总览”是待恢复最小权限发布链后的产品内镜像，不再冒充实时来源。
+
+总进度按固定权重计算，禁止凭当前动作主观报数：T0 8%、T1 14%、T2 20%、T3 20%、T4 23%、T5 15%。当前 T0 至 T3 完成，因此已结算总进度为 `8 + 14 + 20 + 20 = 62%`。T4 不再报告主观的“阶段内部百分比”，改为 5 个可核验完成门：G1 流程孤岛修复 PR 合并、G2 33 章正文连续实测完成、G3 至少 12 张标注截图读回通过、G4 双主题/移动端/负面路径通过、G5 低理解力新手复验通过。当前 G1、G3、G4 已关闭，T4 为 `3/5`；G2、G5 尚未关闭。已关闭的阶段内完成门只更新 T4 看板；T4 五门未全部关闭前，已结算总进度仍保持 62%，不把零散工作折算成波动百分比。GitHub issue #1139 是 62% 最新账本；MAP 在途总览仍是 49% 旧快照，只有最小权限 publisher API、隔离演练和有效授权全部通过后才同步，禁止通过重置密码或高权 impersonation 绕开。
+
+CDS L2 报告与在途总览职责不同：在途总览用于实时纠偏；每个独立修复 PR 可以先归档一份不可变的增量验收报告。T4-G1 合并后报告固定深链为 `https://cds.miduo.org/reports?project=prd-agent&folder=4167d445397245de99b642ad507a38eb&report=12f1a576458d4ba1b042edd1a8e707c8`，已验证标题、正文、iframe 和 54 个图片节点真实渲染。整本教程最终报告仍必须等待 G1 至 G5 全部关闭；匿名公开属于权限扩大，只有取得单独授权后才创建。
+
+## 九、关联 SSOT
+
+- `plan.platform.llm-gateway-external-platform.md`：租户平台化、密钥、提示词、首页与验收的实现事实。
+- `plan.platform.llm-gateway.console-productization.md`：学习中心、双主题、模型池心智和根目录收拢。
+- `rule.acceptance.map-enterprise.md`、`rule.acceptance.ssot.md`：视觉验收和归档规则。
+- `guide.acceptance.report-evidence.md`：截图、说明和证据完整性合同。
+- `debt.llm-gateway.md`：不在本教程批次内重开的运行边界和技术债。

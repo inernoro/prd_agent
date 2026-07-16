@@ -177,6 +177,42 @@ services:
     networks:
       - prdagent-network
 
+  # 独立 LLM serving 数据面（dev）。llmgw-web 的四协议同源入口直接代理到该服务。
+  llmgw-serve:
+    build:
+      context: .
+      dockerfile: llmgw/serving/Dockerfile
+    image: prdagent-llmgw-serve:dev
+    container_name: prdagent-llmgw-serve
+    ports:
+      - "5091:8091"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8091
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__DatabaseName=prdagent
+      - LlmGateway__MongoConnectionString=mongodb://mongodb:27017
+      - LlmGateway__DatabaseName=llm_gateway
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}
+      - ASSETS_PROVIDER=local
+      - ASSETS_LOCAL_DIR=/tmp/llmgw-assets
+      - LlmGateway__Retention__WorkerEnabled=false
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8091/gw/v1/healthz"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
+    networks:
+      - prdagent-network
+
   # 独立 LLM 网关前端静态站 llmgw-web（dev）—— nginx 托管 llmgw/web 构建产物。
   # 占位：静态产物挂载到 ./deploy/llmgw-web/dist；llmgw/web 拆出后改为 build。
   llmgw-web:
@@ -192,6 +228,7 @@ services:
       - "5590:80"
     depends_on:
       - llmgw
+      - llmgw-serve
     networks:
       - prdagent-network
 

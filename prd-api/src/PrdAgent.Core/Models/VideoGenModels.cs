@@ -1,4 +1,102 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
+
+public static class VideoProjectStatus
+{
+    public const string Draft = "Draft";
+    public const string Analyzing = "Analyzing";
+    public const string Editing = "Editing";
+    public const string Rendering = "Rendering";
+    public const string Completed = "Completed";
+}
+
+public static class VideoProjectAssetType
+{
+    public const string Character = "character";
+    public const string Scene = "scene";
+    public const string Prop = "prop";
+    public const string Audio = "audio";
+}
+
+public static class VideoTrackType
+{
+    public const string Video = "video";
+    public const string Subtitle = "subtitle";
+    public const string Voice = "voice";
+    public const string Music = "music";
+}
+
+public static class VideoExportTaskStatus
+{
+    public const string Queued = "Queued";
+    public const string Processing = "Processing";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+    public const string Cancelled = "Cancelled";
+}
+
+public class VideoProjectAsset
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Type { get; set; } = VideoProjectAssetType.Scene;
+    public string Name { get; set; } = string.Empty;
+    public string? Url { get; set; }
+    public string? Description { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class VideoTimelineClip
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public int? SceneIndex { get; set; }
+    public double StartSeconds { get; set; }
+    public double DurationSeconds { get; set; } = 5;
+    public double TrimStartSeconds { get; set; }
+    public double TrimEndSeconds { get; set; }
+    public string? AssetUrl { get; set; }
+    public string? Text { get; set; }
+    public string? Transition { get; set; }
+}
+
+public class VideoTimelineTrack
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Type { get; set; } = VideoTrackType.Video;
+    public string Name { get; set; } = "视频";
+    public bool Muted { get; set; }
+    public bool Locked { get; set; }
+    public List<VideoTimelineClip> Clips { get; set; } = new();
+}
+
+[BsonIgnoreExtraElements]
+public class VideoProject
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string Title { get; set; } = "未命名视频";
+    public string Status { get; set; } = VideoProjectStatus.Draft;
+    public string SourceMarkdown { get; set; } = string.Empty;
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string DefaultAspectRatio { get; set; } = "16:9";
+    public string DefaultResolution { get; set; } = "1080p";
+    public int DefaultDuration { get; set; } = 5;
+    public bool GenerateAudio { get; set; } = true;
+    public string? LatestRunId { get; set; }
+    public string? LatestExportTaskId { get; set; }
+    public List<VideoProjectAsset> Assets { get; set; } = new();
+    public List<VideoTimelineTrack> TimelineTracks { get; set; } =
+    [
+        new() { Type = VideoTrackType.Video, Name = "视频" },
+        new() { Type = VideoTrackType.Subtitle, Name = "字幕" },
+        new() { Type = VideoTrackType.Voice, Name = "配音" },
+        new() { Type = VideoTrackType.Music, Name = "音乐" },
+    ];
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
 
 /// <summary>
 /// 视频生成模式
@@ -90,6 +188,9 @@ public class VideoGenScene
     /// <summary>本镜分辨率（留空 = 跟随 Run）</summary>
     public string? Resolution { get; set; }
 
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
+
     /// <summary>本镜 OpenRouter jobId</summary>
     public string? JobId { get; set; }
 
@@ -98,6 +199,27 @@ public class VideoGenScene
 
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
+
+    /// <summary>当前采用的视频版本 ID</summary>
+    public string? ActiveVersionId { get; set; }
+
+    /// <summary>本镜历史生成版本，重新渲染不会覆盖旧产物</summary>
+    public List<VideoGenSceneVersion> Versions { get; set; } = new();
+}
+
+/// <summary>单个分镜的一次生成结果</summary>
+public class VideoGenSceneVersion
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string VideoUrl { get; set; } = string.Empty;
+    public string? JobId { get; set; }
+    public string? Model { get; set; }
+    public string Prompt { get; set; } = string.Empty;
+    public int? Duration { get; set; }
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
+    public double? Cost { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>
@@ -111,6 +233,7 @@ public class VideoGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
+    public string? ProjectId { get; set; }
     public string Status { get; set; } = VideoGenRunStatus.Queued;
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
@@ -136,6 +259,7 @@ public class VideoGenRun
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
+    public bool GenerateAudio { get; set; } = true;
 
     /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video。</summary>
     public string? DirectFirstFrameUrl { get; set; }
@@ -150,6 +274,18 @@ public class VideoGenRun
 
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
+
+    /// <summary>最近一次独立导出任务 ID。</summary>
+    public string? LatestExportTaskId { get; set; }
+
+    /// <summary>用户已请求把全部分镜合成为完整视频</summary>
+    public bool ExportRequested { get; set; }
+
+    /// <summary>最近一次导出错误；成功后清空</summary>
+    public string? ExportErrorMessage { get; set; }
+
+    public DateTime? ExportStartedAt { get; set; }
+    public DateTime? ExportedAt { get; set; }
 
     // ─── storyboard 模式：分镜列表 ───
 
@@ -181,9 +317,45 @@ public class VideoGenRun
     public bool ForceFullShadowSample { get; set; }
 }
 
+[BsonIgnoreExtraElements]
+public class VideoExportTask
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    public string CurrentPhase { get; set; } = "queued";
+    public int Progress { get; set; }
+    public string? OutputUrl { get; set; }
+    public string? ErrorMessage { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? StartedAt { get; set; }
+    public DateTime? EndedAt { get; set; }
+}
+
+public class VideoModelOption
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string HealthStatus { get; set; } = "Healthy";
+    public bool SupportsAudio { get; set; }
+    public bool SupportsFirstFrame { get; set; }
+    public bool SupportsLastFrame { get; set; }
+    public bool SupportsReferenceAssets { get; set; }
+    public List<string> AspectRatios { get; set; } = new();
+    public List<string> Resolutions { get; set; } = new();
+    public List<int> Durations { get; set; } = new();
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+}
+
 /// <summary>创建视频生成任务请求</summary>
 public class CreateVideoGenRunRequest
 {
+    /// <summary>所属视频项目 ID；设置后任务会继承项目的文学稿和默认参数。</summary>
+    public string? ProjectId { get; set; }
     /// <summary>模式：direct / storyboard（默认 direct）</summary>
     public string? Mode { get; set; }
 
@@ -203,9 +375,38 @@ public class CreateVideoGenRunRequest
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
 
     /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video（视觉分镜台「动起来」用）。</summary>
     public string? DirectFirstFrameUrl { get; set; }
+}
+
+public class CreateVideoProjectRequest
+{
+    public string? Title { get; set; }
+    public string? SourceMarkdown { get; set; }
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string? DefaultAspectRatio { get; set; }
+    public string? DefaultResolution { get; set; }
+    public int? DefaultDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
+    public List<VideoProjectAsset>? Assets { get; set; }
+    public List<VideoTimelineTrack>? TimelineTracks { get; set; }
+}
+
+public class UpdateVideoProjectRequest
+{
+    public string? Title { get; set; }
+    public string? SourceMarkdown { get; set; }
+    public string? StyleDescription { get; set; }
+    public string? DefaultVideoModel { get; set; }
+    public string? DefaultAspectRatio { get; set; }
+    public string? DefaultResolution { get; set; }
+    public int? DefaultDuration { get; set; }
+    public bool? GenerateAudio { get; set; }
+    public List<VideoProjectAsset>? Assets { get; set; }
+    public List<VideoTimelineTrack>? TimelineTracks { get; set; }
 }
 
 /// <summary>更新分镜请求（storyboard 模式编辑）</summary>
@@ -217,4 +418,17 @@ public class UpdateVideoSceneRequest
     public int? Duration { get; set; }
     public string? AspectRatio { get; set; }
     public string? Resolution { get; set; }
+    public string? FirstFrameUrl { get; set; }
+    public string? LastFrameUrl { get; set; }
+}
+
+/// <summary>批量渲染分镜请求；不传 indexes 时渲染所有未完成或失败分镜</summary>
+public class BatchRenderVideoScenesRequest
+{
+    public List<int>? SceneIndexes { get; set; }
+}
+
+public class ReorderVideoScenesRequest
+{
+    public List<int> SceneIndexes { get; set; } = new();
 }

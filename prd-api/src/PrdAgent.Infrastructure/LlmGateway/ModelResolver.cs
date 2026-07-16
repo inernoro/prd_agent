@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
@@ -82,18 +83,6 @@ public class ModelResolver : IModelResolver
                 .FirstOrDefaultAsync(ct);
         }
 
-        // pinned 是显式精确模型语义，先于 appCaller 默认池解析；但配置权威开启时仍只允许 GW-owned 平台/模型。
-        var pinned = await TryResolvePinnedModelAsync(
-            expectedModel,
-            pinnedPlatformId,
-            pinnedModelId,
-            ct,
-            allowMapFallback: !gatewayConfigRequired);
-        if (pinned != null)
-        {
-            return pinned;
-        }
-
         if (gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired)
         {
             _logger.LogWarning(
@@ -102,6 +91,39 @@ public class ModelResolver : IModelResolver
                 gatewayRegistry.ModelPoolId ?? "(未绑定)", gatewayRegistry.BlockReason ?? "missing-gateway-pool");
             return ModelResolutionResult.NotFound(expectedModel,
                 $"GW appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
+        }
+
+        // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
+        var pinnedWithinGatewayPool = false;
+        if (gatewayRegistry.Groups.Count > 0
+            && (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId)))
+        {
+            var pinnedAllowed = !string.IsNullOrWhiteSpace(pinnedPlatformId)
+                                && !string.IsNullOrWhiteSpace(pinnedModelId)
+                                && gatewayRegistry.Groups.Any(group => group.Models.Any(model =>
+                                    string.Equals(model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
+                                    && string.Equals(model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal)));
+            if (!pinnedAllowed)
+            {
+                return ModelResolutionResult.NotFound(
+                    expectedModel ?? pinnedModelId,
+                    $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}");
+            }
+            pinnedWithinGatewayPool = true;
+            expectedModel = pinnedModelId!.Trim();
+        }
+        if (!pinnedWithinGatewayPool)
+        {
+            var pinned = await TryResolvePinnedModelAsync(
+                expectedModel,
+                pinnedPlatformId,
+                pinnedModelId,
+                ct,
+                allowMapFallback: !gatewayConfigRequired);
+            if (pinned != null)
+            {
+                return pinned;
+            }
         }
 
         if (gatewayRegistry.Groups.Count > 0)
@@ -1069,7 +1091,26 @@ public class ModelResolver : IModelResolver
         if (_gatewayDb is null)
             return [];
 
+        var poolTypes = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_model_pool_types");
+        var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", CurrentTenantId),
+                Builders<BsonDocument>.Filter.Eq("Code", modelType)))
+            .FirstOrDefaultAsync(ct);
         var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
+        if (type is not null)
+        {
+            var defaultPoolId = type.TryGetValue("DefaultPoolId", out var pointer) && pointer.IsString
+                ? pointer.AsString
+                : string.Empty;
+            if (string.IsNullOrWhiteSpace(defaultPoolId))
+                return [];
+            var authoritative = await gatewayPools.Find(Builders<ModelGroup>.Filter.And(
+                    Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
+                    Builders<ModelGroup>.Filter.Eq(g => g.Id, defaultPoolId),
+                    Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType)))
+                .FirstOrDefaultAsync(ct);
+            return authoritative is null ? [] : [authoritative];
+        }
         return await gatewayPools
             .Find(Builders<ModelGroup>.Filter.And(
                 Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
