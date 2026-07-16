@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Services;
 /// 输出格式：带时间戳的 Markdown 字幕文件。
 ///
 /// 分派规则（按 entry.ContentType 前缀）：
-///   audio/*         → ILlmGateway ASR（支持 mp3/wav/m4a/ogg/flac，必要时 ffmpeg 转码）
+///   audio/*         → ffmpeg 规范化为 16kHz mono WAV → ILlmGateway ASR
 ///   video/*         → 下载后 ffmpeg 抽音频 → 走 ASR（ffmpeg 由 host 挂载，见 docker-compose.yml）
 ///   image/*         → ILlmGateway Vision 模型 → 直译图片文字
 ///   其他            → 不支持，直接失败
@@ -417,9 +417,14 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 35, isVideo ? "提取音轨" : "解析音频");
 
-        // 如果是视频，先用 ffmpeg 抽音频；音频直接走 LLM Gateway ASR。
-        if (isVideo)
-            bytes = await ExtractAudioWithFfmpegAsync(bytes);
+        // ASR 上游对 WebM/Opus、M4A 等容器的支持不一致，不能只依赖 multipart 的文件名和 MIME
+        // 伪装。音频和视频统一先转成 16kHz、单声道 WAV，再送入任意 ASR 路径，避免清晰录音被上游
+        // 当成不可解析的格式后返回空结果。
+        var sourceBytes = bytes.Length;
+        bytes = await ExtractAudioWithFfmpegAsync(bytes);
+        _logger.LogInformation(
+            "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
+            sourceBytes, bytes.Length, isVideo);
 
         // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
         //
@@ -488,10 +493,8 @@ public class SubtitleGenerationProcessor
             _logger.LogInformation(
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
-            // chat-audio 端点对 input_audio.format 严格校验：统一转成 wav。视频上面已 ffmpeg 抽成 wav；
-            // 上传的 audio/m4a、audio/mp3 此处补转，否则把非 wav 字节标成 "wav" 发给严格端点会失败/乱码（Bugbot Medium）。
-            var chatAudioWav = isVideo ? bytes : await ExtractAudioWithFfmpegAsync(bytes);
-            return await TranscribeViaChatAudioAsync(run, chatAudioWav, resolution.ToGatewayResolution());
+            // 上面已统一转成 WAV，chat-audio 只接收规范化后的字节，避免重复转码。
+            return await TranscribeViaChatAudioAsync(run, bytes, resolution.ToGatewayResolution());
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）

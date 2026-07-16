@@ -16,13 +16,47 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 点击左侧“组织”下的“团队与成员”，找到“当前租户团队”。
+
+**图 016 五种角色用大白话说明最小权限**
+
+![图 016 五种角色用大白话说明最小权限](https://cds.miduo.org/api/reports/assets/b3fc528c31beaf467b34bda7c6074a4714f638abe3ec59ffad805e8ef35d50f9.png)
+
 2. 输入“客服组”，点击“创建团队”；看到成功提示后，再用同样方法创建“内容组”。
+
+**图 018 团队把成员、appCaller 和密钥收进同一工作范围**
+
+![图 018 团队把成员、appCaller 和密钥收进同一工作范围](https://cds.miduo.org/api/reports/assets/7b3b663ad647d7eb317bd3aebb0682585fdd834bf9ebca169866bf6a7ab245f9.png)
+
 3. 在“添加成员”中填写客服同事的账号短名和显示名，角色选 Developer，所属团队只勾选“客服组”。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 018 团队把成员、appCaller 和密钥收进同一工作范围](https://cds.miduo.org/api/reports/assets/7b3b663ad647d7eb317bd3aebb0682585fdd834bf9ebca169866bf6a7ab245f9.png)
+
 4. 输入至少 12 位的初始密码，点击“创建成员账号”。把初始密码通过安全渠道单独交给本人，不在清单中记录。
+
+**图 019 添加成员时需要账号、初始密码、角色和团队范围**
+
+![图 019 添加成员时需要账号、初始密码、角色和团队范围](https://cds.miduo.org/api/reports/assets/4e96e4a9afebc80e887c056a83adb3373dc7176749e4366376d357c309325624.png)
+
 5. 再创建一名 Viewer，所属团队明确勾选“内容组”。后面的团队隔离自检会用客服组 Developer 和内容组 Viewer 做对照，因此这里不要留空。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 020 成员列表支持角色、状态、团队和会话失效管理](https://cds.miduo.org/api/reports/assets/dbe54e448e83433a7c0ada151fb23bb1db96f48a99f976baa0aceabd26536f1c.png)
+
 6. 在“成员与角色”列表核对角色、所属团队和状态。Developer 必须至少有一个活动团队。
+
+**图 020 成员列表支持角色、状态、团队和会话失效管理**
+
+![图 020 成员列表支持角色、状态、团队和会话失效管理](https://cds.miduo.org/api/reports/assets/dbe54e448e83433a7c0ada151fb23bb1db96f48a99f976baa0aceabd26536f1c.png)
+
 7. 让新成员首次登录并设置自己的密码。回到本页时只核对账号状态，不会看到初始密码。
+
+![图 020 成员列表支持角色、状态、团队和会话失效管理](https://cds.miduo.org/api/reports/assets/dbe54e448e83433a7c0ada151fb23bb1db96f48a99f976baa0aceabd26536f1c.png)
 
 ## 看图核对
 

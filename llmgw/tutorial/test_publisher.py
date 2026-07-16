@@ -108,6 +108,27 @@ class TutorialPublisherTests(unittest.TestCase):
         chapter_ids = [node.source_id for node in self.source.nodes if node.source_id.startswith("chapter-")]
         self.assertEqual([f"chapter-{number:02d}" for number in range(33)], chapter_ids)
 
+    def test_visual_density_has_no_zero_image_chapter(self):
+        chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]
+        counts = [len(publisher.MARKDOWN_IMAGE_RE.findall(node.content)) for node in chapters]
+        urls = [url for node in chapters for url in publisher.MARKDOWN_IMAGE_RE.findall(node.content)]
+        self.assertTrue(all(count >= publisher.MIN_IMAGES_PER_CHAPTER for count in counts))
+        self.assertGreaterEqual(len(set(urls)), publisher.MIN_UNIQUE_IMAGES)
+        self.assertGreaterEqual(len(urls), publisher.MIN_EVIDENCE_REFERENCES)
+
+    def test_every_numbered_step_has_an_inline_image(self):
+        chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]
+        for chapter in chapters:
+            doing = chapter.content.split("## 跟我做\n", 1)[1].split("## 看到什么算成功\n", 1)[0]
+            steps = list(publisher.NUMBERED_STEP_RE.finditer(doing))
+            self.assertTrue(steps, chapter.source_path)
+            for index, step in enumerate(steps):
+                end = steps[index + 1].start() if index + 1 < len(steps) else len(doing)
+                self.assertIsNotNone(
+                    publisher.MARKDOWN_IMAGE_RE.search(doing[step.end():end]),
+                    f"{chapter.source_path}: {step.group(0)}",
+                )
+
     def test_first_apply_second_apply_noop_and_manual_drift_conflict(self):
         gateway = MemoryGateway()
         foreign_before = copy.deepcopy(gateway.foreign)
@@ -171,6 +192,27 @@ class TutorialPublisherTests(unittest.TestCase):
             changed = publisher.dataclasses.replace(chapter, content=chapter.content + bad)
             with self.assertRaises(publisher.TutorialError):
                 publisher._validate_chapter(changed, 0, "什么是模型网关")
+
+    def test_cross_chapter_references_are_clickable_and_protected_regions_are_unchanged(self):
+        titles = {
+            int(node.source_id.removeprefix("chapter-")): node.title
+            for node in self.source.nodes
+            if node.source_id.startswith("chapter-")
+        }
+        for number, node in titles.items():
+            chapter = next(item for item in self.source.nodes if item.source_id == f"chapter-{number:02d}")
+            self.assertEqual(
+                chapter.content,
+                publisher.link_chapter_references(chapter.content, number, titles),
+                chapter.source_path,
+            )
+
+        sample = "第 20 章；`第 21 章`；[[第 22 章：看懂用量、预算和费用]]\n```text\n第 23 章\n```"
+        linked = publisher.link_chapter_references(sample, 19, titles)
+        self.assertIn("[[第 20 章：配置 PromptPolicy|第 20 章]]", linked)
+        self.assertIn("`第 21 章`", linked)
+        self.assertIn("[[第 22 章：看懂用量、预算和费用]]", linked)
+        self.assertIn("```text\n第 23 章\n```", linked)
 
 
 if __name__ == "__main__":

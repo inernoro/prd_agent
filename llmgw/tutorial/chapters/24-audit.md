@@ -16,13 +16,49 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 从左侧“治理”进入“审计”。时间选择“最近 24 小时”，再按操作类型观察创建、修改、轮换和对账；页面没有“今天”选项。
-2. 搜索第 19 章记下的 Exchange id，找到 `exchange.create` 或“创建 Exchange”，核对操作者、时间、目标类型和结果。
+
+**图 084 从左侧导航点击“审计”，不用猜页面地址**
+
+![图 084 从左侧导航点击“审计”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/129d1d09f87a4ce6fa1496d75fb2c068f2813526040014f13cb67441b51ea8f6.png)
+
+2. 搜索[[第 19 章：使用 Exchange|第 19 章]]记下的 Exchange id，找到 `exchange.create` 或“创建 Exchange”，核对操作者、时间、目标类型和结果。
+
+**图 085 审计页按当前租户列出谁在什么时候改了什么**
+
+![图 085 审计页按当前租户列出谁在什么时候改了什么](https://cds.miduo.org/api/reports/assets/7bf4e3d80e3ba99d57d77ed5f87ad70292d3e533beba21f903d0c7c51ce301b1.png)
+
 3. 搜索 `tutorial.gateway-book::chat`，找到 PromptPolicy 版本操作。详情只应包含目标、版本和 hash，不应包含提示词正文。
+
+**图 086 可按动作、对象类型和操作者筛选审计**
+
+![图 086 可按动作、对象类型和操作者筛选审计](https://cds.miduo.org/api/reports/assets/c204c60a594f4a9ce4f4cc76640fee876d1d12e32b1c009cb92d6a883bc1550a.png)
+
 4. 查找 key 创建、轮换或撤销记录。审计可显示 ServiceKeyId、scope 和状态，但不能显示明文 key。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 086 可按动作、对象类型和操作者筛选审计](https://cds.miduo.org/api/reports/assets/c204c60a594f4a9ce4f4cc76640fee876d1d12e32b1c009cb92d6a883bc1550a.png)
+
 5. 查找模型池成员追加，确认目标池和模型属于当前租户，且动作是增加而不是覆盖整个池。
+
+**图 087 审计记录包含对象、操作者、结果和时间，不包含 key 明文**
+
+![图 087 审计记录包含对象、操作者、结果和时间，不包含 key 明文](https://cds.miduo.org/api/reports/assets/a5d9bfad4f2bc7e5f9b8c1fc705f841e4e7008d528aae4d244994a06f2b4953a.png)
+
 6. 查找账单导入或对账记录，核对供应商流水、粒度和状态。不要期待审计替代账单原始证据。
+
+**图 088 展开后只展示带 TenantId 的变更摘要和安全元数据**
+
+![图 088 展开后只展示带 TenantId 的变更摘要和安全元数据](https://cds.miduo.org/api/reports/assets/eeb962e7ae42a3db155110a8779108786682bf5cf10d017021e4e2a8f7c95a7a.png)
+
 7. 对关键变更，确认没有长期停留的 pending。失败意图可以保留用于对账，但成功操作应有完成态。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 088 展开后只展示带 TenantId 的变更摘要和安全元数据](https://cds.miduo.org/api/reports/assets/eeb962e7ae42a3db155110a8779108786682bf5cf10d017021e4e2a8f7c95a7a.png)
 
 ## 看到什么算成功
 

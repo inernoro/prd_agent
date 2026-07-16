@@ -10,20 +10,61 @@
 
 ## 开始前检查
 
-- 选择第 10 章客服组的有效 chat test key，不操作 vision key 或生产共享 key。
-- 第 10 章已复制一份只引用 `$LLMGW_API_KEY`、appCaller 为 `tutorial.gateway-book::chat` 的 cURL 或 Agent Skill。它就是本章的最小测试客户端，不需要另外部署应用。
+- 选择[[第 10 章：一键生成第一把 key|第 10 章]]客服组的有效 chat test key，不操作 vision key 或生产共享 key。
+- [[第 10 章：一键生成第一把 key|第 10 章]]已复制一份只引用 `$LLMGW_API_KEY`、appCaller 为 `tutorial.gateway-book::chat` 的 cURL 或 Agent Skill。它就是本章的最小测试客户端，不需要另外部署应用。
 - 已安排短切换窗口，明确旧 key id、新 key保管位置和回滚负责人。
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 打开“接入密钥”，在客服组 chat test key 行点击“轮换”。页面会带入原 key 的明确范围。
+
+**图 056 列表只显示 key 前缀，不回显完整明文**
+
+![图 056 列表只显示 key 前缀，不回显完整明文](https://cds.miduo.org/api/reports/assets/e88bbb93bc29143203df11d7983b5c4cbab76d8565bd9e549cf4aa0ca4b07ada.png)
+
 2. 核对 Client code、环境、团队、appCaller、协议、scope、CIDR 和限流与旧 key 一致。轮换表单不会自动复制旧过期时间，必须重新选择组织批准的到期日后再创建。
+
+**图 057 点击“新建密钥”打开签发表单**
+
+![图 057 点击“新建密钥”打开签发表单](https://cds.miduo.org/api/reports/assets/d3aaf92d5ec3e467f9b488c04b1c3aae10a89a8c09381e8787becbe0b32793a7.png)
+
 3. 一次性保存新 key。此时旧 key 仍有效，列表应进入等待客户端切换的轮换阶段。
-4. 在终端运行 `read -s LLMGW_API_KEY`，从密码工具粘贴新 key 并回车，再执行第 10 章保存的 chat 安全 cURL。这就是把最小测试客户端切到新 key；记录 requestId 后运行 `unset LLMGW_API_KEY`。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 057 点击“新建密钥”打开签发表单](https://cds.miduo.org/api/reports/assets/d3aaf92d5ec3e467f9b488c04b1c3aae10a89a8c09381e8787becbe0b32793a7.png)
+
+4. 在终端运行 `read -s LLMGW_API_KEY`，从密码工具粘贴新 key 并回车，再执行[[第 10 章：一键生成第一把 key|第 10 章]]保存的 chat 安全 cURL。这就是把最小测试客户端切到新 key；记录 requestId 后运行 `unset LLMGW_API_KEY`。
+
+**图 058 密钥表单要求接入方、环境、用途、appCaller、协议、scope 和限流**
+
+![图 058 密钥表单要求接入方、环境、用途、appCaller、协议、scope 和限流](https://cds.miduo.org/api/reports/assets/ce500ea7ce5e615dee224bfd087be9b5a63673f54cbd755f9dba2d3720ea8cd0.png)
+
 5. 在请求记录中确认新请求的 ServiceKeyId 是新 key，而不是旧 key。
+
+**图 059 单把 key 的每分钟上限可比 appCaller 更严格**
+
+![图 059 单把 key 的每分钟上限可比 appCaller 更严格](https://cds.miduo.org/api/reports/assets/2b88455d6623093368e0937c06f2234fc41c15e840ee1f643acfb450a137e76e.png)
+
 6. 回到密钥列表，对轮换项点击“确认已切换”。再观察约定次数，确保没有旧 key 新请求。
-7. 点击“撤销旧钥并完成”。验证旧 key 时不要把明文写进命令：在终端先输入 `read -s LLMGW_API_KEY` 并回车，再在不回显的输入位置从密码工具粘贴旧 key并回车。运行第 10 章已经引用 `$LLMGW_API_KEY` 的 chat 安全 cURL，应返回 401；随后输入 `unset LLMGW_API_KEY`。历史中只会留下这三条固定命令，不会留下完整 key。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 059 单把 key 的每分钟上限可比 appCaller 更严格](https://cds.miduo.org/api/reports/assets/2b88455d6623093368e0937c06f2234fc41c15e840ee1f643acfb450a137e76e.png)
+
+7. 点击“撤销旧钥并完成”。验证旧 key 时不要把明文写进命令：在终端先输入 `read -s LLMGW_API_KEY` 并回车，再在不回显的输入位置从密码工具粘贴旧 key并回车。运行[[第 10 章：一键生成第一把 key|第 10 章]]已经引用 `$LLMGW_API_KEY` 的 chat 安全 cURL，应返回 401；随后输入 `unset LLMGW_API_KEY`。历史中只会留下这三条固定命令，不会留下完整 key。
+
+**图 065 生成结果只在当前时刻展示完整 key，并提示立即保存**
+
+![图 065 生成结果只在当前时刻展示完整 key，并提示立即保存](https://cds.miduo.org/api/reports/assets/6dc1b657df8a373550e7064b1b4b904e41a954ff39ae624d06f7f67878d9648b.png)
+
 8. 用同样的隐藏输入方法把新 key 临时放入 `LLMGW_API_KEY`，运行同一条带 dry-run 的 cURL，确认仍通过；完成后再次输入 `unset LLMGW_API_KEY`。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 065 生成结果只在当前时刻展示完整 key，并提示立即保存](https://cds.miduo.org/api/reports/assets/6dc1b657df8a373550e7064b1b4b904e41a954ff39ae624d06f7f67878d9648b.png)
 
 ## 看到什么算成功
 

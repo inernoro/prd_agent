@@ -18,12 +18,43 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 从左侧“开发者”进入 `Quickstart`，选择“文字对话”“客服组”“测试”，appCallerCode 填 `tutorial.gateway-book::chat`，Client code 填 `tutorial-protocol-chat`，然后点击“一键生成 appCaller 与 key”。没有当前页面新生成的 bundle 时测试按钮应保持禁用，不能跳过这一步。
+
+**图 063 先选文字对话或图片理解，appCaller 后缀自动同步**
+
+![图 063 先选文字对话或图片理解，appCaller 后缀自动同步](https://cds.miduo.org/api/reports/assets/089d63fa6894e6bef38fb7f9c7ab336258891278174aaf6027cf50973e9607a7.png)
+
 2. 保存一次性 key 后，依次点击 GW Native、OpenAI、Claude、Gemini，确认 Gateway 地址由当前页面来源自动生成。对每种协议点击安全测试；响应必须有 requestId 和 `upstreamCalled=false`。
+
+**图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议**
+
+![图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议](https://cds.miduo.org/api/reports/assets/cc15dcc8a820b1f5167a710645aa3476740b268de0f9478bb717d917d2e0b40e.png)
+
 3. 比较四种请求体：同一句用户意图、同一 appCaller 和相同安全 header 应被保留，协议字段形状可以不同。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议](https://cds.miduo.org/api/reports/assets/cc15dcc8a820b1f5167a710645aa3476740b268de0f9478bb717d917d2e0b40e.png)
+
 4. 点击“修改身份”，确认一次性密钥会从页面清除，然后选择“图片理解”“内容组”“测试”，appCallerCode 填 `tutorial.gateway-book::vision`，Client code 填 `tutorial-protocol-vision`，重新点击“一键生成 appCaller 与 key”。保存一次性 key 后，再对四个协议各点击一次测试。
+
+**图 067 点击测试固定使用安全 dry-run，结果必须带 requestId 且未访问上游**
+
+![图 067 点击测试固定使用安全 dry-run，结果必须带 requestId 且未访问上游](https://cds.miduo.org/api/reports/assets/27a28b5293ff82a1ad6e82c6bd75abc592a3e7e6e6e4ecf89592f7318d8db2f1.png)
+
 5. 在请求记录打开八个 requestId，核对团队、ServiceKeyId、appCaller、协议和 `upstreamCalled=false`。详情页不展示 TenantId，因此不要把“看见 TenantId”列为页面通过条件；租户归属由当前会话和 key 的服务端解析保证。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
+
 6. 普通管理员到这里结束。验收人员在仓库根目录执行已有合同套件，它使用进程内假上游，不需要真实 key，也不会产生费用：
+
+**图 068 生成后可复制 curl、配置和 Agent 技能接入方式**
+
+![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
 
 ```bash
 dotnet test prd-api/PrdAgent.sln --no-restore \
@@ -31,8 +62,20 @@ dotnet test prd-api/PrdAgent.sln --no-restore \
 ```
 
 7. 套件中的 `QuickstartDryRun_UsesChatAndVisionAcrossFourProtocolsWithoutCallingUpstream` 验证八格 dry-run；OpenAI、Claude、Gemini 的 image、stream、tool 与参数用例验证真实协议形状。保存测试总数和通过结果。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![红框标出 OpenAI vision dry-run 的完整通过条件](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/shlwkwyqya7xswmvni6yyhlduq.png)
+
 8. 只有页面八格和合同套件都通过，才可写“协议保真通过”。本章不执行真实付费协议；若另有上线批准，仍遵守每类最多一次。
-9. 保存八个 requestId 后，到“接入密钥”按 Client code 找到 `tutorial-protocol-chat` 和 `tutorial-protocol-vision`，分别点击“撤销”并确认。它们只是本章临时 bundle，不得长期留存；第 16 章轮换后的 chat key 和第 10 章 vision key不受影响。
+
+**图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
+
+![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+
+9. 保存八个 requestId 后，到“接入密钥”按 Client code 找到 `tutorial-protocol-chat` 和 `tutorial-protocol-vision`，分别点击“撤销”并确认。它们只是本章临时 bundle，不得长期留存；[[第 16 章：轮换、切换和撤销 key|第 16 章]]轮换后的 chat key 和[[第 10 章：一键生成第一把 key|第 10 章]] vision key不受影响。
+
+![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
 ## 看图核对
 

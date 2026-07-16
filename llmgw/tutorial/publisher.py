@@ -41,6 +41,16 @@ IMAGE_PLACEHOLDERS = (
 EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF]")
 SUSPECT_SECRET_RE = re.compile(r"(?:gwk|sk-ak|sk)-[A-Za-z0-9_-]{16,}")
 SELF_REPORTED_TENANT_RE = re.compile(r"(?:[?&]tenantId=|[\"']tenantId[\"']\s*:)", re.IGNORECASE)
+MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https://[^)\s]+)\)")
+NUMBERED_STEP_RE = re.compile(r"(?m)^\d+\. [^\n]+$")
+CHAPTER_REFERENCE_RE = re.compile(r"第\s*(\d{1,2})\s*章")
+CHAPTER_REFERENCE_PROTECTED_RE = re.compile(
+    r"```.*?```|~~~.*?~~~|`+[^`\n]*`+|\[\[[^\]\n]+\]\]|!?\[[^\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)",
+    re.DOTALL,
+)
+MIN_IMAGES_PER_CHAPTER = 2
+MIN_UNIQUE_IMAGES = 80
+MIN_EVIDENCE_REFERENCES = 111
 
 
 class TutorialError(RuntimeError):
@@ -104,6 +114,42 @@ def normalized_text(path: Path) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def link_chapter_references(content: str, current_number: int, titles: dict[int, str]) -> str:
+    """把正文中的跨章节字面引用变成可点击双链，同时保护代码和已有链接。"""
+    protected = [(match.start(), match.end()) for match in CHAPTER_REFERENCE_PROTECTED_RE.finditer(content)]
+    replacements: list[tuple[int, int, str]] = []
+    protected_index = 0
+    consumed_until = 0
+    for match in CHAPTER_REFERENCE_RE.finditer(content):
+        if match.start() < consumed_until:
+            continue
+        while protected_index < len(protected) and protected[protected_index][1] <= match.start():
+            protected_index += 1
+        if protected_index < len(protected):
+            start, end = protected[protected_index]
+            if start <= match.start() < end:
+                continue
+        target_number = int(match.group(1))
+        title = titles.get(target_number)
+        if title is None or target_number == current_number:
+            continue
+        if content.startswith(title, match.start()):
+            replace_end = match.start() + len(title)
+            replacement = f"[[{title}]]"
+        else:
+            replace_end = match.end()
+            replacement = f"[[{title}|{match.group(0)}]]"
+        replacements.append((match.start(), replace_end, replacement))
+        consumed_until = replace_end
+
+    if not replacements:
+        return content
+    output = content
+    for start, end, replacement in reversed(replacements):
+        output = output[:start] + replacement + output[end:]
+    return output
+
+
 def _safe_source_path(root: Path, value: str) -> Path:
     target = (root / value).resolve()
     try:
@@ -155,6 +201,17 @@ def _validate_chapter(node: SourceNode, number: int, next_title: str | None) -> 
         raise TutorialError(f"{node.source_path}: 包含疑似真实密钥")
     if SELF_REPORTED_TENANT_RE.search(content):
         raise TutorialError(f"{node.source_path}: 出现请求自报 tenantId 的示例")
+    image_urls = MARKDOWN_IMAGE_RE.findall(content)
+    if len(image_urls) < MIN_IMAGES_PER_CHAPTER:
+        raise TutorialError(
+            f"{node.source_path}: 每章至少需要 {MIN_IMAGES_PER_CHAPTER} 张按操作圈选的截图，当前 {len(image_urls)} 张")
+    doing = content.split("## 跟我做\n", 1)[1].split("## 看到什么算成功\n", 1)[0]
+    steps = list(NUMBERED_STEP_RE.finditer(doing))
+    for index, step in enumerate(steps):
+        end = steps[index + 1].start() if index + 1 < len(steps) else len(doing)
+        if not MARKDOWN_IMAGE_RE.search(doing[step.end():end]):
+            raise TutorialError(
+                f"{node.source_path}: 编号步骤下方缺少就近圈选图：{step.group(0)}")
 
 
 def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
@@ -230,9 +287,20 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
     if actual_chapters != expected_chapters:
         raise TutorialError("第 0 至 32 章必须按顺序且各出现一次")
     chapter_nodes = [next(node for node in nodes if node.source_id == source_id) for source_id in expected_chapters]
+    chapter_titles = {number: node.title for number, node in enumerate(chapter_nodes)}
     for number, node in enumerate(chapter_nodes):
         next_title = chapter_nodes[number + 1].title.split("：", 1)[-1] if number < 32 else None
         _validate_chapter(node, number, next_title)
+        if link_chapter_references(node.content, number, chapter_titles) != node.content:
+            raise TutorialError(f"{node.source_path}: 存在未转换为可点击双链的跨章节引用")
+    image_references = [url for node in chapter_nodes for url in MARKDOWN_IMAGE_RE.findall(node.content)]
+    unique_images = set(image_references)
+    if len(unique_images) < MIN_UNIQUE_IMAGES:
+        raise TutorialError(
+            f"全书至少需要 {MIN_UNIQUE_IMAGES} 张不同操作截图，当前 {len(unique_images)} 张")
+    if len(image_references) < MIN_EVIDENCE_REFERENCES:
+        raise TutorialError(
+            f"全书至少需要 {MIN_EVIDENCE_REFERENCES} 个操作证据引用，当前 {len(image_references)} 个")
     primary = manifest.get("primarySourceId")
     if primary not in source_ids or next(node for node in nodes if node.source_id == primary).kind != "document":
         raise TutorialError("primarySourceId 必须指向一个受管文档")

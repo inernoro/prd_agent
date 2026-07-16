@@ -16,13 +16,49 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 点击左侧“工作区”下的“概览”。
+
+**图 004 概览第一屏同时回答健康、快速接入、费用可信度和最近请求**
+
+![图 004 概览第一屏同时回答健康、快速接入、费用可信度和最近请求](https://cds.miduo.org/api/reports/assets/ac553f3e6827dc2668c65df8b7637527422bf5f92bfdf95b38059b04040604b0.png)
+
 2. 看第一屏的健康卡。状态正常时，说明控制台能读到 Gateway 健康；它不代表你的 Provider 和模型已经配置好。
+
+**图 005 健康状态只告诉普通用户当前能否接入，运行细节留在系统运维**
+
+![图 005 健康状态只告诉普通用户当前能否接入，运行细节留在系统运维](https://cds.miduo.org/api/reports/assets/40cd0d17311ee475c0a6f1814a34898d037fdad0a4c1968cb14cf16359d58871.png)
+
 3. 看“快速接入”卡。写权限角色会看到“开始接入”，只读角色会看到教程入口。
+
+**图 006 快速接入卡明确三步：生成身份、点击测试、复制接入方式**
+
+![图 006 快速接入卡明确三步：生成身份、点击测试、复制接入方式](https://cds.miduo.org/api/reports/assets/b58daf891dee3308eb2a68837a47fb6dde31fcf071e2ea8dda9ac53ee6ea5e5a.png)
+
 4. 看“最近请求”。空白租户应出现“还没有请求”及下一步说明，而不是无意义的空表。
+
+**图 007 费用可信度分币种显示覆盖率，unknown 不写成 0**
+
+![图 007 费用可信度分币种显示覆盖率，unknown 不写成 0](https://cds.miduo.org/api/reports/assets/09528dceb85219f3e0e4074df5fbf246f0270de2b484a3d21a80db18d946568c.png)
+
 5. 向下看“租户使用情况”和“关键指标”，认识请求数、用户、应用、模型与费用可信度。
-6. 找到 Top appCaller、常用模型和租户接入密钥区域。现在为空没关系，第 13 章后再回来对照。
+
+**图 008 最近请求提供 requestId、模型、appCaller 和耗时入口**
+
+![图 008 最近请求提供 requestId、模型、appCaller 和耗时入口](https://cds.miduo.org/api/reports/assets/9d6ed93f8b7db29907ac853127b408edac8e5f77df167c2df6ba1e22c11c40f7.png)
+
+6. 找到 Top appCaller、常用模型和租户接入密钥区域。现在为空没关系，[[第 13 章：找到第一条请求|第 13 章]]后再回来对照。
+
+**图 009 租户首页展示用户、appCaller、模型和密钥分布**
+
+![图 009 租户首页展示用户、appCaller、模型和密钥分布](https://cds.miduo.org/api/reports/assets/982928c0758c1439127082afb3c7c20b9798f322bf9007e8bee3b6e5af050a01.png)
+
 7. 内部租户的 Owner 或 Admin 才可能看到“治理”下的“系统运维”。外部租户看不到是正常隔离，不代表页面损坏。
+
+**图 103 浅色主题下导航、卡片、输入框和说明文字仍清晰可读**
+
+![图 103 浅色主题下导航、卡片、输入框和说明文字仍清晰可读](https://cds.miduo.org/api/reports/assets/87cef701e468c39566bf1ef13616d21c735e6bd4b8897e498a959e2f03d42e97.png)
 
 ## 看图核对
 
