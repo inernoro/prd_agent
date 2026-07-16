@@ -158,6 +158,8 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("目标 commit 越窗", plan);
         Assert.Contains("功能验收通过；闭环证据不完整", plan);
         Assert.Contains("只有功能仍失败", plan);
+        Assert.Contains("reportVerdict=conditional", plan);
+        Assert.Contains("conditional 回调必须填写 message", plan);
         Assert.Contains("start-next 返回 hasNext=false", plan);
         Assert.Contains("无正式发布后待验收通知项", plan);
         Assert.Contains("runId", plan);
@@ -313,6 +315,26 @@ public class ChangelogLinkedDefectsTests
     public void NormalizeValidationVerdict_DefaultsToPass(string? input, string expected)
     {
         Assert.Equal(expected, DefectAgentController.NormalizeValidationVerdict(input));
+    }
+
+    [Theory]
+    [InlineData("conditional", null, true)]
+    [InlineData("conditional", "", true)]
+    [InlineData("conditional", "   ", true)]
+    [InlineData("conditional", "功能验收通过；闭环证据不完整：缺少更新中心弹窗截图。", false)]
+    [InlineData("pass", null, false)]
+    [InlineData("fail", null, false)]
+    [InlineData("invalid", null, false)]
+    public void ValidateValidationReportMessage_RequiresDetailsForConditionalOnly(
+        string verdict,
+        string? message,
+        bool expectsError)
+    {
+        var error = DefectAgentController.ValidateValidationReportMessage(verdict, message);
+
+        Assert.Equal(expectsError, error != null);
+        if (expectsError)
+            Assert.Contains("conditional 验收必须填写 message", error!);
     }
 
     [Fact]

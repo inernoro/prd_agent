@@ -13,7 +13,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.9.0", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.9.1", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自主三档边界", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("五层自治回路", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -34,6 +34,9 @@ public class OfficialSkillCatalogTests
         Assert.Contains("evidenceStatus", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("功能验收通过；闭环证据不完整", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自动化取证能力不足不得描述成代码仍未修复", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("reportVerdict=conditional", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("不得把 `invalid` 传给 `create-visual-test-to-kb`", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("`conditional` 必须提供 `message`", OfficialSkillTemplates.AiDefectResolveSkillMd);
     }
 
     [Fact]

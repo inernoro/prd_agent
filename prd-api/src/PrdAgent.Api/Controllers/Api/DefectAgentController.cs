@@ -36,7 +36,7 @@ public class DefectAgentController : ControllerBase
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.9.0";
+    private const string DefectResolveSkillMinVersion = "1.9.1";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -3134,6 +3134,9 @@ public class DefectAgentController : ControllerBase
 
         var now = DateTime.UtcNow;
         var verdict = NormalizeValidationVerdict(request.Verdict);
+        var messageValidationError = ValidateValidationReportMessage(verdict, request.Message);
+        if (messageValidationError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, messageValidationError));
         var validationStatus = verdict switch
         {
             "fail" => DefectResolutionValidationStatus.Failed,
@@ -4296,6 +4299,8 @@ public class DefectAgentController : ControllerBase
         lines.Add("- 发布后验收必须拆成两轴：functionalVerdict 只判断用户可见功能，evidenceStatus 只判断更新中心 commit 行、关联弹窗、报告和截图是否齐全。");
         lines.Add("- 禁止因更新中心只显示最近一周、目标 commit 越窗、预览下线、弹窗或截图取证失败，把已经通过的功能验收降为 fail；这些情况应标记 evidenceStatus=partial/blocked 并记录兜底证据。");
         lines.Add("- validation-report 映射：功能通过且证据完整用 pass；功能通过但证据不完整用 conditional，消息以“功能验收通过；闭环证据不完整”开头；只有功能仍失败、出现回归或缺少关键功能验证时才用 fail 和“需要继续改进”。");
+        lines.Add("- 知识库归档 reportVerdict 只允许 pass、conditional、fail；功能核验为 invalid 时先用 reportVerdict=conditional 归档并在正文证明缺陷陈述不成立，归档成功后正式 validation-report.verdict 再用 invalid。");
+        lines.Add("- conditional 回调必须填写 message，分别说明功能结论、闭环证据状态以及限制或缺口；缺少 message 时后端会拒绝通知。");
         lines.Add("- 不要把 K 写入 commit、报告、截图、Slack 或缺陷评论；每日输出只能写 keyId/keyName，不写明文 K。");
         lines.Add("");
         lines.Add("启动前自检：");
@@ -4571,6 +4576,13 @@ public class DefectAgentController : ControllerBase
     {
         var value = verdict?.Trim().ToLowerInvariant();
         return value is "pass" or "conditional" or "fail" or "invalid" ? value : "pass";
+    }
+
+    internal static string? ValidateValidationReportMessage(string verdict, string? message)
+    {
+        if (verdict == "conditional" && string.IsNullOrWhiteSpace(message))
+            return "conditional 验收必须填写 message，分别说明功能结论、闭环证据状态以及限制或缺口";
+        return null;
     }
 
     internal static string BuildValidationNotificationMessage(DefectReport defect, string verdict)
