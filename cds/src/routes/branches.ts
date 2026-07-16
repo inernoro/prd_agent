@@ -2337,6 +2337,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       kind: BranchOperationKind;
       profileId?: string | null;
       commitSha?: string | null;
+      versionId?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
@@ -2354,6 +2355,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor: resolveActorFromRequest(req),
       requestId: requestId || null,
       commitSha: input.commitSha || null,
+      versionId: input.versionId || null,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
@@ -11427,6 +11429,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
+      // 版本重部署（body.versionId）不参与 manual 合并去重：pending 重放只送
+      // commitSha 会丢版本捕获配置（Codex P2），撞车维持 409。
+      versionId: requestedVersionId || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,

@@ -942,6 +942,49 @@ describe('BranchOperationCoordinator', () => {
     expect(profileRetry.status).toBe('rejected');
   });
 
+  it('stop 在途时 manual deploy 维持 409——不得合并后在停止完成时自动重启（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'manual',
+      actor: 'operator',
+    });
+    expect(stop.status).toBe('started');
+
+    const deployDuringStop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    expect(deployDuringStop.status).toBe('rejected');
+
+    // stop 完成后不派发任何 pending：分支保持停止，不被自动重启
+    const pending = coordinator.complete(stop.lease!, 'completed');
+    expect(pending).toBeNull();
+  });
+
+  it('带 versionId 的版本重部署撞车维持 409——pending 重放会丢版本捕获配置（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    const versionRedeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+      versionId: 'dv_123',
+    });
+    expect(versionRedeploy.status).toBe('rejected');
+  });
+
   it('manual stop 仍按优先级 supersede 在途 deploy，并取消已合并的 pending', () => {
     const { sink } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

@@ -1146,45 +1146,6 @@ export class ContainerService {
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
     await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
-    context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
-    // Remove any existing container
-    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? null,
-      operationId: context.operationId ?? null,
-      actor: context.actor ?? null,
-      trigger: context.trigger ?? null,
-      operation: 'deploy-pre-run-replace',
-      source: 'container.runService',
-    });
-    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
-    this.recordContainerEvent({
-      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
-      source: 'cds-container-service',
-      action: 'app.pre-run-rm',
-      message: `pre-run cleanup for ${service.containerName}`,
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? undefined,
-      operationId: context.operationId ?? undefined,
-      containerName: service.containerName,
-      command: {
-        name: 'docker rm -f',
-        exitCode: preRunRemove.exitCode,
-        stdoutPreview: preRunRemove.stdout,
-        stderrPreview: preRunRemove.stderr,
-      },
-      details: {
-        operation: 'deploy-pre-run-replace',
-        reason: '部署前替换同名旧容器',
-        actor: context.actor ?? null,
-        trigger: context.trigger ?? null,
-      },
-    });
-
     // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
     // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
     let command = profile.command || '';
@@ -1318,6 +1279,49 @@ export class ContainerService {
         onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
       }
     }
+
+    // 旧容器移除放在极速版拉取/回退闸**之后**（Codex P2「Queue fallback builds
+    // before removing live containers」）：镜像拉取失败回退源码编译时，回退钩子
+    // 可能在全局构建队列里排队——若像旧实现那样在函数开头就 docker rm，健康的
+    // 旧预览会在整个排队 + 构建期间白宕机。移到这里，拉取/排队期间旧容器持续
+    // 服务，真正要 docker run 前才替换。
+    context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
+    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      requestId: context.requestId ?? null,
+      operationId: context.operationId ?? null,
+      actor: context.actor ?? null,
+      trigger: context.trigger ?? null,
+      operation: 'deploy-pre-run-replace',
+      source: 'container.runService',
+    });
+    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
+    this.recordContainerEvent({
+      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
+      source: 'cds-container-service',
+      action: 'app.pre-run-rm',
+      message: `pre-run cleanup for ${service.containerName}`,
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
+      containerName: service.containerName,
+      command: {
+        name: 'docker rm -f',
+        exitCode: preRunRemove.exitCode,
+        stdoutPreview: preRunRemove.stdout,
+        stderrPreview: preRunRemove.stderr,
+      },
+      details: {
+        operation: 'deploy-pre-run-replace',
+        reason: '部署前替换同名旧容器',
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+      },
+    });
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
 

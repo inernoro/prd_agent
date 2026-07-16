@@ -30,6 +30,13 @@ export interface BranchOperationRequest {
   actor?: string | null;
   requestId?: string | null;
   commitSha?: string | null;
+  /**
+   * 不可变部署版本重部署时携带（body.versionId）。带版本的 manual deploy
+   * **不参与**合并去重：pending 重放只送 commitSha，会丢失版本捕获的
+   * profiles/config（Codex P2「Preserve requested versions in merged deploys」），
+   * 维持撞车 409 的旧行为。
+   */
+  versionId?: string | null;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -130,12 +137,29 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
  * 现在与 webhook 同样合并为「当前部署完成后自动执行的最新待部署请求」
  * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
  * restart 语义按单服务隔离，合并归属不明确，维持 409。
+ * 带 versionId 的版本重部署不合并（pending 重放会丢版本捕获配置，Codex P2）。
  * 注意：仅在 incoming **不能**压过（supersede）在途操作时才走合并——优先级
  * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
  */
 function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
-  return req.trigger === 'manual' && req.kind === 'deploy';
+  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId;
 }
+
+/**
+ * manual deploy 只允许合并在**部署类**在途操作后面（Codex P2「Restrict manual
+ * deploy merges to deploy blockers」）：若在途的是 stop/reset/delete 等终止类
+ * 操作，合并的 pending 会在 complete() 后立刻派发——运维刚停下的分支被自动
+ * 重启，抵消停止意图。此时维持 409 旧行为，让调用方自己决定停后是否再部署。
+ */
+const MANUAL_MERGE_BEHIND_KINDS = new Set<BranchOperationKind>([
+  'deploy',
+  'deploy-profile',
+  'force-rebuild',
+  'restart',
+  'auto-restart',
+  'auto-lifecycle-redeploy',
+  'database-init',
+]);
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -207,7 +231,9 @@ export class BranchOperationCoordinator {
 
     // manual 整分支 deploy 压不过在途操作时不再 409，而是与 webhook 同通道
     // 合并为最新待部署请求（治重试风暴：agent 重试不再叠加新部署/新排队）。
-    if (isMergeableManualDeploy(request)) {
+    // 仅限部署类在途操作（stop/reset/delete 在途时维持 409，见
+    // MANUAL_MERGE_BEHIND_KINDS 注释）。
+    if (isMergeableManualDeploy(request) && MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind)) {
       const existing = this.pendingWebhookDeploys.get(branchId);
       const generation = this.nextGeneration(branchId);
       const operationId = existing?.operationId || this.createOperationId();
