@@ -25,6 +25,7 @@
 | 3 | holders/waiters 无运维 UI | `GET /api/cluster/status` 已透出 `buildGate.holders[]/waiters[]` 明细（branchId/profileId/runId/持槽时长），但 cluster/ops 前端面板尚未渲染，排障需直接看 API | 排障便利性；数据面已就绪 |
 | 4 | 健康阈值硬编码 | `evaluateBuildGateHealth` 的阈值（queued≥15、holder≥45min、stale-run≥30min）为常量，未走系统级设置。当前值基于事故数据（queued=54 必红、正常构建 ≤20min）留有余量，暂无调整需求 | 需调整时改代码重发版 |
 | 5 | merged 部署完成后无自动通知 | 前端对 merged 请求已如实展示「已合并为待部署」且不再打开旧预览（Codex P2 x2），但重放的那次部署真正完成时没有主动通知/自动打开预览，用户需自行回来看分支状态 | 体验打磨；靠分支列表状态刷新兜底 |
+| 6 | 续约过期时 pending 被取消而非派发 | force-rebuild 续约 5 分钟过期时（`getUsableReservedContinuation` 惰性清理），挂在其后的 pending 部署一并取消（含 warn 事件留痕）。撞续约的重放已改为重新合并不丢（Codex P2），但「续约过期」这一小概率出口仍会取消 pending——改为过期即派发需要协调器持有派发通道，属结构调整 | 5 分钟窗口 + 续约方几乎立即接续，触发概率低；事件日志可见 |
 
 ## 修复主线（已完成，供回溯）
 

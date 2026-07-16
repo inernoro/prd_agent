@@ -740,6 +740,62 @@ describe('BranchOperationCoordinator', () => {
     expect(pending?.request.commitSha).toBe('2222222');
   });
 
+  it('续约保留期间 manual 整分支 deploy 合并为 pending 而非拒绝——重放撞续约不得静默丢弃（Codex P2）', () => {
+    const coordinator = new BranchOperationCoordinator();
+    // 完整事故时序：profile B 在途 → manual 整分支 deploy 合并（用户被告知已排队）
+    const profileB = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'web',
+    });
+    const merged = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    expect(merged.status).toBe('merged');
+
+    // 与 B 并行的 profile A force-rebuild 完成，保留 deploy-profile 续约
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    expect(force.status).toBe('started');
+    coordinator.complete(force.lease!, 'completed');
+
+    // B 完成 → complete() 弹出 pending 交给路由内部重放
+    const pending = coordinator.complete(profileB.lease!, 'completed');
+    expect(pending?.request.kind).toBe('deploy');
+
+    // 重放的整分支 deploy 与 deploy-profile 续约不匹配：修复前这里 rejected，
+    // pending 已被弹出 → 请求静默丢失；现在应重新合并回 pending 等续约消费后派发
+    const replay = coordinator.begin(pending!.request);
+    expect(replay.status).toBe('merged');
+
+    // force-rebuild 自己的续约 deploy-profile 仍优先接续（不被合并吞掉）
+    const continuation = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+    expect(continuation.status).toBe('started');
+    expect(continuation.operationId).toBe(force.operationId);
+
+    // 续约操作完成后，重新合并的 pending 被弹出派发，承诺闭环
+    const redispatched = coordinator.complete(continuation.lease!, 'completed');
+    expect(redispatched?.request.kind).toBe('deploy');
+    expect(redispatched?.request.trigger).toBe('manual');
+  });
+
   it('manual delete cancels a reserved force-rebuild continuation and its pending webhook', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

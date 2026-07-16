@@ -20,3 +20,4 @@
 | docs | cds | 新增 doc/debt.cds.build-gate.md 债务台账（pending 队列更名/排队心跳拆分/holders 运维 UI/健康阈值可配等延期项），同步 index.yml 与 guide.list.directory.md |
 | fix | cds | 回应 Codex P2：带一次性选项（?force=1 / ?ignoreRequired=1 / targetExecutorId）的 manual deploy 不参与合并去重（pending 重放丢选项会导致强制部署被暂停闸门拦下、env 豁免失效、执行器指定丢失），撞车维持 409 |
 | fix | cds | 回应 Codex P2：构建闸健康探针 GET /api/cluster/build-gate/health 补登 github-auth 模式 PUBLIC_PATHS 白名单（此前仅在 basic-auth 白名单，CDS_AUTH_MODE=github 部署下探针 401 不可用） |
+| fix | cds | 回应 Codex P2：manual 整分支 deploy 撞上保留的 force-rebuild 续约时合并为 pending 而非拒绝——已合并 pending 的内部重放撞续约不再被 409 静默丢弃，续约操作完成后照常派发；force-rebuild 自己的续约仍优先接续不被合并 |

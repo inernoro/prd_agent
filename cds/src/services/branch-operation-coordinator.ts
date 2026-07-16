@@ -489,6 +489,43 @@ export class BranchOperationCoordinator {
       return this.start(request);
     }
 
+    // manual 整分支 deploy 撞上保留的续约时同样合并为 pending，不再 409：
+    // 已合并的 pending 会在其他 profile 操作 complete() 后被内部重放，若此刻
+    // 分支上还挂着未消费的 force-rebuild 续约，重放走到这里被拒绝 = 静默丢弃
+    // 「已排队」的承诺（Codex P2「Preserve pending deploys while a continuation
+    // is reserved」）。必须放在 requestMatchesContinuation 之后——force-rebuild
+    // 自己的 deploy 续约仍优先接续执行，不能被合并吞掉。
+    if (isMergeableManualDeploy(request)) {
+      const existing = this.pendingWebhookDeploys.get(request.branchId);
+      const generation = this.nextGeneration(request.branchId);
+      const operationId = existing?.operationId || this.createOperationId();
+      this.pendingWebhookDeploys.set(request.branchId, {
+        operationId,
+        branchId: request.branchId,
+        generation,
+        request,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        updatedAt: nowIso(),
+      });
+      this.record('branch.operation.merged', request, operationId, generation, 'info', {
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        reservedContinuation: true,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        commitSha: request.commitSha || null,
+        manualMerge: true,
+      });
+      return {
+        status: 'merged',
+        operationId,
+        generation,
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        pendingCommitSha: request.commitSha || null,
+        reason: 'manual deploy merged while force-rebuild waits for its deploy continuation',
+      };
+    }
+
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(request.branchId), 'warn', {
       activeOperationId: reserved.operationId,
       activeKind: reserved.request.kind,
