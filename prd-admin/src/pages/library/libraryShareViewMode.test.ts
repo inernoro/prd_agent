@@ -5,6 +5,7 @@ import {
   resolveInitialSharedEntryId,
   resolveLibraryShareSortMode,
   resolveControlledSharedEntryId,
+  resolveShareKnowledgeBaseReturnPath,
   resolveSharedWikilinkEntryId,
   withLibraryShareEntry,
   withLibraryShareSortMode,
@@ -16,6 +17,12 @@ describe('libraryShareViewMode', () => {
     expect(buildOwnedDocumentStorePath('store-123')).toBe('/document-store?store=store-123');
     expect(buildOwnedDocumentStorePath(' store/with space ')).toBe('/document-store?store=store%2Fwith+space');
     expect(buildOwnedDocumentStorePath('  ')).toBe('/document-store');
+  });
+
+  it('fails closed for token-only share readers without owned-store access', () => {
+    expect(resolveShareKnowledgeBaseReturnPath('owner-private-store', false)).toBe('/document-store');
+    expect(resolveShareKnowledgeBaseReturnPath('owner-private-store', true))
+      .toBe('/document-store?store=owner-private-store');
   });
 
   it('controls the first reader render with a valid entry deep link', () => {

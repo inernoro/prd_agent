@@ -28,13 +28,14 @@ import {
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
   getDocStoreShareGraph,
+  getDocumentStore,
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import {
-  buildOwnedDocumentStorePath,
   parseLibraryShareViewMode,
+  resolveShareKnowledgeBaseReturnPath,
   resolveControlledSharedEntryId,
   resolveInitialSharedEntryId,
   resolveLibraryShareSortMode,
@@ -64,6 +65,7 @@ export function LibraryShareViewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
+  const [canOpenStore, setCanOpenStore] = useState(false);
 
   const shareSortMode = useMemo(
     () => resolveLibraryShareSortMode(
@@ -90,6 +92,19 @@ export function LibraryShareViewPage() {
     });
     return () => { mounted = false; };
   }, [token]);
+
+  // 分享 token 只授权匿名分享端点，不能推导登录用户也能读取后台知识库详情。
+  // 复用 GetStore 的服务端权限判断（owner/public/team/project）；失败时保持安全回退列表。
+  useEffect(() => {
+    let mounted = true;
+    setCanOpenStore(false);
+    if (!isAuthenticated || !view?.store.id) return () => { mounted = false; };
+
+    getDocumentStore(view.store.id).then((response) => {
+      if (mounted) setCanOpenStore(response.success);
+    });
+    return () => { mounted = false; };
+  }, [isAuthenticated, view?.store.id]);
 
   // 默认选中服从阅读排序：书籍顺序先打开主文档；时间模式打开相应的最新文档。
   const initialSelectedId = useMemo<string | undefined>(() => {
@@ -226,6 +241,17 @@ export function LibraryShareViewPage() {
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
   const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
+  const knowledgeBaseReturnPath = resolveShareKnowledgeBaseReturnPath(store.id, canOpenStore);
+  const knowledgeBaseReturnLabel = canOpenStore
+    ? '返回知识库'
+    : isAuthenticated
+      ? '我的知识库'
+      : '登录后进入知识库';
+  const knowledgeBaseReturnTitle = canOpenStore
+    ? `以我的身份打开「${store.name}」`
+    : isAuthenticated
+      ? '当前账号不能直接打开该知识库，返回我的知识库列表'
+      : '登录后进入我的知识库列表';
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
@@ -266,10 +292,9 @@ export function LibraryShareViewPage() {
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
-        {/* 返回当前知识库，而不是知识库列表。匿名点击仍保留当前 store 深链，
-            由路由守卫完成登录后回跳。 */}
+        {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
         <button
-          onClick={() => navigate(buildOwnedDocumentStorePath(store.id))}
+          onClick={() => navigate(knowledgeBaseReturnPath)}
           className="transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
           style={{
             marginLeft: 'auto', flexShrink: 0,
@@ -279,9 +304,9 @@ export function LibraryShareViewPage() {
             background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
             fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
           }}
-          title={isAuthenticated ? `以我的身份打开「${store.name}」` : `登录后打开「${store.name}」`}
+          title={knowledgeBaseReturnTitle}
         >
-          <ArrowLeft size={14} /> {isAuthenticated ? '返回知识库' : '登录后打开知识库'}
+          <ArrowLeft size={14} /> {knowledgeBaseReturnLabel}
         </button>
       </div>
 

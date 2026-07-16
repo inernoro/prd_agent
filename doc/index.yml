@@ -325,6 +325,7 @@ docs:
   debt.frontend.mobile-light-theme: 移动端全局浅色主题 · 债务台账（硬编码暗色页面清理 / 主题竞态收敛）
   debt.frontend.navigation-history: 前端导航历史（返回上一页）· 债务台账（教程跨页 push / NavigationBridge / cds-agent 整页跳转 / 长尾硬编码返回）
   debt.cds.agent.acceptance-smoke-drift: CDS Agent 验收 smoke 断言漂移 · 需专项修复或退役（未接 CI 的手工取证脚本）
+  debt.cds.build-gate: CDS 构建闸 · 债务台账（2026-07-16 队列堵死事故修复后的延期项：pending 队列更名 / 排队心跳拆分 / holders 运维 UI / 健康阈值可配）
   debt.cds.ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.cds.executor-watchdog: CDS executor 卡死看门狗 · 债务台账（cluster-only，#228/#233 评审冲突）
   debt.cds.selfupdate-prebuilt: CDS 自更新极速版（预构建产物）· 债务台账（CI+决策+拉取已落地，orchestrator 接线待灰度）

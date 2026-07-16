@@ -306,7 +306,10 @@ describe('ProxyService', () => {
       expect(initialPercent).toBeLessThan(25);
     });
 
-    it('does not use release build ETA for hot restart progress', () => {
+    it('does not use release build ETA for hot restart progress (uses restart bucket instead)', () => {
+      // 2026-07-16「卡 86%」修复后语义：热重启不再返回 null timing（进度静止），
+      // 而是走独立的 restart 样本桶——绝不复用 release 构建中位（420s 会把 15s
+      // 的重启压成 3%），无 restart 样本时 medianMs=null + 时间曲线驱动进度。
       proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
       addBranch('hot-restart', 'restarting', {
         api: { profileId: 'api', status: 'starting' },
@@ -324,12 +327,18 @@ describe('ProxyService', () => {
       expect(written.statusCode).toBe(200);
       const payload = JSON.parse(written.body) as {
         progress: { percent: number; label: string; reason: string };
-        timing: { estimateMedianMs: number } | null;
+        timing: { estimateMedianMs: number | null; estimateSamples: number; elapsedMs: number } | null;
+        buildMode: string | null;
       };
-      expect(payload.timing).toBeNull();
+      // restart 桶无样本：medianMs 为 null（不编造、不借 release 的 420s），elapsed 真实
+      expect(payload.timing).not.toBeNull();
+      expect(payload.buildMode).toBe('restart');
+      expect(payload.timing!.estimateMedianMs).toBeNull();
+      expect(payload.timing!.estimateSamples).toBe(0);
+      expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(14_000);
       expect(payload.progress.label).toBe('热重启进度');
       expect(payload.progress.percent).toBeGreaterThan(50);
-      expect(payload.progress.reason).toContain('热重启状态');
+      expect(payload.progress.reason).toContain('重启时长估算');
 
       const htmlReq = makeReq({ host: 'hot-restart.preview.test', accept: 'text/html' });
       const { res: htmlRes, written: htmlWritten } = makeRes();
@@ -337,6 +346,38 @@ describe('ProxyService', () => {
       const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
       expect(match).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(50);
+    });
+
+    it('hot restart with restart history uses elapsed/median as the real progress source', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('hot-restart-hist', 'restarting', {
+        api: { profileId: 'api', status: 'starting' },
+      }, 'feature/hot-restart-hist');
+      const branch = stateService.getBranch('hot-restart-hist')!;
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      // 近 3 次热重启中位 30s → 已过 15s ≈ 50%，但下限 clamp 35 → 落在 [50,96]
+      stateService.recordDeployDuration('default', 'restart', 30_000);
+      stateService.recordDeployDuration('default', 'restart', 30_000);
+      stateService.recordDeployDuration('default', 'restart', 30_000);
+      stateService.save();
+
+      const req = makeReq({ host: 'hot-restart-hist.preview.test', accept: 'application/json' }, '/_cds/waiting-status');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as {
+        progress: { percent: number; label: string; reason: string };
+        timing: { estimateMedianMs: number | null; estimateSamples: number } | null;
+        modeLabel: string | null;
+      };
+      expect(payload.timing!.estimateMedianMs).toBe(30_000);
+      expect(payload.timing!.estimateSamples).toBe(3);
+      expect(payload.modeLabel).toBe('热重启');
+      expect(payload.progress.label).toBe('热重启进度');
+      expect(payload.progress.percent).toBeGreaterThanOrEqual(45);
+      expect(payload.progress.percent).toBeLessThanOrEqual(60);
+      expect(payload.progress.reason).toContain('热重启历史耗时');
     });
 
     it('serves the auto-refresh "preparing" page (not the manual-redeploy page) for an express branch waiting on the CI image', () => {
