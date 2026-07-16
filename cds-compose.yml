@@ -163,6 +163,8 @@ x-cds-deploy-modes:
   llmgw-web:
     dev:
       label: "开发模式 (Vite HMR)"
+      # 即使 CDS 存量 profile 仍带旧 prebuiltImage=true，本模式也必须恢复源码挂载。
+      prebuilt: false
       command: >-
         cd /repo/llmgw/web &&
         corepack enable &&
