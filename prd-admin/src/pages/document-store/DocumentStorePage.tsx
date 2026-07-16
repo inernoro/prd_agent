@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Library,
   Orbit,
@@ -71,7 +71,7 @@ import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { SkillOpenApiDialog } from '@/pages/marketplace/SkillOpenApiDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
 import { StoreSizeBadge } from './StoreSizeBadge';
 import {
@@ -2559,6 +2559,24 @@ export function DocumentStorePage() {
     }
     if (pinPendingRef.current != null) void flushPins(); // 在途期间又有点击，继续发最新
   }, []);
+  // 置顶/取消置顶后的「去哪了」反馈（2026-07-16 用户反馈：库多时不知道操作的是哪个、挪去了哪）：
+  // 1) 卡片包 motion.div layout → 重排时 FLIP 位移动画，卡片肉眼可见地滑到新位置；
+  // 2) 落点外圈琥珀描边 1.6s 渐隐（kb-card-flash）；
+  // 3) 平滑跟随滚动到卡片新位置（block:nearest，已在视口内则不动）。
+  const [movedStoreId, setMovedStoreId] = useState<string | null>(null);
+  const movedTimerRef = useRef<number | null>(null);
+  const markMoved = useCallback((storeId: string) => {
+    setMovedStoreId(null); // 先清空再下一帧置回，保证连续点同一张卡也能重放闪烁动画
+    requestAnimationFrame(() => setMovedStoreId(storeId));
+    if (movedTimerRef.current) window.clearTimeout(movedTimerRef.current);
+    movedTimerRef.current = window.setTimeout(() => setMovedStoreId(null), 1700);
+    window.setTimeout(() => {
+      document.querySelector(`[data-store-card="${storeId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 120);
+  }, []);
+  useEffect(() => () => { if (movedTimerRef.current) window.clearTimeout(movedTimerRef.current); }, []);
+
   const handleTogglePin = useCallback((storeId: string) => {
     setPinnedIds(prev => {
       const next = new Set(prev);
@@ -2567,7 +2585,8 @@ export function DocumentStorePage() {
       void flushPins();
       return next;
     });
-  }, [flushPins]);
+    markMoved(storeId);
+  }, [flushPins, markMoved]);
 
   const handleSystemShareStore = useCallback(async (storeId: string, name: string) => {
     const url = `${window.location.origin}/library/${storeId}`;
@@ -2894,6 +2913,21 @@ export function DocumentStorePage() {
   ].filter(Boolean).length;
 
   const isEmpty = currentList.length === 0;
+  // 「已置顶 / 其他」分区：有置顶时给两组各一条小节标题，置顶后卡片滑进「已置顶」区，
+  // 落点一目了然（currentList 已保证置顶排最前，仅 store tab 参与置顶排序）
+  const pinnedCount = isStoreTab
+    ? (currentList as DocumentStoreWithPreview[]).filter(x => pinnedIds.has(x.id)).length
+    : 0;
+  const showPinnedSections = pinnedCount > 0 && pinnedCount < currentList.length;
+  const sectionHeader = (label: string, count: number, pinned: boolean) => (
+    <div className="col-span-full flex items-center gap-2 min-w-0" style={{ marginBottom: -6 }}>
+      {pinned && <Pin size={11} style={{ color: 'rgba(234,179,8,0.9)', fill: 'rgba(234,179,8,0.9)' }} />}
+      <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+        {label} · {count}
+      </span>
+      <span className="flex-1 h-px" style={{ background: 'var(--border-faint, rgba(148,163,184,0.16))' }} />
+    </div>
+  );
   // 区分三种空态：1) 筛选有但被过滤掉了；2) 真·空（onboarding 引导）；3) 团队空间未选 team
   // 必须确认原始数据(stores)有内容才算"被筛选掉",否则 mine/team 真空态会被误判为"筛选无结果"
   const isFilteredOut = isEmpty && isStoreTab
@@ -2983,6 +3017,7 @@ export function DocumentStorePage() {
               data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setSearch(''); }}
               placeholder="按名称或标签筛选…"
               className={isMobile
                 ? 'h-10 pl-8 pr-8 rounded-[12px] text-[14px] outline-none w-full'
@@ -3467,7 +3502,7 @@ export function DocumentStorePage() {
         ) : (
           /* 空间列表 - 增大卡片高度，显示文档预览 */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
-            {(currentList as (DocumentStoreWithPreview | InteractionStoreCard)[]).map(s => {
+            {(currentList as (DocumentStoreWithPreview | InteractionStoreCard)[]).map((s, idx) => {
               const isInteraction = !isStoreTab;
               // 只有 owner 才能见 编辑/分享/删除 入口。
               // 团队空间下其他成员分享进来的库 ownerId !== 当前用户 → 隐藏破坏性按钮(后端也会拒)
@@ -3495,8 +3530,18 @@ export function DocumentStorePage() {
                 ?? (s as InteractionStoreCard).ownerAvatar;
               const hasOwner = Boolean((s as DocumentStoreWithPreview).ownerName || ownerName);
               return (
-                <GlassCard key={s.id} animated interactive padding="none"
-                  className="group kb-store-card flex flex-col h-full"
+                <Fragment key={s.id}>
+                {showPinnedSections && idx === 0 && sectionHeader('已置顶', pinnedCount, true)}
+                {showPinnedSections && idx === pinnedCount && sectionHeader('其他', currentList.length - pinnedCount, false)}
+                {/* motion.div layout：置顶/排序变化时 FLIP 位移动画，卡片肉眼可见地滑到新位置 */}
+                <motion.div
+                  layout
+                  data-store-card={s.id}
+                  className="h-full min-w-0"
+                  transition={{ layout: { type: 'spring', stiffness: 360, damping: 34 } }}
+                >
+                <GlassCard animated interactive padding="none"
+                  className={`group kb-store-card flex flex-col h-full ${movedStoreId === s.id ? 'kb-card-flash' : ''}`}
                   onClick={() => {
                     // 团队共享的库:成员也能写(后端 CanWriteStore = owner OR IsTeamShared),
                     // 所以 store tab 全部进 StoreDetailView。收藏/点赞:owner 进编辑,其他人走只读 library。
@@ -3680,6 +3725,8 @@ export function DocumentStorePage() {
                     </div>
                   </div>
                 </GlassCard>
+                </motion.div>
+                </Fragment>
               );
             })}
           </div>
