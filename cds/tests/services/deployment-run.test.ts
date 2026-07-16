@@ -118,6 +118,27 @@ describe('DeploymentRunService', () => {
     });
   });
 
+  it('reconcileInterrupted 周期语义：心跳新鲜不收割、终态跳过、重入幂等', async () => {
+    const service = createService();
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    service.transition('dr_test', 'preparing', { phase: 'pull', message: '正在准备' });
+
+    // 心跳新鲜（刚 append 过）→ 不收割
+    clock = new Date('2026-07-10T01:05:00.000Z');
+    service.append('dr_test', { phase: 'queue', level: 'info', status: 'info', message: '排队心跳' });
+    expect(service.reconcileInterrupted(clock, 15 * 60 * 1000)).toHaveLength(0);
+
+    // 心跳停跳超过阈值 → 收割为失败
+    clock = new Date('2026-07-10T01:20:01.000Z');
+    const reaped = service.reconcileInterrupted(clock, 15 * 60 * 1000);
+    expect(reaped).toHaveLength(1);
+    expect(reaped[0].status).toBe('failed');
+
+    // 已终态 → 第二轮（周期重入）不再处理，幂等
+    clock = new Date('2026-07-10T02:00:00.000Z');
+    expect(service.reconcileInterrupted(clock, 15 * 60 * 1000)).toHaveLength(0);
+  });
+
   it('refuses a project and branch mismatch', async () => {
     const service = createService();
     await expect(service.begin({

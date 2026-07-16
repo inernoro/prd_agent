@@ -1390,6 +1390,21 @@ export class StateService {
     }
   }
 
+  // ── 全局构建并发上限（build-gate，系统级）──
+  // 2026-07-16：运行时可调，随 CdsState 持久化跨重启生效；env
+  // CDS_MAX_CONCURRENT_BUILDS 在 build-gate 读取端仍优先于本值。
+  getMaxConcurrentBuilds(): number | undefined {
+    return this.state.maxConcurrentBuilds;
+  }
+
+  setMaxConcurrentBuilds(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.maxConcurrentBuilds;
+    } else {
+      this.state.maxConcurrentBuilds = value;
+    }
+  }
+
   // ── Janitor runtime override ──
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to
@@ -3671,12 +3686,27 @@ export class StateService {
    * 启用中的外部访问代理容器名集合（供孤儿收割器判定，Codex P1）。
    * 只有 enabled 且未过期的策略才算「代理在正当运行」；access 被关/过期后
    * 若 docker rm 失败留下的代理容器不在此集合，收割器据此断掉公网暴露。
+   *
+   * 归属存活校验（Codex P1，2026-07-15）：`removeBranch()` / 项目删除只删
+   * branch/project 记录，**不清 `resourceExternalAccess`**——删掉一个带 TCP
+   * 外部访问代理的分支后，那条 enabled 策略会残留，把代理名一直留在本集合里，
+   * 收割器就永远跳过这个**仍在公网暴露**的 resource-external-access 容器。
+   * 因此策略只有在其归属 branch 仍存在于 state.branches 时，才算「正当运行」
+   * 保护其代理；归属分支已消失的残留策略不再保护代理，交给收割器断掉公网暴露
+   * （与收割器「对账收敛、不指望命令式级联做全对」同一哲学）。
+   *
+   * 只按 branch 存活判定即可覆盖项目删除：removeProject 会级联把该项目所有分支
+   * 从 state.branches 删掉，其策略的 branchId 随之查不到。反过来不按 project 判定
+   * 是刻意的——projectId='default' 的 legacy 分支未必有显式 Project 记录（fresh
+   * install 不建空 default 项目），若加 project 存活校验会误伤这些活分支的代理。
    */
   getActiveExternalAccessProxyContainerNames(nowIso = new Date().toISOString()): Set<string> {
     const active = new Set<string>();
     for (const policy of Object.values(this.state.resourceExternalAccess || {})) {
       if (!policy.enabled || !policy.proxyContainerName) continue;
       if (policy.expiresAt && policy.expiresAt <= nowIso) continue;
+      // 归属分支已被删除（记录不在 state.branches）→ 策略残留，不再保护其代理。
+      if (policy.branchId && !this.state.branches[policy.branchId]) continue;
       active.add(policy.proxyContainerName);
     }
     return active;
