@@ -5,7 +5,8 @@
 报告永远按项目入库 CDS；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。
 
 三种输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
-  - cds（默认主路）：Markdown 写作源 → 交互 HTML（截图内联 data-URI）→ POST /api/reports，
+  - cds（默认主路）：截图先进入 CDS 内容寻址资产库，Markdown 写作源引用不可变图片地址
+    → 交互 HTML → POST /api/reports，
     按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
     依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
   - local：把报告写成本地 html/md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
@@ -1042,7 +1043,7 @@ def _report_flavor(a, body):
 
 
 # ── CDS 验收中心（默认主路，职责分离：验收能力归 CDS，MAP 走开放协议消费）──
-CDS_REPORT_CAP = 10 * 1024 * 1024  # 与 cds/src/routes/reports.ts MAX_CONTENT_BYTES 对齐
+CDS_REPORT_CAP = 10 * 1024 * 1024  # 仅正文；截图通过 /api/reports/assets 独立上传
 
 
 def _cds_base():
@@ -1073,6 +1074,32 @@ def _cds_call(method, path, payload=None):
     return curl(H + ["-X", method, url])
 
 
+def _cds_upload_asset(path):
+    """先上传单张截图，返回 CDS 内容寻址不可变 URL。正文不再携带 base64。"""
+    suffix = Path(path).suffix.lower()
+    content_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(suffix)
+    if not content_type:
+        raise RuntimeError(f"CDS 截图只支持 PNG、JPEG 或 WebP：{path}")
+    resp = curl(_cds_auth_headers() + [
+        "-H", f"Content-Type: {content_type}",
+        "-X", "POST",
+        "--data-binary", f"@{path}",
+        _cds_base() + "/api/reports/assets",
+    ])
+    asset = resp.get("asset") if isinstance(resp, dict) else None
+    if not asset or not asset.get("url"):
+        raise RuntimeError(f"CDS 截图上传失败：{json.dumps(resp, ensure_ascii=False)[:300]}")
+    url = str(asset["url"])
+    if url.startswith("/"):
+        url = _cds_base() + url
+    return url, asset
+
+
 def _cds_resolve_project(cfg):
     """CDS 项目 ID：config.report.cdsProjectId > env CDS_PROJECT_ID > config.project（项目身份 slug）。
     解析不到时返回 None（归到 CDS 自身 / 全局，仍可入库）。"""
@@ -1096,20 +1123,19 @@ def _resolve_folder_path(cfg, a):
 
 
 def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
-    """职责分离主路：把验收报告（自包含 markdown，截图内联 data-URI）入库到 CDS 验收中心。
+    """职责分离主路：把验收报告和独立截图资产入库到 CDS 验收中心。
     报告永远按项目归类；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。"""
     project_id = _cds_resolve_project(cfg)
     folder_path = _resolve_folder_path(cfg, a)
 
-    # 自包含报告：Markdown 写作源，归档前可转交互 HTML；截图内联 data-URI 后由 CDS 入库时抽资产。
+    # 截图先入 CDS 内容寻址资产库；正文只保留不可变 HTTPS 地址。
+    # 这样截图数量由证据需要决定，不再占用 10MB 文本正文额度。
     evid_parts, img_md = [], {}
     for m in manifest:
-        with open(m["path"], "rb") as f:
-            data = base64.b64encode(f.read()).decode("ascii")
-        uri = f"data:image/png;base64,{data}"
+        uri, asset = _cds_upload_asset(m["path"])
         evid_parts.append(_with_figure_anchor(m["name"], f"**{m['caption']}**\n\n![{m['caption']}]({uri})"))
         img_md[m["name"]] = f"![{m['caption']}]({uri})"
-        print(f"  内联截图 {m['name']} ({os.path.getsize(m['path'])}B)")
+        print(f"  上传截图 {m['name']} ({asset.get('sizeBytes', os.path.getsize(m['path']))}B) -> {asset.get('name', uri)}")
     meta = build_meta(report_id, now, "cds", a, "")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "cds")
@@ -1117,8 +1143,8 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     size = len(content.encode("utf-8"))
     if size > CDS_REPORT_CAP:
         raise RuntimeError(
-            f"报告自包含正文 {size/1048576:.1f}MB 超 CDS 10MB 上限。"
-            "请减少截图数量、或改用 cds/cli/acceptance 的 JPEG 压图取证管线（chromium-canvas 缩放）后重跑。")
+            f"报告文本正文 {size/1048576:.1f}MB 超 CDS 10MB 上限。"
+            "截图已独立存储，因此无需减少证据图；请拆分过长文字或日志附件后重跑。")
 
     payload = {
         "title": title, "format": fmt, "content": content,

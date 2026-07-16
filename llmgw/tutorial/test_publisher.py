@@ -108,6 +108,27 @@ class TutorialPublisherTests(unittest.TestCase):
         chapter_ids = [node.source_id for node in self.source.nodes if node.source_id.startswith("chapter-")]
         self.assertEqual([f"chapter-{number:02d}" for number in range(33)], chapter_ids)
 
+    def test_visual_density_has_no_zero_image_chapter(self):
+        chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]
+        counts = [len(publisher.MARKDOWN_IMAGE_RE.findall(node.content)) for node in chapters]
+        urls = [url for node in chapters for url in publisher.MARKDOWN_IMAGE_RE.findall(node.content)]
+        self.assertTrue(all(count >= publisher.MIN_IMAGES_PER_CHAPTER for count in counts))
+        self.assertGreaterEqual(len(set(urls)), publisher.MIN_UNIQUE_IMAGES)
+        self.assertGreaterEqual(len(urls), publisher.MIN_EVIDENCE_REFERENCES)
+
+    def test_every_numbered_step_has_an_inline_image(self):
+        chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]
+        for chapter in chapters:
+            doing = chapter.content.split("## 跟我做\n", 1)[1].split("## 看到什么算成功\n", 1)[0]
+            steps = list(publisher.NUMBERED_STEP_RE.finditer(doing))
+            self.assertTrue(steps, chapter.source_path)
+            for index, step in enumerate(steps):
+                end = steps[index + 1].start() if index + 1 < len(steps) else len(doing)
+                self.assertIsNotNone(
+                    publisher.MARKDOWN_IMAGE_RE.search(doing[step.end():end]),
+                    f"{chapter.source_path}: {step.group(0)}",
+                )
+
     def test_first_apply_second_apply_noop_and_manual_drift_conflict(self):
         gateway = MemoryGateway()
         foreign_before = copy.deepcopy(gateway.foreign)

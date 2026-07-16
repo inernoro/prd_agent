@@ -18,13 +18,49 @@ Gateway 的估算来自价格快照，供应商扣费来自账单。两边可能
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 从“治理”进入“预算与用量”，点击“导入供应商账单”。“供应商请求编号”保持为空，页面会显示“账单窗开始”和“账单窗结束”。
+
+**图 072 费用可信度条区分价格覆盖、unknown 与原币种金额**
+
+![图 072 费用可信度条区分价格覆盖、unknown 与原币种金额](https://cds.miduo.org/api/reports/assets/d6875f1f274fb6106f00336d5889877e1911c7077c9b98980bf25bd69e19fb0e.png)
+
 2. 供应商名称逐字填写第 20 章 chat 请求详情的 Provider，可能是“教程假上游”或“教程假上游映射”，以实际记录为准。唯一流水号填写准备好的 `tutorial-window-日期-时间`；账单窗只包住那一次 chat 请求，不能覆盖随后发生的 vision 请求，接入密钥编号填写该 chat 请求详情里的 ServiceKeyId。
+
+**图 077 用量页按当前租户展示请求、token、价格覆盖和分币种金额**
+
+![图 077 用量页按当前租户展示请求、token、价格覆盖和分币种金额](https://cds.miduo.org/api/reports/assets/52b6ba639eb5acd9d6e71aa922b8169892322096b315988b958019f6c2a964be.png)
+
 3. actual 填 `0.01`，币种选 `CNY`，汇率凭证和汇率都留空，然后点击“确认导入”。不要在任何字段填写通讯密钥。
+
+**图 079 同币种逐请求对账显示 Gateway 估算、供应商实际和差额**
+
+![图 079 同币种逐请求对账显示 Gateway 估算、供应商实际和差额](https://cds.miduo.org/api/reports/assets/a2346b81ada7aeb15dbc3d214e51a797e1a7a0b27ad757f45beb25c67b60e995.png)
+
 4. 阅读“供应商账单已导入”回执。它应明确写“按明确时间窗记录为汇总账单”，没有单条 requestId 回查入口。
+
+**图 080 CNY 与 USD 没有汇率凭证时明确不计算差额**
+
+![图 080 CNY 与 USD 没有汇率凭证时明确不计算差额](https://cds.miduo.org/api/reports/assets/aeabfb4faf157ff001ec9be5c12796cfd580401071591d332ab5fe3cae22ced3.png)
+
 5. 在“最近对账记录”找到该流水。由于教程模型价格未知，Gateway 估算应显示“未知”，状态为“估算未知”或等义文案，不能出现 0 元差额。
+
+**图 081 供应商只有时间窗账单时标为汇总，不伪装单条 requestId**
+
+![图 081 供应商只有时间窗账单时标为汇总，不伪装单条 requestId](https://cds.miduo.org/api/reports/assets/976011a35fdab42f768b1625fd237185994acf4c7131f00f39633d46134c6689.png)
+
 6. 只有将来真实供应商提供请求编号时，才在“供应商请求编号”填写 Provider 返回的编号并执行逐请求对账；Gateway requestId 不能顶替它。
+
+**图 082 Owner 或 Admin 可打开供应商账单导入表单**
+
+![图 082 Owner 或 Admin 可打开供应商账单导入表单](https://cds.miduo.org/api/reports/assets/50a2eac0568bdf1a9fdf2dac451e2bc5acee1b04ef77a6b8ca9bcf92a1d8a6c4.png)
+
 7. 跨币种和 reconciled 的边界留到第 28 章用隔离测试验证，不在当前汇总样例上编造 FX。
+
+**图 083 导入表单要求供应商流水、实际金额、币种和请求或时间窗证据**
+
+![图 083 导入表单要求供应商流水、实际金额、币种和请求或时间窗证据](https://cds.miduo.org/api/reports/assets/3a37ca5f295eeaee18ae859bc4ad2840b4cad81e1e85d80e1b09291470ef517a.png)
 
 ## 看图核对
 

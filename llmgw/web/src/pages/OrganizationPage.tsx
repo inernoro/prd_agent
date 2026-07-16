@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Building2, Plus, RefreshCw, RotateCcw, Save, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Activity, Building2, KeyRound, Plus, RefreshCw, RotateCcw, Save, ShieldCheck, UserPlus, Users, Workflow } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
   createMember,
@@ -48,6 +48,8 @@ export function OrganizationPage() {
   const canCreateTenant = canUseCapability(sessionTenant?.role, 'tenantOwner');
   const canManageKeys = canAccessPage(sessionTenant, 'serviceKeys');
   const canUseQuickstart = canAccessPage(sessionTenant, 'quickstart');
+  const canManageAppCallers = canAccessPage(sessionTenant, 'appCallers');
+  const canReadUsage = canAccessPage(sessionTenant, 'usage');
 
   const load = useCallback(async () => {
     setError(null);
@@ -142,6 +144,43 @@ export function OrganizationPage() {
           <p style={hintStyle}>当前租户由服务端登录会话确定。请求体和自定义 tenantId header 都不能切换数据范围。</p>
         </section>
 
+        <section style={cardStyle} data-testid="tenant-governance-map">
+          <div style={sectionHeadingRowStyle}>
+            <div>
+              <h2 style={headingStyle}><Activity size={14} />租户行为与额度在哪里管理</h2>
+              <p style={hintStyle}>租户负责隔离数据和汇总用量；实际拦截请求的额度放在 appCaller 和接入密钥上，便于定位是哪项业务、哪把 key 超限。</p>
+            </div>
+          </div>
+          <div role="note" style={boundaryNoteStyle}>
+            <strong>当前没有单独的“租户总额度”输入框。</strong>
+            <span>appCaller 月预算是费用硬边界，appCaller 与接入密钥的每分钟上限是速率硬边界。用量页提供当前租户的汇总证据，但不会把各项预算相加后伪装成租户总上限。</span>
+          </div>
+          <div className="lg-quickstart-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8, marginTop: 10 }}>
+            <GovernanceLink
+              icon={<Workflow size={15} />}
+              title="业务预算与业务速率"
+              detail="在 appCaller 中按业务用途设置月预算、单次预算预占和每分钟上限。"
+              to={canManageAppCallers ? '/app-callers' : undefined}
+              action={canManageAppCallers ? '管理 appCaller' : '当前角色只读或不可见'}
+            />
+            <GovernanceLink
+              icon={<KeyRound size={15} />}
+              title="接入方速率与撤销"
+              detail="每个系统、环境和用途使用独立 key，并为单把 key 设置每分钟上限。"
+              to={canManageKeys ? '/service-keys' : undefined}
+              action={canManageKeys ? '管理接入密钥' : '请联系密钥管理员'}
+            />
+            <GovernanceLink
+              icon={<Activity size={15} />}
+              title="租户汇总与费用可信度"
+              detail="按当前租户查看请求量、费用状态、unknown cost 和供应商对账证据。"
+              to={canReadUsage ? '/usage' : undefined}
+              action={canReadUsage ? '查看预算与用量' : '当前角色不可查看'}
+            />
+          </div>
+          <p style={{ ...hintStyle, marginTop: 9 }}>推荐顺序：先为每个 appCaller 设业务预算，再为每把 key 设速率上限，最后在用量页观察租户整体。要停止某个接入方时撤销它的 key，不要停用整个租户。</p>
+        </section>
+
         <section style={cardStyle}>
           <div style={sectionHeadingRowStyle}>
             <div><h2 style={headingStyle}><ShieldCheck size={14} />五种角色怎么选</h2><p style={hintStyle}>给完成工作所需的最小权限。Owner 只留给真正负责租户的人。</p></div>
@@ -197,6 +236,16 @@ export function OrganizationPage() {
       </>}
     </div>
   </div>;
+}
+
+function GovernanceLink({ icon, title, detail, to, action }: { icon: React.ReactNode; title: string; detail: string; to?: string; action: string }) {
+  const content = <>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontWeight: 600 }}>{icon}{title}</span>
+    <span style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.55 }}>{detail}</span>
+    <span style={{ color: to ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11 }}>{action}</span>
+  </>;
+  const style: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, padding: 10, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', textDecoration: 'none' };
+  return to ? <Link to={to} style={style}>{content}</Link> : <div style={style}>{content}</div>;
 }
 
 function MemberRow({ member, teams, currentRole, currentUsername, canManage, onChanged, onError }: {
@@ -285,6 +334,7 @@ function roleLabel(role: string) {
 const cardStyle: React.CSSProperties = { padding: 14, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' };
 const memberCardStyle: React.CSSProperties = { padding: 11, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };
 const roleCardStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, padding: 9, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.45 };
+const boundaryNoteStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9, padding: '9px 10px', color: 'var(--text-secondary)', background: 'var(--accent-soft)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 11, lineHeight: 1.55 };
 const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 5px', fontSize: 13 };
 const sectionHeadingRowStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between' };
 const hintStyle: React.CSSProperties = { margin: '0', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.55 };

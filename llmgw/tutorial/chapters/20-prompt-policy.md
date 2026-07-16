@@ -17,12 +17,43 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 进入左侧“工作区”下的“appCaller”，找到 `tutorial.gateway-book::chat`，打开“提示词策略”。也可以在 Quickstart 创建结果中使用“打开提示词策略”。
+
+**图 047 chat 和 vision appCaller 可以从这里进入提示词治理**
+
+![图 047 chat 和 vision appCaller 可以从这里进入提示词治理](https://cds.miduo.org/api/reports/assets/aedadeaeec92436e8273c35cdfd488539e1981b9006ebb95eed097bbc7b77b01.png)
+
 2. 在前缀或后缀中填写一条简单规则，例如“回答前先确认问题所属商品；无法确认时说明需要补充的信息”。保持用途只针对 chat。
+
+**图 048 策略页先解释仅应用于 chat 和 vision，日志只记 id、版本和 hash**
+
+![图 048 策略页先解释仅应用于 chat 和 vision，日志只记 id、版本和 hash](https://cds.miduo.org/api/reports/assets/0b0a3d401d2d5266c34a6479ee0cccbc645b15035be4f0674d922b0bb2af230b.png)
+
 3. 点击预览，使用无敏感内容的样例系统提示词。对比合成前后，确认规则位置和长度符合预期。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 048 策略页先解释仅应用于 chat 和 vision，日志只记 id、版本和 hash](https://cds.miduo.org/api/reports/assets/0b0a3d401d2d5266c34a6479ee0cccbc645b15035be4f0674d922b0bb2af230b.png)
+
 4. 预览正确后点击“保存新版本”。页面应生成新版本，而不是覆盖旧版本；先记下页面可见的 version 和 hash，policy id 要到后面的请求详情读取。
+
+**图 049 前缀、后缀、变量和最大字符数在同一编辑区**
+
+![图 049 前缀、后缀、变量和最大字符数在同一编辑区](https://cds.miduo.org/api/reports/assets/4d66a5774f555fe14080c1e944693a7abc72dcbd6eadefeac51d22edc32388e6.png)
+
 5. Quickstart 安全测试会在应用策略前结束，不能证明策略生效。要取应用证据，使用一把尚未撤销、只允许该 chat appCaller 的测试 key，在终端先运行 `read -s LLMGW_API_KEY`，在无回显输入中粘贴 key 并回车；这样明文不会写入命令历史。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 049 前缀、后缀、变量和最大字符数在同一编辑区](https://cds.miduo.org/api/reports/assets/4d66a5774f555fe14080c1e944693a7abc72dcbd6eadefeac51d22edc32388e6.png)
+
 6. 再复制执行下面这段。把第一行地址换成 Quickstart 页面显示的“Gateway 地址”；命令只调用第 6 章公开教程桩一次，不访问付费模型，也不会把 key 写进文件。
+
+**图 050 先填写示例 system prompt，再点击预览，不必保存就能检查合并结果**
+
+![图 050 先填写示例 system prompt，再点击预览，不必保存就能检查合并结果](https://cds.miduo.org/api/reports/assets/3e5cdcb1de2e6037f6b393e8567fc6b789c923e2a1ee660cb09a66c156866ac2.png)
 
 ```bash
 export LLMGW_BASE_URL="https://map.ebcone.net"
@@ -38,9 +69,28 @@ unset LLMGW_API_KEY LLMGW_BASE_URL
 ```
 
 7. 复制输出的 requestId，进入“请求记录”打开详情。只应看见 policy id、version、hash，不应出现策略正文。终端命令完成后已经清除了内存变量。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 050 先填写示例 system prompt，再点击预览，不必保存就能检查合并结果](https://cds.miduo.org/api/reports/assets/3e5cdcb1de2e6037f6b393e8567fc6b789c923e2a1ee660cb09a66c156866ac2.png)
+
 8. 新建第二版做一个小修改，再选择旧版本执行回滚。回滚应产生新的当前版本，历史版本仍可追溯。
+
+**图 051 预览返回合并结果、策略字符数、hash 和实际变量**
+
+![图 051 预览返回合并结果、策略字符数、hash 和实际变量](https://cds.miduo.org/api/reports/assets/154ed01202892a18842007791a1e7b6f6e285da9e38057d451015f242635ea12.png)
+
 9. 回到 appCaller 列表，打开 `tutorial.gateway-book::vision` 的“提示词策略”。填写只与图片理解有关的简单规则，例如“先描述看得见的内容；看不清时明确说明”，点击预览并确认合成位置，再点击“保存新版本”。记录页面显示的 vision version 和 hash，不把正文抄进日志。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 052 每次保存创建新版本，历史版本可回滚但不会被改写](https://cds.miduo.org/api/reports/assets/1ab94eb9234a65228095b560693ae0f7268f0c137f93a559267b235a393a3e75.png)
+
 10. 使用第 10 章仍有效的 vision test key 做一次应用验证。在终端运行 `read -s LLMGW_VISION_KEY`，无回显粘贴后执行下面命令。它只向第 6 章公开教程桩发送 MAP 的公开图标，不读取本地照片，也不调用付费模型。发布前已确认该图片地址返回 `image/png`：
+
+**图 052 每次保存创建新版本，历史版本可回滚但不会被改写**
+
+![图 052 每次保存创建新版本，历史版本可回滚但不会被改写](https://cds.miduo.org/api/reports/assets/1ab94eb9234a65228095b560693ae0f7268f0c137f93a559267b235a393a3e75.png)
 
 ```bash
 export LLMGW_BASE_URL="https://map.ebcone.net"
@@ -56,6 +106,8 @@ unset LLMGW_VISION_KEY LLMGW_BASE_URL
 ```
 
 11. 用输出的 vision requestId 打开请求详情，核对它使用 vision appCaller，并且只显示 vision policy id、刚保存的 version 与 hash。chat 和 vision 各自只有一次公开教程桩应用验证；不要把策略扩展到 image generation、speech 或其他请求类型。
+
+![图 052 每次保存创建新版本，历史版本可回滚但不会被改写](https://cds.miduo.org/api/reports/assets/1ab94eb9234a65228095b560693ae0f7268f0c137f93a559267b235a393a3e75.png)
 
 ## 看图核对
 
