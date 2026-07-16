@@ -7,3 +7,5 @@
 | fix | cds | 单服务重部署路由（POST /branches/:id/deploy/:profileId）补齐 build-gate 过闸，源码编译不再绕过全局并发控制 |
 | feat | cds | 全局构建并发上限运行时可调：GET/PUT /api/cluster/build-gate（CdsState.maxConcurrentBuilds 持久化，env 仍为最终 override），上调即 pumpWaiters 唤醒排队者；/api/cluster/status 的 buildGate 透出 holders/waiters 身份明细 |
 | test | cds | build-gate 取消/身份/pump、deploy-layer-runner、coordinator manual 合并、reconcileInterrupted 周期语义、waitForReadiness 活性早退共 5 个套件新增或扩展 |
+| feat | cds | 构建队列健康判定常态化：evaluateBuildGateHealth 纯函数（积压/持槽超时/幽灵 run/账目不变量四类退化）+ GET /api/cluster/build-gate/health（健康 200 / 退化 503，供任务调度定时回归探测）+ 进程内 build-gate-watchdog 每 60s 采样、退化写系统事件告警、恢复留痕 |
+| test | cds | build-gate-health 回归门禁套件（8 例：四类退化 + 阈值边界 + 多退化并存 + 坏时间戳容错），随 CI cds-build job 门禁 PR |

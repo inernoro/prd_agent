@@ -884,6 +884,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cluster/status': '获取集群状态',
     'GET /cluster/build-gate': '获取构建并发闸',
     'PUT /cluster/build-gate': '调整构建并发上限',
+    'GET /cluster/build-gate/health': '获取构建闸健康',
     'GET /cluster/strategy': '获取集群调度策略',
     'PUT /cluster/strategy': '更新集群调度策略',
     'POST /cluster/join': '加入集群',

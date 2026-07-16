@@ -39,6 +39,7 @@ import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import { ExecutorAgent } from '../executor/agent.js';
 import { updateEnvFile, defaultEnvFilePath } from '../services/env-file.js';
 import { buildGateStatus, pumpWaiters } from '../services/build-gate.js';
+import { evaluateBuildGateHealth } from '../services/build-gate-health.js';
 
 /**
  * Shape of a cluster connection code after base64+JSON decoding. The UI
@@ -443,6 +444,20 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       stateValue: stateService.getMaxConcurrentBuilds() ?? null,
       envOverride: !!(process.env.CDS_MAX_CONCURRENT_BUILDS || '').trim(),
     });
+  });
+
+  // ── GET /api/cluster/build-gate/health — 构建队列健康判定（回归探测目标）──
+  //
+  // 健康 200 / 退化 503：注册在「任务调度」的定时回归任务用它当 http 探测目标，
+  // 退化时任务 run 直接红灯（2026-07-16 队列堵死事故的常态化回归拦截）。
+  // 判定逻辑 SSOT：services/build-gate-health.ts（进程内看门狗与本端点共用）。
+  router.get('/build-gate/health', (_req, res) => {
+    const health = evaluateBuildGateHealth(
+      buildGateStatus(),
+      stateService.getDeploymentRuns(),
+      new Date(),
+    );
+    res.status(health.ok ? 200 : 503).json(health);
   });
 
   router.put('/build-gate', (req, res) => {

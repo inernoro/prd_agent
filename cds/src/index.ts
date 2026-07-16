@@ -29,7 +29,8 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
-import { setMaxConcurrentBuildsProvider } from './services/build-gate.js';
+import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
+import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
@@ -181,6 +182,71 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
   const timer = setInterval(sample, MASTER_MEMORY_MONITOR_INTERVAL_MS);
   timer.unref?.();
   sample();
+  return timer;
+}
+
+/**
+ * build-gate 看门狗（2026-07-16 队列堵死事故的常态化回归拦截，进程内主防线）。
+ *
+ * 60s 采样 evaluateBuildGateHealth（排队积压 / 槽位持有超时 / 幽灵 run / 闸门
+ * 账目不变量），退化时向 ServerEventLogStore 记 warn/error 事件（dashboard
+ * 系统日志可见）+ console.warn；同一严重度 10 分钟去重；恢复时记一条 info。
+ * 判定 SSOT：services/build-gate-health.ts（与 GET /api/cluster/build-gate/health
+ * 端点共用，端点是注册在「任务调度」里的定时回归任务的探测目标）。
+ */
+const BUILD_GATE_WATCHDOG_INTERVAL_MS = 60_000;
+const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
+
+function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
+  if (!store) return null;
+  let lastSeverity: ServerEventSeverity | null = null;
+  let lastRecordedAt = 0;
+
+  const sample = () => {
+    try {
+      const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
+      const now = Date.now();
+      if (health.ok) {
+        if (lastSeverity) {
+          // 从退化恢复：记一条 info 让事件流有始有终。
+          store.record({
+            category: 'system',
+            severity: 'info',
+            source: 'build-gate-watchdog',
+            action: 'build-gate.health.recovered',
+            message: `构建队列健康已恢复（active=${health.summary.active} queued=${health.summary.queued} max=${health.summary.max}）`,
+            details: { summary: health.summary },
+          });
+          console.warn('[build-gate-watchdog] 构建队列健康已恢复');
+          lastSeverity = null;
+        }
+        return;
+      }
+      const severity: ServerEventSeverity = health.reasons.some((r) => r.severity === 'error') ? 'error' : 'warn';
+      if (lastSeverity === severity && now - lastRecordedAt < BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS) return;
+      lastSeverity = severity;
+      lastRecordedAt = now;
+      const message = `构建队列健康退化：${health.reasons.map((r) => r.message).join('；')}`;
+      store.record({
+        category: 'system',
+        severity,
+        source: 'build-gate-watchdog',
+        action: 'build-gate.health.degraded',
+        message,
+        status: severity,
+        details: {
+          summary: health.summary,
+          reasons: health.reasons,
+        },
+      });
+      console.warn(`[build-gate-watchdog] ${message}`);
+    } catch (err) {
+      console.warn(`[build-gate-watchdog] 采样失败: ${(err as Error).message}`);
+    }
+  };
+
+  const timer = setInterval(sample, BUILD_GATE_WATCHDOG_INTERVAL_MS);
+  timer.unref?.();
   return timer;
 }
 
@@ -724,6 +790,7 @@ if (activeServerEventLogStore) {
 }
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
+const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -2919,6 +2986,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
+  if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
