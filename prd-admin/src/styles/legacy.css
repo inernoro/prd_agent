@@ -38,16 +38,24 @@ html[data-material="solid"] *::after {
   -webkit-backdrop-filter: none !important;
 }
 
-/* 顶部工具条 / TabBar 容器：去棱光内高光，投影收敛为轻投影 */
-html[data-material="solid"] .surface-nav-bar {
-  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+/* 顶部工具条 / TabBar 容器：纯平实底 + 发丝描边，去掉硬编码亚克力渐变、
+   棱光内高光与大投影（浅色主题有自己的纸感覆盖，故只作用于暗色） */
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar {
+  background: var(--glass-bg-start, #1c1c22);
+  border-color: var(--glass-border, rgba(255, 255, 255, 0.08));
+  box-shadow: none;
 }
-html[data-material="solid"] .surface-nav-bar[data-variant="gold"] {
-  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar[data-variant="gold"] {
+  background: var(--glass-bg-start, #1c1c22);
+  box-shadow: none;
+}
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar[data-variant="plain"] {
+  background: transparent;
+  border-color: transparent;
 }
 
-/* 抬升面板：同样去内高光、收敛投影（--glass-border/--glass-bg 已是实底 token） */
-html[data-material="solid"] .surface-raised {
+/* 抬升面板：去内高光，收敛为轻投影（--glass-border/--glass-bg 已是实底 token） */
+html[data-material="solid"]:not([data-theme="light"]) .surface-raised {
   box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
 }
 
@@ -55,6 +63,21 @@ html[data-material="solid"] .surface-raised {
 html[data-material="solid"] .surface-raised::after,
 html[data-material="solid"] .glass-blur-pseudo::after {
   content: none;
+}
+
+/* 卡片 hover 全站统一为「安静反馈」：零位移，描边提亮 + 轻投影。
+   压过 surface.css 里默认的 translateY(-3px) + 强光晕（那是玻璃材质的手势） */
+html[data-material="solid"] .glass-card-interactive:hover {
+  transform: none;
+  border-color: var(--border-hover, rgba(255, 255, 255, 0.20)) !important;
+  box-shadow: 0 4px 16px -10px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-material="solid"] .glass-card-interactive:active {
+  transform: none;
+}
+[data-theme="light"][data-material="solid"] .glass-card-interactive:hover {
+  border-color: var(--border-hover, rgba(26, 26, 31, 0.24)) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 
 /* 减少过渡持续时间，让操作更干脆 */

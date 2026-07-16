@@ -198,16 +198,16 @@ function buildObsidianStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // 背景：使用 CSS 变量（已在 themeComputed 中切换为实底值）
+  // 背景：使用 CSS 变量（已在 themeComputed 中切换为纯平实底值）。
+  // 2026-07-16 现代化重做：去掉白色顶部镜面高光——那是「塑料亚克力感」的来源；
+  // 素色的层级只靠 细描边 + 底色阶梯 表达（Linear/Vercel 式扁平）。
+  // gold / accentHue 变体保留一层极轻的色彩顶部氛围（身份色，不是镜面反光）。
   let background = `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`;
-
-  // 顶部微光：用 linear-gradient 模拟顶边高光
-  const topHighlight = variant === 'gold'
-    ? 'linear-gradient(180deg, rgba(99, 102, 241, 0.08) 0%, transparent 50%)'
-    : accentHue !== undefined
-      ? `linear-gradient(180deg, hsla(${accentHue}, 50%, 60%, 0.06) 0%, transparent 50%)`
-      : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 50%)';
-  background = `${topHighlight}, ${background}`;
+  if (variant === 'gold') {
+    background = `linear-gradient(180deg, rgba(99, 102, 241, 0.05) 0%, transparent 55%), ${background}`;
+  } else if (accentHue !== undefined) {
+    background = `linear-gradient(180deg, hsla(${accentHue}, 50%, 60%, 0.04) 0%, transparent 55%), ${background}`;
+  }
 
   // 光晕效果（radial-gradient，GPU-friendly，不需要 backdrop-filter）
   if (glow) {
@@ -227,13 +227,13 @@ function buildObsidianStyle(
       ? `hsla(${accentHue}, 50%, 60%, 0.15)`
       : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
-  // 阴影：素色基调走轻投影 token（2026-07-16 收敛「浮肿感」——大投影是元凶之一），
-  // gold/accent 变体仅保留一层很轻的彩色氛围光
-  let boxShadow = 'var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))';
+  // 阴影：静息态近乎无影（现代扁平——分离靠描边），仅一条发丝级落影防止表面与底色粘连；
+  // gold/accent 变体多一层极轻的彩色氛围，浮层类阴影由 surface-popover 等自己负责
+  let boxShadow = '0 1px 2px rgba(0, 0, 0, 0.22)';
   if (variant === 'gold') {
-    boxShadow = '0 8px 24px -8px rgba(99, 102, 241, 0.14), var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))';
+    boxShadow = '0 8px 24px -12px rgba(99, 102, 241, 0.12), 0 1px 2px rgba(0, 0, 0, 0.22)';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 8px 24px -8px hsla(${accentHue}, 60%, 50%, 0.12), var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))`;
+    boxShadow = `0 8px 24px -12px hsla(${accentHue}, 60%, 50%, 0.10), 0 1px 2px rgba(0, 0, 0, 0.22)`;
   }
 
   // 浅色"纸感"卡片:走 token 暖咖啡微影,无白色 inset 高光(在白底上无效)、无黑色 inset 暗边(违反纸感)。

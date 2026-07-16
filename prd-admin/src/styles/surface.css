@@ -1654,35 +1654,10 @@
   transition-duration: 0.1s;
 }
 
-/* ── 知识库卡片（DocumentStorePage .kb-store-card）素色实底 ──
-   2026-07-16 用户反馈：玻璃效果「不太像玻璃、悬浮很不自在」。
-   改为素色实底面板：去掉伪元素 blur / 棱光 / 噪点层，底色走双主题 token；
-   hover 只做描边提亮 + 投影微调，零位移（Notion/Linear 式安静反馈）。 */
-.kb-store-card.glass-card-interactive {
-  background: var(--bg-elevated, #1e1e24) !important;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12)) !important;
-  box-shadow: var(--shadow-card) !important;
-}
-
-/* 关掉 GlassCard 质量模式的 blur 层与噪点层（素色不需要） */
-.kb-store-card.glass-blur-pseudo::before,
-.kb-store-card.glass-blur-pseudo::after {
-  content: none;
-}
-
-.kb-store-card.glass-card-interactive:hover {
-  border-color: var(--border-strong, rgba(255, 255, 255, 0.22)) !important;
-  box-shadow: 0 8px 24px -14px rgba(0, 0, 0, 0.5) !important;
-}
-
-[data-theme="light"] .kb-store-card.glass-card-interactive {
-  background: var(--bg-card, #ffffff) !important;
-}
-
-[data-theme="light"] .kb-store-card.glass-card-interactive:hover {
-  border-color: var(--border-strong, rgba(15, 23, 42, 0.16)) !important;
-  box-shadow: var(--shadow-card) !important;
-}
+/* ── 知识库卡片（.kb-store-card）──
+   2026-07-16 起素色/玻璃由系统级界面材质统一接管（data-material，见 legacy.css）：
+   素色下 GlassCard 全站走纯平实底 + 安静 hover，知识库不再特例化，
+   本区仅保留置顶落点闪烁动画。 */
 
 /* ── 置顶/取消置顶的落点提示 ──
    配合卡片 FLIP 位移动画：动完在落点处外圈琥珀描边 1.6s 渐隐，一眼看到它挪去了哪。
