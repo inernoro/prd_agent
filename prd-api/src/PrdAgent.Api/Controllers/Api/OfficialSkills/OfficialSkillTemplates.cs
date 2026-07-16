@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.9.0";
+    public const string AiDefectResolveVersion = "1.9.1";
     public const string AiDefectResolveReleaseDate = "2026-07-17";
 
     public const string AiDefectResolveSkillMd = """
@@ -89,6 +89,8 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 
 `validation-report.verdict` 映射：功能通过且证据完整用 `pass`；功能通过但证据不完整用 `conditional`，消息以“功能验收通过；闭环证据不完整”开头；功能本身有已确认限制也用 `conditional` 并单独说明；只有用户可见功能仍失败、出现回归，或缺少关键功能验证而无法确认修复时才用 `fail` 和“需要继续改进”；正式证据证明缺陷陈述不成立用 `invalid`。自动化取证能力不足不得描述成代码仍未修复。
 
+知识库归档的 `reportVerdict` 只能取 `pass`、`conditional` 或 `fail`。当功能核验结论为 `invalid` 时，使用 `reportVerdict=conditional` 归档，正文明确写“缺陷陈述不成立”并引用证据；归档成功后，正式系统 `validation-report.verdict` 再使用 `invalid`。不得把 `invalid` 传给 `create-visual-test-to-kb` 或 `archive_report.py`。
+
 ## 正式发布后的验收通知
 
 1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
@@ -96,7 +98,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
 4. 视觉验收应进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮，并点击按钮截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。若 UI 因时间窗口或环境状态无法展示目标 commit，按双轴规则标记证据缺口并记录兜底证据，不得直接判功能失败。普通 changelog 文案行不作为缺陷关联验收目标。
 5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
-6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；只有功能验收为 `fail` 才发送“需要继续改进”，功能通过但闭环证据不完整应回写 `conditional` 并明确说明待补证据。
+6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；只有功能验收为 `fail` 才发送“需要继续改进”。`conditional` 必须提供 `message`，分别说明功能结论、闭环证据状态以及限制或缺口，缺少时后端返回 400。
 
 ## 轻量标准
 
