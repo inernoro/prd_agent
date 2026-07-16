@@ -158,6 +158,7 @@ export function QuickstartPage() {
       scopes: ['invoke'],
       teamId,
       allowedCidrs: [],
+      rateLimitPerMinute: 60,
     });
     setCreatingStage(null);
     if (!keyResponse.success) {
@@ -299,7 +300,7 @@ export function QuickstartPage() {
           <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={setBaseUrl} /></details>
 
           <div className="lg-quickstart-actions">
-            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议；切换协议后可直接测试。` : '不会创建通配 key，也不会调用付费模型。'}</small></div>
+            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议，默认限制 60 次/分钟；切换协议后可直接测试。` : '不会创建通配 key；密钥默认限制 60 次/分钟，也不会调用付费模型。'}</small></div>
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {canCreateAccess && bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
               {canCreateAccess ? <Button variant="primary" disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : '一键生成 appCaller 与 key'}</Button> : null}

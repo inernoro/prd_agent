@@ -16,14 +16,55 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 从左侧“工作区”进入“请求记录”，先搜索第 11 章标为 chat 的 dry-run requestId。
+
+**图 069 从左侧导航点击“请求记录”，不用猜页面地址**
+
+![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
+
 2. 打开详情，确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
+
+**图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度**
+
+![图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+
 3. 再搜索第 20 章 chat 命令输出的 requestId，核对时间、状态、协议、appCaller `tutorial.gateway-book::chat`、ServiceKeyId 和客服组。密钥这里只显示身份或遮盖信息。
+
+**图 071 请求趋势和状态分布让用户先看有没有流量与失败**
+
+![图 071 请求趋势和状态分布让用户先看有没有流量与失败](https://cds.miduo.org/api/reports/assets/af4fb1eb6028d571e6923c337b807fab3c0872eff1a16817fa744082a486bb37.png)
+
 4. 在这条非 dry-run 详情中读取模型池、实际模型 `stub-chat`、Provider 和耗时；只有这条记录能证明真实路由经过教程桩。
+
+**图 072 费用可信度条区分价格覆盖、unknown 与原币种金额**
+
+![图 072 费用可信度条区分价格覆盖、unknown 与原币种金额](https://cds.miduo.org/api/reports/assets/d6875f1f274fb6106f00336d5889877e1911c7077c9b98980bf25bd69e19fb0e.png)
+
 5. 查看 PromptPolicy 证据。应显示 policy id、version、hash，不应出现策略正文。
+
+**图 073 请求、上游调用、会话和后台任务四个页签回答不同问题**
+
+![图 073 请求、上游调用、会话和后台任务四个页签回答不同问题](https://cds.miduo.org/api/reports/assets/381b0bb85f777a44ed90be5ef4298f323f2839c12decf45b96e011a3d4d1d9c9.png)
+
 6. 查看费用状态和原币种。第 7 章没有为教程桩填写价格，因此这里应保持 unknown，不能读成 0。
+
+**图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份**
+
+![图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份](https://cds.miduo.org/api/reports/assets/6905aa13616c5bd2191b0971714064d307f8e9a5d9f543fd302d4c4b3989d1a4.png)
+
 7. 如果记录本身带 session，再切到“会话”或使用“会话 ID”筛选。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
+
+**图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
+
+![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+
 8. 复制定位所需的 requestId，而不是复制整页可能含业务内容的详情。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
 ## 看到什么算成功
 

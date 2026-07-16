@@ -100,6 +100,23 @@ function publicBaseFromReq(req: Request): string {
 
 /** Hard cap on report body size (paste + upload). 10MB of UTF-8 text. */
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+
+const UPLOADABLE_IMAGE_TYPES: Record<string, { ext: string; valid: (data: Buffer) => boolean }> = {
+  'image/png': {
+    ext: 'png',
+    valid: (data) => data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+  },
+  'image/jpeg': {
+    ext: 'jpg',
+    valid: (data) => data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff,
+  },
+  'image/webp': {
+    ext: 'webp',
+    valid: (data) => data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF'
+      && data.subarray(8, 12).toString('ascii') === 'WEBP',
+  },
+};
 
 /** Matches inline base64 image data URIs (HTML `src="data:..."` or Markdown
  *  `![](data:...)` — we operate on the data-URI substring, syntax-agnostic). */
@@ -384,6 +401,51 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   const jsonParser = expressJson({ limit: '12mb' });
   const textParser = expressText({ limit: '12mb', type: ['text/*', 'application/markdown'] });
   const rawParser = expressRaw({ limit: '12mb', type: 'multipart/form-data' });
+  const assetParser = expressRaw({ limit: `${MAX_ASSET_BYTES}b`, type: Object.keys(UPLOADABLE_IMAGE_TYPES) });
+
+  // POST /api/reports/assets — upload one screenshot before the textual report.
+  // Reports keep their 10MB text safety cap, while any number of screenshots can
+  // live in the content-addressed asset store and be referenced by immutable URLs.
+  router.post('/reports/assets', assetParser, async (req: Request, res: Response) => {
+    try {
+      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      const type = UPLOADABLE_IMAGE_TYPES[contentType];
+      if (!type) {
+        return res.status(415).json({
+          error: 'unsupported_asset_type',
+          message: '截图只支持 PNG、JPEG 或 WebP',
+        });
+      }
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (!data.length) {
+        return res.status(400).json({ error: 'empty_asset', message: '截图内容为空' });
+      }
+      if (data.length > MAX_ASSET_BYTES) {
+        return res.status(413).json({
+          error: 'asset_too_large',
+          message: `单张截图超过上限（${MAX_ASSET_BYTES / 1024 / 1024}MB）`,
+        });
+      }
+      if (!type.valid(data)) {
+        return res.status(400).json({ error: 'invalid_asset', message: '截图内容与声明的图片格式不一致' });
+      }
+
+      const name = `${createHash('sha256').update(data).digest('hex')}.${type.ext}`;
+      await stateService.writeReportAssetAsync(name, data);
+      const path = `/api/reports/assets/${name}`;
+      const base = publicBaseFromReq(req);
+      return res.status(201).json({
+        asset: {
+          name,
+          url: base ? `${base}${path}` : path,
+          contentType,
+          sizeBytes: data.length,
+        },
+      });
+    } catch (err) {
+      return res.status(500).json({ error: 'internal', message: (err as Error).message });
+    }
+  });
 
   // POST /api/reports — create a report (paste JSON OR multipart upload).
   // 2026-07-09：报告正文/资产 IO 全部异步化（Express 4 不接管 async handler

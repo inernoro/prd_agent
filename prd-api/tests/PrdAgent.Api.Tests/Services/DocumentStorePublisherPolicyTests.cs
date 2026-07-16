@@ -157,22 +157,41 @@ public class DocumentStorePublisherPolicyTests
     [Fact]
     public async Task Controller_RequiresApiKeyAndWriteScopeAtClassBoundary()
     {
-        var type = typeof(DocumentStorePublisherController);
-        var route = type.GetCustomAttributes(typeof(RouteAttribute), inherit: true).Cast<RouteAttribute>().Single();
-        var authorize = type.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>().Single();
-        var scope = type.GetCustomAttributes(typeof(RequireScopeAttribute), inherit: true).SingleOrDefault();
+        foreach (var type in new[]
+                 {
+                     typeof(DocumentStorePublisherController),
+                     typeof(DocumentStorePublisherAssetsController),
+                 })
+        {
+            var route = type.GetCustomAttributes(typeof(RouteAttribute), inherit: true).Cast<RouteAttribute>().Single();
+            var authorize = type.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>().Single();
+            var scope = type.GetCustomAttributes(typeof(RequireScopeAttribute), inherit: true).SingleOrDefault();
 
-        route.Template.ShouldBe("api/open/document-store/publisher");
-        authorize.AuthenticationSchemes.ShouldBe("ApiKey");
-        scope.ShouldNotBeNull();
+            route.Template.ShouldBe("api/open/document-store/publisher");
+            authorize.AuthenticationSchemes.ShouldBe("ApiKey");
+            scope.ShouldNotBeNull();
 
-        var denied = CreateAuthorizationContext("document-store:read");
-        await ((RequireScopeAttribute)scope!).OnAuthorizationAsync(denied);
-        ((ObjectResult)denied.Result!).StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
+            var denied = CreateAuthorizationContext("document-store:read");
+            await ((RequireScopeAttribute)scope!).OnAuthorizationAsync(denied);
+            ((ObjectResult)denied.Result!).StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
 
-        var allowed = CreateAuthorizationContext(DocumentStoreOpenApiController.ScopeWrite);
-        await ((RequireScopeAttribute)scope!).OnAuthorizationAsync(allowed);
-        allowed.Result.ShouldBeNull();
+            var allowed = CreateAuthorizationContext(DocumentStoreOpenApiController.ScopeWrite);
+            await ((RequireScopeAttribute)scope!).OnAuthorizationAsync(allowed);
+            allowed.Result.ShouldBeNull();
+        }
+    }
+
+    [Fact]
+    public void PublisherImageUpload_DetectsContentInsteadOfTrustingFilename()
+    {
+        DocumentStorePublisherAssetsController.DetectImageMime(
+            new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }).ShouldBe("image/png");
+        DocumentStorePublisherAssetsController.DetectImageMime(
+            new byte[] { 0xff, 0xd8, 0xff, 0x00 }).ShouldBe("image/jpeg");
+        DocumentStorePublisherAssetsController.DetectImageMime(
+            "RIFF1234WEBP"u8.ToArray()).ShouldBe("image/webp");
+        DocumentStorePublisherAssetsController.DetectImageMime(
+            "not a png"u8.ToArray()).ShouldBeNull();
     }
 
     [Fact]

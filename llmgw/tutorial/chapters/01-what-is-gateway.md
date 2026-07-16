@@ -16,11 +16,37 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 打开左侧“开发者”下的“学习中心”，找到“这些概念如何连接”。
+
+**图 012 租户行为与额度管理地图给出 appCaller、key 和用量三处入口**
+
+![图 012 租户行为与额度管理地图给出 appCaller、key 和用量三处入口](https://cds.miduo.org/api/reports/assets/61e7dd789a2e2dd44cbffd76c768b4a1828bcde5992cae9787fdbd524f9b24de.png)
+
 2. 依次读“租户”“团队与用户”“appCaller”“租户接入密钥”“模型池”“模型”“Provider”“请求记录”。
+
+**图 097 学习中心先用三步讲清第一条请求，不要求先懂全部术语**
+
+![图 097 学习中心先用三步讲清第一条请求，不要求先懂全部术语](https://cds.miduo.org/api/reports/assets/5b663dc659eb61f03554e6147a1f6b08de72fde553f14100520a9785236155e6.png)
+
 3. 在四个方框旁写下：密钥回答“谁在调用”，appCaller 回答“为什么调用”，模型池回答“去哪里调用”，Provider 回答“怎样连接上游”。
+
+**图 098 完整链路把租户、key、appCaller、池、模型和 Provider 连起来**
+
+![图 098 完整链路把租户、key、appCaller、池、模型和 Provider 连起来](https://cds.miduo.org/api/reports/assets/ddac98c28e33de05568b35661348a0d8f75883d77179341e2a756a113d44a3d7.png)
+
 4. 再补一条：Exchange 在请求模型名和平台可执行模型之间做映射，它不是新密钥，也不是另一个租户。
+
+**图 099 术语索引可以直接跳到对应解释和操作入口**
+
+![图 099 术语索引可以直接跳到对应解释和操作入口](https://cds.miduo.org/api/reports/assets/b0688567037291c40d696a6fe3776dee9353cf57821b8cfd6f76ba5970b09b33.png)
+
 5. 找到学习中心的排错顺序并记下：请求记录、appCaller、模型池、模型与 Provider、Exchange。
+
+**本步位置复核：在同一圈选画面完成本步后再继续。**
+
+![图 099 术语索引可以直接跳到对应解释和操作入口](https://cds.miduo.org/api/reports/assets/b0688567037291c40d696a6fe3776dee9353cf57821b8cfd6f76ba5970b09b33.png)
 
 ## 看到什么算成功
 

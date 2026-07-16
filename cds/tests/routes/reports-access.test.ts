@@ -26,16 +26,16 @@ async function call(
   server: http.Server,
   method: string,
   urlPath: string,
-  opts: { projectKey?: string; body?: unknown } = {},
+  opts: { projectKey?: string; body?: unknown; raw?: Buffer; contentType?: string } = {},
 ): Promise<Res> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (opts.projectKey) headers['x-test-project-key'] = opts.projectKey;
-    const payload = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+    const payload = opts.raw ?? (opts.body !== undefined ? Buffer.from(JSON.stringify(opts.body)) : undefined);
     if (payload) {
-      headers['Content-Type'] = 'application/json';
-      headers['Content-Length'] = String(Buffer.byteLength(payload));
+      headers['Content-Type'] = opts.contentType || 'application/json';
+      headers['Content-Length'] = String(payload.length);
     }
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
@@ -278,6 +278,46 @@ describe('Acceptance report routes — project-scoped key access', () => {
     // The public asset route serves it (200).
     const got = await call(server, 'GET', `/api/reports/assets/${name}`);
     expect(got.status).toBe(200);
+  });
+
+  it('uploads screenshots separately and returns an immutable asset URL', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    const uploaded = await call(server, 'POST', '/api/reports/assets', {
+      projectKey: 'proj-a',
+      raw: png,
+      contentType: 'image/png',
+    });
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.body.asset.name).toMatch(/^[a-f0-9]{64}\.png$/);
+    expect(uploaded.body.asset.url).toContain(`/api/reports/assets/${uploaded.body.asset.name}`);
+    expect(uploaded.body.asset.sizeBytes).toBe(png.length);
+
+    const downloaded = await call(server, 'GET', `/api/reports/assets/${uploaded.body.asset.name}`);
+    expect(downloaded.status).toBe(200);
+    expect(downloaded.headers['cache-control']).toContain('immutable');
+
+    const duplicate = await call(server, 'POST', '/api/reports/assets', {
+      projectKey: 'proj-a',
+      raw: png,
+      contentType: 'image/png',
+    });
+    expect(duplicate.status).toBe(201);
+    expect(duplicate.body.asset.name).toBe(uploaded.body.asset.name);
+  });
+
+  it('rejects unsupported or disguised screenshot uploads', async () => {
+    const unsupported = await call(server, 'POST', '/api/reports/assets', {
+      raw: Buffer.from('<svg></svg>'),
+      contentType: 'image/svg+xml',
+    });
+    expect(unsupported.status).toBe(415);
+
+    const disguised = await call(server, 'POST', '/api/reports/assets', {
+      raw: Buffer.from('not a png'),
+      contentType: 'image/png',
+    });
+    expect(disguised.status).toBe(400);
+    expect(disguised.body.error).toBe('invalid_asset');
   });
 
   it('rejects execution acceptance HTML without the standard report template', async () => {
