@@ -43,6 +43,13 @@ describe('buildDocStoreAgentPrompt', () => {
     expect(p).not.toContain('PUT    $PRD_AGENT_BASE');
   });
 
+  it('只读 Key：收尾指引不邀请写入请求，且提示需另签写权限 Key', () => {
+    const p = buildDocStoreAgentPrompt(KEY, { writable: false, base: BASE });
+    expect(p).not.toContain('存进我的知识库');
+    expect(p).toContain('只读');
+    expect(p).toContain('先签发带写入权限的 Key');
+  });
+
   it('文档空间指令不引用 marketplace 技能（findmapskills 只覆盖海鲜市场端点）', () => {
     const p = buildDocStoreAgentPrompt(KEY, { base: BASE });
     expect(p).not.toContain('findmapskills');
