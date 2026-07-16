@@ -43,6 +43,11 @@ SUSPECT_SECRET_RE = re.compile(r"(?:gwk|sk-ak|sk)-[A-Za-z0-9_-]{16,}")
 SELF_REPORTED_TENANT_RE = re.compile(r"(?:[?&]tenantId=|[\"']tenantId[\"']\s*:)", re.IGNORECASE)
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https://[^)\s]+)\)")
 NUMBERED_STEP_RE = re.compile(r"(?m)^\d+\. [^\n]+$")
+CHAPTER_REFERENCE_RE = re.compile(r"第\s*(\d{1,2})\s*章")
+CHAPTER_REFERENCE_PROTECTED_RE = re.compile(
+    r"```.*?```|~~~.*?~~~|`+[^`\n]*`+|\[\[[^\]\n]+\]\]|!?\[[^\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)",
+    re.DOTALL,
+)
 MIN_IMAGES_PER_CHAPTER = 2
 MIN_UNIQUE_IMAGES = 80
 MIN_EVIDENCE_REFERENCES = 111
@@ -107,6 +112,42 @@ def normalized_text(path: Path) -> str:
     except UnicodeDecodeError as exc:
         raise TutorialError(f"{path}: 不是 UTF-8 文本") from exc
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def link_chapter_references(content: str, current_number: int, titles: dict[int, str]) -> str:
+    """把正文中的跨章节字面引用变成可点击双链，同时保护代码和已有链接。"""
+    protected = [(match.start(), match.end()) for match in CHAPTER_REFERENCE_PROTECTED_RE.finditer(content)]
+    replacements: list[tuple[int, int, str]] = []
+    protected_index = 0
+    consumed_until = 0
+    for match in CHAPTER_REFERENCE_RE.finditer(content):
+        if match.start() < consumed_until:
+            continue
+        while protected_index < len(protected) and protected[protected_index][1] <= match.start():
+            protected_index += 1
+        if protected_index < len(protected):
+            start, end = protected[protected_index]
+            if start <= match.start() < end:
+                continue
+        target_number = int(match.group(1))
+        title = titles.get(target_number)
+        if title is None or target_number == current_number:
+            continue
+        if content.startswith(title, match.start()):
+            replace_end = match.start() + len(title)
+            replacement = f"[[{title}]]"
+        else:
+            replace_end = match.end()
+            replacement = f"[[{title}|{match.group(0)}]]"
+        replacements.append((match.start(), replace_end, replacement))
+        consumed_until = replace_end
+
+    if not replacements:
+        return content
+    output = content
+    for start, end, replacement in reversed(replacements):
+        output = output[:start] + replacement + output[end:]
+    return output
 
 
 def _safe_source_path(root: Path, value: str) -> Path:
@@ -246,9 +287,12 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
     if actual_chapters != expected_chapters:
         raise TutorialError("第 0 至 32 章必须按顺序且各出现一次")
     chapter_nodes = [next(node for node in nodes if node.source_id == source_id) for source_id in expected_chapters]
+    chapter_titles = {number: node.title for number, node in enumerate(chapter_nodes)}
     for number, node in enumerate(chapter_nodes):
         next_title = chapter_nodes[number + 1].title.split("：", 1)[-1] if number < 32 else None
         _validate_chapter(node, number, next_title)
+        if link_chapter_references(node.content, number, chapter_titles) != node.content:
+            raise TutorialError(f"{node.source_path}: 存在未转换为可点击双链的跨章节引用")
     image_references = [url for node in chapter_nodes for url in MARKDOWN_IMAGE_RE.findall(node.content)]
     unique_images = set(image_references)
     if len(unique_images) < MIN_UNIQUE_IMAGES:

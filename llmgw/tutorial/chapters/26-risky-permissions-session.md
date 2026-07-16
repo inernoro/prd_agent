@@ -10,7 +10,7 @@
 
 ## 开始前检查
 
-- 只在“教程咖啡店”操作第 5 章已创建的客服组 Developer，不停用、降权或修改唯一 Owner。
+- 只在“教程咖啡店”操作[[第 5 章：创建团队和成员|第 5 章]]已创建的客服组 Developer，不停用、降权或修改唯一 Owner。
 - 准备 Owner 和 Developer 两个独立浏览器会话；不需要额外创建备用 Owner 或 Admin。
 - 记录客服组 Developer 当前角色与团队；不记录密码或 key 明文。
 - Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥，不能创建通配 key。

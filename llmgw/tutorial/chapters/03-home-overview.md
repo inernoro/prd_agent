@@ -48,7 +48,7 @@
 
 ![图 008 最近请求提供 requestId、模型、appCaller 和耗时入口](https://cds.miduo.org/api/reports/assets/9d6ed93f8b7db29907ac853127b408edac8e5f77df167c2df6ba1e22c11c40f7.png)
 
-6. 找到 Top appCaller、常用模型和租户接入密钥区域。现在为空没关系，第 13 章后再回来对照。
+6. 找到 Top appCaller、常用模型和租户接入密钥区域。现在为空没关系，[[第 13 章：找到第一条请求|第 13 章]]后再回来对照。
 
 **图 009 租户首页展示用户、appCaller、模型和密钥分布**
 

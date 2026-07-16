@@ -11,7 +11,7 @@ Gateway 的估算来自价格快照，供应商扣费来自账单。两边可能
 ## 开始前检查
 
 - 当前角色能管理账单，当前租户为“教程咖啡店”。
-- 第 20 章 chat 教程桩请求已经成功，记下 chat requestId 对应的发生时间和 ServiceKeyId。vision 请求不放进本章时间窗。教程桩没有供应商请求编号，这是官方桩的已知边界。
+- [[第 20 章：配置 PromptPolicy|第 20 章]] chat 教程桩请求已经成功，记下 chat requestId 对应的发生时间和 ServiceKeyId。vision 请求不放进本章时间窗。教程桩没有供应商请求编号，这是官方桩的已知边界。
 - 准备唯一流水号 `tutorial-window-日期-时间`，样例 actual 金额为 `0.01`，币种为 `CNY`。这是明确标记的教学汇总样例，不冒充真实供应商扣款。
 - 若要跨币种比较，必须准备可审计的汇率值、来源和时间；缺任一项就保持分别展示。
 - 先在非生产隔离数据上操作，不导入共享池或其他业务真实账单。
@@ -26,7 +26,7 @@ Gateway 的估算来自价格快照，供应商扣费来自账单。两边可能
 
 ![图 072 费用可信度条区分价格覆盖、unknown 与原币种金额](https://cds.miduo.org/api/reports/assets/d6875f1f274fb6106f00336d5889877e1911c7077c9b98980bf25bd69e19fb0e.png)
 
-2. 供应商名称逐字填写第 20 章 chat 请求详情的 Provider，可能是“教程假上游”或“教程假上游映射”，以实际记录为准。唯一流水号填写准备好的 `tutorial-window-日期-时间`；账单窗只包住那一次 chat 请求，不能覆盖随后发生的 vision 请求，接入密钥编号填写该 chat 请求详情里的 ServiceKeyId。
+2. 供应商名称逐字填写[[第 20 章：配置 PromptPolicy|第 20 章]] chat 请求详情的 Provider，可能是“教程假上游”或“教程假上游映射”，以实际记录为准。唯一流水号填写准备好的 `tutorial-window-日期-时间`；账单窗只包住那一次 chat 请求，不能覆盖随后发生的 vision 请求，接入密钥编号填写该 chat 请求详情里的 ServiceKeyId。
 
 **图 077 用量页按当前租户展示请求、token、价格覆盖和分币种金额**
 
@@ -56,7 +56,7 @@ Gateway 的估算来自价格快照，供应商扣费来自账单。两边可能
 
 ![图 082 Owner 或 Admin 可打开供应商账单导入表单](https://cds.miduo.org/api/reports/assets/50a2eac0568bdf1a9fdf2dac451e2bc5acee1b04ef77a6b8ca9bcf92a1d8a6c4.png)
 
-7. 跨币种和 reconciled 的边界留到第 28 章用隔离测试验证，不在当前汇总样例上编造 FX。
+7. 跨币种和 reconciled 的边界留到[[第 28 章：费用可信度双向校验|第 28 章]]用隔离测试验证，不在当前汇总样例上编造 FX。
 
 **图 083 导入表单要求供应商流水、实际金额、币种和请求或时间窗证据**
 

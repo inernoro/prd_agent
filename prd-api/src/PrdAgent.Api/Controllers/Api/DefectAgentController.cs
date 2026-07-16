@@ -36,7 +36,7 @@ public class DefectAgentController : ControllerBase
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.8.0";
+    private const string DefectResolveSkillMinVersion = "1.9.1";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -3134,6 +3134,9 @@ public class DefectAgentController : ControllerBase
 
         var now = DateTime.UtcNow;
         var verdict = NormalizeValidationVerdict(request.Verdict);
+        var messageValidationError = ValidateValidationReportMessage(verdict, request.Message);
+        if (messageValidationError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, messageValidationError));
         var validationStatus = verdict switch
         {
             "fail" => DefectResolutionValidationStatus.Failed,
@@ -4292,7 +4295,12 @@ public class DefectAgentController : ControllerBase
         lines.Add("- 正式缺陷系统 domain 负责拉取真实缺陷、评论、回写 commit/PR/validation-report 和通知；测试或预览环境只负责修复验证与视觉验收。");
         lines.Add("- 不要从测试环境领取正式缺陷，也不要把测试环境数据库中的演练缺陷当成正式闭环结果。");
         lines.Add("- 不要把 PR 已创建当成完成；只有 workflow/complete 写回 commit 后，单缺陷修复阶段才算结束。");
-        lines.Add("- 不要把正式发布前的缺陷通知给提交人；只有 published-pending 返回 trace，视觉验收通过并回写 validation-report 后，才能发送“你的问题已修复”。");
+        lines.Add("- 不要把正式发布前的缺陷通知给提交人；只有 published-pending 返回 trace、验收报告归档并回写 validation-report 后，才能发送通知。");
+        lines.Add("- 发布后验收必须拆成两轴：functionalVerdict 只判断用户可见功能，evidenceStatus 只判断更新中心 commit 行、关联弹窗、报告和截图是否齐全。");
+        lines.Add("- 禁止因更新中心只显示最近一周、目标 commit 越窗、预览下线、弹窗或截图取证失败，把已经通过的功能验收降为 fail；这些情况应标记 evidenceStatus=partial/blocked 并记录兜底证据。");
+        lines.Add("- validation-report 映射：功能通过且证据完整用 pass；功能通过但证据不完整用 conditional，消息以“功能验收通过；闭环证据不完整”开头；只有功能仍失败、出现回归或缺少关键功能验证时才用 fail 和“需要继续改进”。");
+        lines.Add("- 知识库归档 reportVerdict 只允许 pass、conditional、fail；功能核验为 invalid 时先用 reportVerdict=conditional 归档并在正文证明缺陷陈述不成立，归档成功后正式 validation-report.verdict 再用 invalid。");
+        lines.Add("- conditional 回调必须填写 message，分别说明功能结论、闭环证据状态以及限制或缺口；缺少 message 时后端会拒绝通知。");
         lines.Add("- 不要把 K 写入 commit、报告、截图、Slack 或缺陷评论；每日输出只能写 keyId/keyName，不写明文 K。");
         lines.Add("");
         lines.Add("启动前自检：");
@@ -4570,12 +4578,20 @@ public class DefectAgentController : ControllerBase
         return value is "pass" or "conditional" or "fail" or "invalid" ? value : "pass";
     }
 
+    internal static string? ValidateValidationReportMessage(string verdict, string? message)
+    {
+        if (verdict == "conditional" && string.IsNullOrWhiteSpace(message))
+            return "conditional 验收必须填写 message，分别说明功能结论、闭环证据状态以及限制或缺口";
+        return null;
+    }
+
     internal static string BuildValidationNotificationMessage(DefectReport defect, string verdict)
     {
         var title = defect.Title ?? defect.DefectNo;
         return verdict switch
         {
-            "fail" => $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。",
+            "fail" => $"你的问题「{title}」已发布到正式环境，但功能验收未通过，需要继续改进。",
+            "conditional" => $"你的问题「{title}」已修复并发布，验收报告包含功能限制或待补闭环证据。",
             "invalid" => $"你的问题「{title}」已完成发布后核验，验收报告显示该问题陈述不成立。",
             _ => $"你的问题「{title}」已修复并发布，验收报告已生成。",
         };
@@ -4729,7 +4745,7 @@ public class DefectAgentController : ControllerBase
         {
             "fail" => "验收未通过，需要继续改进",
             "invalid" => "验收报告证明该缺陷陈述不成立",
-            "conditional" => "有条件通过，请查看报告约束",
+            "conditional" => "有条件通过，请查看功能限制或闭环证据缺口",
             _ => "验收通过",
         };
         var commitLabel = string.IsNullOrWhiteSpace(trace.CommitMessage)
