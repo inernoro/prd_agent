@@ -3226,6 +3226,34 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void Console_RelatedRoutingObjects_OpenInlinePreviewsWithoutExposingSecrets()
+    {
+        var preview = ReadRepoFile("llmgw/web/src/components/EntityPreviewDrawer.tsx");
+        var platforms = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+        var models = ReadRepoFile("llmgw/web/src/pages/ModelsPage.tsx");
+        var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
+        var exchanges = ReadRepoFile("llmgw/web/src/pages/ExchangesPage.tsx");
+
+        Assert.Contains("createPortal", preview);
+        Assert.Contains("role=\"dialog\"", preview);
+        Assert.Contains("aria-modal=\"true\"", preview);
+        Assert.Contains("event.key === 'Escape'", preview);
+        Assert.Contains("event.key !== 'Tab'", preview);
+        Assert.Contains("triggerButtonRef.current?.focus()", preview);
+        Assert.Contains("密钥明文不会在预览中显示", preview);
+
+        Assert.Contains("Provider 接口预览", platforms);
+        Assert.Contains("查看接口", platforms);
+        Assert.Contains("查看 Provider", models);
+        Assert.Contains("查看模型池", appCallers);
+        Assert.Contains("Exchange 路由预览", exchanges);
+        Assert.Contains("查看路由", exchanges);
+
+        Assert.DoesNotContain("apiKey={", preview);
+        Assert.DoesNotContain("bundle.key", preview);
+    }
+
+    [Fact]
     public void AgentFirstQuickstart_KeepsTenantAuthorityAndUnknownCostBoundaries()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");

@@ -48,13 +48,13 @@
 
 **本步位置复核：在同一圈选画面完成本步后再继续。**
 
-![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
+![图 075 请求详情用 requestId 核对协议、key 身份、路由与未访问上游](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
 6. 普通管理员到这里结束。验收人员在仓库根目录执行已有合同套件，它使用进程内假上游，不需要真实 key，也不会产生费用：
 
-**图 068 生成后可复制 curl、配置和 Agent 技能接入方式**
+**合同套件实跑图：命令、假上游边界和 92/92 结果在同一张证据中**
 
-![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
+![合同套件实跑图：命令、假上游边界和 92/92 结果在同一张证据中](https://cds.miduo.org/api/reports/assets/b173c275c109623d1cc5760d90e44466b3e2fe39183ba5d7d1000e76279cb553.png)
 
 ```bash
 dotnet test prd-api/PrdAgent.sln --no-restore \
@@ -63,19 +63,21 @@ dotnet test prd-api/PrdAgent.sln --no-restore \
 
 7. 套件中的 `QuickstartDryRun_UsesChatAndVisionAcrossFourProtocolsWithoutCallingUpstream` 验证八格 dry-run；OpenAI、Claude、Gemini 的 image、stream、tool 与参数用例验证真实协议形状。保存测试总数和通过结果。
 
-**本步位置复核：在同一圈选画面完成本步后再继续。**
+**合同套件实跑结果：失败 0、通过 92、跳过 0**
 
-![红框标出 OpenAI vision dry-run 的完整通过条件](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/shlwkwyqya7xswmvni6yyhlduq.png)
+![合同套件实跑结果：失败 0、通过 92、跳过 0](https://cds.miduo.org/api/reports/assets/b173c275c109623d1cc5760d90e44466b3e2fe39183ba5d7d1000e76279cb553.png)
 
 8. 只有页面八格和合同套件都通过，才可写“协议保真通过”。本章不执行真实付费协议；若另有上线批准，仍遵守每类最多一次。
 
-**图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
+**两道门合并核对：页面 requestId 可回查，合同套件 92/92 通过**
 
-![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+![两道门合并核对：页面 requestId 可回查，合同套件 92/92 通过](https://cds.miduo.org/api/reports/assets/b173c275c109623d1cc5760d90e44466b3e2fe39183ba5d7d1000e76279cb553.png)
+
+![页面门实图：请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
 9. 保存八个 requestId 后，到“接入密钥”按 Client code 找到 `tutorial-protocol-chat` 和 `tutorial-protocol-vision`，分别点击“撤销”并确认。它们只是本章临时 bundle，不得长期留存；[[第 16 章：轮换、切换和撤销 key|第 16 章]]轮换后的 chat key 和[[第 10 章：一键生成第一把 key|第 10 章]] vision key不受影响。
 
-![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+![图 054 接入密钥列表按 Client code 定位临时 key 并执行撤销](https://cds.miduo.org/api/reports/assets/6dc1f580e61d83fd7e0f70131b4b18e229a7c2235852814bfead14493c65a6aa.png)
 
 ## 看图核对
 

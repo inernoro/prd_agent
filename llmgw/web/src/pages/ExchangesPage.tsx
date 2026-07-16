@@ -21,6 +21,7 @@ import type {
   UpdateExchangeRequest,
 } from '@/lib/types';
 import { Button, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -378,6 +379,45 @@ export function ExchangesPage() {
                   <span>{item.transformerType || 'passthrough'}</span>
                   <ArrowRight size={14} />
                   <code title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>
+                  <EntityPreviewDrawer
+                    buttonLabel="查看路由"
+                    kicker="Exchange 路由预览"
+                    title={item.name || item.id}
+                    summary="从当前卡片直接查看 adapter 如何把 Gateway 请求转换并发往上游。这里只展示配置与请求边界，不会试连目标地址，也不会读取通讯密钥。"
+                    status={[
+                      { label: item.enabled ? '已启用' : '已停用', tone: item.enabled ? 'good' : 'warning' },
+                      { label: item.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: item.hasKey ? 'good' : 'warning' },
+                      { label: `版本 ${item.version}` },
+                    ]}
+                    sections={[
+                      {
+                        title: 'adapter 与目标接口',
+                        description: meta.transformerTypes.find((option) => option.value === item.transformerType)?.description || '当前 adapter 没有额外说明。',
+                        fields: [
+                          { label: '上游接口类型', value: meta.transformerTypes.find((option) => option.value === item.transformerType)?.label || item.transformerType || 'passthrough' },
+                          { label: '目标地址', value: <code>{item.targetUrl || '未配置'}</code>, hint: item.targetUrl?.includes('{model}') ? '运行时会把 {model} 替换为当前模型标识。' : '请求按此完整地址发送。' },
+                          { label: '认证方式', value: meta.authSchemes.find((option) => option.value === item.targetAuthScheme)?.label || item.targetAuthScheme || 'Bearer' },
+                          { label: '配置来源', value: item.authority === 'llm_gateway' ? '当前租户 Gateway 配置' : '旧 MAP 配置，需先导入' },
+                        ],
+                      },
+                      {
+                        title: '模型映射',
+                        description: '上游模型标识先映射为明确用途，再决定能加入哪一类模型池。',
+                        fields: item.models.map((model) => ({
+                          label: model.displayName || model.modelId,
+                          value: <><code>{model.modelId}</code> · {meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} · {model.enabled ? '已启用' : '已停用'}</>,
+                        })),
+                      },
+                      {
+                        title: '验证方式',
+                        fields: [
+                          { label: '保存配置', value: '只写配置和审计，不访问上游' },
+                          { label: '安全验证', value: '使用 Quickstart dry-run 取得 requestId' },
+                          { label: '真实验证', value: '在明确批准后按协议单次调用，避免批量付费测试' },
+                        ],
+                      },
+                    ]}
+                  />
                 </div>
                 <div className="lg-exchange-models">
                   {item.models.length ? item.models.map((model) => (

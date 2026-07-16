@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
+import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -259,7 +260,41 @@ export function PlatformsPage() {
               const key = boolChip(p.hasKey, '已配置', '未配置');
               return (
                 <tr key={p.id}>
-                  <td style={td}><span style={{ fontWeight: 600 }}>{p.name}</span></td>
+                  <td style={td}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
+                      <span style={{ fontWeight: 600 }}>{p.name}</span>
+                      <EntityPreviewDrawer
+                        buttonLabel="查看接口"
+                        kicker="Provider 接口预览"
+                        title={p.name}
+                        summary="从当前页确认网关会把模型请求发往哪里、采用哪种兼容协议，以及这条上游连接是否具备通讯密钥。预览本身不会访问供应方。"
+                        status={[
+                          { label: p.enabled ? '已启用' : '已停用', tone: p.enabled ? 'good' : 'warning' },
+                          { label: p.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: p.hasKey ? 'good' : 'warning' },
+                        ]}
+                        sections={[
+                          {
+                            title: '连接方式',
+                            fields: [
+                              { label: '接口类型', value: platformTypeLabel(p.platformType) },
+                              { label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>, hint: '这是供应方地址，不是业务应用调用 Gateway 的地址。' },
+                              { label: '供应方标识', value: p.providerId || '未单独设置' },
+                              { label: '最大并发', value: p.maxConcurrency ?? '未配置' },
+                            ],
+                          },
+                          {
+                            title: '平台归属',
+                            description: '配置来源决定这条 Provider 是否可在当前控制台直接维护。',
+                            fields: [
+                              { label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入' },
+                              { label: '备注', value: p.remark || '无备注' },
+                              { label: '最近更新', value: formatPlatformTime(p.updatedAt) },
+                            ],
+                          },
+                        ]}
+                      />
+                    </div>
+                  </td>
                   <td style={td}>{p.platformType || '—'}</td>
                   <td style={{ ...td, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
                   <td style={td}>{p.maxConcurrency || '—'}</td>
@@ -404,4 +439,14 @@ function Empty({ text }: { text: string }) {
       {text}
     </div>
   );
+}
+
+function platformTypeLabel(value: string) {
+  return ({ openai: 'OpenAI 兼容', claude: 'Claude 兼容' } as Record<string, string>)[value] || value || '未配置';
+}
+
+function formatPlatformTime(value?: string | null) {
+  if (!value) return '暂无记录';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
