@@ -138,12 +138,17 @@ export function evaluateBuildGateHealth(
   }
 
   // 4. 闸门账目不变量
-  if (gate.active > gate.max) {
+  // 注意（Codex P2）：active > max **不是**异常——运维把上限下调到在跑构建数
+  // 以下时，闸门按设计让在跑构建自然收敛（release 时缩减而不驱逐），这是受
+  // 支持的紧急节流状态，不能让健康探针在收敛期间一直 503。真正的账目异常用
+  // 「active 与持有者明细数量不一致」判定：每次授予/释放都同步维护 holders，
+  // 二者恒等；不等说明计数器泄漏（僵尸占位或重复释放）。
+  if (gate.active !== gate.holders.length) {
     reasons.push({
       kind: 'invariant',
       severity: 'error',
-      message: `构建闸账目异常：active(${gate.active}) 超过上限 max(${gate.max})——超额授予`,
-      detail: { active: gate.active, max: gate.max },
+      message: `构建闸账目异常：active(${gate.active}) 与持有者明细数(${gate.holders.length})不一致——计数器泄漏`,
+      detail: { active: gate.active, holders: gate.holders.length, max: gate.max },
     });
   }
   if (gate.active === 0 && gate.queued > 0) {

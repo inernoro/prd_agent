@@ -12,3 +12,5 @@
 | fix | cds | 回应 Codex P1：构建并发上限下调后 release 不再无条件转移槽位，active 高于新上限时先缩减，紧急节流即时生效 |
 | fix | cds | 回应 Codex P2：manual 部署被合并（merged）时 BranchListPage/BranchDetailPage 如实显示「已合并为待部署请求」，不再误报「部署完成」 |
 | fix | cds | 分支预览「热重启」等待页卡 86% 修复：热重启改用独立 restart 历史耗时样本桶（auto-wake/手动 restart 成功时记录），进度条按 elapsed/median 真实推进，无样本时按重启时长曲线持续移动；唤醒的启动信号等待收紧到 120s + 就绪探测启用容器活性早退，等待上限从最坏 40 分钟降到分钟级 |
+| fix | cds | 回应 Codex P2：上限下调后的自然收敛（active>max 且账目一致）不再被健康探针误报 503，账目不变量改为 active 与持有者明细数一致性 |
+| fix | cds | 回应 Codex P2：部署静默阶段（构建输出/启动信号/就绪探测最长 1200s）打 30s 节流 run 心跳，周期收割器不再误杀活着的慢启动部署 |

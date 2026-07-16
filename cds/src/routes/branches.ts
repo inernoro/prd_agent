@@ -2244,6 +2244,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.fail(runId, classifyDeploymentFailure({ message, phase, run }));
   }
 
+  // 部署静默阶段的 run 心跳（Codex P2「Do not reap live quiet deployment runs」）：
+  // 构建容器输出与就绪探测只走 SSE/opLog，不写 run 事件——慢启动在 1200s 就绪
+  // 下限内可能超过周期收割器的 15 分钟心跳阈值而被误杀。凡有构建输出/探测尝试
+  // 就打一次心跳（30s 节流，不追加事件不刷屏），证明部署仍活着。
+  const deploymentRunLastBeatAt = new Map<string, number>();
+  function heartbeatDeploymentRun(runId: string | undefined | null): void {
+    if (!deploymentRunService || !runId) return;
+    const now = Date.now();
+    const last = deploymentRunLastBeatAt.get(runId) || 0;
+    if (now - last < 30_000) return;
+    deploymentRunLastBeatAt.set(runId, now);
+    try {
+      deploymentRunService.heartbeat(runId);
+    } catch { /* run 已终态或不存在：心跳只是加分项 */ }
+    if (deploymentRunLastBeatAt.size > 200) {
+      const cutoff = now - 60 * 60_000;
+      for (const [k, v] of deploymentRunLastBeatAt) {
+        if (v < cutoff) deploymentRunLastBeatAt.delete(k);
+      }
+    }
+  }
+
   function cancelDeploymentRun(runId: string | undefined, message: string): void {
     if (!deploymentRunService || !runId) return;
     const run = deploymentRunService.get(runId);
@@ -12179,6 +12201,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               },
               onOutput: (chunk) => {
                 sendSSE(res, 'log', { profileId: profile.id, chunk });
+                heartbeatDeploymentRun(deploymentRun?.id);
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) {
                     logDeploy(id, line);
@@ -12222,6 +12245,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
 
               ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+                heartbeatDeploymentRun(deploymentRun?.id);
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
@@ -12252,6 +12276,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
                     ok: info.ok,
                     error: info.error,
                   });
+                  // 慢启动就绪等待期（最长 1200s）不写 run 事件，靠探测心跳防误杀
+                  heartbeatDeploymentRun(deploymentRun?.id);
                 },
                 (chunk) => {
                   for (const line of chunk.split('\n')) {
@@ -13116,6 +13142,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           },
           onOutput: (chunk) => {
             sendSSE(res, 'log', { profileId: profile.id, chunk });
+            heartbeatDeploymentRun(deploymentRun?.id);
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
@@ -13139,6 +13166,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let ready = false;
         if (profile.startupSignal) {
           const signalReady = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+            heartbeatDeploymentRun(deploymentRun?.id);
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
@@ -13164,6 +13192,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             ),
             (info) => {
               sendSSE(res, 'probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error });
+              // 慢启动就绪等待期不写 run 事件，靠探测心跳防周期收割器误杀
+              heartbeatDeploymentRun(deploymentRun?.id);
             },
             (chunk) => {
               for (const line of chunk.split('\n')) {

@@ -85,9 +85,14 @@ describe('evaluateBuildGateHealth 构建队列健康判定', () => {
     expect(fresh.reasons.find((r) => r.kind === 'stale-runs')).toBeUndefined();
   });
 
-  it('invariant：active 超上限 / 有排队却零活跃 → error（闸门账目坏了）', () => {
-    const over = evaluateBuildGateHealth(gate({ active: 4, max: 3 }), [], NOW);
-    expect(over.reasons.find((r) => r.kind === 'invariant')).toMatchObject({ severity: 'error' });
+  it('invariant：计数器与持有者明细不一致 / 有排队却零活跃 → error（闸门账目坏了）', () => {
+    // active 与 holders 数量不一致 = 计数器泄漏
+    const leak = evaluateBuildGateHealth(
+      gate({ active: 4, max: 3, holders: [{ branchId: 'b1', acquiredAt: minutesAgo(5) }] }),
+      [],
+      NOW,
+    );
+    expect(leak.reasons.find((r) => r.kind === 'invariant')).toMatchObject({ severity: 'error' });
 
     const stalled = evaluateBuildGateHealth(gate({ active: 0, queued: 3, holders: [] }), [], NOW);
     expect(stalled.reasons.find((r) => r.kind === 'invariant')).toMatchObject({ severity: 'error' });
@@ -95,6 +100,25 @@ describe('evaluateBuildGateHealth 构建队列健康判定', () => {
     // active=0 且 queued=0 是正常空闲，不是账目问题
     const idle = evaluateBuildGateHealth(gate({ active: 0, queued: 0, holders: [] }), [], NOW);
     expect(idle.ok).toBe(true);
+  });
+
+  it('上限下调后的自然收敛（active > max 但账目一致）是健康状态，不误报（Codex P2）', () => {
+    const draining = evaluateBuildGateHealth(
+      gate({
+        active: 3,
+        max: 1,
+        queued: 0,
+        holders: [
+          { branchId: 'b1', acquiredAt: minutesAgo(5) },
+          { branchId: 'b2', acquiredAt: minutesAgo(8) },
+          { branchId: 'b3', acquiredAt: minutesAgo(2) },
+        ],
+      }),
+      [],
+      NOW,
+    );
+    expect(draining.ok).toBe(true);
+    expect(draining.reasons).toHaveLength(0);
   });
 
   it('多退化并存时 reasons 全部列出（不吞并）', () => {
