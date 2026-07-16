@@ -40,6 +40,12 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   // inside the route handler, not by the CDS session cookie. Must be
   // public so GitHub's outbound webhook can reach it.
   '/api/github/webhook',
+  // Build-gate health probe: consumed by the scheduled regression job and
+  // external monitors that carry no session. The response is stripped to
+  // counts only (no holder identity detail) in cluster.ts, so exposing it
+  // unauthenticated leaks nothing sensitive. Keep in sync with
+  // isPublicAccessRequestRoute in server.ts (basic-auth mode whitelist).
+  '/api/cluster/build-gate/health',
   // Static assets the login page needs before a session exists.
   /^\/assets\//,
   '/style.css',

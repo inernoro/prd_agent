@@ -74,4 +74,27 @@ describe('github auth middleware — agent key coexistence', () => {
     expect(resolveAgentKey).not.toHaveBeenCalled();
     expect((req as any).cdsUser).toEqual({ id: 'u1' });
   });
+
+  // 构建闸健康探针必须免鉴权可达（定时回归任务 / 外部监控不带会话），
+  // github 模式有自己的 PUBLIC_PATHS 白名单，与 server.ts 的
+  // isPublicAccessRequestRoute 相互独立、两边都要登记（Codex P2，2026-07-16）。
+  it('lets the build-gate health probe through without any session or key', async () => {
+    const authService = { validateSession: vi.fn(async () => null) } as any;
+    const resolveAgentKey = vi.fn(() => null);
+    const mw = createGithubAuthMiddleware({ authService, resolveAgentKey });
+    const req = {
+      path: '/api/cluster/build-gate/health',
+      url: '/api/cluster/build-gate/health',
+      originalUrl: '/api/cluster/build-gate/health',
+      headers: { accept: 'application/json' },
+    } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.statusCode).toBe(0);
+    expect(authService.validateSession).not.toHaveBeenCalled();
+  });
 });

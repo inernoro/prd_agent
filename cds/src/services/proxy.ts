@@ -984,10 +984,34 @@ export class ProxyService {
         ? '预计启动进度'
         : '预计处理进度';
     if (branch.status === 'restarting') {
-      const reason = estimates.some((item) => item.matchedLog)
-        ? `基于 ${services.length} 个服务状态与热重启状态估算`
-        : `基于 ${services.length} 个服务状态与运行时长估算`;
-      return { percent: Math.max(35, percent), confidence, label: '热重启进度', reason };
+      // 2026-07-16 用户反馈「永远停在 86%」：此前重启只按服务状态估算（starting/
+      // restarting 硬编码 86），页面全程静止。改为：
+      // 1) 有 restart 历史样本 → elapsed/median 真实进度（与「已等待/预计还需」同源）；
+      // 2) 无样本 → 从本轮重启起点起的时间曲线，保证进度条始终在动。
+      if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
+        const timePercent = timing.overdue
+          ? 96
+          : Math.max(35, Math.min(96, (timing.elapsedMs / timing.estimateMedianMs) * 100));
+        return {
+          percent: Math.round(timePercent),
+          confidence: 'high',
+          label: '热重启进度',
+          reason: `基于近 ${timing.estimateSamples} 次热重启历史耗时估算`,
+        };
+      }
+      const restartStartMs = timing && timing.elapsedMs > 0
+        ? timing.elapsedMs
+        : (() => {
+            const parsed = Date.parse(branch.lastDeployStartedAt || '');
+            return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+          })();
+      const restartCurve = Math.min(96, 35 + Math.sqrt(restartStartMs / 1000) * 6.5);
+      return {
+        percent: Math.max(35, Math.min(96, Math.round(Math.max(restartCurve, percent * 0.4)))),
+        confidence,
+        label: '热重启进度',
+        reason: `基于 ${services.length} 个服务状态与重启时长估算（正在积累热重启历史耗时）`,
+      };
     }
     if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
       const timePercent = timing.overdue
@@ -1105,7 +1129,7 @@ export class ProxyService {
         ? classifyDeployRuntime(modeSource)
         : 'source';
     const full = this.stateService.getBranchDeployEstimate(branch.projectId);
-    const buckets: Record<DeployDurationMode, { medianMs: number | null; samples: number }> = {
+    const buckets: Record<'release' | 'source', { medianMs: number | null; samples: number }> = {
       release: { medianMs: full.releaseMedianMs, samples: full.releaseSamples },
       source: { medianMs: full.sourceMedianMs, samples: full.sourceSamples },
     };
@@ -1134,10 +1158,22 @@ export class ProxyService {
 
     let timing: (ReturnType<typeof computeWaitTiming> & { mode: DeployDurationMode }) | null = null;
     if (branch) {
-      const { mode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
       // 热重启是 docker restart 级别的短操作，不是 release/source 构建。若复用发布版
       // 构建中位耗时，15s 的重启等待会被 7min 构建样本压成 1% 左右，误导为卡死。
-      if (branch.status !== 'restarting') {
+      // 2026-07-16 用户反馈「热重启页永远停在 86%」：重启改用**独立的 restart 样本桶**
+      // （auto-wake / 手动 restart 成功时记录耗时），等待页因此拿到真实的
+      // 已等待 / 预计还需 + elapsed/median 连续进度，而不是静止的状态估算。
+      if (branch.status === 'restarting') {
+        const restartEstimate = this.stateService.getDeployEstimate(branch.projectId || 'default', 'restart');
+        const computed = computeWaitTiming({
+          status: branch.status,
+          deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+          nowMs: Date.now(),
+          estimate: { medianMs: restartEstimate.medianMs, samples: restartEstimate.sampleCount },
+        });
+        timing = { ...computed, mode: 'restart' };
+      } else {
+        const { mode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
         const computed = computeWaitTiming({
           status: branch.status,
           deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
@@ -1164,7 +1200,7 @@ export class ProxyService {
       progress: this.estimateWaitingProgress(branch, waitingProfileId, timing),
       timing,
       buildMode: timing?.mode || null,
-      modeLabel: timing ? (timing.mode === 'release' ? '极速版' : '源码') : null,
+      modeLabel: timing ? (timing.mode === 'restart' ? '热重启' : timing.mode === 'release' ? '极速版' : '源码') : null,
       branchPanelUrl: branch && this.dashboardBaseUrl()
         ? `${this.dashboardBaseUrl()}/branch-panel/${branch.id}`
         : null,
@@ -1574,15 +1610,22 @@ void main(){
       });
       return;
     }
-    const { mode: buildMode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
-    const initialTiming = branch.status === 'restarting'
-      ? null
-      : computeWaitTiming({
-          status: branch.status,
-          deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
-          nowMs: Date.now(),
-          estimate,
-        });
+    // 热重启用独立的 restart 样本桶（与 serveWaitingStatus 同口径），首屏即有
+    // 真实的已等待/预计还需，不再渲染静止的状态估算（2026-07-16「卡 86%」修复）。
+    const isRestarting = branch.status === 'restarting';
+    const resolved = isRestarting ? null : this.resolveWaitTimingMode(branch, waitingProfileId);
+    const buildMode: DeployDurationMode = isRestarting ? 'restart' : resolved!.mode;
+    const restartEstimate = isRestarting
+      ? this.stateService.getDeployEstimate(branch.projectId || 'default', 'restart')
+      : null;
+    const initialTiming = computeWaitTiming({
+      status: branch.status,
+      deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+      nowMs: Date.now(),
+      estimate: isRestarting
+        ? { medianMs: restartEstimate!.medianMs, samples: restartEstimate!.sampleCount }
+        : resolved!.estimate,
+    });
     const progress = this.estimateWaitingProgress(branch, waitingProfileId, initialTiming);
     const safeBranch = this.escapeHtml(displayBranch);
     const safeProgressLabel = this.escapeHtml(progress.label);
@@ -1623,7 +1666,7 @@ void main(){
     const branchLabel = ciWaiting ? '准备中' : stageLabel(branchStatus);
     // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
     // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
-    const safeModeLabel = this.escapeHtml(buildMode === 'release' ? '极速版' : '源码');
+    const safeModeLabel = this.escapeHtml(buildMode === 'restart' ? '热重启' : buildMode === 'release' ? '极速版' : '源码');
     const dashBase = this.dashboardBaseUrl();
     const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
     const prNum = branch.githubPrNumber;
