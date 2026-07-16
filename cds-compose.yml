@@ -377,6 +377,8 @@ services:
       LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
       LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
     labels:
+      # 显式清理存量 CDS profile 可能遗留的 prebuiltImage=true；源码模式必须挂载当前 worktree。
+      cds.prebuilt-image: "false"
       # 公网命名 URL：<previewSlug>-llmgw-web.<root> 根路径直达控制台（登录后看 LLM 日志）。
       # Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
       cds.subdomain: "llmgw-web"
