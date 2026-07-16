@@ -29,6 +29,8 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
+import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
+import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
@@ -180,6 +182,71 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
   const timer = setInterval(sample, MASTER_MEMORY_MONITOR_INTERVAL_MS);
   timer.unref?.();
   sample();
+  return timer;
+}
+
+/**
+ * build-gate 看门狗（2026-07-16 队列堵死事故的常态化回归拦截，进程内主防线）。
+ *
+ * 60s 采样 evaluateBuildGateHealth（排队积压 / 槽位持有超时 / 幽灵 run / 闸门
+ * 账目不变量），退化时向 ServerEventLogStore 记 warn/error 事件（dashboard
+ * 系统日志可见）+ console.warn；同一严重度 10 分钟去重；恢复时记一条 info。
+ * 判定 SSOT：services/build-gate-health.ts（与 GET /api/cluster/build-gate/health
+ * 端点共用，端点是注册在「任务调度」里的定时回归任务的探测目标）。
+ */
+const BUILD_GATE_WATCHDOG_INTERVAL_MS = 60_000;
+const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
+
+function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
+  if (!store) return null;
+  let lastSeverity: ServerEventSeverity | null = null;
+  let lastRecordedAt = 0;
+
+  const sample = () => {
+    try {
+      const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
+      const now = Date.now();
+      if (health.ok) {
+        if (lastSeverity) {
+          // 从退化恢复：记一条 info 让事件流有始有终。
+          store.record({
+            category: 'system',
+            severity: 'info',
+            source: 'build-gate-watchdog',
+            action: 'build-gate.health.recovered',
+            message: `构建队列健康已恢复（active=${health.summary.active} queued=${health.summary.queued} max=${health.summary.max}）`,
+            details: { summary: health.summary },
+          });
+          console.warn('[build-gate-watchdog] 构建队列健康已恢复');
+          lastSeverity = null;
+        }
+        return;
+      }
+      const severity: ServerEventSeverity = health.reasons.some((r) => r.severity === 'error') ? 'error' : 'warn';
+      if (lastSeverity === severity && now - lastRecordedAt < BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS) return;
+      lastSeverity = severity;
+      lastRecordedAt = now;
+      const message = `构建队列健康退化：${health.reasons.map((r) => r.message).join('；')}`;
+      store.record({
+        category: 'system',
+        severity,
+        source: 'build-gate-watchdog',
+        action: 'build-gate.health.degraded',
+        message,
+        status: severity,
+        details: {
+          summary: health.summary,
+          reasons: health.reasons,
+        },
+      });
+      console.warn(`[build-gate-watchdog] ${message}`);
+    } catch (err) {
+      console.warn(`[build-gate-watchdog] 采样失败: ${(err as Error).message}`);
+    }
+  };
+
+  const timer = setInterval(sample, BUILD_GATE_WATCHDOG_INTERVAL_MS);
+  timer.unref?.();
   return timer;
 }
 
@@ -723,6 +790,7 @@ if (activeServerEventLogStore) {
 }
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
+const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -787,7 +855,9 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     headers: {
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
-      'X-CDS-Trigger': 'webhook',
+      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
+      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
+      'X-CDS-Trigger': pending.request.trigger,
       'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
@@ -1639,10 +1709,13 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         const profile = profiles.find((p) => p.id === svc.profileId);
         let ready = false;
         if (profile?.startupSignal) {
-          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+          // 唤醒是 docker restart 级操作：启动信号等待收紧到 120s（默认 300s 是给
+          // 全量构建用的），避免等待页在静止进度上挂几分钟（2026-07-16「卡 86%」修复）。
+          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, undefined, 120);
         }
         if (!profile?.startupSignal || ready) {
-          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe);
+          // 传 containerName 启用容器活性早退：容器崩了秒级失败，不空等探测超时。
+          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe, undefined, undefined, svc.containerName);
         }
         lease?.assertCurrent(`auto-wake readiness ${svc.profileId}`);
         if (ready) {
@@ -1657,6 +1730,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 
       if (failed.length === 0) {
         lease?.assertCurrent('auto-wake before success save');
+        // 记录本次热重启耗时进 restart 样本桶：预览等待页据此显示真实进度与
+        // 「预计还需」（上界 10 分钟防离谱样本污染中位）。
+        {
+          const wakeElapsedMs = Date.now() - Date.parse(wakeStartedAt);
+          stateService.recordDeployDuration(branch.projectId || 'default', 'restart', wakeElapsedMs, 10 * 60 * 1000);
+        }
         branch.status = 'running';
         branch.errorMessage = undefined;
         branch.lastStoppedAt = undefined;
@@ -2916,6 +2995,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
+  if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
@@ -4024,6 +4104,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // the node between standalone and "hot-joined hybrid" states without a
   // restart. See `cds/src/routes/cluster.ts` for the flow doc.
   let hotJoinAgent: ExecutorAgent | null = null;
+  // 全局构建并发上限的运行时供给（CDS 系统设置 → CdsState.maxConcurrentBuilds）。
+  // env CDS_MAX_CONCURRENT_BUILDS 在 build-gate 内部仍优先于本供给器。
+  setMaxConcurrentBuildsProvider(() => stateService.getMaxConcurrentBuilds());
   app.use('/api/cluster', createClusterRouter({
     config,
     stateService,

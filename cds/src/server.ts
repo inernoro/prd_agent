@@ -882,6 +882,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
     'GET /cluster/status': '获取集群状态',
+    'GET /cluster/build-gate': '获取构建并发闸',
+    'PUT /cluster/build-gate': '调整构建并发上限',
+    'GET /cluster/build-gate/health': '获取构建闸健康',
     'GET /cluster/strategy': '获取集群调度策略',
     'PUT /cluster/strategy': '更新集群调度策略',
     'POST /cluster/join': '加入集群',
@@ -1217,6 +1220,9 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
   if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
+  // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
+  if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
   return false;
 }
 
@@ -1335,6 +1341,29 @@ export function createServer(deps: ServerDeps): express.Express {
       : undefined,
   );
   deploymentRunService.reconcileInterrupted();
+  // 周期收割（2026-07-16 队列堵死复盘）：此前 reconcileInterrupted 只在启动时
+  // 跑一次，重启前心跳仍新鲜的 run 会在重启后永远卡在 building（观测到 24h+
+  // 的幽灵 run）。每 5 分钟收一轮：心跳停跳超过 15 分钟的非终结 run 收敛为
+  // 失败（cds.run.interrupted，可重试）。合法排队/构建中的 run 由部署循环的
+  // 事件持续刷新心跳，不会被误杀。
+  {
+    let runReaperBusy = false;
+    const runReaper = setInterval(() => {
+      if (runReaperBusy) return;
+      runReaperBusy = true;
+      try {
+        const reconciled = deploymentRunService.reconcileInterrupted();
+        if (reconciled.length > 0) {
+          console.warn(`[deployment-run] 周期收割：${reconciled.length} 个心跳过期的 run 已收敛为失败 (${reconciled.map((r) => r.id).join(', ')})`);
+        }
+      } catch (err) {
+        console.warn(`[deployment-run] 周期收割失败: ${(err as Error).message}`);
+      } finally {
+        runReaperBusy = false;
+      }
+    }, 5 * 60 * 1000);
+    runReaper.unref?.();
+  }
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
