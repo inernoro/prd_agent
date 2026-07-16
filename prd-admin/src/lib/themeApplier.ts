@@ -4,6 +4,7 @@
  */
 
 import type { ThemeConfig } from '@/types/theme';
+import { DEFAULT_THEME_CONFIG } from '@/types/theme';
 import { computeThemeVars } from './themeComputed';
 
 /**
@@ -40,11 +41,22 @@ export function shouldReduceEffects(config: ThemeConfig): boolean {
 }
 
 /**
+ * 界面材质是否为素色实底（material='solid'，或性能路径本就退实底）。
+ * 这是「表面渲染走玻璃还是实底」的唯一判定入口——GlassCard 与 CSS 都以它为准。
+ */
+export function isSolidMaterial(config: ThemeConfig): boolean {
+  return (config.material ?? DEFAULT_THEME_CONFIG.material) === 'solid' || shouldReduceEffects(config);
+}
+
+/**
  * 将主题配置应用到 :root
  */
 export function applyThemeToDOM(config: ThemeConfig): void {
   const reduceEffects = shouldReduceEffects(config);
-  const vars = computeThemeVars(config, reduceEffects);
+  const solidMaterial = isSolidMaterial(config);
+  // 素色材质复用性能模式的实底 token 集（--glass-bg-* 变高不透明实底），
+  // 但不带性能模式的「压缩过渡/动画」副作用——素色只改材质，不降体验。
+  const vars = computeThemeVars(config, reduceEffects || solidMaterial);
   const root = document.documentElement;
 
   // 注入计算后的 CSS 变量
@@ -57,6 +69,8 @@ export function applyThemeToDOM(config: ThemeConfig): void {
   root.dataset.themeOpacity = config.opacity;
   root.dataset.themeGlow = config.enableGlow ? 'on' : 'off';
   root.dataset.themeSidebarGlass = config.sidebarGlass;
+  // 界面材质：CSS 据此清除 backdrop-filter / 压平棱光高光（见 tokens.css [data-material="solid"]）
+  root.dataset.material = solidMaterial ? 'solid' : 'glass';
 
   // 性能模式：设置 data 属性，全局 CSS 会根据此属性清除 backdrop-filter
   if (reduceEffects) {
@@ -105,6 +119,7 @@ export function clearThemeFromDOM(): void {
   delete root.dataset.themeOpacity;
   delete root.dataset.themeGlow;
   delete root.dataset.themeSidebarGlass;
+  delete root.dataset.material;
   delete root.dataset.perfMode;
 }
 

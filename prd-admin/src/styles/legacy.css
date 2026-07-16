@@ -23,6 +23,40 @@ html[data-perf-mode="performance"] *::after {
   -webkit-backdrop-filter: none !important;
 }
 
+/* ========================================
+   界面材质 · 素色（data-material="solid"，2026-07-16 系统级统一）
+   与性能模式共用「清除 backdrop-filter + 实底 token」的表面机制，但只改材质、
+   不带性能模式压缩过渡/动画的副作用。玻璃 token（--glass-bg-*）已由
+   themeComputed 切为高不透明实底，这里补两件事：
+   1) 全局清 blur（含 inline 与伪元素）——86 处散装 backdrop-filter 一次统一；
+   2) 压平主要 chrome 的棱光内高光与超大投影（「浮肿感」的来源）。
+   ======================================== */
+html[data-material="solid"] * ,
+html[data-material="solid"] *::before,
+html[data-material="solid"] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 顶部工具条 / TabBar 容器：去棱光内高光，投影收敛为轻投影 */
+html[data-material="solid"] .surface-nav-bar {
+  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+}
+html[data-material="solid"] .surface-nav-bar[data-variant="gold"] {
+  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+}
+
+/* 抬升面板：同样去内高光、收敛投影（--glass-border/--glass-bg 已是实底 token） */
+html[data-material="solid"] .surface-raised {
+  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+}
+
+/* 玻璃噪点层在素色下无意义，一并关闭 */
+html[data-material="solid"] .surface-raised::after,
+html[data-material="solid"] .glass-blur-pseudo::after {
+  content: none;
+}
+
 /* 减少过渡持续时间，让操作更干脆 */
 html[data-perf-mode="performance"] .transition-all {
   transition-duration: 120ms !important;

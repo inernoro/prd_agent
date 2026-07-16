@@ -12,3 +12,8 @@
 | feat | prd-admin | 知识库文件夹（章节）支持拖拽同级换位（书籍顺序下，插入指示线 + SortOrder 持久化），文件夹行补 hover 反馈 |
 | polish | prd-admin | 知识库目录行重排（拖拽/置顶/切排序）带 FLIP 位移动画，行滑到新位置而非瞬移 |
 | feat | prd-admin | 团队空间卡片标注归属团队（首个团队名 +N，tooltip 列全量），「全部」聚合视图不再分不清来源 |
+| feat | prd-admin | 系统级界面材质：新增「素色 / 液态玻璃」材质开关（设置 → 皮肤设置），一处切换全站 surface/卡片/工具条统一跟随，默认素色 |
+| style | prd-admin | 素色材质全局清除 backdrop-filter、压平棱光内高光与超大投影；GlassCard 素色走实底渲染但动画不降级 |
+| fix | prd-admin | 修复 5 处素色下会失焦的低透明表面（分享页密码门 / 短链提示卡 / 竞技场工具条 / 首页顶栏 / 工作流聊天抽屉），背景提升为自身可读的实底 |
+| feat | prd-api | 主题配置持久化新增 Material 字段（素色/液态玻璃跨设备保持） |
+| docs | doc | 新增 debt.frontend.material-system 台账（低风险装饰面复核 / 长尾玻璃迁 token） |

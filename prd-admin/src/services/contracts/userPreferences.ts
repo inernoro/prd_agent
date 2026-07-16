@@ -9,6 +9,8 @@ export type ThemeConfigResponse = {
   enableGlow?: boolean;
   sidebarGlass?: string;
   performanceMode?: string;
+  /** 界面材质：solid 素色实底（默认）/ glass 液态玻璃 */
+  material?: string;
 };
 
 /** 视觉代理生成类型 */

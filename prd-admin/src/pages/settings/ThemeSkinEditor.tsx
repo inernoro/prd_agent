@@ -11,13 +11,16 @@ import {
   OPACITY_MAP,
   SIDEBAR_GLASS_OPTIONS,
   PERFORMANCE_MODE_OPTIONS,
+  MATERIAL_OPTIONS,
+  DEFAULT_THEME_CONFIG,
   type ColorDepthLevel,
   type OpacityLevel,
   type SidebarGlassMode,
   type PerformanceMode,
+  type MaterialMode,
 } from '@/types/theme';
 import { isWindowsPlatform } from '@/lib/themeApplier';
-import { RotateCcw, Sparkles, Palette, Layers, PanelLeft, Save, Gauge } from 'lucide-react';
+import { RotateCcw, Sparkles, Palette, Layers, PanelLeft, Save, Gauge, Square } from 'lucide-react';
 
 export function ThemeSkinEditor() {
   const { config, setConfig, reset, saving } = useThemeStore();
@@ -53,6 +56,41 @@ export function ThemeSkinEditor() {
 
       {/* 设置项网格 */}
       <div className="flex-1 overflow-y-auto space-y-6">
+        {/* 界面材质（系统级统一调配：一处切换，全站 surface/卡片/工具条同时跟随） */}
+        <SettingSection
+          icon={<Square size={14} />}
+          title="界面材质"
+          description="素色实底或液态玻璃，一处切换全站生效"
+        >
+          <div className="grid grid-cols-2 gap-2">
+            {MATERIAL_OPTIONS.map((option) => {
+              const isActive = (config.material ?? DEFAULT_THEME_CONFIG.material) === option.value;
+              return (
+                <button
+                  key={option.value}
+                  onClick={() => setConfig({ material: option.value as MaterialMode })}
+                  className="p-3 rounded-lg transition-all text-left"
+                  style={{
+                    background: isActive
+                      ? 'rgba(99, 102, 241, 0.15)'
+                      : 'var(--nested-block-bg)',
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'var(--nested-block-border)'}`,
+                  }}
+                >
+                  <div
+                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
+                  >
+                    {option.label}
+                  </div>
+                  <div className="mt-0.5 text-xs text-token-muted">
+                    {option.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </SettingSection>
+
         {/* 色深选择 */}
         <SettingSection
           icon={<Palette size={14} />}

@@ -1269,7 +1269,7 @@ export function ArenaPage() {
           sidebarCollapsed ? 'w-0 overflow-hidden opacity-0' : 'w-[280px] min-w-[280px]'
         )}
         style={{
-          background: 'rgba(10, 14, 22, 0.62)',
+          background: 'rgba(10, 14, 22, 0.90)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           borderRight: '1px solid rgba(255, 255, 255, 0.06)',
@@ -1381,7 +1381,7 @@ export function ArenaPage() {
         <div
           className="flex items-center justify-between px-5 h-14 flex-shrink-0"
           style={{
-            background: 'rgba(10, 14, 22, 0.52)',
+            background: 'rgba(10, 14, 22, 0.88)',
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
             borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
@@ -1923,7 +1923,7 @@ export function ArenaPage() {
             <div
               className="flex-shrink-0 px-5 py-2.5"
               style={{
-                background: 'rgba(10, 14, 22, 0.42)',
+                background: 'rgba(10, 14, 22, 0.86)',
                 backdropFilter: 'blur(8px)',
                 WebkitBackdropFilter: 'blur(8px)',
                 borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
@@ -2030,7 +2030,7 @@ export function ArenaPage() {
                         justCompleted && 'arena-panel-done-pulse'
                       )}
                       style={{
-                        background: 'rgba(10, 14, 22, 0.68)',
+                        background: 'rgba(10, 14, 22, 0.90)',
                         border: `1px solid ${labelColor}33`,
                         backdropFilter: 'blur(12px)',
                         WebkitBackdropFilter: 'blur(12px)',
@@ -2213,7 +2213,7 @@ export function ArenaPage() {
         <div
           className="flex-shrink-0 px-6 py-3"
           style={{
-            background: 'rgba(10, 14, 22, 0.52)',
+            background: 'rgba(10, 14, 22, 0.88)',
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
             borderTop: '1px solid rgba(255, 255, 255, 0.06)',
@@ -2377,7 +2377,7 @@ export function ArenaPage() {
                         disabled={revealLoading}
                         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-white/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{
-                          background: 'rgba(10, 14, 22, 0.62)',
+                          background: 'rgba(10, 14, 22, 0.90)',
                           border: '1px solid rgba(255, 255, 255, 0.24)',
                           boxShadow: '0 0 14px rgba(255, 255, 255, 0.06), inset 0 0 8px rgba(255, 255, 255, 0.03)',
                           fontFamily: 'var(--font-display)',

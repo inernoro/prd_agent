@@ -116,8 +116,9 @@ function LandingInner() {
         <div
           className="mx-auto px-6 py-4"
           style={{
+            // 素色材质下 blur 被全局清除：渐变主体加深，导航文字不再靠 blur 才能压住滚动内容
             background:
-              'linear-gradient(180deg, rgba(3,3,6,0.88) 0%, rgba(3,3,6,0) 100%)',
+              'linear-gradient(180deg, rgba(3,3,6,0.94) 0%, rgba(3,3,6,0.72) 70%, rgba(3,3,6,0) 100%)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
           }}

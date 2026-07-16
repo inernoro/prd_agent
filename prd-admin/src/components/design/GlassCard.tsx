@@ -89,7 +89,10 @@ export function GlassCard({
   onPointerDown,
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
+  const material = useThemeStore((s) => s.config.material ?? 'solid');
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
+  // 素色材质（系统默认）：表面走 Obsidian 实底渲染，但入场动画等体验不降级（那是性能模式的事）
+  const solidSurface = isPerf || material === 'solid';
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 
@@ -120,13 +123,13 @@ export function GlassCard({
 
   // 使用 useMemo 缓存样式计算
   const cardStyle = useMemo((): React.CSSProperties => {
-    // ── 性能模式：Obsidian 实底暗色表面 ──
-    if (isPerf) {
+    // ── 素色材质 / 性能模式：Obsidian 实底暗色表面 ──
+    if (solidSurface) {
       return buildObsidianStyle(variant, accentHue, glow, isLight, style);
     }
-    // ── 质量模式：液态玻璃 ──
+    // ── 液态玻璃材质 ──
     return buildGlassStyle(variant, accentHue, glow, isLight, style);
-  }, [variant, accentHue, glow, isPerf, isLight, style]);
+  }, [variant, accentHue, glow, solidSurface, isLight, style]);
 
   // 入场动画样式
   const animatedStyle: React.CSSProperties = animated && !isPerf
@@ -165,7 +168,7 @@ export function GlassCard({
         className={cn(
           radiusClass,
           'relative no-focus-ring',
-          !isPerf && !flush && 'glass-blur-pseudo',
+          !solidSurface && !flush && 'glass-blur-pseudo',
           !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
           overflowClass[overflow],
           paddingClass,
@@ -224,12 +227,13 @@ function buildObsidianStyle(
       ? `hsla(${accentHue}, 50%, 60%, 0.15)`
       : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
-  // 阴影：精调内高光与底部暗边，塑造伪 3D 棱感
-  let boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.5)';
+  // 阴影：素色基调走轻投影 token（2026-07-16 收敛「浮肿感」——大投影是元凶之一），
+  // gold/accent 变体仅保留一层很轻的彩色氛围光
+  let boxShadow = 'var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))';
   if (variant === 'gold') {
-    boxShadow = '0 8px 24px -4px rgba(99, 102, 241, 0.18), 0 8px 16px -4px rgba(0, 0, 0, 0.5)';
+    boxShadow = '0 8px 24px -8px rgba(99, 102, 241, 0.14), var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5)`;
+    boxShadow = `0 8px 24px -8px hsla(${accentHue}, 60%, 50%, 0.12), var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35))`;
   }
 
   // 浅色"纸感"卡片:走 token 暖咖啡微影,无白色 inset 高光(在白底上无效)、无黑色 inset 暗边(违反纸感)。
