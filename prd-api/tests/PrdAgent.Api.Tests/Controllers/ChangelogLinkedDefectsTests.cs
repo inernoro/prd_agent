@@ -153,6 +153,11 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("不要从测试环境领取正式缺陷", plan);
         Assert.Contains("不要把 PR 已创建当成完成", plan);
         Assert.Contains("不要把正式发布前的缺陷通知给提交人", plan);
+        Assert.Contains("functionalVerdict", plan);
+        Assert.Contains("evidenceStatus", plan);
+        Assert.Contains("目标 commit 越窗", plan);
+        Assert.Contains("功能验收通过；闭环证据不完整", plan);
+        Assert.Contains("只有功能仍失败", plan);
         Assert.Contains("start-next 返回 hasNext=false", plan);
         Assert.Contains("无正式发布后待验收通知项", plan);
         Assert.Contains("runId", plan);
@@ -371,5 +376,42 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("PR #861", comment);
         Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
         Assert.Contains("报告显示正式环境无法复现该问题", comment);
+    }
+
+    [Fact]
+    public void BuildValidationEvidenceComment_ConditionalVerdictSeparatesEvidenceGapFromFunctionalFailure()
+    {
+        var comment = DefectAgentController.BuildValidationEvidenceComment(
+            new DefectResolutionTrace
+            {
+                ShortSha = "abcdef1",
+                CommitMessage = "fix(prd-admin): 修复用户可见问题",
+            },
+            new SubmitPublishedValidationReportRequest
+            {
+                Message = "功能验收通过；闭环证据不完整：目标提交已越出更新中心最近一周列表。",
+            },
+            "缺陷修复验收报告",
+            "https://map.ebcone.net/document-store/report",
+            "https://map.ebcone.net/report/visual",
+            "conditional");
+
+        Assert.Contains("有条件通过，请查看功能限制或闭环证据缺口", comment);
+        Assert.Contains("功能验收通过；闭环证据不完整", comment);
+        Assert.DoesNotContain("验收未通过", comment);
+        Assert.DoesNotContain("需要继续改进", comment);
+    }
+
+    [Fact]
+    public void BuildValidationNotificationMessage_ConditionalVerdictDoesNotClaimFunctionalFailure()
+    {
+        var message = DefectAgentController.BuildValidationNotificationMessage(
+            new DefectReport { DefectNo = "DEF-0185", Title = "修复用户可见问题" },
+            "conditional");
+
+        Assert.Contains("已修复并发布", message);
+        Assert.Contains("待补闭环证据", message);
+        Assert.DoesNotContain("验收未通过", message);
+        Assert.DoesNotContain("需要继续改进", message);
     }
 }
