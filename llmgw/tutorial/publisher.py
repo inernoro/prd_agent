@@ -41,6 +41,11 @@ IMAGE_PLACEHOLDERS = (
 EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF]")
 SUSPECT_SECRET_RE = re.compile(r"(?:gwk|sk-ak|sk)-[A-Za-z0-9_-]{16,}")
 SELF_REPORTED_TENANT_RE = re.compile(r"(?:[?&]tenantId=|[\"']tenantId[\"']\s*:)", re.IGNORECASE)
+MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https://[^)\s]+)\)")
+NUMBERED_STEP_RE = re.compile(r"(?m)^\d+\. [^\n]+$")
+MIN_IMAGES_PER_CHAPTER = 2
+MIN_UNIQUE_IMAGES = 80
+MIN_EVIDENCE_REFERENCES = 111
 
 
 class TutorialError(RuntimeError):
@@ -155,6 +160,17 @@ def _validate_chapter(node: SourceNode, number: int, next_title: str | None) -> 
         raise TutorialError(f"{node.source_path}: 包含疑似真实密钥")
     if SELF_REPORTED_TENANT_RE.search(content):
         raise TutorialError(f"{node.source_path}: 出现请求自报 tenantId 的示例")
+    image_urls = MARKDOWN_IMAGE_RE.findall(content)
+    if len(image_urls) < MIN_IMAGES_PER_CHAPTER:
+        raise TutorialError(
+            f"{node.source_path}: 每章至少需要 {MIN_IMAGES_PER_CHAPTER} 张按操作圈选的截图，当前 {len(image_urls)} 张")
+    doing = content.split("## 跟我做\n", 1)[1].split("## 看到什么算成功\n", 1)[0]
+    steps = list(NUMBERED_STEP_RE.finditer(doing))
+    for index, step in enumerate(steps):
+        end = steps[index + 1].start() if index + 1 < len(steps) else len(doing)
+        if not MARKDOWN_IMAGE_RE.search(doing[step.end():end]):
+            raise TutorialError(
+                f"{node.source_path}: 编号步骤下方缺少就近圈选图：{step.group(0)}")
 
 
 def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
@@ -233,6 +249,14 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
     for number, node in enumerate(chapter_nodes):
         next_title = chapter_nodes[number + 1].title.split("：", 1)[-1] if number < 32 else None
         _validate_chapter(node, number, next_title)
+    image_references = [url for node in chapter_nodes for url in MARKDOWN_IMAGE_RE.findall(node.content)]
+    unique_images = set(image_references)
+    if len(unique_images) < MIN_UNIQUE_IMAGES:
+        raise TutorialError(
+            f"全书至少需要 {MIN_UNIQUE_IMAGES} 张不同操作截图，当前 {len(unique_images)} 张")
+    if len(image_references) < MIN_EVIDENCE_REFERENCES:
+        raise TutorialError(
+            f"全书至少需要 {MIN_EVIDENCE_REFERENCES} 个操作证据引用，当前 {len(image_references)} 个")
     primary = manifest.get("primarySourceId")
     if primary not in source_ids or next(node for node in nodes if node.source_id == primary).kind != "document":
         raise TutorialError("primarySourceId 必须指向一个受管文档")

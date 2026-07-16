@@ -134,7 +134,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - `format=md` 输出写作源的原始审计结构,保持现有 Markdown 格式不变。
 - `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
 - HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
-- 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档,截图走 CDS report assets,总正文仍受 10MB 上限约束。
+- 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档。截图先逐张上传到 CDS 内容寻址资产库,正文只引用不可变 URL;10MB 只约束文本/HTML 正文,不限制一份报告需要多少张合格证据图。
 - 执行类验收 HTML 必须由 `archive_report.py` 从 Markdown 写作源和 manifest 生成,并带 `map-acceptance-template` 模板标记。禁止把 `/tmp/*.html`、临时手写页面或外部生成的自由样式 HTML 直接上传到 CDS 作为每日/视觉验收报告。CDS 会对带 verdict 或 L0/L1/L2 档位的验收 HTML 做模板血统校验,不合格返回 `acceptance_html_template_required`。
 
 ## 线上报告与通知门禁（自动化/每日验收强制）
@@ -278,7 +278,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
 4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
    - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
-   - **交互 HTML 默认**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构作为 Markdown 写作源,归档脚本默认转成 `format=html` 交互报告（证据导航/表格筛选/章节折叠/图号跳转）。截图**内联为 data-URI** 后由 CDS 入库抽成 report assets。报告自包含、单份 < 10MB(超了减截图或改用 `cds/cli/acceptance` 的 JPEG 压图取证管线)。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。仅在下游明确要求 Markdown 时把 config `report.format` 改为 `md`。
+   - **交互 HTML 默认**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构作为 Markdown 写作源,归档脚本默认转成 `format=html` 交互报告（证据导航/表格筛选/章节折叠/图号跳转）。归档时先把每张截图上传到 CDS report assets,再把正文占位符替换为不可变 URL。10MB 仅是文本/HTML 正文的安全上限,不得通过删减必要截图来迁就该限制。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。仅在下游明确要求 Markdown 时把 config `report.format` 改为 `md`。
    - **按项目 + 文件夹归类(文件夹归类是默认行为,不是可选项)**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);文件夹三级解析 `--folder-path`('/'分隔可嵌套,如 `每日验收/2026-07`) > `config.report.cdsFolder` > `--module` 自动归类——三者都空才落项目根,所以只要按规范传了 `--module`,报告就不会散在根上(2026-07-10 用户反馈 54 份报告大半未归类,由此固化)。服务端在项目作用域内按名 find-or-create,不会跨项目串文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 verdict 元数据徽章**,不靠改名表达状态。
    - **必给地址**:收尾必打印「验收归档完成 · CDS 验收中心」块 + `/reports?project=&folder=&report=` 直达深链——每次归档都有一个可达地址交付,绝不静默。
@@ -379,5 +379,5 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 `ASSETS_PROVIDER` 未显式设置时按 **auto** 选择：有 COS 凭据→COS；否则有 R2 凭据→R2；都没有→**local 占位**（不再像旧逻辑那样直接抛异常，避免 CDS 预览等无凭据实例传图失败）。
 
 ### 两种传图入口（接口已规范）
-1. **随正文一次性归档**（本技能默认）：Markdown 用 `{{IMG:name}}` 占位 + `assets[]` 传 base64，或正文直接内嵌 `data:image` / HTML `<img src="data:...">`。`PUT /api/document-store/entries/{id}/content` 的归一化器会抽取→存储→改写为正式 URL（正文不留 `data:image`）。
-2. **单独上传一张图片**（新增）：`POST /api/document-store/stores/{storeId}/images`（multipart `file`），返回 `{ url, sha256, mime, sizeBytes }`，供正文按 URL 引用。解决"上传 HTML 报告内嵌图存不住、又没有单独传图入口"。
+1. **截图先单独上传**（本技能默认）：`POST /api/reports/assets`（multipart `file`），返回内容寻址的不可变 URL。`archive_report.py` 会逐张上传并把 `{{IMG:name}}` / `{{EVIDENCE}}` 改写为 URL，正文不再携带 base64。
+2. **MAP 知识库单独传图**：`POST /api/document-store/stores/{storeId}/images`（multipart `file`），返回 `{ url, sha256, mime, sizeBytes }`，供教程或文档正文按 URL 引用。

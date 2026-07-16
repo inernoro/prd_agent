@@ -16,14 +16,53 @@
 
 ## 跟我做
 
+> 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
+
 1. 遇到 401，检查是否确实提供 tenant-scoped service key、是否撤销或过期、Gateway 地址是否来自当前页面。无 key 本来就必须失败。
+
+**图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
+
+![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+
 2. 遇到 403，核对角色、团队 scope、appCaller 和协议范围。隐藏按钮只是体验，服务端拒绝才是最终边界。
+
+**图 081 供应商只有时间窗账单时标为汇总，不伪装单条 requestId**
+
+![图 081 供应商只有时间窗账单时标为汇总，不伪装单条 requestId](https://cds.miduo.org/api/reports/assets/976011a35fdab42f768b1625fd237185994acf4c7131f00f39633d46134c6689.png)
+
 3. 遇到 404，确认当前租户和对象 id。跨租户猜测也应返回不存在，不要通过传 tenantId 绕过。
+
+**图 088 展开后只展示带 TenantId 的变更摘要和安全元数据**
+
+![图 088 展开后只展示带 TenantId 的变更摘要和安全元数据](https://cds.miduo.org/api/reports/assets/eeb962e7ae42a3db155110a8779108786682bf5cf10d017021e4e2a8f7c95a7a.png)
+
 4. 遇到 409，重新读取最新版本再合并修改。常见于 Exchange 或 PromptPolicy 并发编辑，不能直接覆盖别人新版本。
+
+**图 097 学习中心先用三步讲清第一条请求，不要求先懂全部术语**
+
+![图 097 学习中心先用三步讲清第一条请求，不要求先懂全部术语](https://cds.miduo.org/api/reports/assets/5b663dc659eb61f03554e6147a1f6b08de72fde553f14100520a9785236155e6.png)
+
 5. 遇到 429，按 ServiceKeyId、appCaller 和团队检查速率与预算，排除客户端重试风暴后再申请调整。
+
+**图 098 完整链路把租户、key、appCaller、池、模型和 Provider 连起来**
+
+![图 098 完整链路把租户、key、appCaller、池、模型和 Provider 连起来](https://cds.miduo.org/api/reports/assets/ddac98c28e33de05568b35661348a0d8f75883d77179341e2a756a113d44a3d7.png)
+
 6. 遇到 5xx 或超时，查看请求详情中的模型池、实际模型、Provider 和 Exchange，再检查第 6 章公开教程桩地址是否能打开模型列表。官方桩没有失败开关，不要改坏它制造错误；502 还需由运维核对代理上游和目标服务。
+
+**图 099 术语索引可以直接跳到对应解释和操作入口**
+
+![图 099 术语索引可以直接跳到对应解释和操作入口](https://cds.miduo.org/api/reports/assets/b0688567037291c40d696a6fe3776dee9353cf57821b8cfd6f76ba5970b09b33.png)
+
 7. 遇到 unknown cost，核对请求价格快照、模型价格与币种。未知不是调用失败，也绝不能改成 0。
+
+**图 100 排错入口要求拿 requestId 定位，不让用户只说“调用失败”**
+
+![图 100 排错入口要求拿 requestId 定位，不让用户只说“调用失败”](https://cds.miduo.org/api/reports/assets/aa7b3bdf62d175bdfb8ecd5e46123481257154f1365173fa3fef87ffbfe14b9e.png)
+
 8. 每次只改变一个因素，再用一条安全请求验证。修复后保留新的 requestId 与旧证据对照。
+
+![图 100 排错入口要求拿 requestId 定位，不让用户只说“调用失败”](https://cds.miduo.org/api/reports/assets/aa7b3bdf62d175bdfb8ecd5e46123481257154f1365173fa3fef87ffbfe14b9e.png)
 
 ## 看图核对
 
