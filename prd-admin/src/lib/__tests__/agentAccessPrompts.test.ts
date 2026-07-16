@@ -16,21 +16,28 @@ describe('buildKeySecretsBlock', () => {
 });
 
 describe('buildDocStoreAgentPrompt', () => {
-  it('可读可写（默认）：读写端点齐全', () => {
+  it('可读可写（默认）：读端点走 /api/open/document-store，写端点走受控发布协议', () => {
     const p = buildDocStoreAgentPrompt(KEY, { base: BASE });
-    expect(p).toContain('GET  $PRD_AGENT_BASE/api/document-store/stores');
-    expect(p).toContain('GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}');
-    expect(p).toContain('POST $PRD_AGENT_BASE/api/document-store/stores');
-    expect(p).toContain('PUT  $PRD_AGENT_BASE/api/document-store/entries/{entryId}/content');
+    expect(p).toContain('GET  $PRD_AGENT_BASE/api/open/document-store/stores');
+    expect(p).toContain('GET  $PRD_AGENT_BASE/api/open/document-store/stores/{storeId}/entries');
+    expect(p).toContain('GET  $PRD_AGENT_BASE/api/open/document-store/entries/{entryId}/content');
+    expect(p).toContain('PUT    $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}');
+    expect(p).toContain('sourceSha256');
     expect(p).toContain('Authorization: Bearer $PRD_AGENT_API_KEY');
     expect(p).toContain(KEY);
   });
 
+  it('sk-ak 不可用的 JWT 业务路由绝不出现（PublicRoutes 无身份注入会 401）', () => {
+    const p = buildDocStoreAgentPrompt(KEY, { base: BASE });
+    expect(p).not.toContain('$PRD_AGENT_BASE/api/document-store/');
+    expect(p).not.toContain('新建知识库');
+  });
+
   it('只读 Key：不给写入端点，避免 AI 照做后 403', () => {
     const p = buildDocStoreAgentPrompt(KEY, { writable: false, base: BASE });
-    expect(p).toContain('GET  $PRD_AGENT_BASE/api/document-store/stores');
-    expect(p).not.toContain('POST $PRD_AGENT_BASE/api/document-store/stores');
-    expect(p).not.toContain('PUT  $PRD_AGENT_BASE');
+    expect(p).toContain('GET  $PRD_AGENT_BASE/api/open/document-store/stores');
+    expect(p).not.toContain('publisher');
+    expect(p).not.toContain('PUT    $PRD_AGENT_BASE');
   });
 
   it('文档空间指令不引用 marketplace 技能（findmapskills 只覆盖海鲜市场端点）', () => {

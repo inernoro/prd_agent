@@ -36,23 +36,37 @@ export interface DocStorePromptOptions {
   base?: string;
 }
 
-/** 文档空间（知识库）专用智能体指令 —— 真实端点，不引用 marketplace 技能 */
+/**
+ * 文档空间（知识库）专用智能体指令 —— 真实端点，不引用 marketplace 技能。
+ *
+ * 端点必须是 AgentApiKey（sk-ak-*）真正可用的开放接口 `/api/open/document-store/*`：
+ * 普通业务路由 `/api/document-store/stores|entries` 在 AdminControllerScanner.PublicRoutes
+ * 里（JWT 用户专用，跳过 scope→身份注入），sk-ak 没有 sub 会 401（PR #1166 Codex P1）。
+ * 写入走受控发布协议 DocumentStorePublisherController（publisher + sourceId 幂等 upsert），
+ * 开放接口不能新建知识库——库需在网页端先建好。
+ */
 export function buildDocStoreAgentPrompt(key: string, options?: DocStorePromptOptions): string {
   const writable = options?.writable ?? true;
   const base = options?.base ?? (typeof window !== 'undefined' ? window.location.origin : '');
-  const readLines = `- 列出我的知识库：GET  $PRD_AGENT_BASE/api/document-store/stores
-- 读取某篇文章：  GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}`;
-  const writeLines = `
-- 新建知识库：    POST $PRD_AGENT_BASE/api/document-store/stores
-- 在知识库下新增文章：POST $PRD_AGENT_BASE/api/document-store/stores/{storeId}/entries
-- 更新文章正文：  PUT  $PRD_AGENT_BASE/api/document-store/entries/{entryId}/content`;
+  const readBlock = `③ 读取（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
+- 列出我的知识库：GET  $PRD_AGENT_BASE/api/open/document-store/stores
+- 列出库内文章：  GET  $PRD_AGENT_BASE/api/open/document-store/stores/{storeId}/entries
+- 读取文章正文：  GET  $PRD_AGENT_BASE/api/open/document-store/entries/{entryId}/content`;
+  const writeBlock = `
+
+④ 写入走「受控发布」协议（同样 Bearer 鉴权）。注意：只能写我自己已有的知识库，开放接口不能新建库——目标库我会先在网页端建好：
+- 查看发布快照：  GET    $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/snapshot?publisher={你的发布标识}
+- 新增/更新文章： PUT    $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}
+- 删除受管文章：  DELETE $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}（query 带 publisher/runId 及 expected* 校验参数，以快照返回值为准）
+
+PUT body 必填字段：publisher（你固定的发布标识，小写字母/数字/点/下划线/短横线）、runId、kind（document 或 folder）、title、sourcePath、sourceRevision、sourceSha256（规范化正文的 SHA256）、manifestSha256、contentType（如 text/markdown）、content（正文）。
+同一 publisher + sourceId 幂等 upsert：重复 PUT 同一 sourceId 即为更新该篇文章。`;
 
   return `请帮我接入 PrdAgent 知识库（文档空间）开放接口。
 
 ${buildKeySecretsBlock(key, base)}
 
-③ 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
-${readLines}${writable ? writeLines : ''}
+${readBlock}${writable ? writeBlock : ''}
 
 后续我说"把这份内容存进我的知识库"或"读一下我某个知识库的文章"，按上面的接口操作即可。
 `;

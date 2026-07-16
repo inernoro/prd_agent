@@ -267,7 +267,7 @@ export function ConnectAiDialog({ onClose }: Props) {
                       key: 'rw' as Permission,
                       title: '可读可写',
                       recommended: true,
-                      desc: '读取知识库与文章，并能以你的身份创建知识库、上传 / 更新文章',
+                      desc: '读取知识库与文章，并能以你的身份在你已有的知识库中发布 / 更新文章',
                       code: 'document-store:read + write',
                     },
                     {
