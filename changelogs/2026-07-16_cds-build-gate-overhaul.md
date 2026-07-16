@@ -18,3 +18,5 @@
 | fix | cds | 回应 Codex P2：merged 部署请求不再打开旧版本预览（BranchListPage 合并分支改为关闭预览占位窗口，消除「已部署完成」假象） |
 | rule | cds | 新增 .claude/rules/concurrency-gate-discipline.md：并发闸/队列组件五件套设计纪律（等待可取消/持有者身份/只锁真实资源/周期收敛/健康不变量+常态回归），固化本次队列堵死事故教训 |
 | docs | cds | 新增 doc/debt.cds.build-gate.md 债务台账（pending 队列更名/排队心跳拆分/holders 运维 UI/健康阈值可配等延期项），同步 index.yml 与 guide.list.directory.md |
+| fix | cds | 回应 Codex P2：带一次性选项（?force=1 / ?ignoreRequired=1 / targetExecutorId）的 manual deploy 不参与合并去重（pending 重放丢选项会导致强制部署被暂停闸门拦下、env 豁免失效、执行器指定丢失），撞车维持 409 |
+| fix | cds | 回应 Codex P2：构建闸健康探针 GET /api/cluster/build-gate/health 补登 github-auth 模式 PUBLIC_PATHS 白名单（此前仅在 basic-auth 白名单，CDS_AUTH_MODE=github 部署下探针 401 不可用） |

@@ -2338,6 +2338,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       profileId?: string | null;
       commitSha?: string | null;
       versionId?: string | null;
+      hasOneShotOptions?: boolean;
       source: string;
       reason?: string | null;
       sse?: boolean;
@@ -2356,6 +2357,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       requestId: requestId || null,
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
+      hasOneShotOptions: input.hasOneShotOptions || false,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
@@ -11432,6 +11434,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 版本重部署（body.versionId）不参与 manual 合并去重：pending 重放只送
       // commitSha 会丢版本捕获配置（Codex P2），撞车维持 409。
       versionId: requestedVersionId || null,
+      // 一次性选项（?force=1 / ?ignoreRequired=1 / body.targetExecutorId）同理
+      // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
+      // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
+      hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,

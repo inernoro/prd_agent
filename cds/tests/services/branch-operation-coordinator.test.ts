@@ -985,6 +985,35 @@ describe('BranchOperationCoordinator', () => {
     expect(versionRedeploy.status).toBe('rejected');
   });
 
+  it('带一次性选项（force/ignoreRequired/targetExecutorId）的 manual deploy 撞车维持 409——pending 重放会丢选项（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    // ?force=1 绕过项目暂停闸门：重放不带 force 会被暂停闸门直接拦下
+    const forcedDeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+      hasOneShotOptions: true,
+    });
+    expect(forcedDeploy.status).toBe('rejected');
+
+    // 对照：不带一次性选项的普通 manual deploy 仍走合并通道
+    const plainDeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+    });
+    expect(plainDeploy.status).toBe('merged');
+  });
+
   it('manual stop 仍按优先级 supersede 在途 deploy，并取消已合并的 pending', () => {
     const { sink } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

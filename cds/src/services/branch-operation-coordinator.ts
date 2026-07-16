@@ -37,6 +37,15 @@ export interface BranchOperationRequest {
    * 维持撞车 409 的旧行为。
    */
   versionId?: string | null;
+  /**
+   * 请求携带一次性选项时为 true（?force=1 绕过项目暂停 / ?ignoreRequired=1
+   * 跳过必填 env 检查 / body.targetExecutorId 显式指定执行器）。pending 重放
+   * 只送 commitSha，这些选项会丢失——强制部署会在重放时被暂停闸门拦下、
+   * env 豁免失效、执行器指定被自动选择覆盖，用户却已被告知「已排队」。
+   * 故带一次性选项的 manual deploy 不参与合并去重，维持撞车 409
+   * （Codex P2「Reject manual deploy merges with one-shot options」）。
+   */
+  hasOneShotOptions?: boolean;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -138,11 +147,13 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
  * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
  * restart 语义按单服务隔离，合并归属不明确，维持 409。
  * 带 versionId 的版本重部署不合并（pending 重放会丢版本捕获配置，Codex P2）。
+ * 带一次性选项（force/ignoreRequired/targetExecutorId）的请求同理不合并
+ * （pending 重放只送 commitSha，选项丢失后重放可能直接失败，Codex P2）。
  * 注意：仅在 incoming **不能**压过（supersede）在途操作时才走合并——优先级
  * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
  */
 function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
-  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId;
+  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId && !req.hasOneShotOptions;
 }
 
 /**
