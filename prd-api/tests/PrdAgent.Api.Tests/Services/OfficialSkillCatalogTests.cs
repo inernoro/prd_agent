@@ -13,7 +13,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.8.0", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.9.0", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自主三档边界", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("五层自治回路", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -30,6 +30,10 @@ public class OfficialSkillCatalogTests
         Assert.Contains("hasNext=false", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("正式缺陷系统只负责读取待验收 trace", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("测试或预览环境跑视觉验收", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("functionalVerdict", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("evidenceStatus", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("功能验收通过；闭环证据不完整", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("自动化取证能力不足不得描述成代码仍未修复", OfficialSkillTemplates.AiDefectResolveSkillMd);
     }
 
     [Fact]
