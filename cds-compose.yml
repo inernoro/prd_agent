@@ -159,6 +159,28 @@ x-cds-deploy-modes:
         # CDS 预览没有稳定对象存储探针对象；深度 readiness 仍检查 Mongo、key 和 router，
         # 正式 docker-compose 则默认强制对象存储探针。
         LlmGateway__Readiness__RequireAssetProbe: "false"
+  # 独立 LLM Gateway Web：CDS 源码模式不依赖 GitHub/GHCR，express 仍使用不可变 SHA 镜像。
+  llmgw-web:
+    dev:
+      label: "开发模式 (Vite HMR)"
+      command: >-
+        cd /repo/llmgw/web &&
+        corepack enable &&
+        corepack prepare pnpm@10.28.2 --activate &&
+        pnpm config set store-dir /pnpm/store &&
+        pnpm install --frozen-lockfile &&
+        pnpm exec vite --host 0.0.0.0 --port 8100
+      env:
+        LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
+        LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
+      prebuilt: true
+      containerPort: 80
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -330,33 +352,37 @@ services:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
       cds.readiness-path: "/gw/v1/healthz"
 
-  # 独立 LLM 网关前端控制台 llmgw-web —— Vite React SPA（登录页 POST /gw/auth/login → JWT；
-  # LLM 日志页调 /gw/logs），容器内 nginx 监听 80：SPA 回退 index.html + /gw/* 反代到 llmgw:8090。
-  # 纯静态站点、只由 CI 预构建（.github/workflows/branch-image.yml 的 LLMGW_WEB_IMAGE），无源码热重载模式。
-  # 采用「标准形态的预构建 app service」：image + 标准 ports:["80"] + cds.prebuilt-image label，
-  # 让 compose-parser 的 isAppServiceCandidate 识别为可部署 app profile（CDS docker-PULL nginx 镜像、
-  # 非本机源码构建），命名子域 <previewSlug>-llmgw-web.<root> 正常发布。回退链走 base 级 fallbackImage
-  # （同 admin：branch-<slug> → branch-main），镜像 tag 公式 sha-${CDS_COMMIT_SHA} 与 branch-image.yml SSOT。
+  # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
+  # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。
+  # 这样 GitHub/GHCR 暂时不可用时，CDS 仍能单独构建和验收完整 Gateway。
   llmgw-web:
-    image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
-    # 容器内 nginx 监听 80（见 llmgw/web/nginx.conf listen 80）。标准 ports 供 extractContainerPort 读取。
+    image: node:20-slim
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - llmgw-web-pnpm-store:/pnpm/store
     ports:
-      - "80"
-    # 本 commit 未构建 llmgw-web（CI 路径过滤只在 llmgw/web/** 变更时构建）时按顺序回退：
-    #   ① 本分支该组件最近一次构建（branch-<slug>）② 退到固定主分支镜像（branch-main）
-    # 基础级 fallbackImage：无 express deployMode 的裸预构建站点也逐级回退（resolveEffectiveProfile 消费）。
-    fallbackImage:
-      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
-      - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
+      - "8100"
+    command: >-
+      cd /repo/llmgw/web &&
+      corepack enable &&
+      corepack prepare pnpm@10.28.2 --activate &&
+      pnpm config set store-dir /pnpm/store &&
+      pnpm install --frozen-lockfile &&
+      pnpm exec vite --host 0.0.0.0 --port 8100
+    depends_on:
+      llmgw: { condition: service_started }
+      llmgw-serve: { condition: service_started }
+    environment:
+      LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
+      LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
     labels:
-      # 预构建镜像 app 站点标记：CDS docker-PULL 该 nginx 镜像启动，跳过源码 mount + 本机构建。
-      cds.prebuilt-image: "true"
       # 公网命名 URL：<previewSlug>-llmgw-web.<root> 根路径直达控制台（登录后看 LLM 日志）。
-      # 浏览器同源，nginx 把 /gw/* 反代到 llmgw:8090，故 SPA 无需额外 VITE_LLMGW_API_BASE（编译期默认 /gw）。
+      # Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
       cds.subdomain: "llmgw-web"
-      # SPA 站点无独立健康端点，根路径 nginx 返回 index.html 即视为就绪（与 admin 的 cds.readiness-path "/" 同）。
+      # SPA 根路径返回 index.html 即视为就绪。
       cds.readiness-path: "/"
-      # 首次拉取 nginx 镜像 + 容器起就绪窗口，给足 600s 兜底（避免慢拉镜像被误判 error）。
+      # 首次 pnpm 冷安装留足窗口。
       cds.readiness-timeout: "600"
 
   # ── Infrastructure Services (无相对路径 mount) ──
@@ -386,5 +412,6 @@ services:
 volumes:
   api-nuget-cache:
   admin-pnpm-store:
+  llmgw-web-pnpm-store:
   mongodb-data:
   redis-data:
