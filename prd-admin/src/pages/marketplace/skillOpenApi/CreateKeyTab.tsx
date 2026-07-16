@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { buildDocStoreAgentPrompt, buildKeySecretsBlock } from '@/lib/agentAccessPrompts';
 import { createAgentApiKey } from '@/services';
 import { useDemoVideoUrl } from '@/stores/homepageAssetsStore';
 import {
@@ -148,40 +149,21 @@ export function CreateKeyTab({
    */
   const buildAgentPrompt = (key: string) => {
     const base = typeof window !== 'undefined' ? window.location.origin : '';
-    const keyBlock = `① 把 Key 保存到本机 secrets 文件。不要写进仓库、.claude/settings.local.json、PR、验收报告或公开日志：
 
-mkdir -p ~/.codex/secrets
-umask 077
-printf '%s\\n' '${key}' > ~/.codex/secrets/prd-agent-api-key
-chmod 600 ~/.codex/secrets/prd-agent-api-key
-
-② 当前 shell 临时导入环境变量：
-
-export PRD_AGENT_API_KEY="$(cat ~/.codex/secrets/prd-agent-api-key)"
-export PRD_AGENT_BASE="${base}"`;
-
-    // 仅文档空间权限（无 marketplace）→ 文档空间 API 指令，不引用 findmapskills。
+    // 仅文档空间权限（无 marketplace）→ 文档空间 API 指令（SSOT：lib/agentAccessPrompts.ts），
+    // 不引用 findmapskills。
     if (hasDocStoreScope && !hasMarketplaceScope) {
-      return `请帮我接入 PrdAgent 知识库（文档空间）开放接口。
-
-${keyBlock}
-
-③ 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
-- 列出我的知识库：GET  $PRD_AGENT_BASE/api/document-store/stores
-- 读取某篇文章：  GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}
-- 新建知识库：    POST $PRD_AGENT_BASE/api/document-store/stores
-- 在知识库下新增文章：POST $PRD_AGENT_BASE/api/document-store/stores/{storeId}/entries
-- 更新文章正文：  PUT  $PRD_AGENT_BASE/api/document-store/entries/{entryId}/content
-
-后续我说"把这份内容存进我的知识库"或"读一下我某个知识库的文章"，按上面的接口操作即可。
-`;
+      return buildDocStoreAgentPrompt(key, {
+        writable: selectedScopes.includes('document-store:write'),
+        base,
+      });
     }
 
     // 含海鲜市场权限 → 海鲜市场提示词 + findmapskills 技能。
     const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
     return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
 
-${keyBlock}
+${buildKeySecretsBlock(key, base)}
 
 ③ 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
