@@ -19,7 +19,6 @@ import { cn } from '@/lib/cn';
 import { createAgentApiKey, listAgentApiKeys } from '@/services';
 import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { buildDocStoreAgentPrompt } from '@/lib/agentAccessPrompts';
-import { GuideTab } from '@/pages/marketplace/skillOpenApi/GuideTab';
 import { KeysListTab } from '@/pages/marketplace/skillOpenApi/KeysListTab';
 
 /**
@@ -79,6 +78,97 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 指南里的单个代码块：surface-code + 右上角复制按钮 */
+function GuideSnippet({ title, code }: { title: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    const ok = await copyText(code);
+    setCopied(ok);
+    if (ok) setTimeout(() => setCopied(false), 1500);
+    else toast.error('复制失败，请手动选中');
+  };
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="text-[12px] font-semibold text-token-primary">{title}</div>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="surface-action inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-0.5 text-[10.5px] transition-all hover:text-token-secondary"
+        >
+          {copied ? <Check size={10} /> : <Copy size={10} />}
+          {copied ? '已复制' : '复制'}
+        </button>
+      </div>
+      <pre
+        className="surface-code rounded-xl px-3.5 py-3 font-mono text-[11px] leading-relaxed text-token-secondary"
+        style={{ overflowX: 'auto', whiteSpace: 'pre' }}
+      >
+        {code}
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * 文档空间专属使用指南 —— 端点与「复制给智能体」的指令同源（/api/open/document-store/*
+ * + 受控发布协议），不再复用海鲜市场 GuideTab（那份讲的是 findmapskills 与
+ * /api/open/marketplace/skills，语境错位，PR #1166 Codex P2）。
+ */
+function DocStoreGuidePanel() {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  const readSnippet = `BASE=${base}
+KEY=sk-ak-你的Key
+
+# 列出我的知识库
+curl -H "Authorization: Bearer $KEY" "$BASE/api/open/document-store/stores"
+
+# 列出库内文章
+curl -H "Authorization: Bearer $KEY" "$BASE/api/open/document-store/stores/{storeId}/entries"
+
+# 读取文章正文
+curl -H "Authorization: Bearer $KEY" "$BASE/api/open/document-store/entries/{entryId}/content"`;
+  const writeSnippet = `# 1) 查看发布快照（更新已有文章前必查：拿节点的 updatedAt 作并发令牌）
+curl -H "Authorization: Bearer $KEY" \\
+  "$BASE/api/open/document-store/publisher/stores/{storeId}/snapshot?publisher=my-agent"
+
+# 2) 新增 / 更新文章（同一 publisher + sourceId 幂等 upsert）
+curl -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \\
+  "$BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}" \\
+  -d '{
+    "publisher": "my-agent",
+    "runId": "run-001",
+    "kind": "document",
+    "title": "文章标题",
+    "sourcePath": "docs/example.md",
+    "sourceRevision": "rev-001",
+    "sourceSha256": "<规范化正文的 SHA256>",
+    "manifestSha256": "<清单 SHA256>",
+    "contentType": "text/markdown",
+    "content": "# 正文"
+  }'
+
+# 并发令牌规则（服务端强校验，弄错 409）：
+#   新建该 sourceId：不带 expectedUpdatedAt
+#   更新已有 sourceId：把快照返回的节点 updatedAt 原样放进 body.expectedUpdatedAt`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-[11.5px] leading-relaxed text-token-muted">
+        以下端点与「复制给智能体」的指令同源，统一带请求头
+        <span className="mx-1 font-mono text-[10.5px]">Authorization: Bearer sk-ak-...</span>
+        。写入仅限你自己已有的通用知识库（目标库先在网页端建好），开放接口不能新建库。
+      </div>
+      <GuideSnippet title="读取（document-store:read，写权限隐含读）" code={readSnippet} />
+      <GuideSnippet title="写入 · 受控发布协议（document-store:write）" code={writeSnippet} />
+      <div className="surface-inset rounded-xl px-3.5 py-3 text-[11px] leading-relaxed text-token-muted">
+        Key 管理：明文只在签发时显示一次；到期前 30 天会提醒续期，过期后有 7 天宽限期仍可调用，超过宽限期才
+        403；续期、吊销、查看前缀都在「我的 Key」列表里。
+      </div>
+    </div>
+  );
 }
 
 export function ConnectAiDialog({ onClose }: Props) {
@@ -652,7 +742,7 @@ export function ConnectAiDialog({ onClose }: Props) {
                 presetScopes={[SCOPE_READ, SCOPE_WRITE]}
               />
             )}
-            {view === 'guide' && <GuideTab />}
+            {view === 'guide' && <DocStoreGuidePanel />}
           </div>
         )}
       </div>
