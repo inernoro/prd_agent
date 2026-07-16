@@ -32,6 +32,13 @@ export function buildOwnedDocumentStorePath(storeId: string): string {
   return `/document-store?${params.toString()}`;
 }
 
+export function resolveShareKnowledgeBaseReturnPath(
+  storeId: string,
+  canOpenStore: boolean,
+): string {
+  return canOpenStore ? buildOwnedDocumentStorePath(storeId) : '/document-store';
+}
+
 export function resolveControlledSharedEntryId(
   selectedEntryId: string | undefined,
   initialSelectedId: string | undefined,
