@@ -42,14 +42,22 @@ services:
       - "9900"
     # 后端 tsc 构建 + 前端 vite 构建 + node 直启（不走 exec_cds.sh：
     # 那是宿主入口脚本，会去装依赖 / 渲染 nginx / 起 daemon，容器内全不适用）。
+    # node_modules 落在 bind-mount 的 worktree（.:/repo）里，随分支持久化。
+    # `--frozen-lockfile` 增量安装遇 node_modules 已存在会「Done in ~1s」直接跳过，
+    # 一旦某次安装被打断 / 并发（如 force-rebuild 与 deploy 撞车）留下半链的
+    # node_modules（.bin/tsc 等软链缺失），后续增量安装不自愈、`tsc` 构建 exit 1
+    # 崩溃。自愈守卫：装之前先探 build 工具软链是否可执行，缺了就 rm -rf 该目录，
+    # 逼一次干净全装。正常情况（软链在）探测秒过、仍走快速增量，不牺牲常态速度。
     command: >-
       cd cds &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&
+      ( [ -x node_modules/.bin/tsc ] || rm -rf node_modules ) &&
       pnpm install --frozen-lockfile &&
       pnpm build &&
       cd web &&
+      ( [ -x node_modules/.bin/vite ] || rm -rf node_modules ) &&
       pnpm install --frozen-lockfile &&
       pnpm build &&
       cd .. &&
