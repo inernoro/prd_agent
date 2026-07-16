@@ -2464,6 +2464,12 @@ export function DocumentStorePage() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
+  // 团队 id → 团队名（团队空间「全部」聚合视图给卡片标归属团队用）
+  const myTeams = useTeamStore((s) => s.teams);
+  const teamNameMap = useMemo(
+    () => new Map(myTeams.map((t) => [t.team.id, t.team.name])),
+    [myTeams],
+  );
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
     return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
@@ -3522,6 +3528,15 @@ export function DocumentStorePage() {
               const CatIcon = iconForStore(s as DocumentStoreWithPreview);
               const isPinned = pinnedIds.has(s.id);
               const isFresh = isUpdatedToday(s.updatedAt);
+              // 团队空间（尤其「全部」聚合视图）：标出这个库共享到了哪个团队，否则分不清归属
+              const teamNames = tab === 'team'
+                ? ((s as DocumentStoreWithPreview).sharedTeamIds ?? [])
+                    .map(id => teamNameMap.get(id))
+                    .filter((n): n is string => Boolean(n))
+                : [];
+              const teamLabel = teamNames.length > 0
+                ? `${teamNames[0]}${teamNames.length > 1 ? ` +${teamNames.length - 1}` : ''}`
+                : undefined;
               const cardMenuOpen = openCardMenuId === s.id;
               // 动作按钮 hover 才显现（触屏无 hover → 常显）；已置顶图钉 / 打开中的菜单按钮保持常显
               const hoverReveal = isMobile ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity';
@@ -3569,7 +3584,12 @@ export function DocumentStorePage() {
                         </h3>
                         {/* 副标题：分类 · N 篇文章 · 体量（状态徽标移到右上角与置顶/更多同一排对齐） */}
                         <p className="text-[11px] truncate mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                          <span className="truncate">{category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章</span>
+                          <span
+                            className="truncate"
+                            title={teamNames.length > 1 ? `共享到：${teamNames.join('、')}` : undefined}
+                          >
+                            {teamLabel ? `${teamLabel} · ` : category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          </span>
                           <span aria-hidden>·</span>
                           <StoreSizeBadge storeId={s.id} variant="compact" />
                         </p>

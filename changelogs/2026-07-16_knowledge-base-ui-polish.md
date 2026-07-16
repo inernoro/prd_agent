@@ -9,3 +9,6 @@
 | feat | prd-admin | 置顶/取消置顶带 FLIP 位移动画 + 落点琥珀描边渐隐 + 平滑跟随滚动，库多时一眼看到卡片挪去了哪 |
 | feat | prd-admin | 有置顶时列表分「已置顶 / 其他」两个小节，置顶卡片滑入分区落点明确 |
 | polish | prd-admin | 知识库搜索框支持 ESC 一键清空 |
+| feat | prd-admin | 知识库文件夹（章节）支持拖拽同级换位（书籍顺序下，插入指示线 + SortOrder 持久化），文件夹行补 hover 反馈 |
+| polish | prd-admin | 知识库目录行重排（拖拽/置顶/切排序）带 FLIP 位移动画，行滑到新位置而非瞬移 |
+| feat | prd-admin | 团队空间卡片标注归属团队（首个团队名 +N，tooltip 列全量），「全部」聚合视图不再分不清来源 |

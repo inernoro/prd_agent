@@ -1354,21 +1354,33 @@ function TreeNode({
           // 双击文件名重命名（文件夹双击仍是展开/收起，不抢交互）
           if (!isFolder && onRequestRename) onRequestRename(entry);
         }}
-        draggable={!isFolder}
+        draggable={!isFolder || !!onReorderDrop}
         onDragStart={(e) => {
-          if (isFolder) return;
+          if (isFolder && !onReorderDrop) return;
           e.dataTransfer.setData('text/plain', entry.id);
+          // 文件夹拖拽打类型标记：dragover 阶段读不到 data，只能靠 types 区分「拖的是文件夹」
+          if (isFolder) e.dataTransfer.setData('application/x-kb-folder', '1');
           e.dataTransfer.effectAllowed = 'move';
         }}
         onDragOver={(e) => {
+          const folderDrag = e.dataTransfer.types.includes('application/x-kb-folder');
           if (isFolder) {
+            if (folderDrag) {
+              // 文件夹拖到文件夹上：上/下半区 = 章节换位（拖拽不做嵌套，嵌套心智留给「拖文档进文件夹」）
+              if (!onReorderDrop) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              const rect = e.currentTarget.getBoundingClientRect();
+              setReorderHint(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
+              return;
+            }
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             setDragOver(true);
             return;
           }
-          // 书籍顺序下文档行也是放置目标：上半行插前、下半行插后
-          if (!onReorderDrop) return;
+          // 书籍顺序下文档行也是放置目标：上半行插前、下半行插后（文件夹不插进文档行之间）
+          if (!onReorderDrop || folderDrag) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
           const rect = e.currentTarget.getBoundingClientRect();
@@ -1376,23 +1388,29 @@ function TreeNode({
         }}
         onDragLeave={() => { setDragOver(false); setReorderHint(null); }}
         onDrop={(e) => {
+          const draggedId = e.dataTransfer.getData('text/plain');
+          const folderDrag = e.dataTransfer.types.includes('application/x-kb-folder');
           if (isFolder) {
             e.preventDefault();
+            if (folderDrag) {
+              const position = reorderHint ?? 'after';
+              setReorderHint(null);
+              if (onReorderDrop && draggedId && draggedId !== entry.id) onReorderDrop(draggedId, entry.id, position);
+              return;
+            }
             setDragOver(false);
-            const draggedId = e.dataTransfer.getData('text/plain');
             if (draggedId && draggedId !== entry.id && onMoveEntry) {
               onMoveEntry(draggedId, entry.id);
             }
             return;
           }
-          if (!onReorderDrop) return;
+          if (!onReorderDrop || folderDrag) return;
           e.preventDefault();
           const position = reorderHint ?? 'after';
           setReorderHint(null);
-          const draggedId = e.dataTransfer.getData('text/plain');
           if (draggedId && draggedId !== entry.id) onReorderDrop(draggedId, entry.id, position);
         }}
-        className={`relative flex flex-col justify-center text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'gap-1 py-[8px] hover-bg-soft'}`}
+        className={`relative flex flex-col justify-center text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px] hover-bg-soft' : 'gap-1 py-[8px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -2492,7 +2510,18 @@ export function DocBrowser({
     if (!onReorderEntries) return;
     const dragged = entries.find(e => e.id === draggedId);
     const target = entries.find(e => e.id === targetId);
-    if (!dragged || !target || dragged.isFolder || target.isFolder) return;
+    if (!dragged || !target) return;
+    // 文档只与文档换位、文件夹只与文件夹换位（TreeNode 的 dragover 已按类型过滤，这里兜底）
+    if (dragged.isFolder !== target.isFolder) return;
+    if (dragged.isFolder) {
+      // 文件夹（章节）仅支持同父级换位；拖拽不做嵌套
+      if ((dragged.parentId ?? null) !== (target.parentId ?? null)) return;
+      const siblings = (target.parentId ? (childrenMap.get(target.parentId) ?? []) : rootEntries)
+        .filter(e => e.isFolder);
+      const updates = computeReorderUpdates(siblings, draggedId, targetId, position);
+      if (updates.length > 0) void onReorderEntries(updates);
+      return;
+    }
     // 以目标所在父级的「当前视觉顺序」计算新 SortOrder；被拖条目跨文件夹时先移动再定位
     const siblings = (target.parentId ? (childrenMap.get(target.parentId) ?? []) : rootEntries)
       .filter(e => !e.isFolder);
@@ -3212,9 +3241,18 @@ export function DocBrowser({
             ) : (
             <motion.div
               key={item.entry.id}
+              /* layout="position"：拖拽换位 / 置顶 / 切排序时 FLIP 位移动画，行滑到新位置
+                 而非瞬移（与列表页卡片同一套「看得见去哪了」反馈）。layout 动画单独给
+                 无延迟的 spring——不能吃入场 stagger 的 delay，否则重排像多米诺 */
+              layout="position"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.28, delay: Math.min(idx * 0.018, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
+              transition={{
+                duration: 0.28,
+                delay: Math.min(idx * 0.018, 0.5),
+                ease: [0.25, 0.1, 0.25, 1],
+                layout: { type: 'spring', stiffness: 420, damping: 38, delay: 0 },
+              }}
             >
             <TreeNode
               entry={item.entry}

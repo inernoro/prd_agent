@@ -103,4 +103,12 @@ describe('computeReorderUpdates（拖拽自定义排序）', () => {
       { entryId: 'outsider', sortOrder: 15 },
     ]);
   });
+
+  it('文件夹（章节）同级换位与文档走同一套编号逻辑', () => {
+    const folder = (id: string, sortOrder?: number) => ({ id, title: id, isFolder: true, sortOrder });
+    const siblings = [folder('基础篇', 100), folder('中级篇', 200), folder('高级篇', 300)];
+    expect(computeReorderUpdates(siblings, '高级篇', '基础篇', 'before')).toEqual([
+      { entryId: '高级篇', sortOrder: 90 },
+    ]);
+  });
 });
