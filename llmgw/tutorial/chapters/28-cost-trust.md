@@ -10,7 +10,7 @@
 
 ## 开始前检查
 
-- 第 20 章 chat 教程桩请求提供 unknown 样例，第 23 章只包住该 chat 请求的窗口账单提供 `0.01 CNY` actual 汇总；连续路线没有价格快照，因此不假装已有 estimated。
+- [[第 20 章：配置 PromptPolicy|第 20 章]] chat 教程桩请求提供 unknown 样例，[[第 23 章：导入供应商账单并对账|第 23 章]]只包住该 chat 请求的窗口账单提供 `0.01 CNY` actual 汇总；连续路线没有价格快照，因此不假装已有 estimated。
 - 严格的 estimated、同币种 reconciled、跨币种缺 FX 与有 FX 分支由项目验收人员使用仓库既有费用策略测试验证，不使用真实密钥。
 - 不把时间窗汇总假装成逐请求对账。
 
@@ -18,13 +18,13 @@
 
 > 每做完一个编号步骤，就核对紧接在步骤下方的圈选图。同一步有两张图时，第一张确认入口或全貌，第二张确认字段或结果。
 
-1. 从第 20 章 chat 请求详情记下 chat requestId、实际模型 `stub-chat`、Provider 和费用状态。不要误用 vision requestId。由于第 7 章未填写价格，estimated 必须显示“未知”，不能显示 0。
+1. 从[[第 20 章：配置 PromptPolicy|第 20 章]] chat 请求详情记下 chat requestId、实际模型 `stub-chat`、Provider 和费用状态。不要误用 vision requestId。由于[[第 7 章：配置第一个模型|第 7 章]]未填写价格，estimated 必须显示“未知”，不能显示 0。
 
 **图 007 费用可信度分币种显示覆盖率，unknown 不写成 0**
 
 ![图 007 费用可信度分币种显示覆盖率，unknown 不写成 0](https://cds.miduo.org/api/reports/assets/09528dceb85219f3e0e4074df5fbf246f0270de2b484a3d21a80db18d946568c.png)
 
-2. 打开“治理 → 预算与用量”，在“最近对账记录”找到第 23 章流水。它应显示 `0.01 CNY` actual、Gateway 估算未知，并明确是时间窗汇总，没有单条 requestId。
+2. 打开“治理 → 预算与用量”，在“最近对账记录”找到[[第 23 章：导入供应商账单并对账|第 23 章]]流水。它应显示 `0.01 CNY` actual、Gateway 估算未知，并明确是时间窗汇总，没有单条 requestId。
 
 **图 072 费用可信度条区分价格覆盖、unknown 与原币种金额**
 

@@ -20,6 +20,7 @@ import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, N
 import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { DocumentGalaxyView, type GalaxyLabelMode } from '@/pages/document-store/DocumentGalaxyView';
 import { UniverseGraphPage } from '@/pages/document-store/UniverseGraphPage';
 import {
@@ -34,8 +35,11 @@ import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import {
   parseLibraryShareViewMode,
   resolveControlledSharedEntryId,
+  resolveInitialSharedEntryId,
+  resolveLibraryShareSortMode,
   resolveSharedWikilinkEntryId,
   withLibraryShareEntry,
+  withLibraryShareSortMode,
   withLibraryShareViewMode,
   type LibraryShareViewMode,
 } from './libraryShareViewMode';
@@ -51,6 +55,7 @@ export function LibraryShareViewPage() {
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
   const entryFromUrl = searchParams.get('entry');
   const viewFromUrl = searchParams.get('view');
+  const sortFromUrl = searchParams.get('sort');
 
   const [view, setView] = useState<DocStoreShareView | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -58,6 +63,14 @@ export function LibraryShareViewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
+
+  const shareSortMode = useMemo(
+    () => resolveLibraryShareSortMode(
+      sortFromUrl,
+      entries.some((entry) => Number.isFinite(entry.sortOrder)),
+    ),
+    [entries, sortFromUrl],
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -77,26 +90,16 @@ export function LibraryShareViewPage() {
     return () => { mounted = false; };
   }, [token]);
 
-  // 默认选中：URL ?entry= > 单篇分享 entryId > 最新创建的非 folder > primaryEntryId > 第一个非 folder
-  // 「最新创建」放在 primaryEntryId 之前：分享场景下"刚归档的新报告"是最常见的查看目标，
-  // 让分享对象一打开就看到最新内容，不用先在目录里翻。
+  // 默认选中服从阅读排序：书籍顺序先打开主文档；时间模式打开相应的最新文档。
   const initialSelectedId = useMemo<string | undefined>(() => {
     if (!view || entries.length === 0) return undefined;
-    if (entryFromUrl && entries.some((e) => e.id === entryFromUrl)) return entryFromUrl;
-    if (view.entryId) return view.entryId;
-    const docs = entries.filter((e) => !e.isFolder);
-    if (docs.length === 0) return undefined;
-    const newest = docs.reduce((best, e) => {
-      const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
-      const bt = best.createdAt ? new Date(best.createdAt).getTime() : 0;
-      return t > bt ? e : best;
-    }, docs[0]);
-    if (newest) return newest.id;
-    if (view.store.primaryEntryId && docs.some((e) => e.id === view.store.primaryEntryId)) {
-      return view.store.primaryEntryId;
-    }
-    return docs[0]?.id;
-  }, [view, entries, entryFromUrl]);
+    return resolveInitialSharedEntryId(entries, {
+      entryFromUrl,
+      sharedEntryId: view.entryId,
+      primaryEntryId: view.store.primaryEntryId,
+      sortMode: shareSortMode,
+    });
+  }, [view, entries, entryFromUrl, shareSortMode]);
 
   useEffect(() => {
     if (!initialSelectedId) return;
@@ -172,6 +175,10 @@ export function LibraryShareViewPage() {
     // 视图模式切换用 replace，避免每次切换都往 history 堆条目
     setSearchParams(withLibraryShareViewMode(searchParams, mode), { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const setShareSortMode = useCallback((mode: DocBrowserSortMode) => {
+    setSearchParams((current) => withLibraryShareSortMode(current, mode), { replace: true });
+  }, [setSearchParams]);
 
   // DocumentEntry 字段是 DocBrowserEntry 的超集，可直接传入
   const browserEntries = entries as unknown as DocBrowserEntry[];
@@ -328,7 +335,10 @@ export function LibraryShareViewPage() {
             selectedEntryId={controlledSelectedEntryId}
             onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
-            sortMode="created-desc"
+            sortMode={shareSortMode}
+            sidebarHeader={
+              <ReaderSortControl value={shareSortMode} onChange={setShareSortMode} />
+            }
             inlineCommentShareToken={token ?? undefined}
           />
         )}
@@ -355,6 +365,36 @@ export function LibraryShareViewPage() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (mode: DocBrowserSortMode) => void }) {
+  const options: Array<{ mode: DocBrowserSortMode; label: string }> = [
+    { mode: 'default', label: '书籍顺序' },
+    { mode: 'created-desc', label: '最新创建' },
+    { mode: 'updated-desc', label: '最近更新' },
+  ];
+  return (
+    <div className="flex items-center gap-1 px-1" aria-label="文章排序">
+      <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
+      {options.map((option) => {
+        const active = option.mode === value;
+        return (
+          <button
+            key={option.mode}
+            type="button"
+            onClick={() => onChange(option.mode)}
+            aria-pressed={active}
+            className="shrink-0 rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+            style={active
+              ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
+              : { color: 'var(--text-muted)' }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

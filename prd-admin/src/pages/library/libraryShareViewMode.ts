@@ -1,4 +1,11 @@
+import {
+  sortDocBrowserEntries,
+  type DocBrowserSortMode,
+  type SortableDocBrowserEntry,
+} from '@/components/doc-browser/docBrowserSort';
+
 export type LibraryShareViewMode = 'read' | 'galaxy' | 'universe';
+export type LibraryShareSortParam = 'book' | 'created' | 'updated';
 
 export interface SharedWikilinkEntry {
   id: string;
@@ -9,6 +16,13 @@ export interface SharedWikilinkEntry {
 export interface SharedWikilinkTarget {
   entryId?: string;
   title?: string;
+}
+
+export interface InitialSharedEntryOptions {
+  entryFromUrl: string | null;
+  sharedEntryId?: string;
+  primaryEntryId?: string;
+  sortMode: DocBrowserSortMode;
 }
 
 export function resolveControlledSharedEntryId(
@@ -37,6 +51,54 @@ export function withLibraryShareEntry(params: URLSearchParams, entryId: string):
   next.set('entry', entryId);
   next.delete('view');
   return next;
+}
+
+export function resolveLibraryShareSortMode(
+  raw: string | null,
+  hasManualOrder: boolean,
+): DocBrowserSortMode {
+  if (raw === 'book') return 'default';
+  if (raw === 'created') return 'created-desc';
+  if (raw === 'updated') return 'updated-desc';
+  return hasManualOrder ? 'default' : 'created-desc';
+}
+
+export function withLibraryShareSortMode(
+  params: URLSearchParams,
+  mode: DocBrowserSortMode,
+): URLSearchParams {
+  const next = new URLSearchParams(params);
+  const value: LibraryShareSortParam = mode === 'default'
+    ? 'book'
+    : mode === 'created-desc'
+      ? 'created'
+      : 'updated';
+  next.set('sort', value);
+  return next;
+}
+
+export function resolveInitialSharedEntryId<T extends SortableDocBrowserEntry>(
+  entries: readonly T[],
+  options: InitialSharedEntryOptions,
+): string | undefined {
+  const documents = entries.filter((entry) => !entry.isFolder);
+  const deepLink = options.entryFromUrl?.trim();
+  if (deepLink && documents.some((entry) => entry.id === deepLink)) return deepLink;
+  if (options.sharedEntryId && documents.some((entry) => entry.id === options.sharedEntryId)) {
+    return options.sharedEntryId;
+  }
+  if (documents.length === 0) return undefined;
+
+  if (options.sortMode === 'default'
+      && options.primaryEntryId
+      && documents.some((entry) => entry.id === options.primaryEntryId)) {
+    return options.primaryEntryId;
+  }
+
+  return sortDocBrowserEntries(documents, { mode: options.sortMode })[0]?.id
+    ?? (options.primaryEntryId && documents.some((entry) => entry.id === options.primaryEntryId)
+      ? options.primaryEntryId
+      : undefined);
 }
 
 export function resolveSharedWikilinkEntryId(
