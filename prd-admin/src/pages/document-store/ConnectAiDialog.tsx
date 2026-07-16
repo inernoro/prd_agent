@@ -582,14 +582,17 @@ export function ConnectAiDialog({ onClose }: Props) {
             </div>
           </div>
           {view === 'issue' ? (
-            <div className="hidden shrink-0 items-center gap-3.5 text-[11.5px] text-token-muted sm:flex">
+            /* 回访路径降权为文字链；手机端收成图标 + 计数（不许藏死——撤销/续期入口必须可达） */
+            <div className="flex shrink-0 items-center gap-3 text-[11.5px] text-token-muted sm:gap-3.5">
               <button
                 type="button"
                 onClick={() => setView('keys')}
-                className="inline-flex items-center gap-1.5 transition-colors hover:text-token-secondary"
+                className="inline-flex items-center gap-1.5 rounded-lg p-1 transition-colors hover:text-token-secondary"
+                title="我的 Key"
+                aria-label="我的 Key"
               >
-                <KeyRound size={12} />
-                我的 Key
+                <KeyRound size={13} />
+                <span className="hidden sm:inline">我的 Key</span>
                 {keys.length > 0 && (
                   <span className="surface-action-accent rounded-full px-1.5 font-mono text-[10px]">
                     {keys.length}
@@ -599,10 +602,12 @@ export function ConnectAiDialog({ onClose }: Props) {
               <button
                 type="button"
                 onClick={() => setView('guide')}
-                className="inline-flex items-center gap-1.5 transition-colors hover:text-token-secondary"
+                className="inline-flex items-center gap-1.5 rounded-lg p-1 transition-colors hover:text-token-secondary"
+                title="使用指南"
+                aria-label="使用指南"
               >
-                <Book size={12} />
-                使用指南
+                <Book size={13} />
+                <span className="hidden sm:inline">使用指南</span>
               </button>
             </div>
           ) : (

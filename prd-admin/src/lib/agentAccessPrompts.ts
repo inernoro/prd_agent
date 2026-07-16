@@ -60,7 +60,9 @@ export function buildDocStoreAgentPrompt(key: string, options?: DocStorePromptOp
 - 删除受管文章：  DELETE $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}（query 带 publisher/runId 及 expected* 校验参数，以快照返回值为准）
 
 PUT body 必填字段：publisher（你固定的发布标识，小写字母/数字/点/下划线/短横线）、runId、kind（document 或 folder）、title、sourcePath、sourceRevision、sourceSha256（规范化正文的 SHA256）、manifestSha256、contentType（如 text/markdown）、content（正文）。
-同一 publisher + sourceId 幂等 upsert：重复 PUT 同一 sourceId 即为更新该篇文章。`;
+同一 publisher + sourceId 幂等 upsert，并发令牌规则（服务端强校验，弄错会 409）：
+- 首次 PUT（新建该 sourceId）：不要带 expectedUpdatedAt / lastAppliedSha256；
+- 更新已有 sourceId：必须先 GET snapshot，把该节点返回的 updatedAt 原样放进 body 的 expectedUpdatedAt 再 PUT。`;
 
   return `请帮我接入 PrdAgent 知识库（文档空间）开放接口。
 

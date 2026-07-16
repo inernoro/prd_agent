@@ -23,6 +23,9 @@ describe('buildDocStoreAgentPrompt', () => {
     expect(p).toContain('GET  $PRD_AGENT_BASE/api/open/document-store/entries/{entryId}/content');
     expect(p).toContain('PUT    $PRD_AGENT_BASE/api/open/document-store/publisher/stores/{storeId}/nodes/{sourceId}');
     expect(p).toContain('sourceSha256');
+    // 并发令牌规则：新建不带 expectedUpdatedAt，更新必须从 snapshot 取（否则服务端 409）
+    expect(p).toContain('expectedUpdatedAt');
+    expect(p).toContain('不要带 expectedUpdatedAt');
     expect(p).toContain('Authorization: Bearer $PRD_AGENT_API_KEY');
     expect(p).toContain(KEY);
   });
