@@ -115,6 +115,7 @@ import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
+import ShinyText from '@/components/reactbits/ShinyText';
 import { createPortal } from 'react-dom';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -253,14 +254,16 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
   const background = isError ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.12)';
   const borderColor = isError ? 'rgba(239,68,68,0.30)' : 'rgba(245,158,11,0.35)';
   if (compact) {
+    // 卡片右上角走「安静状态图标」：纯图标 + tooltip，不做成按钮盒——
+    // 状态与动作分离，右上角不再一排方块互相打架（2026-07-16 用户反馈）
     return (
       <span
-        className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
-        style={{ background, borderColor, color }}
+        className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center"
+        style={{ color }}
         title={title}
         aria-label={label}
       >
-        <Icon size={14} />
+        <Icon size={13} />
       </span>
     );
   }
@@ -285,8 +288,8 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
 // 库内文档排序控件（落在 DocBrowser 左栏顶部 sidebarHeader 槽位）。
 // 选中即服务端持久化（store.defaultSortMode），换设备/重登录/刷新都保持。
 function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (m: DocBrowserSortMode) => void }) {
-  const opts: { key: DocBrowserSortMode; label: string }[] = [
-    { key: 'default', label: '书籍顺序' },
+  const opts: { key: DocBrowserSortMode; label: string; hint?: string }[] = [
+    { key: 'default', label: '书籍顺序', hint: '自定义顺序：在下方列表里拖拽文档即可调整位置' },
     { key: 'created-desc', label: '最新创建' },
     { key: 'updated-desc', label: '最近更新' },
   ];
@@ -300,7 +303,8 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
             <button
               key={o.key}
               onClick={() => onChange(o.key)}
-              className="shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+              title={o.hint}
+              className={`shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors ${active ? '' : 'hover-bg-soft'}`}
               style={active
                 ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
                 : { color: 'var(--text-muted)' }}
@@ -331,6 +335,43 @@ function MoreItem({ icon, label, onClick, disabled, dataTourId }: {
       {label}
     </button>
   );
+}
+
+// 「今天有更新」判定：本地日历日口径（用户说的是"今天"，不是 24h 滚动窗）
+function isUpdatedToday(iso?: string): boolean {
+  if (!iso) return false;
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return false;
+  const now = new Date();
+  return t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate();
+}
+
+// 卡片右键菜单容器：createPortal 到 body + fixed 定位（遵守 frontend-modal.md），
+// 位置按视口边缘收敛，点外/ESC 关闭。菜单项复用 MoreItem，与三点「更多」同源。
+function StoreContextMenu({ x, y, onClose, children }: {
+  x: number; y: number; onClose: () => void; children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+  const left = Math.max(8, Math.min(x, window.innerWidth - 208));
+  const top = Math.max(8, Math.min(y, window.innerHeight - 288));
+  const menu = (
+    <div ref={ref} className="surface-popover fixed z-[10000] min-w-[184px] rounded-[10px] py-1" style={{ left, top }}>
+      {children}
+    </div>
+  );
+  return createPortal(menu, document.body);
 }
 
 // 按知识库类别选图标（模板键 / appKey / 首个标签关键词 → lucide 图标），让卡片一眼看出类别。
@@ -1278,6 +1319,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
   }, []);
 
+  // 拖拽自定义排序：乐观更新本地 SortOrder（行立即移动到新位置，变化可感知），
+  // 逐条 PUT 落库（后端纯排序写入不 bump UpdatedAt，不会误点亮 NEW / 打乱「最近更新」）。
+  const handleReorderEntries = useCallback(async (updates: { entryId: string; sortOrder: number }[]) => {
+    setEntries(prev => prev.map(e => {
+      const u = updates.find(x => x.entryId === e.id);
+      return u ? { ...e, sortOrder: u.sortOrder } : e;
+    }));
+    const results = await Promise.all(
+      updates.map(u => updateDocumentEntry(u.entryId, { sortOrder: u.sortOrder })),
+    );
+    if (results.some(r => !r.success)) {
+      toast.error('保存自定义顺序失败', '已恢复为服务器上的顺序');
+      void loadEntries();
+    }
+  }, [loadEntries]);
+
   const handleSaveContent = useCallback(async (entryId: string, newContent: string) => {
     const res = await updateDocumentContent(entryId, newContent);
     if (res.success) {
@@ -1858,6 +1915,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           onUpdateEntryTags={handleUpdateEntryTags}
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
+          onReorderEntries={handleReorderEntries}
           onSaveContent={handleSaveContent}
           versionApi={versionApi}
           onEntryContentRestored={(entryId, updatedAt) => {
@@ -2427,8 +2485,10 @@ export function DocumentStorePage() {
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   // 当前展开卡片「更多」菜单的触发按钮元素，供 AnchoredMenu 定位（列表里无法为每张卡片建独立 ref）
   const [cardMenuAnchor, setCardMenuAnchor] = useState<HTMLElement | null>(null);
+  // 卡片右键菜单（与三点「更多」同源的操作集，外加 打开/置顶）
+  const [cardCtxMenu, setCardCtxMenu] = useState<{ x: number; y: number; storeId: string } | null>(null);
   // 切 tab 时列表重挂载，旧锚点失效：复位卡片菜单，避免 stale anchor 自动开 / 首点只关（Bugbot）
-  useEffect(() => { setOpenCardMenuId(null); setCardMenuAnchor(null); }, [tab]);
+  useEffect(() => { setOpenCardMenuId(null); setCardMenuAnchor(null); setCardCtxMenu(null); }, [tab]);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -2529,6 +2589,26 @@ export function DocumentStorePage() {
       } catch {
         toast.error('分享失败', '系统分享和复制链接都未成功，请稍后重试');
       }
+    }
+  }, []);
+
+  // 删除知识库：三点「更多」与右键菜单共用同一条确认 + 删除路径
+  const handleDeleteStore = useCallback(async (s: { id: string; name: string; documentCount?: number }) => {
+    const entryCount = s.documentCount ?? 0;
+    const confirmed = await systemDialog.confirm({
+      title: '确认删除知识库',
+      message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+      tone: 'danger',
+      confirmText: '永久删除',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+    const res = await deleteDocumentStore(s.id);
+    if (res.success) {
+      setStores(prev => prev.filter(x => x.id !== s.id));
+      toast.success('知识库已删除', '关联数据已全部清理');
+    } else {
+      toast.error('删除失败', res.error?.message);
     }
   }, []);
 
@@ -2963,10 +3043,10 @@ export function DocumentStorePage() {
               data-tour-id="library-tag-filter"
               onClick={() => setTagOpen(o => !o)}
               disabled={tagStats.length === 0}
-              className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className={`h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${tagFilter.length > 0 ? 'hover:brightness-110' : 'hover-bg-soft'}`}
               style={tagFilter.length > 0
                 ? { background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.95)' }
-                : { background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+                : { border: '1px solid var(--border-default, rgba(148,163,184,0.24))', color: 'var(--text-muted)' }}
               title={tagStats.length === 0 ? '当前没有可用的标签' : '按标签筛选'}
             >
               <Tag size={12} />
@@ -3065,7 +3145,7 @@ export function DocumentStorePage() {
               type="button"
               data-tour-id="library-sort"
               onClick={() => setSortOpen(o => !o)}
-              className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors"
+              className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-all hover:brightness-110"
               style={{
                 background: 'rgba(59,130,246,0.08)',
                 border: '1px solid rgba(59,130,246,0.2)',
@@ -3406,14 +3486,17 @@ export function DocumentStorePage() {
               const category = s.tags?.[0];
               const CatIcon = iconForStore(s as DocumentStoreWithPreview);
               const isPinned = pinnedIds.has(s.id);
+              const isFresh = isUpdatedToday(s.updatedAt);
               const cardMenuOpen = openCardMenuId === s.id;
+              // 动作按钮 hover 才显现（触屏无 hover → 常显）；已置顶图钉 / 打开中的菜单按钮保持常显
+              const hoverReveal = isMobile ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity';
               // 头像文件名字段名因来源而异：我的/团队列表是 ownerAvatarFileName，收藏/点赞列表是 ownerAvatar
               const ownerAvatarFileName = (s as DocumentStoreWithPreview).ownerAvatarFileName
                 ?? (s as InteractionStoreCard).ownerAvatar;
               const hasOwner = Boolean((s as DocumentStoreWithPreview).ownerName || ownerName);
               return (
                 <GlassCard key={s.id} animated interactive padding="none"
-                  className="group flex flex-col h-full"
+                  className="group kb-store-card flex flex-col h-full"
                   onClick={() => {
                     // 团队共享的库:成员也能写(后端 CanWriteStore = owner OR IsTeamShared),
                     // 所以 store tab 全部进 StoreDetailView。收藏/点赞:owner 进编辑,其他人走只读 library。
@@ -3423,7 +3506,12 @@ export function DocumentStorePage() {
                       navigate(`/library/${s.id}`);
                     }
                   }}>
-                  <div className="p-4 pb-2 flex-1 flex flex-col">
+                  <div className="p-4 pb-2 flex-1 flex flex-col"
+                    onContextMenu={(e) => {
+                      // 右键 = 与三点「更多」同源的完整操作菜单（Finder/Notion 惯例）
+                      e.preventDefault();
+                      setCardCtxMenu({ x: e.clientX, y: e.clientY, storeId: s.id });
+                    }}>
                     <div className="flex items-start gap-2.5 mb-2">
                       {/* 类别图标：按模板/标签反映知识库类别（验收→清单、周报→报纸、教程→学士帽…） */}
                       <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
@@ -3441,32 +3529,40 @@ export function DocumentStorePage() {
                           <StoreSizeBadge storeId={s.id} variant="compact" />
                         </p>
                       </div>
-                      {/* 右上角一排：状态徽标(已分享/同步圆点) + 置顶 + 更多，统一 items-center 垂直居中对齐，
-                          避免「图标比圆点偏上」——所有指示物在同一行同一基线 */}
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      {/* 右上角：状态与动作分离（Notion/Drive 惯例）——
+                          状态（NEW / 已分享 / 同步）常显且安静；动作（置顶 / 更多）hover 才显现，
+                          触屏常显。已置顶的图钉是状态，保持常显。 */}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {isFresh && (
+                          <span
+                            className="inline-flex items-center flex-shrink-0 px-1.5 rounded-full text-[9px] font-bold"
+                            style={{ height: 16, lineHeight: '16px', background: 'rgba(34,197,94,0.12)', letterSpacing: '0.3px' }}
+                            title={`今天有更新：${new Date(s.updatedAt).toLocaleString('zh-CN')}`}
+                          >
+                            <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
+                          </span>
+                        )}
                         {s.hasActiveShare && (
-                          <span className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[9px] border"
-                            style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
+                          <span className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center"
+                            style={{ color: 'rgba(234,179,8,0.9)' }}
                             title="该知识库已对外分享" aria-label="已分享">
-                            <Share2 size={14} />
+                            <Share2 size={13} />
                           </span>
                         )}
                         <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                         <button
-                          className="h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
+                          className={`h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer hover-bg-soft ${isPinned ? '' : hoverReveal}`}
                           title={isPinned ? '取消置顶' : '置顶到最前'}
                           aria-label={isPinned ? '取消置顶' : '置顶'}
                           onClick={(e) => { e.stopPropagation(); handleTogglePin(s.id); }}
-                          style={isPinned
-                            ? { background: 'rgba(234,179,8,0.16)', color: 'rgba(234,179,8,0.98)', border: '1px solid rgba(234,179,8,0.4)' }
-                            : { color: 'var(--text-muted)', border: '1px solid transparent' }}>
-                          <Pin size={14} style={{ fill: isPinned ? 'rgba(234,179,8,0.95)' : 'none' }} />
+                          style={{ color: isPinned ? 'rgba(234,179,8,0.98)' : 'var(--text-muted)' }}>
+                          <Pin size={13} style={{ fill: isPinned ? 'rgba(234,179,8,0.95)' : 'none' }} />
                         </button>
                         {canManage && (
                           <div className="relative">
                             <button
-                              className="surface-row h-8 w-8 rounded-[9px] flex items-center justify-center cursor-pointer transition-colors"
-                              title="更多操作"
+                              className={`h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer hover-bg-soft ${cardMenuOpen ? '' : hoverReveal}`}
+                              title="更多操作（也可直接右键卡片）"
                               onClick={(e) => { e.stopPropagation(); setCardMenuAnchor(e.currentTarget); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
                               style={{ color: 'var(--text-muted)' }}>
                               <MoreHorizontal size={15} />
@@ -3485,24 +3581,9 @@ export function DocumentStorePage() {
                                   setOpenCardMenuId(null);
                                   setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
                                 }} />
-                                <MoreItem icon={<Trash2 size={14} />} label="删除知识库" onClick={async () => {
+                                <MoreItem icon={<Trash2 size={14} />} label="删除知识库" onClick={() => {
                                   setOpenCardMenuId(null);
-                                  const entryCount = s.documentCount ?? 0;
-                                  const confirmed = await systemDialog.confirm({
-                                    title: '确认删除知识库',
-                                    message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
-                                    tone: 'danger',
-                                    confirmText: '永久删除',
-                                    cancelText: '取消',
-                                  });
-                                  if (!confirmed) return;
-                                  const res = await deleteDocumentStore(s.id);
-                                  if (res.success) {
-                                    setStores(prev => prev.filter(x => x.id !== s.id));
-                                    toast.success('知识库已删除', '关联数据已全部清理');
-                                  } else {
-                                    toast.error('删除失败', res.error?.message);
-                                  }
+                                  void handleDeleteStore(s);
                                 }} />
                             </AnchoredMenu>
                           </div>
@@ -3609,6 +3690,47 @@ export function DocumentStorePage() {
           <TeamWebPagesSection key={teamScope.teamId ?? '__all__'} teamId={teamScope.teamId} />
         )}
       </div>
+
+      {/* 卡片右键菜单：与三点「更多」同一套操作，另加 打开 / 置顶（Finder/Notion 惯例） */}
+      {cardCtxMenu && (() => {
+        const s = (currentList as (DocumentStoreWithPreview | InteractionStoreCard)[])
+          .find(x => x.id === cardCtxMenu.storeId);
+        if (!s) return null;
+        const isInteraction = !isStoreTab;
+        const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
+        const canManage = isStoreTab && currentUserId != null
+          && (s as DocumentStoreWithPreview).ownerId === currentUserId;
+        const isPinned = pinnedIds.has(s.id);
+        const closeThen = (fn: () => void) => () => { setCardCtxMenu(null); fn(); };
+        return (
+          <StoreContextMenu x={cardCtxMenu.x} y={cardCtxMenu.y} onClose={() => setCardCtxMenu(null)}>
+            <MoreItem icon={<BookOpen size={14} />} label="打开知识库" onClick={closeThen(() => {
+              if (isStoreTab || isOwnInteraction) setSelectedStoreId(s.id);
+              else navigate(`/library/${s.id}`);
+            })} />
+            <MoreItem icon={<Pin size={14} />} label={isPinned ? '取消置顶' : '置顶到最前'}
+              onClick={closeThen(() => handleTogglePin(s.id))} />
+            {canManage && (
+              <>
+                <div className="my-1 border-t border-token-subtle" />
+                <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={closeThen(() => {
+                  setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                })} />
+                <MoreItem icon={<Share2 size={14} />} label="分享到其他应用" onClick={closeThen(() => {
+                  void handleSystemShareStore(s.id, s.name);
+                })} />
+                <MoreItem icon={<Pencil size={14} />} label="编辑名称与标签" onClick={closeThen(() => {
+                  setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
+                })} />
+                <div className="my-1 border-t border-token-subtle" />
+                <MoreItem icon={<Trash2 size={14} />} label="删除知识库" onClick={closeThen(() => {
+                  void handleDeleteStore(s);
+                })} />
+              </>
+            )}
+          </StoreContextMenu>
+        );
+      })()}
 
       {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
       {showAccountViewers && (

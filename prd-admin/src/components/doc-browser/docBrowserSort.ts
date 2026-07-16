@@ -69,3 +69,67 @@ export function sortDocBrowserEntries<T extends SortableDocBrowserEntry>(
 ): T[] {
   return [...entries].sort((a, b) => compareDocBrowserEntries(a, b, options));
 }
+
+// ── 拖拽自定义排序（书籍顺序模式）──
+
+export interface DocBrowserReorderUpdate {
+  entryId: string;
+  sortOrder: number;
+}
+
+const REORDER_STEP = 10;
+
+/**
+ * 计算把 draggedId 拖到 targetId 的 before/after 位置后需要写回的 SortOrder 更新。
+ *
+ * 输入 orderedSiblings 必须是「同一父级、当前视觉顺序」的非文件夹条目列表。
+ * 策略：优先只给被拖条目写一个「两侧邻居中点」的 sortOrder（一次 PUT）；
+ * 当邻居缺 sortOrder / 中点撞值（double 精度耗尽或相等）时，退化为整组重编号
+ * （10, 20, 30…），仅返回 sortOrder 发生变化的条目。
+ */
+export function computeReorderUpdates<T extends SortableDocBrowserEntry>(
+  orderedSiblings: readonly T[],
+  draggedId: string,
+  targetId: string,
+  position: 'before' | 'after',
+): DocBrowserReorderUpdate[] {
+  if (draggedId === targetId) return [];
+  const dragged = orderedSiblings.find(e => e.id === draggedId);
+  const withoutDragged = orderedSiblings.filter(e => e.id !== draggedId);
+  const targetIdx = withoutDragged.findIndex(e => e.id === targetId);
+  if (targetIdx < 0) return [];
+
+  const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+  const nextOrder: SortableDocBrowserEntry[] = [
+    ...withoutDragged.slice(0, insertIdx),
+    dragged ?? { id: draggedId, title: '', isFolder: false },
+    ...withoutDragged.slice(insertIdx),
+  ];
+
+  // 快路径：两侧邻居都有可用 sortOrder（或位于头/尾）时，只写被拖条目一个中点值
+  const prev = insertIdx > 0 ? withoutDragged[insertIdx - 1] : undefined;
+  const next = insertIdx < withoutDragged.length ? withoutDragged[insertIdx] : undefined;
+  const prevOrder = prev && Number.isFinite(prev.sortOrder) ? (prev.sortOrder as number) : undefined;
+  const nextOrder2 = next && Number.isFinite(next.sortOrder) ? (next.sortOrder as number) : undefined;
+
+  let single: number | undefined;
+  if (prev === undefined && next !== undefined && nextOrder2 !== undefined) {
+    single = nextOrder2 - REORDER_STEP;
+  } else if (next === undefined && prev !== undefined && prevOrder !== undefined) {
+    single = prevOrder + REORDER_STEP;
+  } else if (prevOrder !== undefined && nextOrder2 !== undefined && prevOrder < nextOrder2) {
+    const mid = (prevOrder + nextOrder2) / 2;
+    if (mid > prevOrder && mid < nextOrder2) single = mid;
+  }
+  if (single !== undefined) {
+    return dragged?.sortOrder === single ? [] : [{ entryId: draggedId, sortOrder: single }];
+  }
+
+  // 慢路径：整组按新视觉顺序重编号，只回传发生变化的条目
+  const updates: DocBrowserReorderUpdate[] = [];
+  nextOrder.forEach((e, idx) => {
+    const want = (idx + 1) * REORDER_STEP;
+    if (e.sortOrder !== want) updates.push({ entryId: e.id, sortOrder: want });
+  });
+  return updates;
+}

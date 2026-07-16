@@ -20,7 +20,7 @@ import '@uiw/react-md-editor/markdown-editor.css';
 const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
-import { compareDocBrowserEntries, type DocBrowserSortMode } from './docBrowserSort';
+import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
 
@@ -402,6 +402,12 @@ export type DocBrowserProps = {
   /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
+  /**
+   * 拖拽自定义排序写回（仅 sortMode='default' 书籍顺序下启用）。
+   * DocBrowser 负责计算受影响条目的新 SortOrder（见 computeReorderUpdates），
+   * 调用方负责乐观更新本地 entries + PUT 落库。不传则拖拽只支持「拖进文件夹」。
+   */
+  onReorderEntries?: (updates: DocBrowserReorderUpdate[]) => void | Promise<void>;
   /**
    * 写回正文。返回服务端最新 updatedAt（用于把 loadedContentKey 推进到同一版本，
    * 短路掉因 entries.updatedAt 变化触发的内容重拉 —— 避免保存/插入图片后整页闪烁回顶）。
@@ -1257,6 +1263,7 @@ function TreeNode({
   onInlineRenameCancel,
   onShareEntry,
   onMoveEntry,
+  onReorderDrop,
   onOpenSubscription,
   isEntryFresh,
   onToggleTag,
@@ -1293,6 +1300,8 @@ function TreeNode({
   onInlineRenameCancel?: () => void;
   onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
+  /** 书籍顺序模式下的拖拽换位：把 draggedId 放到本行 before/after。不传则文档行不是排序放置目标 */
+  onReorderDrop?: (draggedId: string, targetId: string, position: 'before' | 'after') => void;
   onOpenSubscription?: (entryId: string) => void;
   onToggleTag?: (tag: string) => void;
   activeTags?: Set<string>;
@@ -1313,6 +1322,8 @@ function TreeNode({
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const reserveSelectSpace = isChecked || !!selectionActive;
   const [dragOver, setDragOver] = useState(false);
+  // 排序放置提示：拖到本行上半 = 插到前面（顶部指示线），下半 = 插到后面（底部指示线）
+  const [reorderHint, setReorderHint] = useState<'before' | 'after' | null>(null);
 
   // 是否需要渲染右上角徽章行
   const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
@@ -1350,20 +1361,36 @@ function TreeNode({
           e.dataTransfer.effectAllowed = 'move';
         }}
         onDragOver={(e) => {
-          if (!isFolder) return;
+          if (isFolder) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            setDragOver(true);
+            return;
+          }
+          // 书籍顺序下文档行也是放置目标：上半行插前、下半行插后
+          if (!onReorderDrop) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
-          setDragOver(true);
+          const rect = e.currentTarget.getBoundingClientRect();
+          setReorderHint(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
         }}
-        onDragLeave={() => setDragOver(false)}
+        onDragLeave={() => { setDragOver(false); setReorderHint(null); }}
         onDrop={(e) => {
-          if (!isFolder) return;
-          e.preventDefault();
-          setDragOver(false);
-          const draggedId = e.dataTransfer.getData('text/plain');
-          if (draggedId && draggedId !== entry.id && onMoveEntry) {
-            onMoveEntry(draggedId, entry.id);
+          if (isFolder) {
+            e.preventDefault();
+            setDragOver(false);
+            const draggedId = e.dataTransfer.getData('text/plain');
+            if (draggedId && draggedId !== entry.id && onMoveEntry) {
+              onMoveEntry(draggedId, entry.id);
+            }
+            return;
           }
+          if (!onReorderDrop) return;
+          e.preventDefault();
+          const position = reorderHint ?? 'after';
+          setReorderHint(null);
+          const draggedId = e.dataTransfer.getData('text/plain');
+          if (draggedId && draggedId !== entry.id) onReorderDrop(draggedId, entry.id, position);
         }}
         className={`relative flex flex-col justify-center text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'gap-1 py-[8px] hover-bg-soft'}`}
         style={{
@@ -1383,6 +1410,12 @@ function TreeNode({
                 ? 'var(--accent-soft, rgba(99,102,241,0.10))'
                 : undefined),
           outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
+          // 排序放置指示线：目标行顶/底一条 2px 主题色插入线（Notion/语雀式拖拽换位反馈）
+          boxShadow: reorderHint === 'before'
+            ? 'inset 0 2px 0 0 var(--accent-primary, #818cf8)'
+            : reorderHint === 'after'
+              ? 'inset 0 -2px 0 0 var(--accent-primary, #818cf8)'
+              : undefined,
           // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
@@ -1623,6 +1656,7 @@ function TreeNode({
           onInlineRenameCancel={onInlineRenameCancel}
           onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
+          onReorderDrop={onReorderDrop}
           onOpenSubscription={onOpenSubscription}
           isEntryFresh={isEntryFresh}
           onToggleTag={onToggleTag}
@@ -1706,6 +1740,7 @@ export function DocBrowser({
   onUpdateEntryTags,
   onRenameEntry,
   onMoveEntry,
+  onReorderEntries,
   onSaveContent,
   versionApi,
   onEntryContentRestored,
@@ -2450,6 +2485,24 @@ export function DocBrowser({
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
   }, [entries, primaryEntryId, pinnedSet, sortMode]);
 
+  // 拖拽自定义排序：仅书籍顺序（消费 SortOrder 的模式）+ 非后端搜索态启用。
+  // 时间排序下位置由时间决定，拖了也会弹回，不如不给放置目标（预期管理）。
+  const reorderEnabled = sortMode === 'default' && !!onReorderEntries && searchResults === null;
+  const handleReorderDrop = useCallback((draggedId: string, targetId: string, position: 'before' | 'after') => {
+    if (!onReorderEntries) return;
+    const dragged = entries.find(e => e.id === draggedId);
+    const target = entries.find(e => e.id === targetId);
+    if (!dragged || !target || dragged.isFolder || target.isFolder) return;
+    // 以目标所在父级的「当前视觉顺序」计算新 SortOrder；被拖条目跨文件夹时先移动再定位
+    const siblings = (target.parentId ? (childrenMap.get(target.parentId) ?? []) : rootEntries)
+      .filter(e => !e.isFolder);
+    const updates = computeReorderUpdates(siblings, draggedId, targetId, position);
+    if ((dragged.parentId ?? null) !== (target.parentId ?? null)) {
+      onMoveEntry?.(draggedId, target.parentId ?? null);
+    }
+    if (updates.length > 0) void onReorderEntries(updates);
+  }, [entries, childrenMap, rootEntries, onMoveEntry, onReorderEntries]);
+
   // 从 summary 提取显示标题：优先 YAML frontmatter 的 title（去引号），
   // 没有 frontmatter / 没有 title 时回退到 frontmatter 之后的首个正文标题，
   // 再不行回退到首个非空行（去掉行首 # 号）。与正文渲染共用 parseFrontmatter。
@@ -2750,16 +2803,18 @@ export function DocBrowser({
   // 自动选中主文档 + 展开其父文件夹链。每次进入空间只自动选一次：
   // StoreDetailView 按 selectedStoreId 条件渲染 → 切空间会重挂 DocBrowser、本 ref 自然归零，对新空间仍会自动选；
   // 显式「返回列表」清空选中后不再自动重选——即便此后该空间主文档 id 变化（新设 README）也不打回（Codex/Bugbot）。
+  // 没有主文档时（桌面端）兜底选中排序后的第一篇文档——打开知识库右侧不再空白等待
+  // （2026-07-16 用户反馈；移动端保持「先看目录」的主从节奏，不自动跳正文）。
   const didAutoSelectRef = useRef(false);
   useEffect(() => {
     if (didAutoSelectRef.current) return;
     if (selectedEntryId) { didAutoSelectRef.current = true; return; }      // 已有选中（含深链）→ 视为已初始化、不覆盖
-    if (primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+    const autoSelect = (entryId: string) => {
       didAutoSelectRef.current = true;
-      onSelectEntry(primaryEntryId);
+      onSelectEntry(entryId);
       const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
-      let cur = entryMap.get(primaryEntryId);
+      let cur = entryMap.get(entryId);
       while (cur?.parentId) {
         toExpand.add(cur.parentId);
         cur = entryMap.get(cur.parentId);
@@ -2767,8 +2822,28 @@ export function DocBrowser({
       if (toExpand.size > 0) {
         setExpandedFolders(prev => new Set([...prev, ...toExpand]));
       }
+    };
+    if (primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+      autoSelect(primaryEntryId);
+      return;
     }
-  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry]);
+    if (isMobile || entries.length === 0) return;
+    // DFS 按当前排序找第一篇文档（置顶/主文档已排最前，文件夹内继续下钻）
+    const findFirstDoc = (list: DocBrowserEntry[]): DocBrowserEntry | undefined => {
+      for (const e of list) {
+        if (!e.isFolder) return e;
+      }
+      for (const e of list) {
+        if (e.isFolder) {
+          const hit = findFirstDoc(childrenMap.get(e.id) ?? []);
+          if (hit) return hit;
+        }
+      }
+      return undefined;
+    };
+    const first = findFirstDoc(rootEntries);
+    if (first) autoSelect(first.id);
+  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry, isMobile, rootEntries, childrenMap]);
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim() || !onCreateFolder) return;
@@ -3168,6 +3243,7 @@ export function DocBrowser({
               onInlineRenameCancel={() => setInlineRenameId(null)}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
+              onReorderDrop={reorderEnabled ? handleReorderDrop : undefined}
               onOpenSubscription={onOpenSubscription}
               isEntryFresh={isEntryFresh}
               onToggleTag={toggleTag}

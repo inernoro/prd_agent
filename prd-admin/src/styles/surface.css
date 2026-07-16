@@ -1654,6 +1654,28 @@
   transition-duration: 0.1s;
 }
 
+/* ── 知识库卡片 hover（DocumentStorePage .kb-store-card）──
+   2026-07-16 用户反馈不喜欢默认的「上浮 3px + 强光晕」：改为克制的描边提亮 + 轻投影
+   （Notion/Craft 式安静反馈），配合右上角动作按钮 hover 显现，卡片不再上蹿下跳。
+   双主题：暗色提亮描边，浅色走纸感投影 token。 */
+.kb-store-card.glass-card-interactive:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong, rgba(255, 255, 255, 0.18)) !important;
+  box-shadow:
+    0 10px 28px -16px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+.kb-store-card.glass-card-interactive:active {
+  transform: translateY(0);
+  transition-duration: 0.1s;
+}
+
+[data-theme="light"] .kb-store-card.glass-card-interactive:hover {
+  border-color: var(--border-strong, rgba(15, 23, 42, 0.16)) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
 /* ===== 百宝箱 — 最近使用横条 ===== */
 
 .toolbox-recent-strip {

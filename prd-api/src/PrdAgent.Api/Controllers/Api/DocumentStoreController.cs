@@ -901,16 +901,27 @@ public class DocumentStoreController : ControllerBase
         if (request.SortOrder.HasValue)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.SortOrder, request.SortOrder.Value));
 
-        updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
-        updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
-        updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedByName, userName));
+        // 纯排序写入（拖拽自定义顺序）不 bump UpdatedAt/UpdatedBy，也不记团队动态：
+        // 排序是目录元数据而非内容更新——否则一次拖拽重编号会把整批文档顶到
+        // 「最近更新」最前并点亮 NEW 徽标，还会刷屏团队动态。
+        var isPureSortUpdate = request.SortOrder.HasValue
+            && request.Title == null && request.Summary == null && request.Tags == null
+            && request.Category == null && request.Metadata == null && request.VersionIds == null
+            && string.IsNullOrWhiteSpace(request.ContentType);
+        if (!isPureSortUpdate)
+        {
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedByName, userName));
+        }
 
         await _db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entryId,
             Builders<DocumentEntry>.Update.Combine(updates));
 
         var updated = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        await LogStoreActivityAsync(store!, userId, TeamActivityAction.EntryUpdated, "entry", entryId, updated?.Title);
+        if (!isPureSortUpdate)
+            await LogStoreActivityAsync(store!, userId, TeamActivityAction.EntryUpdated, "entry", entryId, updated?.Title);
         return Ok(ApiResponse<DocumentEntry>.Ok(updated!));
     }
 
