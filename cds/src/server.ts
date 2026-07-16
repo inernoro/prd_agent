@@ -1220,6 +1220,9 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
   if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
+  // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
+  if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
   return false;
 }
 

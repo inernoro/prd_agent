@@ -457,7 +457,14 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       stateService.getDeploymentRuns(),
       new Date(),
     );
-    res.status(health.ok ? 200 : 503).json(health);
+    // 本端点免鉴权（探针语义，见 server.ts isPublicAccessRequestRoute）：剥掉
+    // reasons.detail（含分支/持有者身份），只透出结论 + 计数；身份明细走鉴权的
+    // GET /api/cluster/build-gate 与看门狗系统事件。
+    res.status(health.ok ? 200 : 503).json({
+      ok: health.ok,
+      reasons: health.reasons.map(({ kind, severity, message }) => ({ kind, severity, message })),
+      summary: health.summary,
+    });
   });
 
   router.put('/build-gate', (req, res) => {
