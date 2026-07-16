@@ -876,7 +876,10 @@ export default function WebPagesPage() {
               title: '上传成功',
               createShare: async (mode) => {
                 const pwd = mode === 'password' ? genPassword() : undefined;
-                const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd });
+                // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
+                // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
+                // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
+                const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public' });
                 if (share.success && share.data) {
                   loadShares();
                   return {
