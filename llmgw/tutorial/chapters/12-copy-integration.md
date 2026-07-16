@@ -10,8 +10,8 @@
 
 ## 开始前检查
 
-- 当前仍停留在第 11 章的 vision 已生成配置；如果已经刷新或离开 Quickstart，先按第 10 章相同字段重新生成一把明确限定的 vision test key，再继续，不使用页面恢复后的默认身份。
-- 第 10 章已经安全保存 chat key 与 chat 接入片段；本章当前复制的是 vision 片段，两类片段不要混用。
+- 当前仍停留在[[第 11 章：点击安全测试|第 11 章]]的 vision 已生成配置；如果已经刷新或离开 Quickstart，先按[[第 10 章：一键生成第一把 key|第 10 章]]相同字段重新生成一把明确限定的 vision test key，再继续，不使用页面恢复后的默认身份。
+- [[第 10 章：一键生成第一把 key|第 10 章]]已经安全保存 chat key 与 chat 接入片段；本章当前复制的是 vision 片段，两类片段不要混用。
 - 当前仍为安全模式，示例包含 `X-Gateway-Dry-Run: quickstart`。
 - 明确真实业务采用哪种 SDK 兼容协议；不知道时从 OpenAI 兼容开始验证。
 
@@ -43,7 +43,7 @@
 
 ![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
 
-5. 点击“Agent Skill”，复制给负责接入的 Agent。要求它保留 vision appCaller header、协议路径、dry-run 与 requestId 回查步骤；chat 客户端继续使用第 10 章保存的 chat 片段。
+5. 点击“Agent Skill”，复制给负责接入的 Agent。要求它保留 vision appCaller header、协议路径、dry-run 与 requestId 回查步骤；chat 客户端继续使用[[第 10 章：一键生成第一把 key|第 10 章]]保存的 chat 片段。
 
 **本步位置复核：在同一圈选画面完成本步后再继续。**
 

@@ -193,6 +193,27 @@ class TutorialPublisherTests(unittest.TestCase):
             with self.assertRaises(publisher.TutorialError):
                 publisher._validate_chapter(changed, 0, "什么是模型网关")
 
+    def test_cross_chapter_references_are_clickable_and_protected_regions_are_unchanged(self):
+        titles = {
+            int(node.source_id.removeprefix("chapter-")): node.title
+            for node in self.source.nodes
+            if node.source_id.startswith("chapter-")
+        }
+        for number, node in titles.items():
+            chapter = next(item for item in self.source.nodes if item.source_id == f"chapter-{number:02d}")
+            self.assertEqual(
+                chapter.content,
+                publisher.link_chapter_references(chapter.content, number, titles),
+                chapter.source_path,
+            )
+
+        sample = "第 20 章；`第 21 章`；[[第 22 章：看懂用量、预算和费用]]\n```text\n第 23 章\n```"
+        linked = publisher.link_chapter_references(sample, 19, titles)
+        self.assertIn("[[第 20 章：配置 PromptPolicy|第 20 章]]", linked)
+        self.assertIn("`第 21 章`", linked)
+        self.assertIn("[[第 22 章：看懂用量、预算和费用]]", linked)
+        self.assertIn("```text\n第 23 章\n```", linked)
+
 
 if __name__ == "__main__":
     unittest.main()

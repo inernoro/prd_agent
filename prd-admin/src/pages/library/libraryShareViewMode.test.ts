@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseLibraryShareViewMode,
+  resolveInitialSharedEntryId,
+  resolveLibraryShareSortMode,
   resolveControlledSharedEntryId,
   resolveSharedWikilinkEntryId,
   withLibraryShareEntry,
+  withLibraryShareSortMode,
   withLibraryShareViewMode,
 } from './libraryShareViewMode';
 
@@ -64,5 +67,35 @@ describe('libraryShareViewMode', () => {
 
     expect(resolveSharedWikilinkEntryId(entries, { entryId: 'private-doc' })).toBeUndefined();
     expect(resolveSharedWikilinkEntryId(entries, { title: '不存在的章节' })).toBeUndefined();
+  });
+
+  it('defaults structured books to book order and preserves explicit reader choice', () => {
+    expect(resolveLibraryShareSortMode(null, true)).toBe('default');
+    expect(resolveLibraryShareSortMode(null, false)).toBe('created-desc');
+    expect(resolveLibraryShareSortMode('created', true)).toBe('created-desc');
+
+    const params = withLibraryShareSortMode(new URLSearchParams('entry=chapter-20'), 'default');
+    expect(params.toString()).toBe('entry=chapter-20&sort=book');
+  });
+
+  it('opens the primary document in book mode and the newest document in temporal mode', () => {
+    const entries = [
+      { id: 'chapter-2', title: '第 2 章', isFolder: false, sortOrder: 102, createdAt: '2026-07-16T00:00:00Z' },
+      { id: 'readme', title: '模型网关权威教程', isFolder: false, sortOrder: 0, createdAt: '2026-07-01T00:00:00Z' },
+      { id: 'chapter-1', title: '第 1 章', isFolder: false, sortOrder: 101, createdAt: '2026-07-15T00:00:00Z' },
+    ];
+
+    expect(resolveInitialSharedEntryId(entries, {
+      entryFromUrl: null,
+      sharedEntryId: undefined,
+      primaryEntryId: 'readme',
+      sortMode: 'default',
+    })).toBe('readme');
+    expect(resolveInitialSharedEntryId(entries, {
+      entryFromUrl: null,
+      sharedEntryId: undefined,
+      primaryEntryId: 'readme',
+      sortMode: 'created-desc',
+    })).toBe('chapter-2');
   });
 });

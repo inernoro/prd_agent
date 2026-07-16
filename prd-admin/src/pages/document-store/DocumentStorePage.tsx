@@ -286,7 +286,7 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
 // 选中即服务端持久化（store.defaultSortMode），换设备/重登录/刷新都保持。
 function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (m: DocBrowserSortMode) => void }) {
   const opts: { key: DocBrowserSortMode; label: string }[] = [
-    { key: 'default', label: '默认' },
+    { key: 'default', label: '书籍顺序' },
     { key: 'created-desc', label: '最新创建' },
     { key: 'updated-desc', label: '最近更新' },
   ];

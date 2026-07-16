@@ -2,7 +2,7 @@
 
 ## 你在做什么
 
-你将先用页面中保留的 vision key 对 OpenAI 兼容入口执行零费用 dry-run，再回看第 10 章 chat 测试的 requestId。请求会走真实地址、鉴权、团队边界和协议解析，写入请求记录，但必须在模型解析和上游发送前结束。
+你将先用页面中保留的 vision key 对 OpenAI 兼容入口执行零费用 dry-run，再回看[[第 10 章：一键生成第一把 key|第 10 章]] chat 测试的 requestId。请求会走真实地址、鉴权、团队边界和协议解析，写入请求记录，但必须在模型解析和上游发送前结束。
 
 ## 为什么要做
 
@@ -46,7 +46,7 @@
 
 ![图 064 一键生成 appCaller 与 key，缺 key 不能跳过身份直接测试](https://cds.miduo.org/api/reports/assets/fa5352db762895c9cb2fc2ff2bb5ec9f102f1e3242cd7a73968445a1ddb8c7eb.png)
 
-5. 先不要点击“打开 requestId 请求记录”。这个动作会离开 Quickstart，页面内存中的一次性 key 和已生成接入配置会随之清除；第 12 章还要使用当前 vision 配置。
+5. 先不要点击“打开 requestId 请求记录”。这个动作会离开 Quickstart，页面内存中的一次性 key 和已生成接入配置会随之清除；[[第 12 章：复制接入方式|第 12 章]]还要使用当前 vision 配置。
 
 **图 065 生成结果只在当前时刻展示完整 key，并提示立即保存**
 
@@ -58,7 +58,7 @@
 
 ![图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议](https://cds.miduo.org/api/reports/assets/cc15dcc8a820b1f5167a710645aa3476740b268de0f9478bb717d917d2e0b40e.png)
 
-7. 保持控制台标签不刷新、不跳转，只在教程标签进入第 12 章。两条请求的详情统一留到第 13 章核对。
+7. 保持控制台标签不刷新、不跳转，只在教程标签进入[[第 12 章：复制接入方式|第 12 章]]。两条请求的详情统一留到[[第 13 章：找到第一条请求|第 13 章]]核对。
 
 **图 067 点击测试固定使用安全 dry-run，结果必须带 requestId 且未访问上游**
 

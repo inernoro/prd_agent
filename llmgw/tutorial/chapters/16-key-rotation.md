@@ -10,8 +10,8 @@
 
 ## 开始前检查
 
-- 选择第 10 章客服组的有效 chat test key，不操作 vision key 或生产共享 key。
-- 第 10 章已复制一份只引用 `$LLMGW_API_KEY`、appCaller 为 `tutorial.gateway-book::chat` 的 cURL 或 Agent Skill。它就是本章的最小测试客户端，不需要另外部署应用。
+- 选择[[第 10 章：一键生成第一把 key|第 10 章]]客服组的有效 chat test key，不操作 vision key 或生产共享 key。
+- [[第 10 章：一键生成第一把 key|第 10 章]]已复制一份只引用 `$LLMGW_API_KEY`、appCaller 为 `tutorial.gateway-book::chat` 的 cURL 或 Agent Skill。它就是本章的最小测试客户端，不需要另外部署应用。
 - 已安排短切换窗口，明确旧 key id、新 key保管位置和回滚负责人。
 
 ## 跟我做
@@ -36,7 +36,7 @@
 
 ![图 057 点击“新建密钥”打开签发表单](https://cds.miduo.org/api/reports/assets/d3aaf92d5ec3e467f9b488c04b1c3aae10a89a8c09381e8787becbe0b32793a7.png)
 
-4. 在终端运行 `read -s LLMGW_API_KEY`，从密码工具粘贴新 key 并回车，再执行第 10 章保存的 chat 安全 cURL。这就是把最小测试客户端切到新 key；记录 requestId 后运行 `unset LLMGW_API_KEY`。
+4. 在终端运行 `read -s LLMGW_API_KEY`，从密码工具粘贴新 key 并回车，再执行[[第 10 章：一键生成第一把 key|第 10 章]]保存的 chat 安全 cURL。这就是把最小测试客户端切到新 key；记录 requestId 后运行 `unset LLMGW_API_KEY`。
 
 **图 058 密钥表单要求接入方、环境、用途、appCaller、协议、scope 和限流**
 
@@ -54,7 +54,7 @@
 
 ![图 059 单把 key 的每分钟上限可比 appCaller 更严格](https://cds.miduo.org/api/reports/assets/2b88455d6623093368e0937c06f2234fc41c15e840ee1f643acfb450a137e76e.png)
 
-7. 点击“撤销旧钥并完成”。验证旧 key 时不要把明文写进命令：在终端先输入 `read -s LLMGW_API_KEY` 并回车，再在不回显的输入位置从密码工具粘贴旧 key并回车。运行第 10 章已经引用 `$LLMGW_API_KEY` 的 chat 安全 cURL，应返回 401；随后输入 `unset LLMGW_API_KEY`。历史中只会留下这三条固定命令，不会留下完整 key。
+7. 点击“撤销旧钥并完成”。验证旧 key 时不要把明文写进命令：在终端先输入 `read -s LLMGW_API_KEY` 并回车，再在不回显的输入位置从密码工具粘贴旧 key并回车。运行[[第 10 章：一键生成第一把 key|第 10 章]]已经引用 `$LLMGW_API_KEY` 的 chat 安全 cURL，应返回 401；随后输入 `unset LLMGW_API_KEY`。历史中只会留下这三条固定命令，不会留下完整 key。
 
 **图 065 生成结果只在当前时刻展示完整 key，并提示立即保存**
 

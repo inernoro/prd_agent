@@ -24,7 +24,7 @@
 
 ![图 084 从左侧导航点击“审计”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/129d1d09f87a4ce6fa1496d75fb2c068f2813526040014f13cb67441b51ea8f6.png)
 
-2. 搜索第 19 章记下的 Exchange id，找到 `exchange.create` 或“创建 Exchange”，核对操作者、时间、目标类型和结果。
+2. 搜索[[第 19 章：使用 Exchange|第 19 章]]记下的 Exchange id，找到 `exchange.create` 或“创建 Exchange”，核对操作者、时间、目标类型和结果。
 
 **图 085 审计页按当前租户列出谁在什么时候改了什么**
 

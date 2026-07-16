@@ -20,6 +20,9 @@ import '@uiw/react-md-editor/markdown-editor.css';
 const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
+import { compareDocBrowserEntries, type DocBrowserSortMode } from './docBrowserSort';
+
+export type { DocBrowserSortMode } from './docBrowserSort';
 
 // Tag 颜色覆盖：用户在编辑器里手动选的颜色，sessionStorage 全局共享
 // （后端持久化作为 follow-up，先确保 UI 路径走通）
@@ -366,6 +369,8 @@ export type DocBrowserEntry = {
   category?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** 作者或发布器指定的书籍顺序，越小越靠前。 */
+  sortOrder?: number;
   updatedByName?: string;
   summary?: string;
   syncStatus?: string;
@@ -378,12 +383,10 @@ export type DocBrowserEntry = {
 
 /**
  * 目录排序模式：
- * - 'default'：置顶 → 文件夹 → 主文档 → 按标题升序（用于编辑场景，结构稳定）
+ * - 'default'：置顶 → 文件夹 → 主文档 → SortOrder → 自然标题顺序（用于书籍和自定义目录）
  * - 'created-desc'：置顶 → 文件夹 → 按创建时间倒序（用于阅读/分享场景，新内容先看到）
  * - 'updated-desc'：置顶 → 文件夹 → 按更新时间倒序
  */
-export type DocBrowserSortMode = 'default' | 'created-desc' | 'updated-desc';
-
 export type DocBrowserProps = {
   entries: DocBrowserEntry[];
   primaryEntryId?: string;
@@ -468,7 +471,7 @@ export type DocBrowserProps = {
    * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
    */
   autocompleteStoreId?: string;
-  /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
+  /** 目录排序模式，默认 'default'（置顶+folder+主文档+SortOrder+自然标题）。 */
   sortMode?: DocBrowserSortMode;
   /**
    * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
@@ -2433,29 +2436,12 @@ export function DocBrowser({
       }
     }
 
-    // 排序：置顶优先 → 文件夹优先 → 主文档优先 → 按 sortMode 决定剩余顺序
-    const tsOf = (e: DocBrowserEntry, field: 'createdAt' | 'updatedAt'): number => {
-      const v = e[field];
-      if (!v) return 0;
-      const t = new Date(v).getTime();
-      return Number.isNaN(t) ? 0 : t;
-    };
-    const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => {
-      const aPinned = pinnedSet.has(a.id) || a.id === primaryEntryId;
-      const bPinned = pinnedSet.has(b.id) || b.id === primaryEntryId;
-      if (aPinned !== bPinned) return aPinned ? -1 : 1;
-      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-      if (a.id === primaryEntryId) return -1;
-      if (b.id === primaryEntryId) return 1;
-      if (sortMode === 'created-desc') {
-        const d = tsOf(b, 'createdAt') - tsOf(a, 'createdAt');
-        if (d !== 0) return d;
-      } else if (sortMode === 'updated-desc') {
-        const d = tsOf(b, 'updatedAt') - tsOf(a, 'updatedAt');
-        if (d !== 0) return d;
-      }
-      return a.title.localeCompare(b.title);
-    };
+    // 排序 SSOT：默认模式消费服务端 SortOrder，未设置时按自然标题兜底。
+    const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => compareDocBrowserEntries(a, b, {
+      mode: sortMode,
+      primaryEntryId,
+      pinnedEntryIds: pinnedSet,
+    });
     roots.sort(sortFn);
     for (const [, children] of cMap) children.sort(sortFn);
 
