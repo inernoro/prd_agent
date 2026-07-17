@@ -91,8 +91,8 @@ export function GlassCard({
   const perfMode = useThemeStore((s) => s.config.performanceMode);
   const material = useThemeStore((s) => s.config.material ?? 'solid');
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
-  // 素色材质（系统默认）：表面走 Obsidian 实底渲染，但入场动画等体验不降级（那是性能模式的事）
-  const solidSurface = isPerf || material === 'solid';
+  // 表面材质 100% 跟随用户选择（2026-07-17 修正：性能模式不再劫持材质，只管动画）
+  const solidSurface = material === 'solid';
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 

@@ -12,13 +12,16 @@
    此处仅需清除 backdrop-filter 并微调视觉细节。
    ======================================== */
 
-/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖） */
-html[data-perf-mode="performance"] * {
+/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖）。
+   2026-07-17 起加 [data-material="solid"] 限定：材质是用户的决定——
+   用户选了液态玻璃，性能模式/减少动态效果只压动画，不打碎玻璃
+   （否则半透表面无 blur 叠在内容上失焦，且「切玻璃没反应」）。 */
+html[data-perf-mode="performance"][data-material="solid"] * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-html[data-perf-mode="performance"] *::before,
-html[data-perf-mode="performance"] *::after {
+html[data-perf-mode="performance"][data-material="solid"] *::before,
+html[data-perf-mode="performance"][data-material="solid"] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }

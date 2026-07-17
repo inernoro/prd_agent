@@ -28,11 +28,11 @@ export function prefersReducedMotion(): boolean {
 }
 
 /**
- * 根据配置判断是否应该启用性能模式（降低特效）
+ * 根据配置判断是否应该启用性能模式（降低动画/过渡强度）。
+ * 2026-07-17 起只影响 data-perf-mode（动画侧），不再参与「玻璃还是实底」的材质判定；
+ * perf 模式的全局 backdrop-filter 清除也已限定在素色材质下（见 legacy.css）。
  */
 export function shouldReduceEffects(config: ThemeConfig): boolean {
-  // prefers-reduced-motion 下全局 CSS 已用 !important 清掉所有 backdrop-filter，
-  // 玻璃必须整体退实底（否则半透表面无模糊地叠在 aurora/页面上失焦），故优先级最高。
   if (prefersReducedMotion()) return true;
   if (config.performanceMode === 'performance') return true;
   if (config.performanceMode === 'quality') return false;
@@ -41,11 +41,17 @@ export function shouldReduceEffects(config: ThemeConfig): boolean {
 }
 
 /**
- * 界面材质是否为素色实底（material='solid'，或性能路径本就退实底）。
- * 这是「表面渲染走玻璃还是实底」的唯一判定入口——GlassCard 与 CSS 都以它为准。
+ * 界面材质是否为素色实底。这是「表面渲染走玻璃还是实底」的唯一判定入口——
+ * GlassCard 与 CSS 都以它为准。
+ *
+ * 2026-07-17 修正（用户反馈「切换玻璃和非玻璃没有任何区别」）：
+ * 旧实现 OR 了 shouldReduceEffects——性能模式 / Windows auto / 系统「减少动态效果」
+ * 任意命中就把材质锁死在素色，开关形同虚设。材质是用户的决定，100% 跟随选择；
+ * 性能模式与减少动态效果只管动画强度（data-perf-mode），不劫持材质
+ * （blur 是静态效果，不属于「动态效果」的范畴）。
  */
 export function isSolidMaterial(config: ThemeConfig): boolean {
-  return (config.material ?? DEFAULT_THEME_CONFIG.material) === 'solid' || shouldReduceEffects(config);
+  return (config.material ?? DEFAULT_THEME_CONFIG.material) === 'solid';
 }
 
 /**
@@ -73,9 +79,9 @@ export function applyThemeToDOM(rawConfig: ThemeConfig): void {
   const config = normalizeThemeConfig(rawConfig);
   const reduceEffects = shouldReduceEffects(config);
   const solidMaterial = isSolidMaterial(config);
-  // 素色材质复用性能模式的实底 token 集（--glass-bg-* 变高不透明实底），
-  // 但不带性能模式的「压缩过渡/动画」副作用——素色只改材质，不降体验。
-  const vars = computeThemeVars(config, reduceEffects || solidMaterial);
+  // 表面 token 只由材质决定（素色 → 实底 token 集；玻璃 → 玻璃 token 集），
+  // 性能模式不再参与表面判定，只通过 data-perf-mode 压动画。
+  const vars = computeThemeVars(config, solidMaterial);
   const root = document.documentElement;
 
   // 注入计算后的 CSS 变量
