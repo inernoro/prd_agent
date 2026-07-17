@@ -65,6 +65,33 @@ html[data-material="solid"] .glass-blur-pseudo::after {
   content: none;
 }
 
+/* 极光背景静音：素色的画布就是纯底色。飘动的白雾 radial 层是「蒙一层/胖胖的」
+   观感来源之一，与性能模式同款回退（那边是为省重绘，这边是为气质） */
+html[data-material="solid"] .app-aurora {
+  animation: none !important;
+  background: var(--bg-base) !important;
+}
+
+/* chrome 瘦身：工具条 46 → 42px，配合纯平底与发丝描边，整条更轻 */
+html[data-material="solid"] .surface-nav-bar {
+  min-height: 42px;
+}
+html[data-material="solid"] .surface-nav-bar .surface-nav-content {
+  min-height: 42px;
+}
+
+/* 按钮扁平化（.map-btn-* 钩子挂在 design/Button 上）：去内嵌白环 / 彩色泛光 /
+   悬浮大阴影，主按钮保留品牌色本身，反馈靠 brightness 与描边。仅暗色素色生效 */
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-primary {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-secondary {
+  box-shadow: none !important;
+}
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-danger {
+  box-shadow: none !important;
+}
+
 /* 卡片 hover 全站统一为「安静反馈」：零位移，描边提亮 + 轻投影。
    压过 surface.css 里默认的 translateY(-3px) + 强光晕（那是玻璃材质的手势） */
 html[data-material="solid"] .glass-card-interactive:hover {

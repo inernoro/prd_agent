@@ -18,3 +18,4 @@
 | feat | prd-api | 主题配置持久化新增 Material 字段（素色/液态玻璃跨设备保持） |
 | docs | doc | 新增 debt.frontend.material-system 台账（低风险装饰面复核 / 长尾玻璃迁 token） |
 | style | prd-admin | 素色材质现代化重做：表面纯平全不透明、去白色镜面高光与渐变（亚克力感来源）、静息态发丝级投影、hover 全站零位移描边提亮 |
+| style | prd-admin | 素色瘦身第二波：极光背景静音为纯底色（去白雾）、工具条 46 变 42px、按钮去内嵌白环/彩色泛光（map-btn 钩子集中调配） |
