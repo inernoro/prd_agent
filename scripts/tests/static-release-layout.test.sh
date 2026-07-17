@@ -77,4 +77,26 @@ test ! -L "$failure_root/current"
 grep -F 'old' "$failure_root/assets/app.js" >/dev/null
 grep -F 'restoring the original layout' "$tmp_root/failure.log" >/dev/null
 
+restricted_root="$tmp_root/restricted-web/dist"
+mkdir -p "$restricted_root/assets" "$restricted_root/.staging-restricted/assets"
+printf 'old\n' > "$restricted_root/index.html"
+printf 'old\n' > "$restricted_root/assets/app.js"
+printf '<script src="/assets/app.js"></script>\n' > "$restricted_root/.staging-restricted/index.html"
+printf 'new\n' > "$restricted_root/.staging-restricted/assets/app.js"
+chmod 700 "$restricted_root" "$restricted_root/assets" "$restricted_root/.staging-restricted" "$restricted_root/.staging-restricted/assets"
+chmod 600 "$restricted_root/index.html" "$restricted_root/assets/app.js" "$restricted_root/.staging-restricted/index.html" "$restricted_root/.staging-restricted/assets/app.js"
+(
+  umask 077
+  static_release_activate "$restricted_root/.staging-restricted" "$restricted_root" "restricted" >/dev/null
+)
+test "$(stat -c '%a' "$restricted_root/.releases" 2>/dev/null || stat -f '%Lp' "$restricted_root/.releases")" = "755"
+test "$(stat -c '%a' "$restricted_root/.releases/restricted" 2>/dev/null || stat -f '%Lp' "$restricted_root/.releases/restricted")" = "755"
+test "$(stat -c '%a' "$restricted_root/.releases/restricted/assets" 2>/dev/null || stat -f '%Lp' "$restricted_root/.releases/restricted/assets")" = "755"
+test "$(stat -c '%a' "$restricted_root/.releases/restricted/index.html" 2>/dev/null || stat -f '%Lp' "$restricted_root/.releases/restricted/index.html")" = "644"
+test "$(stat -c '%a' "$restricted_root/.releases/restricted/assets/app.js" 2>/dev/null || stat -f '%Lp' "$restricted_root/.releases/restricted/assets/app.js")" = "644"
+test -r "$restricted_root/current/index.html"
+test -r "$restricted_root/current/assets/app.js"
+find "$restricted_root/.releases/restricted" -type d -exec test -x {} \;
+find "$restricted_root/.releases/restricted" -type f -exec test -r {} \;
+
 echo "Static release layout test: PASS"
