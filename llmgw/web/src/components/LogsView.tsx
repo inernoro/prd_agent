@@ -203,6 +203,7 @@ export function LogsView() {
   const sessSeq = useRef(0);
   const seriesSeq = useRef(0);
   const summarySeq = useRef(0);
+  const openedRequestIdRef = useRef('');
 
   const loadList = useCallback(
     async (p: number) => {
@@ -276,6 +277,19 @@ export function LogsView() {
   useEffect(() => {
     if (subtab === 'sessions') loadSessions(sessPage);
   }, [subtab, sessPage, loadSessions]);
+
+  useEffect(() => {
+    const requestId = filterRequestId.trim();
+    if (!requestId) {
+      openedRequestIdRef.current = '';
+      return;
+    }
+    if (loading || openedRequestIdRef.current === requestId) return;
+    const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
+    if (!matched) return;
+    openedRequestIdRef.current = requestId;
+    setSelectedId(matched.id);
+  }, [filterRequestId, loading, rows]);
 
   const refresh = () => {
     loadSeries();

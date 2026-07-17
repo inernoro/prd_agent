@@ -5,5 +5,6 @@
 | polish | llmgw-web | appCaller 在手机端改为完整摘要卡片并保留路由治理配置，避免横向表格遮断信息 |
 | polish | llmgw-web | 生成详情按概览、请求与响应、路由和审计四类重组，补齐加载失败反馈并让核心指标优先可见 |
 | fix | llmgw-web | 上游响应改为三列纵向信息卡，修复长 Provider、模型和模型池文本在详情抽屉中粘连重叠 |
+| fix | llmgw-web | 请求记录的 requestId 深链在唯一命中后自动打开生成详情，避免移动端还要点击拥挤表格 |
 | test | llmgw | 更新生成详情数据域保护断言，覆盖四类页签与加载失败兜底 |
 | docs | llmgw | 更正 CDS Quickstart 真实请求证据并沉淀 OpenRouter 微观体验基线 |
