@@ -40,23 +40,40 @@ export LLMGW_SHADOW_FULL_SAMPLE_PERCENT=0
 export LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST=
 export LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS=false
 
+reload_gateway_in_place() {
+  if [ -z "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
+    return 0
+  fi
+  if ! $COMPOSE -f "$compose_file" config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
+    echo "LLM Gateway rollback: gateway service '$gateway_service' not found, reload skipped"
+    return 0
+  fi
+
+  gateway_container_id="$($COMPOSE -f "$compose_file" ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+  if [ -z "$gateway_container_id" ]; then
+    echo "LLM Gateway rollback: gateway is absent, starting it without forced recreation"
+    # shellcheck disable=SC2086
+    $COMPOSE -f "$compose_file" up -d --no-deps "$gateway_service"
+    gateway_container_id="$($COMPOSE -f "$compose_file" ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+  fi
+  if [ -z "$gateway_container_id" ]; then
+    echo "ERROR: gateway container is unavailable after API rollback" >&2
+    return 1
+  fi
+  docker exec "$gateway_container_id" nginx -t
+  docker exec "$gateway_container_id" nginx -s reload
+  echo "LLM Gateway rollback: gateway reloaded in place after API restart"
+}
+
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"
   if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
-    echo "LLM Gateway rollback dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $gateway_service"
+    echo "LLM Gateway rollback dry-run: validate and reload $gateway_service in place without changing its container IP"
   fi
   echo "LLM Gateway rollback dry-run completed: API would restart with LLMGW_MODE=inproc and disableMapConfigFallbackForActiveAppCallers=false"
 else
   # shellcheck disable=SC2086
   $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
-  if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
-    if $COMPOSE -f "$compose_file" config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
-      # shellcheck disable=SC2086
-      $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$gateway_service"
-      echo "LLM Gateway rollback: gateway service refreshed after API restart"
-    else
-      echo "LLM Gateway rollback: gateway service '$gateway_service' not found, refresh skipped"
-    fi
-  fi
+  reload_gateway_in_place
   echo "LLM Gateway rollback completed: API restarted with LLMGW_MODE=inproc and disableMapConfigFallbackForActiveAppCallers=false"
 fi
