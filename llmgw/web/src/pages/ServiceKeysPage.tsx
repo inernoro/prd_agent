@@ -8,7 +8,7 @@ import { Button, Chip, SectionLoader } from '@/components/ui';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 
 const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemini-compatible';
-const DEFAULT_SCOPES = 'invoke, route:read';
+const DEFAULT_SCOPES = 'invoke, stream:invoke, route:read';
 
 export function ServiceKeysPage() {
   const { tenant } = useAuth();
@@ -18,6 +18,7 @@ export function ServiceKeysPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [created, setCreated] = useState<CreatedServiceKey | null>(null);
   const [copied, setCopied] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -65,7 +66,11 @@ export function ServiceKeysPage() {
   useEffect(() => {
     void load();
     void getGatewayAppCallers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) setKnownAppCallers(Array.from(new Set(res.data.items.map((item) => item.appCallerCode))).sort());
+      if (res.success) {
+        const codes = Array.from(new Set(res.data.items.map((item) => item.appCallerCode))).sort();
+        setKnownAppCallers(codes);
+        setAppCallerCodes((current) => current || codes[0] || '');
+      }
     });
   }, [load]);
 
@@ -152,7 +157,23 @@ export function ServiceKeysPage() {
     setRateLimitPerMinute(item.rateLimitPerMinute ? String(item.rateLimitPerMinute) : '');
     setRotatesKeyId(item.id);
     setConfirmWildcardRisk(false);
+    setShowAdvanced(true);
     setShowCreate(true);
+  };
+
+  const updateName = (value: string) => {
+    const previousAutomaticClientCode = normalizeClientCode(name);
+    setName(value);
+    if (!rotatesKeyId) {
+      setClientCode((current) => !current || current === previousAutomaticClientCode ? normalizeClientCode(value) : current);
+    }
+  };
+
+  const toggleCreate = () => {
+    setShowCreate((current) => {
+      if (!current) setShowAdvanced(false);
+      return !current;
+    });
   };
 
   const usesWildcard = sourceSystem.trim() === '*'
@@ -218,7 +239,7 @@ export function ServiceKeysPage() {
           <Link to="/organization" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12 }}>组织与团队</Link>
           <Link to="/quickstart" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 12 }}>Quickstart</Link>
           <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
-          <Button size="sm" variant="primary" onClick={() => setShowCreate((value) => !value)}>
+          <Button size="sm" variant="primary" onClick={toggleCreate}>
             {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}
           </Button>
         </div>
@@ -239,40 +260,51 @@ export function ServiceKeysPage() {
       ) : null}
 
       {showCreate ? (
-        <div className="lg-service-key-form" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr)', gap: 8, padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <Field label="名称" value={name} onChange={setName} placeholder="例如 content-service" />
-          {isInternalTenant
-            ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
-            : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
-          <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
-          <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
-            <option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option>
-          </select></label>
-          {isInternalTenant
-            ? <label style={labelStyle}>用途<select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)} style={inputStyle}>
-              <option value="runtime">MAP runtime</option><option value="release-gate">发布 Gate</option><option value="canary">Canary</option><option value="external-platform">外部平台</option>
-            </select></label>
-            : <label style={labelStyle}>用途<input aria-label="用途" value="external-platform" readOnly style={inputStyle} /></label>}
-          {!purposeMatchesSource ? <div style={{ gridColumn: '1 / -1', color: 'var(--danger)', fontSize: 12 }}>MAP 只能使用 runtime、release-gate 或 canary；其他来源只能使用 external-platform。</div> : null}
-          <Field label="AppCallerCodes" value={appCallerCodes} onChange={setAppCallerCodes} placeholder="选择已有值或逗号分隔输入" list="llmgw-app-callers" />
-          <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
-          <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
-          <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, stream:invoke, raw:invoke, profile:test" />
-          <Field label="Team ID（可选）" value={teamId} onChange={setTeamId} placeholder="仅限当前租户团队" />
-          <Field label="来源 CIDR（可选）" value={allowedCidrs} onChange={setAllowedCidrs} placeholder="10.20.0.0/16, 2001:db8::/32" />
-          <Field label="每分钟上限（可选）" value={rateLimitPerMinute} onChange={setRateLimitPerMinute} placeholder="例如 60" type="number" />
-          <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
+        <div className="lg-service-key-form">
+          <div className="lg-service-key-fast-fields">
+            <Field label="密钥名称" value={name} onChange={updateName} placeholder="例如 cherry-studio" />
+            <label style={labelStyle}>调用用途
+              <input list="llmgw-app-callers" value={appCallerCodes} onChange={(event) => setAppCallerCodes(event.target.value)} placeholder={knownAppCallers.length ? '选择已有业务调用身份' : '尚无调用用途，请先打开 Quickstart'} style={inputStyle} />
+              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{knownAppCallers.length ? '决定这把 key 可以调用哪项业务；通常保留默认选择即可。' : <Link to="/quickstart" style={{ color: 'var(--accent)' }}>去 Quickstart 自动创建调用用途和 key</Link>}</span>
+            </label>
+            <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
+            <div className="lg-service-key-fast-action"><Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
+          </div>
+          <div className="lg-service-key-defaults">
+            <span>自动设置</span>
+            <strong>{clientCode || '根据名称生成 clientCode'}</strong>
+            <span>生产环境</span>
+            <span>四种兼容协议</span>
+            <span>普通、流式调用与路由预检</span>
+          </div>
+          <details open={showAdvanced} onToggle={(event) => setShowAdvanced(event.currentTarget.open)} className="lg-service-key-advanced">
+            <summary>高级权限与安全设置</summary>
+            <div className="lg-service-key-advanced-grid">
+              {isInternalTenant
+                ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
+                : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>由服务端固定，不能伪装为 MAP。</span></label>}
+              <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
+              <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
+              {isInternalTenant
+                ? <label style={labelStyle}>用途<select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)} style={inputStyle}><option value="runtime">MAP runtime</option><option value="release-gate">发布 Gate</option><option value="canary">Canary</option><option value="external-platform">外部平台</option></select></label>
+                : <label style={labelStyle}>用途<input aria-label="用途" value="external-platform" readOnly style={inputStyle} /></label>}
+              <Field label="入口协议" value={ingressProtocols} onChange={setIngressProtocols} placeholder="openai-compatible" />
+              <Field label="Scopes" value={scopes} onChange={setScopes} placeholder="invoke, route:read" />
+              <Field label="Team ID（可选）" value={teamId} onChange={setTeamId} placeholder="仅限当前租户团队" />
+              <Field label="来源 CIDR（可选）" value={allowedCidrs} onChange={setAllowedCidrs} placeholder="10.20.0.0/16, 2001:db8::/32" />
+              <Field label="每分钟上限（可选）" value={rateLimitPerMinute} onChange={setRateLimitPerMinute} placeholder="例如 60" type="number" />
+              <label style={labelStyle}>过期时间<input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} /></label>
+            </div>
+          </details>
+          {!purposeMatchesSource ? <div style={{ color: 'var(--danger)', fontSize: 12 }}>MAP 只能使用 runtime、release-gate 或 canary；其他来源只能使用 external-platform。</div> : null}
           {usesWildcard && canCreateWildcard ? (
-            <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
               <input type="checkbox" checked={confirmWildcardRisk} onChange={(event) => setConfirmWildcardRisk(event.target.checked)} />
               <span><strong>确认创建通配密钥</strong><br />该密钥的来源、appCaller、协议或 scope 含通配符，权限范围明显扩大。</span>
             </label>
           ) : null}
-          {usesWildcard && !canCreateWildcard ? <div style={{ gridColumn: '1 / -1', color: 'var(--danger)', fontSize: 12 }}>Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥，不能创建通配密钥。</div> : null}
-          {rotatesKeyId ? <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 12 }}>正在轮换 {rotatesKeyId}。新旧密钥会并行有效，完成客户端切换后再撤销旧密钥。</div> : null}
-          <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}>
-            <Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '创建密钥'}</Button>
-          </div>
+          {usesWildcard && !canCreateWildcard ? <div style={{ color: 'var(--danger)', fontSize: 12 }}>Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥，不能创建通配密钥。</div> : null}
+          {rotatesKeyId ? <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>正在轮换 {rotatesKeyId}。新旧密钥会并行有效，完成客户端切换后再撤销旧密钥。</div> : null}
         </div>
       ) : null}
 
@@ -308,21 +340,16 @@ export function ServiceKeysPage() {
         <div className="lg-service-key-desktop" style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
           <table className="lg-service-key-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
-              {['名称', '工作负载身份', '前缀', '团队/创建者', 'AppCaller', '协议', 'Scope', '网络/限流', '最后使用', '过期', '状态', '轮换阶段', ''].map((label) => <th key={label} style={th}>{label}</th>)}
+              {['API Key', '客户端', 'AppCaller 与权限', '团队', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
             </tr></thead>
             <tbody>{items.map((item) => <tr key={item.id}>
-              <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.id}</div></td>
-              <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.purpose} · {item.sourceSystem}</div></td>
-              <td style={{ ...td, ...mutedMono }}>{item.keyPrefix}</td>
+              <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.keyPrefix} · {rotationLabel(item.rotationState)}</div></td>
+              <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.sourceSystem}</div></td>
+              <td style={td}>{item.appCallerCodes.join(', ')}<details className="lg-service-key-permissions"><summary>查看权限</summary><div>协议：{item.ingressProtocols.join(', ')}</div><div>Scope：{item.scopes.join(', ')}</div><div>网络：{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'} · {item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</div></details></td>
               <td style={td}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
-              <td style={td}>{item.appCallerCodes.join(', ')}</td>
-              <td style={td}>{item.ingressProtocols.join(', ')}</td>
-              <td style={td}>{item.scopes.join(', ')}</td>
-              <td style={td}>{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'}<div style={mutedMono}>{item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</div></td>
               <td style={td}>{formatTime(item.lastUsedAt)}</td>
               <td style={td}>{formatTime(item.expiresAt)}</td>
               <td style={td}><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? '#3fb950' : '#8b949e'} bg={item.enabled ? 'rgba(63,185,80,0.14)' : 'rgba(139,148,158,0.12)'} /></td>
-              <td style={td}>{rotationLabel(item.rotationState)}{item.rotatedByKeyId ? <div style={mutedMono}>新钥 {item.rotatedByKeyId}</div> : null}</td>
               <td style={{ ...td, textAlign: 'right' }}>{renderActions(item)}</td>
             </tr>)}</tbody>
           </table>
@@ -341,11 +368,10 @@ export function ServiceKeysPage() {
             <dl>
               <div><dt>轮换阶段</dt><dd>{rotationLabel(item.rotationState)}{item.rotatedByKeyId ? <small>新钥 {item.rotatedByKeyId}</small> : null}</dd></div>
               <div><dt>AppCaller</dt><dd>{item.appCallerCodes.join(', ')}</dd></div>
-              <div><dt>入口协议</dt><dd>{item.ingressProtocols.join(', ')}</dd></div>
-              <div><dt>Scope</dt><dd>{item.scopes.join(', ')}</dd></div>
               <div><dt>团队 / 创建者</dt><dd>{item.teamId || '租户级'}<small>{item.createdByUsername || '历史密钥'}</small></dd></div>
-              <div><dt>网络 / 限流</dt><dd>{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'}<small>{item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</small></dd></div>
+              <div><dt>最后使用</dt><dd>{formatTime(item.lastUsedAt)}<small>过期：{formatTime(item.expiresAt)}</small></dd></div>
             </dl>
+            <details className="lg-service-key-permissions"><summary>查看协议、Scope 和网络限制</summary><div>协议：{item.ingressProtocols.join(', ')}</div><div>Scope：{item.scopes.join(', ')}</div><div>网络：{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'} · {item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</div></details>
             {renderActions(item)}
           </article>)}
         </div>
@@ -361,6 +387,11 @@ function Field({ label, value, onChange, placeholder, type = 'text', list }: { l
 
 function splitValues(value: string) {
   return value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeClientCode(value: string) {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z]+/, '').slice(0, 80);
+  return normalized.length >= 2 ? normalized : 'external-client';
 }
 
 function formatTime(value?: string | null) {

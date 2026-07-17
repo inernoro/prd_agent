@@ -652,7 +652,8 @@ public class GatewayMultipartHttpTests
             string ingressProtocol,
             string requiredScope,
             System.Net.IPAddress? remoteIp,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
             => Task.FromResult(new GatewayKeyAuthorization(
                 true,
                 true,
