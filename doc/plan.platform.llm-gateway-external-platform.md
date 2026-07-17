@@ -115,7 +115,7 @@ PR-10 最终验收结论（2026-07-15）：最终代码提交 `e0b2ae40d6c0a48a7
 
 2026-07-17 按“用户无需跳页验证关联字段”的交付自检，确认四个剩余体验断点：Provider 的接口信息只能读表格、模型到 Provider 需要跨页比对、appCaller 绑定模型池后看不到候选与健康、Exchange 的 adapter 与目标路由需要进入编辑页理解。本批只新增一个复用的只读关联抽屉，在 Provider、模型、appCaller 和 Exchange 当前行或卡片展示已有权限范围内的配置摘要；不新增 API、不改变路由、不读取密钥明文、不发起上游请求，也不重做模型池、full-http 或发布 gate。
 
-本地完成证据：四类预览均通过键盘 Escape、关闭后焦点返回、移动端单列滚动和安全边界检查；Web 生产构建 1620 个模块通过，Gateway 定向测试 174/174 与 647/647，解决方案构建 0 error，完整非集成套件为 PrdAgent.Tests 679/679、PrdAgent.Api.Tests 1702 通过与 4 个既有跳过。浏览器只通过可见导航连续走完 113 个证据点，覆盖深色、浅色、390 像素移动端、系统运维入口、发布 Gate 和三个独立 Gateway 容器，0 warning、0 console/network 自动发现；四协议合同套件另有 92/92 真实执行结果。L2 本地预验收报告为 `https://cds.miduo.org/reports?project=prd-agent&folder=c508db129e7f420fbfade7da8b6de622&report=2e0f93e05aeb4fd3b3ef7b61b7499fe4`。独立 PR、GitHub CI、CDS exact commit 和公网预览未通过前，本批仍保持验收中。
+完成证据：四类预览均通过键盘 Escape、关闭后焦点返回、移动端单列滚动和安全边界检查；Web 生产构建 1620 个模块通过，Gateway 定向测试 174/174 与 647/647，解决方案构建 0 error，完整非集成套件为 PrdAgent.Tests 679/679、PrdAgent.Api.Tests 1702 通过与 4 个既有跳过。浏览器只通过可见导航连续走完 113 个证据点，覆盖深色、浅色、390 像素移动端、系统运维入口、发布 Gate 和三个独立 Gateway 容器，0 warning、0 console/network 自动发现；四协议合同套件另有 92/92 真实执行结果。PR #1168 已合并为 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3`；GitHub CI、Codex Review、CDS exact commit、smoke 3/3 和公网预览均已通过。最终 L2 验收报告与 MAP 生产发布、备份、临时 Key 撤销证据统一记录在 §9.1，本批状态为已生产交付。
 
 每个 PR 都必须等待 CI、Codex Review 或替代人工复审、CDS 和验收。Bugbot 因订阅停用记为不适用。生产 key 切换固定使用“清单 -> 新 key -> 双 key 并存 -> 按 ServiceKeyId 观测 -> 撤销旧 key”，禁止直接覆盖共享 key，也禁止修改任何既有用户密码。
 
