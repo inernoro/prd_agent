@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
+import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, probeReleaseSurface, releaseScriptPhase } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -174,6 +174,44 @@ describe('release service script preflight helpers', () => {
       const failed = await probeHealthcheckStatus(`http://127.0.0.1:${addr.port}/down`, 500);
       expect(failed.status).toBe('failed');
       expect(failed.message).toBe('healthcheck HTTP 503');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('requires the public HTML and entry assets for generated static releases', async () => {
+    let serveSurface = false;
+    const server = http.createServer((req, res) => {
+      if (req.url === '/api/health') {
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"healthy"}');
+        return;
+      }
+      if (req.url === '/' && serveSurface) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          .end('<html><head><link href="/assets/app.css" rel="stylesheet"></head><body><script src="/assets/app.js"></script></body></html>');
+        return;
+      }
+      if (req.url === '/assets/app.js' && serveSurface) {
+        res.writeHead(200, { 'content-type': 'application/javascript' }).end('window.appReady = true;');
+        return;
+      }
+      if (req.url === '/assets/app.css' && serveSurface) {
+        res.writeHead(200, { 'content-type': 'text/css' }).end('body { color: black; }');
+        return;
+      }
+      res.writeHead(500, { 'content-type': 'text/plain' }).end('static root unavailable');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const addr = server.address() as { port: number };
+      const healthcheckUrl = `http://127.0.0.1:${addr.port}/api/health`;
+
+      await expect(probeReleaseSurface(healthcheckUrl, 'existing-script', 500)).resolves.toBeUndefined();
+      await expect(probeReleaseSurface(healthcheckUrl, 'generated-static', 500))
+        .rejects.toThrow('static surface root HTTP 500');
+
+      serveSurface = true;
+      await expect(probeReleaseSurface(healthcheckUrl, 'generated-static', 500)).resolves.toBeUndefined();
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

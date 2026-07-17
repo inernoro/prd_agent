@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { StateService } from './state.js';
-import type { BranchEntry, ReleaseArtifact, ReleasePlan, ReleaseRun, ReleaseTarget, RemoteHost } from '../types.js';
+import type { BranchEntry, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleaseRun, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
@@ -467,7 +467,7 @@ export class ReleaseService {
     this.patchStatus(releaseId, 'healthchecking');
     this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
     try {
-      await probeHealthcheck(target.ssh.healthcheckUrl);
+      await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
     } catch (err) {
       await this.restorePreviousAfterFailedProbe(releaseId, target, run, err);
       throw err;
@@ -486,6 +486,7 @@ export class ReleaseService {
     const rollbackRun = this.stateService.getReleaseRun(releaseId);
     if (!rollbackRun) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const rollbackCommand = ssh.rollbackCommand?.trim();
+    const rollbackMode = rollbackRun.executionSnapshot?.mode || effectiveReleaseStrategy(target).mode;
     if (rollbackCommand) {
       this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
       await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
@@ -498,7 +499,7 @@ export class ReleaseService {
       await this.runDeployCommand(releaseId, executionTarget, rollbackRun, execution.command);
     }
     this.emitLog(releaseId, 'info', `健康检查 ${ssh.healthcheckUrl}`, 'healthcheck');
-    await probeHealthcheck(ssh.healthcheckUrl);
+    await probeReleaseSurface(ssh.healthcheckUrl, rollbackMode);
     const done = this.stateService.patchReleaseRun(releaseId, {
       status: 'rollback_success',
       finishedAt: new Date().toISOString(),
@@ -543,7 +544,7 @@ export class ReleaseService {
     this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
-      await probeHealthcheck(target.ssh!.healthcheckUrl);
+      await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
       this.emitLog(releaseId, 'warn', `已恢复上一成功版本 ${previous.releaseId}`, 'auto-restore');
     } catch (restoreError) {
       this.emitLog(releaseId, 'error', `自动恢复失败: ${(restoreError as Error).message}`, 'auto-restore');
@@ -732,6 +733,82 @@ export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawC
 async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {
   const result = await probeHealthcheckStatus(url, timeoutMs);
   if (result.status !== 'healthy') throw new Error(result.message || 'healthcheck failed');
+}
+
+export async function probeReleaseSurface(
+  healthcheckUrl: string,
+  mode: ReleaseExecutionMode,
+  timeoutMs = 8_000,
+): Promise<void> {
+  await probeHealthcheck(healthcheckUrl, timeoutMs);
+  if (mode === 'generated-static') {
+    await probeStaticSiteSurface(healthcheckUrl, timeoutMs);
+  }
+}
+
+export async function probeStaticSiteSurface(healthcheckUrl: string, timeoutMs = 8_000): Promise<void> {
+  let surfaceUrl: URL;
+  try {
+    surfaceUrl = new URL('/', healthcheckUrl);
+  } catch {
+    throw new Error('healthcheckUrl must be a valid URL');
+  }
+  if (!['http:', 'https:'].includes(surfaceUrl.protocol)) {
+    throw new Error('healthcheckUrl must be http or https');
+  }
+
+  const htmlResponse = await fetchSurfaceResource(surfaceUrl, timeoutMs, 'static surface root');
+  const htmlType = htmlResponse.contentType;
+  if (!htmlType.includes('text/html') && !htmlType.includes('application/xhtml+xml')) {
+    throw new Error(`static surface root has non-HTML content-type: ${htmlType || 'missing'}`);
+  }
+  const html = Buffer.from(htmlResponse.body).toString('utf8');
+  const refs = Array.from(html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css)(?:[?#][^"']*)?)["']/gi))
+    .map((match) => match[1]);
+  if (refs.length === 0) throw new Error('static surface root has no JS/CSS entry reference');
+
+  const sameOriginEntries = refs
+    .map((ref) => new URL(ref, surfaceUrl))
+    .filter((entry) => entry.origin === surfaceUrl.origin);
+  if (sameOriginEntries.length === 0) {
+    throw new Error('static surface root has no same-origin JS/CSS entry reference');
+  }
+
+  for (const entry of sameOriginEntries) {
+    const response = await fetchSurfaceResource(entry, timeoutMs, `static entry ${entry.pathname}`);
+    const contentType = response.contentType;
+    const isCss = entry.pathname.toLowerCase().endsWith('.css');
+    const mimeOk = isCss
+      ? contentType.includes('text/css')
+      : contentType.includes('javascript');
+    if (!mimeOk) {
+      throw new Error(`static entry ${entry.pathname} has invalid content-type: ${contentType || 'missing'}`);
+    }
+    if (response.body.byteLength === 0) throw new Error(`static entry ${entry.pathname} is empty`);
+  }
+}
+
+async function fetchSurfaceResource(
+  url: URL,
+  timeoutMs: number,
+  label: string,
+): Promise<{ contentType: string; body: ArrayBuffer }> {
+  const ctrl = new AbortController();
+  const timer = global.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: 'GET', signal: ctrl.signal });
+    if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+    const body = await response.arrayBuffer();
+    return {
+      contentType: response.headers.get('content-type')?.toLowerCase() || '',
+      body,
+    };
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw new Error(`${label} timeout after ${timeoutMs}ms`);
+    throw err;
+  } finally {
+    global.clearTimeout(timer);
+  }
 }
 
 export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Promise<ReleaseHealthProbe> {

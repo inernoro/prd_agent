@@ -269,6 +269,7 @@ worktree_root="$repo_parent/.cds-releases/$CDS_TARGET_ID/worktrees"
 worktree="$worktree_root/$CDS_RELEASE_ID"
 version="$publish_root/.releases/$CDS_RELEASE_ID"
 mkdir -p "$worktree_root" "$publish_root/.releases"
+chmod 755 "$publish_root" "$publish_root/.releases"
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi

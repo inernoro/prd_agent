@@ -75,6 +75,7 @@ describe('release strategy discovery and generation', () => {
     const script = decodeGeneratedCommand(execution.command);
 
     expect(script).toContain("publish_root='/srv/proj-a-web'");
+    expect(script).toContain('chmod 755 "$publish_root" "$publish_root/.releases"');
     expect(script).toContain("raise SystemExit('index.html has no JS/CSS entry reference')");
     expect(script).toContain('find "$version.tmp" -type d -exec chmod 755 {} +');
     expect(script).toContain('ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"');
@@ -122,6 +123,10 @@ describe('release strategy discovery and generation', () => {
     const firstSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     executeStaticRelease(repo, published, firstSha, 'rel-first');
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-one');
+    expect(fs.statSync(published).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(published, '.releases')).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(published, 'current')).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(published, 'current', 'index.html')).mode & 0o777).toBe(0o644);
 
     writeStaticFixture(repo, 'version-two');
     execFileSync('git', ['-C', repo, 'add', '.']);
@@ -146,7 +151,7 @@ function executeStaticRelease(repo: string, published: string, commitSha: string
     artifactDirectory: 'dist',
     publicDirectory: published,
   }), { ...run(), releaseId, commitSha });
-  execFileSync('bash', ['-lc', execution.command], {
+  execFileSync('bash', ['-lc', `umask 077; ${execution.command}`], {
     cwd: repo,
     env: { ...process.env, CDS_COMMIT_SHA: commitSha, CDS_RELEASE_ID: releaseId, CDS_TARGET_ID: 'target-a' },
     stdio: 'pipe',
