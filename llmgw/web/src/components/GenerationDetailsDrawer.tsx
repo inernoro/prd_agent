@@ -66,7 +66,7 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
   );
 }
 
-function CodeBlock({ body, empty = 'No data' }: { body?: string | null; empty?: string }) {
+function CodeBlock({ body, empty = '暂无数据' }: { body?: string | null; empty?: string }) {
   return (
     <pre
       style={{
@@ -275,14 +275,29 @@ function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg
 export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onClose: () => void }) {
   const [detail, setDetail] = useState<LlmLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [viewTab, setViewTab] = useState<'overview' | 'content' | 'routing' | 'audit'>('overview');
   const [bodyTab, setBodyTab] = useState<'request' | 'response' | 'raw'>('request');
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setLoadError(null);
+    setViewTab('overview');
+    setBodyTab('request');
     getLogDetail(logId).then((res) => {
       if (!alive) return;
-      if (res.success && res.data) setDetail(res.data);
+      if (res.success && res.data) {
+        setDetail(res.data);
+      } else {
+        setDetail(null);
+        setLoadError(res.error?.message || '请求详情加载失败，请稍后重试');
+      }
+      setLoading(false);
+    }).catch(() => {
+      if (!alive) return;
+      setDetail(null);
+      setLoadError('请求详情加载失败，请稍后重试');
       setLoading(false);
     });
     return () => {
@@ -349,20 +364,27 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           }}
         >
           <div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>请求详情</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>生成详情</div>
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
               <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 14 }}>{detail.model || DASH}</span>
               <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 14 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
-          <button aria-label="关闭详情" onClick={onClose} style={{ background: 'none', border: 'none', opacity: 0.7, color: 'var(--text-secondary)' }}>
+          <button aria-label="关闭详情" onClick={onClose} style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 'var(--radius-sm)', opacity: 0.7, color: 'var(--text-secondary)' }}>
             <X size={18} />
           </button>
         </div>
 
         <div style={{ flex: 1, padding: '16px 18px 24px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          {loading || !detail ? (
+          {loading ? (
             <SectionLoader text="正在加载详情…" />
+          ) : loadError || !detail ? (
+            <div className="lg-generation-load-error" role="alert">
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>无法打开这条生成记录</div>
+              <div style={{ marginTop: 6, fontSize: 14, color: 'var(--text-muted)' }}>{loadError || '这条记录不存在，或当前租户无权查看。'}</div>
+              <button type="button" onClick={onClose}>返回请求记录</button>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
@@ -410,56 +432,128 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 ))}
               </div>
 
-              <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-                <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
-                <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
-                <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
-                <MetricCard
-                  title="费用"
-                  value={detail.providerReportedCost == null
-                    ? fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)
-                    : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
-                  note={detail.providerReportedCost != null
-                    ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
-                    : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
-                />
-                <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" />
-                <MetricCard
-                  title="回退"
-                  value={detail.isFallback ? '是' : '否'}
-                  note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
-                />
+              <div className="lg-generation-view-tabs" role="tablist" aria-label="生成详情分类">
+                {[
+                  ['overview', '概览'],
+                  ['content', '请求与响应'],
+                  ['routing', '路由'],
+                  ['audit', '审计'],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={viewTab === key}
+                    onClick={() => setViewTab(key as typeof viewTab)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
-              <section>
-                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>概览</div>
-                <Row k="实际模型" v={detail.model} mono copy />
-                <Row k="期望模型" v={detail.expectedModel} mono />
-                <Row k="Provider" v={detail.platformName || detail.provider} />
-                <Row k="协议" v={detail.protocol || detail.ingressProtocol} />
-                <Row k="传输方式" v={transportLabel(detail.transport)} />
-                <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
-              </section>
+              {viewTab === 'overview' ? (
+                <div className="lg-generation-tab-panel" role="tabpanel">
+                  <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                    <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
+                    <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
+                    <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
+                    <MetricCard
+                      title="费用"
+                      value={detail.providerReportedCost == null
+                        ? fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)
+                        : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
+                      note={detail.providerReportedCost != null
+                        ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
+                        : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
+                    />
+                    <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" />
+                    <MetricCard
+                      title="回退"
+                      value={detail.isFallback ? '是' : '否'}
+                      note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
+                    />
+                  </div>
+                  <section>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>本次生成</div>
+                    <Row k="实际模型" v={detail.model} mono copy />
+                    <Row k="期望模型" v={detail.expectedModel} mono />
+                    <Row k="Provider" v={detail.platformName || detail.provider} />
+                    <Row k="应用" v={generationAppName(detail)} />
+                    <Row k="协议" v={detail.protocol || detail.ingressProtocol} />
+                    <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
+                    <Row k="结束原因" v={detail.finishReason} />
+                  </section>
+                  <ProviderResponses detail={detail} />
+                  {detail.error ? (
+                    <div className="lg-generation-error">
+                      <div>错误</div>
+                      <pre>{detail.error}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
-              <section>
-                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>请求</div>
-                <Row k="应用" v={generationAppName(detail)} />
-                <Row k="团队" v={detail.teamId} mono />
-                <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
-                <Row k="Request ID" v={detail.requestId} mono copy />
-                <Row k="Generation ID" v={detail.id} mono copy />
-                <Row k="结束原因" v={detail.finishReason} />
-                <Row k="流式响应" v={streaming} />
-              </section>
+              {viewTab === 'content' ? (
+                <div className="lg-generation-tab-panel" role="tabpanel">
+                  <section>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>请求身份</div>
+                    <Row k="应用" v={generationAppName(detail)} />
+                    <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
+                    <Row k="Request ID" v={detail.requestId} mono copy />
+                    <Row k="Generation ID" v={detail.id} mono copy />
+                    <Row k="流式响应" v={streaming} />
+                  </section>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div className="lg-generation-body-tabs" role="tablist" aria-label="请求响应内容">
+                      {[
+                        ['request', '请求内容'],
+                        ['response', '响应内容'],
+                        ['raw', '原始数据'],
+                      ].map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          role="tab"
+                          aria-selected={bodyTab === key}
+                          onClick={() => setBodyTab(key as typeof bodyTab)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="未记录请求内容" /> : null}
+                    {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="未记录响应内容" /> : null}
+                    {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="未记录原始数据" /> : null}
+                  </div>
+                  {detail.responseToolCalls ? (
+                    <div className="lg-generation-tool-calls">
+                      <div>函数调用 tool_calls{typeof detail.toolCallCount === 'number' ? ` ×${detail.toolCallCount}` : ''}</div>
+                      <pre>{prettyJson(detail.responseToolCalls)}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
-              <ProviderResponses detail={detail} />
-
-              <details className="lg-generation-advanced">
-                <summary>查看路由、费用凭证和完整审计字段</summary>
-                <div>
+              {viewTab === 'routing' ? (
+                <div className="lg-generation-tab-panel" role="tabpanel">
                   <RouterTracePanel detail={detail} />
                   <section>
-                    <h3>费用与对账</h3>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>治理策略</div>
+                    <Row k="模型策略" v={detail.modelPolicy} />
+                    <Row k="请求模型池" v={detail.modelPoolId} mono />
+                    <Row k="解析原因" v={detail.resolutionReason} />
+                    <Row k="参数策略" v={detail.parameterPolicy} />
+                    <Row k="被丢弃参数" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
+                    <Row k="提示词策略" v={detail.promptPolicyId ? `${detail.promptPolicyId} / v${detail.promptPolicyVersion ?? '—'}` : null} mono />
+                    <Row k="提示词策略 hash" v={detail.promptPolicyHash} mono />
+                  </section>
+                </div>
+              ) : null}
+
+              {viewTab === 'audit' ? (
+                <div className="lg-generation-tab-panel" role="tabpanel">
+                  <section>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>费用与对账</div>
                     <Row k="价格币种" v={detail.priceCurrency} />
                     <Row k="输入价格 / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
                     <Row k="输出价格 / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
@@ -474,9 +568,10 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     <Row k="价格快照 hash" v={detail.priceSnapshotHash} mono copy />
                   </section>
                   <section>
-                    <h3>身份与时间</h3>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>身份与时间</div>
                     <Row k="appCallerCode" v={detail.appCallerCode} mono />
                     <Row k="业务标题" v={detail.appCallerTitle || detail.appCallerCodeDisplayName} />
+                    <Row k="团队" v={detail.teamId} mono />
                     <Row k="Client code" v={detail.clientCode} mono />
                     <Row k="环境" v={detail.environment} />
                     <Row k="Service key ID" v={detail.serviceKeyId} mono copy />
@@ -488,111 +583,8 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     <Row k="首字节时间" v={detail.firstByteAt} mono />
                     <Row k="结束时间" v={detail.endedAt} mono />
                   </section>
-                  <section>
-                    <h3>治理策略</h3>
-                    <Row k="模型策略" v={detail.modelPolicy} />
-                    <Row k="请求模型池" v={detail.modelPoolId} mono />
-                    <Row k="解析原因" v={detail.resolutionReason} />
-                    <Row k="参数策略" v={detail.parameterPolicy} />
-                    <Row k="被丢弃参数" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
-                    <Row k="提示词策略" v={detail.promptPolicyId ? `${detail.promptPolicyId} / v${detail.promptPolicyVersion ?? '—'}` : null} mono />
-                    <Row k="提示词策略 hash" v={detail.promptPolicyHash} mono />
-                  </section>
-                </div>
-              </details>
-
-              {detail.error ? (
-                <div
-                  style={{
-                    borderRadius: 10,
-                    padding: '8px 12px',
-                    background: 'var(--err-bg)',
-                    border: '1px solid rgba(248,113,113,0.28)',
-                  }}
-                >
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--err)' }}>错误</div>
-                  <pre
-                    style={{
-                          fontSize: 13,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                      color: 'var(--text-secondary)',
-                      maxHeight: 180,
-                      overflow: 'auto',
-                      margin: 0,
-                    }}
-                  >
-                    {detail.error}
-                  </pre>
                 </div>
               ) : null}
-
-              {detail.responseToolCalls ? (
-                <div
-                  style={{
-                    borderRadius: 10,
-                    padding: '8px 12px',
-                    background: 'rgba(56,189,248,0.06)',
-                    border: '1px solid rgba(56,189,248,0.22)',
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'rgba(56,189,248,0.95)' }}>
-                    函数调用 tool_calls{typeof detail.toolCallCount === 'number' ? ` ×${detail.toolCallCount}` : ''}
-                  </div>
-                  <pre
-                    style={{
-                      fontSize: 11,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                      color: 'var(--text-secondary)',
-                      maxHeight: 240,
-                      overflow: 'auto',
-                      margin: 0,
-                    }}
-                  >
-                    {(() => {
-                      try {
-                        return JSON.stringify(JSON.parse(detail.responseToolCalls!), null, 2);
-                      } catch {
-                        return detail.responseToolCalls;
-                      }
-                    })()}
-                  </pre>
-                </div>
-              ) : null}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border-subtle)' }}>
-                  {[
-                    ['request', '请求内容'],
-                    ['response', '响应内容'],
-                    ['raw', '原始数据'],
-                  ].map(([key, label]) => {
-                    const active = bodyTab === key;
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => setBodyTab(key as typeof bodyTab)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          borderBottom: active ? '1px solid var(--text-primary)' : '1px solid transparent',
-                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                          fontSize: 14,
-                          fontWeight: active ? 650 : 500,
-                          padding: '9px 10px',
-                          marginBottom: -1,
-                        }}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="未记录请求内容" /> : null}
-                {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="未记录响应内容" /> : null}
-                {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="未记录原始数据" /> : null}
-              </div>
             </div>
           )}
         </div>
