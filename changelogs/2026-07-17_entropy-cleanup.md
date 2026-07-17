@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 5 条（补 design.platform.peer-sync.md §13 触发式自动发送/签名去重/回流抑制；#production-release-safety-learning 已由既有规则文档覆盖、#cds-mobile-widget/#cds-waiting-page-refresh/本条自身 无自然文档归属跳过） |

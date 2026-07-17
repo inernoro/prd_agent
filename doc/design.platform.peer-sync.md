@@ -282,3 +282,48 @@ per-item 两阶段同步核心从 `PeerSyncController` 抽到 `IPeerSyncTransfer
 
 新增 DocumentStore 字段：`PeerSyncAutoEnabled` / `PeerSyncIntervalMinutes` / `PeerSyncAutoLastAt` /
 `PeerSyncLeaseOwner` / `PeerSyncLeaseExpiresAt`。守卫测试：`PeerSyncScheduleTests`。
+
+---
+
+## 13. 已落地能力更新（2026-07-13）：触发式自动发送 + 内容签名去重 + 回流抑制
+
+§12 的自动同步只有「按固定周期」一种节奏（`PeerSyncIntervalMinutes`，下限 5 分钟）。本次给知识库自动发送
+新增「内容变更触发」模式，并补齐两处会导致重复/无效发送的漏洞。
+
+### 13.1 双模式：`PeerSyncAutoMode`（trigger / scheduled）
+
+- `DocumentStore.PeerSyncAutoMode`：`trigger`（内容变更触发，默认）/ `scheduled`（按 §12 周期检查）。
+- **trigger 模式的合并窗口**（`PeerSyncSchedule.TriggerDebounceMinutes = 2`）：知识库内容变更后不立即发，
+  等最近一次变更起满 2 分钟「静默期」才判定到期——用户连续编辑/保存时，只在编辑停下来后触发一轮，
+  不会逐次保存逐次发送形成风暴。到期判定与 scheduled 模式共用 `PeerSyncScheduleWorker` 同一条到期扫描
+  逻辑，只是 trigger 模式把「周期」替换成「距最近一次内容变更的静默窗口」。
+- 用户在「同步中心」（`SyncCenterDialog.tsx`）为自动发送选择模式；两种模式都遵守 §12.3 的租约 +
+  并发上限 + 批量上限防风暴机制，未新增额外请求路径。
+
+### 13.2 内容签名去重（避免无变化也发一次）
+
+`PeerSyncScheduleWorker` 每轮到期检测都先算 `ComputeSignatureAsync` 当前签名，和 `PeerSyncLastContentSignature`
+逐字节比对；相同则跳过本轮（不访问对端、不计入发送次数），避免"trigger 模式合并窗口一到，不管内容有没有
+真变化都发一次"的空转。
+
+### 13.3 回流抑制（接收端标记签名，防止对端把刚收到的内容立刻发回来）
+
+`PeerSyncController.RemoteApply`（对端 push 落地本端）成功后，若资源类型是 `document-store`，立即用
+`ComputeSignatureAsync` 算出「刚接收内容」的签名并写回 `PeerSyncLastContentSignature`。这样本端下一轮
+trigger 检测会发现"当前内容签名 == 已确认签名"直接跳过，不会把对端刚发来的内容（尤其图片等重写过
+本地 URL 的附件）当作"本地变更"原路发送回去，形成 A→B→A 的回流。`DocumentStoreSyncResource` 的附件
+签名取源头身份，不受本地 URL 重写影响，保证两端签名口径一致。
+
+### 13.4 前端：知识库详情发送入口 + StrictMode 双挂载修复
+
+- 知识库详情页新增「发送」入口，可直接对某个已配对节点手动发一次，或跳转「同步中心」配置 13.1 的
+  触发/周期模式，不必每次都从系统设置页进入。
+- `SyncCenterDialog.tsx` 修复 React StrictMode 下开发态"setup → cleanup → setup"两遍执行导致同步状态
+  轮询永久停留在"加载中"的问题：第二次 setup 必须恢复存活标记，否则第一次 cleanup 设的"已卸载"标志
+  会让第二次 setup 的轮询回调永远判定为"组件已卸载"而不再更新状态。
+
+### 13.5 关联
+
+- 变更来源：`changelogs/2026-07-13_document-store-auto-send.md`。
+- 代码：`PeerSyncSchedule.cs`（合并窗口常量 + 到期判定）、`PeerSyncScheduleWorker.cs`（签名比对跳过）、
+  `PeerSyncController.RemoteApply`（回流抑制签名回写）、`prd-admin/src/pages/document-store/SyncCenterDialog.tsx`。
