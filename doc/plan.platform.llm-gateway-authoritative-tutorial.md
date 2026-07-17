@@ -1,6 +1,6 @@
 # LLM Gateway 模型网关权威教程 · 计划
 
-> **版本**：v1.3 | **日期**：2026-07-17 | **状态**：教程主体已完成，最终关联预览 PR 验收中
+> **版本**：v1.4 | **日期**：2026-07-17 | **状态**：已完成并生产交付
 
 ## 一、目标与完成定义
 
@@ -185,13 +185,13 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 | T0 至 T3 基础链路 | 已完成 | 租户、团队、成员、Provider、模型、模型池、appCaller、key、四协议、PromptPolicy、Activity、费用与审计均已完成独立 PR、CI、CDS 和浏览器验收 | 只在对应功能变化时更新受影响章节 |
 | T4 教程与低理解力复验 | 已完成 | 33 章、253 个编号步骤、132 张不同图片、292 次内联；低理解力复验通过；[GitHub issue #1139](https://github.com/inernoro/prd_agent/issues/1139) 已关闭 | 新功能不得形成教程孤岛，必须在同一 PR 更新章节 |
 | T5 发布与终验 | 已完成 | PR #1158 已合并；104/104 权威图片资产返回 200；[整本教程 L2 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=eb1021a9af874bdc91da5f07762dba68&report=b20e4de1719c42f6b444941bf8a0c383) verdict 为通过、P0/P1/P2 为 0 | 公共入口保持 `https://map.ebcone.net/s/lib/PNyJj8JYqXJN?entry=3e4e51616ce64cb8f9e09c105dc7aaaa` |
-| 最终关联预览补洞 | 远程终验通过，待合并发布 | PR #1168 提交 `6a0d128fe` 的 GitHub CI、三个 Gateway 镜像、Codex Review 与 CDS Deploy 全绿；CDS 五个源码 profile 和 smoke 3/3 通过，独立 Web 的 10 个页面与双健康端点返回 200，四协议无 Key 全部 401。远端浏览器 113/113、Exchange 连续故事 3/3、0 console/network finding；[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 12 个步骤、12 张图片和 4 个验收深链 | PR 合并后使用一小时有效的最小权限 Key 增量发布，回查第二次 noop 后立即撤销 |
+| 最终关联预览补洞 | 已生产交付 | PR #1168 已 squash 合并为 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3`；GitHub CI、三个 Gateway 镜像、Codex Review 与 CDS Deploy 全绿，CDS 五个源码 profile 和 smoke 3/3 通过。独立 Web 的 10 个页面与双健康端点返回 200，四协议无 Key 全部 401；远端浏览器 113/113、Exchange 连续故事 3/3、0 console/network finding。[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 12 个步骤、12 张图片和 4 个验收深链。生产发布 `rel_aaae1903c97652b6` 首次更新 37 项，第二次 37 项全部 noop；只读复核 `rel_3c0ae6c6fc0ce838` 确认五集合备份 SHA256 为 `9167ba616bcc228ea42ae509d6686c07a3c484080c3f88b851f82c0132e1f1a2`，临时 Key 活跃数为 0 且最新 Key 已撤销；CDS 目标已恢复原命令并禁用 | 后续仅在控制台功能变化造成教程证据漂移时增量维护 |
 
 ## 八、实时可见与完成口径
 
 总进度仍按 T0 8%、T1 14%、T2 20%、T3 20%、T4 23%、T5 15% 固定权重计算。PR #1158 合并、G1 至 G5 全部关闭、MAP 33 章发布和整本 L2 报告通过后，权威教程主体已结算为 100%；历史 62% 和 49% 只保留在 GitHub issue 与旧报告版本中，不再代表当前事实。
 
-本次最终交付补洞不重开教程主体完成度，只维护“关联字段能否就地看懂”这一条增量门。仓库源已增加 Provider、模型、模型池和 Exchange 四类预览说明及五张新图；PR #1168 的远程 CI、CDS exact commit 和 L2 报告已经通过，MAP 增量发布与临时 Key 撤销完成前，仍不得把本次补洞称为已生产交付。
+本次最终交付补洞不重开教程主体完成度，只维护“关联字段能否就地看懂”这一条增量门。仓库源已增加 Provider、模型、模型池和 Exchange 四类预览说明及五张新图；PR #1168、远程 CI、CDS exact commit、L2 报告和 MAP 增量发布均已通过。公共分享页及 API 返回 200，生产知识库读回 38 个条目，其中包含第 0 至 32 章、三个篇章分组、README 和最终交付验收总览；四类预览说明均能从对应章节正文读回。旧 49% 临时进度条目已原位更新为 100% 最终总览，公共读回正文 SHA256 为 `83b2e0253c5538bd5079ed55f1368c7becb4c3a903829b5538445ce25b329973`。临时最小权限 Key 已撤销，三次生产写入前备份均保留且校验和已复核，发布目标已恢复并禁用，本次补洞结算为已生产交付。
 
 ## 九、关联 SSOT
 
