@@ -223,13 +223,12 @@ export function QuickstartPage() {
         }),
         credentials: 'omit',
       });
-      const payload = await response.json().catch(() => null) as RoutePreview | { error?: { message?: string } } | null;
+      const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!response.ok) {
-        const message = payload && 'error' in payload ? payload.error?.message : undefined;
-        setRoutePreview({ success: false, errorMessage: message || `路由预检失败，HTTP ${response.status}` });
+        setRoutePreview({ success: false, errorMessage: readErrorMessage(payload) || `路由预检失败，HTTP ${response.status}` });
         return;
       }
-      setRoutePreview(payload && 'success' in payload ? payload : { success: false, errorMessage: 'Gateway 未返回可识别的路由结果' });
+      setRoutePreview(normalizeRoutePreview(payload) ?? { success: false, errorMessage: 'Gateway 未返回可识别的路由结果' });
     } catch (error) {
       setRoutePreview({ success: false, errorMessage: error instanceof Error ? error.message : '无法连接 Gateway' });
     } finally {
@@ -609,6 +608,27 @@ function readActualModel(payload: Record<string, unknown> | null) {
     || stringValue(payload?.model_version)
     || stringValue(resolution?.actualModel)
     || stringValue(resolution?.actual_model);
+}
+
+function normalizeRoutePreview(payload: Record<string, unknown> | null): RoutePreview | null {
+  if (!payload) return null;
+  const success = payload.success ?? payload.Success;
+  if (typeof success !== 'boolean') return null;
+  const value = (camel: string, pascal: string) => stringValue(payload[camel]) || stringValue(payload[pascal]);
+  return {
+    success,
+    errorMessage: value('errorMessage', 'ErrorMessage'),
+    resolutionType: value('resolutionType', 'ResolutionType'),
+    actualModel: value('actualModel', 'ActualModel'),
+    actualPlatformId: value('actualPlatformId', 'ActualPlatformId'),
+    actualPlatformName: value('actualPlatformName', 'ActualPlatformName'),
+    platformType: value('platformType', 'PlatformType'),
+    protocol: value('protocol', 'Protocol'),
+    apiUrl: value('apiUrl', 'ApiUrl'),
+    modelGroupId: value('modelGroupId', 'ModelGroupId'),
+    modelGroupName: value('modelGroupName', 'ModelGroupName'),
+    healthStatus: value('healthStatus', 'HealthStatus'),
+  };
 }
 
 function canRunRealTest(preview: RoutePreview | null) {

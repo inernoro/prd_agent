@@ -614,6 +614,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("X-Gateway-Source: external", quickstart);
         Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("context: { sourceSystem: 'external' }", quickstart);
+        Assert.Contains("payload.success ?? payload.Success", quickstart);
+        Assert.Contains("normalizeRoutePreview(payload)", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
