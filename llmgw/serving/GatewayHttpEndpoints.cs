@@ -759,7 +759,9 @@ public static class GatewayHttpEndpoints
             var ingress = new GatewayIngressRequest
             {
                 RequestId = TrackGatewayRequestId(http),
-                SourceSystem = "map",
+                SourceSystem = body.Context?.SourceSystem
+                               ?? ResolveHeader(http, "X-Gateway-Source")
+                               ?? "map",
                 IngressProtocol = "gw-native",
                 AppCallerCode = body.AppCallerCode,
                 RequestType = body.ModelType,
@@ -775,6 +777,9 @@ public static class GatewayHttpEndpoints
                 {
                     TenantId = GetVerifiedTenantId(http),
                     TeamId = GetVerifiedTeamId(http),
+                    SourceSystem = body.Context?.SourceSystem
+                                   ?? ResolveHeader(http, "X-Gateway-Source")
+                                   ?? "map",
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
@@ -1767,8 +1772,7 @@ public static class GatewayHttpEndpoints
                     appCallerCode = bodyAppCaller;
                 }
 
-                var handlerForcesMap = path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)
-                                       || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase);
+                var handlerForcesMap = path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase);
                 var bodySource = handlerForcesMap ? "map" : ReadNestedJsonString(root, "Context", "SourceSystem") ?? "map";
                 if (!string.IsNullOrWhiteSpace(headerSource)
                     && !string.Equals(headerSource, bodySource, StringComparison.OrdinalIgnoreCase))

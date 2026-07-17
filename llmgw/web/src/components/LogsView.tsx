@@ -753,19 +753,9 @@ export function LogsView() {
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-          flexShrink: 0,
-          padding: 8,
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--radius)',
-          background: 'var(--bg-surface)',
-        }}
-      >
+      <details className="lg-log-filters">
+        <summary>筛选{activeFilterCount > 0 ? `（${activeFilterCount}）` : ''}</summary>
+        <div>
           <select value={filterClientCode} onChange={(e) => setFilterClientCode(e.target.value)} style={selectStyle}>
             <option value="">全部调用方</option>
             {meta.clientCodes.map((value) => <option key={value} value={value}>{value}</option>)}
@@ -890,7 +880,8 @@ export function LogsView() {
               清除 {activeFilterCount} 项筛选
             </Button>
           ) : null}
-      </div>
+        </div>
+      </details>
 
       {metaError || listError || summaryError ? (
         <div

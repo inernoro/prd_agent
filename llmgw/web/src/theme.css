@@ -2498,6 +2498,47 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.lg-log-filters {
+  flex-shrink: 0;
+}
+
+.lg-log-filters > summary {
+  width: fit-content;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  list-style: none;
+  cursor: pointer;
+}
+
+.lg-log-filters > summary::-webkit-details-marker {
+  display: none;
+}
+
+.lg-log-filters > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.lg-log-filters select,
+.lg-log-filters input {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
 .lg-safe-test-panel {
   display: flex;
   flex-direction: column;
@@ -2811,7 +2852,7 @@ a:focus-visible {
 }
 
 .lg-app-caller-table-wrap table {
-  min-width: 980px;
+  min-width: 1020px;
 }
 
 .lg-app-caller-identity,

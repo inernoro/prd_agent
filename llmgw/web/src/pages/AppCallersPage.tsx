@@ -165,8 +165,8 @@ export function AppCallersPage() {
     bulkDraft.budgetReservationUsd.trim() ||
     bulkDraft.rateLimitPerMinute.trim()
   );
-  const th: React.CSSProperties = { height: 46, textAlign: 'left', padding: '10px 16px', fontSize: 14, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { minHeight: 46, padding: '10px 16px', fontSize: 14, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th: React.CSSProperties = { height: 46, textAlign: 'left', padding: '10px 12px', fontSize: 14, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { minHeight: 46, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
   const selectStyle: React.CSSProperties = {
     height: 38,
     borderRadius: 'var(--radius-sm)',
@@ -313,7 +313,16 @@ export function AppCallersPage() {
       ) : null}
 
       <div className="lg-app-caller-table-wrap">
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+          <colgroup>
+            <col style={{ width: 240 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 140 }} />
+            <col style={{ width: 160 }} />
+            <col style={{ width: 120 }} />
+          </colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               <th style={th}>appCaller</th>

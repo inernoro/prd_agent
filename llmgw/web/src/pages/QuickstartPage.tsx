@@ -219,6 +219,7 @@ export function QuickstartPage() {
           appCallerCode: target.appCallerCode,
           modelType: target.requestType,
           modelPolicy: 'auto',
+          context: { sourceSystem: 'external' },
         }),
         credentials: 'omit',
       });

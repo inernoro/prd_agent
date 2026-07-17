@@ -613,11 +613,16 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("X-Gateway-Source: external", quickstart);
         Assert.Contains("sourceSystem: 'external'", quickstart);
+        Assert.Contains("context: { sourceSystem: 'external' }", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
         Assert.Contains("return new URL(window.location.href).origin", quickstart);
         Assert.DoesNotContain("gateway.example.com", quickstart);
+
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        Assert.Contains("SourceSystem = body.Context?.SourceSystem", endpoints);
+        Assert.DoesNotContain("|| path.Equals(\"/gw/v1/resolve\", StringComparison.OrdinalIgnoreCase);", endpoints);
     }
 
     [Fact]
@@ -3354,8 +3359,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("原始数据", drawer);
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", drawer);
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
+        Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.DoesNotContain("fontSize: 11", logs);
+
+        var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
+        Assert.Contains("tableLayout: 'fixed'", appCallers);
+        Assert.Contains("<colgroup>", appCallers);
     }
 
     [Fact]

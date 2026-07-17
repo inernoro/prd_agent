@@ -1414,12 +1414,15 @@ public class GatewayKeyGateContractTests
                 {
                     AppCallerCode = "external.resolve::chat",
                     ModelType = "chat",
+                    Context = new { SourceSystem = "external" },
                 }),
             };
             resolve.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            resolve.Headers.Add("X-Gateway-Source", "external");
             var resolveResponse = await app.GetTestClient().SendAsync(resolve);
 
             resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.SourceSystem.ShouldBe("external");
             gateway.LastResolveTenantId.ShouldBe("tenant-test");
 
             var pools = new HttpRequestMessage(
