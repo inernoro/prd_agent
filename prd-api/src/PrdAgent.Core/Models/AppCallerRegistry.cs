@@ -1043,6 +1043,17 @@ public static class DocumentStoreAgent
         public const string Generate = "document-store.reprocess::chat";
     }
 
+    public static class CreativePublish
+    {
+        [AppCallerMetadata(
+            "知识库一键创作发布",
+            "基于知识库正文生成可托管的海报、教程、文案或网页 HTML",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string HtmlGenerate = "document-store.creative-publish::chat";
+    }
+
     public static class Selection
     {
         [AppCallerMetadata(

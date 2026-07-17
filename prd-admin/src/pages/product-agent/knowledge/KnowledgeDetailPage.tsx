@@ -10,7 +10,7 @@
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, RefreshCw, GitBranch, Save, X, Tags, Layers, FolderOpen, Eye, Code as CodeIcon } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, RefreshCw, GitBranch, Save, X, Tags, Layers, FolderOpen, Eye, Code as CodeIcon, Globe, BookOpen } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
@@ -19,9 +19,9 @@ import { systemDialog } from '@/lib/systemDialog';
 import {
   getDocumentEntry, getDocumentContent, updateDocumentContent,
   updateDocumentEntry, deleteDocumentEntry, replaceDocumentFile, getDocumentStore,
-  listDocumentEntries, moveDocumentEntry,
+  listDocumentEntries, moveDocumentEntry, publishDocumentEntryCreative,
 } from '@/services';
-import type { DocumentEntry, DocumentStore } from '@/services/contracts/documentStore';
+import type { DocumentEntry, DocumentStore, KnowledgeCreativePublishKind, KnowledgeCreativePublishResult } from '@/services/contracts/documentStore';
 import { listVersions } from '@/services/real/productAgent';
 import type { ProductVersion } from '../types';
 import type { LucideIcon } from 'lucide-react';
@@ -30,6 +30,18 @@ import { htmlToMarkdown, markdownToHtml } from './htmlMarkdown';
 import './knowledge.css';
 import { VersionLinkDialog } from './VersionLinkDialog';
 import { KnowledgeEditor, FileKindBadge, type EditorMode } from './RichKnowledgeEditor';
+
+const CREATIVE_PUBLISH_OPTIONS: Array<{
+  kind: KnowledgeCreativePublishKind;
+  label: string;
+  desc: string;
+  Icon: LucideIcon;
+}> = [
+  { kind: 'poster', label: '海报', desc: '手机分享视觉页', Icon: Layers },
+  { kind: 'tutorial', label: '教程', desc: '步骤化知识页', Icon: BookOpen },
+  { kind: 'copy-html', label: '文案 HTML', desc: '可发布文案页', Icon: Pencil },
+  { kind: 'page', label: '网页', desc: '通用展示页', Icon: Globe },
+];
 
 export function KnowledgeDetailPage() {
   const { productId = '', entryId = '' } = useParams();
@@ -50,6 +62,8 @@ export function KnowledgeDetailPage() {
   const [busy, setBusy] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [codeMode, setCodeMode] = useState(false);
+  const [publishingKind, setPublishingKind] = useState<KnowledgeCreativePublishKind | null>(null);
+  const [publishedCreative, setPublishedCreative] = useState<KnowledgeCreativePublishResult | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
 
   const editable = isEditableText(entry?.contentType);
@@ -177,6 +191,20 @@ export function KnowledgeDetailPage() {
       setEntry((e) => (e ? { ...e, contentType: ct } : e));
       toast.success(ct.includes('markdown') ? '已转为 Markdown' : '已转为富文本');
     } else toast.error('切换格式失败', res.error?.message);
+  };
+
+  const handleCreativePublish = async (kind: KnowledgeCreativePublishKind) => {
+    if (!entry) return;
+    setPublishingKind(kind);
+    setPublishedCreative(null);
+    const res = await publishDocumentEntryCreative(entryId, { kind });
+    setPublishingKind(null);
+    if (res.success) {
+      setPublishedCreative(res.data);
+      toast.success('已发布到网页托管', res.data.title);
+    } else {
+      toast.error('发布失败', res.error?.message);
+    }
   };
 
   const handleRenameTitle = async () => {
@@ -366,6 +394,52 @@ export function KnowledgeDetailPage() {
                     {entry.updatedByName ? ` · ${entry.updatedByName} 更新于 ${fmtTime(entry.updatedAt)}` : ` · 更新于 ${fmtTime(entry.updatedAt)}`}
                   </span>
                 </div>
+              </div>
+
+              <div className="mb-5 rounded-xl border border-cyan-500/18 bg-cyan-500/[0.05] px-4 py-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-cyan-100">一键变成可发布内容</div>
+                    <div className="mt-1 text-xs leading-relaxed text-cyan-100/60">
+                      基于当前知识生成完整 HTML，并自动发布到网页托管。
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {CREATIVE_PUBLISH_OPTIONS.map(({ kind: optionKind, label, desc, Icon }) => {
+                      const active = publishingKind === optionKind;
+                      return (
+                        <button
+                          key={optionKind}
+                          onClick={() => void handleCreativePublish(optionKind)}
+                          disabled={publishingKind != null || loading}
+                          className="group inline-flex min-w-[112px] items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left hover:border-cyan-400/35 hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-55"
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-400/10 text-cyan-200">
+                            {active ? <MapSpinner size={14} /> : <Icon size={14} />}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-xs font-semibold text-white/90">{active ? '发布中' : label}</span>
+                            <span className="block truncate text-[10px] text-white/42">{desc}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {publishedCreative && (
+                  <div className="mt-3 flex flex-col gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-emerald-100/85 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="min-w-0 truncate">已发布：{publishedCreative.title}</span>
+                    <a
+                      href={publishedCreative.siteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-300/25 px-2.5 py-1 text-emerald-100 hover:bg-emerald-300/10"
+                    >
+                      <Globe size={12} />
+                      打开网页
+                    </a>
+                  </div>
+                )}
               </div>
 
               <DocBody
