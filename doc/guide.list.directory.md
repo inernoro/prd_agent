@@ -969,6 +969,7 @@
 - [CDS Agent 验收 smoke 断言漂移 · 债务台账](debt.cds.agent.acceptance-smoke-drift) `debt.cds.agent.acceptance-smoke-drift`
   > 2026-05 手工取证 smoke 的 require_match 硬编码文案随 doc 改写漂移、未接 CI；需整组「修复(锚结构化字段)或退役」而非逐条打补丁
 - [移动端控制条过载治理台账](debt.frontend.mobile-control-bar-overload) `debt.frontend.mobile-control-bar-overload`
+- [界面材质系统（素色/液态玻璃）债务台账](debt.frontend.material-system) `debt.frontend.material-system`
   > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
 - [LLM 网关与模型池 · 债务台账](debt.llm-gateway) `debt.llm-gateway`
   > LLM 网关与模型池统一迁移过程中已识别、尚未在代码中偿还的边界与风险

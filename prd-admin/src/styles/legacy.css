@@ -12,15 +12,111 @@
    此处仅需清除 backdrop-filter 并微调视觉细节。
    ======================================== */
 
-/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖） */
-html[data-perf-mode="performance"] * {
+/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖）。
+   2026-07-17 起加 [data-material="solid"] 限定：材质是用户的决定——
+   用户选了液态玻璃，性能模式/减少动态效果只压动画，不打碎玻璃
+   （否则半透表面无 blur 叠在内容上失焦，且「切玻璃没反应」）。 */
+html[data-perf-mode="performance"][data-material="solid"] * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-html[data-perf-mode="performance"] *::before,
-html[data-perf-mode="performance"] *::after {
+html[data-perf-mode="performance"][data-material="solid"] *::before,
+html[data-perf-mode="performance"][data-material="solid"] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+/* ========================================
+   界面材质 · 素色（data-material="solid"，2026-07-16 系统级统一）
+   与性能模式共用「清除 backdrop-filter + 实底 token」的表面机制，但只改材质、
+   不带性能模式压缩过渡/动画的副作用。玻璃 token（--glass-bg-*）已由
+   themeComputed 切为高不透明实底，这里补两件事：
+   1) 全局清 blur（含 inline 与伪元素）——86 处散装 backdrop-filter 一次统一；
+   2) 压平主要 chrome 的棱光内高光与超大投影（「浮肿感」的来源）。
+   ======================================== */
+html[data-material="solid"] * ,
+html[data-material="solid"] *::before,
+html[data-material="solid"] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 顶部工具条 / TabBar 容器：纯平实底 + 发丝描边，去掉硬编码亚克力渐变、
+   棱光内高光与大投影（浅色主题有自己的纸感覆盖，故只作用于暗色） */
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar {
+  background: var(--glass-bg-start, #1c1c22);
+  border-color: var(--glass-border, rgba(255, 255, 255, 0.08));
+  box-shadow: none;
+}
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar[data-variant="gold"] {
+  background: var(--glass-bg-start, #1c1c22);
+  box-shadow: none;
+}
+html[data-material="solid"]:not([data-theme="light"]) .surface-nav-bar[data-variant="plain"] {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* 抬升面板：去内高光，收敛为轻投影（--glass-border/--glass-bg 已是实底 token） */
+html[data-material="solid"]:not([data-theme="light"]) .surface-raised {
+  box-shadow: var(--shadow-card, 0 2px 14px rgba(0, 0, 0, 0.35));
+}
+
+/* 玻璃噪点层在素色下无意义，一并关闭 */
+html[data-material="solid"] .surface-raised::after,
+html[data-material="solid"] .glass-blur-pseudo::after {
+  content: none;
+}
+
+/* 极光静音但不失血色（2026-07-17 用户：「首页有点偏黑白了」）：
+   去掉漂移动画与白雾 radial（「蒙一层/胖」的来源），但保留两抹极淡的静态品牌色
+   氛围——左上靛蓝、右下青色，与主按钮/强调色同族，全站画布共享同一色温（联动）。
+   浅色纸面自带墨色氛围，仅停动画。 */
+html[data-material="solid"]:not([data-theme="light"]) .app-aurora {
+  animation: none !important;
+  background:
+    radial-gradient(56% 42% at 12% 0%, rgba(99, 102, 241, 0.11) 0%, transparent 62%),
+    radial-gradient(48% 38% at 88% 100%, rgba(56, 189, 248, 0.06) 0%, transparent 60%),
+    var(--bg-base) !important;
+  background-size: 100% 100% !important;
+}
+html[data-material="solid"][data-theme="light"] .app-aurora {
+  animation: none !important;
+}
+
+/* chrome 瘦身：工具条 46 → 42px，配合纯平底与发丝描边，整条更轻 */
+html[data-material="solid"] .surface-nav-bar {
+  min-height: 42px;
+}
+html[data-material="solid"] .surface-nav-bar .surface-nav-content {
+  min-height: 42px;
+}
+
+/* 按钮扁平化（.map-btn-* 钩子挂在 design/Button 上）：去内嵌白环 / 彩色泛光 /
+   悬浮大阴影，主按钮保留品牌色本身，反馈靠 brightness 与描边。仅暗色素色生效 */
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-primary {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-secondary {
+  box-shadow: none !important;
+}
+html[data-material="solid"]:not([data-theme="light"]) .map-btn-danger {
+  box-shadow: none !important;
+}
+
+/* 卡片 hover 全站统一为「安静反馈」：零位移，描边提亮 + 轻投影。
+   压过 surface.css 里默认的 translateY(-3px) + 强光晕（那是玻璃材质的手势） */
+html[data-material="solid"] .glass-card-interactive:hover {
+  transform: none;
+  border-color: var(--border-hover, rgba(255, 255, 255, 0.20)) !important;
+  box-shadow: 0 4px 16px -10px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-material="solid"] .glass-card-interactive:active {
+  transform: none;
+}
+[data-theme="light"][data-material="solid"] .glass-card-interactive:hover {
+  border-color: var(--border-hover, rgba(26, 26, 31, 0.24)) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 
 /* 减少过渡持续时间，让操作更干脆 */
@@ -41,11 +137,12 @@ html[data-perf-mode="performance"] .blur-text span {
   transition: none !important;
 }
 
-/* 尊重系统级别的减少动画偏好 */
+/* 尊重系统级别的减少动画偏好。
+   2026-07-17（Codex P2）：不再顺手清 backdrop-filter——blur 是静态效果，
+   不属于「动态效果」；玻璃材质在 reduced-motion 下应保持完整模糊（否则半透
+   表面无模糊叠在内容上失焦）。素色材质的 blur 清除由 data-material 规则负责。 */
 @media (prefers-reduced-motion: reduce) {
   * {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
@@ -112,12 +209,10 @@ html[data-perf-mode="performance"]:not([data-theme="light"]) .prd-dialog-content
   background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
 }
 
-/* 同理:prefers-reduced-motion 下 legacy.css 的 * { backdrop-filter:none } 也清掉模糊,
-   暗色弹窗同样恢复近实底背景(Dialog.tsx 的 glassReduced 已把遮罩一并回退实底)。 */
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-theme="light"]) .prd-dialog-content {
-    background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
-  }
+/* 同理:素色材质全局清 blur 后，0.55/0.62 半透弹窗底会「透而不糊」叠在繁忙页面上
+   失焦，恢复近实底背景保可读（Codex P2）。reduced-motion 已不再清 blur，无需单独兜底。 */
+html[data-material="solid"]:not([data-theme="light"]) .prd-dialog-content {
+  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
 }
 
 .prd-dialog-overlay {
