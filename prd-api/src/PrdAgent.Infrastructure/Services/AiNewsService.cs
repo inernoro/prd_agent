@@ -26,7 +26,7 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class AiNewsService : IAiNewsService
 {
-    private const string FeedUrl = "https://learnprompt.github.io/ai-news-radar/data/latest-24h.json";
+    internal const string FeedUrl = "https://news.learnprompt.pro/data/latest-24h.json";
     private const string CacheKey = "AiNews:Latest24h";
     private const string StaleKey = "AiNews:Latest24h:Stale";
     private static readonly TimeSpan FreshTtl = TimeSpan.FromMinutes(5);
