@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildReleaseCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
+import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -74,6 +74,15 @@ describe('release service script preflight helpers', () => {
   it('recognizes local production release commands', () => {
     expect(isLocalProdReleaseCommand("CDS_LOCAL_PROD_DIR='/opt/a-prod/current' '/opt/cds/current/scripts/local-prod-release.sh'")).toBe(true);
     expect(isLocalProdReleaseCommand('./deploy.sh')).toBe(false);
+  });
+
+  it('checks that the remote app path is the Git root and extracts a canonical repository identity', () => {
+    const cmd = buildRemoteRepositoryCheckCommand(target());
+    expect(cmd).toContain("cd '/opt/prd agent'");
+    expect(cmd).toContain('git rev-parse --show-toplevel');
+    expect(cmd).toContain('git remote get-url origin');
+    expect(parseRemoteRepositoryIdentity('CDS_REPO_ORIGIN=git@github.com:Owner/Repo.git\n')).toBe('owner/repo');
+    expect(parseRemoteRepositoryIdentity('CDS_REPO_ORIGIN=https://github.com/owner/repo.git\n')).toBe('owner/repo');
   });
 
   it('exports release variables before running compound shell commands', () => {

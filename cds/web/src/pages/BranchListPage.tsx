@@ -295,6 +295,15 @@ interface ReleaseTargetSummary {
   name: string;
   type: string;
   isEnabled: boolean;
+  projectIdentity?: { projectId: string; projectSlug: string; repository?: string };
+  strategy?: {
+    mode: 'existing-script' | 'generated-compose' | 'generated-static';
+    command?: string;
+    composeFile?: string;
+    buildCommand?: string;
+    artifactDirectory?: string;
+    publicDirectory?: string;
+  };
   ssh?: {
     host: string;
     port: number;
@@ -4273,8 +4282,8 @@ function ReleaseBranchDialog({
     [targetId, targets],
   );
   const selectedScripts = useMemo(
-    () => releaseScriptsFromCommand(selectedTarget?.ssh?.deployCommand),
-    [selectedTarget?.ssh?.deployCommand],
+    () => releaseStepsFromTarget(selectedTarget),
+    [selectedTarget],
   );
   const selectedServer = selectedTarget?.ssh
     ? `${selectedTarget.ssh.user}@${selectedTarget.ssh.host}:${selectedTarget.ssh.port}`
@@ -4404,7 +4413,7 @@ function ReleaseBranchDialog({
                   <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
                   <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
                   <div className="md:col-span-2">
-                    <div className="text-xs text-muted-foreground">执行脚本</div>
+                    <div className="text-xs text-muted-foreground">执行计划</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       {selectedScripts.map((script, index) => (
                         <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
@@ -4540,6 +4549,24 @@ function releaseScriptsFromCommand(command?: string): string[] {
   const source = command?.trim() || './fast.sh && ./exec_dep.sh';
   const matches = Array.from(new Set((source.match(/\.\/[^\s&|;]+/g) || []).map((item) => item.trim())));
   return matches.length > 0 ? matches : [source];
+}
+
+function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
+  if (target?.strategy?.mode === 'generated-compose') {
+    return [
+      'CDS 生成 commit 隔离 worktree',
+      `动态执行 ${target.strategy.composeFile || 'compose.yml'}`,
+      '验证最终入口并记录脚本哈希',
+    ];
+  }
+  if (target?.strategy?.mode === 'generated-static') {
+    return [
+      target.strategy.buildCommand || '执行静态构建',
+      `离线验证 ${target.strategy.artifactDirectory || 'dist'}/index.html 与入口资源`,
+      `原子切换 ${target.strategy.publicDirectory || '-'}/current`,
+    ];
+  }
+  return releaseScriptsFromCommand(target?.strategy?.command || target?.ssh?.deployCommand);
 }
 
 function releaseStepsForRun(

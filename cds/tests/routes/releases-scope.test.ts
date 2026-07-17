@@ -190,6 +190,74 @@ describe('release control plane project-scope isolation', () => {
     expect(stateService.getReleaseTarget('target-b-hijack')).toBeUndefined();
   });
 
+  it('requires AI callers to use a project-scoped key when mutating release targets', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-AI-Access-Key': 'global-ai-key' }, {
+      projectId: 'proj-a',
+      name: 'unscoped AI target',
+      host: 'prod.example.test',
+      port: 22,
+      user: 'deploy',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/app',
+      deployCommand: './deploy.sh',
+      healthcheckUrl: 'https://prod.example.test/healthz',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_key_required');
+  });
+
+  it('creates a no-script compose target with server-owned project identity', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      id: 'target-a-compose',
+      projectId: 'proj-a',
+      name: 'A compose production',
+      host: '127.0.0.1',
+      port: 22,
+      user: 'root',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/proj-a',
+      healthcheckUrl: 'https://a.example.test/healthz',
+      isCanonical: true,
+      strategy: {
+        mode: 'generated-compose',
+        composeFile: 'compose.yml',
+        composeProject: 'proj-a-prod',
+      },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    expect(res.body.target.strategy.mode).toBe('generated-compose');
+    expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+  });
+
+  it('archives a wrong-project target with evidence and removes it from active lists', async () => {
+    const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
+      reason: '该站点不属于 proj-a，保留事故证据后归档',
+    });
+    expect(archive.status).toBe(200);
+    expect(archive.body.target).toMatchObject({
+      id: 'target-a',
+      lifecycle: 'archived',
+      isEnabled: false,
+      isCanonical: false,
+    });
+    const list = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
+    expect(list.body.targets.map((target: ReleaseTarget) => target.id)).not.toContain('target-a');
+    expect(list.body.archivedTargets.map((target: ReleaseTarget) => target.id)).toContain('target-a');
+  });
+
+  it('detects release strategies from the selected project branch only', async () => {
+    const worktree = stateService.getBranch('branch-a')!.worktreePath;
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'compose.yml'), 'services: {}\n');
+    const res = await request(server, 'POST', '/api/releases/projects/proj-a/discover', { 'X-Test-Key': KEY_A }, {
+      branchId: 'branch-a',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.projectIdentity.projectId).toBe('proj-a');
+    expect(res.body.candidates.map((candidate: { mode: string }) => candidate.mode)).toContain('generated-compose');
+  });
+
   it('creates a simplified local production target with inferred script and healthcheck', async () => {
     stateService.updateProject('proj-a', { gitDefaultBranch: 'master' });
 

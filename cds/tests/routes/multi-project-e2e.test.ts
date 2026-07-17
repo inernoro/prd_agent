@@ -10,7 +10,8 @@
  *      projects (so `docker rm cds-foo-main-api` never accidentally
  *      kills another project's API).
  *   3. customEnv reads/writes are scoped: project A setting JWT_SECRET
- *      doesn't leak into project B's effective env.
+ *      doesn't leak into project B, and control-plane `_global` values only
+ *      enter a project after explicit `inheritGlobalEnv=true` opt-in.
  *   4. GET /api/branches?project= returns ONLY that project's branches —
  *      no cross-project leakage.
  *   5. project-scoped activity logs stay separate (A's logs never appear
@@ -176,9 +177,14 @@ describe('Multi-project end-to-end isolation (data + endpoints)', () => {
     // 项目级覆盖各自独立
     expect(fooEnv.JWT_SECRET).toBe('foo-secret');
     expect(barEnv.JWT_SECRET).toBe('bar-secret');
-    // _global 在两个项目里都能看到
-    expect(fooEnv.SHARED_KEY).toBe('global-value');
-    expect(barEnv.SHARED_KEY).toBe('global-value');
+    // 控制面 _global 默认不进入任何项目，避免另一系统配置被批量复制。
+    expect(fooEnv.SHARED_KEY).toBeUndefined();
+    expect(barEnv.SHARED_KEY).toBeUndefined();
+
+    // 只有显式 opt-in 的项目继承；另一个项目仍然隔离。
+    stateService.updateProject('foo', { inheritGlobalEnv: true });
+    expect(stateService.getCustomEnv('foo').SHARED_KEY).toBe('global-value');
+    expect(stateService.getCustomEnv('bar').SHARED_KEY).toBeUndefined();
   });
 
   it('GET /api/branches?project=<id> 只返回该项目分支(无跨项目泄漏)', async () => {

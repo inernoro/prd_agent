@@ -4,8 +4,8 @@
  * Covers:
  *   1) Legacy flat state.json migrates into { _global: {...} } on load
  *   2) getCustomEnv() default returns global-only (pre-feature behaviour)
- *   3) getCustomEnv(projectId) merges { ..._global, ...project } with
- *      project winning on key conflict
+ *   3) getCustomEnv(projectId) isolates project env from `_global` by default;
+ *      inheritGlobalEnv=true is the explicit compatibility opt-in
  *   4) setCustomEnvVar writes into the requested scope and doesn't leak
  *   5) dropCustomEnvScope clears one project without touching others
  */
@@ -80,11 +80,40 @@ describe('StateService customEnv scoped store', () => {
     svc.load();
 
     expect(svc.getCustomEnv()).toEqual({ G: '1' });
-    expect(svc.getCustomEnv('proj1')).toEqual({ G: '1', P: '2' });
+    expect(svc.getCustomEnv('proj1')).toEqual({ P: '2' });
     expect(svc.getCustomEnvScope('proj1')).toEqual({ P: '2' });
   });
 
-  it('getCustomEnv(projectId) merges with project override winning', () => {
+  it('does not fan out legacy global env into every project during startup migration', () => {
+    const now = new Date().toISOString();
+    fs.writeFileSync(
+      stateFile,
+      JSON.stringify({
+        routingRules: [],
+        buildProfiles: [],
+        branches: {},
+        nextPortIndex: 0,
+        logs: {},
+        defaultBranch: null,
+        customEnv: { _global: { DATABASE_URL: 'server-control-plane-value' } },
+        infraServices: [],
+        projects: [
+          { id: 'projA', slug: 'proj-a', name: 'Project A', kind: 'git', createdAt: now, updatedAt: now },
+          { id: 'projB', slug: 'proj-b', name: 'Project B', kind: 'git', createdAt: now, updatedAt: now },
+        ],
+      }),
+    );
+
+    const svc = new StateService(stateFile, tmpDir);
+    svc.load();
+
+    expect(svc.getProject('projA')?.customEnv).toBeUndefined();
+    expect(svc.getProject('projB')?.customEnv).toBeUndefined();
+    expect(svc.getCustomEnv('projA')).toEqual({});
+    expect(svc.getCustomEnv('projB')).toEqual({});
+  });
+
+  it('keeps project env isolated from global env by default', () => {
     const svc = new StateService(stateFile, tmpDir);
     svc.load();
     svc.setCustomEnv({ SHARED: 'global', ONLY_GLOBAL: 'g' }); // _global
@@ -93,13 +122,31 @@ describe('StateService customEnv scoped store', () => {
     expect(svc.getCustomEnv()).toEqual({ SHARED: 'global', ONLY_GLOBAL: 'g' });
     expect(svc.getCustomEnv('projA')).toEqual({
       SHARED: 'project', // project wins
-      ONLY_GLOBAL: 'g',
       ONLY_PROJECT: 'p',
     });
-    // A different project sees only _global
-    expect(svc.getCustomEnv('projB')).toEqual({
-      SHARED: 'global',
+    // A different project does not inherit control-plane globals.
+    expect(svc.getCustomEnv('projB')).toEqual({});
+  });
+
+  it('inherits global env only after an explicit project opt-in', () => {
+    const svc = new StateService(stateFile, tmpDir);
+    svc.load();
+    svc.addProject({
+      id: 'projA',
+      slug: 'proj-a',
+      name: 'Project A',
+      kind: 'git',
+      inheritGlobalEnv: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    svc.setCustomEnv({ SHARED: 'global', ONLY_GLOBAL: 'g' });
+    svc.setCustomEnv({ SHARED: 'project', ONLY_PROJECT: 'p' }, 'projA');
+
+    expect(svc.getCustomEnv('projA')).toEqual({
+      SHARED: 'project',
       ONLY_GLOBAL: 'g',
+      ONLY_PROJECT: 'p',
     });
   });
 

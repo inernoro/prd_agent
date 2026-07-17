@@ -2,8 +2,13 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
-import type { CdsConfig, ReleaseTarget, RemoteHost } from '../types.js';
+import type { CdsConfig, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { ReleaseService, probeHealthcheckStatus } from '../services/release-service.js';
+import {
+  discoverReleaseStrategies,
+  releaseProjectIdentity,
+  validateReleaseStrategy,
+} from '../services/release-strategy.js';
 import { releaseEvents } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { assertProjectAccess } from './projects.js';
@@ -17,11 +22,37 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   const router = Router();
   const service = new ReleaseService(deps.stateService);
 
+  router.post('/releases/projects/:projectId/discover', (req, res) => {
+    const projectId = req.params.projectId;
+    if (rejectProjectMismatch(req, res, projectId)) return;
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: `project not found: ${projectId}` });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    const requestedBranchId = typeof body.branchId === 'string' ? body.branchId.trim() : '';
+    const branches = deps.stateService.getBranchesForProject(projectId);
+    const branch = requestedBranchId
+      ? branches.find((candidate) => candidate.id === requestedBranchId)
+      : branches.find((candidate) => candidate.branch === project.gitDefaultBranch && candidate.status === 'running')
+        || branches.find((candidate) => candidate.status === 'running')
+        || branches[0];
+    if (!branch) {
+      res.status(409).json({ error: '项目还没有可检测的分支，请先完成一次分支部署' });
+      return;
+    }
+    res.json(discoverReleaseStrategies(project, branch));
+  });
+
   router.get('/releases/targets', (req, res) => {
     const projectId = resolveReadableProjectId(req, res);
     if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
     const targets = deps.stateService.getReleaseTargets(projectId);
+    const archivedTargets = deps.stateService
+      .getReleaseTargets(projectId, { includeArchived: true })
+      .filter((target) => target.lifecycle === 'archived');
     // RemoteHost 无 projectId 归属（系统级资源）。项目级调用方只能看到本项目发布目标
     // 实际引用（ssh.privateKeyRef）的主机——与 rejectPrivateKeyRefMismatch 同款归属口径，
     // 避免泄露其他项目的 SSH 主机。无项目语境（系统级调用）时才返回全部。
@@ -30,6 +61,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       : null;
     res.json({
       targets,
+      archivedTargets,
       plans: deps.stateService.getReleasePlans(projectId),
       remoteHosts: deps.stateService.getRemoteHosts()
         .filter((host) => referencedHostIds === null || referencedHostIds.has(host.id))
@@ -49,6 +81,13 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const body = (req.body || {}) as Record<string, unknown>;
     const access = rejectProjectMismatch(req, res, typeof body.projectId === 'string' ? body.projectId : undefined);
     if (access) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
+    const strategy = parseReleaseStrategy(body);
+    const strategyValidation = validateReleaseStrategy(strategy);
+    if (strategyValidation) {
+      res.status(400).json({ error: strategyValidation });
+      return;
+    }
     const validation = validateSshTargetBody(body, false);
     if (validation) {
       res.status(400).json({ error: validation });
@@ -61,6 +100,11 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       String(body.projectId).trim(),
       String(body.privateKeyRef).trim(),
     )) return;
+    const project = deps.stateService.getProject(String(body.projectId).trim());
+    if (!project) {
+      res.status(404).json({ error: `project not found: ${String(body.projectId).trim()}` });
+      return;
+    }
     const now = new Date().toISOString();
     const target: ReleaseTarget = {
       id: typeof body.id === 'string' && body.id.trim() ? body.id.trim() : `rt_${crypto.randomBytes(6).toString('hex')}`,
@@ -71,13 +115,18 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       updatedAt: now,
       createdBy: resolveActorFromRequest(req),
       isEnabled: body.isEnabled !== false,
+      lifecycle: 'active',
+      environment: normalizeEnvironment(body.environment),
+      isCanonical: body.isCanonical !== false,
+      projectIdentity: releaseProjectIdentity(project),
+      strategy,
       ssh: {
         host: String(body.host).trim(),
         port: Number(body.port || 22),
         user: String(body.user).trim(),
         privateKeyRef: String(body.privateKeyRef).trim(),
         appPath: String(body.appPath).trim(),
-        deployCommand: String(body.deployCommand).trim(),
+        deployCommand: strategy.mode === 'existing-script' ? strategy.command!.trim() : '',
         rollbackCommand: typeof body.rollbackCommand === 'string' ? body.rollbackCommand.trim() : '',
         healthcheckUrl: String(body.healthcheckUrl).trim(),
       },
@@ -94,6 +143,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const body = (req.body || {}) as Record<string, unknown>;
     const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
     if (rejectProjectMismatch(req, res, projectId || undefined)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     const validation = validateLocalProdTargetBody(body);
     if (validation) {
       res.status(400).json({ error: validation });
@@ -151,6 +201,15 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       updatedAt: now,
       createdBy: resolveActorFromRequest(req),
       isEnabled: body.isEnabled !== false,
+      lifecycle: 'active',
+      environment: 'production',
+      isCanonical: body.isCanonical !== false,
+      projectIdentity: releaseProjectIdentity(project),
+      strategy: {
+        mode: 'existing-script',
+        command: deployCommand,
+        detectedFrom: ['cds/scripts/local-prod-release.sh'],
+      },
       ssh: {
         host: remoteHost.host.host,
         port: remoteHost.host.sshPort || 22,
@@ -177,6 +236,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     const body = (req.body || {}) as Record<string, unknown>;
     const mergedBody = {
       projectId: existing.projectId,
@@ -190,8 +250,17 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       rollbackCommand: existing.ssh?.rollbackCommand,
       healthcheckUrl: existing.ssh?.healthcheckUrl,
       isEnabled: existing.isEnabled,
+      strategy: existing.strategy,
+      environment: existing.environment,
+      isCanonical: existing.isCanonical,
       ...body,
     };
+    const strategy = parseReleaseStrategy(mergedBody);
+    const strategyValidation = validateReleaseStrategy(strategy);
+    if (strategyValidation) {
+      res.status(400).json({ error: strategyValidation });
+      return;
+    }
     const validation = validateSshTargetBody(mergedBody, true);
     if (validation) {
       res.status(400).json({ error: validation });
@@ -210,13 +279,16 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       projectId: String(mergedBody.projectId).trim(),
       name: String(mergedBody.name).trim(),
       isEnabled: mergedBody.isEnabled !== false,
+      environment: normalizeEnvironment(mergedBody.environment),
+      isCanonical: mergedBody.isCanonical !== false,
+      strategy,
       ssh: {
         host: String(mergedBody.host).trim(),
         port: Number(mergedBody.port || 22),
         user: String(mergedBody.user).trim(),
         privateKeyRef: String(mergedBody.privateKeyRef).trim(),
         appPath: String(mergedBody.appPath).trim(),
-        deployCommand: String(mergedBody.deployCommand).trim(),
+        deployCommand: strategy.mode === 'existing-script' ? strategy.command!.trim() : '',
         rollbackCommand: typeof mergedBody.rollbackCommand === 'string' ? mergedBody.rollbackCommand.trim() : '',
         healthcheckUrl: String(mergedBody.healthcheckUrl).trim(),
       },
@@ -231,6 +303,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     const runs = deps.stateService.getReleaseRuns({ targetId: req.params.id });
     if (runs.length > 0) {
       res.status(409).json({ error: 'target has release runs and cannot be deleted' });
@@ -241,6 +314,33 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     res.status(204).end();
+  });
+
+  router.post('/releases/targets/:id/archive', (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    if (reason.length < 8) {
+      res.status(400).json({ error: 'archive reason must contain at least 8 characters' });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    const archived = deps.stateService.upsertReleaseTarget({
+      ...existing,
+      lifecycle: 'archived',
+      isEnabled: false,
+      isCanonical: false,
+      archivedAt: new Date().toISOString(),
+      archivedBy: actor,
+      archiveReason: reason,
+    });
+    res.json({ target: archived });
   });
 
   router.post('/releases/branches/:branchId/preflight', async (req, res) => {
@@ -437,6 +537,16 @@ function rejectProjectMismatch(req: Request, res: Response, projectId: string | 
   return true;
 }
 
+function rejectUnscopedAiMutation(req: Request, res: Response): boolean {
+  const actor = resolveActorFromRequest(req);
+  if (!(actor === 'ai' || actor.startsWith('ai:')) || requestProjectKey(req)) return false;
+  res.status(403).json({
+    error: 'project_key_required',
+    message: 'AI 配置发布目标必须使用项目级 Agent Key，禁止用全局 AI key 写入项目发布配置。',
+  });
+  return true;
+}
+
 function rejectPrivateKeyRefMismatch(
   req: Request,
   res: Response,
@@ -484,7 +594,7 @@ function rejectBranchAndTargetMismatch(
 }
 
 function validateSshTargetBody(body: Record<string, unknown>, allowExisting: boolean): string | null {
-  const required = ['projectId', 'name', 'host', 'user', 'privateKeyRef', 'appPath', 'deployCommand', 'healthcheckUrl'];
+  const required = ['projectId', 'name', 'host', 'user', 'privateKeyRef', 'appPath', 'healthcheckUrl'];
   for (const key of required) {
     if (typeof body[key] !== 'string' || !String(body[key]).trim()) {
       return `${key} is required`;
@@ -492,6 +602,8 @@ function validateSshTargetBody(body: Record<string, unknown>, allowExisting: boo
   }
   const port = Number(body.port || 22);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return 'port must be an integer in [1, 65535]';
+  const appPath = path.posix.normalize(String(body.appPath).trim());
+  if (!path.posix.isAbsolute(appPath) || appPath === '/') return 'appPath must be an absolute project directory, not filesystem root';
   try {
     const url = new URL(String(body.healthcheckUrl));
     if (!['http:', 'https:'].includes(url.protocol)) return 'healthcheckUrl must be http or https';
@@ -502,6 +614,48 @@ function validateSshTargetBody(body: Record<string, unknown>, allowExisting: boo
     return 'id must match [A-Za-z0-9_-]{2,80}';
   }
   return null;
+}
+
+function parseReleaseStrategy(body: Record<string, unknown>): ReleaseStrategy {
+  const raw = body.strategy && typeof body.strategy === 'object'
+    ? body.strategy as Record<string, unknown>
+    : {};
+  const mode = raw.mode === 'generated-compose' || raw.mode === 'generated-static' || raw.mode === 'existing-script'
+    ? raw.mode
+    : 'existing-script';
+  if (mode === 'generated-compose') {
+    return {
+      mode,
+      composeFile: typeof raw.composeFile === 'string' ? raw.composeFile.trim() : '',
+      composeProject: typeof raw.composeProject === 'string' ? raw.composeProject.trim() : '',
+      detectedFrom: stringArray(raw.detectedFrom),
+    };
+  }
+  if (mode === 'generated-static') {
+    return {
+      mode,
+      buildCommand: typeof raw.buildCommand === 'string' ? raw.buildCommand.trim() : '',
+      artifactDirectory: typeof raw.artifactDirectory === 'string' ? raw.artifactDirectory.trim() : '',
+      publicDirectory: typeof raw.publicDirectory === 'string' ? raw.publicDirectory.trim() : '',
+      detectedFrom: stringArray(raw.detectedFrom),
+    };
+  }
+  const command = typeof raw.command === 'string'
+    ? raw.command.trim()
+    : typeof body.deployCommand === 'string'
+      ? body.deployCommand.trim()
+      : '';
+  return { mode, command, detectedFrom: stringArray(raw.detectedFrom) };
+}
+
+function normalizeEnvironment(value: unknown): ReleaseTarget['environment'] {
+  return value === 'staging' || value === 'other' ? value : 'production';
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim());
+  return values.length > 0 ? values : undefined;
 }
 
 function validateLocalProdTargetBody(body: Record<string, unknown>): string | null {

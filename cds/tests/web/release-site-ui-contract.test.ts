@@ -34,8 +34,12 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('添加站点发布');
     expect(releaseCenterSource).toContain('选择服务器');
     expect(releaseCenterSource).toContain('生产域名');
-    expect(releaseCenterSource).toContain('本机端口');
-    expect(releaseCenterSource).toContain('本机生产发布');
+    expect(releaseCenterSource).toContain('远端项目仓库');
+    expect(releaseCenterSource).toContain('CDS 动态 Compose 发布');
+    expect(releaseCenterSource).toContain('CDS 动态静态站发布');
+    expect(releaseCenterSource).toContain('项目现有脚本');
+    expect(releaseCenterSource).toContain('项目身份');
+    expect(releaseCenterSource).toContain('已归档发布目标');
     expect(releaseCenterSource).toContain('健康检查');
     expect(releaseCenterSource).toContain('发布记录');
     expect(releaseCenterSource).toContain('响应时间');
@@ -63,7 +67,9 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('发布目标');
     expect(branchListSource).toContain('服务器');
     expect(branchListSource).toContain('目录');
-    expect(branchListSource).toContain('执行脚本');
+    expect(branchListSource).toContain('执行计划');
+    expect(branchListSource).toContain('动态执行');
+    expect(branchListSource).toContain('原子切换');
     expect(branchListSource).toContain('发布脚本可执行');
     expect(branchListSource).toContain('上线地址');
     expect(branchListSource).toContain('开始发布');
