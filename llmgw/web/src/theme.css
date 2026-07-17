@@ -2855,6 +2855,103 @@ a:focus-visible {
   min-width: 1020px;
 }
 
+.lg-app-caller-mobile-list {
+  display: none;
+}
+
+.lg-app-caller-mobile-card {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.lg-app-caller-mobile-heading,
+.lg-app-caller-mobile-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lg-app-caller-mobile-heading {
+  padding: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lg-app-caller-mobile-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.lg-app-caller-mobile-facts > div {
+  min-width: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lg-app-caller-mobile-facts > div:nth-child(odd) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.lg-app-caller-mobile-facts dt,
+.lg-app-caller-mobile-facts small,
+.lg-app-caller-mobile-pool span,
+.lg-app-caller-mobile-pool small,
+.lg-app-caller-mobile-editor > div:first-child span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lg-app-caller-mobile-facts dd {
+  min-width: 0;
+  margin: 5px 0 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.lg-app-caller-mobile-facts dd > div {
+  margin-bottom: 3px;
+}
+
+.lg-app-caller-mobile-actions {
+  justify-content: flex-end;
+  padding: 10px 14px;
+}
+
+.lg-app-caller-mobile-actions a {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.lg-app-caller-mobile-editor {
+  padding: 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.lg-app-caller-mobile-editor > div:first-child,
+.lg-app-caller-mobile-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lg-app-caller-mobile-pool {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
 .lg-app-caller-identity,
 .lg-app-caller-stack,
 .lg-app-caller-recent {
@@ -3293,6 +3390,20 @@ a:focus-visible {
 
   .lg-app-caller-editor-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-app-caller-table-wrap {
+    display: none;
+  }
+
+  .lg-app-caller-mobile-list {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .lg-quickstart-actions,

@@ -3368,6 +3368,8 @@ public class GatewayDataDomainGuardTests
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
         Assert.Contains("<colgroup>", appCallers);
+        Assert.Contains("lg-app-caller-mobile-list", appCallers);
+        Assert.Contains("function AppCallerMobileCard", appCallers);
     }
 
     [Fact]
