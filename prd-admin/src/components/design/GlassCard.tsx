@@ -266,14 +266,14 @@ function buildGlassStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先。
-  // 玻璃感来自「边缘棱光 + 镜面反光 + 饱和度提升」，不靠重模糊——blur 半径大幅下调，
-  // 背景透得清楚（评估页 labs/liquid-glass 实测 current blur(40px) 把背景糊成一坨）。
+  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先，玻璃感靠饱和度与柔和顶光。
+  // 2026-07-17 微调（用户：「边缘塑料感」）：blur 略升一档补材质厚度，
+  // 玻璃感不再依赖强镜面棱光（那是塑料感来源，见下方 shadowLayers）。
   const blurValues = {
-    default: 'blur(14px) saturate(180%) brightness(1.08)',
-    gold: 'blur(16px) saturate(200%) brightness(1.12)',
-    frost: 'blur(22px) saturate(220%) brightness(1.1)',
-    subtle: 'blur(10px) saturate(160%) brightness(1.04)',
+    default: 'blur(16px) saturate(180%) brightness(1.08)',
+    gold: 'blur(18px) saturate(200%) brightness(1.12)',
+    frost: 'blur(24px) saturate(220%) brightness(1.1)',
+    subtle: 'blur(12px) saturate(160%) brightness(1.04)',
   };
 
   const borderMultiplier = { default: 1, gold: 1.3, frost: 1.4, subtle: 0.7 };
@@ -301,13 +301,13 @@ function buildGlassStyle(
     `;
   }
 
-  // B 方案棱光：顶边镜面高光（光从上方打下来）+ 侧缘光 + 底部内反光，让低模糊也读作"玻璃"。
+  // 2026-07-17 去斜面棱（用户：「越看越假、边缘塑料感」）：旧版 50% 白顶部内描边 +
+  // 侧缘线 + 底部暗线组成了 2000 年代的「斜面塑料」。现代玻璃（macOS 材质）的边缘
+  // 是发丝级柔光：顶光降到 0.16 且无扩散、去掉侧缘与底部明暗线，厚度感交给 blur 与投影。
   const shadowLayers = [
-    '0 16px 32px -8px rgba(10, 10, 14, 0.5)',
-    `inset 0 1px 1px rgba(255, 255, 255, ${0.5 * borderMult})`,
-    'inset 1px 0 0 rgba(255, 255, 255, 0.12)',
-    'inset 0 -10px 20px -16px rgba(255, 255, 255, 0.16)',
-    'inset 0 -1px 1px rgba(0, 0, 0, 0.15)',
+    '0 16px 32px -12px rgba(10, 10, 14, 0.45)',
+    `inset 0 1px 0 rgba(255, 255, 255, ${0.16 * borderMult})`,
+    'inset 0 -14px 28px -24px rgba(255, 255, 255, 0.10)',
   ];
   if (variant === 'gold') {
     shadowLayers.push('0 8px 32px -8px rgba(99, 102, 241, 0.35)');

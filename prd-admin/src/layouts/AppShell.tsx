@@ -57,8 +57,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
-import { shouldReduceEffects } from '@/lib/themeApplier';
-import { useReducedMotion } from '@/lib/useReducedMotion';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { getLauncherCatalog } from '@/lib/launcherCatalog';
@@ -535,13 +533,12 @@ export default function AppShell() {
 
   // 读取主题配置中的侧边栏玻璃效果设置
   const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
-  // 液态玻璃一键开关（头像菜单内）：用 shouldReduceEffects 判断「实际」是否开玻璃，
-  // 覆盖 auto 在 Windows 上自动降级的情况，避免徽章显示与真实渲染不一致。
-  // useReducedMotion 让徽章在 OS 偏好变化时即时刷新，不滞后。
-  const themeConfig = useThemeStore((s) => s.config);
+  // 液态玻璃一键开关（头像菜单内）：2026-07-17 起接到「界面材质」SSOT——
+  // 与 设置 → 皮肤设置 的材质开关同一个 config.material，两处联动。
+  // 旧实现切的是 performanceMode，材质系统上线后已断线（用户「切换没有任何区别」的根因）。
   const setThemeConfig = useThemeStore((s) => s.setConfig);
-  const reducedMotion = useReducedMotion();
-  const glassOn = !reducedMotion && !shouldReduceEffects(themeConfig);
+  const materialChoice = useThemeStore((s) => s.config.material ?? 'solid');
+  const glassOn = materialChoice === 'glass';
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
@@ -1543,7 +1540,7 @@ export default function AppShell() {
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={(e) => {
                     e.preventDefault();
-                    setThemeConfig({ performanceMode: glassOn ? 'performance' : 'quality' });
+                    setThemeConfig({ material: glassOn ? 'solid' : 'glass' });
                   }}
                 >
                   <Droplets size={16} className="shrink-0" />

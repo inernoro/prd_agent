@@ -24,3 +24,5 @@
 | style | prd-admin | 素色画布带回静态品牌色氛围（左上靛蓝/右下青色，与强调色同族联动），治「首页偏黑白」 |
 | fix | prd-admin | 首页 hero 浅色外观适配：极光提亮层/白雾底光浅色不渲染，问候语/副标题/eyebrow/搜索框/快捷胶囊改走双主题 token |
 | fix | prd-admin | 修复材质开关在性能模式/Windows 自动降级/系统「减少动态效果」下完全失灵：材质 100% 跟随用户选择，性能路径只压动画不劫持表面 |
+| fix | prd-admin | 头像菜单「液态玻璃」开关接到界面材质 SSOT（旧实现切 performanceMode 已断线导致切换无效），与设置页材质开关联动 |
+| style | prd-admin | 液态玻璃去斜面棱：50% 白顶部内描边/侧缘线/底部暗线（塑料感来源）改为发丝级柔光，blur 升一档补材质厚度（GlassCard/nav-bar/raised 同步） |
