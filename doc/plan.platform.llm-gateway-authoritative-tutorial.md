@@ -185,13 +185,13 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 | T0 至 T3 基础链路 | 已完成 | 租户、团队、成员、Provider、模型、模型池、appCaller、key、四协议、PromptPolicy、Activity、费用与审计均已完成独立 PR、CI、CDS 和浏览器验收 | 只在对应功能变化时更新受影响章节 |
 | T4 教程与低理解力复验 | 已完成 | 33 章、253 个编号步骤、132 张不同图片、292 次内联；低理解力复验通过；[GitHub issue #1139](https://github.com/inernoro/prd_agent/issues/1139) 已关闭 | 新功能不得形成教程孤岛，必须在同一 PR 更新章节 |
 | T5 发布与终验 | 已完成 | PR #1158 已合并；104/104 权威图片资产返回 200；[整本教程 L2 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=eb1021a9af874bdc91da5f07762dba68&report=b20e4de1719c42f6b444941bf8a0c383) verdict 为通过、P0/P1/P2 为 0 | 公共入口保持 `https://map.ebcone.net/s/lib/PNyJj8JYqXJN?entry=3e4e51616ce64cb8f9e09c105dc7aaaa` |
-| 最终关联预览补洞 | 本地完成，远程门进行中 | Provider、模型关联 Provider、appCaller 关联模型池、Exchange 路由均可当前页预览；113/113 浏览器截图、0 warning、0 自动发现，另有 92/92 四协议合同实跑图和发布六项核对卡；[本地预验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=c508db129e7f420fbfade7da8b6de622&report=2e0f93e05aeb4fd3b3ef7b61b7499fe4) 已读回 90,143 字节、6 个步骤和 18 个图片引用 | 当前独立 PR 通过 CI 与 CDS exact commit 后，使用一小时有效的最小权限 Key 增量发布并立即撤销 |
+| 最终关联预览补洞 | 远程终验通过，待合并发布 | PR #1168 提交 `6a0d128fe` 的 GitHub CI、三个 Gateway 镜像、Codex Review 与 CDS Deploy 全绿；CDS 五个源码 profile 和 smoke 3/3 通过，独立 Web 的 10 个页面与双健康端点返回 200，四协议无 Key 全部 401。远端浏览器 113/113、Exchange 连续故事 3/3、0 console/network finding；[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 12 个步骤、12 张图片和 4 个验收深链 | PR 合并后使用一小时有效的最小权限 Key 增量发布，回查第二次 noop 后立即撤销 |
 
 ## 八、实时可见与完成口径
 
 总进度仍按 T0 8%、T1 14%、T2 20%、T3 20%、T4 23%、T5 15% 固定权重计算。PR #1158 合并、G1 至 G5 全部关闭、MAP 33 章发布和整本 L2 报告通过后，权威教程主体已结算为 100%；历史 62% 和 49% 只保留在 GitHub issue 与旧报告版本中，不再代表当前事实。
 
-本次最终交付补洞不重开教程主体完成度，只维护“关联字段能否就地看懂”这一条增量门。仓库源已增加 Provider、模型、模型池和 Exchange 四类预览说明及五张新图；远程 PR、CDS exact commit 和 MAP 增量发布完成前，仍不得把本次补洞称为已生产交付。
+本次最终交付补洞不重开教程主体完成度，只维护“关联字段能否就地看懂”这一条增量门。仓库源已增加 Provider、模型、模型池和 Exchange 四类预览说明及五张新图；PR #1168 的远程 CI、CDS exact commit 和 L2 报告已经通过，MAP 增量发布与临时 Key 撤销完成前，仍不得把本次补洞称为已生产交付。
 
 ## 九、关联 SSOT
 

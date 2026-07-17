@@ -356,6 +356,14 @@ Tenant
 - 图表在 1440x900、1024x768、390x844 和深浅主题下无空白、溢出或错误比例。
 - 不做重复付费模型测试：协议接入每格最多一次，UI/权限优先使用假上游和固定数据。
 
+### 9.1 最终交付增量证据（2026-07-17）
+
+PR #1168 在不重做 full-http、模型迁移、模型池算法或发布 Gate 的前提下，关闭了最后一组用户体验和独立部署缺口：Provider、模型关联 Provider、appCaller 显式模型池和 Exchange 路由均可在当前列表打开只读抽屉；抽屉不返回密钥明文、不发写请求，支持 Escape、Tab 焦点约束、关闭后焦点恢复和 390px 内部滚动。Quickstart、费用、Activity、租户、策略与模型池既有主链未被复制。
+
+提交 `6a0d128fe04a49f967d526de64030b7cbc49a8ba` 的 Build & Test、Server、CDS、Docker、三个 Gateway 镜像、CI Status 和 CDS Deploy 全绿，Codex Review 覆盖最终提交且没有修改意见；Bugbot 因用户停止续费记为不适用。CDS 部署 `dr_9f651c309df8cc1254e27b33` 以五个源码 profile 运行同一提交，自动 smoke 3/3；`llmgw-web` 不再依赖旧 `branch-main` 预构建镜像，Console API、Serving 和 Web 可以随 prd-agent 作为独立服务更新。为防存量 profile 从预构建切回源码时仍跳过 worktree 挂载，Compose 与解析器同时保留显式 `prebuilt=false`，定向解析测试 51/51 通过。
+
+公网独立网关子域的首页、Provider、模型、appCaller、Exchange、Quickstart、Activity、用量、治理和学习中心共 10 个页面以及 Console/Serving 双健康端点均返回 200；GW Native、OpenAI、Claude、Gemini 四入口没有 Gateway Key 时全部返回 401，没有调用付费上游。远端源码页面完成 113/113 浏览器截图和 Exchange 连续故事 3/3，自动发现、功能缺陷、console error 与 network error 均为 0。[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 64,337 字节、12 个步骤、12 张内容寻址图片和 4 个验收深链。PR 合并与 MAP 教程增量发布完成前，本段状态仍是“远程终验通过，待生产发布”。
+
 ## 10. 不做
 
 - 不重新迁移 MAP 模型请求。
