@@ -7,7 +7,8 @@ import argparse
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import sys
 import urllib.error
@@ -40,6 +41,8 @@ LEGACY_SYMBOL_TEXT = {
     0x1F504: "[刷新]",
     0x270F: "[编辑]",
 }
+MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]\n]+)\]\(([^)\n]+)\)")
+MARKDOWN_CODE_RE = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`")
 
 
 def _load_core():
@@ -88,6 +91,52 @@ def _contains_suspect_secret(content: str) -> bool:
     return False
 
 
+def _rewrite_repository_markdown_links(
+    content: str,
+    source_path: str,
+    managed_titles: dict[str, str],
+) -> str:
+    """把仓库相对 Markdown 链接变成知识库内双链。
+
+    复用 doc/ 文档作为教程章节时，原文常包含
+    ``[部署方式](guide.cds.deploy-three-paths.md)``。知识库阅读器会把这种链接
+    解析成当前站点下的普通网页地址，点击后离开知识库。发布器知道本书完整
+    manifest，因此只在发布边界做确定性映射：已收录目标改成 ``[[章节|别名]]``；
+    未收录的仓库 Markdown 只展示标题并明确未收录，不制造无效跳转。
+
+    fenced code 与 inline code 保持原样，避免改写教程中的语法示例。
+    """
+
+    def rewrite_segment(segment: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            label = match.group(1).strip()
+            raw_destination = match.group(2).strip()
+            destination = raw_destination.split(maxsplit=1)[0].strip("<>")
+            parsed = urllib.parse.urlsplit(destination)
+            if parsed.scheme or parsed.netloc or destination.startswith(("/", "#")):
+                return match.group(0)
+            relative_path = urllib.parse.unquote(parsed.path)
+            if not relative_path.lower().endswith(".md"):
+                return match.group(0)
+            parent = PurePosixPath(source_path).parent
+            resolved = posixpath.normpath(str(parent / relative_path))
+            target_title = managed_titles.get(resolved)
+            if target_title:
+                return f"[[{target_title}]]" if label == target_title else f"[[{target_title}|{label}]]"
+            return f"{label}（本教程未收录）"
+
+        return MARKDOWN_LINK_RE.sub(replace, segment)
+
+    output: list[str] = []
+    cursor = 0
+    for protected in MARKDOWN_CODE_RE.finditer(content):
+        output.append(rewrite_segment(content[cursor:protected.start()]))
+        output.append(protected.group(0))
+        cursor = protected.end()
+    output.append(rewrite_segment(content[cursor:]))
+    return "".join(output)
+
+
 def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST):
     manifest_path = manifest_path.resolve()
     try:
@@ -103,6 +152,14 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST):
     raw_nodes = manifest.get("nodes")
     if not isinstance(raw_nodes, list) or not raw_nodes:
         raise TutorialError("manifest.nodes 不能为空")
+    managed_titles = {
+        posixpath.normpath(str(raw_node.get("sourcePath"))): str(raw_node.get("title")).strip()
+        for raw_node in raw_nodes
+        if isinstance(raw_node, dict)
+        and raw_node.get("kind") == "document"
+        and isinstance(raw_node.get("sourcePath"), str)
+        and isinstance(raw_node.get("title"), str)
+    }
 
     nodes = []
     source_ids: set[str] = set()
@@ -131,6 +188,7 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST):
             if not source_file.is_file():
                 raise TutorialError(f"{source_path}: 源文件不存在")
             content = _text(source_file)
+            content = _rewrite_repository_markdown_links(content, source_path, managed_titles)
             if len(content) < MIN_CHAPTER_CHARACTERS:
                 raise TutorialError(f"{source_path}: 正文过短，至少 {MIN_CHAPTER_CHARACTERS} 个字符")
             if core.EMOJI_RE.search(content):

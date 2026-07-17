@@ -46,6 +46,39 @@ class CdsTutorialPublisherTests(unittest.TestCase):
         self.assertEqual("CDS 权威教程", body["category"])
         self.assertEqual("cds-authoritative-tutorial", body["publisher"])
 
+    def test_repository_links_are_rewritten_to_managed_chapter_wikilinks(self):
+        chapter = next(node for node in self.source.nodes if node.source_id == "chapter-01")
+        self.assertIn(
+            "[[第 8 章：理解托管交付|自动交付与 Agent 接入]]",
+            chapter.content,
+        )
+        self.assertIn(
+            "[[第 9 章：选择三条部署路径|部署方式选择]]",
+            chapter.content,
+        )
+        self.assertNotIn("](guide.cds.managed-delivery.md)", chapter.content)
+
+    def test_unmanaged_repository_links_become_non_clickable_disclosures(self):
+        rendered = publisher._rewrite_repository_markdown_links(
+            "查看 [内部设计](design.private.md)，示例 ` [保留](sample.md) `。",
+            "doc/guide.current.md",
+            {"doc/guide.current.md": "当前章"},
+        )
+        self.assertIn("内部设计（本教程未收录）", rendered)
+        self.assertNotIn("](design.private.md)", rendered)
+        self.assertIn("` [保留](sample.md) `", rendered)
+
+    def test_published_book_has_no_relative_markdown_document_links(self):
+        leftovers: list[str] = []
+        for node in self.source.nodes:
+            if node.kind != "document":
+                continue
+            for match in publisher.MARKDOWN_LINK_RE.finditer(node.content):
+                destination = match.group(2).strip().split(maxsplit=1)[0].strip("<>")
+                if "://" not in destination and destination.split("#", 1)[0].lower().endswith(".md"):
+                    leftovers.append(f"{node.source_path}: {match.group(0)}")
+        self.assertEqual([], leftovers)
+
 
 if __name__ == "__main__":
     unittest.main()
