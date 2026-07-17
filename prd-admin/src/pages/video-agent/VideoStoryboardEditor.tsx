@@ -54,6 +54,7 @@ import {
   type VideoProjectAsset,
   type VideoTimelineTrack,
 } from '@/services/contracts/videoAgent';
+import { resolveVideoTitle } from './titleUtils';
 import './videoConsole.css';
 
 export interface VideoStoryboardEditorProps {
@@ -377,7 +378,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             </button>
           )}
           <div className="min-w-0">
-            <div className="video-workbench__title">{run.articleTitle || '未命名视频项目'}</div>
+            <div className="video-workbench__title">{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</div>
             <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · ${totalCost.toFixed(3)}</div>
           </div>
         </div>
