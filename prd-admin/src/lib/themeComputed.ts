@@ -52,31 +52,31 @@ export function computeThemeVars(config: ThemeConfig, reduceEffects = false): Co
   // 玻璃亮度倍数（受色深影响）
   const glassBrightness = depth.glassBrightness;
 
-  // ── 性能模式（Obsidian 风格）：实底暗色表面，不依赖 backdrop-filter ──
+  // ── 素色材质 / 性能模式：纯平实底暗色表面，不依赖 backdrop-filter ──
+  // 2026-07-16 重做（用户：「不要 2000 年的塑料亚克力风」）：
+  // 半透明 + 渐变 + 白色高光 = 亚克力感的三个来源，素色一律砍掉——
+  // 表面完全不透明、start/end 同值（渐变退化为纯平色）、层级靠细描边与底色阶梯表达。
   if (reduceEffects) {
-    // 从 bgElevated hex 提取 RGB，构造高不透明度的实底表面
+    // 从 bgElevated hex 提取 RGB，构造实底表面
     const r = parseInt(depth.bgElevated.slice(1, 3), 16);
     const g = parseInt(depth.bgElevated.slice(3, 5), 16);
     const b = parseInt(depth.bgElevated.slice(5, 7), 16);
 
-    // 基于色深的表面亮度微调
-    const lift = { darker: 8, default: 12, lighter: 18 }[config.colorDepth] ?? 12;
+    // 基于色深的表面亮度微调（小步抬升：表面只比底色亮一档，现代扁平的层级来自描边而非亮度差）
+    const lift = { darker: 4, default: 6, lighter: 10 }[config.colorDepth] ?? 6;
     const sr = Math.min(255, r + lift);
     const sg = Math.min(255, g + lift);
     const sb = Math.min(255, b + lift);
-
-    // 表面透明度基于 opacity 配置
-    const surfaceAlpha = { solid: 0.97, default: 0.94, translucent: 0.88 }[config.opacity] ?? 0.94;
 
     return {
       '--bg-base': depth.bgBase,
       '--bg-elevated': depth.bgElevated,
       '--bg-card': depth.bgCard,
 
-      // 实底暗色表面（替代透明玻璃）
-      '--glass-bg-start': `rgba(${sr}, ${sg}, ${sb}, ${surfaceAlpha})`,
-      '--glass-bg-end': `rgba(${r}, ${g}, ${b}, ${Math.min(1, surfaceAlpha + 0.02)})`,
-      '--glass-border': `rgba(255, 255, 255, ${(0.07 * glassBrightness).toFixed(4)})`,
+      // 纯平实底表面（同值 → linear-gradient 退化为平色；全不透明，杜绝亚克力感）
+      '--glass-bg-start': `rgb(${sr}, ${sg}, ${sb})`,
+      '--glass-bg-end': `rgb(${sr}, ${sg}, ${sb})`,
+      '--glass-border': `rgba(255, 255, 255, ${(0.08 * glassBrightness).toFixed(4)})`,
 
       // 边框
       '--border-subtle': `rgba(255, 255, 255, ${(0.10 * borderMultiplier * glassBrightness).toFixed(4)})`,

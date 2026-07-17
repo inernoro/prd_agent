@@ -587,6 +587,21 @@
 - 一次性最终验收允许视频状态轮询，但每次完整矩阵最多提交一个视频任务；失败后只允许带人工批准说明补跑失败单格，禁止整套自动重跑。
 - `inproc` 与 legacy 代码继续作为生产回滚兜底，本计划不删除。稳定期后的删除必须另立有限任务，不能混入本次发布。
 
+## 已禁用生产目标的外置配置债务（2026-07-17）
+
+- 目标 `rt_c00f704bfee3` 已按用户要求逐字段恢复原配置并保持禁用，配置哈希为 `e1c318dfd8c65a74531e28dd1d912138e88d0a6aac7a2bf34e47768a08a1705b`。原配置仍包含固定旧提交下载和发布后真实 chat 尾段，因此禁止不经复核直接启用。
+- 本次生产发布使用去除付费尾段、显式绑定目标提交的临时安全命令；完成后没有把临时命令写回长期目标。未来若要重新启用该目标，必须另立受审配置迁移：移除固定提交、删除付费 chat 尾段、绑定当前 release intent，并先做 dry-run。
+- 该外置目标配置不属于仓库运行时代码，不能用仓库提交伪装为已修。仓库侧已把所有发布和回滚改为保留 gateway 容器：静态版本在既有 bind 根内原子切换，活跃宿主配置同步后原地热重载，解决容器重建导致反向代理地址失效和短暂 502 的问题；外置目标仍以“禁用即安全、启用前迁移”为边界。
+
+## 独立品牌域名待办（2026-07-17）
+
+| ID | 严重度 | 状态 | 事实与收口条件 |
+|---|---|---|---|
+| `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
+| `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
+
+测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
+
 ## 已还的债务（归档）
 
 > 修复后从上面表格挪到这里，保留以便复盘

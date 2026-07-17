@@ -22,6 +22,7 @@ jobs:
       admin: ${{ steps.filter.outputs.admin }}
       desktop: ${{ steps.filter.outputs.desktop }}
       cds: ${{ steps.filter.outputs.cds }}
+      release_scripts: ${{ steps.filter.outputs.release_scripts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,6 +45,32 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/ci.yml'
+            release_scripts:
+              - 'exec_dep.sh'
+              - 'scripts/lib/static-release.sh'
+              - 'scripts/prd-agent-public-surface-smoke.py'
+              - 'scripts/tests/static-release-*.test.sh'
+              - 'scripts/tests/public-surface-smoke.test.py'
+              - 'deploy/nginx/**'
+              - '.github/workflows/ci.yml'
+
+  release-script-test:
+    name: Production Release Script Test
+    needs: changes
+    if: needs.changes.outputs.release_scripts == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Static release layout
+        run: sh scripts/tests/static-release-layout.test.sh
+
+      - name: Static release through nginx worker
+        run: sh scripts/tests/static-release-nginx.test.sh
+
+      - name: Public surface smoke unit test
+        run: python3 scripts/tests/public-surface-smoke.test.py
 
   # 后端服务构建和测试
   server-build:

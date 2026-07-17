@@ -1,6 +1,6 @@
 # 生产发布表面健康与可追溯性 · 规则
 
-> **版本**：v1.0 | **日期**：2026-07-12 | **状态**：已落地
+> **版本**：v1.2 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 核心原则
 
@@ -15,6 +15,8 @@
 已经证实的直接原因是静态目录不可遍历；首次把目录设置为 `700` 的具体进程无法从现有证据中确定。系统级根因是发布脚本没有固定权限后置条件、没有原子切换、没有产品表面验证，也没有保存足够的权限变化证据。
 
 同日还确认了发布命令兼容性退化：旧流程中 `./exec_dep.sh release` 等价于部署 latest，新参数解析会把 `release` 当作版本 ref，继而请求不存在的产物并输出多层错误。发布入口改变语义时没有兼容别名和迁移提示，也属于本规则治理范围。
+
+2026-07-17 的首次稳定根目录生产发布进一步确认：CDS 发布命令为保护临时凭据使用 `umask 077`，原子发布库却没有在切换前固定最终权限，导致新建 `.releases` 与发布根目录为 `700`。产物、`current`/`previous` 链接和入口文件本身都完整，但 Nginx worker 无法遍历目录，SPA fallback 最终返回 500。公网表面探针正确阻止完成声明，精确发布前备份恢复根页 200；PR #1176 把目录固定为 `755`、文件固定为 `644`，并增加真实 Nginx worker 回归。该事件证明“校验文件存在”不能替代“以实际服务用户读取”。
 
 ## 规则条目
 
@@ -106,6 +108,15 @@
 ## 例外情况
 
 紧急恢复可以先执行范围最小、可逆的权限修复或 previous 回切，但必须立即验证公网表面，并在后续变更中补齐长期防回归。紧急情况不允许跳过证据记录，也不能把临时恢复当作永久修复。
+
+## 当前实现
+
+- `exec_dep.sh`：不可变静态产物必须通过 SHA256；在 gateway 已挂载的稳定 `deploy/web/dist` 根目录内，用 `.staging-*` 离线解压和校验，再通过 `scripts/lib/static-release.sh` 把目录精确归一为 `755`、文件归一为 `644`，最后原子切换 `current`，`previous` 保存上一版。Nginx 的 standalone root 固定指向 bind 根内的 `current`，切换不需要重建容器。
+- 代理稳定：非 gateway 服务重建后立即使用当前配置原地 reload gateway，先刷新 API 与 LLMGW 容器地址，再等待较长的 Serving readiness；静态切换后的任一强制阶段失败都会恢复 previous，并再次执行 `nginx -t` 与 reload 后复跑公网表面探针。`llmgw-rollback-inproc.sh` 和 `llmgw-restore-shadow-safe.sh` 同样只重启 API、原地 reload gateway。正常发布、静态复用、inproc 回滚和 shadow 恢复都不改变 gateway 容器 IP。
+- `scripts/prd-agent-public-surface-smoke.py`：验证根 HTML、实际同源 JS/CSS、根级 `/health`、`/api/version`、LLMGW 页面及 Console/Serving 双健康；发布后强制运行，并由 `llmgw-shadow-watch.yml` 每 6 小时独立运行。
+- `scripts/prd-agent-release-evidence.py`：按唯一发布编号写不可覆盖 JSON，记录操作者、主机、release PID、开始结束时间、ref、产物 URL 与 hash、静态链接和权限、公网探针、首个失败阶段和回滚结果。
+- `./exec_dep.sh release`：保留 latest 兼容语义并提示迁移到不可变 `--commit`；`--help` 同时展示兼容与推荐命令。
+- `.github/workflows/ci.yml`：独立执行静态布局、严格 umask、真实 `nginx:1.27-alpine` worker 和公网探针单测，防止只有发布时才发现权限退化。
 
 ## 关联债务
 

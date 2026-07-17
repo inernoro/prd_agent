@@ -342,7 +342,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const modal = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: 'rgba(5,7,12,0.70)' }} onClick={onClose}>
-      <div className="flex w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border shadow-2xl"
+      <div className="flex w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border shadow-2xl"
         style={{ maxHeight: '88vh', background: 'linear-gradient(150deg,rgba(18,24,33,0.99),rgba(26,30,40,0.99))', borderColor: 'rgba(148,163,184,0.24)', color: 'var(--text-primary)' }}
         onClick={(e) => e.stopPropagation()}>
         <style>{`
@@ -429,7 +429,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                   variant="primary"
                   onClick={runNow}
                   disabled={submitting || !direction || nodes.length === 0 || !nodeId}
-                  className="h-11 flex-1 justify-center text-sm"
+                  className="h-11 flex-1 justify-center whitespace-nowrap text-sm"
                   title={!direction ? '先选择同步方式' : `按既定方向执行：${DIRECTION_VERB[direction]}`}
                 >
                   {submitting ? <MapSpinner size={15} /> : tone === 'red' ? <RefreshCw size={15} /> : <Send size={15} />} {primaryLabel}
@@ -525,12 +525,12 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
               {/* 最近记录（折叠） */}
               {showRecords && (
                 <section className="mt-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="space-y-1.5">
                     <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>接收审计只表示本节点收到了对端推送</div>
-                    <div className="flex items-center gap-1">
+                    <div className="sync-row-scroll flex items-center gap-1">
                       {RECORD_FILTERS.map(t => (
                         <button key={t.key} onClick={() => setRecordFilter(t.key)}
-                          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] transition"
+                          className="flex items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 text-[11px] transition"
                           style={{
                             color: recordFilter === t.key ? 'var(--text-primary)' : 'rgb(148,163,184)',
                             background: recordFilter === t.key ? 'rgba(45,212,191,0.12)' : 'transparent',
@@ -760,7 +760,7 @@ export function RunCard({ run, forceExpanded = false, onCancel }: { run: PeerSyn
           </span>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="sync-row-scroll mt-2 flex gap-x-3 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>
         {run.created > 0 && <span style={{ color: 'rgb(134,239,172)' }}>新增 {run.created}</span>}
         {run.updated > 0 && <span style={{ color: 'rgb(94,234,212)' }}>更新 {run.updated}</span>}
         {run.skipped > 0 && <span>已一致 {run.skipped}</span>}
@@ -768,7 +768,7 @@ export function RunCard({ run, forceExpanded = false, onCancel }: { run: PeerSyn
         {run.failed > 0 && <span style={{ color: 'rgb(252,165,165)' }}>失败 {run.failed}</span>}
         {(run.assetsRewritten > 0 || run.assetRewriteFailed > 0) && <span>图片重传 {run.assetsRewritten}/失败 {run.assetRewriteFailed}</span>}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-3 text-[10.5px]" style={{ color: 'var(--text-faint, rgba(148,163,184,0.7))' }}>
+      <div className="sync-row-scroll mt-1.5 flex gap-x-3 whitespace-nowrap text-[10.5px]" style={{ color: 'var(--text-faint, rgba(148,163,184,0.7))' }}>
         <span>{incoming ? '接收自' : '对端'} {run.peerNodeName}</span>
         <span>{formatTime(run.startedAt)}</span>
         {run.durationMs > 0 && <span>耗时 {(run.durationMs / 1000).toFixed(1)}s</span>}

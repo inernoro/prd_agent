@@ -42,6 +42,7 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/marketplace':             { level: 'full' },
   '/library':                 { level: 'full' },
   '/shortcuts-agent':         { level: 'full' },
+  '/md-to-ppt-agent':         { level: 'full' },
 
   // ── 受限：可以用但体验降级 ──
   '/executive':               { level: 'limited', note: '图表较宽，横屏查看更佳' },
@@ -54,7 +55,6 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   '/team-activity':           { level: 'limited', note: '行为洞察图表较宽，横屏查看更佳' },
   '/review-agent':            { level: 'limited' },
   '/pr-review':               { level: 'limited', note: 'diff 阅读较挤，建议 PC' },
-  '/md-to-ppt-agent':         { level: 'limited', note: '生成与预览可用，深度编辑建议 PC' },
   '/lab':                     { level: 'limited' },
 
   // ── PC 专属：画布 / 拖拽 / 大屏复杂交互 ──

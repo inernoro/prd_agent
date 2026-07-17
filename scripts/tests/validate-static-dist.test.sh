@@ -28,6 +28,11 @@ printf '%s\n' 'body { color: black; }' > "$good/assets/app.css"
 [ "$(file_mode "$good/index.html")" = "644" ]
 [ "$(file_mode "$good/assets/app.js")" = "644" ]
 
+ln -s "$good" "$tmp_root/good-link"
+chmod 700 "$good/assets"
+"$validator" --normalize "$tmp_root/good-link"
+[ "$(file_mode "$good/assets")" = "755" ]
+
 missing_index="$tmp_root/missing-index"
 mkdir -p "$missing_index/assets"
 printf '%s\n' 'console.log("orphan")' > "$missing_index/assets/app.js"
