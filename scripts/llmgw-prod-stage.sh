@@ -386,7 +386,10 @@ config_authority_json="${evidence_prefix}.config-authority.json"
 config_authority_md="${evidence_prefix}.config-authority.md"
 stage_json="${evidence_prefix}.stage.json"
 stage_md="${evidence_prefix}.stage.md"
-maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
+maintenance_baseline_json=""
+if [ -n "$maintenance_from_commit" ]; then
+  maintenance_baseline_json="${evidence_prefix}.maintenance-baseline.json"
+fi
 shadow_evidence_commit="$commit"
 
 case "$stage" in
@@ -748,6 +751,8 @@ append_ledger_entry() {
     --evidence-md "$stage_md" \
     --release-gate-json "$release_gate_json" \
     --shadow-evidence-commit "$shadow_evidence_commit" \
+    --maintenance-baseline-commit "$maintenance_from_commit" \
+    --maintenance-baseline-json "$maintenance_baseline_json" \
     --release-gate-required "${release_gate_required:-0}" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \
@@ -1673,6 +1678,8 @@ if [ "$execute" = "1" ]; then
     --gate-base "$gate_base" \
     --release-gate-json "$release_gate_json" \
     --shadow-evidence-commit "$shadow_evidence_commit" \
+    --maintenance-baseline-commit "$maintenance_from_commit" \
+    --maintenance-baseline-json "$maintenance_baseline_json" \
     --release-gate-required "$release_gate_required" \
     --prod-preflight-json "$prod_preflight_json" \
     --prod-health-preflight-json "$prod_health_preflight_json" \

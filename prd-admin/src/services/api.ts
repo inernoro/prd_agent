@@ -1120,6 +1120,13 @@ export const api = {
 
   // ============ Video Agent 视频创作 ============
   videoAgent: {
+    models: () => '/api/video-agent/models',
+    projects: {
+      list: () => '/api/video-agent/projects',
+      create: () => '/api/video-agent/projects',
+      byId: (projectId: string) => `/api/video-agent/projects/${projectId}`,
+      exports: (projectId: string) => `/api/video-agent/projects/${projectId}/exports`,
+    },
     // 视频生成 API（OpenRouter 直出 + storyboard 拆分镜两种模式）
     runs: {
       list: () => '/api/video-agent/runs',
@@ -1127,11 +1134,16 @@ export const api = {
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
+      export: (runId: string) => `/api/video-agent/runs/${runId}/export`,
     },
     scenes: {
       update: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}`,
       regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,
       render: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/render`,
+      renderBatch: (runId: string) => `/api/video-agent/runs/${runId}/scenes/render-batch`,
+      reorder: (runId: string) => `/api/video-agent/runs/${runId}/scenes/reorder`,
+      activateVersion: (runId: string, sceneIndex: number, versionId: string) =>
+        `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/versions/${versionId}/activate`,
     },
   },
 
@@ -1292,6 +1304,9 @@ export const api = {
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+      // 录音转笔记：整理方式列表 + 换个整理方式（免重跑 ASR）
+      transcribeStyles: () => `/api/document-store/transcribe-styles`,
+      transcribeRestyle: (runId: string) => `/api/document-store/agent-runs/${runId}/restyle`,
       // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
       autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
     },
@@ -1375,6 +1390,7 @@ export const api = {
     autoSync: () => '/api/peer-sync/auto-sync',
     runs: (type: string, itemId?: string) =>
       `/api/peer-sync/runs?resourceType=${encodeURIComponent(type)}${itemId ? `&itemId=${encodeURIComponent(itemId)}` : ''}`,
+    cancelRun: (id: string) => `/api/peer-sync/runs/${encodeURIComponent(id)}/cancel`,
     // 管理侧（设置 → 系统互联）
     adminList: () => '/api/admin/peer-nodes',
     adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',

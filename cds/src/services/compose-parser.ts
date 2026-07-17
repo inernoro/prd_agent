@@ -539,7 +539,10 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           readinessProbe,
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
-          ...(prebuiltImage ? { prebuiltImage: true } : {}),
+          // 显式 false 也必须保留。pending-import 对既有 profile 做 merge；如果旧配置曾是
+          // 预构建站点而新 Compose 改回源码模式，省略 false 会让旧 true 永久残留，最终
+          // runService 跳过源码挂载，容器以 "can't cd to /repo/..." 退出。
+          ...(prebuilt !== undefined ? { prebuiltImage } : {}),
           // 基础级 fallbackImage(裸预构建站点):base service 上直接声明的回退链带到 profile,
           // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
@@ -852,8 +855,24 @@ export function toCdsCompose(
  * 用 fixed-point iteration:迭代展开 cdsVars 自身,直到稳定或达到 8 次上限
  * (8 次足够覆盖任何合理的引用深度,防止循环引用造成无限循环)。
  */
-const ENV_TEMPLATE_RE = /\$\{(\w+)(?::-(.*?))?\}/g;
+// #753：除 ${VAR} / ${VAR:-default} 外，还要识别 POSIX 的
+//   ${VAR:?msg}（必填，无默认）、${VAR:=default}（默认并回填）、${VAR:+alt}（已设置才用 alt）。
+// group1=变量名，group2=操作符（- = ? +，可选），group3=操作数（可选）。
+export const ENV_TEMPLATE_RE = /\$\{(\w+)(?::([-=?+])([^}]*))?\}/g;
 const MAX_ENV_RESOLVE_ITERATIONS = 8;
+
+/**
+ * 计算某个 `${VAR:op...}` 模板在「变量未设置」时应展开成的默认值。
+ *   - `:-` / `:=` → 提供默认值（操作数），未设置时用它
+ *   - `:+`        → 未设置时展开为空串（不算缺失，也不算必填）
+ *   - `:?` 或无操作符（`${VAR}`）→ 无默认（必填，未设置即缺失）
+ * 返回 undefined 表示「无默认值」（供 missing 判定用）。
+ */
+export function envTemplateDefault(op: string | undefined, operand: string | undefined): string | undefined {
+  if (op === '-' || op === '=') return operand ?? '';
+  if (op === '+') return '';
+  return undefined;
+}
 
 function singlePassResolve(
   value: string | number | boolean | null | undefined,
@@ -864,8 +883,19 @@ function singlePassResolve(
   // 直接 .replace() 会炸 "value.replace is not a function"。统一 stringify。
   if (value === null || value === undefined) return '';
   const s = typeof value === 'string' ? value : String(value);
-  return s.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
-    return vars[name] ?? process.env[name] ?? defaultVal ?? '';
+  return s.replace(ENV_TEMPLATE_RE, (_match, name, op, operand) => {
+    const currentValue = vars[name] ?? process.env[name];
+    const hasNonEmptyValue = currentValue !== undefined && currentValue !== '';
+    if (op === '-') return hasNonEmptyValue ? currentValue : (operand ?? '');
+    if (op === '=') {
+      if (hasNonEmptyValue) return currentValue;
+      const assignedValue = operand ?? '';
+      vars[name] = assignedValue;
+      return assignedValue;
+    }
+    if (op === '+') return hasNonEmptyValue ? (operand ?? '') : '';
+    if (op === '?') return hasNonEmptyValue ? currentValue : '';
+    return currentValue ?? '';
   });
 }
 

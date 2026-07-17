@@ -29,6 +29,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
+import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -38,6 +39,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
+import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
+import type { GitHubAppClient } from '../services/github-app-client.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -78,6 +81,8 @@ export interface ProjectsRouterDeps {
   shell: IShellExecutor;
   /** Root CDS config — unused in Part 2 but reserved for Part 3 when we derive per-project paths. */
   config?: CdsConfig;
+  /** GitHub App client for project-scoped installation tokens during private-repo clone. */
+  githubApp?: GitHubAppClient | null;
   /** Kept for backward compat with P1 callers; ignored. */
   legacyProjectName?: string;
 }
@@ -1104,11 +1109,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
 
+    const repoRoot = nodePath.resolve(project.repoPath || nodePath.dirname(composePath));
+    const composeRoot = nodePath.dirname(nodePath.resolve(composePath));
+
+    function inferRunnableComposeProfile(candidate: BuildProfile): BuildProfile {
+      const hasCommand = Boolean(candidate.command?.trim());
+      const hasSyntheticImage = candidate.dockerImage.startsWith('cds-build-');
+      if (hasCommand && !hasSyntheticImage) return candidate;
+
+      const sourceRoot = nodePath.resolve(composeRoot, candidate.workDir || '.');
+      const isInsideRepo = sourceRoot === repoRoot || sourceRoot.startsWith(`${repoRoot}${nodePath.sep}`);
+      if (!isInsideRepo) {
+        sendEvent('progress', { line: `[profile] ${candidate.id} 的构建目录超出项目范围，保留 Compose 原配置` });
+        return candidate;
+      }
+
+      const detection = detectStack(sourceRoot, { preferManifest: true });
+      if (detection.stack === 'unknown' || detection.stack === 'dockerfile') return candidate;
+
+      const command = hasCommand ? candidate.command : composeAutoCommand(detection);
+      const dockerImage = hasSyntheticImage ? detection.dockerImage : candidate.dockerImage;
+      const cacheMounts = candidate.cacheMounts?.length
+        ? candidate.cacheMounts
+        : defaultCacheMountsFor(dockerImage);
+      sendEvent('progress', {
+        line: `[profile] ${candidate.id} 未声明完整启动配置，已从 ${detection.stack} 项目清单自动补全`,
+      });
+      return {
+        ...candidate,
+        dockerImage,
+        command: command || candidate.command,
+        ...(cacheMounts ? { cacheMounts } : {}),
+      };
+    }
+
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
     for (const candidate of parsed.buildProfiles) {
+      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
       const scoped: BuildProfile = {
-        ...(candidate as BuildProfile),
+        ...runnableCandidate,
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
       };
@@ -2657,6 +2697,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
+    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
+    // 已签发后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
+    // create-only key 未标 oneTime，保持原有可重复建项目行为。
+    if (callerAccess) {
+      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
+      if (callerKey?.oneTime && issuedProjectKey) {
+        stateService.revokeGlobalAgentKey(callerAccess.keyId);
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -3253,20 +3303,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const repoPath = project.repoPath;
     const gitUrl = project.gitRepoUrl;
 
-    // P4 Part 18 (Phase E audit fix #1): if the URL points at github.com
-    // AND a GitHub Device Flow token is stored, inject the token into
-    // the clone URL so private repos work. The token is ephemerally
-    // inserted into the shell command only — never persisted back to
-    // state.json. If Device Flow isn't connected we try the bare URL,
-    // which works for public repos.
+    // Private GitHub repositories prefer the project's GitHub App
+    // installation token. Device Flow remains a compatibility fallback.
+    // Authentication is passed through git's ephemeral extraheader env,
+    // never embedded into the command, SSE output, or persisted URL.
     //
     // Also (audit fix #9): the displayed gitUrl in events is the
     // ORIGINAL user-supplied URL, but we DO redact any embedded
     // userinfo before logging so pasted credentials don't leak into
     // the SSE log or state.json.
     const displayUrl = _redactUrlUserInfo(gitUrl);
-    const deviceToken = stateService.getGithubDeviceAuth()?.token;
-    const cloneUrl = _injectGithubTokenIfPossible(gitUrl, deviceToken);
+    const gitAuth = await resolveGitAuthEnv({
+      repoRoot: repoPath,
+      config,
+      stateService,
+      githubApp: deps.githubApp,
+    });
 
     // UF-01 preflight: when the URL points at github.com but we have
     // no Device Flow token, warn the user up-front. For public repos
@@ -3276,7 +3328,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // and the user sees an english git error with no actionable hint.
     // We emit a 'progress' warning now and map the error below.
     const isGithubUrl = _isGithubHttpsUrl(gitUrl);
-    const needsAuthHint = isGithubUrl && !deviceToken;
+    const needsAuthHint = isGithubUrl && gitAuth.source === 'none';
 
     try {
       stateService.updateProject(project.id, {
@@ -3290,7 +3342,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       if (needsAuthHint) {
         sendEvent('progress', {
-          line: '警告：未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
+          line: '警告：未检测到该项目可用的 GitHub App 授权或 GitHub 登录。若这是私有仓库,请先在设置中授权该仓库后重试。',
         });
       }
 
@@ -3322,8 +3374,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // don't leak into the SSE stream.
       sendEvent('progress', { line: `$ git clone ${displayUrl} ${repoPath}` });
       const clone = await shell.exec(
-        `GIT_TERMINAL_PROMPT=0 git clone "${cloneUrl}" "${repoPath}"`,
-        {
+        `git clone "${displayUrl}" "${repoPath}"`,
+        mergeGitAuthEnv({
           timeout: 10 * 60 * 1000, // 10 minutes max; cancel any stuck clone
           onData: (chunk: string) => {
             // git often emits carriage-return progress updates for
@@ -3335,14 +3387,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
               if (trimmed) sendEvent('progress', { line: trimmed });
             }
           },
-        },
+        }, gitAuth),
       );
 
       if (clone.exitCode !== 0) {
         const rawErr = (combinedOutput(clone) || 'git clone failed').trim();
         // UF-01: translate "could not read Username" into a clear,
         // actionable Chinese message pointing the user at Device Flow.
-        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, !!deviceToken);
+        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, gitAuth.source !== 'none');
         stateService.updateProject(project.id, {
           cloneStatus: 'error',
           cloneError: errMsg,
@@ -3407,39 +3459,91 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    // Drop the docker network first so that even if state save fails,
-    // the operator can retry and succeed without network collisions.
-    if (project.dockerNetwork) {
-      const result = await removeDockerNetwork(project.dockerNetwork);
-      if (!result.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[projects] failed to remove docker network ${project.dockerNetwork}: ${result.detail}`,
-        );
-        // Continue anyway — zombie network is less harmful than zombie
-        // project entry. State cascade will clean up the rest.
-      }
+    // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
+    // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个
+    // 孤儿容器）。顺序修正：**先收容器、后删网络**——网络上还挂着容器时
+    // `docker network rm` 必然失败（active endpoints），旧实现先删网络等于
+    // 僵尸网络 + 僵尸容器双输。
+    //
+    // 在 state cascade 之前先抄下本项目的全部容器名（cascade 之后就查不到了）。
+    const projectBranches = stateService
+      .getAllBranches()
+      .filter((b) => (b.projectId || 'default') === project.id);
+    const appContainerNames = projectBranches
+      .flatMap((b) => Object.values(b.services || {}).map((s) => s.containerName))
+      .filter((n): n is string => Boolean(n));
+    // getInfraServicesForProject 已排除系统级 infra（如 cds-state-mongo，CDS
+    // 自身状态库）——removeProject 的 cascade 同样保护它，物理清理必须镜像该口径。
+    const infraContainerNames = stateService
+      .getInfraServicesForProject(project.id)
+      .map((s) => s.containerName)
+      .filter((n): n is string => Boolean(n));
+    // 外部访问代理容器（Codex P1）：删项目也要停掉，否则公网端口一直暴露已删资源。
+    const proxyContainerNames = projectBranches
+      .flatMap((b) => stateService.getResourceExternalAccessForBranch(project.id, b.id))
+      .map((p) => p.proxyContainerName)
+      .filter((n): n is string => Boolean(n));
+    const teardownContainers = [...new Set([...appContainerNames, ...infraContainerNames, ...proxyContainerNames])];
+
+    // 墓碑必须**先于** removeProject 落库（Codex P2）：若 tombstone 写在
+    // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
+    // 也无墓碑，收割器的补偿路径彻底断（删最后一个项目时尤其致命）。先写墓碑，
+    // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
+    const requestedAt = new Date().toISOString();
+    if (teardownContainers.length > 0) {
+      stateService.addContainerTeardownTombstones(
+        teardownContainers.map((containerName) => ({
+          containerName,
+          projectId: project.id,
+          requestedAt,
+        })),
+      );
     }
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
     // orphans in state.json. The state service returns a summary so we
     // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost). Container teardown is intentionally NOT
-    // done here — the previous list view's per-branch DELETE already
-    // handles that, and chasing it from a project DELETE would slow the
-    // request to multi-second territory. We log the cascade summary so
-    // operators can run `docker ps` and see the leftovers.
+    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
       summary = stateService.removeProject(project.id);
     } catch (err) {
+      // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
+      // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
+      for (const containerName of teardownContainers) {
+        try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
+      }
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,
       });
       return;
     }
+
+    // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
+    // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
+    // 按墓碑补偿重试（含「删最后一个项目、state 已空」的场景）。
+    const dockerNetwork = project.dockerNetwork;
+    void (async () => {
+      try {
+        await processTeardownTombstones({ shell, state: stateService, instanceId: config?.repoRoot ? computeCdsInstanceId(config.repoRoot) : undefined });
+      } catch (err) {
+        console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
+      }
+      if (dockerNetwork) {
+        const result = await removeDockerNetwork(dockerNetwork);
+        if (!result.ok) {
+          console.warn(
+            `[projects] failed to remove docker network ${dockerNetwork}: ${result.detail}`,
+          );
+        }
+      }
+      console.log(
+        `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
+        (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
+      );
+    })();
 
     const totalCascade =
       summary.branches.length +
@@ -3461,6 +3565,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ok: true,
       projectId: project.id,
       cascade: summary,
+      // 容器/网络物理清理在后台进行；这里如实告知调度了哪些（expectation-management）。
+      containerTeardown: {
+        scheduled: teardownContainers,
+        network: dockerNetwork ?? null,
+      },
     });
   });
 

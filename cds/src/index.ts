@@ -29,6 +29,8 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
+import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
+import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
@@ -46,6 +48,9 @@ import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
+import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
+import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -70,7 +75,15 @@ import type { BranchEntry } from './types.js';
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
-const shell = new ShellExecutor();
+// 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
+// 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
+const shell = isPreviewInstance()
+  ? new PreviewInstanceShellExecutor(new ShellExecutor())
+  : new ShellExecutor();
+if (isPreviewInstance()) {
+  console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
+  console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
+}
 
 const MASTER_MEMORY_MONITOR_INTERVAL_MS = Math.max(
   10_000,
@@ -169,6 +182,71 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
   const timer = setInterval(sample, MASTER_MEMORY_MONITOR_INTERVAL_MS);
   timer.unref?.();
   sample();
+  return timer;
+}
+
+/**
+ * build-gate 看门狗（2026-07-16 队列堵死事故的常态化回归拦截，进程内主防线）。
+ *
+ * 60s 采样 evaluateBuildGateHealth（排队积压 / 槽位持有超时 / 幽灵 run / 闸门
+ * 账目不变量），退化时向 ServerEventLogStore 记 warn/error 事件（dashboard
+ * 系统日志可见）+ console.warn；同一严重度 10 分钟去重；恢复时记一条 info。
+ * 判定 SSOT：services/build-gate-health.ts（与 GET /api/cluster/build-gate/health
+ * 端点共用，端点是注册在「任务调度」里的定时回归任务的探测目标）。
+ */
+const BUILD_GATE_WATCHDOG_INTERVAL_MS = 60_000;
+const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
+
+function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
+  if (!store) return null;
+  let lastSeverity: ServerEventSeverity | null = null;
+  let lastRecordedAt = 0;
+
+  const sample = () => {
+    try {
+      const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
+      const now = Date.now();
+      if (health.ok) {
+        if (lastSeverity) {
+          // 从退化恢复：记一条 info 让事件流有始有终。
+          store.record({
+            category: 'system',
+            severity: 'info',
+            source: 'build-gate-watchdog',
+            action: 'build-gate.health.recovered',
+            message: `构建队列健康已恢复（active=${health.summary.active} queued=${health.summary.queued} max=${health.summary.max}）`,
+            details: { summary: health.summary },
+          });
+          console.warn('[build-gate-watchdog] 构建队列健康已恢复');
+          lastSeverity = null;
+        }
+        return;
+      }
+      const severity: ServerEventSeverity = health.reasons.some((r) => r.severity === 'error') ? 'error' : 'warn';
+      if (lastSeverity === severity && now - lastRecordedAt < BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS) return;
+      lastSeverity = severity;
+      lastRecordedAt = now;
+      const message = `构建队列健康退化：${health.reasons.map((r) => r.message).join('；')}`;
+      store.record({
+        category: 'system',
+        severity,
+        source: 'build-gate-watchdog',
+        action: 'build-gate.health.degraded',
+        message,
+        status: severity,
+        details: {
+          summary: health.summary,
+          reasons: health.reasons,
+        },
+      });
+      console.warn(`[build-gate-watchdog] ${message}`);
+    } catch (err) {
+      console.warn(`[build-gate-watchdog] 采样失败: ${(err as Error).message}`);
+    }
+  };
+
+  const timer = setInterval(sample, BUILD_GATE_WATCHDOG_INTERVAL_MS);
+  timer.unref?.();
   return timer;
 }
 
@@ -712,6 +790,7 @@ if (activeServerEventLogStore) {
 }
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
+const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -776,7 +855,9 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     headers: {
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
-      'X-CDS-Trigger': 'webhook',
+      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
+      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
+      'X-CDS-Trigger': pending.request.trigger,
       'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
@@ -981,10 +1062,25 @@ try {
 // 与 repo 模板有实质 drift 时,以 root 身份自动备份 + 重写 + daemon-reload,
 // forwarder 还会立即 systemctl restart 让新 ExecStart 生效。
 // 详细策略 + 跳过条件见 services/systemd-sync.ts 头部注释。
-try {
-  syncAllSystemdUnits(config.repoRoot);
-} catch (err) {
-  console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+// 预览实例不碰宿主 systemd（写 /etc/systemd + daemon-reload 全是宿主操作）。
+if (isPreviewInstance()) {
+  console.log('  [systemd-sync] 预览实例模式，跳过 systemd 单元同步');
+} else {
+  try {
+    syncAllSystemdUnits(config.repoRoot);
+  } catch (err) {
+    console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+  }
+}
+
+// 预览实例首启 seed 演示数据（空库才 seed，幂等），保证 dashboard 各页有内容可验收。
+if (isPreviewInstance()) {
+  try {
+    const seeded = seedPreviewInstanceDemoData(stateService);
+    if (seeded) console.log('  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+  } catch (err) {
+    console.warn(`  [preview-instance] 演示数据 seed 失败: ${(err as Error).message}`);
+  }
 }
 
 // 2026-05-07 一次性迁移:hotReload.mode === 'dotnet-watch' 的 BuildProfile 全部
@@ -1029,7 +1125,8 @@ const containerService = new ContainerService(shell, config, {
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
 // executor 节点的分支容器在远端，本地采样无意义，跳过。
-const resourceUsageSampler = config.mode === 'executor'
+// 预览实例没有 docker，docker stats 采样只会持续报错，直接跳过。
+const resourceUsageSampler = (config.mode === 'executor' || isPreviewInstance())
   ? null
   : new ResourceUsageSampler(stateService, containerService);
 resourceUsageSampler?.start();
@@ -1183,7 +1280,7 @@ if (process.env.CDS_USE_FORWARDER === '1') {
   }
 }
 
-if (config.mode !== 'executor') {
+if (config.mode !== 'executor' && !isPreviewInstance()) {
   const explicitCanaryUrls = parseCsv(process.env.CDS_PREVIEW_CANARY_URLS || '') ?? [];
   previewCanaryService = new PreviewCanaryService({
     getTargets: (): PreviewCanaryTarget[] => {
@@ -1612,10 +1709,13 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         const profile = profiles.find((p) => p.id === svc.profileId);
         let ready = false;
         if (profile?.startupSignal) {
-          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+          // 唤醒是 docker restart 级操作：启动信号等待收紧到 120s（默认 300s 是给
+          // 全量构建用的），避免等待页在静止进度上挂几分钟（2026-07-16「卡 86%」修复）。
+          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, undefined, 120);
         }
         if (!profile?.startupSignal || ready) {
-          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe);
+          // 传 containerName 启用容器活性早退：容器崩了秒级失败，不空等探测超时。
+          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe, undefined, undefined, svc.containerName);
         }
         lease?.assertCurrent(`auto-wake readiness ${svc.profileId}`);
         if (ready) {
@@ -1630,6 +1730,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 
       if (failed.length === 0) {
         lease?.assertCurrent('auto-wake before success save');
+        // 记录本次热重启耗时进 restart 样本桶：预览等待页据此显示真实进度与
+        // 「预计还需」（上界 10 分钟防离谱样本污染中位）。
+        {
+          const wakeElapsedMs = Date.now() - Date.parse(wakeStartedAt);
+          stateService.recordDeployDuration(branch.projectId || 'default', 'restart', wakeElapsedMs, 10 * 60 * 1000);
+        }
         branch.status = 'running';
         branch.errorMessage = undefined;
         branch.lastStoppedAt = undefined;
@@ -2125,6 +2231,12 @@ janitorService.setRemoveFn(async (slug: string) => {
 
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
+  // 预览实例没有 docker，跳过启动对账：否则 discover 拿到空集会把 seed 的
+  // 演示分支（status=running）误判成「容器丢失」翻成 error。
+  if (isPreviewInstance()) {
+    console.log('  [preview-instance] 跳过 docker 启动对账（infra/app 容器 reconcile）');
+    return;
+  }
   try {
     const discovered = await containerService.discoverInfraContainers();
     const stateServices = stateService.getInfraServices();
@@ -2757,10 +2869,20 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
   }
 
+  // 孤儿容器收割器的 timer 句柄（首扫 setTimeout + 周期 setInterval），
+  // stop/shutdown 时统一清理。
+  const orphanReaperTimers: Array<NodeJS.Timeout> = [];
+
   // B'.2:standby 模式下**不**启动 scheduler/janitor。supervisor 调
   // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
   // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
   function startBackgroundServices(): void {
+    // 预览实例：所有依赖 docker / 宿主的后台服务整体跳过（docker events、
+    // janitor 清 worktree、auto-lifecycle 停容器、infra 重启循环都属宿主操作）。
+    if (isPreviewInstance()) {
+      console.log('[preview-instance] 跳过后台服务：docker-events / janitor / scheduler / auto-lifecycle / infra-watchdog');
+      return;
+    }
     dockerEventMonitor.start();
     void systemLogMonitor.start();
     if (schedulerService.isEnabled()) {
@@ -2794,8 +2916,43 @@ janitorService.setRemoveFn(async (slug: string) => {
     if (config.mode !== 'executor') {
       infraFlapWatchdog.start();
     }
+    // 2026-07-15:孤儿容器收割器。删除的项目/分支残留的 cds-managed 容器
+    //（state 中无 owner）定期停掉——单日取证 68 个孤儿 app 容器 + 用户报告的
+    // 已删项目 infra 容器仍在跑。启动 2 分钟后首扫（让 startup reconcile 先
+    // 收敛 state），此后每小时一轮。详见 services/orphan-container-reaper.ts。
+    if (config.mode !== 'executor' && isOrphanReaperEnabled()) {
+      const runOrphanSweep = () => {
+        void sweepOrphanCdsContainers({
+          shell,
+          state: stateService,
+          eventLog: activeServerEventLogStore,
+          instanceId: computeCdsInstanceId(config.repoRoot),
+        }).then((result) => {
+          if (result.skippedReason) {
+            console.log(`[orphan-reaper] 本轮跳过: ${result.skippedReason}`);
+            return;
+          }
+          const stopped = result.actions.filter((a) => a.action === 'stopped');
+          const failed = result.actions.filter((a) => a.action === 'stop-failed');
+          if (stopped.length || failed.length) {
+            console.warn(
+              `[orphan-reaper] 孤儿容器处置: 已停止 ${stopped.length} 个` +
+              (failed.length ? `, 失败 ${failed.length} 个` : '') +
+              ` (共发现 ${result.actions.length} 个孤儿)`,
+            );
+          }
+        }).catch((err) => {
+          console.warn(`[orphan-reaper] sweep 异常: ${(err as Error).message}`);
+        });
+      };
+      orphanReaperTimers.push(setTimeout(runOrphanSweep, 2 * 60_000));
+      const interval = setInterval(runOrphanSweep, 60 * 60_000);
+      interval.unref?.();
+      orphanReaperTimers.push(interval);
+    }
   }
   function stopBackgroundServices(): void {
+    for (const t of orphanReaperTimers.splice(0)) clearTimeout(t as NodeJS.Timeout);
     dockerEventMonitor.stop();
     systemLogMonitor.stop();
     schedulerService.stop();
@@ -2838,6 +2995,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
+  if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
@@ -3946,6 +4104,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // the node between standalone and "hot-joined hybrid" states without a
   // restart. See `cds/src/routes/cluster.ts` for the flow doc.
   let hotJoinAgent: ExecutorAgent | null = null;
+  // 全局构建并发上限的运行时供给（CDS 系统设置 → CdsState.maxConcurrentBuilds）。
+  // env CDS_MAX_CONCURRENT_BUILDS 在 build-gate 内部仍优先于本供给器。
+  setMaxConcurrentBuildsProvider(() => stateService.getMaxConcurrentBuilds());
   app.use('/api/cluster', createClusterRouter({
     config,
     stateService,

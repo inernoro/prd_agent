@@ -132,6 +132,25 @@ def _require_stage_evidence_matches_entry(path: str, label: str, entry: dict) ->
             f"ERROR: {label} releaseMainSha mismatch: {path} actual={actual_main_sha or 'empty'} expected={expected_main_sha or 'empty'}"
         )
 
+    expected_maintenance_commit = _normalize_commit(entry.get("maintenanceBaselineCommit"))
+    actual_maintenance_commit = _normalize_commit(
+        payload.get("maintenanceBaselineCommit") or payload.get("MaintenanceBaselineCommit")
+    )
+    if expected_maintenance_commit != actual_maintenance_commit:
+        raise SystemExit(
+            f"ERROR: {label} maintenanceBaselineCommit mismatch: {path} "
+            f"actual={actual_maintenance_commit or 'empty'} expected={expected_maintenance_commit or 'empty'}"
+        )
+    expected_maintenance_json = str(entry.get("maintenanceBaselineJson") or "").strip()
+    actual_maintenance_json = str(
+        payload.get("maintenanceBaselineJson") or payload.get("MaintenanceBaselineJson") or ""
+    ).strip()
+    if expected_maintenance_json != actual_maintenance_json:
+        raise SystemExit(
+            f"ERROR: {label} maintenanceBaselineJson mismatch: {path} "
+            f"actual={actual_maintenance_json or 'empty'} expected={expected_maintenance_json or 'empty'}"
+        )
+
 
 def _require_serving_probe_for_commit(path: str, label: str, commit: str) -> None:
     payload = _require_pass_json(path, label)
@@ -295,7 +314,14 @@ def _require_smoke_route_matrix(path: str, label: str) -> None:
         )
 
 
-def _require_release_gate_for_commit(path: str, label: str, commit: str, require_config_authority: bool = False) -> None:
+def _require_release_gate_for_commit(
+    path: str,
+    label: str,
+    commit: str,
+    require_config_authority: bool = False,
+    allow_skipped_runtime_gates: bool = False,
+    allow_skipped_config_authority: bool = False,
+) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
     if not expected:
@@ -335,21 +361,44 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
         active_without_usable = config.get("activeBoundPoolWithoutUsableMember")
         if active_without_usable is None:
             active_without_usable = config.get("ActiveBoundPoolWithoutUsableMember")
-        if not required or not ok:
+        active_missing_pool = config.get("activeMissingGatewayPool")
+        if active_missing_pool is None:
+            active_missing_pool = config.get("ActiveMissingGatewayPool")
+        readiness_percent = config.get("readinessPercent")
+        if readiness_percent is None:
+            readiness_percent = config.get("ReadinessPercent")
+        config_failures = config.get("failures")
+        if config_failures is None:
+            config_failures = config.get("Failures")
+        if not isinstance(config_failures, list):
+            config_failures = []
+        audited_maintenance_config_skip = (
+            allow_skipped_config_authority
+            and not required
+            and not ok
+            and status == "not-required"
+            and map_remaining is None
+            and active_ready is None
+            and active_without_usable is None
+            and active_missing_pool is None
+            and readiness_percent is None
+            and not config_failures
+        )
+        if not audited_maintenance_config_skip and (not required or not ok):
             raise SystemExit(
                 f"ERROR: {label} configAuthority is not required+ok for http-full gate: "
                 f"{path} required={required} ok={ok}"
             )
-        if status != "ready":
+        if not audited_maintenance_config_skip and status != "ready":
             raise SystemExit(f"ERROR: {label} configAuthority status is not ready: {path} status={status or 'empty'}")
-        if int(map_remaining or 0) != 0:
+        if not audited_maintenance_config_skip and int(map_remaining or 0) != 0:
             raise SystemExit(
                 f"ERROR: {label} configAuthority mapFallbackObjectsRemaining is not zero: "
                 f"{path} value={map_remaining}"
             )
-        if active_ready is not True:
+        if not audited_maintenance_config_skip and active_ready is not True:
             raise SystemExit(f"ERROR: {label} activeAppCallerMapFallbackReady is not true: {path}")
-        if int(active_without_usable or 0) != 0:
+        if not audited_maintenance_config_skip and int(active_without_usable or 0) != 0:
             raise SystemExit(
                 f"ERROR: {label} activeBoundPoolWithoutUsableMember is not zero: "
                 f"{path} value={active_without_usable}"
@@ -381,13 +430,55 @@ def _require_release_gate_for_commit(path: str, label: str, commit: str, require
             and remaining == ["full_http_rollout_ledger"]
             and allowed_pending == ["full_http_rollout_ledger"]
         )
-        if not runtime_required or not runtime_ok or (not runtime_ready and not pending_http_full_ledger_only):
+        audited_maintenance_skip = (
+            allow_skipped_runtime_gates
+            and not runtime_required
+            and not runtime_ok
+            and not runtime_ready
+            and not remaining
+            and not allowed_pending
+            and not self_finalizing
+        )
+        if not audited_maintenance_skip and (
+            not runtime_required or not runtime_ok or (not runtime_ready and not pending_http_full_ledger_only)
+        ):
             raise SystemExit(
                 f"ERROR: {label} runtimeGates is not required+ok+ready for http-full gate: "
                 f"{path} required={runtime_required} ok={runtime_ok} readyForHttpFull={runtime_ready} "
                 f"remaining={','.join(str(x) for x in remaining) or 'none'} "
                 f"allowedPending={','.join(str(x) for x in allowed_pending) or 'none'}"
             )
+
+
+def _validated_maintenance_baseline_commit(args: argparse.Namespace) -> str:
+    commit = _normalize_commit(args.maintenance_baseline_commit)
+    if not commit:
+        if args.maintenance_baseline_json:
+            raise SystemExit("ERROR: maintenance baseline JSON requires a maintenance baseline commit")
+        return ""
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise SystemExit("ERROR: maintenance baseline commit must be a complete 40-character commit")
+    if args.stage != "http-full":
+        raise SystemExit("ERROR: maintenance baseline commit is only valid for stage http-full")
+    if commit == _normalize_commit(args.commit):
+        raise SystemExit("ERROR: maintenance baseline commit must differ from the new release commit")
+    payload = _require_pass_json(args.maintenance_baseline_json, "maintenance baseline audit")
+    audited_commit = _normalize_commit(payload.get("commit") or payload.get("Commit"))
+    if audited_commit != commit:
+        raise SystemExit(
+            "ERROR: maintenance baseline audit commit mismatch: "
+            f"actual={audited_commit or 'empty'} expected={commit}"
+        )
+    audited_shadow_commit = _normalize_commit(
+        payload.get("shadowEvidenceCommit") or payload.get("ShadowEvidenceCommit") or audited_commit
+    )
+    expected_shadow_commit = _normalize_commit(args.shadow_evidence_commit)
+    if not expected_shadow_commit or audited_shadow_commit != expected_shadow_commit:
+        raise SystemExit(
+            "ERROR: maintenance baseline audit shadowEvidenceCommit mismatch: "
+            f"actual={audited_shadow_commit or 'empty'} expected={expected_shadow_commit or 'empty'}"
+        )
+    return commit
 
 
 def _require_prod_preflight_for_commit(path: str, label: str, commit: str, stage: str = "") -> None:
@@ -835,10 +926,20 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
     if _bool_flag(str(entry.get("releaseGateRequired") or "0")):
         try:
             shadow_evidence_commit = _normalize_commit(entry.get("shadowEvidenceCommit")) or commit
+            maintenance_baseline_commit = _validated_maintenance_baseline_commit(argparse.Namespace(
+                maintenance_baseline_commit=str(entry.get("maintenanceBaselineCommit") or ""),
+                maintenance_baseline_json=str(entry.get("maintenanceBaselineJson") or ""),
+                shadow_evidence_commit=shadow_evidence_commit,
+                stage=stage,
+                commit=commit,
+            ))
             _require_release_gate_for_commit(
                 str(entry.get("releaseGateJson") or ""),
                 f"{stage} release gate evidence",
                 shadow_evidence_commit,
+                require_config_authority=stage == "http-full",
+                allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                allow_skipped_config_authority=bool(maintenance_baseline_commit),
             )
         except SystemExit as exc:
             failures.append(str(exc))
@@ -1036,6 +1137,7 @@ def append(args: argparse.Namespace) -> int:
     parent = os.path.dirname(args.ledger)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    maintenance_baseline_commit = _validated_maintenance_baseline_commit(args)
     if args.status == "success":
         _require_http_full_map_fallback_exit(
             args.stage,
@@ -1063,6 +1165,8 @@ def append(args: argparse.Namespace) -> int:
                     "release gate evidence",
                     args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
+                    allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                    allow_skipped_config_authority=bool(maintenance_baseline_commit),
                 )
             if _bool_flag(args.protocol_canary_required):
                 _require_protocol_canary_for_commit(args.protocol_canary_json, "protocol canary evidence", args.commit)
@@ -1098,6 +1202,8 @@ def append(args: argparse.Namespace) -> int:
         "evidenceMarkdown": args.evidence_md,
         "releaseGateJson": args.release_gate_json,
         "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
+        "maintenanceBaselineCommit": maintenance_baseline_commit,
+        "maintenanceBaselineJson": args.maintenance_baseline_json,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "prodPreflightJson": args.prod_preflight_json,
         "prodHealthPreflightJson": args.prod_health_preflight_json,
@@ -1170,6 +1276,8 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- allowlist: `{cell(report['allowlist'])}`\n")
         fh.write(f"- disableMapConfigFallbackForActiveAppCallers: `{cell(report['disableMapConfigFallbackForActiveAppCallers'])}`\n")
         fh.write(f"- releaseGateRequired: `{cell(report['releaseGateRequired'])}`\n")
+        fh.write(f"- maintenanceBaselineCommit: `{cell(report['maintenanceBaselineCommit'])}`\n")
+        fh.write(f"- maintenanceBaselineJson: `{cell(report['maintenanceBaselineJson'])}`\n")
         fh.write(f"- rollbackRehearsal: `{cell(report['rollbackRehearsal'])}`\n")
         fh.write(f"- allowOutOfOrder: `{cell(report['allowOutOfOrder'])}`\n")
         fh.write(f"- allowOutOfOrderReason: `{cell(report['allowOutOfOrderReason'])}`\n")
@@ -1235,6 +1343,7 @@ def _write_markdown(path: str, report: dict) -> None:
 
 def stage_report(args: argparse.Namespace) -> int:
     failures: list[str] = []
+    maintenance_baseline_commit = _validated_maintenance_baseline_commit(args)
     provider_external_blockers = _provider_external_blockers(args.provider_audit_json)
     video_canary_external_blockers = _canary_external_blockers(args.video_canary_json)
     asr_http_canary_external_blockers = _canary_external_blockers(args.asr_http_canary_json)
@@ -1286,6 +1395,8 @@ def stage_report(args: argparse.Namespace) -> int:
                     label,
                     args.shadow_evidence_commit or args.commit,
                     require_config_authority=args.stage == "http-full",
+                    allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
+                    allow_skipped_config_authority=bool(maintenance_baseline_commit),
                 )
             elif label == "prodPreflightJson":
                 _require_prod_preflight_for_commit(path, label, args.commit, args.stage)
@@ -1328,6 +1439,8 @@ def stage_report(args: argparse.Namespace) -> int:
         "gateBase": args.gate_base,
         "releaseGateRequired": _bool_flag(args.release_gate_required),
         "shadowEvidenceCommit": _normalize_commit(args.shadow_evidence_commit) or args.commit.lower(),
+        "maintenanceBaselineCommit": maintenance_baseline_commit,
+        "maintenanceBaselineJson": args.maintenance_baseline_json,
         "rollbackRehearsal": args.stage == ROLLBACK_REHEARSAL_STAGE,
         "allowOutOfOrder": _bool_flag(args.allow_out_of_order),
         "allowOutOfOrderReason": args.allow_out_of_order_reason.strip(),
@@ -1557,6 +1670,12 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                         failures.append("maintenance baseline shadow check commit mismatch")
                     if int(item.get("critical") or 0) != 0 or int(item.get("httpFail") or 0) != 0 or item.get("ok") is not True:
                         failures.append(f"maintenance baseline shadow check is unsafe: {item.get('label') or 'unknown'}")
+            _require_release_gate_for_commit(
+                release_gate_path,
+                "maintenance baseline release gate",
+                shadow_evidence_commit,
+                require_config_authority=True,
+            )
         except (SystemExit, TypeError, ValueError) as exc:
             failures.append(str(exc))
 
@@ -1619,6 +1738,8 @@ def main() -> int:
     append_parser.add_argument("--evidence-md", default="")
     append_parser.add_argument("--release-gate-json", default="")
     append_parser.add_argument("--shadow-evidence-commit", default="")
+    append_parser.add_argument("--maintenance-baseline-commit", default="")
+    append_parser.add_argument("--maintenance-baseline-json", default="")
     append_parser.add_argument("--release-gate-required", default="0")
     append_parser.add_argument("--prod-preflight-json", default="")
     append_parser.add_argument("--prod-health-preflight-json", default="")
@@ -1662,6 +1783,8 @@ def main() -> int:
     report_parser.add_argument("--gate-base", default="")
     report_parser.add_argument("--release-gate-json", default="")
     report_parser.add_argument("--shadow-evidence-commit", default="")
+    report_parser.add_argument("--maintenance-baseline-commit", default="")
+    report_parser.add_argument("--maintenance-baseline-json", default="")
     report_parser.add_argument("--release-gate-required", default="0")
     report_parser.add_argument("--prod-preflight-json", default="")
     report_parser.add_argument("--prod-health-preflight-json", default="")

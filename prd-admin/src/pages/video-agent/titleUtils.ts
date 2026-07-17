@@ -11,8 +11,8 @@ export function sanitizeVideoTitle(raw: string | undefined | null, maxLen = 30):
 
   // 剥 HTML 注释 <!-- ... -->（含跨行）
   s = s.replace(/<!--[\s\S]*?-->/g, ' ');
-  // 剥 markdown 图片 ![alt](url)
-  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  // 剥 markdown 图片，包含用户只粘贴到一半的 ![](
+  s = s.replace(/!\[[^\]]*\](?:\([^)]*\)?)?/g, ' ').replace(/!\[[^\]]*$/g, ' ');
   // 剥 markdown 链接 [text](url) → 保留 text
   s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
   // 剥裸 URL

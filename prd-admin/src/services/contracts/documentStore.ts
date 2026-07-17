@@ -41,6 +41,8 @@ export type DocumentStore = {
   peerSyncAutoEnabled?: boolean | null;
   /** 自动同步周期（分钟，下限 5） */
   peerSyncIntervalMinutes?: number | null;
+  /** 自动发送模式：trigger（内容变更触发，默认）/ scheduled（定时检查） */
+  peerSyncAutoMode?: 'trigger' | 'scheduled' | string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -181,6 +183,10 @@ export type DocumentStoreAgentRun = {
   templateKey?: string;
   customPrompt?: string;
   generatedText?: string;
+  /** 转录纯文本全文（transcribe 完成后保存；「转录原文」页签与免重跑整理的数据源） */
+  transcriptText?: string;
+  /** 「换个整理方式」任务指向的原转录 run */
+  restyleOfRunId?: string;
   /** 多轮对话历史（仅 reprocess 模式有内容） */
   messages?: ReprocessChatMessage[];
   createdAt: string;

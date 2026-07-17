@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -20,6 +21,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     private readonly ILogger<LlmRequestLogWriter> _logger;
     private readonly IAppSettingsService _settingsService;
     private readonly IAssetStorage _assetStorage;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly string _internalTenantId;
 
     /// <summary>JSON 中字符串值超过此长度时，上传 COS 存储引用</summary>
@@ -31,12 +33,14 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         LlmRequestLogBackground _,
         IAppSettingsService settingsService,
         IAssetStorage assetStorage,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _db = db;
         _logger = logger;
         _settingsService = settingsService;
         _assetStorage = assetStorage;
+        _httpContextAccessor = httpContextAccessor;
         _internalTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -65,6 +69,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 Id = Guid.NewGuid().ToString(),
                 TenantId = ResolveTenantId(start.TenantId),
                 TeamId = start.TeamId,
+                ServiceKeyId = NormalizeIdentity(start.ServiceKeyId),
+                ClientCode = NormalizeIdentity(start.ClientCode),
+                Environment = NormalizeIdentity(start.Environment),
+                ServiceKeyPrefix = NormalizeIdentity(start.ServiceKeyPrefix),
                 RequestId = start.RequestId,
                 ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
@@ -94,7 +102,6 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 PromptPolicyId = string.IsNullOrWhiteSpace(start.PromptPolicyId) ? null : start.PromptPolicyId,
                 PromptPolicyVersion = start.PromptPolicyVersion,
                 PromptPolicyHash = string.IsNullOrWhiteSpace(start.PromptPolicyHash) ? null : start.PromptPolicyHash,
-                PromptPolicyChars = start.PromptPolicyChars,
                 DroppedParameters = start.DroppedParameters?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList(),
                 ModelResolutionType = start.ModelResolutionType,
                 ModelGroupId = start.ModelGroupId,
@@ -132,10 +139,16 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 InputPricePerMillion = start.InputPricePerMillion,
                 OutputPricePerMillion = start.OutputPricePerMillion,
                 PricePerCall = start.PricePerCall,
-                PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant()
+                PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant(),
+                PriceSnapshotHash = LlmCostEvidence.BuildPriceSnapshotHash(
+                    start.InputPricePerMillion,
+                    start.OutputPricePerMillion,
+                    start.PricePerCall,
+                    start.PriceCurrency)
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);
+            MarkLifecycleStarted();
 
             // 运行时警告：UserId 为空意味着日志无法关联到用户
             if (string.IsNullOrWhiteSpace(log.UserId))
@@ -170,6 +183,10 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     Id = Guid.NewGuid().ToString(),
                     TenantId = ResolveTenantId(start.TenantId),
                     TeamId = start.TeamId,
+                    ServiceKeyId = NormalizeIdentity(start.ServiceKeyId),
+                    ClientCode = NormalizeIdentity(start.ClientCode),
+                    Environment = NormalizeIdentity(start.Environment),
+                    ServiceKeyPrefix = NormalizeIdentity(start.ServiceKeyPrefix),
                     RequestId = start.RequestId,
                     ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,
@@ -195,6 +212,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     Error = $"日志写入失败（请求仍照常发起，但完整结果未被记录）：{ex.GetType().Name}: {ex.Message}"
                 };
                 await _db.LlmRequestLogs.InsertOneAsync(fallbackLog, cancellationToken: ct);
+                MarkLifecycleStarted();
                 _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — 已写入 blackhole 占位日志（记录降级）。AppCallerCode={AppCallerCode}, RequestId={RequestId}", start.AppCallerCode, start.RequestId);
                 // 关键：返回 null 而非 fallbackLog.Id，使后续 MarkDone/MarkError 不会复用并覆盖这条记录。
                 return null;
@@ -212,6 +230,15 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         => string.IsNullOrWhiteSpace(tenantId)
             ? _internalTenantId
             : tenantId.Trim();
+
+    private void MarkLifecycleStarted()
+    {
+        if (_httpContextAccessor?.HttpContext is { } http)
+            http.Items[LlmRequestLogContextItems.LifecycleStarted] = true;
+    }
+
+    private static string? NormalizeIdentity(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public void MarkFirstByte(string logId, DateTime at)
     {

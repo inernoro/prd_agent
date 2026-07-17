@@ -16,10 +16,11 @@
  */
 import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { DocumentGalaxyView, type GalaxyLabelMode } from '@/pages/document-store/DocumentGalaxyView';
 import { UniverseGraphPage } from '@/pages/document-store/UniverseGraphPage';
 import {
@@ -27,10 +28,23 @@ import {
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
   getDocStoreShareGraph,
+  getDocumentStore,
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { parseLibraryShareViewMode, withLibraryShareViewMode, type LibraryShareViewMode } from './libraryShareViewMode';
+import { setWikilinkEntries } from '@/lib/wikilinkCache';
+import {
+  parseLibraryShareViewMode,
+  resolveShareKnowledgeBaseReturnPath,
+  resolveControlledSharedEntryId,
+  resolveInitialSharedEntryId,
+  resolveLibraryShareSortMode,
+  resolveSharedWikilinkEntryId,
+  withLibraryShareEntry,
+  withLibraryShareSortMode,
+  withLibraryShareViewMode,
+  type LibraryShareViewMode,
+} from './libraryShareViewMode';
 
 const PAGE_BG = '#0a0a0a';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -43,6 +57,7 @@ export function LibraryShareViewPage() {
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
   const entryFromUrl = searchParams.get('entry');
   const viewFromUrl = searchParams.get('view');
+  const sortFromUrl = searchParams.get('sort');
 
   const [view, setView] = useState<DocStoreShareView | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -50,6 +65,15 @@ export function LibraryShareViewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
+  const [canOpenStore, setCanOpenStore] = useState(false);
+
+  const shareSortMode = useMemo(
+    () => resolveLibraryShareSortMode(
+      sortFromUrl,
+      entries.some((entry) => Number.isFinite(entry.sortOrder)),
+    ),
+    [entries, sortFromUrl],
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -69,30 +93,76 @@ export function LibraryShareViewPage() {
     return () => { mounted = false; };
   }, [token]);
 
-  // 默认选中：URL ?entry= > 单篇分享 entryId > 最新创建的非 folder > primaryEntryId > 第一个非 folder
-  // 「最新创建」放在 primaryEntryId 之前：分享场景下"刚归档的新报告"是最常见的查看目标，
-  // 让分享对象一打开就看到最新内容，不用先在目录里翻。
+  // 分享 token 只授权匿名分享端点，不能推导登录用户也能读取后台知识库详情。
+  // 复用 GetStore 的服务端权限判断（owner/public/team/project）；失败时保持安全回退列表。
+  useEffect(() => {
+    let mounted = true;
+    setCanOpenStore(false);
+    if (!isAuthenticated || !view?.store.id) return () => { mounted = false; };
+
+    getDocumentStore(view.store.id).then((response) => {
+      if (mounted) setCanOpenStore(response.success);
+    });
+    return () => { mounted = false; };
+  }, [isAuthenticated, view?.store.id]);
+
+  // 默认选中服从阅读排序：书籍顺序先打开主文档；时间模式打开相应的最新文档。
   const initialSelectedId = useMemo<string | undefined>(() => {
     if (!view || entries.length === 0) return undefined;
-    if (entryFromUrl && entries.some((e) => e.id === entryFromUrl)) return entryFromUrl;
-    if (view.entryId) return view.entryId;
-    const docs = entries.filter((e) => !e.isFolder);
-    if (docs.length === 0) return undefined;
-    const newest = docs.reduce((best, e) => {
-      const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
-      const bt = best.createdAt ? new Date(best.createdAt).getTime() : 0;
-      return t > bt ? e : best;
-    }, docs[0]);
-    if (newest) return newest.id;
-    if (view.store.primaryEntryId && docs.some((e) => e.id === view.store.primaryEntryId)) {
-      return view.store.primaryEntryId;
-    }
-    return docs[0]?.id;
-  }, [view, entries, entryFromUrl]);
+    return resolveInitialSharedEntryId(entries, {
+      entryFromUrl,
+      sharedEntryId: view.entryId,
+      primaryEntryId: view.store.primaryEntryId,
+      sortMode: shareSortMode,
+    });
+  }, [view, entries, entryFromUrl, shareSortMode]);
 
   useEffect(() => {
-    if (initialSelectedId && !selectedEntryId) setSelectedEntryId(initialSelectedId);
-  }, [initialSelectedId, selectedEntryId]);
+    if (!initialSelectedId) return;
+    if (entryFromUrl) {
+      if (selectedEntryId !== initialSelectedId) setSelectedEntryId(initialSelectedId);
+      return;
+    }
+    if (!selectedEntryId) setSelectedEntryId(initialSelectedId);
+  }, [entryFromUrl, initialSelectedId, selectedEntryId]);
+
+  // DocBrowser 会在自己的首次 effect 中选择默认文档，而父组件同步 URL 的 effect
+  // 要到提交后才执行。直接把有效深链作为受控值传下去，避免子 effect 抢先把
+  // ?entry= 覆盖成 README；浏览器前进/后退时也由 URL 在首帧取得优先级。
+  const controlledSelectedEntryId = resolveControlledSharedEntryId(
+    selectedEntryId,
+    initialSelectedId,
+    Boolean(entryFromUrl),
+  );
+
+  // 公开阅读页与后台知识库共用 MarkdownViewer，因此也必须装载当前分享范围的双链索引。
+  // 这里只写入匿名端点已经返回的条目，任何未被分享的文档都无法被解析或跳转。
+  useEffect(() => {
+    setWikilinkEntries(entries.filter((entry) => !entry.isFolder).map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      summary: entry.summary,
+      updatedAt: entry.updatedAt,
+    })));
+    return () => setWikilinkEntries([]);
+  }, [entries]);
+
+  const selectSharedEntry = useCallback((entryId: string) => {
+    setSelectedEntryId(entryId);
+    setSearchParams((current) => withLibraryShareEntry(current, entryId));
+  }, [setSearchParams]);
+
+  // MarkdownViewer 把 [[章节标题]] 派发为全局事件。公开页只在当前分享列表内解析，
+  // 命中后同步内容和 URL，保证刷新、复制链接及浏览器前进后退都可复现。
+  useEffect(() => {
+    const handleWikilinkClick = (event: Event) => {
+      const detail = (event as CustomEvent<{ title?: string; entryId?: string }>).detail ?? {};
+      const entryId = resolveSharedWikilinkEntryId(entries, detail);
+      if (entryId) selectSharedEntry(entryId);
+    };
+    document.addEventListener('wikilink:click', handleWikilinkClick);
+    return () => document.removeEventListener('wikilink:click', handleWikilinkClick);
+  }, [entries, selectSharedEntry]);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     if (!token) return null;
@@ -121,6 +191,10 @@ export function LibraryShareViewPage() {
     // 视图模式切换用 replace，避免每次切换都往 history 堆条目
     setSearchParams(withLibraryShareViewMode(searchParams, mode), { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const setShareSortMode = useCallback((mode: DocBrowserSortMode) => {
+    setSearchParams((current) => withLibraryShareSortMode(current, mode), { replace: true });
+  }, [setSearchParams]);
 
   // DocumentEntry 字段是 DocBrowserEntry 的超集，可直接传入
   const browserEntries = entries as unknown as DocBrowserEntry[];
@@ -167,6 +241,17 @@ export function LibraryShareViewPage() {
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
   const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
+  const knowledgeBaseReturnPath = resolveShareKnowledgeBaseReturnPath(store.id, canOpenStore);
+  const knowledgeBaseReturnLabel = canOpenStore
+    ? '返回知识库'
+    : isAuthenticated
+      ? '我的知识库'
+      : '登录后进入知识库';
+  const knowledgeBaseReturnTitle = canOpenStore
+    ? `以我的身份打开「${store.name}」`
+    : isAuthenticated
+      ? '当前账号不能直接打开该知识库，返回我的知识库列表'
+      : '登录后进入我的知识库列表';
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
@@ -207,22 +292,21 @@ export function LibraryShareViewPage() {
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
-        {/* 分享页右上角一键回到知识库：常驻显示（2026-06-12 用户反馈"找不到回知识库的入口"——
-            旧逻辑只在登录态渲染，未登录标签页里按钮整个消失，用户以为功能没了）。
-            匿名点击会被路由守卫带去登录，文案如实说明，不藏入口。 */}
+        {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
         <button
-          onClick={() => navigate('/document-store')}
+          onClick={() => navigate(knowledgeBaseReturnPath)}
+          className="transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
           style={{
             marginLeft: 'auto', flexShrink: 0,
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 12px', borderRadius: 8,
+            minHeight: 36, padding: '6px 12px', borderRadius: 9,
             border: '1px solid rgba(255,255,255,0.12)',
             background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
             fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
           }}
-          title={isAuthenticated ? '回到我的知识库' : '登录后进入我的知识库'}
+          title={knowledgeBaseReturnTitle}
         >
-          <BookOpen size={14} /> {isAuthenticated ? '返回我的知识库' : '登录进入知识库'}
+          <ArrowLeft size={14} /> {knowledgeBaseReturnLabel}
         </button>
       </div>
 
@@ -251,21 +335,30 @@ export function LibraryShareViewPage() {
       )}
 
       {!isSingleDoc && (
-        <div
+        <nav
+          aria-label="知识库查看方式"
           style={{
             flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            padding: '8px 16px',
-            background: 'rgba(255,255,255,0.018)',
+            gap: 10,
+            padding: '7px 16px',
+            overflowX: 'auto',
+            background: 'rgba(255,255,255,0.012)',
             borderBottom: '1px solid rgba(255,255,255,0.05)',
           }}
         >
-          <ShareModeButton active={activeView === 'read'} icon={<BookOpen size={13} />} label="阅读" onClick={() => setShareViewMode('read')} />
-          <ShareModeButton active={activeView === 'galaxy'} icon={<Orbit size={13} />} label="知识星球" onClick={() => setShareViewMode('galaxy')} />
-          <ShareModeButton active={activeView === 'universe'} icon={<Network size={13} />} label="Obsidian 双链图" onClick={() => setShareViewMode('universe')} />
-        </div>
+          <span className="hidden shrink-0 text-[11px] font-medium text-token-muted sm:inline">查看方式</span>
+          <div
+            role="tablist"
+            aria-label="知识库视图"
+            className="surface-inset flex shrink-0 items-center gap-1 rounded-[10px] p-1"
+          >
+            <ShareModeButton active={activeView === 'read'} icon={<BookOpen size={14} />} label="阅读" onClick={() => setShareViewMode('read')} />
+            <ShareModeButton active={activeView === 'galaxy'} icon={<Orbit size={14} />} label="知识星球" onClick={() => setShareViewMode('galaxy')} />
+            <ShareModeButton active={activeView === 'universe'} icon={<Network size={14} />} label="双链图" title="Obsidian 风格双链图" onClick={() => setShareViewMode('universe')} />
+          </div>
+        </nav>
       )}
 
       <div className="flex-1 min-h-0 flex flex-col">
@@ -274,10 +367,13 @@ export function LibraryShareViewPage() {
             entries={browserEntries}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
-            selectedEntryId={selectedEntryId}
-            onSelectEntry={setSelectedEntryId}
+            selectedEntryId={controlledSelectedEntryId}
+            onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
-            sortMode="created-desc"
+            sortMode={shareSortMode}
+            sidebarHeader={
+              <ReaderSortControl value={shareSortMode} onChange={setShareSortMode} />
+            }
             inlineCommentShareToken={token ?? undefined}
           />
         )}
@@ -308,25 +404,50 @@ export function LibraryShareViewPage() {
   );
 }
 
-function ShareModeButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (mode: DocBrowserSortMode) => void }) {
+  const options: Array<{ mode: DocBrowserSortMode; label: string }> = [
+    { mode: 'default', label: '书籍顺序' },
+    { mode: 'created-desc', label: '最新创建' },
+    { mode: 'updated-desc', label: '最近更新' },
+  ];
+  return (
+    <div className="flex items-center gap-1.5" aria-label="文章排序">
+      <span className="shrink-0 text-[11px] font-medium text-token-muted">排序</span>
+      <div role="group" aria-label="排序方式" className="surface-inset flex shrink-0 items-center gap-0.5 rounded-[9px] p-0.5">
+        {options.map((option) => {
+          const active = option.mode === value;
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              onClick={() => onChange(option.mode)}
+              aria-pressed={active}
+              className={`shrink-0 whitespace-nowrap rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ShareModeButton({ active, icon, label, title, onClick }: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  title?: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
+      title={title}
       onClick={onClick}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        height: 30,
-        padding: '0 12px',
-        borderRadius: 8,
-        border: active ? '1px solid rgba(129,140,248,0.55)' : '1px solid rgba(255,255,255,0.10)',
-        background: active ? 'rgba(129,140,248,0.18)' : 'rgba(255,255,255,0.045)',
-        color: active ? 'rgba(224,231,255,0.98)' : 'rgba(255,255,255,0.62)',
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: 'pointer',
-      }}
+      className={`inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
     >
       {icon}
       {label}

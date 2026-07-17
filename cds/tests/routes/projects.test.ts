@@ -22,6 +22,7 @@ import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -57,6 +58,23 @@ function mockDockerNetworkHappyPath(shell: MockShellExecutor): Set<string> {
   });
 
   return existing;
+}
+
+/**
+ * DELETE /projects/:id 的容器/网络物理清理是响应后异步执行的（2026-07-15），
+ * 测试用小步轮询等 mock shell 收到对应命令，避免 race。
+ */
+async function waitForCommands(
+  shell: { commands: string[] },
+  predicate: (cmds: string[]) => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate(shell.commands)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`waitForCommands timed out; saw: ${JSON.stringify(shell.commands)}`);
 }
 
 async function request(
@@ -134,7 +152,10 @@ describe('Projects router (P4 Part 2)', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/api', createProjectsRouter({ stateService, shell }));
+    const githubApp = {
+      getInstallationToken: async () => 'github-app-installation-token',
+    } as GitHubAppClient;
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp }));
 
     server = app.listen(0);
   });
@@ -727,8 +748,12 @@ describe('Projects router (P4 Part 2)', () => {
       expect(del.body.cascade.buildProfiles).toEqual([]);
       expect(del.body.cascade.infraServices).toEqual([]);
       expect(del.body.cascade.routingRules).toEqual([]);
+      // 2026-07-15: 物理清理（容器 + 网络）改为响应后异步执行，响应体里
+      // 如实声明调度内容。
+      expect(del.body.containerTeardown).toEqual({ scheduled: [], network });
 
-      // Shell was asked to inspect + rm the network
+      // Shell was asked to inspect + rm the network (async teardown — poll).
+      await waitForCommands(shell, (cmds) => cmds.some((c) => c.startsWith('docker network rm')));
       const rmCmds = shell.commands.filter((c) => c.startsWith('docker network rm'));
       expect(rmCmds).toHaveLength(1);
       expect(rmCmds[0]).toContain(network);
@@ -855,6 +880,84 @@ describe('Projects router (P4 Part 2)', () => {
       expect(state.infraServices.map((s) => s.id)).toEqual(['cds-state-mongo']);
       expect(state.routingRules).toEqual([]);
     });
+
+    // 2026-07-15（用户实锤）：删项目必须连带停删容器，且顺序是先容器后网络
+    //（网络上挂着容器时 network rm 必然失败）。系统级 infra（cds-state-mongo）
+    // 绝不能被物理清理。
+    it('tears down branch/app + project infra containers before the network, sparing system infra', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'teardown-target' });
+      expect(created.status).toBe(201);
+      const pid = created.body.project.id;
+      const network = created.body.project.dockerNetwork;
+
+      shell.addResponsePattern(/^docker rm -f /, () => ({ stdout: 'removed', stderr: '', exitCode: 0 }));
+      // 墓碑消费方 rm 前会 inspect Created 校验归属：给一个早于墓碑的时间
+      shell.addResponsePattern(/^docker inspect -f /, () => ({ stdout: '2026-01-01T00:00:00.000000000Z', stderr: '', exitCode: 0 }));
+
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'td-b1',
+        projectId: pid,
+        branch: 'main',
+        worktreePath: '/tmp/wt-td-1',
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: { profileId: 'api', containerName: 'cds-td-b1-api', hostPort: 10001, status: 'running' },
+          web: { profileId: 'web', containerName: 'cds-td-b1-web', hostPort: 10002, status: 'stopped' },
+        },
+      });
+      stateService.addInfraService({
+        id: 'td-mysql',
+        projectId: pid,
+        name: 'mysql',
+        dockerImage: 'mysql:8',
+        containerName: 'cds-infra-teardown-mysql',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+      stateService.addInfraService({
+        id: 'cds-state-mongo',
+        projectId: pid,
+        name: 'CDS State MongoDB',
+        dockerImage: 'mongo:7',
+        containerName: 'cds-infra-cds-state-mongo',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+      stateService.save();
+
+      const del = await request(server, 'DELETE', '/api/projects/' + pid);
+      expect(del.status).toBe(200);
+      expect(del.body.containerTeardown.network).toBe(network);
+      expect(del.body.containerTeardown.scheduled.sort()).toEqual([
+        'cds-infra-teardown-mysql',
+        'cds-td-b1-api',
+        'cds-td-b1-web',
+      ]);
+      // 系统级 infra 不在清理名单
+      expect(del.body.containerTeardown.scheduled).not.toContain('cds-infra-cds-state-mongo');
+
+      await waitForCommands(shell, (cmds) => cmds.some((c) => c.startsWith('docker network rm')));
+
+      const relevant = shell.commands.filter(
+        (c) => c.startsWith('docker rm -f') || c.startsWith('docker network rm'),
+      );
+      // 三个容器的 rm -f 全部发生在 network rm 之前
+      const networkIdx = relevant.findIndex((c) => c.startsWith('docker network rm'));
+      expect(networkIdx).toBe(3);
+      const rmTargets = relevant.slice(0, 3).join('\n');
+      expect(rmTargets).toContain('cds-td-b1-api');
+      expect(rmTargets).toContain('cds-td-b1-web');
+      expect(rmTargets).toContain('cds-infra-teardown-mysql');
+      expect(rmTargets).not.toContain('cds-state-mongo');
+      // 墓碑全部消费完毕（清理意图闭环，Codex P2）
+      expect(stateService.getContainerTeardownTombstones()).toEqual([]);
+    });
   });
 });
 
@@ -950,7 +1053,10 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       if (typeof h === 'string' && h) (req as any).cdsProjectKey = { projectId: h, keyId: 'k' };
       next();
     });
-    app.use('/api', createProjectsRouter({ stateService, shell, config }));
+    const githubApp = {
+      getInstallationToken: async () => 'github-app-installation-token',
+    } as GitHubAppClient;
+    app.use('/api', createProjectsRouter({ stateService, shell, config, githubApp }));
 
     server = app.listen(0);
   });
@@ -1244,15 +1350,85 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(after.cloneError).toBeUndefined();
       expect(after.gitDefaultBranch).toBe('master');
 
-      // The git clone command was actually executed. P4 Part 18
-      // (Phase E audit fix #1): the command is now prefixed with
-      // `GIT_TERMINAL_PROMPT=0` so private repos fail fast instead
-      // of prompting for credentials — so we match a substring.
+      // The git clone command was actually executed. Authentication and
+      // non-interactive flags are carried in the process env rather than
+      // embedded into the command or visible SSE output.
       const cloneCmds = shell.commands.filter((c) => c.includes('git clone'));
       expect(cloneCmds).toHaveLength(1);
       expect(cloneCmds[0]).toContain('https://github.com/example/test.git');
       expect(cloneCmds[0]).toContain(`${REPOS_BASE}/${pid}`);
-      expect(cloneCmds[0]).toContain('GIT_TERMINAL_PROMPT=0');
+    });
+
+    it('uses the project GitHub App installation token for private-repo clone', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      let cloneEnv: Record<string, string | undefined> | undefined;
+      shell.addResponsePattern(/git clone /, (_match, options) => {
+        cloneEnv = options?.env;
+        return { stdout: 'Cloning into private-repo\n', stderr: '', exitCode: 0 };
+      });
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Private App Clone',
+        gitRepoUrl: 'https://github.com/example/private-repo.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      stateService.updateProject(pid, { githubInstallationId: 146383199 });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+
+      expect(clone.events.find((event) => event.event === 'complete')).toBeDefined();
+      expect(cloneEnv?.GIT_TERMINAL_PROMPT).toBe('0');
+      expect(cloneEnv?.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
+      expect(cloneEnv?.GIT_CONFIG_VALUE_0).toMatch(/^AUTHORIZATION: basic /);
+      const cloneCommand = shell.commands.find((command) => command.includes('git clone'))!;
+      expect(cloneCommand).toContain('https://github.com/example/private-repo.git');
+      expect(cloneCommand).not.toContain('github-app-installation-token');
+    });
+
+    it('fills a runnable command for a standard build-only Compose service', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Compose Build App',
+        gitRepoUrl: 'https://github.com/example/compose-build-app.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'Dockerfile'), 'FROM node:20-alpine\nCMD ["node", "server.js"]\n');
+        fs.writeFileSync(path.join(repoPath, 'package.json'), JSON.stringify({
+          name: 'compose-build-app',
+          scripts: { start: 'node server.js' },
+        }));
+        fs.writeFileSync(path.join(repoPath, 'package-lock.json'), '{}');
+        fs.writeFileSync(path.join(repoPath, 'docker-compose.yml'), [
+          'services:',
+          '  app:',
+          '    build: .',
+          '    ports:',
+          '      - "4302:4302"',
+        ].join('\n'));
+        return { stdout: 'Cloning into compose-build-app\n', stderr: '', exitCode: 0 };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+
+      expect(clone.status).toBe(200);
+      const profile = stateService.getBuildProfilesForProject(pid)[0];
+      expect(profile.dockerImage).toBe('node:20-slim');
+      expect(profile.command).toBe('npm ci && npm start');
+      expect(profile.containerPort).toBe(4302);
+      expect(profile.workDir).toBe('.');
+      expect(clone.events.some((event) =>
+        event.event === 'progress' && String(event.data.line).includes('项目清单自动补全'),
+      )).toBe(true);
     });
 
     it('auto-detects the cloned stack and creates a default build profile', async () => {

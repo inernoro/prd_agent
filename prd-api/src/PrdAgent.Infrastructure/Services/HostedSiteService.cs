@@ -694,6 +694,18 @@ public class HostedSiteService : IHostedSiteService
             var group = await _db.WebPageGroups.Find(g => g.Id == groupId && g.TeamId == teamId).FirstOrDefaultAsync(ct);
             if (group == null)
                 throw new KeyNotFoundException("目标分组不存在或不属于该团队");
+
+            // 受限分组：任何人（含团队编辑者）往里放内容都需分组级编辑权（与 SetSiteGroup 同款门控）
+            if (WebPageGroupAccess.IsRestricted(group))
+            {
+                var member = await _db.TeamMembers
+                    .Find(m => m.TeamId == group.TeamId && m.UserId == userId)
+                    .FirstOrDefaultAsync(ct);
+                var myLabels = member?.Labels ?? new List<string>();
+                var myGroupRole = WebPageGroupAccess.ResolveGroupRole(role, group, userId, myLabels);
+                if (myGroupRole != WebHostingRoles.Owner && myGroupRole != WebHostingRoles.Editor)
+                    throw new UnauthorizedAccessException("你在该受限分组没有编辑权，无法将网页复制进去");
+            }
         }
 
         // 物理复制 COS 文件：副本与原件彻底独立（删除/重传互不影响），

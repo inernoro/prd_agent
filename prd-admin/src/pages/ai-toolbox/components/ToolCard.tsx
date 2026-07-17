@@ -71,6 +71,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
+import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 interface ToolCardProps {
   item: ToolboxItem;
@@ -129,8 +130,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const navigate = useNavigate();
   const accent = getAccent(item.icon);
   const IconComponent = getIconComponent(item.icon);
+  const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const isPaAgent = item.agentKey === 'pa-agent';
-  const paPrimaryCopy = '把模糊想法转成 MECE 执行清单的 MBB 级私人助理';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
@@ -316,25 +317,56 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             handleClick();
           }
         }}
-        className="group relative w-full h-full text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
-        style={glassTileStyle(accent)}
+        className="group relative w-full h-full overflow-hidden text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
+        style={{
+          ...glassTileStyle(accent),
+          minHeight: hasArtwork ? 258 : undefined,
+          background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
+          border: hasArtwork ? 'none' : glassTileStyle(accent).border,
+        }}
       >
-        {/* Hover：本卡色相的描边 + 一缕同色投影（静时安静，碰时呼吸）—— 与首页瓦片一致 */}
-        <div
-          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
-        />
-
-        {/* 头行：图标芯片 + NEW 徽章 + 操作浮条 + 悬停箭头 */}
-        <div className="flex items-start justify-between gap-2">
+        <AgentCardArtwork agentKey={item.agentKey} />
+        {hasArtwork && (
           <div
-            className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-            style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
-          >
-            <IconComponent size={19} style={{ color: accent.color }} />
-          </div>
+            aria-hidden
+            className="absolute inset-x-0 bottom-0 h-[30%] pointer-events-none"
+            style={{
+              background: 'var(--media-card-panel-translucent)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }}
+          />
+        )}
+        {hasArtwork ? (
+          <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
+        ) : (
+          <div
+            className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+            style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
+          />
+        )}
 
-          <div className="flex items-center gap-1 shrink-0">
+        {/* 头行：大图卡显示名称与直接任务；普通卡保留图标芯片。 */}
+        <div className="relative z-10 flex items-start justify-between gap-2">
+          {hasArtwork ? (
+            <div
+              className="max-w-[60%] text-[21px] font-semibold leading-[1.2] tracking-[-0.02em]"
+              style={{ color: 'var(--text-on-media)' }}
+            >
+              {item.name}
+            </div>
+          ) : (
+            <div
+              className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+              style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
+            >
+              <IconComponent size={19} style={{ color: accent.color }} />
+            </div>
+          )}
+
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            {hasArtwork && <AgentCardTask agentKey={item.agentKey} />}
+            <div className="flex items-center gap-1">
             {/* NEW 徽章 — 别人 7 天内发布的公开条目 */}
             {isNewByOthers && (
               <span
@@ -427,28 +459,31 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
             <ArrowUpRight
               size={15}
-              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
-              style={{ color: 'var(--text-muted)' }}
+              className="shrink-0 opacity-0 -translate-x-1 group-hover:opacity-[0.45] group-hover:translate-x-0 transition-all duration-200"
+              style={{ color: hasArtwork ? 'var(--media-card-task-muted)' : 'var(--text-muted)' }}
             />
+            </div>
           </div>
         </div>
 
-        {/* 名称 + 描述 */}
-        <div className="min-w-0">
-          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary, #fff)' }}>
-            {item.name}
+        {/* 普通卡保留名称与描述；大图卡只显示更易扫描的标签。 */}
+        {!hasArtwork && (
+          <div className="relative z-10 min-w-0">
+            <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              {item.name}
+            </div>
+            <p
+              className="mt-1 line-clamp-2 text-[12px] leading-relaxed"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {item.description}
+            </p>
           </div>
-          <p
-            className="text-[12px] mt-1 leading-relaxed line-clamp-2"
-            style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
-          >
-            {isPaAgent ? paPrimaryCopy : item.description}
-          </p>
-        </div>
+        )}
 
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className={`relative z-10 flex flex-wrap gap-1 ${hasArtwork ? 'mt-auto' : ''}`}>
             {item.tags.slice(0, 3).map((tag) => {
               const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
@@ -460,6 +495,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   }}
                   title={isActive ? `已按「${tag}」过滤，点击取消` : `按「${tag}」过滤`}
                   className={`toolbox-card-tag text-[10px] px-1.5 py-0.5 rounded transition-colors duration-300 ${isActive ? 'toolbox-card-tag-active' : 'toolbox-card-tag-clickable'}`}
+                  style={hasArtwork ? {
+                    color: 'var(--media-card-tag-text)',
+                    background: 'var(--media-card-tag-bg)',
+                    borderColor: 'var(--media-card-tag-border)',
+                  } : undefined}
                 >
                   {tag}
                 </button>
@@ -480,7 +520,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
          *   - 我的已公开 → 绿色「已公开」
          *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在头行渲染）
          */}
-        <div className="mt-auto flex items-center justify-between gap-1 pt-1.5 border-t border-white/[0.06]">
+        <div
+          className={`relative z-10 flex items-center justify-between gap-1 pt-1.5 border-t ${hasArtwork ? 'mt-0' : 'mt-auto'}`}
+          style={{ borderColor: hasArtwork ? 'var(--media-card-border)' : 'var(--border-faint)' }}
+        >
           {isPaAgent ? (
             <div className="flex items-center gap-1 min-w-0">
               <span

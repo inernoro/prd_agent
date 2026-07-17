@@ -60,8 +60,8 @@
 - [周报 Agent Phase 5 用户故事](spec.report-agent.phase5) `spec.report-agent.phase5`
   > 周报 Agent 第五阶段的用户故事
 
-- [CDS (Cloud Development Suite) 功能需求说明书](spec.cds) `spec.cds`
-  > CDS 云开发套件的功能需求与用户故事
+- [CDS 产品能力 · 规格](spec.cds) `spec.cds`
+  > CDS 当前完整产品定位、用户流程、十五个功能域与验收标准
 
 - [作品投稿与画廊展示规格](spec.submission-gallery) `spec.submission-gallery`
   > 作品投稿、画廊瀑布流展示与社交互动的产品规格
@@ -222,8 +222,8 @@
 - [网络诊断功能](design.platform.network-diagnostics) `design.platform.network-diagnostics`
   > 客户端网络连通性诊断功能的设计
 
-- [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
-  > 云开发套件的架构设计
+- [CDS 总体架构 · 设计](design.cds) `design.cds`
+  > CDS 项目授权、托管交付、版本恢复、隔离、可观测与集群的总体架构
 
 - [CDS 托管交付契约](design.cds.managed-delivery) `design.cds.managed-delivery`
   > DeploymentRun 唯一事实源、不可变 DeploymentVersion、managed/compose 双模式、能力绑定与结构化诊断的分阶段设计
@@ -239,6 +239,12 @@
 
 - [CDS 配置树](design.cds.config-tree) `design.cds.config-tree`
   > 全局→项目→分支→派生分支四层继承；派生=快照拷贝（保留溯源指针）；生效配置检查器（env 逐 key 溯源 + 部署计划预览）；快照覆盖分支层；波4/5 方向（repo compose 纯结构种子、无 Agent 接入）
+
+- [CDS Self-Hosting（CDS 托管 CDS）](design.cds.self-hosting) `design.cds.self-hosting`
+  > 预览实例模式（CDS_PREVIEW_INSTANCE=1）：宿主操作统一拦截 + 越界服务跳过 + JSON store + seed 演示数据；cds-self 独立项目 compose 解「同仓库多构建」；验收 CDS 改动不再 self-update 生产实例；DinD/实验田域名/webhook fan-out 为后续路线
+
+- [CDS 生命周期原子性](design.cds.lifecycle-atomicity) `design.cds.lifecycle-atomicity`
+  > 对账收敛取代命令式级联：state 是唯一权威，孤儿容器收割器每小时把无 owner 的 cds-managed 容器停掉；项目删除连带容器物理清理（先容器后网络）；五类原子性问题分类 + 68 孤儿容器日志实证；安全阀（label 过滤/空库守卫/系统容器免死/逃生阀）
 
 - [CDS Agent API 契约设计](design.cds.agent.api) `design.cds.agent.api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
@@ -398,8 +404,11 @@
 - [Claude Code 云开发教程](guide.cds.cloud-dev-tutorial) `guide.cds.cloud-dev-tutorial`
   > 使用 Claude Code 进行云端协作开发的操作指南
 
-- [CDS 托管交付使用指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
-  > 面向普通用户介绍新增功能、3 分钟 Quick Start、日常上线、失败处理和版本恢复
+- [CDS 自动交付与 Agent 接入 · 指南](guide.cds.managed-delivery) `guide.cds.managed-delivery`
+  > 从页面批准 Agent 到自动识别、部署、预览、版本复用和恢复的主用户指南
+
+- [CDS 宿主迁移 Runbook](guide.cds.host-migration) `guide.cds.host-migration`
+  > 迁移前/中/后检查单：必迁三样（mongo-split 库、.cds.env 的 CDS_JWT_SECRET、TLS 证书）、repos/worktree/缓存不迁重建、调度器与并发闸核对、缓存预热、极速版首拉限流、选机 CPU 优先
 
 - [初始化策略实现总结](guide.platform.init-strategy) `guide.platform.init-strategy`
   > 系统初始化与启动策略的实现说明
@@ -479,25 +488,32 @@
 - [CDS Agent Runtime Pool 恢复指南](guide.cds.agent.runtime-pool-recovery) `guide.cds.agent.runtime-pool-recovery`
   > CDS Agent Runtime Pool 恢复与官方 SDK Smoke 测试操作指南
 
-- [CDS 环境变量配置指南](guide.cds.env) `guide.cds.env`
-  > CDS 环境变量的配置与使用说明
+- [CDS 环境与凭据 · 指南](guide.cds.env) `guide.cds.env`
+  > 区分 CDS 系统配置、项目运行变量、Agent 项目凭据和 GitHub 授权
 
-- [CDS + 后端 API 双层认证诊断指南](guide.cds.ai-auth) `guide.cds.ai-auth`
-  > CDS 与后端 API 双层认证的诊断与排查指南
+- [CDS 与业务 API 双层认证诊断 · 指南](guide.cds.ai-auth) `guide.cds.ai-auth`
+  > 分清 CDS 项目权限和业务应用身份，按真实用户路径诊断未授权问题
 
 - [CDS GitHub Webhook 订阅配置指南](guide.cds.github-webhook-events) `guide.cds.github-webhook-events`
   > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
 
+- [CDS GitHub App 接入与私有仓库部署 · 指南](guide.cds.github-app) `guide.cds.github-app`
+  > 项目用户完成单仓库授权与部署，管理员完成 GitHub App 配置与推送验收
+
 - [CDS CLI 蜂群优化操作手册](guide.cds.cli-swarm) `guide.cds.cli-swarm`
   > 多 agent 并行反馈+修复+复测：3 个反馈方 + 1 个修复方 + 1 个协调方，含 5 段可直接复制的 prompt
 
-- [CDS 三种部署方式指南](guide.cds.deploy-three-paths) `guide.cds.deploy-three-paths`
-  > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
+- [CDS 部署方式选择 · 指南](guide.cds.deploy-three-paths) `guide.cds.deploy-three-paths`
+  > 按项目复杂度选择可视化托管、Compose 或 Agent 操作，并统一进入版本和回滚流程
 
-- [从零开始的 CDS 教程 · 指南](guide.cds.tutorial) `guide.cds.tutorial`
-- [CDS 可视化部署与验收指南](guide.cds.deploy-acceptance) `guide.cds.deploy-acceptance`
-- [CDS 一键可视化部署使用教程](guide.cds.one-click-deploy) `guide.cds.one-click-deploy`
-  > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
+- [从零开始使用 CDS · 指南](guide.cds.tutorial) `guide.cds.tutorial`
+  > 从 Agent 接入到首次部署、预览、日常发布和恢复的渐进教程
+
+- [CDS 部署验收 · 指南](guide.cds.deploy-acceptance) `guide.cds.deploy-acceptance`
+  > 通过真实预览地址验证部署过程、核心操作、依赖、版本复用和回滚
+
+- [CDS 一键可视化部署 · 指南](guide.cds.one-click-deploy) `guide.cds.one-click-deploy`
+  > 选择仓库、自动识别、试运行、持续部署、预览和恢复的纯页面操作指南
 
 - [CDS 全栈基础设施冒烟样例指南](guide.cds.fullstack-infra-smoke) `guide.cds.fullstack-infra-smoke`
   > 使用前端、后端、MySQL、Redis、RabbitMQ 极简样例验证 CDS 一键部署和沙盒导入适配度
@@ -673,6 +689,9 @@
 - [LLM Gateway 外部平台化与控制台体验收口](plan.platform.llm-gateway-external-platform) `plan.platform.llm-gateway-external-platform`
   > 租户/团队/用户/RBAC、外部接入教程、appCaller 提示词策略、左侧导航、图表与金额可信度的有限五 PR 计划
 
+- [LLM Gateway 模型网关权威教程 · 实施计划](plan.platform.llm-gateway-authoritative-tutorial) `plan.platform.llm-gateway-authoritative-tutorial`
+  > 从全空租户到生产治理的 33 章连续教程、实测修复、低理解力复验与 MAP/CDS 双归档计划
+
 - [LLM Gateway 控制台产品化与独立目录收拢](plan.platform.llm-gateway.console-productization) `plan.platform.llm-gateway.console-productization`
   > 双主题可发现性、请求记录、安全直测、租户首页、学习中心、模型池用户心智与根目录 llmgw 收拢的分阶段计划
 
@@ -713,6 +732,7 @@
   > 页面级路由迁完后,补 12k 行 app.js 里 13 项特色功能模块的功能级迁移(Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG / AI 占用 feed 等),分 3 wave,带状态/效果/测试/工作量字段
 
 - [移动端适配功能规划](plan.frontend.mobile-adaptation) `plan.frontend.mobile-adaptation`
+- [Apple 设计系统双轨迁移 · 活状态看板](plan.frontend.apple-design-migration) `plan.frontend.apple-design-migration`
   > 移动端响应式适配的功能规划
 
 - [移动端布局分析报告](plan.frontend.mobile-layout-review) `plan.frontend.mobile-layout-review`
@@ -821,12 +841,15 @@
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
 - [缺陷管理 手机截图分享提交 · 债务台账](debt.defect-agent.mobile-share) `debt.defect-agent.mobile-share`
+- [Apple 设计系统迁移 · 债务台账](debt.frontend.apple-design-migration) `debt.frontend.apple-design-migration`
 - [移动端全局浅色主题 · 债务台账](debt.frontend.mobile-light-theme) `debt.frontend.mobile-light-theme`
 - [前端导航历史（返回上一页）· 债务台账](debt.frontend.navigation-history) `debt.frontend.navigation-history`
   > useSmartBack 已落地 + 主要污染源已修；边界：教程跨页 push、NavigationBridge push、cds-agent 整页跳转、长尾页面硬编码返回待走到哪修到哪
   > 首版已落地（share_target + VLM 追加填充 + 移动全屏面板）；边界：iOS 无 share_target、需先装 PWA、冷启重登录、全局弹窗未接填充
 - [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds.ci-prebuilt) `debt.cds.ci-prebuilt`
 - [CDS executor 卡死看门狗 · 债务台账](debt.cds.executor-watchdog) `debt.cds.executor-watchdog`
+- [CDS 构建闸 · 债务台账](debt.cds.build-gate) `debt.cds.build-gate`
+  > 2026-07-16 队列堵死事故修复后的延期项：pending 队列更名 / 排队心跳拆分 / holders 运维 UI / 健康阈值可配 / merged 完成通知
 - [CDS 自更新极速版（预构建产物）· 债务台账](debt.cds.selfupdate-prebuilt) `debt.cds.selfupdate-prebuilt`
   > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base.versioning) `debt.knowledge-base.versioning`
@@ -1092,6 +1115,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-07-15 | 更新 | `spec.cds` `design.cds` `guide.cds.managed-delivery` `guide.cds.tutorial` `guide.cds.deploy-three-paths` `guide.cds.one-click-deploy` `guide.cds.deploy-acceptance` `guide.cds.env` `guide.cds.github-app` `guide.cds.ai-auth` | CDS 重大版本文档体系重构 |
+| 2026-07-15 | 新增 | `plan.platform.llm-gateway-authoritative-tutorial` | LLM Gateway 模型网关权威教程 · 实施计划 |
 | 2026-07-12 | 新增 | `rule.platform.production-release-safety` | 生产发布表面健康与可追溯性 · 规则 |
 | 2026-07-12 | 新增 | `debt.platform.production-release` | 生产发布安全 · 债务台账 |
 | 2026-07-12 | 新增 | `plan.platform.llm-gateway.console-productization` | LLM Gateway 控制台产品化与独立目录收拢 · 计划 |
@@ -1211,3 +1236,4 @@
 | 2026-06-26 | 新增 | `report.daily-tips.tutorial-coverage` | 页面教程小技巧 全量路由覆盖审计报告 |
 | 2026-06-26 | 新增 | `report.frontend.prd-admin-surface-style-migration` | prd-admin 样式统一统计报表 |
 | 2026-07-10 | 新增 | `debt.cds.reports` | CDS 验收中心报告治理债务台账（存量未归类迁移 / 保留策略 / 批量操作 / 日期文件夹归并） |
+| 2026-07-16 | 新增 | `debt.cds.build-gate` | CDS 构建闸债务台账（队列堵死事故修复后的延期项 + 修复主线回溯） |

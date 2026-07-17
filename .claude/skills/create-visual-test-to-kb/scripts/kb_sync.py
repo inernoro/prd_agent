@@ -6,15 +6,15 @@
 本期只同步文本类正文（验收报告天然是 markdown），二进制附件源端标 skipped、不搬。
 
 鉴权（两种，优先 scoped key）：
-  - 推荐：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope），走 Bearer，最小权限
+  - 推荐：设 MAP_DOC_STORE_KEY=<scoped-agent-key>（带 document-store:write scope），走 Bearer，最小权限
   - 回退：AI_ACCESS_KEY（超级密钥）+ MAP_AI_USER（模拟用户），走 X-AI-Access-Key + X-AI-Impersonate
   - 目标端如需不同凭据，用 --to-key-env / --to-user-env / --to-agent-key-env 指向另一组 env 变量名
 
 用法：
-  export AI_ACCESS_KEY=...  MAP_AI_USER=...
+  export AI_ACCESS_KEY='<access-key>'  MAP_AI_USER='<login-user>'
   python3 kb_sync.py \
-    --from https://<src-branch>.miduo.org \
-    --to   https://<dst-branch>.miduo.org \
+    --from https://<src-preview-host> \
+    --to   https://<dst-preview-host> \
     --store 验收报告
 """
 import argparse
@@ -63,10 +63,10 @@ def find_store(base, H, name):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from", dest="src", required=True, help="源环境 base URL，如 https://a.miduo.org")
+    ap.add_argument("--from", dest="src", required=True, help="源环境 base URL，如 https://<src-preview-host>")
     ap.add_argument("--to", dest="dst", required=True, help="目标环境 base URL")
     ap.add_argument("--store", required=True, help="知识库名称（两端按名匹配/创建）")
-    ap.add_argument("--agent-key-env", default="MAP_DOC_STORE_KEY", help="源端 scoped AgentApiKey env（优先；sk-ak-*）")
+    ap.add_argument("--agent-key-env", default="MAP_DOC_STORE_KEY", help="源端 scoped AgentApiKey env（优先；值不得写入文件）")
     ap.add_argument("--key-env", default="AI_ACCESS_KEY", help="源端超级密钥 env（scoped key 缺省时回退）")
     ap.add_argument("--user-env", default="MAP_AI_USER", help="源端模拟用户 env（回退路径用）")
     ap.add_argument("--to-agent-key-env", default=None, help="目标端 scoped key env（缺省同源端）")

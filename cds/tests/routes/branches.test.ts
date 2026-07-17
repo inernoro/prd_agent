@@ -3467,6 +3467,75 @@ describe('Branch Routes', () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it('normalizes project-scoped dependencies before dispatching to a remote executor', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'gateway-project',
+        slug: 'gateway-project',
+        name: 'Gateway Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (const profile of [
+        { id: 'console-gateway-project', name: 'Console', dependsOn: undefined },
+        { id: 'serving-gateway-project', name: 'Serving', dependsOn: undefined },
+        { id: 'web-gateway-project', name: 'Web', dependsOn: ['console', 'serving'] },
+      ]) {
+        stateService.addBuildProfile({
+          ...profile,
+          projectId: 'gateway-project',
+          dockerImage: 'node:20-slim',
+          command: 'node server.js',
+          workDir: '.',
+          containerPort: 3000,
+        });
+      }
+      stateService.addBranch({
+        id: 'gateway-project-remote',
+        projectId: 'gateway-project',
+        branch: 'feature/remote',
+        worktreePath: path.join(tmpDir, 'worktrees', 'gateway-project-remote'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      registryNodes.push({
+        id: 'exec-gateway',
+        host: '127.0.0.1',
+        port: 9102,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+
+      let dispatchedBody: any;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        dispatchedBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const result = await request(server, 'POST', '/api/branches/gateway-project-remote/deploy', {
+          targetExecutorId: 'exec-gateway',
+        });
+
+        expect(result.status).toBe(200);
+        expect(dispatchedBody.profiles.find((profile: any) => profile.id === 'web-gateway-project')?.dependsOn).toEqual([
+          'console-gateway-project',
+          'serving-gateway-project',
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('POST /api/branches/:id/set-default', () => {
@@ -3832,6 +3901,61 @@ describe('Branch Routes', () => {
       expect((configRes.body as any).repoRoot).toBe('/bulk/repo');
       expect((configRes.body as any).worktreeBase).toBe('/bulk/worktrees');
       expect((configRes.body as any).githubRepoUrl).toBe('https://github.com/bulk-org/bulk-repo');
+    });
+  });
+
+  describe('POST /api/quickstart project-scoped dependencies', () => {
+    it('scopes application dependencies while preserving infra dependencies', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'gateway-project',
+        slug: 'gateway-project',
+        name: 'Gateway Project',
+        kind: 'git',
+        repoPath: tmpDir,
+        createdAt: now,
+        updatedAt: now,
+      });
+      fs.writeFileSync(path.join(tmpDir, 'cds-compose.yml'), [
+        'services:',
+        '  gateway-api:',
+        '    image: node:20-slim',
+        '    volumes:',
+        '      - ./api:/repo/api',
+        '    working_dir: /repo/api',
+        '    command: node server.js',
+        '    ports:',
+        '      - "8080"',
+        '  gateway-web:',
+        '    image: node:20-slim',
+        '    volumes:',
+        '      - ./web:/repo/web',
+        '    working_dir: /repo/web',
+        '    command: node server.js',
+        '    ports:',
+        '      - "5173"',
+        '    depends_on:',
+        '      - gateway-api',
+        '      - mongodb',
+        '  mongodb:',
+        '    image: mongo:8.0',
+        '    ports:',
+        '      - "27017"',
+      ].join('\n'));
+
+      const res = await request(server, 'POST', '/api/quickstart?project=gateway-project');
+
+      expect(res.status).toBe(201);
+      const saved = stateService.getBuildProfilesForProject('gateway-project');
+      expect(saved.map((item) => item.id).sort()).toEqual([
+        'gateway-api-gateway-project',
+        'gateway-web-gateway-project',
+      ]);
+      expect(saved.find((item) => item.id === 'gateway-web-gateway-project')?.dependsOn).toEqual([
+        'gateway-api-gateway-project',
+        'mongodb',
+      ]);
+      expect(stateService.getInfraServicesForProject('gateway-project').map((item) => item.id)).toContain('mongodb');
     });
   });
 

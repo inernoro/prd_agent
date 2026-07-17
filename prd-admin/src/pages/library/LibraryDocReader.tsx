@@ -21,6 +21,7 @@ import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toast } from '@/lib/toast';
+import { parseFrontmatter } from '@/lib/frontmatter';
 import {
   FolderOpen,
   FolderClosed,
@@ -208,8 +209,18 @@ export function LibraryDocReader({
     const map = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
-      const line = e.summary.split('\n').find((l) => l.trim());
-      if (line) map.set(e.id, line.replace(/^#+\s*/, '').trim());
+      // 先剥离 YAML frontmatter，避免正文以 `---\n...\n---` 开头时把首行的
+      // `---` 当成标题（#701）。frontmatter 的 title 字段优先；否则取剥离
+      // frontmatter 后正文的首个非空行。畸形 frontmatter → parseFrontmatter
+      // 原样返回 body，退回原有「首个非空行」行为。
+      const parsed = parseFrontmatter(e.summary);
+      const fmTitle = parsed.data.title?.trim();
+      let title = fmTitle || '';
+      if (!title) {
+        const line = parsed.body.split('\n').find((l) => l.trim());
+        if (line) title = line.replace(/^#+\s*/, '').trim();
+      }
+      if (title) map.set(e.id, title);
     }
     return map;
   }, [entries]);

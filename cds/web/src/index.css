@@ -930,8 +930,27 @@
     border-radius: 14px;
     background-color: hsl(var(--surface-raised));
     border: 1px solid hsl(var(--hairline));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.05), 0 1px 2px rgb(0 0 0 / 0.18);
+    /* 品牌磁贴呼吸辉光:柔和的品牌色外发光每 4.2s 起落一次,让磁贴"活着"
+       (辉光在磁贴外圈,不碰宝石本体切面,不会把小尺寸宝石糊成一团)。 */
+    animation: cds-rail-avatar-breath 4.2s ease-in-out infinite;
     color: hsl(var(--foreground));
+  }
+
+  /* 辉光色跟随品牌宝石(iris 紫蓝),不再用 --primary 橙,避免撞色。 */
+  @keyframes cds-rail-avatar-breath {
+    0%,
+    100% {
+      box-shadow:
+        inset 0 1px 0 hsl(0 0% 100% / 0.05),
+        0 1px 2px rgb(0 0 0 / 0.18),
+        0 0 0 0 hsl(255 90% 66% / 0);
+    }
+    50% {
+      box-shadow:
+        inset 0 1px 0 hsl(0 0% 100% / 0.05),
+        0 1px 2px rgb(0 0 0 / 0.18),
+        0 0 16px -3px hsl(255 90% 66% / 0.5);
+    }
   }
 
   .cds-rail-avatar-icon {
@@ -957,23 +976,11 @@
     filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
   }
 
-  /* 小尺寸清晰档:切面永远满亮度(禁一切透明度波动=不发虚),但保留"活"——
-     brand 待机换成亮度琉光:一道只增不减的高光每 4.8s 沿 12 切面扫一圈,
-     legibility 底线与灵动共存(2026-07-05 "只有动起来才像活跃的")。
-     loader 的组装循环不受此档压制(加载器的使命就是动)。 */
-  .cds-gem--simple .cds-gem-facet {
+  /* 小尺寸清晰档:**非品牌** simple 切面永远满亮度(状态指示器不发虚)。
+     品牌切面从这条锁定里排除 —— 它要走下面的 facetGlow 待机动效
+     (透明度 0.72↔1 轮流起伏,用户指定的 cdsgemcolors 动态样式)。 */
+  .cds-gem--simple:not(.cds-gem--brand) .cds-gem-facet {
     opacity: 1 !important;
-  }
-
-  .cds-gem--simple.cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-glint 4.8s ease-in-out infinite;
-    animation-delay: calc(var(--gi, 0) * 0.09s);
-  }
-
-  .cds-gem--simple.cds-gem--brand:hover .cds-gem-facet,
-  .cds-rail-avatar:hover .cds-gem--simple.cds-gem--brand .cds-gem-facet {
-    animation-duration: 1.7s;
-    animation-delay: calc(var(--gi, 0) * 0.035s);
   }
 
   .cds-gem-facet {
@@ -981,20 +988,24 @@
     transform-box: fill-box;
   }
 
-  /* 品牌:整体微呼吸 + 每 5.2s 一道流光沿切面扫过一圈(灵动但不聒噪);
-     hover 时流光提速成一圈快旋。 */
-  .cds-gem--brand {
-    animation: cds-gem-breath 4.2s ease-in-out infinite alternate;
-  }
-
+  /* 品牌 = 完全照抄用户参考 cdsgemcolors 的两段式:
+     ① play:每个切面 scale 0→1 逐面弹入(cds-gem-pop,back-out 回弹,按 --gi 错相位)
+        —— 这就是"慢慢出现"的组装入场,挂载即播一次。
+     ② settled:入场结束后切入 facetGlow(透明度 0.72↔1 错相位起伏),常驻不停。
+     两个动画同挂一个选择器,靠各自 delay 错开:pop 先跑,glow 延迟到入场后再接管。 */
   .cds-gem--brand .cds-gem-facet {
-    animation: cds-gem-ripple 5.2s ease-in-out infinite;
-    animation-delay: calc(var(--gi, 0) * 0.12s);
+    animation:
+      cds-gem-pop 0.62s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+      cds-gem-facet-glow 3.4s ease-in-out infinite alternate;
+    animation-delay: calc(var(--gi, 0) * 0.07s), calc(var(--gi, 0) * 0.16s + 1.4s);
   }
 
-  .cds-gem--brand:hover .cds-gem-facet {
-    animation-duration: 1.3s;
-    animation-delay: calc(var(--gi, 0) * 0.045s);
+  /* hover:整颗宝石轻搏一下(pulseOnce),给一点即时反馈。 */
+  .cds-topbar-brand:hover .cds-gem--brand,
+  .cds-rail-avatar:hover .cds-gem--brand,
+  .cdsh-brand:hover .cds-gem--brand,
+  .cds-gem--brand:hover {
+    animation: cds-gem-hover-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   /* 一次性逐面组装入场(登录卡/冷启动) */
@@ -1098,16 +1109,26 @@
     }
   }
 
-  /* simple 档专用琉光:只调 brightness(永不低于 1),高光短促、间隔长——
-     "活着"但一帧暂停下来也永远是满亮度的清晰星形。 */
-  @keyframes cds-gem-glint {
-    0%,
-    18%,
-    100% {
-      filter: brightness(1);
+  /* 品牌待机:切面透明度起伏(cdsgemcolors facetGlow)。错相位 → 轮流点亮。 */
+  @keyframes cds-gem-facet-glow {
+    from {
+      opacity: 0.72;
     }
-    7% {
-      filter: brightness(1.55) saturate(1.12);
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* 品牌 hover:整颗宝石轻搏一下(cdsgemcolors pulseOnce)。 */
+  @keyframes cds-gem-hover-pulse {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.08);
+    }
+    100% {
+      transform: scale(1);
     }
   }
 
@@ -1224,6 +1245,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .cds-rail-avatar,
     .cds-rail-avatar-icon,
     .cds-gem,
     .cds-gem-facet,
@@ -2827,4 +2849,21 @@
   .cds-loading-skeleton-panel {
     animation: none;
   }
+}
+
+/* ── 分支卡片浅色模式对比增强（2026-07-14，含 Codex P2「勿吞状态样式」修复）──
+   白卡（--surface-raised: 100%）在近白页面上、配发丝边框几乎糊在一起。给普通卡加
+   「更实的边缘 + 轻投影」把卡片抬起来(参考 Linear / GitHub 浅色卡片):整套增强只用
+   一条 box-shadow(inset ring 当更实的边 + 外投影当抬升),不碰 border-color(角色/异常
+   卡的彩色边框因此不受影响)。
+   Codex P2 修复要点:本项目 Tailwind 输出**不带 @layer**(全扁平),故靠层级让状态
+   utility 覆盖行不通——本规则选择器 (0,2,0) 会盖过 `shadow-[...]`/`ring-*` (0,1,0)。
+   因此用 :not() 把「带 box-shadow 的状态卡」显式排除掉:AI 活跃(ring+发光)、选中、
+   忙碌——这些卡不吃本投影,保留各自的状态阴影/光环。角色卡(main 等)只改 border/bg
+   不带 box-shadow,可安全叠加本 ring。深色模式完全不变,不改任何全局 token(零外溢)。 */
+[data-theme='light'] .cds-branch-card:not(.cds-ai-active-card):not(.cds-card-selected):not(.cds-branch-card-busy) {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--hairline-strong)),
+    0 1px 2px hsl(24 20% 15% / 0.06),
+    0 6px 16px -8px hsl(24 20% 15% / 0.12);
 }

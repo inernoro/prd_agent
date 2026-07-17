@@ -100,7 +100,9 @@ describe('BranchOperationCoordinator', () => {
     });
   });
 
-  it('starts one operation per branch and rejects a concurrent manual deploy', () => {
+  it('starts one operation per branch and merges a concurrent manual deploy', () => {
+    // 2026-07-16 起：manual 整分支 deploy 撞车不再 409，而是合并为最新待部署
+    // 请求（治重试风暴，见 isMergeableManualDeploy）。
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);
     const first = coordinator.begin({
@@ -117,12 +119,12 @@ describe('BranchOperationCoordinator', () => {
     });
 
     expect(first.status).toBe('started');
-    expect(second.status).toBe('rejected');
+    expect(second.status).toBe('merged');
     expect(second.activeOperationId).toBe(first.operationId);
     expect(records[0].operationId).toBe(first.operationId);
     expect(records.map((r) => r.action)).toEqual([
       'branch.operation.started',
-      'branch.operation.rejected',
+      'branch.operation.merged',
     ]);
   });
 
@@ -642,7 +644,9 @@ describe('BranchOperationCoordinator', () => {
     });
 
     expect(admin.status).toBe('started');
-    expect(branchDeploy.status).toBe('rejected');
+    // 2026-07-16 起：manual 整分支 deploy 被在途操作挡住时合并为 pending
+    // （admin 单服务部署完成后自动派发），不再 409。
+    expect(branchDeploy.status).toBe('merged');
     expect([force.operationId, admin.operationId]).toContain(branchDeploy.activeOperationId);
   });
 
@@ -734,6 +738,62 @@ describe('BranchOperationCoordinator', () => {
     expect(webhook.status).toBe('merged');
     expect(deploy.operationId).toBe(force.operationId);
     expect(pending?.request.commitSha).toBe('2222222');
+  });
+
+  it('续约保留期间 manual 整分支 deploy 合并为 pending 而非拒绝——重放撞续约不得静默丢弃（Codex P2）', () => {
+    const coordinator = new BranchOperationCoordinator();
+    // 完整事故时序：profile B 在途 → manual 整分支 deploy 合并（用户被告知已排队）
+    const profileB = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'web',
+    });
+    const merged = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    expect(merged.status).toBe('merged');
+
+    // 与 B 并行的 profile A force-rebuild 完成，保留 deploy-profile 续约
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    expect(force.status).toBe('started');
+    coordinator.complete(force.lease!, 'completed');
+
+    // B 完成 → complete() 弹出 pending 交给路由内部重放
+    const pending = coordinator.complete(profileB.lease!, 'completed');
+    expect(pending?.request.kind).toBe('deploy');
+
+    // 重放的整分支 deploy 与 deploy-profile 续约不匹配：修复前这里 rejected，
+    // pending 已被弹出 → 请求静默丢失；现在应重新合并回 pending 等续约消费后派发
+    const replay = coordinator.begin(pending!.request);
+    expect(replay.status).toBe('merged');
+
+    // force-rebuild 自己的续约 deploy-profile 仍优先接续（不被合并吞掉）
+    const continuation = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+    expect(continuation.status).toBe('started');
+    expect(continuation.operationId).toBe(force.operationId);
+
+    // 续约操作完成后，重新合并的 pending 被弹出派发，承诺闭环
+    const redispatched = coordinator.complete(continuation.lease!, 'completed');
+    expect(redispatched?.request.kind).toBe('deploy');
+    expect(redispatched?.request.trigger).toBe('manual');
   });
 
   it('manual delete cancels a reserved force-rebuild continuation and its pending webhook', () => {
@@ -856,5 +916,188 @@ describe('BranchOperationCoordinator', () => {
     expect(deployProfile.status).toBe('rejected');
     expect(deployProfile.activeOperationId).toBe(restart.operationId);
     expect(records.find((record) => record.action === 'branch.operation.rejected')?.details?.activeKind).toBe('restart');
+  });
+
+  // ── 2026-07-16 队列堵死复盘：manual 整分支 deploy 合并去重 ──
+
+  it('manual deploy 撞上在途 manual deploy 时合并为 pending（不再 409），complete 后可派发', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const first = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+      commitSha: '1111111',
+    });
+    expect(first.status).toBe('started');
+
+    const retry = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+      commitSha: '2222222',
+    });
+    expect(retry.status).toBe('merged');
+    expect(retry.pendingCommitSha).toBe('2222222');
+
+    const pending = coordinator.complete(first.lease!, 'completed');
+    expect(pending).not.toBeNull();
+    expect(pending!.request.trigger).toBe('manual');
+    expect(pending!.request.commitSha).toBe('2222222');
+  });
+
+  it('manual 与 webhook 合并共享同一 pending，last-writer-wins 且 mergedCount 累计', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    const webhookMerge = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: 'aaaaaaa',
+    });
+    expect(webhookMerge.status).toBe('merged');
+    const manualMerge = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-b',
+      commitSha: 'bbbbbbb',
+    });
+    expect(manualMerge.status).toBe('merged');
+
+    const pending = coordinator.complete(active.lease!, 'completed');
+    expect(pending!.mergedCount).toBe(2);
+    expect(pending!.request.trigger).toBe('manual');
+    expect(pending!.request.commitSha).toBe('bbbbbbb');
+  });
+
+  it('manual deploy-profile 撞车仍 409（单服务合并语义不明确，维持拒绝）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+    const profileRetry = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      profileId: 'api',
+      trigger: 'manual',
+      actor: 'user',
+    });
+    expect(profileRetry.status).toBe('rejected');
+  });
+
+  it('stop 在途时 manual deploy 维持 409——不得合并后在停止完成时自动重启（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'manual',
+      actor: 'operator',
+    });
+    expect(stop.status).toBe('started');
+
+    const deployDuringStop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    expect(deployDuringStop.status).toBe('rejected');
+
+    // stop 完成后不派发任何 pending：分支保持停止，不被自动重启
+    const pending = coordinator.complete(stop.lease!, 'completed');
+    expect(pending).toBeNull();
+  });
+
+  it('带 versionId 的版本重部署撞车维持 409——pending 重放会丢版本捕获配置（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    const versionRedeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+      versionId: 'dv_123',
+    });
+    expect(versionRedeploy.status).toBe('rejected');
+  });
+
+  it('带一次性选项（force/ignoreRequired/targetExecutorId）的 manual deploy 撞车维持 409——pending 重放会丢选项（Codex P2）', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'agent-a',
+    });
+    // ?force=1 绕过项目暂停闸门：重放不带 force 会被暂停闸门直接拦下
+    const forcedDeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+      hasOneShotOptions: true,
+    });
+    expect(forcedDeploy.status).toBe('rejected');
+
+    // 对照：不带一次性选项的普通 manual deploy 仍走合并通道
+    const plainDeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'operator',
+    });
+    expect(plainDeploy.status).toBe('merged');
+  });
+
+  it('manual stop 仍按优先级 supersede 在途 deploy，并取消已合并的 pending', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const deploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+    const merged = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+      commitSha: 'ccccccc',
+    });
+    expect(merged.status).toBe('merged');
+
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'manual',
+      actor: 'user',
+    });
+    expect(stop.status).toBe('started');
+    expect(deploy.lease!.isCurrent()).toBe(false);
+    // stop supersede 已把 pending 取消：stop 完成后不应再派发被合并的 deploy
+    const pendingAfterStop = coordinator.complete(stop.lease!, 'completed');
+    expect(pendingAfterStop).toBeNull();
   });
 });

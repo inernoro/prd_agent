@@ -20,6 +20,7 @@ public class PeerSyncScheduleTests
             PeerSyncStatus = status,
             PeerSyncAutoLastAt = autoLastAt,
             PeerSyncIntervalMinutes = interval,
+            PeerSyncAutoMode = PeerSyncSchedule.ScheduledMode,
         };
 
     [Fact]
@@ -97,5 +98,69 @@ public class PeerSyncScheduleTests
         var now = DateTime.UtcNow;
         var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-2), interval: 1);
         Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_UsesShortDebounceInsteadOfScheduledInterval()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-3), interval: 1440);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        store.UpdatedAt = now.AddMinutes(-3);
+        Assert.True(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_CombinesRapidChanges()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-1), interval: 5);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Fact]
+    public void TriggerMode_WaitsForQuietWindowAfterLatestContentChange()
+    {
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-10), interval: 5);
+        store.PeerSyncAutoMode = PeerSyncSchedule.TriggerMode;
+        store.UpdatedAt = now.AddSeconds(-30);
+        Assert.False(PeerSyncSchedule.IsDue(store, now));
+    }
+
+    [Theory]
+    [InlineData(null, "trigger")]
+    [InlineData("unknown", "trigger")]
+    [InlineData("trigger", "trigger")]
+    [InlineData("scheduled", "scheduled")]
+    public void NormalizeMode_DefaultsToTrigger(string? input, string expected)
+    {
+        Assert.Equal(expected, PeerSyncSchedule.NormalizeMode(input));
+    }
+
+    [Theory]
+    // 归一方向 → 含对齐等价值的集合
+    [InlineData("push", new[] { "push", "align-local" })]
+    [InlineData("pull", new[] { "pull", "align-remote" })]
+    [InlineData("both", new[] { "both", "align-both" })]
+    // align-* 原值也必须归一到同一集合：store.PeerSyncDirection 被 IsRunnableDirection /
+    // IsUserConfirmedAutoDirection 视为合法可运行值也含 align-*，若这里返回空集，established gate
+    // 会把「用强制对齐建立过」的库误判为未建立、禁掉自动同步（Codex PR#1144 P2 回归守卫）。
+    [InlineData("align-local", new[] { "push", "align-local" })]
+    [InlineData("align-remote", new[] { "pull", "align-remote" })]
+    [InlineData("align-both", new[] { "both", "align-both" })]
+    public void AcceptableRunDirections_NormalizesAlignEquivalents(string? input, string[] expected)
+    {
+        Assert.Equal(expected, PeerSyncSchedule.AcceptableRunDirections(input));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("received")]   // 仅接收审计，不算任何可运行方向
+    [InlineData("unknown")]
+    public void AcceptableRunDirections_EmptyForNonRunnable(string? input)
+    {
+        Assert.Empty(PeerSyncSchedule.AcceptableRunDirections(input));
     }
 }

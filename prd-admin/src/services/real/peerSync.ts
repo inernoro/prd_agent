@@ -37,6 +37,8 @@ export interface TransferItemResult {
   itemId: string;
   name?: string;
   ok: boolean;
+  /** 是否因用户主动取消而中止（前端应显示为中性「已取消」，而非失败）。 */
+  cancelled?: boolean;
   message?: string;
   created?: number;
   updated?: number;
@@ -89,8 +91,9 @@ export async function setAutoSync(params: {
   itemId: string;
   enabled: boolean;
   intervalMinutes?: number;
+  mode?: 'trigger' | 'scheduled';
 }) {
-  return await apiRequest<{ enabled: boolean; intervalMinutes: number; direction?: string | null; nodeName?: string | null }>(
+  return await apiRequest<{ enabled: boolean; intervalMinutes: number; mode: 'trigger' | 'scheduled'; direction?: string | null; nodeName?: string | null }>(
     api.peerSync.autoSync(),
     { method: 'POST', body: params },
   );
@@ -109,7 +112,9 @@ export interface PeerSyncRun {
   peerNodeId: string;
   peerNodeName: string;
   peerNodeBaseUrl?: string | null;
-  status: 'syncing' | 'synced' | 'skipped' | 'error' | string;
+  status: 'syncing' | 'synced' | 'skipped' | 'error' | 'cancelled' | string;
+  /** 是否已被请求取消（true 表示取消信号已下发，执行体会在检查点中断落 cancelled）。 */
+  cancelRequested?: boolean;
   created: number;
   updated: number;
   skipped: number;
@@ -129,11 +134,22 @@ export interface PeerSyncRun {
   finishedAt?: string | null;
 }
 
-/** 列出同步运行台账。itemId 省略=当前用户全部可见条目；传 itemId=限定单库。 */
+/** 列出同步运行台账。itemId 省略=当前用户全部可见条目；传 itemId=限定单库。
+ *  established：仅单库（传 itemId 且为 document-store）返回——「当前保存的对端+方向」是否跑过全量历史门
+ *  （成功建立过关系）。前端 everSynced 只看被截断到 80 条的 runs，长命库成功 run 可能已滚出，故用此服务端
+ *  全量判定兜底，避免误禁自动开关（Codex PR#1144 P2）。非单库场景为 null。 */
 export async function listPeerSyncRuns(resourceType: string, itemId?: string) {
-  return await apiRequest<{ items: PeerSyncRun[] }>(
+  return await apiRequest<{ items: PeerSyncRun[]; established?: boolean | null }>(
     api.peerSync.runs(resourceType, itemId),
     { method: 'GET' },
+  );
+}
+
+/** 请求取消一个进行中的同步 run（仅 status=syncing 可取消；置取消位，执行体在检查点中断落 cancelled）。 */
+export async function cancelPeerSyncRun(runId: string) {
+  return await apiRequest<{ requested: boolean }>(
+    api.peerSync.cancelRun(runId),
+    { method: 'POST' },
   );
 }
 

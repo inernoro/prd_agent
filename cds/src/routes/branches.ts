@@ -17,7 +17,8 @@ import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } f
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
-import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
+import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
@@ -28,6 +29,8 @@ import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog,
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
+import { checkoutSelfUpdateTarget, resolveSelfUpdateTargetBranch } from '../services/self-update-checkout.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
@@ -55,6 +58,8 @@ import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
+import { isPreviewInstance } from '../services/preview-instance.js';
+import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
 import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
@@ -543,7 +548,7 @@ async function computeSelfStatusPayload(
     }
   };
 
-  const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+  const currentBranch = resolveSelfUpdateTargetBranch(await safeExec('git rev-parse --abbrev-ref HEAD'));
   const headSha = await safeExec('git rev-parse --short HEAD');
   const headIso = await safeExec('git log -1 --format=%cI HEAD');
 
@@ -1436,8 +1441,13 @@ function resourceExternalPortRange(): { start: number; end: number } {
   return { start, end };
 }
 
-async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number): Promise<number> {
+async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number, excludePort?: number): Promise<number> {
   const used = await collectListeningPorts(shell);
+  // #805：更新已启用资源的公网策略时，旧 proxy 仍在监听，其端口会出现在 used 里，
+  // 导致「按当前端口复用」失败而重新分配新端口 → 现有连接被丢弃。把资源自己当前
+  // 占用的端口从 used 中排除，使 preferred 复用成立（旧 proxy 会在本次分配之后、
+  // 启动新 proxy 之前被 disableTcpResourceExternalAccess 拆除，不存在双重绑定）。
+  if (excludePort && excludePort >= 1 && excludePort <= 65535) used.delete(excludePort);
   const { start, end } = resourceExternalPortRange();
   if (preferred && preferred >= 1024 && preferred <= 65535 && !used.has(preferred)) return preferred;
   for (let port = start; port <= end; port += 1) {
@@ -1585,6 +1595,8 @@ interface RunServiceWithPortRetryOptions {
   assertCurrent?: (step: string) => void;
   onOutput?: (chunk: string) => void;
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
+  /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
+  onSourceCompileFallback?: () => Promise<void>;
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
@@ -1604,6 +1616,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
+          onSourceCompileFallback: options.onSourceCompileFallback,
         },
       );
       return;
@@ -2004,6 +2017,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
+  // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
+  // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
+  // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
+  // 只拦这组容器动作，只读端点与非容器写操作（备注/标签等）不受影响。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST' || !isPreviewInstance()) {
+      next();
+      return;
+    }
+    // 允许可选尾斜杠：Express 非严格路由会把 /stop/ 派发到 /stop handler，
+    // 不吸收尾斜杠的话守卫会被绕过（Codex P2）。
+    // force-rebuild/:profileId 也是容器动作（会 docker stop + find rm -rf worktree），
+    // 必须同罩（Codex P2）。
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+|stop|restart|pull)\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+    res.status(403).json({
+      error: 'preview_instance',
+      message: 'CDS 预览实例不执行容器操作（部署/停止/重启/拉取）。此实例仅用于验收 CDS 自身的界面与交互；真实操作请回到生产 CDS。',
+    });
+  });
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -2210,6 +2246,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.fail(runId, classifyDeploymentFailure({ message, phase, run }));
   }
 
+  // 部署静默阶段的 run 心跳（Codex P2「Do not reap live quiet deployment runs」）：
+  // 构建容器输出与就绪探测只走 SSE/opLog，不写 run 事件——慢启动在 1200s 就绪
+  // 下限内可能超过周期收割器的 15 分钟心跳阈值而被误杀。凡有构建输出/探测尝试
+  // 就打一次心跳（30s 节流，不追加事件不刷屏），证明部署仍活着。
+  const deploymentRunLastBeatAt = new Map<string, number>();
+  function heartbeatDeploymentRun(runId: string | undefined | null): void {
+    if (!deploymentRunService || !runId) return;
+    const now = Date.now();
+    const last = deploymentRunLastBeatAt.get(runId) || 0;
+    if (now - last < 30_000) return;
+    deploymentRunLastBeatAt.set(runId, now);
+    try {
+      deploymentRunService.heartbeat(runId);
+    } catch { /* run 已终态或不存在：心跳只是加分项 */ }
+    if (deploymentRunLastBeatAt.size > 200) {
+      const cutoff = now - 60 * 60_000;
+      for (const [k, v] of deploymentRunLastBeatAt) {
+        if (v < cutoff) deploymentRunLastBeatAt.delete(k);
+      }
+    }
+  }
+
   function cancelDeploymentRun(runId: string | undefined, message: string): void {
     if (!deploymentRunService || !runId) return;
     const run = deploymentRunService.get(runId);
@@ -2281,6 +2339,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       kind: BranchOperationKind;
       profileId?: string | null;
       commitSha?: string | null;
+      versionId?: string | null;
+      hasOneShotOptions?: boolean;
       source: string;
       reason?: string | null;
       sse?: boolean;
@@ -2298,6 +2358,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor: resolveActorFromRequest(req),
       requestId: requestId || null,
       commitSha: input.commitSha || null,
+      versionId: input.versionId || null,
+      hasOneShotOptions: input.hasOneShotOptions || false,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
@@ -2312,7 +2374,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
       message: decision.status === 'merged'
-        ? '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit'
+        ? (triggerFromRequest(req) === 'manual'
+          ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
+          : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
         : decision.reason || '同分支已有写操作正在运行',
     };
     if (input.sse) {
@@ -2425,7 +2489,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       headers: {
         'Content-Type': 'application/json',
         'X-CDS-Internal': '1',
-        'X-CDS-Trigger': 'webhook',
+        // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
+        // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
+        'X-CDS-Trigger': pending.request.trigger,
         'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
         ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
         'X-CDS-Source-Branch-Id': pending.branchId,
@@ -2953,9 +3019,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
     // auto-publish 表面成功实际没切容器。
     // 分支实际部署清单 = 项目底座 + 本分支临时额外服务(branch-local);未声明额外服务 = 项目原样。
-    const profiles = context.profiles || stateService
+    const rawProfiles = context.profiles || stateService
       .getEffectiveProfilesForBranch(entry)
       .map((p) => resolveEffectiveProfile(p, entry));
+    const remoteProjectId = entry.projectId || 'default';
+    const remoteProject = stateService.getProject(remoteProjectId);
+    const remoteProfileSuffix = remoteProjectId === 'default'
+      ? ''
+      : `-${remoteProject?.slug || remoteProjectId}`;
+    const profiles = normalizeProjectProfileDependencies(rawProfiles, remoteProfileSuffix);
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
@@ -3449,12 +3521,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`SQL 初始化文件路径非法: ${file}`);
     }
     const sql = fs.readFileSync(sqlPath, 'utf-8');
-    const infra = stateService.getInfraServicesForProject(projectId)
+    const runningSqlInfra = stateService.getInfraServicesForProject(projectId)
       .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
-      .sort((a, b) => a.id.localeCompare(b.id))[0];
-    if (!infra) {
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (runningSqlInfra.length === 0) {
       throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
     }
+    // 优先选部署 profile 的 depends_on 明确声明的那个 SQL 库（compose depends_on 里的 infra id/名）；
+    // 仅当没有任何依赖信息命中时，才退回按 id 字母序取首个（历史行为），避免多库项目初始化到错的库。
+    const dependsOnIds = new Set<string>();
+    for (const p of [
+      ...stateService.getBuildProfilesForProject(projectId),
+      ...(entry.extraProfiles ?? []),
+    ]) {
+      for (const dep of p.dependsOn ?? []) dependsOnIds.add(dep);
+    }
+    const infra = runningSqlInfra.find((svc) => dependsOnIds.has(svc.id) || dependsOnIds.has(svc.name))
+      ?? runningSqlInfra[0];
     logEvent({
       step: `database-init-sql-${infra.id}`,
       status: 'running',
@@ -7908,7 +7991,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const firewallChain = resourceExternalFirewallChain(input.projectId, input.branch.id, input.resourceId);
     const network = stateService.getProject(input.projectId)?.dockerNetwork || config.dockerNetwork;
     const listenPort = 15432;
-    const port = await allocateResourceExternalPort(shell, input.currentPolicy?.enabled ? input.currentPolicy.port : undefined);
+    // #805：把当前策略端口既作为 preferred、又从 used 里排除，保证更新策略时端口稳定复用。
+    const reusePort = input.currentPolicy?.enabled ? input.currentPolicy.port : undefined;
+    const port = await allocateResourceExternalPort(shell, reusePort, reusePort);
     await disableTcpResourceExternalAccess(input.currentPolicy);
     await ensureDockerNetwork(shell, network);
     const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
@@ -7918,6 +8003,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const labels = [
       'cds.managed=true',
       'cds.type=resource-external-access',
+      // 实例身份：与 app/infra 容器一致，同宿主多 CDS master 时收割器据此互不
+      // 触碰（Codex P1；缺此 label 时无标记代理会被别的实例误停）。
+      `cds.instance=${computeCdsInstanceId(config.repoRoot)}`,
       `cds.project.id=${input.projectId}`,
       `cds.branch.id=${input.branch.id}`,
       `cds.resource.id=${input.resourceId}`,
@@ -11026,6 +11114,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/deploy', async (req, res) => {
     const { id } = req.params;
+    // 预览实例的容器动作拒绝已由 createBranchRouter 顶部的统一守卫中间件处理
+    //（deploy / deploy/:profileId / stop / restart / pull 一并覆盖）。
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
@@ -11349,6 +11439,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
+      // 版本重部署（body.versionId）不参与 manual 合并去重：pending 重放只送
+      // commitSha 会丢版本捕获配置（Codex P2），撞车维持 409。
+      versionId: requestedVersionId || null,
+      // 一次性选项（?force=1 / ?ignoreRequired=1 / body.targetExecutorId）同理
+      // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
+      // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
+      hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
@@ -11842,6 +11939,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // ── Compute startup layers (topological sort by dependsOn) ──
+      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
+      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
+      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
+      const deployProjectId = entry.projectId || 'default';
+      const deployProfileSuffix = deployProjectId === 'default'
+        ? ''
+        : `-${deployProject?.slug || deployProjectId}`;
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
+
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
       // this project. Avoids cross-project bleed where project A's
@@ -11915,7 +12021,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         const layerStartTime = Date.now();
 
-        await Promise.all(layer.items.map(async (profile) => {
+        // 层内 fan-out 走共享 abort 执行器（deploy-layer-runner）：任一服务被
+        // supersede 时踢出仍在排队的兄弟，且等**所有**服务闭包终结才继续——
+        // 部署收尾（释放分支租约）绝不发生在兄弟闭包还存活的时刻，根治
+        // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
+        await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           const effectiveProfile = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
           const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
@@ -11931,6 +12041,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 宿主 CPU 吃满、彼此饿死（实测并发时 admin 构建从 ~300s 膨胀到 845s）。
           // 排队状态写进部署日志 + SSE，让用户看到「排队中，前面还有 N 个」而不是
           // 疑似卡死的 spinner（expectation-management.md：排队 ≠ 卡死，必须可感知）。
+          //
+          // 2026-07-16 队列堵死复盘后的三条纪律：
+          // 1. 排队可取消：15s 刷新 tick 检查租约，被 supersede 的部署 abort 出队，
+          //    不再僵尸占位（此前僵尸把全局等待数撑到 54、醒来才抛错）。
+          // 2. 极速版不占槽：prebuilt 部署只 docker pull + 启动，零编译；镜像拉取
+          //    失败回退源码编译时经 onSourceCompileFallback 回补槽位。
+          // 3. 持有者身份：holder 带 branch/profile/run，运维可回答「槽被谁占着」。
           let queueRefreshTimer: NodeJS.Timeout | undefined;
           const clearQueueTimer = () => {
             if (queueRefreshTimer) {
@@ -11938,44 +12055,101 @@ export function createBranchRouter(deps: RouterDeps): Router {
               queueRefreshTimer = undefined;
             }
           };
-          const buildSlot = await acquireBuildSlot({
-            onQueued: ({ ahead, active, max }) => {
-              logEvent({
-                step: `queue-${profile.id}`,
-                status: 'info',
-                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
-                timestamp: new Date().toISOString(),
+          const gateAbort = new AbortController();
+          // 层级共享 abort（兄弟被 supersede 首败广播）级联到本服务的排队等待。
+          if (layerSignal.aborted) gateAbort.abort();
+          else layerSignal.addEventListener('abort', () => gateAbort.abort(), { once: true });
+          const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
+          const acquireGateSlot = async (): Promise<BuildSlot> => {
+            try {
+              const slot = await acquireBuildSlot({
+                holder: {
+                  branchId: id,
+                  profileId: profile.id,
+                  runId: deploymentRun?.id,
+                  operationId: branchOperationLease?.operationId,
+                  label: effectiveProfile.name,
+                },
+                signal: gateAbort.signal,
+                isCancelled: leaseCancelled,
+                onQueued: ({ ahead, active, max }) => {
+                  logEvent({
+                    step: `queue-${profile.id}`,
+                    status: 'info',
+                    title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                    timestamp: new Date().toISOString(),
+                  });
+                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+                  // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
+                  deployQueueTracker.onQueued(profile.id, { ahead, active, max });
+                  // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
+                  // 首要职责是租约检查：被 supersede 的部署立刻 abort 出队，
+                  // 不再向 run 账本写心跳（僵尸 run 才能被周期收割器收敛）。
+                  queueRefreshTimer = setInterval(() => {
+                    if (leaseCancelled()) {
+                      clearQueueTimer();
+                      gateAbort.abort();
+                      return;
+                    }
+                    const s = buildGateStatus();
+                    logEvent({
+                      step: `queue-${profile.id}`,
+                      status: 'info',
+                      title: `${effectiveProfile.name} 仍在排队：${s.queued} 个等待中 / ${s.active} 个构建中（上限 ${s.max}）`,
+                      timestamp: new Date().toISOString(),
+                    });
+                    sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
+                    deployQueueTracker.refresh();
+                  }, 15000);
+                  if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
+                },
+                onStart: ({ waitedMs }) => {
+                  clearQueueTimer();
+                  logEvent({
+                    step: `queue-${profile.id}`,
+                    status: 'info',
+                    title: `${effectiveProfile.name} 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建`,
+                    timestamp: new Date().toISOString(),
+                  });
+                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
+                  deployQueueTracker.onStart(profile.id);
+                },
               });
-              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
-              // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
-              deployQueueTracker.onQueued(profile.id, { ahead, active, max });
-              // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
-              queueRefreshTimer = setInterval(() => {
-                const s = buildGateStatus();
+              clearQueueTimer();
+              return slot;
+            } catch (err) {
+              clearQueueTimer();
+              if (err instanceof BuildSlotCancelledError) {
+                // 排队等待被取消：结束排队 episode 清掉分支卡 chip。
+                deployQueueTracker.onStart(profile.id);
                 logEvent({
                   step: `queue-${profile.id}`,
-                  status: 'info',
-                  title: `${effectiveProfile.name} 仍在排队：${s.queued} 个等待中 / ${s.active} 个构建中（上限 ${s.max}）`,
+                  status: 'warning',
+                  title: `${effectiveProfile.name} 排队等待已取消：${err.reason}`,
                   timestamp: new Date().toISOString(),
                 });
-                sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
-                deployQueueTracker.refresh();
-              }, 15000);
-              if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
-            },
-            onStart: ({ waitedMs }) => {
-              clearQueueTimer();
-              logEvent({
-                step: `queue-${profile.id}`,
-                status: 'info',
-                title: `${effectiveProfile.name} 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建`,
-                timestamp: new Date().toISOString(),
-              });
-              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
-              deployQueueTracker.onStart(profile.id);
-            },
-          });
-          clearQueueTimer();
+                // 租约确已失效（被更高优先级操作取代）→ 转成 supersede 流程让
+                // 既有收尾（run→cancelled + 围栏容器清理）接管；否则原样上抛
+                // （层内兄弟失败连坐踢出），由 pickError 保证不掩盖真实根因。
+                if (leaseCancelled()) {
+                  throw new BranchOperationSupersededError(
+                    branchOperationLease?.operationId || 'unknown',
+                    id,
+                    `build-gate-wait-${profile.id}`,
+                  );
+                }
+              }
+              throw err;
+            }
+          };
+          // 极速版（prebuilt）：仅拉镜像 + 启动，零编译，不占构建槽。
+          const isPrebuiltDeploy = effectiveProfile.prebuiltImage === true;
+          let buildSlot: BuildSlot | null = null;
+          if (isPrebuiltDeploy) {
+            sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+          } else {
+            buildSlot = await acquireGateSlot();
+          }
 
           logEvent({
             step: `build-${profile.id}`,
@@ -11988,6 +12162,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'building';
 
           try {
+            // 拿到槽位后立即复核租约：排队期间可能已被更高优先级操作取代，
+            // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
+            assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
             await archiveBranchContainerLogs({
               stateService,
@@ -12036,6 +12213,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
+              // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
+              onSourceCompileFallback: async () => {
+                if (!buildSlot) buildSlot = await acquireGateSlot();
+              },
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -12047,6 +12229,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               },
               onOutput: (chunk) => {
                 sendSSE(res, 'log', { profileId: profile.id, chunk });
+                heartbeatDeploymentRun(deploymentRun?.id);
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) {
                     logDeploy(id, line);
@@ -12090,6 +12273,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
 
               ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+                heartbeatDeploymentRun(deploymentRun?.id);
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
@@ -12120,12 +12304,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
                     ok: info.ok,
                     error: info.error,
                   });
+                  // 慢启动就绪等待期（最长 1200s）不写 run 事件，靠探测心跳防误杀
+                  heartbeatDeploymentRun(deploymentRun?.id);
                 },
                 (chunk) => {
                   for (const line of chunk.split('\n')) {
                     if (line.trim()) logDeploy(id, line);
                   }
                 },
+                // 容器活性早退：崩溃容器不再让持有的构建槽白等满就绪下限。
+                svc.containerName,
               );
               ready = ready ? probeReady : probeReady;
             }
@@ -12174,11 +12362,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
               timestamp: new Date().toISOString(),
             });
           } finally {
-            // 释放构建槽位（幂等），唤醒下一个排队的构建。
+            // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
             clearQueueTimer();
-            buildSlot.release();
+            buildSlot?.release();
           }
-        }));
+        }, {
+          // Superseded 优先（整个 run 收敛为 cancelled）；真实构建错误次之；
+          // 兄弟连坐产生的排队取消（BuildSlotCancelledError）垫底，不掩盖根因。
+          pickError: (errors) => {
+            const superseded = errors.find((e) => e instanceof BranchOperationSupersededError);
+            if (superseded) return superseded;
+            const real = errors.find((e) => !(e instanceof BuildSlotCancelledError));
+            return real ?? errors[0];
+          },
+        });
 
         const layerElapsed = Date.now() - layerStartTime;
         logEvent({
@@ -12820,7 +13017,115 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
+      // ── 全局构建并发闸（2026-07-16 复盘补齐）──
+      // 此前单服务重部署完全绕过 build-gate，源码编译不受全局并发控制。
+      // 与主部署路径同一套语义：排队可取消（15s tick 查租约）、极速版不占槽、
+      // 持有者身份可观测；镜像拉取失败回退源码编译时经钩子回补槽位。
+      const deployQueueTracker = createDeployQueueTracker({
+        entry,
+        save: () => stateService.save(),
+        emitBranchUpdated: () => branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId: id,
+            projectId: entry.projectId,
+            patch: { buildQueue: entry.buildQueue, lastDeployQueueWaitMs: entry.lastDeployQueueWaitMs },
+            ts: new Date().toISOString(),
+          },
+        }),
+      });
+      const gateAbort = new AbortController();
+      const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
+      let queueRefreshTimer: NodeJS.Timeout | undefined;
+      const clearQueueTimer = () => {
+        if (queueRefreshTimer) {
+          clearInterval(queueRefreshTimer);
+          queueRefreshTimer = undefined;
+        }
+      };
+      const acquireGateSlot = async (): Promise<BuildSlot> => {
+        try {
+          const slot = await acquireBuildSlot({
+            holder: {
+              branchId: id,
+              profileId: profile.id,
+              runId: deploymentRun?.id,
+              operationId: branchOperationLease?.operationId,
+              label: effectiveProfile.name,
+            },
+            signal: gateAbort.signal,
+            isCancelled: leaseCancelled,
+            onQueued: ({ ahead, active, max }) => {
+              logEvent({
+                step: `queue-${profile.id}`,
+                status: 'info',
+                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                timestamp: new Date().toISOString(),
+              });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              deployQueueTracker.onQueued(profile.id, { ahead, active, max });
+              queueRefreshTimer = setInterval(() => {
+                if (leaseCancelled()) {
+                  clearQueueTimer();
+                  gateAbort.abort();
+                  return;
+                }
+                const s = buildGateStatus();
+                logEvent({
+                  step: `queue-${profile.id}`,
+                  status: 'info',
+                  title: `${effectiveProfile.name} 仍在排队：${s.queued} 个等待中 / ${s.active} 个构建中（上限 ${s.max}）`,
+                  timestamp: new Date().toISOString(),
+                });
+                sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
+                deployQueueTracker.refresh();
+              }, 15000);
+              if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
+            },
+            onStart: ({ waitedMs }) => {
+              clearQueueTimer();
+              logEvent({
+                step: `queue-${profile.id}`,
+                status: 'info',
+                title: `${effectiveProfile.name} 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建`,
+                timestamp: new Date().toISOString(),
+              });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
+              deployQueueTracker.onStart(profile.id);
+            },
+          });
+          clearQueueTimer();
+          return slot;
+        } catch (err) {
+          clearQueueTimer();
+          if (err instanceof BuildSlotCancelledError) {
+            deployQueueTracker.onStart(profile.id);
+            logEvent({
+              step: `queue-${profile.id}`,
+              status: 'warning',
+              title: `${effectiveProfile.name} 排队等待已取消：${err.reason}`,
+              timestamp: new Date().toISOString(),
+            });
+            if (leaseCancelled()) {
+              throw new BranchOperationSupersededError(
+                branchOperationLease?.operationId || 'unknown',
+                id,
+                `build-gate-wait-${profile.id}`,
+              );
+            }
+          }
+          throw err;
+        }
+      };
+      let buildSlot: BuildSlot | null = null;
+      if (effectiveProfile.prebuiltImage === true) {
+        sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+      } else {
+        buildSlot = await acquireGateSlot();
+      }
+
       try {
+        assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
         await archiveBranchContainerLogs({
           stateService,
@@ -12850,6 +13155,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
+          onSourceCompileFallback: async () => {
+            if (!buildSlot) buildSlot = await acquireGateSlot();
+          },
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
@@ -12861,6 +13170,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           },
           onOutput: (chunk) => {
             sendSSE(res, 'log', { profileId: profile.id, chunk });
+            heartbeatDeploymentRun(deploymentRun?.id);
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
@@ -12884,6 +13194,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let ready = false;
         if (profile.startupSignal) {
           const signalReady = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+            heartbeatDeploymentRun(deploymentRun?.id);
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
@@ -12909,12 +13220,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             ),
             (info) => {
               sendSSE(res, 'probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error });
+              // 慢启动就绪等待期不写 run 事件，靠探测心跳防周期收割器误杀
+              heartbeatDeploymentRun(deploymentRun?.id);
             },
             (chunk) => {
               for (const line of chunk.split('\n')) {
                 if (line.trim()) logDeploy(id, line);
               }
             },
+            // 容器活性早退：崩溃容器立即结束就绪等待，不空转到超时。
+            svc.containerName,
           );
         }
         if (ready) {
@@ -12944,6 +13259,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           detail: { profileId: profile.id },
           timestamp: new Date().toISOString(),
         });
+      } finally {
+        // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
+        clearQueueTimer();
+        buildSlot?.release();
+        // 排队 chip 兜底清理（部署 throw 也不许留下「排队中」残影）。
+        deployQueueTracker.dispose();
       }
 
       // Update overall status
@@ -13495,6 +13816,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (failed.length === 0) {
         assertBranchOperationCurrent(branchOperationLease, 'restart before success save');
+        // 记录热重启耗时进 restart 样本桶（预览等待页真实进度的历史数据源）。
+        stateService.recordDeployDuration(entry.projectId || 'default', 'restart', Date.now() - Date.parse(restartStartedAt), 10 * 60 * 1000);
         entry.status = 'running';
         // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
         // （Codex P2）。
@@ -14448,6 +14771,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-logs', async (req, res) => {
     const { id } = req.params;
+    // 预览实例守卫（Codex P2，2026-07-15）：不加这条，isRunning/docker inspect 会先被
+    // 拦截 executor 打成 exitCode 1，路由返回误导性的「容器不存在，请重新部署」，
+    // 预览实例的中文拒绝语永远到不了 UI。在入口直接给准确说明。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例没有真实容器，无法查看容器日志。此实例仅用于验收 CDS 自身的界面与交互。',
+      });
+      return;
+    }
     const { profileId } = req.body as { profileId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
@@ -16116,15 +16449,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       const parsed = parseCdsCompose(composeYaml);
       if (parsed && parsed.buildProfiles.length > 0) {
-        const seeded: BuildProfile[] = [];
-        for (const bp of parsed.buildProfiles) {
-          const profile: BuildProfile = {
-            ...bp,
-            id: `${bp.id}${idSuffix}`,
-            projectId,
-          };
+        const scopedProfiles = parsed.buildProfiles.map((bp): BuildProfile => ({
+          ...bp,
+          id: `${bp.id}${idSuffix}`,
+          projectId,
+        }));
+        const seeded = normalizeProjectProfileDependencies(scopedProfiles, idSuffix);
+        for (const profile of seeded) {
           stateService.addBuildProfile(profile);
-          seeded.push(profile);
         }
 
         // Merge envVars — never clobber user-authored vars. Since the
@@ -18313,9 +18645,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET /api/export-skill — export all CDS skills as a single tar.gz bundle
   //
   // 打包内容（全量，不分 legacy / unified）：
-  //   .claude/skills/cds/                — 统一技能（主入口 + CLI + reference）
-  //   .claude/skills/cds-deploy-pipeline/ — 部署流水线技能
-  //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //   skills/cds/                — 统一技能（主入口 + CLI + reference）
+  //   skills/cds-deploy-pipeline/ — 部署流水线技能
+  //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
   // 2026-07-09：目录复制与 tar 打包全部异步化——原实现 statSync/readdirSync
@@ -18348,7 +18681,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const skillName of skillsToCopy) {
         const skillDir = path.join(skillsRoot, skillName);
         if (!fs.existsSync(skillDir)) continue;
-        const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+        const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
         await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
         copiedCount++;
@@ -18361,35 +18694,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // README tailored to the new unified skill
       const readme = useLegacy
-        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
+        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
 包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
-## 三分钟安装
+## 安装
+
+解压后，将 \`skills/\` 下的三个目录复制到当前项目的 Agent Skills 目录：
+
+| Agent | 项目级目录 |
+|------|-----------|
+| Codex / 通用 Agent Skills | \`.agents/skills\` |
+| Cursor | \`.cursor/skills\` |
+| Claude Code | \`.claude/skills\` |
+
+不要写入用户主目录，不要修改 PATH、\`.bashrc\`、\`.zshrc\` 或系统环境变量。
+
+## 安全接入
 
 \`\`\`bash
-# 1. 解压到你项目的根目录（会在 .claude/skills/ 下放置所有 cds 技能）
-tar -xzf ${packName}.tar.gz --strip-components=1
+# 已有项目
+python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host> --project <project-id> --agent <agent-name>
 
-# 2. 加 alias（推荐）
-echo 'alias cdscli="python3 \\$(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"' >> ~/.bashrc
-source ~/.bashrc
-
-# 3. 初始化（交互式）
-cdscli init
-
-# 4. 验证
-cdscli auth check
-cdscli project list --human
+# 首次创建项目
+python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host> --new-project --agent <agent-name>
 \`\`\`
+
+命令会等待用户在 CDS 页面批准。凭据保存在当前项目的 \`.cds/credentials.json\`，
+并写入本地 git exclude；密钥不会出现在对话、标准输出或 shell 配置中。
 
 ## 主要命令
 
 | 命令 | 用途 |
 |------|------|
-| \`cdscli init\` | 首次配置 CDS_HOST / AI_ACCESS_KEY / 默认 projectId |
+| \`cdscli connect\` | 页面批准后安全连接，不复制密钥、不写全局环境变量 |
+| \`cdscli init\` | 交互式安全接入；\`--legacy-env\` 才使用旧版环境变量方式 |
 | \`cdscli scan --apply-to-cds <projectId>\` | 扫描本地 → 生成 compose YAML → 提交 CDS 审批 |
 | \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
 | \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
@@ -18400,23 +18741,32 @@ cdscli project list --human
 
 | 文件 | 何时看 |
 |------|--------|
-| \`.claude/skills/cds/SKILL.md\` | Claude Code 自动加载，主入口 |
-| \`.claude/skills/cds/reference/api.md\` | 需要 curl 直调 API |
-| \`.claude/skills/cds/reference/auth.md\` | 401 / 403 排查 |
-| \`.claude/skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
-| \`.claude/skills/cds/reference/smoke.md\` | 分层冒烟策略 |
-| \`.claude/skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
-| \`.claude/skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+| \`skills/cds/SKILL.md\` | 主入口 |
+| \`skills/cds/reference/api.md\` | 需要 curl 直调 API |
+| \`skills/cds/reference/auth.md\` | 401 / 403 排查 |
+| \`skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
+| \`skills/cds/reference/smoke.md\` | 分层冒烟策略 |
+| \`skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
+| \`skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
 
 ## 升级
 
-直接重新下载本包覆盖即可，\`~/.cdsrc\` 不受影响。
+运行 \`cdscli update\`。旧版本备份放在项目 \`.cds/skill-backups\`，不会产生重复可发现技能。
 
 ## 反馈
 
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
+      await fs.promises.writeFile(
+        path.join(packDir, 'manifest.json'),
+        JSON.stringify({
+          format: 'agent-skills',
+          version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
+          skills: skillsToCopy.filter((name) => fs.existsSync(path.join(skillsRoot, name))),
+        }, null, 2) + '\n',
+        'utf-8',
+      );
 
       // Create tar.gz using tar command (available on all Linux) — 异步 execFile，
       // 压缩期间事件循环不阻塞（原 execSync 会让所有请求/SSE/代理停摆）。
@@ -20157,6 +20507,14 @@ cdscli project list --human
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
+    // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持自更新。此实例随分支部署，推送新 commit 即自动重建；生产更新请到生产 CDS 执行。',
+      });
+      return;
+    }
     // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
     let { branch, force } = req.body as { branch?: string; force?: boolean };
@@ -20183,7 +20541,9 @@ cdscli project list --human
       try {
         const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot }))
           .stdout.trim();
-        branch = currentBranch && currentBranch !== 'HEAD' ? currentBranch : 'main';
+        branch = currentBranch && currentBranch !== 'HEAD'
+          ? resolveSelfUpdateTargetBranch(currentBranch)
+          : 'main';
       } catch {
         branch = 'main';
       }
@@ -20292,31 +20652,35 @@ cdscli project list --human
           return;
         }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
-        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
-        const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
-        if (checkoutResult.exitCode !== 0) {
-          // Try creating tracking branch from remote
-          const fallbackResult = await shell.exec(`git checkout -f -b ${branch} origin/${branch}`, { cwd: repoRoot });
-          if (fallbackResult.exitCode !== 0) {
-            const errMsg = (fallbackResult.stderr || fallbackResult.stdout || '未知错误').trim();
-            send('checkout', 'error', `切换分支失败: ${errMsg}`);
-            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
-            res.end();
-            recordFailure(`切换分支失败: ${errMsg}`);
-            return;
-          }
+        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
+        // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
+        // 不移动应用工作树使用的本地分支引用。
+        const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, branch);
+        if (!checkoutResult.ok) {
+          const errMsg = checkoutResult.error || '未知错误';
+          send('checkout', 'error', `切换分支失败: ${errMsg}`);
+          sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
+          res.end();
+          recordFailure(`切换分支失败: ${errMsg}`);
+          return;
         }
         // Verify the checkout actually worked
         const verifyResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
         const actualBranch = verifyResult.stdout.trim();
-        if (actualBranch !== branch) {
-          send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
+        if (actualBranch !== checkoutResult.actualBranch) {
+          send('checkout', 'error', `切换失败: 期望 ${checkoutResult.actualBranch}，实际仍在 ${actualBranch}`);
           sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
           res.end();
           recordFailure(`分支切换未生效: 仍在 ${actualBranch}`);
           return;
         }
-        send('checkout', 'done', `已切换到 ${branch}`);
+        send(
+          'checkout',
+          'done',
+          checkoutResult.usedRuntimeBranch
+            ? `已通过控制面隔离分支对齐 ${branch}`
+            : `已切换到 ${branch}`,
+        );
       }
 
       // 2026-05-04 fix:fetch 之后先校验 origin/<target> ref 存在,
@@ -20958,6 +21322,14 @@ cdscli project list --human
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
+    // 预览实例不支持自更新（同 /self-update）。
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持强制同步。此实例随分支部署，推送新 commit 即自动重建。',
+      });
+      return;
+    }
     // 2026-05-08 用户反馈"强制更新一秒过 → 没法重复测试":body.force=true 强制
     // 跳过 no-op fast-path,即使 HEAD === origin 且 dist .build-sha 都已对上,
     // 也走完整 fetch + reset + analyze + (热/冷/web-only) 流程。这样测试人员
@@ -21062,7 +21434,7 @@ cdscli project list --human
       let target = branch;
       if (!target) {
         const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
-        target = cur.stdout.trim() || 'main';
+        target = resolveSelfUpdateTargetBranch(cur.stdout.trim() || 'main');
       }
       if (!isSafeGitRef(target)) {
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
@@ -21098,32 +21470,33 @@ cdscli project list --human
       // tracking. self-update does this right; we were missing it.
       // Caught by Cursor Bugbot #450 round 7 (HIGH).
       send('checkout', 'running', `切换到 ${target} 分支...`);
-      const coRes = await shell.exec(`git checkout -f ${target}`, { cwd: repoRoot, timeout: 30_000 });
-      if (coRes.exitCode !== 0) {
-        // Fallback: create tracking branch from origin if it doesn't exist
-        // locally yet (same dance self-update performs).
-        const fbRes = await shell.exec(`git checkout -f -b ${target} origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
-        if (fbRes.exitCode !== 0) {
-          const errMsg = (combinedOutput(fbRes) || '未知错误').trim();
-          send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
-          sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
-          res.end();
-          recordFailure(`无法切换到 ${target}: ${errMsg}`);
-          return;
-        }
+      const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, target);
+      if (!checkoutResult.ok) {
+        const errMsg = checkoutResult.error || '未知错误';
+        send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
+        sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
+        res.end();
+        recordFailure(`无法切换到 ${target}: ${errMsg}`);
+        return;
       }
       // Verify we actually ended up on the target branch — catch any
       // silent checkout-succeeds-but-HEAD-elsewhere edge case.
       const verify = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
       const actual = verify.stdout.trim();
-      if (actual !== target) {
-        send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
+      if (actual !== checkoutResult.actualBranch) {
+        send('checkout', 'error', `切换未生效: 期望 ${checkoutResult.actualBranch},实际 ${actual}`);
         sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
         res.end();
         recordFailure(`git checkout 未生效: 仍在 ${actual}`);
         return;
       }
-      send('checkout', 'done', `已切到 ${target}`);
+      send(
+        'checkout',
+        'done',
+        checkoutResult.usedRuntimeBranch
+          ? `已通过控制面隔离分支对齐 ${target}`
+          : `已切到 ${target}`,
+      );
 
       // Step 3b: hard-reset to origin/<target>
       send('reset', 'running', `硬对齐 HEAD → origin/${target}`);

@@ -79,6 +79,7 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
@@ -766,6 +767,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /export-config': '导出配置',
     'GET /reports': '列出验收报告',
     'POST /reports': '创建验收报告',
+    'POST /reports/assets': '上传验收截图',
     'GET /report-folders': '列出报告文件夹',
     'POST /report-folders': '新建报告文件夹',
     'POST /peer-sync/handshake': 'peer-sync 配对握手',
@@ -834,6 +836,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
     'GET /auth/public-status': '获取公开认证能力',
+    'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
@@ -879,6 +882,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
     'GET /cluster/status': '获取集群状态',
+    'GET /cluster/build-gate': '获取构建并发闸',
+    'PUT /cluster/build-gate': '调整构建并发上限',
+    'GET /cluster/build-gate/health': '获取构建闸健康',
     'GET /cluster/strategy': '获取集群调度策略',
     'PUT /cluster/strategy': '更新集群调度策略',
     'POST /cluster/join': '加入集群',
@@ -1070,6 +1076,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
+    [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
+    [/^GET \/bootstrap-access-requests\/[^/]+$/, '轮询新项目接入结果'],
     [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
     [/^POST \/access-requests\/[^/]+\/reject$/, '拒绝授权申请'],
     // 项目虚拟 cds-compose.yml
@@ -1210,6 +1218,11 @@ function broadcastAiPairing(event: string, data: unknown) {
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
+  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
+  // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
+  if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
   return false;
 }
 
@@ -1328,6 +1341,29 @@ export function createServer(deps: ServerDeps): express.Express {
       : undefined,
   );
   deploymentRunService.reconcileInterrupted();
+  // 周期收割（2026-07-16 队列堵死复盘）：此前 reconcileInterrupted 只在启动时
+  // 跑一次，重启前心跳仍新鲜的 run 会在重启后永远卡在 building（观测到 24h+
+  // 的幽灵 run）。每 5 分钟收一轮：心跳停跳超过 15 分钟的非终结 run 收敛为
+  // 失败（cds.run.interrupted，可重试）。合法排队/构建中的 run 由部署循环的
+  // 事件持续刷新心跳，不会被误杀。
+  {
+    let runReaperBusy = false;
+    const runReaper = setInterval(() => {
+      if (runReaperBusy) return;
+      runReaperBusy = true;
+      try {
+        const reconciled = deploymentRunService.reconcileInterrupted();
+        if (reconciled.length > 0) {
+          console.warn(`[deployment-run] 周期收割：${reconciled.length} 个心跳过期的 run 已收敛为失败 (${reconciled.map((r) => r.id).join(', ')})`);
+        }
+      } catch (err) {
+        console.warn(`[deployment-run] 周期收割失败: ${(err as Error).message}`);
+      } finally {
+        runReaperBusy = false;
+      }
+    }, 5 * 60 * 1000);
+    runReaper.unref?.();
+  }
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -1764,6 +1800,12 @@ export function createServer(deps: ServerDeps): express.Express {
         local: authMode === 'basic' || authMode === 'github',
       },
     });
+  });
+
+  // ── 实例模式（公开，登录前后都可读）──
+  // 预览实例（CDS 托管 CDS）时前端据此渲染顶部提示，避免用户把演示实例当生产。
+  app.get('/api/instance-mode', (_req, res) => {
+    res.json({ previewInstance: isPreviewInstance() });
   });
 
   // ── AI pairing endpoints (before auth, some are public) ──
@@ -3390,6 +3432,17 @@ export function createServer(deps: ServerDeps): express.Express {
     next();
   });
 
+  // Instantiate the GitHub App client before project routes so private-repo
+  // clone and later webhook/deploy routes share the same installation-token
+  // cache and authorization behavior.
+  const githubAppClient = deps.config.githubApp
+    ? new GitHubAppClient({
+        appId: deps.config.githubApp.appId,
+        privateKey: deps.config.githubApp.privateKey,
+        appSlug: deps.config.githubApp.appSlug,
+      })
+    : undefined;
+
   // API routes
   app.use('/api/bridge', createBridgeRouter({
     bridgeService: deps.bridgeService,
@@ -3402,6 +3455,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     shell: deps.shell,
     config: deps.config,
+    githubApp: githubAppClient,
     legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
   }));
   // Pending imports — agent-authored CDS compose awaiting operator approval.
@@ -3577,20 +3631,6 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     worktreeBase: deps.config.worktreeBase,
   }));
-  // ── GitHub App client (optional) ──
-  //
-  // Instantiate once and share between the webhook router and the branch
-  // router. Absent when CDS_GITHUB_APP_* env vars are not set — both
-  // consumers handle `undefined` gracefully (routes return 503, deploys
-  // skip check-run creation).
-  const githubAppClient = deps.config.githubApp
-    ? new GitHubAppClient({
-        appId: deps.config.githubApp.appId,
-        privateKey: deps.config.githubApp.privateKey,
-        appSlug: deps.config.githubApp.appSlug,
-      })
-    : undefined;
-
   deps.worktreeService.setGitEnvProvider(async (repoRoot: string) => {
     const auth = await resolveGitAuthEnv({
       repoRoot,
@@ -4018,18 +4058,49 @@ export function installSpaFallback(
       res.end(body);
     });
     // favicon and any other root-level files that Vite emits next to index.html
-    app.use(
-      express.static(reactDist, {
-        index: false,
-        setHeaders: (res, filePath) => {
-          if (filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-          }
-        },
-      })
-    );
+    const reactStatic = express.static(reactDist, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      },
+    });
+    // /index.html 不许走裸文件（Codex P2）：express.static 的 index:false 只关目录
+    // 索引，显式请求 /index.html 仍会吐原始文件，绕过 sendReactIndex 的预览实例
+    // 标记注入。跳过它让请求落到下方 catch-all 的 301 → /branch-list（注入版）。
+    app.use((req, res, next) => {
+      if (req.path === '/index.html') {
+        next();
+        return;
+      }
+      reactStatic(req, res, next);
+    });
+    // 预览实例标记注入（Codex P1，2026-07-15）：子 CDS 的 dashboard 通过分支预览
+    // 域名访问时，web 端 apiUrl() 的 `/_cds` 直通会把 /api/* 送回**父** CDS（forwarder
+    // 对任意 host 都把 /_cds 路由到 master）——子实例的 API 被整体绕过。服务端在
+    // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
+    // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
+    // 生产实例走原 sendFile 路径，零改动。
+    let previewInstanceIndexHtml: string | null = null;
+    const sendReactIndex = (res: express.Response): void => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      if (!isPreviewInstance()) {
+        res.sendFile(reactIndex);
+        return;
+      }
+      if (previewInstanceIndexHtml === null) {
+        const raw = fs.readFileSync(reactIndex, 'utf-8');
+        previewInstanceIndexHtml = raw.replace(
+          '<head>',
+          '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+        );
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(previewInstanceIndexHtml);
+    };
     app.get('*', (req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/')) return next();
@@ -4046,8 +4117,7 @@ export function installSpaFallback(
           : res.redirect(302, '/project-list');
       }
       if (req.path === '/settings') return res.redirect(302, '/project-list');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      res.sendFile(reactIndex);
+      sendReactIndex(res);
     });
   } else {
     console.warn(

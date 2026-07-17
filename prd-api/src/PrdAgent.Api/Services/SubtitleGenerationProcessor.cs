@@ -14,7 +14,7 @@ namespace PrdAgent.Api.Services;
 /// 输出格式：带时间戳的 Markdown 字幕文件。
 ///
 /// 分派规则（按 entry.ContentType 前缀）：
-///   audio/*         → ILlmGateway ASR（支持 mp3/wav/m4a/ogg/flac，必要时 ffmpeg 转码）
+///   audio/*         → ffmpeg 规范化为 16kHz mono WAV → ILlmGateway ASR
 ///   video/*         → 下载后 ffmpeg 抽音频 → 走 ASR（ffmpeg 由 host 挂载，见 docker-compose.yml）
 ///   image/*         → ILlmGateway Vision 模型 → 直译图片文字
 ///   其他            → 不支持，直接失败
@@ -27,6 +27,7 @@ public class SubtitleGenerationProcessor
     private readonly ILogger<SubtitleGenerationProcessor> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILLMRequestContextAccessor _llmCtx;
+    private readonly ContentReprocessApplyService _applyService;
 
     public SubtitleGenerationProcessor(
         IModelResolver modelResolver,
@@ -34,6 +35,7 @@ public class SubtitleGenerationProcessor
         IDocumentService documentService,
         IHttpClientFactory httpClientFactory,
         ILLMRequestContextAccessor llmCtx,
+        ContentReprocessApplyService applyService,
         ILogger<SubtitleGenerationProcessor> logger)
     {
         _modelResolver = modelResolver;
@@ -41,6 +43,7 @@ public class SubtitleGenerationProcessor
         _documentService = documentService;
         _httpClientFactory = httpClientFactory;
         _llmCtx = llmCtx;
+        _applyService = applyService;
         _logger = logger;
     }
 
@@ -151,6 +154,13 @@ public class SubtitleGenerationProcessor
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        // 「换个整理方式」：跳过 ASR，用原 run 的转录文本按新风格重生成摘要并更新原笔记
+        if (!string.IsNullOrEmpty(run.RestyleOfRunId))
+        {
+            await ProcessRestyleAsync(run, db, runStore);
+            return;
+        }
+
         var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
         if (entry == null)
             throw new InvalidOperationException("源文档条目不存在");
@@ -181,6 +191,12 @@ public class SubtitleGenerationProcessor
             .Select(s => s.Text.Trim()));
         if (string.IsNullOrWhiteSpace(transcriptPlain))
             throw new InvalidOperationException("转录结果为空（音频可能无人声或识别失败）");
+        // 静音/拒答守卫：静音音频喂给多模态转写模型时，模型可能把转写指令当聊天回答
+        // （真实事故 2026-07-12：静音录音产出"好的，请播放音频，我会逐字转写"并被存成笔记）。
+        // 极短文本 + 命中拒答/寒暄模式 → 判定无有效语音，友好失败而不是落一篇垃圾笔记。
+        if (TranscribeNoteText.LooksLikeNoSpeech(transcriptPlain))
+            throw new InvalidOperationException(
+                "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。");
 
         // 2) AI 摘要（流式 delta 推给前端逐字生长）。摘要失败不摧毁整条链路：转录稿仍然交付。
         await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
@@ -257,6 +273,8 @@ public class SubtitleGenerationProcessor
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, newEntry.Id)
                 .Set(r => r.GeneratedText, summary)
+                // 存转录纯文本：「换个整理方式」免重跑 ASR 的一级数据源（超长截断防 run 文档膨胀）
+                .Set(r => r.TranscriptText, transcriptPlain.Length > 60000 ? transcriptPlain[..60000] : transcriptPlain)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
 
@@ -264,6 +282,57 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] Transcript note generated for {EntryId} → {NewEntryId}, transcript={TLen} chars summary={SLen} chars",
             entry.Id, newEntry.Id, transcriptPlain.Length, summary.Length);
     }
+
+    /// <summary>
+    /// 「换个整理方式」（restyle）：不重跑 ASR，用原转录文本按新风格重生成摘要，
+    /// 原地更新原笔记 entry 的「摘要」小节（走版本快照，可从历史撤销），转录全文保持不动。
+    /// </summary>
+    private async Task ProcessRestyleAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
+    {
+        var prior = await db.DocumentStoreAgentRuns.Find(r => r.Id == run.RestyleOfRunId).FirstOrDefaultAsync();
+        if (prior == null || string.IsNullOrEmpty(prior.OutputEntryId))
+            throw new InvalidOperationException("原转录任务不存在或尚未产出笔记");
+
+        var noteEntry = await db.DocumentEntries.Find(e => e.Id == prior.OutputEntryId).FirstOrDefaultAsync();
+        if (noteEntry == null)
+            throw new InvalidOperationException("转录笔记已被删除，无法重新整理");
+
+        await UpdateProgressAsync(db, runStore, run, 20, "准备中");
+        var noteMd = await _applyService.LoadContentAsync(noteEntry);
+
+        // 转录文本：优先原 run 存的纯文本；老数据兜底从笔记「## 转录全文」节反解
+        var transcript = prior.TranscriptText;
+        if (string.IsNullOrWhiteSpace(transcript))
+            transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
+        if (string.IsNullOrWhiteSpace(transcript))
+            throw new InvalidOperationException("找不到原转录文本（笔记可能被改动过），请对源音频重新发起转录");
+
+        await UpdateProgressAsync(db, runStore, run, 40, "生成摘要");
+        var summary = await SummarizeTranscriptAsync(run, runStore, noteEntry.Title, transcript);
+        if (string.IsNullOrWhiteSpace(summary))
+            throw new InvalidOperationException("整理结果为空，请换个方式重试");
+
+        await UpdateProgressAsync(db, runStore, run, 90, "写入中");
+        var newNoteMd = TranscribeNoteText.ReplaceSummarySection(noteMd, summary);
+        await _applyService.SaveContentAsync(noteEntry, newNoteMd, run.UserId, db);
+
+        await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            r => r.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(r => r.OutputEntryId, noteEntry.Id)
+                .Set(r => r.GeneratedText, summary)
+                // 链式重整理：把转录文本继续带在新 run 上，下一次 restyle 不必回溯最初 run
+                .Set(r => r.TranscriptText, prior.TranscriptText)
+                .Set(r => r.Progress, 95),
+            cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Transcript restyled: run={RunId} prior={PriorId} entry={EntryId} style={Style}",
+            run.Id, prior.Id, noteEntry.Id, run.TemplateKey ?? "general");
+    }
+
+    // 摘要节替换 / 转录全文反解 / 静音判定 / 风格提示词组装：纯函数下沉到
+    // PrdAgent.Core.Models.TranscribeNoteText（PrdAgent.Tests 单测覆盖）。
 
     /// <summary>对转录全文生成结构化 Markdown 摘要，流式 delta 事件推给前端。</summary>
     private async Task<string> SummarizeTranscriptAsync(
@@ -288,17 +357,17 @@ public class SubtitleGenerationProcessor
             maxTokens: 2048,
             temperature: 0.3);
 
-        var systemPrompt =
-            "你是录音笔记助手。根据用户提供的录音转录全文，输出一份结构化 Markdown 摘要：" +
-            "先用一段话概述，再列 3-8 条要点；如转录中有明确结论或待办事项，单独用「结论」「待办」小节列出。" +
-            "硬约束：1) 只依据转录内容，不得编造；2) 未提及的内容不要出现；" +
-            "3) 直接以摘要内容开头，不要任何标题、前言或结语；4) 禁止使用 emoji 字符。";
+        var systemPrompt = TranscribeNoteText.BuildSummarySystemPrompt(run);
 
         var maxChars = 30000;
         var clipped = transcript.Length > maxChars ? transcript[..maxChars] : transcript;
+        var userContent = $"录音标题：{title}\n\n转录全文：\n{clipped}";
+        // 补充背景（如"参会人：张三、李四"）只帮助理解，硬约束禁止据此编造
+        if (!string.IsNullOrWhiteSpace(run.StyleContext))
+            userContent = $"补充背景（仅用于理解人物/场景，禁止据此编造转录中没有的内容）：{run.StyleContext.Trim()}\n\n{userContent}";
         var messages = new List<LLMMessage>
         {
-            new() { Role = "user", Content = $"录音标题：{title}\n\n转录全文：\n{clipped}" },
+            new() { Role = "user", Content = userContent },
         };
 
         var sb = new StringBuilder();
@@ -348,9 +417,14 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 35, isVideo ? "提取音轨" : "解析音频");
 
-        // 如果是视频，先用 ffmpeg 抽音频；音频直接走 LLM Gateway ASR。
-        if (isVideo)
-            bytes = await ExtractAudioWithFfmpegAsync(bytes);
+        // ASR 上游对 WebM/Opus、M4A 等容器的支持不一致，不能只依赖 multipart 的文件名和 MIME
+        // 伪装。音频和视频统一先转成 16kHz、单声道 WAV，再送入任意 ASR 路径，避免清晰录音被上游
+        // 当成不可解析的格式后返回空结果。
+        var sourceBytes = bytes.Length;
+        bytes = await ExtractAudioWithFfmpegAsync(bytes);
+        _logger.LogInformation(
+            "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
+            sourceBytes, bytes.Length, isVideo);
 
         // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
         //
@@ -419,10 +493,8 @@ public class SubtitleGenerationProcessor
             _logger.LogInformation(
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
-            // chat-audio 端点对 input_audio.format 严格校验：统一转成 wav。视频上面已 ffmpeg 抽成 wav；
-            // 上传的 audio/m4a、audio/mp3 此处补转，否则把非 wav 字节标成 "wav" 发给严格端点会失败/乱码（Bugbot Medium）。
-            var chatAudioWav = isVideo ? bytes : await ExtractAudioWithFfmpegAsync(bytes);
-            return await TranscribeViaChatAudioAsync(run, chatAudioWav, resolution.ToGatewayResolution());
+            // 上面已统一转成 WAV，chat-audio 只接收规范化后的字节，避免重复转码。
+            return await TranscribeViaChatAudioAsync(run, bytes, resolution.ToGatewayResolution());
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
@@ -564,7 +636,8 @@ public class SubtitleGenerationProcessor
                         new JsonObject
                         {
                             ["type"] = "text",
-                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。",
+                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。" +
+                                       "如果音频中没有任何可识别的人声（静音、空白或纯噪音），只输出 NO_SPEECH 这一个词，不要输出其他任何文字。",
                         },
                         new JsonObject
                         {
@@ -619,6 +692,16 @@ public class SubtitleGenerationProcessor
                 {
                     ["model"] = gwResolution.ActualModel ?? "",
                     ["reason"] = "empty-content",
+                }));
+        // 静音哨兵：提示词约定无人声时只输出 NO_SPEECH → 当"无有效语音"失败抛出，
+        // 不能让它流进后续摘要/落库（真实事故：静音音频产出对话式回复被存成笔记）。
+        if (text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            throw new SubtitleAsrException(
+                "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["model"] = gwResolution.ActualModel ?? "",
+                    ["reason"] = "no-speech",
                 }));
         return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
     }

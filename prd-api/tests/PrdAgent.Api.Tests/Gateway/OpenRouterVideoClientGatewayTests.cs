@@ -26,6 +26,8 @@ public class OpenRouterVideoClientGatewayTests
             Model = "openrouter/test-video",
             Prompt = "生成一个产品演示视频",
             FirstFrameImageUrl = "https://example.test/frame.png",
+            LastFrameImageUrl = "https://example.test/last.png",
+            ReferenceImageUrls = ["https://example.test/character.png"],
             AspectRatio = "16:9",
             Resolution = "720p",
             DurationSeconds = 5,
@@ -68,7 +70,11 @@ public class OpenRouterVideoClientGatewayTests
         submitCall.Request.RequestBody.ShouldNotBeNull();
         submitCall.Request.RequestBody!["model"]!.GetValue<string>().ShouldBe("openrouter/test-video");
         submitCall.Request.RequestBody!["prompt"]!.GetValue<string>().ShouldBe("生成一个产品演示视频");
-        submitCall.Request.RequestBody!["frame_images"]!.AsArray().Count.ShouldBe(1);
+        var frameImages = submitCall.Request.RequestBody!["frame_images"]!.AsArray();
+        frameImages.Count.ShouldBe(3);
+        frameImages[0]!["frame_type"]!.GetValue<string>().ShouldBe("first_frame");
+        frameImages[1]!["frame_type"]!.GetValue<string>().ShouldBe("last_frame");
+        frameImages[2]!["frame_type"]!.GetValue<string>().ShouldBe("reference_image");
 
         var statusCall = gateway.RawCalls[1];
         statusCall.Request.EndpointPath.ShouldBe("/videos/job-123");

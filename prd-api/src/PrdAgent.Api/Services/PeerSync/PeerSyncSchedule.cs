@@ -14,6 +14,15 @@ public static class PeerSyncSchedule
     /// <summary>用户未指定周期时的默认值。</summary>
     public const int DefaultIntervalMinutes = 60;
 
+    /// <summary>变更触发模式的合并窗口。短时间连续保存只触发一轮，避免逐次编辑形成发送风暴。</summary>
+    public const int TriggerDebounceMinutes = 2;
+
+    public const string TriggerMode = "trigger";
+    public const string ScheduledMode = "scheduled";
+
+    public static string NormalizeMode(string? mode)
+        => string.Equals(mode, ScheduledMode, StringComparison.OrdinalIgnoreCase) ? ScheduledMode : TriggerMode;
+
     /// <summary>把用户填写的周期夹到 [MinIntervalMinutes, +∞)，null 回落默认值。</summary>
     public static int ClampInterval(int? minutes)
     {
@@ -26,6 +35,23 @@ public static class PeerSyncSchedule
     {
         "push" or "pull" or "both" or "align-remote" or "align-local" or "align-both" => true,
         _ => false,
+    };
+
+    /// <summary>
+    /// 给定一个方向（push/pull/both 或 align-remote/align-local/align-both），返回「算作该方向成功过」的
+    /// run.Direction 取值集合。因为 run.Direction 存的是 runDirection：普通同步为 push/pull/both，强制对齐为
+    /// align-*（align-remote 等价 pull、align-local 等价 push、align-both 等价 both）。判「该方向是否成功建立过」
+    /// 时必须把对齐等价值一并算上，否则「通过强制对齐建立、再开自动」的库会被误判为方向未建立（Codex P2）。
+    /// 入参既接受归一方向，也接受 align-* 原值——因为 store.PeerSyncDirection 被 IsRunnableDirection /
+    /// IsUserConfirmedAutoDirection 视为合法可运行值也含 align-*（历史数据 / 未来写路径可能落 align-*），
+    /// 若此处对 align-* 返回空集，established gate 会把「用对齐建立过」的库误判为未建立、禁掉自动同步（Codex P2）。
+    /// </summary>
+    public static string[] AcceptableRunDirections(string? normalizedDirection) => normalizedDirection switch
+    {
+        "push" or "align-local" => new[] { "push", "align-local" },
+        "pull" or "align-remote" => new[] { "pull", "align-remote" },
+        "both" or "align-both" => new[] { "both", "align-both" },
+        _ => Array.Empty<string>(),
     };
 
     /// <summary>
@@ -52,8 +78,16 @@ public static class PeerSyncSchedule
         if (store.PeerSyncAutoLastAt == null)
             return true;
 
-        var interval = ClampInterval(store.PeerSyncIntervalMinutes);
-        return store.PeerSyncAutoLastAt.Value.AddMinutes(interval) <= utcNow;
+        var triggerMode = NormalizeMode(store.PeerSyncAutoMode) == TriggerMode;
+        var interval = triggerMode
+            ? TriggerDebounceMinutes
+            : ClampInterval(store.PeerSyncIntervalMinutes);
+        if (store.PeerSyncAutoLastAt.Value.AddMinutes(interval) > utcNow)
+            return false;
+
+        // 触发模式还要从知识库最近一次实际变更起等待完整合并窗口，避免用户连续保存时中途发送。
+        // 定时模式只遵循配置周期。
+        return !triggerMode || store.UpdatedAt.AddMinutes(TriggerDebounceMinutes) <= utcNow;
     }
 
     /// <summary>下一次自动同步的预计时间（UI 展示用）。未开启 / 无对端时为 null。</summary>
@@ -67,6 +101,14 @@ public static class PeerSyncSchedule
         if (store.PeerSyncAutoLastAt == null)
             return null; // 立即可同步
 
-        return store.PeerSyncAutoLastAt.Value.AddMinutes(ClampInterval(store.PeerSyncIntervalMinutes));
+        var triggerMode = NormalizeMode(store.PeerSyncAutoMode) == TriggerMode;
+        var interval = triggerMode ? TriggerDebounceMinutes : ClampInterval(store.PeerSyncIntervalMinutes);
+        var next = store.PeerSyncAutoLastAt.Value.AddMinutes(interval);
+        if (triggerMode)
+        {
+            var quietAt = store.UpdatedAt.AddMinutes(TriggerDebounceMinutes);
+            if (quietAt > next) next = quietAt;
+        }
+        return next;
     }
 }

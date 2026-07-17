@@ -405,9 +405,11 @@ async function postSse(
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
     const message =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `${path} -> ${res.status}`;
+      typeof parsed === 'object' && parsed !== null && 'message' in parsed && (parsed as { message: unknown }).message
+        ? String((parsed as { message: unknown }).message)
+        : typeof parsed === 'object' && parsed !== null && 'error' in parsed
+          ? String((parsed as { error: unknown }).error)
+          : `${path} -> ${res.status}`;
     throw new ApiError(res.status, parsed, message);
   }
 
@@ -1066,9 +1068,20 @@ export function BranchDetailPage(): JSX.Element {
       const path = profileId
         ? `/api/branches/${encodeURIComponent(state.branch.id)}/deploy/${encodeURIComponent(profileId)}`
         : `/api/branches/${encodeURIComponent(state.branch.id)}/deploy`;
-      await postSse(path, {}, (event, data) => appendActionLog(eventMessage(event, data)));
+      // 同分支已有在途操作时部署请求会被合并（SSE complete 带 operationStatus='merged'）：
+      // 只是排进待部署队列，不能报「已部署」（Codex P2，2026-07-16）。
+      let mergedIntoPending = false;
+      await postSse(path, {}, (event, data) => {
+        appendActionLog(eventMessage(event, data));
+        if (event === 'complete' && typeof data === 'object' && data !== null
+          && (data as { operationStatus?: unknown }).operationStatus === 'merged') {
+          mergedIntoPending = true;
+        }
+      });
       updateAction(null);
-      setToast(profileId ? `${profileId} 已部署` : '分支已部署');
+      setToast(mergedIntoPending
+        ? '部署请求已合并，当前部署完成后自动执行'
+        : (profileId ? `${profileId} 已部署` : '分支已部署'));
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);

@@ -97,6 +97,31 @@ updates = {
     "LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST": "",
     "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS": "false",
 }
+
+reload_gateway_in_place() {
+  if [ -z "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
+    return 0
+  fi
+  if ! $COMPOSE -f "$compose_file" config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
+    echo "LLM Gateway restore: gateway service '$gateway_service' not found, reload skipped"
+    return 0
+  fi
+
+  gateway_container_id="$($COMPOSE -f "$compose_file" ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+  if [ -z "$gateway_container_id" ]; then
+    echo "LLM Gateway restore: gateway is absent, starting it without forced recreation"
+    # shellcheck disable=SC2086
+    $COMPOSE -f "$compose_file" up -d --no-deps "$gateway_service"
+    gateway_container_id="$($COMPOSE -f "$compose_file" ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+  fi
+  if [ -z "$gateway_container_id" ]; then
+    echo "ERROR: gateway container is unavailable after shadow restore" >&2
+    return 1
+  fi
+  docker exec "$gateway_container_id" nginx -t
+  docker exec "$gateway_container_id" nginx -s reload
+  echo "LLM Gateway restore: gateway reloaded in place after API restart"
+}
 image_updates = {
     "PRD_AGENT_API_IMAGE": os.environ.get("RESTORE_PRD_AGENT_API_IMAGE", ""),
     "PRD_AGENT_LLMGW_IMAGE": os.environ.get("RESTORE_PRD_AGENT_LLMGW_IMAGE", ""),
@@ -158,20 +183,12 @@ persist_env_file
 if [ "$dry_run" = "1" ] || [ "$dry_run" = "true" ]; then
   echo "LLM Gateway restore dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $service_name"
   if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
-    echo "LLM Gateway restore dry-run: $COMPOSE -f $compose_file up -d --no-deps --force-recreate $gateway_service"
+    echo "LLM Gateway restore dry-run: validate and reload $gateway_service in place without changing its container IP"
   fi
   echo "LLM Gateway restore dry-run completed: API would restart with LLMGW_MODE=shadow, sample=$sample_percent, and disableMapConfigFallbackForActiveAppCallers=false"
 else
   # shellcheck disable=SC2086
   $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$service_name"
-  if [ -n "$(printf '%s' "$gateway_service" | xargs || true)" ]; then
-    if $COMPOSE -f "$compose_file" config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
-      # shellcheck disable=SC2086
-      $COMPOSE -f "$compose_file" up -d --no-deps --force-recreate "$gateway_service"
-      echo "LLM Gateway restore: gateway service refreshed after API restart"
-    else
-      echo "LLM Gateway restore: gateway service '$gateway_service' not found, refresh skipped"
-    fi
-  fi
+  reload_gateway_in_place
   echo "LLM Gateway restore completed: API restarted with LLMGW_MODE=shadow, sample=$sample_percent, and disableMapConfigFallbackForActiveAppCallers=false"
 fi

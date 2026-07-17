@@ -7,13 +7,13 @@ import {
   ArrowRight,
   Bell,
   Beaker,
+  Bot,
   Braces,
   CheckCircle2,
   ClipboardCheck,
   Code2,
   Copy,
   Database,
-  Download,
   ExternalLink,
   FileText,
   Gauge,
@@ -58,6 +58,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
@@ -740,12 +741,8 @@ export function ProjectListPage(): JSX.Element {
                 </DropdownItem>
                 <DropdownDivider />
                 <DropdownItem onSelect={() => setSkillDownloadOpen(true)}>
-                  <Download className="h-4 w-4 shrink-0" />
-                  下载技能包
-                </DropdownItem>
-                <DropdownItem onSelect={() => setGlobalAgentKeyOpen(true)}>
-                  <KeyRound className="h-4 w-4 shrink-0" />
-                  全局 Agent Key
+                  <Bot className="h-4 w-4 shrink-0" />
+                  接入 Agent
                 </DropdownItem>
                 <DropdownItem onSelect={() => setPendingImportOpen(true)}>
                   <FileText className="h-4 w-4 shrink-0" />
@@ -778,7 +775,7 @@ export function ProjectListPage(): JSX.Element {
 
         {/* Project tile grid — only content in the workspace, like Railway. */}
         <section>
-          {state.status === 'loading' ? <LoadingBlock label="加载项目列表" /> : null}
+          {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
             <EmptyProjects onCreate={() => setCreateOpen(true)} />
@@ -867,12 +864,7 @@ export function ProjectListPage(): JSX.Element {
         <SkillDownloadDialog
           open={skillDownloadOpen}
           onOpenChange={setSkillDownloadOpen}
-          onOpenGlobalKey={() => {
-            // 接入引导里直接跳到全局 Key 管理:全新接入(没项目)只能靠 cdsg_
-            // 全局 key bootstrap 建第一个项目,别让新手回下拉里翻。
-            setSkillDownloadOpen(false);
-            setGlobalAgentKeyOpen(true);
-          }}
+          projects={projects.map((project) => ({ id: project.id, name: displayName(project), slug: project.slug }))}
         />
         <MonitoringDialog
           open={monitoringOpen}
@@ -1337,6 +1329,62 @@ function LegacyBanner({
         {status.needsMigration ? '迁移' : '清理残留'}
         <ArrowRight />
       </Button>
+    </div>
+  );
+}
+
+/**
+ * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
+ * 骨架卡逐张镜像真实 ProjectCard(标题条 + 220px 点阵画布 + 底部状态行),
+ * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
+ * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
+ */
+const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
+
+function ProjectListSkeleton(): JSX.Element {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <div className="mb-5 flex items-center">
+        <CdsLogoLoader
+          label="加载项目列表"
+          size="sm"
+          mineral="iris"
+          className="text-[13px] font-medium text-muted-foreground"
+        />
+      </div>
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        {SKELETON_CARD_WIDTHS.map((width, index) => (
+          <article
+            key={index}
+            className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
+          >
+            <header className="px-5 pt-5">
+              <div className="cds-loading-skeleton-line h-[18px]" style={{ width }} />
+            </header>
+            <div
+              className="relative mx-3 my-3 h-[220px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+              style={{
+                backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
+                backgroundSize: '14px 14px',
+              }}
+            >
+              <div className="absolute inset-0 flex items-center justify-center gap-2.5">
+                {[0, 1, 2, 3].map((node) => (
+                  <div
+                    key={node}
+                    className="cds-loading-skeleton-panel h-11 w-11 rounded-xl"
+                    style={{ animationDelay: `${node * 0.14}s` }}
+                  />
+                ))}
+              </div>
+              <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
+                <div className="cds-loading-skeleton-line h-2.5 w-14" />
+                <div className="cds-loading-skeleton-line h-2.5 w-24" />
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

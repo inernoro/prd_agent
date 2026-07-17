@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -1390,6 +1390,21 @@ export class StateService {
     }
   }
 
+  // ── 全局构建并发上限（build-gate，系统级）──
+  // 2026-07-16：运行时可调，随 CdsState 持久化跨重启生效；env
+  // CDS_MAX_CONCURRENT_BUILDS 在 build-gate 读取端仍优先于本值。
+  getMaxConcurrentBuilds(): number | undefined {
+    return this.state.maxConcurrentBuilds;
+  }
+
+  setMaxConcurrentBuilds(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.maxConcurrentBuilds;
+    } else {
+      this.state.maxConcurrentBuilds = value;
+    }
+  }
+
   // ── Janitor runtime override ──
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to
@@ -1547,6 +1562,49 @@ export class StateService {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
     this.state.projects.push(project);
+    this.save();
+  }
+
+  // ── 容器清理墓碑（项目删除异步清理的持久化意图，见 types.ts 注释）──
+
+  static readonly CONTAINER_TEARDOWN_TOMBSTONES_MAX = 200;
+
+  addContainerTeardownTombstones(items: ContainerTeardownTombstone[]): void {
+    if (!items.length) return;
+    const list = this.state.pendingContainerTeardowns || [];
+    for (const item of items) {
+      const existing = list.find((t) => t.containerName === item.containerName);
+      if (existing) {
+        // 同名重复墓碑取**较新的** requestedAt：旧时间戳会把当前这次真正要删的
+        // 容器误判成「后继项目的新容器」而放生。
+        existing.requestedAt = item.requestedAt;
+        existing.projectId = item.projectId;
+        continue;
+      }
+      list.push(item);
+    }
+    // ring-buffer 上限：墓碑是补偿意图不是审计账本，防极端情况下无限膨胀。
+    // 但**绝不截掉本批刚写入的墓碑**（Codex P2：单次删除 >200 容器时旧实现会
+    // 把当前批次的头部挤掉，且删的是最后一个项目时再无人补偿）——只淘汰
+    // 历史遗留条目，本批超限就整批保留。
+    const justAdded = new Set(items.map((i) => i.containerName));
+    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) {
+      const idx = list.findIndex((t) => !justAdded.has(t.containerName));
+      if (idx === -1) break;
+      list.splice(idx, 1);
+    }
+    this.state.pendingContainerTeardowns = list;
+    this.save();
+  }
+
+  getContainerTeardownTombstones(): ContainerTeardownTombstone[] {
+    return [...(this.state.pendingContainerTeardowns || [])];
+  }
+
+  removeContainerTeardownTombstone(containerName: string): void {
+    const list = this.state.pendingContainerTeardowns;
+    if (!list?.length) return;
+    this.state.pendingContainerTeardowns = list.filter((t) => t.containerName !== containerName);
     this.save();
   }
 
@@ -1939,6 +1997,11 @@ export class StateService {
     if (!this.state.releaseTargets) this.state.releaseTargets = {};
     const now = new Date().toISOString();
     const existing = this.state.releaseTargets[target.id];
+    // 跨项目 id 复用防护：客户端可指定 id，若命中的既有目标属于其他项目，
+    // 直接抛冲突（路由侧捕获返回 409），禁止盲合并覆盖他人项目的发布目标。
+    if (existing && existing.projectId !== target.projectId) {
+      throw new Error(`发布目标 '${target.id}' 已属于其他项目，无法跨项目覆盖`);
+    }
     this.state.releaseTargets[target.id] = {
       ...existing,
       ...target,
@@ -3617,6 +3680,36 @@ export class StateService {
     return Object.entries(this.state.resourceExternalAccess || {})
       .filter(([key]) => key.startsWith(prefix))
       .map(([, policy]) => policy);
+  }
+
+  /**
+   * 启用中的外部访问代理容器名集合（供孤儿收割器判定，Codex P1）。
+   * 只有 enabled 且未过期的策略才算「代理在正当运行」；access 被关/过期后
+   * 若 docker rm 失败留下的代理容器不在此集合，收割器据此断掉公网暴露。
+   *
+   * 归属存活校验（Codex P1，2026-07-15）：`removeBranch()` / 项目删除只删
+   * branch/project 记录，**不清 `resourceExternalAccess`**——删掉一个带 TCP
+   * 外部访问代理的分支后，那条 enabled 策略会残留，把代理名一直留在本集合里，
+   * 收割器就永远跳过这个**仍在公网暴露**的 resource-external-access 容器。
+   * 因此策略只有在其归属 branch 仍存在于 state.branches 时，才算「正当运行」
+   * 保护其代理；归属分支已消失的残留策略不再保护代理，交给收割器断掉公网暴露
+   * （与收割器「对账收敛、不指望命令式级联做全对」同一哲学）。
+   *
+   * 只按 branch 存活判定即可覆盖项目删除：removeProject 会级联把该项目所有分支
+   * 从 state.branches 删掉，其策略的 branchId 随之查不到。反过来不按 project 判定
+   * 是刻意的——projectId='default' 的 legacy 分支未必有显式 Project 记录（fresh
+   * install 不建空 default 项目），若加 project 存活校验会误伤这些活分支的代理。
+   */
+  getActiveExternalAccessProxyContainerNames(nowIso = new Date().toISOString()): Set<string> {
+    const active = new Set<string>();
+    for (const policy of Object.values(this.state.resourceExternalAccess || {})) {
+      if (!policy.enabled || !policy.proxyContainerName) continue;
+      if (policy.expiresAt && policy.expiresAt <= nowIso) continue;
+      // 归属分支已被删除（记录不在 state.branches）→ 策略残留，不再保护其代理。
+      if (policy.branchId && !this.state.branches[policy.branchId]) continue;
+      active.add(policy.proxyContainerName);
+    }
+    return active;
   }
 
   upsertResourceExternalAccess(policy: Omit<ResourceExternalAccessPolicy, 'id' | 'createdAt' | 'updatedAt'>): ResourceExternalAccessPolicy {

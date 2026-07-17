@@ -11,6 +11,7 @@ import { resolveMobileCompat } from '@/lib/mobileCompatibility';
 import { MobileSegmented } from '@/components/mobile/MobileSegmented';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import { AppStoreSection, AppStoreRankedList } from '@/components/mobile/appStore';
+import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
  * 移动端「发现」（AI 百宝箱）—— 原生手机浏览体验。
@@ -20,8 +21,8 @@ import { AppStoreSection, AppStoreRankedList } from '@/components/mobile/appStor
  * 这里首屏直接用静态 BUILTIN_TOOLS 立即出内容（与 MobileHomePage 同款数据源），
  * 接口返回的自建/公开工具到位后再并入，永不空白等待（CLAUDE.md §6）。
  *
- * 布局遵循 mobile-first-density：一条段控 + 一行横滚 chip + FAB，
- * 内容卡片 edge-to-edge 铺满，杜绝「中间操作区缩成小盒子」。
+ * 布局遵循 mobile-first-density：搜索框 + 一条横滚控制条（段控与权属 chip 同行）+ FAB，
+ * 进内容前控制条不超过 2 条且不换行；内容卡片 edge-to-edge 铺满，杜绝「中间操作区缩成小盒子」。
  */
 
 const KIND_SEG = [
@@ -108,15 +109,15 @@ export function MobileToolboxView() {
       style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}
     >
       <div style={{ paddingBottom: 120 }}>
-        {/* 大标题 */}
-        <div style={{ padding: '6px 16px 0', fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, color: C.label }}>
+        {/* 大标题（紧凑：28px + 收紧上下间距，让卡片更早进首屏） */}
+        <div style={{ padding: '4px 16px 0', fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, color: C.label }}>
           发现
         </div>
 
         {/* 搜索 */}
         <div
           className="flex items-center gap-2"
-          style={{ margin: '12px 16px', background: light ? 'rgba(120,120,128,0.12)' : 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
+          style={{ margin: '8px 16px', background: light ? 'rgba(120,120,128,0.12)' : 'rgba(118,118,128,0.24)', borderRadius: 12, padding: '10px 12px' }}
         >
           <Search size={18} style={{ color: C.labelTertiary }} />
           <input
@@ -128,16 +129,16 @@ export function MobileToolboxView() {
           />
         </div>
 
-        {/* 段控：类型维度（一条，替代桌面的两排 tab） */}
-        <MobileSegmented
-          items={KIND_SEG}
-          activeKey={funcKindFilter}
-          onChange={(k) => setFuncKindFilter(k as 'all' | 'agent' | 'tool')}
-          style={{ margin: '4px 16px 6px' }}
-        />
-
-        {/* chip 行：权属维度（单行横滚，永不堆叠） */}
-        <div className="flex gap-2 overflow-x-auto" style={{ padding: '4px 16px 2px', scrollbarWidth: 'none' }}>
+        {/* 控制条：类型段控 + 权属 chip 合并为一条横滚（mobile-first-density §二.3：进内容前控制条 ≤2 且不换行） */}
+        <div className="flex items-center gap-2 overflow-x-auto" style={{ padding: '4px 16px 2px', scrollbarWidth: 'none' }}>
+          <MobileSegmented
+            items={KIND_SEG}
+            activeKey={funcKindFilter}
+            onChange={(k) => setFuncKindFilter(k as 'all' | 'agent' | 'tool')}
+            className="shrink-0"
+            style={{ width: 216 }}
+          />
+          <span aria-hidden className="shrink-0" style={{ width: 1, height: 20, background: C.hairline }} />
           {OWNERSHIP_CHIPS.map((c) => {
             const on = category === c.key;
             return (
@@ -187,7 +188,7 @@ export function MobileToolboxView() {
           <>
             {agents.length > 0 && (
               <AppStoreSection title="智能体" caption={`${agents.length} 个`}>
-                <div className="grid grid-cols-2 gap-3" style={{ padding: '0 16px' }}>
+                <div className="grid grid-cols-1 gap-3" style={{ padding: '0 16px' }}>
                   {agents.map((a) => (
                     <AgentCard key={a.id} item={a} onClick={() => open(a)} />
                   ))}
@@ -220,12 +221,13 @@ export function MobileToolboxView() {
   );
 }
 
-/* ─────────── 智能体大卡（2 列，渐变铺满） ─────────── */
+/* ─────────── 智能体大卡（单列大图） ─────────── */
 
 function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const light = useDataTheme() === 'light';
   const accent = accentFor(item.agentKey);
   const Icon = iconFor(item.icon);
+  const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const pcOnly = item.routePath ? resolveMobileCompat(item.routePath)?.level === 'pc-only' : false;
 
   return (
@@ -234,19 +236,20 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
       onClick={onClick}
       className="text-left active:scale-[0.97] transition-transform relative overflow-hidden flex flex-col justify-between"
       style={{
-        height: 150,
+        height: hasArtwork ? 216 : 150,
         borderRadius: 18,
         padding: 16,
         color: '#fff',
-        background: `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
+        background: hasArtwork ? 'var(--media-card-base)' : `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
         boxShadow: light ? '0 8px 22px -12px rgba(20,21,26,0.35)' : '0 8px 22px -10px rgba(0,0,0,0.6)',
       }}
     >
+      <AgentCardArtwork agentKey={item.agentKey} compact />
       {pcOnly && (
         <span
-          className="absolute"
+          className="absolute z-10"
           style={{
-            top: 12,
+            top: hasArtwork ? 58 : 12,
             right: 12,
             fontSize: 10,
             fontWeight: 700,
@@ -258,29 +261,68 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
           建议 PC
         </span>
       )}
-      <span
-        className="flex items-center justify-center"
-        style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.22)' }}
-      >
-        <Icon size={24} strokeWidth={2} />
-      </span>
-      <span>
-        <b style={{ fontSize: 17, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>{item.name}</b>
-        <span
-          className="block"
-          style={{
-            fontSize: 12,
-            opacity: 0.85,
-            lineHeight: 1.3,
-            marginTop: 3,
-            overflow: 'hidden',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-          }}
-        >
-          {item.description}
+      {hasArtwork ? (
+        <span className="relative z-10 flex items-start justify-between gap-2">
+          <b style={{ maxWidth: '62%', fontSize: 20, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>
+            {item.name}
+          </b>
+          <AgentCardTask agentKey={item.agentKey} compact />
         </span>
+      ) : (
+        <span
+          className="relative z-10 flex items-center justify-center"
+          style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
+        >
+          <Icon size={24} strokeWidth={2} />
+        </span>
+      )}
+      <span
+        className="relative z-10"
+        style={hasArtwork ? {
+          margin: 'auto -16px -16px',
+          padding: '14px 16px 16px',
+          background: 'var(--media-card-panel-translucent)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        } : undefined}
+      >
+        {!hasArtwork && (
+          <b style={{ fontSize: 17, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>{item.name}</b>
+        )}
+        {hasArtwork ? (
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+            {item.tags.slice(0, 3).map((tag) => (
+              <span
+                key={tag}
+                className="shrink-0 rounded-full border px-2.5 py-1 font-medium leading-none"
+                style={{
+                  fontSize: 12,
+                  color: 'var(--media-card-tag-text)',
+                  background: 'var(--media-card-tag-bg)',
+                  borderColor: 'var(--media-card-tag-border)',
+                }}
+              >
+                {tag}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span
+            className="block"
+            style={{
+              fontSize: 12,
+              opacity: 0.85,
+              lineHeight: 1.3,
+              marginTop: 3,
+              overflow: 'hidden',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+            }}
+          >
+            {item.description}
+          </span>
+        )}
       </span>
     </button>
   );

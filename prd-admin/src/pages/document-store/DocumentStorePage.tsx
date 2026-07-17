@@ -4,6 +4,10 @@ import {
   Orbit,
   Plus,
   Upload,
+  FilePlus,
+  FileUp,
+  AudioLines,
+  Video,
   ArrowLeft,
   X,
   Rss,
@@ -54,7 +58,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
-import { MobileFab } from '@/components/mobile/MobileFab';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -65,7 +68,7 @@ import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
-import { SkillOpenApiDialog } from '@/pages/marketplace/SkillOpenApiDialog';
+import { ConnectAiDialog } from './ConnectAiDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -76,7 +79,7 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
-  uploadDocumentFile,
+  uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
   addSubscription,
@@ -88,6 +91,7 @@ import {
   getDocumentStore,
   deleteDocumentEntry,
   moveDocumentEntry,
+  getLatestAgentRun,
   updateDocumentContent,
   listEntryVersions,
   getEntryVersion,
@@ -111,6 +115,8 @@ import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
+import { createPortal } from 'react-dom';
+import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
@@ -132,12 +138,20 @@ import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
+import { RecordAudioSheet } from './RecordAudioSheet';
+import { vaultListSessions, vaultLoadSessionFile, vaultDeleteSession } from './recordingVault';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
-const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+// 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
+// 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
+const ACCEPT_TYPES = '.md,.mdc,.txt,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.json,.yaml,.yml,.csv,.xml,.html,'
+  + '.mp3,.m4a,.wav,.aac,.ogg,.flac,.weba,.webm,.mp4,.mov,.png,.jpg,.jpeg,.gif,.webp';
+
+/** 后端单文件上限（DocumentStoreController.MaxUploadBytes = 20MB），前端预检即时报错，不让用户白等 */
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 export type DocumentStoreEmptyActionKey = 'create' | 'upload' | 'emergence';
 
@@ -272,7 +286,7 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
 // 选中即服务端持久化（store.defaultSortMode），换设备/重登录/刷新都保持。
 function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (m: DocBrowserSortMode) => void }) {
   const opts: { key: DocBrowserSortMode; label: string }[] = [
-    { key: 'default', label: '默认' },
+    { key: 'default', label: '书籍顺序' },
     { key: 'created-desc', label: '最新创建' },
     { key: 'updated-desc', label: '最近更新' },
   ];
@@ -795,13 +809,15 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
   onOpenLegacySyncPanel: () => void;
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
+  /** 进入时自动触发的新增动作（外层知识库列表「+」选库后带入；挂载时消费一次） */
+  initialAction?: 'doc' | 'record' | 'upload' | 'video';
 }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -877,8 +893,60 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
-  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目
-  const [transcribeFlow, setTranscribeFlow] = useState<{ file?: File; entryId?: string; title: string } | null>(null);
+  // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目。
+  // vaultSessionId = 本机保险箱会话（上传成功才删除，断网/崩溃可恢复，不丢数据）。
+  // style = 首次转录整理方式；restyleRun = 「换个整理方式」直接进 done 态整理面板。
+  const [transcribeFlow, setTranscribeFlow] = useState<{
+    file?: File;
+    entryId?: string;
+    title: string;
+    vaultSessionId?: string;
+    style?: import('@/services/real/documentStore').TranscribeStyleParams;
+    restyleRun?: { runId: string; outputEntryId: string };
+  } | null>(null);
+  // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
+  const [showRecorder, setShowRecorder] = useState(false);
+  // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
+  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
+  // 保险箱恢复只在进页时检查一次
+  const vaultCheckedRef = useRef(false);
+
+  // 进页检查录音保险箱：上次录音若因断网/崩溃/忘关没有完成上传，提示恢复并转录（不丢数据）
+  useEffect(() => {
+    if (vaultCheckedRef.current) return;
+    vaultCheckedRef.current = true;
+    void (async () => {
+      const all = await vaultListSessions();
+      // 过期会话（>7 天）直接清理；恢复只提示【本库】的会话，避免笔记落错库
+      const now = Date.now();
+      for (const s of all.filter(s => now - s.startedAt > 7 * 24 * 3600 * 1000)) void vaultDeleteSession(s.id);
+      const sessions = all.filter(s => s.storeId === storeId && now - s.startedAt <= 7 * 24 * 3600 * 1000);
+      if (sessions.length === 0) return;
+      const latest = sessions[0];
+      const d = new Date(latest.startedAt);
+      const p = (n: number) => String(n).padStart(2, '0');
+      const when = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      const sizeMb = Math.max(0.1, latest.bytes / 1024 / 1024).toFixed(1);
+      const ok = await systemDialog.confirm({
+        title: '发现未完成的录音',
+        message: `上次有一段录音（${when} 开始，约 ${sizeMb}MB）没有完成上传。要恢复并转录成笔记吗？`,
+        confirmText: '恢复并转录',
+        cancelText: '丢弃',
+      });
+      if (ok) {
+        const file = await vaultLoadSessionFile(latest.id);
+        if (file) {
+          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id });
+          transcribeFlowOpenRef.current = true;
+        }
+        // 本库更老的滞留会话一并清理，只恢复最新一段（避免弹窗轰炸）
+        for (const s of sessions.slice(1)) void vaultDeleteSession(s.id);
+      } else {
+        for (const s of sessions) void vaultDeleteSession(s.id);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
   // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
   const transcribeRunRef = useRef<string | null>(null);
@@ -897,9 +965,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
   const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>(undefined);
-  /** 同步中心 / 发送到对端弹窗（本库范围） */
+  /** 统一同步面板（本库范围）：方向 + 自动 + 对齐 + 记录，全部在这一个面板里 */
   const [showSyncCenter, setShowSyncCenter] = useState(false);
-  const [showSendToPeerDetail, setShowSendToPeerDetail] = useState(false);
   /** 本库是否有进行中的同步（轮询运行台账得出，驱动「同步」按钮动起来） */
   const [syncActive, setSyncActive] = useState(false);
   /** 顶栏「更多」下拉 */
@@ -1043,19 +1110,36 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
+    // 前端预检 20MB 上限：超限文件即时报错，不进入上传白等
+    const oversized = files.filter(f => f.size > MAX_UPLOAD_BYTES);
+    for (const f of oversized) {
+      toast.error(`文件过大: ${f.name}`, `单文件上限 20MB（该文件 ${(f.size / 1024 / 1024).toFixed(1)}MB）`);
+    }
+    const accepted = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    if (accepted.length === 0) return;
+
     setUploading(true);
     let successCount = 0;
-    for (const file of files) {
-      const res = await uploadDocumentFile(storeId, file);
+    let firstUploadedId: string | null = null;
+    for (let i = 0; i < accepted.length; i++) {
+      const file = accepted[i];
+      setUploadProgress({ name: file.name, percent: 0, index: i + 1, total: accepted.length });
+      const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
+        setUploadProgress({ name: file.name, percent, index: i + 1, total: accepted.length });
+      });
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
+        firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
         toast.error(`上传失败: ${file.name}`, res.error?.message);
       }
     }
+    setUploadProgress(null);
     if (successCount > 0) {
       toast.success(`上传完成`, `${successCount} 个文件已存储`);
+      // 上传成功自动跳转到刚上传的文档（多文件跳第一个），不让用户自己去列表里找
+      if (firstUploadedId) setSelectedEntryId(firstUploadedId);
     }
     setUploading(false);
   }, [storeId]);
@@ -1269,6 +1353,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     });
   }, []);
 
+  // 外层列表「+」选库进入后自动触发对应新增动作（消费一次；与库内 FAB 出一样的结果）
+  const initialActionConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!initialAction || initialActionConsumedRef.current || !store || loading) return;
+    initialActionConsumedRef.current = true;
+    if (initialAction === 'doc') void handleCreateDocument();
+    else if (initialAction === 'record') setShowRecorder(true);
+    else if (initialAction === 'upload') fileInputRef.current?.click();
+    else if (initialAction === 'video') handleOpenVideoParser();
+  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser]);
+
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
     if (contentSearch) {
@@ -1439,6 +1534,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 不再叠加 store.peerSyncStatus==='syncing'——后端 IsDue 已不用该字段判在途，
   // 崩溃残留的 syncing 会让按钮永久脉冲（Bugbot: Stale syncing status pins UI）。
   const syncBusy = syncActive;
+  // 「同步」按钮文案即状态：同步中 > 需要处理 > 已同步·对端 > 同步（还没建立关系）。
+  // 「已建立」= 真正成功同步过一次（status=synced）。失败(error)/取消(cancelled)/未同步都算未建立，
+  // 顶栏只显示「同步」，不显示「已同步·对端」（Codex P2：取消的首次同步不应显示为 synced）。
+  const syncEstablished = !syncBusy && store.peerSyncStatus === 'synced'
+    && ['push', 'pull', 'both', 'align-remote', 'align-local', 'align-both'].includes(store.peerSyncDirection ?? '');
+  const syncButtonLabel = syncBusy ? (isMobile ? '同步中' : '同步中…')
+    : store.peerSyncStatus === 'error' ? '需要处理'
+      : syncEstablished ? (isMobile || !store.peerSyncNodeName ? '已同步' : `已同步 · ${store.peerSyncNodeName}`)
+        : '同步';
+  const syncButtonTitle = syncEstablished
+    ? `同步面板：与「${store.peerSyncNodeName ?? '对端'}」的同步关系、立即同步、自动同步与记录`
+    : '同步面板：选择方向（发送 / 拉回 / 双向）建立与对端节点的同步关系';
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -1477,17 +1584,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
         actions={
           <div className="flex items-center gap-2">
-            {/* 同步中心入口：有任务进行中时转圈 + 脉冲 + 文案「同步中…」，点击进入四视图 + 强制对齐 */}
+            {/* 统一同步入口（唯一）：文案即状态——同步中 / 需要处理 / 已同步·对端 / 同步（未建立）。
+                原「发送到」按钮已合并进面板：发送只是方向为 push 的同步，不再独立成门面。 */}
             <button
               onClick={() => setShowSyncCenter(true)}
               className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all ${syncBusy ? 'animate-pulse' : ''}`}
               style={syncBusy
                 ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
-                : store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : undefined}
-              title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
+                : store.peerSyncStatus === 'error'
+                  ? { color: 'rgba(252,165,165,0.96)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
+                  : syncEstablished
+                    ? { color: 'rgba(94,234,212,0.96)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
+                    : undefined}
+              title={syncButtonTitle}
             >
               {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              {syncBusy ? (isMobile ? '同步中' : '同步中…') : '同步'}
+              {syncButtonLabel}
             </button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示，点击进入隐藏兼容管理面板。 */}
             {!isMobile && <StoreSyncBadge
@@ -1763,14 +1875,33 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
-          onTranscribe={(id) => {
+          onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
-              setTranscribeFlow({ entryId: id, title: entry.title });
+              setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }
           }}
-          onUploadAudio={() => audioInputRef.current?.click()}
+          onRestyleTranscribe={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (!entry) return;
+            // 免重跑 ASR：取该音频最近一次「已完成且有产物」的转录 run（过滤掉失败的
+            // restyle run，否则一次失败后整理面板永远打不开，Codex P2），直接进 done 态整理面板
+            void getLatestAgentRun(id, 'transcribe', { status: 'done', requireOutput: true }).then((res) => {
+              const run = res.success ? res.data : null;
+              if (run && run.status === 'done' && run.outputEntryId) {
+                setTranscribeFlow({
+                  entryId: id,
+                  title: entry.title,
+                  restyleRun: { runId: run.id, outputEntryId: run.outputEntryId },
+                });
+                transcribeFlowOpenRef.current = true;
+              } else {
+                toast.error('暂不能重新整理', '没有找到已完成的转录记录，请先完成一次转录');
+              }
+            });
+          }}
+          onUploadAudio={() => setShowRecorder(true)}
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
@@ -1805,27 +1936,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         <WikilinkHoverCard />
       </div>
 
-      {/* 同步中心（本库）：进行中 / 发出去 / 收进来 / 历史 + 强制对齐 */}
+      {/* 统一同步面板（本库）：状态 + 立即同步 + 方向/自动关系设定 + 强制对齐 + 记录 */}
       {showSyncCenter && (
         <SyncCenterDialog
           storeId={store.id}
           storeName={store.name}
           autoEnabled={store.peerSyncAutoEnabled}
           autoIntervalMinutes={store.peerSyncIntervalMinutes}
+          autoMode={store.peerSyncAutoMode}
           peerSyncDirection={store.peerSyncDirection}
+          peerNodeId={store.peerSyncNodeId}
           peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
-          onOpenSend={() => { setShowSyncCenter(false); setShowSendToPeerDetail(true); }}
-        />
-      )}
-      {/* 发送到对端（本库预选） */}
-      {showSendToPeerDetail && (
-        <SendToPeerDialog
-          resourceType="document-store"
-          presetItemIds={[store.id]}
-          onClose={() => setShowSendToPeerDetail(false)}
-          onDone={() => { void loadStore(); void loadEntries(); }}
         />
       )}
 
@@ -1887,6 +2010,26 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
+      {/* 「录音转笔记」现场录音：MediaRecorder 录音 → 产出 File → 进入下方转录全链路；
+          无权限/不支持/已有文件时兜底走 audioInputRef 文件选择 */}
+      <AnimatePresence>
+        {showRecorder && (
+          <RecordAudioSheet
+            storeId={storeId}
+            onClose={() => setShowRecorder(false)}
+            onComplete={(file, vaultSessionId) => {
+              setShowRecorder(false);
+              setTranscribeFlow({ file, title: file.name, vaultSessionId });
+              transcribeFlowOpenRef.current = true;
+            }}
+            onPickFile={() => {
+              setShowRecorder(false);
+              audioInputRef.current?.click();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* 录音转录全链路（Notion 式）：上传音频 → 转录 → AI 摘要 → 转录笔记 */}
       <AnimatePresence>
         {transcribeFlow && (
@@ -1895,13 +2038,32 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             file={transcribeFlow.file}
             entryId={transcribeFlow.entryId}
             entryTitle={transcribeFlow.title}
+            initialStyle={transcribeFlow.style}
+            restyleRun={transcribeFlow.restyleRun}
+            folders={entries.filter(e => e.isFolder).map(f => ({ id: f.id, title: f.title }))}
+            onMoveNote={async (noteId, folderId) => {
+              const res = await moveDocumentEntry(noteId, folderId);
+              if (!res.success) {
+                toast.error('归档失败', res.error?.message);
+                throw new Error(res.error?.message ?? 'move failed');
+              }
+              setEntries(prev => prev.map(e => e.id === noteId ? { ...e, parentId: folderId ?? undefined } : e));
+            }}
             onClose={() => {
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
               if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
             }}
-            onEntryCreated={(entry) => setEntries(prev => [entry, ...prev])}
+            onEntryCreated={(entry) => {
+              setEntries(prev => [entry, ...prev]);
+              // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
+              if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
+            }}
+            onEditNote={(noteId) => {
+              setSelectedEntryId(noteId);
+              setAutoEditEntryId(noteId);
+            }}
             onDone={() => {
               void loadEntries();
               setTimeout(() => { void loadEntries(); }, 1500);
@@ -1915,6 +2077,31 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           />
         )}
       </AnimatePresence>
+
+      {/* 上传进度卡：大文件不再"卡住没反馈"——文件名 + 实时百分比 + 第 n/共 m */}
+      {uploadProgress && (
+        <div
+          className="fixed left-1/2 z-[70] w-[min(360px,88vw)] -translate-x-1/2 rounded-[14px] px-4 py-3"
+          style={{
+            bottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + 20px)',
+            background: 'var(--bg-card, rgba(20,20,24,0.95))',
+            border: '1px solid var(--border-faint)',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
+          }}>
+          <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
+            <span className="truncate font-semibold text-token-primary">正在上传 {uploadProgress.name}</span>
+            <span className="shrink-0 tabular-nums text-token-muted">
+              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-200"
+              style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
           bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}
@@ -2246,6 +2433,9 @@ export function DocumentStorePage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
   });
+  // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
+  const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
+  const [detailInitialAction, setDetailInitialAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -2581,9 +2771,11 @@ export function DocumentStorePage() {
       storeId={selectedStoreId}
       key={selectedStoreId}
       initialEntryId={pendingEntryId ?? undefined}
+      initialAction={detailInitialAction ?? undefined}
       onBack={() => {
         setSelectedStoreId(null);
         setPendingEntryId(null);
+        setDetailInitialAction(null);
         // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
         if (tab === 'mine') loadStores('mine', null);
         else if (tab === 'team') {
@@ -2941,9 +3133,9 @@ export function DocumentStorePage() {
               variant="secondary"
               size="xs"
               onClick={() => setShowSendToPeer(true)}
-              title="把知识库发送到 / 双向同步到另一个 MAP 节点（如正式环境），由管理员预先在「设置 → 系统互联」配好"
+              title="一次选多个知识库，批量同步到另一个 MAP 节点（如正式环境）；单库同步请进库内右上角「同步」。对端节点由管理员预先在「设置 → 系统互联」配好"
             >
-              <Send size={13} /> 发送到
+              <ArrowLeftRight size={13} /> 批量同步
             </Button>
           )}
           {!isMobile && tab === 'mine' && (
@@ -3074,8 +3266,8 @@ export function DocumentStorePage() {
                     className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
                     style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
                   >
-                    <Send size={17} />
-                    <span className="text-[12px]">发送到</span>
+                    <ArrowLeftRight size={17} />
+                    <span className="text-[12px]">批量同步</span>
                   </button>
                   <button
                     type="button"
@@ -3093,9 +3285,8 @@ export function DocumentStorePage() {
         </MobileBottomSheet>
       )}
 
-      {isMobile && isStoreTab && (
-        <MobileFab onClick={() => setShowCreate(true)} icon={Plus} label="新建" />
-      )}
+      {/* 旧移动端「新建」MobileFab 已下线（2026-07-13）：它只开新建库弹窗，与下方统一
+          CreatePaletteFab 撞位且内容不一致——内外「+」必须点开显示一致的新增菜单。 */}
 
       <div className="px-5 pb-6 w-full">
         {tab === 'sync' ? (
@@ -3458,13 +3649,7 @@ export function DocumentStorePage() {
         />
       )}
 
-      {showOpenApi && (
-        <SkillOpenApiDialog
-          presetScopes={['document-store:write']}
-          contextLabel="文档空间（知识库）"
-          onClose={() => setShowOpenApi(false)}
-        />
-      )}
+      {showOpenApi && <ConnectAiDialog onClose={() => setShowOpenApi(false)} />}
 
       {editTarget && (
         <EditStoreDialog
@@ -3490,6 +3675,144 @@ export function DocumentStorePage() {
           onClose={() => setShareTeamTarget(null)}
         />
       )}
+
+      {/* 外层「+」FAB：与库内 FAB 同款动作、出一样的结果，只多一步"归属到哪个知识库"。
+          新建知识库也归入同一入口（与工具栏按钮同源 setShowCreate，不再是两套按钮）。 */}
+      <CreatePaletteFab
+        actions={[
+          {
+            key: 'store', label: '新建知识库', icon: Library, hue: 'rgba(234,179,8,0.92)',
+            onClick: () => {
+              if (tab === 'team' && !teamScope.teamId) {
+                toast.error('请先选择团队空间', '新建的知识库会自动分享到所选团队空间');
+                return;
+              }
+              setShowCreate(true);
+            },
+          },
+          { key: 'doc', label: '写文章', icon: FilePlus, onClick: () => setStorePickerAction('doc') },
+          { key: 'audio', label: '录音转笔记', icon: AudioLines, hue: 'rgba(34,197,94,0.92)', onClick: () => setStorePickerAction('record') },
+          {
+            key: 'import-group', label: '上传与导入', icon: Upload, hue: 'rgba(14,165,233,0.92)',
+            children: [
+              { key: 'upload', label: '上传文件', icon: FileUp, onClick: () => setStorePickerAction('upload') },
+              { key: 'video', label: '解析短视频', icon: Video, hue: 'rgba(168,85,247,0.92)', onClick: () => setStorePickerAction('video') },
+            ],
+          },
+        ]}
+      />
+
+      {/* 选库弹窗：外层动作先选"归属到哪个知识库"，选中后进库自动触发 */}
+      {storePickerAction && (
+        <StorePickerDialog
+          actionLabel={{ doc: '写文章', record: '录音转笔记', upload: '上传文件', video: '解析短视频' }[storePickerAction]}
+          // 团队 tab 下列团队库、我的 tab 下列个人库——否则团队 tab 用外层「+」只能落到个人库（Codex P2）
+          scope={tab === 'team' ? 'team' : 'mine'}
+          teamId={tab === 'team' ? teamScope.teamId : null}
+          onPick={(storeId) => {
+            setDetailInitialAction(storePickerAction);
+            setStorePickerAction(null);
+            setSelectedStoreId(storeId);
+          }}
+          onCreateNew={() => {
+            setStorePickerAction(null);
+            setShowCreate(true);
+          }}
+          onClose={() => setStorePickerAction(null)}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * 选库弹窗：外层「+」动作的"归属到哪个知识库"一步。
+ * 按当前 tab 作用域列可写库（个人 / 团队），支持按名称过滤；没有库时引导先新建。
+ */
+function StorePickerDialog({ actionLabel, scope, teamId, onPick, onCreateNew, onClose }: {
+  actionLabel: string;
+  scope: 'mine' | 'team';
+  teamId: string | null;
+  onPick: (storeId: string) => void;
+  onCreateNew: () => void;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<DocumentStoreWithPreview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    void listDocumentStoresWithPreview(1, 500, { scope, teamId }).then((res) => {
+      if (res.success) setItems(res.data.items);
+      setLoading(false);
+    });
+  }, [scope, teamId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const filtered = q.trim()
+    ? items.filter(s => s.name.toLowerCase().includes(q.trim().toLowerCase()))
+    : items;
+
+  const dialog = (
+    <div
+      className="surface-backdrop fixed inset-0 z-[110] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div
+        className="surface-popover flex flex-col rounded-[16px]"
+        style={{ width: 'min(420px, 92vw)', maxHeight: '70vh' }}>
+        <div className="shrink-0 px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[14px] font-semibold text-token-primary">{actionLabel}：放进哪个知识库？</p>
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+              <X size={14} />
+            </button>
+          </div>
+          {items.length > 5 && (
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="按名称过滤…"
+              autoFocus
+              className="mt-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+            />
+          )}
+        </div>
+        <div className="flex-1 px-2 pb-2" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {loading ? (
+            <div className="flex items-center justify-center py-10"><MapSpinner size={15} /></div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <p className="text-[12px] text-token-muted">{items.length === 0 ? '还没有知识库' : '没有匹配的知识库'}</p>
+              {items.length === 0 && (
+                <Button variant="primary" size="sm" onClick={onCreateNew}><Plus size={13} /> 先新建一个</Button>
+              )}
+            </div>
+          ) : (
+            filtered.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => onPick(s.id)}
+                className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-white/6">
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <Library size={14} className="shrink-0 text-token-muted" />
+                  <span className="truncate text-[13px] text-token-primary">{s.name}</span>
+                </span>
+                <span className="shrink-0 text-[11px] tabular-nums text-token-muted">{s.documentCount} 篇</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(dialog, document.body);
 }

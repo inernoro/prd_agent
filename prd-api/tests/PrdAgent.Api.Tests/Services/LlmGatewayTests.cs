@@ -1274,7 +1274,7 @@ public class LlmGatewayTests
             Context = new GatewayRequestContext
             {
                 TenantId = "tenant-a", PromptPolicyId = "policy-a", PromptPolicyVersion = 7,
-                PromptPolicyHash = "policy-hash", PromptPolicyChars = 48,
+                PromptPolicyHash = "policy-hash",
                 SystemPromptText = "sensitive-policy-prefix\n\nrequest-system\n\nsensitive-policy-suffix",
             },
         });
@@ -1287,7 +1287,6 @@ public class LlmGatewayTests
         Assert.Equal("policy-a", logWriter.Start.PromptPolicyId);
         Assert.Equal(7, logWriter.Start.PromptPolicyVersion);
         Assert.Equal("policy-hash", logWriter.Start.PromptPolicyHash);
-        Assert.Equal(48, logWriter.Start.PromptPolicyChars);
     }
 
     [Fact]
@@ -1524,6 +1523,82 @@ public class LlmGatewayTests
         Assert.Equal(503, attempts[0].StatusCode);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenOpenRouter_ShouldPrefixAppAttributionTitle()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "deepseek/deepseek-chat",
+            ActualPlatformId = "openrouter",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openrouter",
+            Protocol = "openai",
+            ApiUrl = "https://openrouter.ai/api/v1",
+            ApiKey = "sk-test",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "product-agent.marketing-consult::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var headers = Assert.Single(http.RequestHeaders);
+        Assert.Equal("https://prd-agent.miduo.org", Assert.Single(headers["HTTP-Referer"]));
+        Assert.Equal("G-product-agent.marketing-consult::chat", Assert.Single(headers["X-OpenRouter-Title"]));
+        Assert.False(headers.ContainsKey("X-Title"));
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenProviderIsNotOpenRouter_ShouldNotAddAppAttributionHeaders()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "deepseek-chat",
+            ActualPlatformId = "deepseek",
+            ActualPlatformName = "DeepSeek",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.deepseek.com",
+            ApiKey = "sk-test",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "product-agent.marketing-consult::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var headers = Assert.Single(http.RequestHeaders);
+        Assert.False(headers.ContainsKey("HTTP-Referer"));
+        Assert.False(headers.ContainsKey("X-OpenRouter-Title"));
+        Assert.False(headers.ContainsKey("X-Title"));
     }
 
     [Fact]
@@ -2139,25 +2214,31 @@ internal sealed class SequenceHttpClientFactory : IHttpClientFactory
     private readonly Queue<(int StatusCode, string Body)> _responses;
     public List<string> RequestBodies { get; } = new();
     public List<string> RequestUris { get; } = new();
+    public List<IReadOnlyDictionary<string, string[]>> RequestHeaders { get; } = new();
 
     public SequenceHttpClientFactory(params (int StatusCode, string Body)[] responses)
     {
         _responses = new Queue<(int StatusCode, string Body)>(responses);
     }
 
-    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris));
+    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris, RequestHeaders));
 }
 
 internal sealed class SequenceHttpMessageHandler(
     Queue<(int StatusCode, string Body)> responses,
     List<string> requestBodies,
-    List<string> requestUris) : HttpMessageHandler
+    List<string> requestUris,
+    List<IReadOnlyDictionary<string, string[]>> requestHeaders) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult() ?? "";
         requestBodies.Add(body);
         requestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
+        requestHeaders.Add(request.Headers.ToDictionary(
+            header => header.Key,
+            header => header.Value.ToArray(),
+            StringComparer.OrdinalIgnoreCase));
         var next = responses.Count > 0
             ? responses.Dequeue()
             : (200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}");

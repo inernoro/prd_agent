@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.1 | **日期**：2026-07-13 | **状态**：开发中
+> **版本**：v2.5 | **日期**：2026-07-16 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 19 / in-progress: 4 / paid: 19 / 总计: 42
+当前 open: 24 / in-progress: 4 / paid: 19 / 总计: 47
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -15,6 +15,11 @@
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
 | 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
+| 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | open | 控制台与权威教程已明确当前层级并提供三处管理入口，禁止把各 appCaller 预算之和宣称为服务端租户总上限。若实施，需增加 tenant-scoped 原子预占、双层限流返回头、并发与跨租户测试，不能只加前端输入框 |
+| 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | open | 增加 provisioning 修复器和 pending 审计对账器，以 fencing 租约安全恢复；在此之前不得把 catch 补偿或审计意图描述为 crash-safe 原子事务 |
+| 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | open | 将 owner 权威计数与 fencing generation 收敛到可原子更新的租户组织状态，或在支持事务的 Mongo 部署上用事务维护至少一个 active owner；当前租约只作为常规并发保护，不宣称覆盖暂停进程恢复 |
+| 2026-07-15-cross-tenant-membership-invitation | high | 2026-07-15 | 为阻止用户名枚举和未经本人确认的跨租户挂载，成员自助页首版只允许创建租户专属新账号；同一既有用户加入第二个租户尚缺少一次性邀请、本人接受、过期和撤销流程 | 需要让已有 Gateway 用户加入另一个外部租户时 | open | 新增 tenant-scoped invitation，邀请明文只展示一次，落库只存 hash；接受者必须以自己的服务端会话确认，创建 membership 时再次校验 TenantId、角色、团队、过期时间和撤销状态；完成前教程不得宣称可直接添加已有其他租户账号 |
+| 2026-07-15-external-exchange-websocket | medium | 2026-07-15 | 外部租户自助 Exchange 的 HTTP 上游已使用固定 DNS 解析结果的安全出站连接；WebSocket 客户端尚不能固定已验证地址，直接放开会留下 DNS 重绑定进入内网的风险，因此首版明确拒绝外部 WebSocket Exchange | 外部租户需要接入 WebSocket ASR 或其他长连接上游时 | open | 实现可固定已验证 IP、校验证书主机名并拒绝跳转与私网地址的安全 WebSocket 连接器；完成前控制台和教程必须明确只允许外部 HTTP/HTTPS，内部租户既有私网 WebSocket 拓扑保持不变 |
 | 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | paid | PR #1088 已区分 estimated/unknown、按币种汇总并展示价格覆盖率；unknown cost 不再显示为 0，CNY/USD 不再无汇率相加 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |
@@ -581,6 +586,12 @@
 - 正文脱敏和 multipart 删除由 lifecycle worker 执行；请求元数据、shadow、登录与操作审计由 Mongo TTL 异步删除。TTL 删除时间不是精确到秒，控制台以最近 dry-run、清理结果和索引状态为准。
 - 一次性最终验收允许视频状态轮询，但每次完整矩阵最多提交一个视频任务；失败后只允许带人工批准说明补跑失败单格，禁止整套自动重跑。
 - `inproc` 与 legacy 代码继续作为生产回滚兜底，本计划不删除。稳定期后的删除必须另立有限任务，不能混入本次发布。
+
+## 已禁用生产目标的外置配置债务（2026-07-17）
+
+- 目标 `rt_c00f704bfee3` 已按用户要求逐字段恢复原配置并保持禁用，配置哈希为 `e1c318dfd8c65a74531e28dd1d912138e88d0a6aac7a2bf34e47768a08a1705b`。原配置仍包含固定旧提交下载和发布后真实 chat 尾段，因此禁止不经复核直接启用。
+- 本次生产发布使用去除付费尾段、显式绑定目标提交的临时安全命令；完成后没有把临时命令写回长期目标。未来若要重新启用该目标，必须另立受审配置迁移：移除固定提交、删除付费 chat 尾段、绑定当前 release intent，并先做 dry-run。
+- 该外置目标配置不属于仓库运行时代码，不能用仓库提交伪装为已修。仓库侧已把所有发布和回滚改为保留 gateway 容器：静态版本在既有 bind 根内原子切换，活跃宿主配置同步后原地热重载，解决容器重建导致反向代理地址失效和短暂 502 的问题；外置目标仍以“禁用即安全、启用前迁移”为边界。
 
 ## 已还的债务（归档）
 

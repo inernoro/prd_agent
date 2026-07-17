@@ -48,6 +48,8 @@ export function buildStaticAgents(): ToolboxItem[] {
       name: '涌现探索智能体',
       description: '从文档出发，AI 辅助发现功能创意与交叉价值',
       icon: 'Sparkle',
+      agentKey: 'emergence-agent',
+      kind: 'agent',
       tags: ['涌现', '探索', 'AI', '创意', '智能体'],
       routePath: '/emergence',
     } as ToolboxItem,

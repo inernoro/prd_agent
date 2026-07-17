@@ -1224,7 +1224,7 @@ export const GLOBAL_ENV_SCOPE = '_global';
  *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
  * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
  */
-export type DeployDurationMode = 'release' | 'source';
+export type DeployDurationMode = 'release' | 'source' | 'restart';
 
 /**
  * 部署耗时样本桶（2026-06-20）。
@@ -1262,6 +1262,26 @@ export interface BranchDeployEstimate {
   releaseSamples: number;
   sourceMedianMs: number | null;
   sourceSamples: number;
+}
+
+/**
+ * 项目删除的容器清理墓碑（2026-07-15，Codex 两条 P2 的共同解）。
+ *
+ * DELETE /projects/:id 的容器物理清理是响应后异步执行的，存在两个竞态：
+ *   1. 删的是最后一个项目时 state 变空，若异步段崩溃/docker 暂不可用，
+ *      收割器的空库守卫会永远跳过 → 残留永不回收；
+ *   2. 同 slug 项目被快速重建时，确定性容器名相同，迟到的 rm -f 会误删
+ *      新项目的容器。
+ * 墓碑把「要清理哪些容器」持久化进 state（显式意图，不依赖扫描推断），
+ * 消费方在 rm 前用 docker inspect 的 Created 时间与 requestedAt 比对——
+ * 容器比墓碑新 = 属于重建的后继项目，丢弃墓碑不动容器。
+ */
+export interface ContainerTeardownTombstone {
+  containerName: string;
+  /** 被删项目 id（审计用） */
+  projectId: string;
+  /** 墓碑写入时刻（ISO）。晚于此刻创建的同名容器属于后继项目，不许动。 */
+  requestedAt: string;
 }
 
 export interface CdsState {
@@ -1458,6 +1478,12 @@ export interface CdsState {
    */
   worktreeLayoutVersion?: number;
   /**
+   * 项目删除的容器清理墓碑队列（见 ContainerTeardownTombstone 注释）。
+   * 写入于 DELETE /projects/:id 的 state cascade 之前；异步清理成功 /
+   * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
+   */
+  pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /**
    * User-customisable settings for the GitHub PR preview comment that
    * CDS posts on PR open / refreshes on every deploy
    * (postOrUpdatePrComment in routes/github-webhook.ts).
@@ -1542,6 +1568,12 @@ export interface CdsState {
    * （取 max(profile.timeoutSeconds, 此下限)），运行期重启/唤醒保持各 profile 短超时。
    */
   deployReadinessFloorSeconds?: number;
+  /**
+   * 2026-07-16：系统级「全局构建并发上限」（build-gate）。未设时默认 3。
+   * 运行时经「CDS 系统设置」调整立即生效（含唤醒排队者），无需重启；
+   * 环境变量 CDS_MAX_CONCURRENT_BUILDS 是运维最终 override（优先于本值）。
+   */
+  maxConcurrentBuilds?: number;
   /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
@@ -2889,7 +2921,9 @@ export interface AgentKey {
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
-  /** 目标项目 id(单项目)。 */
+  /** 授权类型；存量记录缺省为 project。 */
+  kind?: 'project' | 'bootstrap';
+  /** 目标项目 id；bootstrap 使用保留值 __new_project__。 */
   projectId: string;
   /** sha256 of the one-time pollToken issued at submit. Only the submitter holds the plaintext. */
   pollTokenHash: string;
@@ -2989,6 +3023,8 @@ export interface GlobalAgentKey {
    * state.ts resolveGlobalAgentKeyAccess()。
    */
   access?: AgentKeyAccess;
+  /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
+  oneTime?: boolean;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

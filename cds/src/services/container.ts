@@ -12,6 +12,8 @@ import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
+import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
+import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import {
   collectContainerDiagnostics,
   recordContainerLifecycleIntent,
@@ -1096,6 +1098,13 @@ export class ContainerService {
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
       assertCurrent?: (step: string) => void;
+      /**
+       * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
+       * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
+       * 真实的 CPU 密集构建了——调用方在这里补 acquireBuildSlot，防止拉取
+       * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
+       */
+      onSourceCompileFallback?: () => Promise<void>;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1136,45 +1145,6 @@ export class ContainerService {
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
     await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
-
-    context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
-    // Remove any existing container
-    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? null,
-      operationId: context.operationId ?? null,
-      actor: context.actor ?? null,
-      trigger: context.trigger ?? null,
-      operation: 'deploy-pre-run-replace',
-      source: 'container.runService',
-    });
-    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
-    this.recordContainerEvent({
-      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
-      source: 'cds-container-service',
-      action: 'app.pre-run-rm',
-      message: `pre-run cleanup for ${service.containerName}`,
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? undefined,
-      operationId: context.operationId ?? undefined,
-      containerName: service.containerName,
-      command: {
-        name: 'docker rm -f',
-        exitCode: preRunRemove.exitCode,
-        stdoutPreview: preRunRemove.stdout,
-        stderrPreview: preRunRemove.stderr,
-      },
-      details: {
-        operation: 'deploy-pre-run-replace',
-        reason: '部署前替换同名旧容器',
-        actor: context.actor ?? null,
-        trigger: context.trigger ?? null,
-      },
-    });
 
     // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
     // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
@@ -1264,6 +1234,10 @@ export class ContainerService {
         // 的 sha 镜像 / 8080 端口。
         const sourceProfile = profile.sourceFallbackProfile;
         if (sourceProfile && sourceProfile.command && sourceProfile.command.trim()) {
+          // 回退源码编译 = 真实 CPU 构建。极速版部署没占构建槽，这里先把槽
+          // 补上（可能排队），再继续走源码路径。
+          await context.onSourceCompileFallback?.();
+          context.assertCurrent?.(`runService source-fallback slot acquired ${profile.id}`);
           onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译 [${sourceProfile.activeDeployMode ?? 'source'}]（较慢但必成功，无需手动切回）──\n`);
           this.recordContainerEvent({
             severity: 'warn',
@@ -1305,6 +1279,49 @@ export class ContainerService {
         onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
       }
     }
+
+    // 旧容器移除放在极速版拉取/回退闸**之后**（Codex P2「Queue fallback builds
+    // before removing live containers」）：镜像拉取失败回退源码编译时，回退钩子
+    // 可能在全局构建队列里排队——若像旧实现那样在函数开头就 docker rm，健康的
+    // 旧预览会在整个排队 + 构建期间白宕机。移到这里，拉取/排队期间旧容器持续
+    // 服务，真正要 docker run 前才替换。
+    context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
+    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      requestId: context.requestId ?? null,
+      operationId: context.operationId ?? null,
+      actor: context.actor ?? null,
+      trigger: context.trigger ?? null,
+      operation: 'deploy-pre-run-replace',
+      source: 'container.runService',
+    });
+    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
+    this.recordContainerEvent({
+      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
+      source: 'cds-container-service',
+      action: 'app.pre-run-rm',
+      message: `pre-run cleanup for ${service.containerName}`,
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
+      containerName: service.containerName,
+      command: {
+        name: 'docker rm -f',
+        exitCode: preRunRemove.exitCode,
+        stdoutPreview: preRunRemove.stdout,
+        stderrPreview: preRunRemove.stderr,
+      },
+      details: {
+        operation: 'deploy-pre-run-replace',
+        reason: '部署前替换同名旧容器',
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+      },
+    });
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
 
@@ -1604,6 +1621,7 @@ export class ContainerService {
         '--tmpfs /tmp',
         `--label cds.managed=true`,
         `--label cds.type=job`,
+        `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
         `--label cds.project.id=${entry.projectId || 'default'}`,
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
@@ -1793,10 +1811,39 @@ export class ContainerService {
     probe: ReadinessProbe | undefined,
     onAttempt?: (info: { attempt: number; max: number; stage: 'tcp' | 'http'; ok: boolean; error?: string }) => void,
     onOutput?: (chunk: string) => void,
+    containerName?: string,
   ): Promise<boolean> {
     const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
     const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
     const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
+
+    // 容器活性早退（2026-07-16 队列堵死复盘）：部署期就绪探测下限可达 1200s，
+    // 而探测期间调用方还持着全局构建槽——容器早已崩溃却让槽位白等 20 分钟，
+    // 是 build-gate 吞吐被拖垮的病理路径之一。传入 containerName 时每 ~5 轮
+    // 探测查一次 docker inspect，**连续两次**发现 exited/dead/消失（约 10s
+    // 间隔，容忍 restart-policy 抖动）→ 附崩溃日志立即返回 false，秒放槽。
+    // 不传 containerName 时行为与旧版完全一致。
+    let consecutiveDead = 0;
+    const containerGaveUp = async (attempt: number): Promise<boolean> => {
+      if (!containerName || attempt % 5 !== 0) return false;
+      const inspect = await this.shell.exec(
+        `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+      );
+      const gone = inspect.exitCode !== 0;
+      const [status, exitCode] = gone ? ['missing', ''] : inspect.stdout.trim().split('|');
+      if (gone || status === 'exited' || status === 'dead') {
+        consecutiveDead += 1;
+        if (consecutiveDead >= 2) {
+          const logs = gone ? '' : await this.getLogs(containerName, 30);
+          onOutput?.(`── 容器已退出 (status=${status}${exitCode ? `, exit ${exitCode}` : ''})，提前终止就绪等待 ──\n${logs ? logs + '\n' : ''}`);
+          return true;
+        }
+        onOutput?.(`── 容器状态异常 (${status})，稍后复核（防重启抖动误判）... ──\n`);
+      } else {
+        consecutiveDead = 0;
+      }
+      return false;
+    };
     // CDS build profiles represent HTTP preview/admin/API services. A bare TCP
     // accept can happen before the framework has finished booting, which marks
     // the branch running while users still get empty replies or 502s. Probe "/"
@@ -1829,6 +1876,7 @@ export class ContainerService {
         }
         lastErr = tcp.error || 'tcp refused';
         onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastErr}) ──\n`);
+        if (await containerGaveUp(attempt)) return false;
         await new Promise(r => setTimeout(r, intervalMs));
       }
       onOutput?.(`── noHttp 就绪探测超时 (${Math.round(timeoutMs / 1000)}s),最后错误: ${lastErr} ──\n`);
@@ -1845,6 +1893,7 @@ export class ContainerService {
         if (!tcp.ok) {
           lastError = tcp.error || 'tcp refused';
           onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastError}) ──\n`);
+          if (await containerGaveUp(attempt)) return false;
           await new Promise(r => setTimeout(r, intervalMs));
           continue;
         }
@@ -1860,6 +1909,7 @@ export class ContainerService {
       }
       lastError = httpRes.error || `http ${httpRes.status}`;
       onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: HTTP ${probePath} (${lastError}) ──\n`);
+      if (await containerGaveUp(attempt)) return false;
       await new Promise(r => setTimeout(r, intervalMs));
     }
 
@@ -2313,6 +2363,18 @@ export class ContainerService {
     tail = 200,
   ): AbortController {
     const ac = new AbortController();
+    // 预览实例守卫（Codex P2，2026-07-15）：本方法绕过 IShellExecutor 直接 spawn docker，
+    // 是预览实例里用户唯一可达的裸 spawn 路径（seed 的演示分支点「日志」就会走到）。
+    // 返回同一句中文拒绝而不是裸 spawn 失败。getLogs 走 shell.exec 已被
+    // PreviewInstanceShellExecutor 覆盖，deploy 链路在路由层已 403。
+    if (isPreviewInstance()) {
+      queueMicrotask(() => {
+        if (ac.signal.aborted) return;
+        onData(`${previewInstanceBlockedMessage('docker')}\n`);
+        onClose();
+      });
+      return ac;
+    }
     const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -2348,6 +2410,8 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=app',
+      // 实例身份:同宿主多 CDS master 时收割器据此互不触碰(Codex P1)
+      `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${projectId || '_unknown'}`,
       `--label cds.branch.id=${branchId}`,
       `--label cds.profile.id=${profileId}`,
@@ -2363,6 +2427,7 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
       `--label cds.network=${network}`,

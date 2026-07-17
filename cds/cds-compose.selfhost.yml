@@ -1,0 +1,88 @@
+# CDS Self-Hosting（CDS 托管 CDS）— 独立项目 compose
+#
+# 用途：把 CDS 自己注册成 CDS 的第二个项目（cds-self），任何 CDS 相关分支
+# 部署后得到一个「预览实例」子 CDS —— 通过标准 v3 预览域名打开 dashboard，
+# 验收 CDS 自身的 UI / API 改动，生产 CDS 从此不再为测试而 self-update。
+#
+# 导入方式：CDS Dashboard → 项目列表 → 新建项目（clone 同一仓库）→
+#           项目设置 → 一键导入 → 粘贴本文件内容。
+#
+# 关键取舍（详见 doc/design.cds.self-hosting.md）：
+#   1. 独立项目而非塞进根 cds-compose.yml —— 否则每个 MAP 业务分支都会
+#      白白构建一遍 CDS（「一个仓库多个 CDS 构建」的多构建挑战）。
+#   2. 本项目**不 link GitHub webhook**：webhook 按 repoFullName 只解析到
+#      第一个项目（主项目 prd_agent 会赢），二期再做 fan-out / 分支过滤。
+#      MVP 的部署方式 = Dashboard / cdscli 手动建分支 + 部署。
+#   3. 预览实例不复刻宿主能力：CDS_PREVIEW_INSTANCE=1 会禁用 docker /
+#      systemd / nginx 操作与 self-update，首启 seed 演示数据。
+#
+# 安全提示：预览域名是公网可达的。必须在「项目环境变量」（CDS env scope，
+# 勿写进本文件）配置子实例专用凭据：
+#   CDS_PREVIEW_USERNAME=<自定>
+#   CDS_PREVIEW_PASSWORD=<为子实例单独生成，勿复用父实例密码>
+# 注意是 CDS_PREVIEW_* 前缀：通用 CDS_PASSWORD 会被子实例的 secret 自清洗
+# 一并清除（父实例若用 basic auth，其密码可能经全局变量流进子容器——
+# 白名单保留通用键等于把父实例门禁密码留给未合并代码，Codex P1）。
+# auth mode 无需配置：子实例启动时自动归一化——有 CDS_PREVIEW_PASSWORD 即
+# basic，没有即 disabled；继承的 CDS_AUTH_MODE（如父实例的 github）不生效。
+
+x-cds-project:
+  name: cds-self
+  description: "CDS 预览实例（CDS 托管 CDS）：验收 CDS 自身改动，不执行真实部署"
+  repo: https://github.com/inernoro/prd_agent.git
+
+services:
+  cds:
+    image: node:20-slim
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - cds-self-pnpm-store:/pnpm/store
+    ports:
+      - "9900"
+    # 后端 tsc 构建 + 前端 vite 构建 + node 直启（不走 exec_cds.sh：
+    # 那是宿主入口脚本，会去装依赖 / 渲染 nginx / 起 daemon，容器内全不适用）。
+    # node_modules 落在 bind-mount 的 worktree（.:/repo）里，随分支持久化。
+    # `--frozen-lockfile` 增量安装遇 node_modules 已存在会「Done in ~1s」直接跳过，
+    # 一旦某次安装被打断 / 并发（如 force-rebuild 与 deploy 撞车）留下半链的
+    # node_modules（.bin/tsc 等软链缺失），后续增量安装不自愈、`tsc` 构建 exit 1
+    # 崩溃。自愈守卫：装之前先探 build 工具软链是否可执行，缺了就 rm -rf 该目录，
+    # 逼一次干净全装。正常情况（软链在）探测秒过、仍走快速增量，不牺牲常态速度。
+    command: >-
+      cd cds &&
+      corepack enable &&
+      corepack prepare pnpm@10.28.2 --activate &&
+      pnpm config set store-dir /pnpm/store &&
+      ( [ -x node_modules/.bin/tsc ] || rm -rf node_modules ) &&
+      pnpm install --frozen-lockfile &&
+      pnpm build &&
+      cd web &&
+      ( [ -x node_modules/.bin/vite ] || rm -rf node_modules ) &&
+      pnpm install --frozen-lockfile &&
+      pnpm build &&
+      cd .. &&
+      node dist/index.js
+    environment:
+      # 预览实例模式：禁宿主操作 + 跳后台服务 + seed 演示数据 + 启动时自清洗
+      # 父实例注入的密钥类 env（SSOT：cds/src/services/preview-instance.ts）
+      CDS_PREVIEW_INSTANCE: "1"
+      # 钉死 JSON 存储：绝不让子 CDS 连上父 CDS 的 mongo-split 库
+      #（cross-project-isolation 通道 4：共享库写坏即穿透）。
+      CDS_STORAGE_MODE: "json"
+    # 资源上限：子实例跑的是未合并代码，泄漏/死循环不许拖垮共享宿主
+    #（debt.cds.performance 的老病根；构建期由全局并发闸另行兜底）。
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2"
+    labels:
+      cds.path-prefix: "/"
+      # /api/instance-mode 是公开端点，无需登录即可 200，适合做就绪探针。
+      cds.readiness-path: "/api/instance-mode"
+      # 冷构建 = 两次 pnpm install + tsc + vite build，给足窗口。
+      cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
+
+volumes:
+  cds-self-pnpm-store:
