@@ -1665,7 +1665,9 @@ public static class GatewayHttpEndpoints
     private static string ResolveRequiredScope(string path)
     {
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Readiness;
-        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Route;
+        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase))
+            return GatewayLegacyProbeScopes.Route;
         if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
         // requestId 是用户输入，可能恰好叫 resolve/raw/pools。请求控制路由必须先按
         // 固定形状匹配，不能让 path 子串把 cancel/status 错分到其它 scope。
@@ -1677,8 +1679,7 @@ public static class GatewayHttpEndpoints
             || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
-            || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
-            || path.Contains("shadow-comparisons", StringComparison.OrdinalIgnoreCase)) return "route:read";
+            || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)) return "route:read";
         return "invoke";
     }
 
