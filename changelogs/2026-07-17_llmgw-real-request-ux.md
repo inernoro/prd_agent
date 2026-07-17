@@ -14,3 +14,4 @@
 | fix | llmgw | appCaller 模型池深链筛选加入可见筛选条件及服务端批量治理过滤，防止越池更新 |
 | fix | llmgw-serving | resolve 路由预览支持 header-only 来源校验且不再写入 appCaller 活跃度 |
 | security | llmgw-serving | resolve 在不写活跃度的前提下保留 appCaller 团队所有权校验，拒绝同租户跨团队路由探测 |
+| security | llmgw-web | Quickstart 重新检查路由时立即清除旧预检结果，并在检查期间关闭真实请求与真实调用片段 |

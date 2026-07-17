@@ -129,7 +129,7 @@ export function QuickstartPage() {
     teamId: bundle?.teamId ?? teamId,
   };
   const currentRoutePreview = routePreview?.checkedBaseUrl === normalizeBaseUrl(baseUrl) ? routePreview : null;
-  const realRouteReady = canRunRealTest(currentRoutePreview, baseUrl);
+  const realRouteReady = !routeChecking && canRunRealTest(currentRoutePreview, baseUrl);
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode),
@@ -209,6 +209,8 @@ export function QuickstartPage() {
   const checkRealRoute = async (target = bundle) => {
     if (!target) return;
     setRouteChecking(true);
+    setRoutePreview(null);
+    setTestResult(null);
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     try {
       const response = await fetch(new URL('/gw/v1/resolve', `${normalizedBaseUrl}/`).toString(), {
