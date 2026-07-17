@@ -204,33 +204,27 @@ export default function AppShell() {
   // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
   const ownsThemeRef = useRef(false);
 
-  // 移动端全局明暗（2026-07-12）:暗色默认、可切换,壳层统一落 <html data-theme>。
-  // deps 带 pathname:自管主题的页面卸载清属性后,导航到普通页由这里重申。
-  // 自管主题路由(纸面身份,页面自己 set/remove data-theme)壳层不插手,
-  // 否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
+  // 全局明暗偏好（2026-07-17 升级：从移动端专属扩展到全站，桌面同样生效）:
+  // 暗色默认、可切换（首页移动端右上角 / 设置 → 皮肤设置「外观」共用同一 store）,
+  // 壳层统一落 <html data-theme>。deps 带 pathname:自管主题的页面卸载清属性后,
+  // 导航到普通页由这里重申。自管主题路由(纸面身份,页面自己 set/remove data-theme)
+  // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
   useEffect(() => {
     const root = document.documentElement;
-    if (isMobile) {
-      // 只列真正自己 set/remove data-theme 的页面(weekly-poster 无所有者,已移除 —— Codex P2 三轮)
-      const selfManaged = ['/daily-post', '/report-agent'].some(
-        (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
-      );
-      if (selfManaged) {
-        // 属性所有权移交给页面:此后拉宽到桌面/壳层卸载都不由壳层清理,
-        // 避免误清页面自管的主题(Codex P2 二轮)。离开该路由回普通页时,
-        // 下方 set/remove 会重新接管所有权。
-        ownsThemeRef.current = false;
-        return;
-      }
-      if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
-      else root.removeAttribute('data-theme');
-      ownsThemeRef.current = true;
-    } else if (ownsThemeRef.current) {
-      // 移动 -> 桌面(旋转/拉宽):清掉移动偏好,桌面维持既有暗色体系(Codex P2)
-      root.removeAttribute('data-theme');
+    // 只列真正自己 set/remove data-theme 的页面(weekly-poster 无所有者,已移除 —— Codex P2 三轮)
+    const selfManaged = ['/daily-post', '/report-agent'].some(
+      (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
+    );
+    if (selfManaged) {
+      // 属性所有权移交给页面:壳层卸载也不清理,避免误清页面自管的主题(Codex P2 二轮)。
+      // 离开该路由回普通页时,下方 set/remove 会重新接管所有权。
       ownsThemeRef.current = false;
+      return;
     }
-  }, [isMobile, mobileThemeMode, location.pathname]);
+    if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
+    else root.removeAttribute('data-theme');
+    ownsThemeRef.current = true;
+  }, [mobileThemeMode, location.pathname]);
 
   // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
   useEffect(

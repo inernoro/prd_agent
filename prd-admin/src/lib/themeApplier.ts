@@ -49,9 +49,28 @@ export function isSolidMaterial(config: ThemeConfig): boolean {
 }
 
 /**
+ * 设计参数归一化（2026-07-17 用户定「不要让用户来决定这些」）：
+ * 用户只保留两个决定——外观（深/浅）与界面材质（素色/玻璃）。
+ * 色深、透明度、光晕、侧边栏玻璃是设计参数，一律回到系统预设；
+ * 存量配置里的个性化值不再参与渲染（字段保留仅为前后端兼容）。
+ * performanceMode 保留为内部性能保险丝（Windows auto / 减少动态效果），不再暴露 UI。
+ */
+export function normalizeThemeConfig(config: ThemeConfig): ThemeConfig {
+  return {
+    ...config,
+    colorDepth: 'default',
+    opacity: 'default',
+    enableGlow: (config.material ?? DEFAULT_THEME_CONFIG.material) === 'glass',
+    sidebarGlass: 'always',
+  };
+}
+
+/**
  * 将主题配置应用到 :root
  */
-export function applyThemeToDOM(config: ThemeConfig): void {
+export function applyThemeToDOM(rawConfig: ThemeConfig): void {
+  // 渲染前先归一化：设计参数走系统预设，用户只保留 材质 + 外观 两个决定
+  const config = normalizeThemeConfig(rawConfig);
   const reduceEffects = shouldReduceEffects(config);
   const solidMaterial = isSolidMaterial(config);
   // 素色材质复用性能模式的实底 token 集（--glass-bg-* 变高不透明实底），

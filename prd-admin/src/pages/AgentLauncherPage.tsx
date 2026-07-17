@@ -78,6 +78,7 @@ import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -475,6 +476,9 @@ export default function AgentLauncherPage() {
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
+  // 浅色外观（2026-07-17 全局化）下隐藏 hero 的暗色装饰层、改走文字 token，
+  // 否则白字/白雾直接糊在纸面上（首页是门面，浅色必须能看）
+  const isLight = useDataTheme() === 'light';
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
@@ -605,8 +609,9 @@ export default function AgentLauncherPage() {
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
         {/* 顶带极光（ReactBits Aurora 驯化版）：亮色端锚在右上，补右上角留白的氛围重心。
-            隐藏/离屏自动暂停，reduced-motion 静态一帧，DPR 封顶——不违反首页动画纪律 */}
-        <div
+            隐藏/离屏自动暂停，reduced-motion 静态一帧，DPR 封顶——不违反首页动画纪律。
+            浅色外观下不渲染：screen 提亮混合在纸面上会糊成一片白雾 */}
+        {!isLight && <div
           className="absolute inset-x-0 top-0 pointer-events-none overflow-hidden"
           style={{
             height: isMobile ? 220 : 300,
@@ -627,10 +632,10 @@ export default function AgentLauncherPage() {
             speed={0.35}
             style={{ width: '100%', height: '100%' }}
           />
-        </div>
+        </div>}
 
-        {/* 问候语底光（柔白，静态） */}
-        <div
+        {/* 问候语底光（柔白，静态；浅色外观不渲染——白雾会洗掉纸面对比） */}
+        {!isLight && <div
           className="absolute pointer-events-none"
           style={{
             top: '2%',
@@ -643,7 +648,7 @@ export default function AgentLauncherPage() {
             opacity: 0.68,
             zIndex: 0,
           }}
-        />
+        />}
 
         {/* ── 页面主体内容（悬浮在背景图之上） ── */}
         <div className="relative z-10">
@@ -659,9 +664,9 @@ export default function AgentLauncherPage() {
                     <div
                       className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
                       style={{
-                        background: 'rgba(247, 247, 251, 0.045)',
-                        border: '1px solid rgba(247, 247, 251, 0.13)',
-                        color: 'rgba(214, 216, 212, 0.78)',
+                        background: isLight ? 'var(--nested-block-bg)' : 'rgba(247, 247, 251, 0.045)',
+                        border: `1px solid ${isLight ? 'var(--nested-block-border)' : 'rgba(247, 247, 251, 0.13)'}`,
+                        color: isLight ? 'var(--text-muted)' : 'rgba(214, 216, 212, 0.78)',
                         textShadow: 'none',
                       }}
                     >
@@ -674,7 +679,7 @@ export default function AgentLauncherPage() {
                       className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
                       style={{
                         color: 'var(--text-primary, #fff)',
-                        textShadow: '0 1px 12px rgba(0,0,0,0.35)',
+                        textShadow: isLight ? 'none' : '0 1px 12px rgba(0,0,0,0.35)',
                         lineHeight: 1.15,
                       }}
                     >
@@ -682,12 +687,15 @@ export default function AgentLauncherPage() {
                       {displayName ? '，' : ''}
                       {displayName && (
                         <span
-                          style={{
-                            background: 'linear-gradient(100deg, #F7F7FB 0%, #C8C5BE 100%)',
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
-                            backgroundClip: 'text',
-                          }}
+                          style={isLight
+                            // 浅色：银白渐变在纸面上隐形，名字直接走主文字色
+                            ? { color: 'var(--text-primary)' }
+                            : {
+                                background: 'linear-gradient(100deg, #F7F7FB 0%, #C8C5BE 100%)',
+                                WebkitBackgroundClip: 'text',
+                                WebkitTextFillColor: 'transparent',
+                                backgroundClip: 'text',
+                              }}
                         >
                           {displayName}
                         </span>
@@ -699,8 +707,8 @@ export default function AgentLauncherPage() {
                       data-tour-id="home-subtitle"
                       className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
-                          color: 'rgba(247, 247, 251, 0.72)',
-                        textShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                        color: isLight ? 'var(--text-secondary)' : 'rgba(247, 247, 251, 0.72)',
+                        textShadow: isLight ? 'none' : '0 1px 4px rgba(0,0,0,0.2)',
                         maxWidth: 520,
                       }}
                     >
@@ -729,19 +737,19 @@ export default function AgentLauncherPage() {
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
                         style={{
-                          background: 'rgba(20,20,24,0.54)',
-                          border: '1px solid rgba(247,247,251,0.14)',
+                          background: isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.54)',
+                          border: `1px solid ${isLight ? 'var(--border-subtle)' : 'rgba(247,247,251,0.14)'}`,
                           color: 'var(--text-primary, #fff)',
                           backdropFilter: 'blur(12px)',
                           WebkitBackdropFilter: 'blur(12px)',
                         }}
                         onFocus={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.30)';
-                          e.currentTarget.style.background = 'rgba(20,20,24,0.78)';
+                          e.currentTarget.style.borderColor = isLight ? 'var(--border-strong, rgba(26,26,31,0.3))' : 'rgba(247,247,251,0.30)';
+                          e.currentTarget.style.background = isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.78)';
                         }}
                         onBlur={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.14)';
-                          e.currentTarget.style.background = 'rgba(20,20,24,0.54)';
+                          e.currentTarget.style.borderColor = isLight ? 'var(--border-subtle)' : 'rgba(247,247,251,0.14)';
+                          e.currentTarget.style.background = isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.54)';
                         }}
                       />
                     </div>
@@ -776,18 +784,18 @@ export default function AgentLauncherPage() {
                         className="group inline-flex items-center gap-2 h-9 rounded-full transition-colors duration-150 px-3.5"
                         style={{
                           background: 'var(--bg-elevated, rgba(255,255,255,0.04))',
-                          border: '1px solid rgba(255,255,255,0.08)',
+                          border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'rgba(247,247,251,0.075)';
-                          e.currentTarget.style.borderColor = 'rgba(247,247,251,0.16)';
+                          e.currentTarget.style.background = 'var(--bg-card-hover, rgba(247,247,251,0.075))';
+                          e.currentTarget.style.borderColor = 'var(--border-default, rgba(247,247,251,0.16))';
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.background = 'var(--bg-elevated, rgba(255,255,255,0.04))';
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                          e.currentTarget.style.borderColor = 'var(--border-subtle, rgba(255,255,255,0.08))';
                         }}
                       >
-                        <Icon size={15} style={{ color: 'rgba(214,216,212,0.66)' }} />
+                        <Icon size={15} style={{ color: 'var(--text-muted, rgba(214,216,212,0.66))' }} />
                         <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))' }}>
                           {link.label}
                         </span>

@@ -65,11 +65,20 @@ html[data-material="solid"] .glass-blur-pseudo::after {
   content: none;
 }
 
-/* 极光背景静音：素色的画布就是纯底色。飘动的白雾 radial 层是「蒙一层/胖胖的」
-   观感来源之一，与性能模式同款回退（那边是为省重绘，这边是为气质） */
-html[data-material="solid"] .app-aurora {
+/* 极光静音但不失血色（2026-07-17 用户：「首页有点偏黑白了」）：
+   去掉漂移动画与白雾 radial（「蒙一层/胖」的来源），但保留两抹极淡的静态品牌色
+   氛围——左上靛蓝、右下青色，与主按钮/强调色同族，全站画布共享同一色温（联动）。
+   浅色纸面自带墨色氛围，仅停动画。 */
+html[data-material="solid"]:not([data-theme="light"]) .app-aurora {
   animation: none !important;
-  background: var(--bg-base) !important;
+  background:
+    radial-gradient(56% 42% at 12% 0%, rgba(99, 102, 241, 0.11) 0%, transparent 62%),
+    radial-gradient(48% 38% at 88% 100%, rgba(56, 189, 248, 0.06) 0%, transparent 60%),
+    var(--bg-base) !important;
+  background-size: 100% 100% !important;
+}
+html[data-material="solid"][data-theme="light"] .app-aurora {
+  animation: none !important;
 }
 
 /* chrome 瘦身：工具条 46 → 42px，配合纯平底与发丝描边，整条更轻 */
