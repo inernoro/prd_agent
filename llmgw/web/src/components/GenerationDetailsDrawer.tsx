@@ -185,8 +185,8 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
               key={`${attempt.order}-${attempt.stage}-${attempt.model || provider}`}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '40px 120px minmax(0, 1fr) auto',
-                gap: 10,
+                gridTemplateColumns: '32px minmax(0, 1fr) auto',
+                gap: 12,
                 alignItems: 'start',
                 borderRadius: 'var(--radius-sm)',
                 padding: '11px 12px',
@@ -195,12 +195,12 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
               }}
             >
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
-              <span style={{ fontSize: 14, color: warning ? 'var(--warn)' : 'var(--text-secondary)' }}>{provider}</span>
-              <span style={{ minWidth: 0, fontSize: 14, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
-                <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{attempt.model || DASH}</span>
-                {pool ? <span style={{ color: 'var(--text-muted)' }}> · {pool}</span> : null}
+              <span className="lg-provider-response-main">
+                <span className="lg-provider-response-provider">{provider}</span>
+                <span className="lg-provider-response-model">{attempt.model || DASH}</span>
+                {pool ? <span className="lg-provider-response-pool">模型池：{pool}</span> : null}
                 {attempt.error || attempt.reason ? (
-                  <span style={{ display: 'block', marginTop: 3, color: warning ? 'var(--warn)' : 'var(--text-muted)' }}>
+                  <span className="lg-provider-response-reason" style={{ color: warning ? 'var(--warn)' : 'var(--text-muted)' }}>
                     {attempt.error || attempt.reason}
                   </span>
                 ) : null}

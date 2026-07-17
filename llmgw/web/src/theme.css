@@ -2617,6 +2617,40 @@ a:focus-visible {
   line-height: 1.55;
 }
 
+.lg-provider-response-main,
+.lg-provider-response-provider,
+.lg-provider-response-model,
+.lg-provider-response-pool,
+.lg-provider-response-reason {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lg-provider-response-main {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.lg-provider-response-provider {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.lg-provider-response-model {
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lg-provider-response-pool,
+.lg-provider-response-reason {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .lg-log-filters {
   flex-shrink: 0;
 }
