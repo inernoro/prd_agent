@@ -21,7 +21,7 @@
 | 2026-07-12-public-surface-smoke | PR #1174 | 2026-07-17 | 发布后强制从公网验证主 HTML、实际同源 JS/CSS、API 版本、LLMGW 页面和 Console/Serving 双健康，并写 JSON。相同探针加入每 6 小时独立 GitHub 定时任务，能够区分页面、资源、API 与专项服务失败。 |
 | 2026-07-12-release-command-compatibility | PR #1174 | 2026-07-17 | `./exec_dep.sh release` 明确映射 latest 并输出迁移提示，`--help` 同时展示兼容命令和不可变 `--commit` 推荐路径；不可变静态产物不再允许跳过 SHA256。 |
 | 2026-07-12-release-forensic-ledger | PR #1174 | 2026-07-17 | 每次执行写不可覆盖 JSON，记录操作者、主机、release shell PID、开始结束时间、目标 ref、产物 URL/实际与期望 SHA256、校验结论、切换前后 owner/mode/current/previous、公网探针、首个失败阶段与回滚结果。2026-07-12 首次把目录改为 `700` 的历史进程无法追溯，属于不可恢复历史事实；后续发布已具备归因链。 |
-| 2026-07-17-independent-public-surface-watch | PR #1174 | 2026-07-17 | `LLM Gateway Shadow Watch` 新增无密钥 `public-surface` 独立 job，每 6 小时复用同一公网探针并上传内容寻址检查结果，不依赖发布动作。 |
+| 2026-07-17-independent-public-surface-watch | PR #1174 | 2026-07-17 | `LLM Gateway Shadow Watch` 新增无密钥 `public-surface` 独立 job，每 6 小时先验证 MAP 根页、真实资源、API 与网关双健康，再以独立 Gateway 模式验证网关产品标识、真实 JS/CSS、Console/Serving 精确提交和 GW Native、OpenAI、Claude、Gemini 四协议无密钥 401；两份 JSON 均上传保存，不依赖发布动作。 |
 
 ## 关闭条件
 

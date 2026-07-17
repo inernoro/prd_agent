@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PUBLIC_BASE: ${{ vars.PRD_AGENT_PUBLIC_BASE_URL || 'https://map.ebcone.net' }}
+      STANDALONE_BASE: ${{ vars.LLMGW_STANDALONE_PUBLIC_BASE_URL || '' }}
       EXPECT_COMMIT: ${{ vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
     steps:
       - name: Checkout
@@ -60,6 +61,18 @@ jobs:
             cmd+=(--expect-commit "$EXPECT_COMMIT")
           fi
           "${cmd[@]}"
+
+          gateway_base="${STANDALONE_BASE:-${PUBLIC_BASE%/}/llmgw/}"
+          gateway_cmd=(python3 scripts/prd-agent-public-surface-smoke.py \
+            --surface gateway \
+            --base "$gateway_base" \
+            --attempts 3 \
+            --interval 5 \
+            --json-out artifacts/public-surface/gateway-result.json)
+          if [ -n "$(printf '%s' "$EXPECT_COMMIT" | xargs)" ]; then
+            gateway_cmd+=(--expect-commit "$EXPECT_COMMIT")
+          fi
+          "${gateway_cmd[@]}"
 
       - name: Upload public surface report
         if: always()

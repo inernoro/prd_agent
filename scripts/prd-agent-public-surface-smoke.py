@@ -63,6 +63,35 @@ def fetch_once(url: str, timeout: float) -> HttpResult:
         )
 
 
+def request_once(method: str, url: str, timeout: float, body: bytes | None = None) -> HttpResult:
+    headers = {"User-Agent": "prd-agent-public-surface-smoke/1.0"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return HttpResult(
+                url=response.geturl(),
+                status=int(response.status),
+                content_type=response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
+                body=response.read(),
+            )
+    except urllib.error.HTTPError as exc:
+        return HttpResult(
+            url=exc.geturl(),
+            status=int(exc.code),
+            content_type=exc.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
+            body=exc.read(),
+        )
+    except urllib.error.URLError as exc:
+        return HttpResult(
+            url=url,
+            status=0,
+            content_type="network-error",
+            body=str(exc.reason).encode("utf-8", errors="replace"),
+        )
+
+
 def local_asset_urls(base: str, values: list[str]) -> list[str]:
     base_parts = urllib.parse.urlsplit(base)
     urls: list[str] = []
@@ -208,6 +237,131 @@ def probe_once(
     }
 
 
+def gateway_error_code(body: bytes) -> str | None:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):
+        return None
+    code = payload["error"].get("code")
+    return str(code).strip() if code is not None else None
+
+
+def probe_gateway_once(
+    base: str,
+    timeout: float,
+    requester: Callable[[str, str, float, bytes | None], HttpResult] = request_once,
+    expected_commit: str | None = None,
+) -> dict[str, object]:
+    checks: list[dict[str, object]] = []
+    failures: list[str] = []
+
+    def request_check(
+        name: str,
+        method: str,
+        url: str,
+        body: bytes | None = None,
+        expected_status: int = 200,
+        expected_type: str | None = None,
+    ) -> HttpResult:
+        result = requester(method, url, timeout, body)
+        ok = result.status == expected_status and len(result.body) > 0
+        if expected_type == "html":
+            ok = ok and result.content_type in {"text/html", "application/xhtml+xml"}
+        if expected_type == "json":
+            ok = ok and result.content_type == "application/json"
+        checks.append(
+            {
+                "name": name,
+                "method": method,
+                "url": url,
+                "status": result.status,
+                "contentType": result.content_type,
+                "bytes": len(result.body),
+                "sha256": hashlib.sha256(result.body).hexdigest(),
+                "ok": ok,
+            }
+        )
+        if not ok:
+            failures.append(
+                f"{name} failed: status={result.status} type={result.content_type} bytes={len(result.body)}"
+            )
+        return result
+
+    root_url = base.rstrip("/") + "/"
+    root = request_check("gateway-page", "GET", root_url, expected_type="html")
+    if root.status == 200 and b"LLM Gateway" not in root.body:
+        failures.append("gateway-page does not contain the LLM Gateway product marker")
+    parser = EntryAssetParser()
+    if root.status == 200 and root.body:
+        parser.feed(root.body.decode("utf-8", errors="replace"))
+    scripts = local_asset_urls(root_url, parser.scripts)
+    styles = local_asset_urls(root_url, parser.styles)
+    if not scripts:
+        failures.append("gateway-page does not reference a same-origin JavaScript entry asset")
+    if not styles:
+        failures.append("gateway-page does not reference a same-origin CSS entry asset")
+
+    for index, asset_url in enumerate(scripts, start=1):
+        result = request_check(f"gateway-entry-js-{index}", "GET", asset_url)
+        if result.content_type not in {"application/javascript", "text/javascript", "application/x-javascript"}:
+            failures.append(f"gateway-entry-js-{index} has unexpected MIME: {result.content_type}")
+    for index, asset_url in enumerate(styles, start=1):
+        result = request_check(f"gateway-entry-css-{index}", "GET", asset_url)
+        if result.content_type != "text/css":
+            failures.append(f"gateway-entry-css-{index} has unexpected MIME: {result.content_type}")
+
+    console_health = request_check(
+        "gateway-console-health", "GET", urllib.parse.urljoin(root_url, "gw/healthz"), expected_type="json"
+    )
+    serving_health = request_check(
+        "gateway-serving-health", "GET", urllib.parse.urljoin(root_url, "gw/v1/healthz"), expected_type="json"
+    )
+    for name, result in (("gateway-console-health", console_health), ("gateway-serving-health", serving_health)):
+        state = health_state(result.body)
+        if result.status == 200 and state not in {"healthy", "ok", "ready", "success"}:
+            failures.append(f"{name} business status is not healthy: {state or 'missing'}")
+
+    expected_commit = (expected_commit or "").removeprefix("sha-").strip().lower()
+    if expected_commit:
+        for name, result in (("gateway-console-health", console_health), ("gateway-serving-health", serving_health)):
+            if result.status != 200:
+                continue
+            actual_commit = (json_text_field(result.body, "commit") or "").lower()
+            if actual_commit != expected_commit:
+                failures.append(
+                    f"{name} commit mismatch: expected={expected_commit} actual={actual_commit or 'missing'}"
+                )
+
+    protocol_paths = {
+        "gateway-native-no-key": "gw/v1/send",
+        "gateway-openai-no-key": "v1/chat/completions",
+        "gateway-claude-no-key": "v1/messages",
+        "gateway-gemini-no-key": "v1beta/models/gateway-auto:generateContent",
+    }
+    for name, relative_path in protocol_paths.items():
+        result = request_check(
+            name,
+            "POST",
+            urllib.parse.urljoin(root_url, relative_path),
+            body=b"{}",
+            expected_status=401,
+            expected_type="json",
+        )
+        if result.status == 401 and gateway_error_code(result.body) != "GATEWAY_KEY_REQUIRED":
+            failures.append(f"{name} returned 401 without GATEWAY_KEY_REQUIRED")
+
+    return {
+        "verdict": "pass" if not failures else "fail",
+        "surface": "gateway",
+        "base": base,
+        "checkedAt": datetime.now(timezone.utc).isoformat(),
+        "checks": checks,
+        "failures": failures,
+    }
+
+
 def write_json(path: str, payload: dict[str, object]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +373,7 @@ def write_json(path: str, payload: dict[str, object]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the public product surface after a production release")
     parser.add_argument("--base", required=True)
+    parser.add_argument("--surface", choices=("map", "gateway"), default="map")
     parser.add_argument("--api-health-path", default="/api/version")
     parser.add_argument("--root-health-path", default="/health")
     parser.add_argument("--llmgw-page-path", default="/llmgw/")
@@ -236,16 +391,19 @@ def main() -> int:
     base = args.base.rstrip("/") + "/"
     result: dict[str, object] = {}
     for attempt in range(1, args.attempts + 1):
-        result = probe_once(
-            base,
-            args.api_health_path,
-            args.root_health_path,
-            args.llmgw_page_path,
-            args.llmgw_console_health_path,
-            args.llmgw_serving_health_path,
-            args.timeout,
-            expected_commit=args.expect_commit,
-        )
+        if args.surface == "gateway":
+            result = probe_gateway_once(base, args.timeout, expected_commit=args.expect_commit)
+        else:
+            result = probe_once(
+                base,
+                args.api_health_path,
+                args.root_health_path,
+                args.llmgw_page_path,
+                args.llmgw_console_health_path,
+                args.llmgw_serving_health_path,
+                args.timeout,
+                expected_commit=args.expect_commit,
+            )
         result["attempt"] = attempt
         result["attemptsConfigured"] = args.attempts
         if result["verdict"] == "pass":
