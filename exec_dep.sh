@@ -3,7 +3,7 @@ set -eu
 
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
-# - 解压到 deploy/web/dist
+# - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
 # - 校验 sha256（如果 Release 同时上传了 .sha256 文件）
 # - 执行 docker-compose up -d（若系统仅有 docker compose，则自动回退）
 #
@@ -31,7 +31,10 @@ set -eu
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
+#   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
+#   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收根地址，默认 https://map.ebcone.net
+#   - PRD_AGENT_RELEASE_EVIDENCE_DIR：不可覆盖的发布证据目录，默认 $HOME/prd-agent-release-evidence
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
 #   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
@@ -75,6 +78,21 @@ SKIP_VERIFY="${SKIP_VERIFY:-}"
 LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
+
+print_usage() {
+  cat <<'USAGE'
+Usage:
+  ./exec_dep.sh
+  ./exec_dep.sh release
+  ./exec_dep.sh --commit <40-char-sha>
+  ./exec_dep.sh --tag <tag>
+  ./exec_dep.sh --ref <latest|sha-commit|tag>
+
+Compatibility:
+  ./exec_dep.sh release continues to deploy latest. Prefer an immutable --commit for audited production releases.
+USAGE
+}
+
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
   release_ref="$PRD_AGENT_DEPLOY_COMMIT"
   release_ref_type="commit"
@@ -87,6 +105,10 @@ fi
 pos_index=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    -h|--help)
+      print_usage
+      exit 0
+      ;;
     --skip-verify)
       SKIP_VERIFY=1
       ;;
@@ -146,7 +168,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     *)
       pos_index=$((pos_index + 1))
-      if [ "$pos_index" -eq 1 ] && [ -z "$release_ref" ]; then
+      if [ "$pos_index" -eq 1 ] && [ "$1" = "release" ] && [ -z "$release_ref" ]; then
+        release_ref="latest"
+        release_ref_type="ref"
+        echo "Compatibility: './exec_dep.sh release' deploys latest; prefer '--commit <40-char-sha>' for audited releases." >&2
+      elif [ "$pos_index" -eq 1 ] && [ -z "$release_ref" ]; then
         release_ref="$1"
         release_ref_type="ref"
       elif [ "$pos_index" -le 2 ] && [ -z "${REPO:-}" ]; then
@@ -625,27 +651,184 @@ scripts/llmgw-prod-topology-preflight.sh
 
 persist_release_image_pins
 
+if [ ! -f scripts/lib/static-release.sh ]; then
+  echo "ERROR: missing scripts/lib/static-release.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/static-release.sh
+. scripts/lib/static-release.sh
+
 tmp_dir="$(mktemp -d)"
-cleanup() { rm -rf "$tmp_dir"; }
-trap cleanup EXIT
+release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+release_evidence_id="$(date -u '+%Y%m%dT%H%M%SZ')_${TAG}_$$"
+release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-release-evidence}"
+release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
+public_smoke_json="$tmp_dir/public-surface.json"
+rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
+static_staging_dir=""
+static_release_id=""
+static_release_target=""
+static_rollback_target=""
+compose_started=0
+gateway_config_synced=0
+release_completed=0
+release_failure_stage="initialization"
+release_rollback_result="not-needed"
+asset_url=""
+manifest_url=""
+zip_path=""
+expected=""
+artifact_checksum_verified=0
+gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
+gateway_container_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+active_static_root="deploy/web/dist"
+active_nginx_conf_root="deploy/nginx/conf.d"
+if [ -n "$gateway_container_id" ]; then
+  mounted_static_root="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/usr/share/nginx/html"}}{{.Source}}{{end}}{{end}}' "$gateway_container_id" 2>/dev/null || true)"
+  mounted_nginx_conf_root="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}' "$gateway_container_id" 2>/dev/null || true)"
+  if [ -n "$mounted_static_root" ]; then
+    active_static_root="$mounted_static_root"
+  fi
+  if [ -n "$mounted_nginx_conf_root" ]; then
+    active_nginx_conf_root="$mounted_nginx_conf_root"
+  fi
+fi
+echo "Active gateway mounts: static=$active_static_root nginxConf=$active_nginx_conf_root"
+static_before_mode="$(stat -c '%a' "$active_static_root" 2>/dev/null || true)"
+static_before_owner="$(stat -c '%u:%g' "$active_static_root" 2>/dev/null || true)"
+static_before_current="$(readlink "$active_static_root/current" 2>/dev/null || true)"
+static_before_previous="$(readlink "$active_static_root/previous" 2>/dev/null || true)"
+
+write_release_evidence() {
+  evidence_status="$1"
+  evidence_failure_stage="$2"
+  evidence_rollback_result="$3"
+  if [ -e "$release_evidence_file" ]; then
+    echo "Release evidence already written: $release_evidence_file"
+    return 0
+  fi
+  python3 scripts/prd-agent-release-evidence.py \
+    --out "$release_evidence_file" \
+    --status "$evidence_status" \
+    --release-ref "$TAG" \
+    --started-at "$release_started_at" \
+    --command-semantics "${release_ref_type}:${TAG}" \
+    --release-pid "$$" \
+    --asset-url "$asset_url" \
+    --asset-file "$zip_path" \
+    --expected-sha256 "$expected" \
+    --checksum-verified "$artifact_checksum_verified" \
+    --manifest-url "$manifest_url" \
+    --static-root "$active_static_root/current" \
+    --current-link "$active_static_root/current" \
+    --previous-link "$active_static_root/previous" \
+    --static-before-mode "$static_before_mode" \
+    --static-before-owner "$static_before_owner" \
+    --static-before-current "$static_before_current" \
+    --static-before-previous "$static_before_previous" \
+    --smoke-json "$public_smoke_json" \
+    --failure-stage "$evidence_failure_stage" \
+    --rollback-result "$evidence_rollback_result"
+}
+
+run_public_surface_smoke() {
+  smoke_output="$1"
+  smoke_attempts="${2:-${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}}"
+  public_base="${PRD_AGENT_PUBLIC_BASE_URL:-https://map.ebcone.net}"
+  public_smoke_commit_args=""
+  case "$TAG" in
+    sha-*) public_smoke_commit_args="--expect-commit ${TAG#sha-}" ;;
+  esac
+  # shellcheck disable=SC2086
+  python3 scripts/prd-agent-public-surface-smoke.py \
+    --base "$public_base" \
+    --api-health-path "${PRD_AGENT_PUBLIC_API_HEALTH_PATH:-/api/version}" \
+    --root-health-path "${PRD_AGENT_PUBLIC_ROOT_HEALTH_PATH:-/health}" \
+    --llmgw-page-path "${PRD_AGENT_PUBLIC_LLMGW_PAGE_PATH:-/llmgw/}" \
+    --llmgw-console-health-path "${PRD_AGENT_PUBLIC_LLMGW_CONSOLE_HEALTH_PATH:-/llmgw/gw/healthz}" \
+    --llmgw-serving-health-path "${PRD_AGENT_PUBLIC_LLMGW_SERVING_HEALTH_PATH:-/llmgw/gw/v1/healthz}" \
+    --attempts "$smoke_attempts" \
+    --interval "${PRD_AGENT_PUBLIC_SMOKE_INTERVAL_SECONDS:-5}" \
+    --timeout "${PRD_AGENT_PUBLIC_SMOKE_TIMEOUT_SECONDS:-15}" \
+    --json-out "$smoke_output" \
+    $public_smoke_commit_args
+}
+
+reload_active_gateway() {
+  current_gateway_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+  if [ -z "$current_gateway_id" ]; then
+    echo "ERROR: active gateway container is missing" >&2
+    return 1
+  fi
+  current_gateway_running="$(docker inspect --format '{{.State.Running}}' "$current_gateway_id" 2>/dev/null || true)"
+  if [ "$current_gateway_running" != "true" ]; then
+    echo "ERROR: active gateway container is not running" >&2
+    return 1
+  fi
+  docker exec "$current_gateway_id" nginx -t
+  docker exec "$current_gateway_id" nginx -s reload
+}
+
+release_exit() {
+  exit_status=$?
+  trap - EXIT
+  if [ "$exit_status" -ne 0 ] && [ "$release_completed" != "1" ]; then
+    if [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
+      echo "Release failed at stage '$release_failure_stage'; restoring previous static release..." >&2
+      if static_release_rollback "$active_static_root" "$static_rollback_target"; then
+        release_rollback_result="static-restored"
+        if [ "$gateway_config_synced" = "1" ]; then
+          if reload_active_gateway; then
+            release_rollback_result="static-restored-and-gateway-reloaded"
+          else
+            release_rollback_result="static-restored-gateway-reload-failed"
+          fi
+        fi
+        if [ "$compose_started" = "1" ] && [ "$release_rollback_result" != "static-restored-gateway-reload-failed" ]; then
+          if run_public_surface_smoke "$rollback_smoke_json" 6; then
+            public_smoke_json="$rollback_smoke_json"
+            release_rollback_result="static-restored-and-public-verified"
+          else
+            release_rollback_result="static-restored-public-verification-failed"
+          fi
+        fi
+      else
+        release_rollback_result="failed"
+      fi
+    fi
+    write_release_evidence failed "$release_failure_stage" "$release_rollback_result" || true
+  fi
+  if [ -n "$static_staging_dir" ] && [ -d "$static_staging_dir" ]; then
+    rm -rf "$static_staging_dir"
+  fi
+  rm -rf "$tmp_dir"
+  exit "$exit_status"
+}
+trap release_exit EXIT
 
 reuse_static_dist="$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)"
+release_failure_stage="static-preflight"
 case "$reuse_static_dist" in
   1|true|yes)
-    if [ ! -s deploy/web/dist/index.html ]; then
-      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but deploy/web/dist/index.html is missing or empty." >&2
+    if [ -L "$active_static_root/current" ]; then
+      active_static_validation_root="$active_static_root/current"
+      static_release_target="$(readlink "$active_static_root/current")"
+    else
+      active_static_validation_root="$active_static_root"
+    fi
+    if [ ! -s "$active_static_validation_root/index.html" ]; then
+      echo "ERROR: PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1 but the active static index is missing or empty: $active_static_validation_root/index.html" >&2
       echo "RECOVERY: restore a complete verified static artifact before retrying the backend/GW-only deployment." >&2
       exit 1
     fi
-    echo "Static dist reuse enabled: keeping existing deploy/web/dist"
+    echo "Static dist reuse enabled: keeping $active_static_validation_root"
     ;;
   *)
-    asset_url=""
     sha_url=""
-    manifest_url=""
 
     if [ -n "${DIST_URL:-}" ]; then
       asset_url="$DIST_URL"
+      sha_url="${DIST_SHA256_URL:-}"
     else
       pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
       asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
@@ -669,51 +852,85 @@ case "$reuse_static_dist" in
     fi
 
     zip_path="$tmp_dir/prd-admin-dist.zip"
+    release_failure_stage="static-download"
     echo "Downloading: $asset_url"
     curl -fL "$asset_url" -o "$zip_path"
 
     sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
-
+    artifact_checksum_verified=0
     if [ -n "$SKIP_VERIFY" ]; then
-      echo "跳过 sha256 校验（SKIP_VERIFY=1 或 --skip-verify）"
-    elif [ -n "$sha_url" ] && command -v sha256sum >/dev/null 2>&1; then
-      if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
+      if [ "$TAG" != "latest" ]; then
+        echo "ERROR: immutable release $TAG cannot skip static artifact SHA256 verification" >&2
+        exit 1
+      fi
+      echo "WARN: latest compatibility release skipped sha256 verification" >&2
+    else
+      expected="$(printf '%s' "${DIST_SHA256:-}" | tr 'A-F' 'a-f' | xargs || true)"
+      if [ -z "$expected" ] && [ -n "$sha_url" ]; then
+        if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
+          expected="$(awk '{print $1}' "$sha_path" | head -n 1 | tr 'A-F' 'a-f')"
+        fi
+      fi
+      if [ -n "$expected" ]; then
         echo "Verifying sha256..."
-        # 兼容 sha256 文件内容为："<hash>  <filename>"
-        expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-        actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+        elif command -v shasum >/dev/null 2>&1; then
+          actual="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
+        else
+          echo "ERROR: sha256sum or shasum is required for static artifact verification" >&2
+          exit 1
+        fi
         if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
           echo "WARN: sha256 不匹配，可能是 CDN 缓存不一致，等待 5 秒后重新下载..."
           sleep 5
           curl -fL -H "Cache-Control: no-cache" "$asset_url" -o "$zip_path"
-          curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
-          expected="$(awk '{print $1}' "$sha_path" | head -n 1)"
-          actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+          if [ -z "${DIST_SHA256:-}" ] && [ -n "$sha_url" ]; then
+            curl -fL -H "Cache-Control: no-cache" "$sha_url" -o "$sha_path" 2>/dev/null || true
+            expected="$(awk '{print $1}' "$sha_path" | head -n 1 | tr 'A-F' 'a-f')"
+          fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$zip_path" | awk '{print $1}')"
+          else
+            actual="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
+          fi
           if [ -n "$expected" ] && [ "$expected" != "$actual" ]; then
-            echo "" >&2
             echo "ERROR: sha256 校验失败（expected=$expected actual=$actual）" >&2
-            echo "" >&2
-            echo "可能原因：" >&2
-            echo "  1. GitHub Pages CDN 缓存了不同版本的 zip 和 sha256 文件" >&2
-            echo "  2. 下载过程中文件被截断或损坏" >&2
-            echo "" >&2
-            echo "解决办法：" >&2
-            echo "  - 等待几分钟后重试（等待 CDN 缓存刷新）" >&2
-            echo "  - 跳过校验：SKIP_VERIFY=1 ./exec_dep.sh" >&2
-            echo "  - 或使用 --skip-verify 参数：./exec_dep.sh --skip-verify" >&2
+            echo "RECOVERY: wait for CDN propagation or provide the audited DIST_SHA256; immutable releases cannot bypass verification." >&2
             exit 1
           fi
           echo "重试成功，sha256 校验通过"
         fi
+        if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+          echo "ERROR: static artifact SHA256 must contain exactly 64 hexadecimal characters" >&2
+          exit 1
+        fi
+        artifact_checksum_verified=1
+      fi
+      if [ "$TAG" != "latest" ] && [ "$artifact_checksum_verified" != "1" ]; then
+        echo "ERROR: immutable release $TAG is missing a verifiable static artifact SHA256" >&2
+        echo "RECOVERY: publish the .sha256 asset or set DIST_SHA256/DIST_SHA256_URL." >&2
+        exit 1
       fi
     fi
 
-    mkdir -p deploy/web/dist
-    rm -rf deploy/web/dist/*
-    unzip -q "$zip_path" -d deploy/web/dist
+    if [ ! -x scripts/validate-static-dist.sh ]; then
+      echo "ERROR: missing executable scripts/validate-static-dist.sh" >&2
+      exit 1
+    fi
+    release_failure_stage="static-offline-validation"
+    static_release_id="${TAG}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    mkdir -p "$active_static_root"
+    static_staging_dir="$active_static_root/.staging-$static_release_id"
+    if [ -e "$static_staging_dir" ] || [ -L "$static_staging_dir" ]; then
+      echo "ERROR: static staging path already exists: $static_staging_dir" >&2
+      exit 1
+    fi
+    mkdir -p "$static_staging_dir"
+    unzip -q "$zip_path" -d "$static_staging_dir"
+    scripts/validate-static-dist.sh --normalize "$static_staging_dir"
 
-    echo ""
-    echo "Static dist extracted to: deploy/web/dist"
+    echo "Static release staged and verified: $static_staging_dir"
     ;;
 esac
 
@@ -721,7 +938,12 @@ if [ ! -x scripts/validate-static-dist.sh ]; then
   echo "ERROR: missing executable scripts/validate-static-dist.sh" >&2
   exit 1
 fi
-scripts/validate-static-dist.sh --normalize deploy/web/dist
+if [ -L "$active_static_root/current" ]; then
+  active_static_validation_root="$active_static_root/current"
+else
+  active_static_validation_root="$active_static_root"
+fi
+scripts/validate-static-dist.sh --normalize "$active_static_validation_root"
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
@@ -738,6 +960,76 @@ fi
 echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
 rm -f "$DEFAULT_CONF"
 ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
+
+sync_active_gateway_nginx_config() {
+  source_conf="deploy/nginx/conf.d/branches/_standalone.conf"
+  target_conf="$active_nginx_conf_root/branches/_standalone.conf"
+  target_default="$active_nginx_conf_root/default.conf"
+  config_backup_dir="$tmp_dir/nginx-config-backup"
+  mkdir -p "$config_backup_dir" "$(dirname "$target_conf")"
+
+  if [ -e "$target_conf" ] || [ -L "$target_conf" ]; then
+    cp -a "$target_conf" "$config_backup_dir/standalone.conf"
+  fi
+  if [ -e "$target_default" ] || [ -L "$target_default" ]; then
+    cp -a "$target_default" "$config_backup_dir/default.conf"
+  fi
+
+  if [ "$source_conf" != "$target_conf" ]; then
+    target_conf_next="${target_conf}.next.$$"
+    cp "$source_conf" "$target_conf_next"
+    chmod 644 "$target_conf_next"
+    python3 - "$target_conf_next" "$target_conf" <<'PY'
+import os
+import sys
+
+os.replace(sys.argv[1], sys.argv[2])
+PY
+  fi
+  static_release_atomic_link "$target_default" "branches/_standalone.conf"
+
+  if [ -n "$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)" ]; then
+    if ! reload_active_gateway; then
+      echo "ERROR: new gateway config failed validation; restoring active config backup" >&2
+      if [ -e "$config_backup_dir/standalone.conf" ] || [ -L "$config_backup_dir/standalone.conf" ]; then
+        cp "$config_backup_dir/standalone.conf" "${target_conf}.restore.$$"
+        python3 - "${target_conf}.restore.$$" "$target_conf" <<'PY'
+import os
+import sys
+
+os.replace(sys.argv[1], sys.argv[2])
+PY
+      elif [ "$source_conf" != "$target_conf" ]; then
+        rm -f "$target_conf"
+      fi
+      rm -f "$target_default"
+      if [ -e "$config_backup_dir/default.conf" ] || [ -L "$config_backup_dir/default.conf" ]; then
+        cp -a "$config_backup_dir/default.conf" "$target_default"
+      fi
+      reload_active_gateway || true
+      return 1
+    fi
+  fi
+  gateway_config_synced=1
+}
+
+activate_pending_static_release() {
+  if [ -z "$static_staging_dir" ]; then
+    return 0
+  fi
+
+  release_failure_stage="static-atomic-switch"
+  static_activation_file="$tmp_dir/static-activation.txt"
+  static_release_activate "$static_staging_dir" "$active_static_root" "$static_release_id" > "$static_activation_file"
+  static_staging_dir=""
+  static_release_target="$STATIC_RELEASE_TARGET"
+  static_rollback_target="$STATIC_RELEASE_ROLLBACK_TARGET"
+  if [ -z "$static_release_target" ]; then
+    echo "ERROR: static release activation did not return a target" >&2
+    return 1
+  fi
+  echo "Static release activated after service readiness: current=$static_release_target previous=${static_rollback_target:-none}"
+}
 
 # 自动探测 / 安装 ffmpeg，并把宿主机真实路径导出为 FFMPEG_PATH / FFPROBE_PATH
 # docker-compose.yml 通过 bind mount 把 ${FFMPEG_PATH} → 容器内的 /usr/local/bin/ffmpeg
@@ -1309,11 +1601,28 @@ refresh_gateway_after_compose() {
   fi
 
   if compose_run config --services 2>/dev/null | grep -Fxq "$gateway_service"; then
-    echo "Refreshing gateway service to pick up recreated upstream container IPs..."
-    compose_run up -d --no-deps --force-recreate "$gateway_service"
+    gateway_container_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+    gateway_running=""
+    if [ -n "$gateway_container_id" ]; then
+      gateway_running="$(docker inspect --format '{{.State.Running}}' "$gateway_container_id" 2>/dev/null || true)"
+    fi
+    if [ "$gateway_running" = "true" ]; then
+      echo "Synchronizing active gateway config and reloading in place without changing its container IP..."
+      sync_active_gateway_nginx_config
+    else
+      echo "Starting gateway service for the first time..."
+      compose_run up -d --no-deps "$gateway_service"
+      reload_active_gateway
+      gateway_config_synced=1
+    fi
   else
     echo "Gateway refresh skipped: service '$gateway_service' not found in compose"
   fi
+}
+
+compose_services_without_gateway() {
+  gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
+  compose_run config --services 2>/dev/null | grep -Fvx "$gateway_service" | xargs
 }
 
 wait_for_llmgw_serving_readiness() {
@@ -1376,14 +1685,32 @@ wait_for_llmgw_serving_readiness() {
 
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
+  activate_pending_static_release
 else
+  release_failure_stage="compose-update"
   echo "Ensuring Docker network exists..."
   docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
+  compose_started=1
 
-  echo "Starting compose (force recreate to ensure new image is used)..."
-  compose_run up -d --force-recreate
+  release_services="$(compose_services_without_gateway)"
+  if [ -z "$release_services" ]; then
+    echo "ERROR: no non-gateway compose services found for deployment" >&2
+    exit 1
+  fi
+  echo "Starting non-gateway services while preserving the gateway container IP..."
+  # shellcheck disable=SC2086
+  compose_run up -d --force-recreate $release_services
+
+  # Refresh existing DNS resolutions immediately after the API container is
+  # replaced. This uses the currently active config and static release, so the
+  # public gateway does not wait for the longer serving-readiness phase.
+  if [ -n "$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)" ]; then
+    reload_active_gateway
+  fi
 
   wait_for_llmgw_serving_readiness
+
+  activate_pending_static_release
 
   refresh_gateway_after_compose
 
@@ -1401,4 +1728,13 @@ else
   fi
 fi
 
+release_failure_stage="llmgw-post-deploy-verification"
 run_llmgw_post_deploy_verification_if_needed
+
+release_failure_stage="public-product-surface"
+run_public_surface_smoke "$public_smoke_json"
+
+release_failure_stage="release-evidence"
+write_release_evidence success "" "not-needed"
+release_completed=1
+echo "Production release completed with public surface evidence: $release_evidence_file"
