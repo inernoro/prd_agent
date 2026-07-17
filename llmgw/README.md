@@ -32,3 +32,11 @@ pnpm --dir llmgw/web build
 - 镜像、容器与环境变量名称不变。
 - tenant 只从服务端会话或 service key 解析。
 - 不保留旧目录、符号链接或双写构建入口。
+
+## 公开入口
+
+- 正式 MAP 继续兼容 `/llmgw/*`，这是现有二级目录入口。
+- 独立域名可把根路径完整反代到宿主机 `8081`，由 `llmgw-web` 同源承接 Console API 与四协议。
+- CDS 验收必须使用 `llmgw-web` 命名服务子域，不能用共享预览根路径冒充独立 Gateway。
+
+域名、证书、Nginx 验收和测试数据口径见 `deploy/README.md`。

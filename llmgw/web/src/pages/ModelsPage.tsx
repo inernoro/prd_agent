@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
 import type { CreateModelRequest, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -63,9 +64,9 @@ export function ModelsPage() {
     };
   }, [platformId, enabledOnly]);
 
-  const platformName = useMemo(() => {
-    const map = new Map<string, string>();
-    platforms.forEach((p) => map.set(p.id, p.name));
+  const platformById = useMemo(() => {
+    const map = new Map<string, PlatformItem>();
+    platforms.forEach((p) => map.set(p.id, p));
     return map;
   }, [platforms]);
 
@@ -440,6 +441,7 @@ export function ModelsPage() {
                 const en = boolChip(m.enabled, '启用', '停用');
                 const key = boolChip(m.hasKey, '已配置', '继承平台');
                 const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
+                const provider = m.platformId ? platformById.get(m.platformId) : undefined;
                 return (
                   <tr key={m.id}>
                     <td style={td}>
@@ -448,7 +450,44 @@ export function ModelsPage() {
                         <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', fontSize: 11 }}>{m.modelName || m.id}</span>
                       </div>
                     </td>
-                    <td style={td}>{m.platformId ? (platformName.get(m.platformId) || m.platformId) : '—'}</td>
+                    <td style={td}>
+                      {provider ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
+                          <span>{provider.name}</span>
+                          <EntityPreviewDrawer
+                            buttonLabel="查看 Provider"
+                            kicker="模型关联的 Provider"
+                            title={provider.name}
+                            summary={`模型“${m.name || m.modelName}”会通过这条 Provider 连接访问上游。先在当前页核对协议、地址和密钥状态，不需要跳到 Provider 页面。`}
+                            status={[
+                              { label: provider.enabled ? 'Provider 已启用' : 'Provider 已停用', tone: provider.enabled ? 'good' : 'warning' },
+                              { label: provider.hasKey ? 'Provider 密钥已配置' : 'Provider 密钥缺失', tone: provider.hasKey ? 'good' : 'warning' },
+                              { label: m.hasKey ? '模型使用专属密钥' : '模型继承 Provider 密钥' },
+                            ]}
+                            sections={[
+                              {
+                                title: '上游连接',
+                                fields: [
+                                  { label: 'Provider 类型', value: provider.platformType || '未配置' },
+                                  { label: 'API 地址', value: <code>{provider.apiUrl || '未配置'}</code> },
+                                  { label: '模型上游标识', value: <code>{m.modelName || m.id}</code> },
+                                  { label: '最终协议', value: m.protocol && m.protocol !== 'inherit' ? m.protocol : `继承 ${provider.platformType || 'Provider'}` },
+                                ],
+                              },
+                              {
+                                title: '运行边界',
+                                description: '当前状态只说明配置是否具备调用条件；真实可用性仍由模型池健康和请求记录确认。',
+                                fields: [
+                                  { label: 'Provider 最大并发', value: provider.maxConcurrency ?? '未配置' },
+                                  { label: '模型状态', value: m.enabled ? '已启用' : '已停用' },
+                                  { label: '价格', value: formatModelPrice(m) },
+                                ],
+                              },
+                            ]}
+                          />
+                        </div>
+                      ) : m.platformId ? <code>{m.platformId}</code> : '—'}
+                    </td>
                     <td style={td}>{m.protocol || '继承平台'}</td>
                     <td style={td}>
                       <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>

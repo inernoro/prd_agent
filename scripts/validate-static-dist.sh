@@ -20,6 +20,7 @@ fail() {
 }
 
 [ -d "$static_root" ] || fail "directory does not exist: $static_root"
+static_root="$(CDPATH= cd -- "$static_root" && pwd -P)"
 [ -s "$static_root/index.html" ] || fail "index.html is missing or empty: $static_root/index.html"
 
 entry_asset_count="$(python3 - "$static_root" <<'PY'

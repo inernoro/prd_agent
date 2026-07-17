@@ -16,7 +16,7 @@
  */
 import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
@@ -28,12 +28,14 @@ import {
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
   getDocStoreShareGraph,
+  getDocumentStore,
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import {
   parseLibraryShareViewMode,
+  resolveShareKnowledgeBaseReturnPath,
   resolveControlledSharedEntryId,
   resolveInitialSharedEntryId,
   resolveLibraryShareSortMode,
@@ -63,6 +65,7 @@ export function LibraryShareViewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
+  const [canOpenStore, setCanOpenStore] = useState(false);
 
   const shareSortMode = useMemo(
     () => resolveLibraryShareSortMode(
@@ -89,6 +92,19 @@ export function LibraryShareViewPage() {
     });
     return () => { mounted = false; };
   }, [token]);
+
+  // 分享 token 只授权匿名分享端点，不能推导登录用户也能读取后台知识库详情。
+  // 复用 GetStore 的服务端权限判断（owner/public/team/project）；失败时保持安全回退列表。
+  useEffect(() => {
+    let mounted = true;
+    setCanOpenStore(false);
+    if (!isAuthenticated || !view?.store.id) return () => { mounted = false; };
+
+    getDocumentStore(view.store.id).then((response) => {
+      if (mounted) setCanOpenStore(response.success);
+    });
+    return () => { mounted = false; };
+  }, [isAuthenticated, view?.store.id]);
 
   // 默认选中服从阅读排序：书籍顺序先打开主文档；时间模式打开相应的最新文档。
   const initialSelectedId = useMemo<string | undefined>(() => {
@@ -225,6 +241,17 @@ export function LibraryShareViewPage() {
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
   const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
+  const knowledgeBaseReturnPath = resolveShareKnowledgeBaseReturnPath(store.id, canOpenStore);
+  const knowledgeBaseReturnLabel = canOpenStore
+    ? '返回知识库'
+    : isAuthenticated
+      ? '我的知识库'
+      : '登录后进入知识库';
+  const knowledgeBaseReturnTitle = canOpenStore
+    ? `以我的身份打开「${store.name}」`
+    : isAuthenticated
+      ? '当前账号不能直接打开该知识库，返回我的知识库列表'
+      : '登录后进入我的知识库列表';
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
@@ -265,22 +292,21 @@ export function LibraryShareViewPage() {
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
-        {/* 分享页右上角一键回到知识库：常驻显示（2026-06-12 用户反馈"找不到回知识库的入口"——
-            旧逻辑只在登录态渲染，未登录标签页里按钮整个消失，用户以为功能没了）。
-            匿名点击会被路由守卫带去登录，文案如实说明，不藏入口。 */}
+        {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
         <button
-          onClick={() => navigate('/document-store')}
+          onClick={() => navigate(knowledgeBaseReturnPath)}
+          className="transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
           style={{
             marginLeft: 'auto', flexShrink: 0,
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 12px', borderRadius: 8,
+            minHeight: 36, padding: '6px 12px', borderRadius: 9,
             border: '1px solid rgba(255,255,255,0.12)',
             background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
             fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
           }}
-          title={isAuthenticated ? '回到我的知识库' : '登录后进入我的知识库'}
+          title={knowledgeBaseReturnTitle}
         >
-          <BookOpen size={14} /> {isAuthenticated ? '返回我的知识库' : '登录进入知识库'}
+          <ArrowLeft size={14} /> {knowledgeBaseReturnLabel}
         </button>
       </div>
 
@@ -309,21 +335,30 @@ export function LibraryShareViewPage() {
       )}
 
       {!isSingleDoc && (
-        <div
+        <nav
+          aria-label="知识库查看方式"
           style={{
             flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            padding: '8px 16px',
-            background: 'rgba(255,255,255,0.018)',
+            gap: 10,
+            padding: '7px 16px',
+            overflowX: 'auto',
+            background: 'rgba(255,255,255,0.012)',
             borderBottom: '1px solid rgba(255,255,255,0.05)',
           }}
         >
-          <ShareModeButton active={activeView === 'read'} icon={<BookOpen size={13} />} label="阅读" onClick={() => setShareViewMode('read')} />
-          <ShareModeButton active={activeView === 'galaxy'} icon={<Orbit size={13} />} label="知识星球" onClick={() => setShareViewMode('galaxy')} />
-          <ShareModeButton active={activeView === 'universe'} icon={<Network size={13} />} label="Obsidian 双链图" onClick={() => setShareViewMode('universe')} />
-        </div>
+          <span className="hidden shrink-0 text-[11px] font-medium text-token-muted sm:inline">查看方式</span>
+          <div
+            role="tablist"
+            aria-label="知识库视图"
+            className="surface-inset flex shrink-0 items-center gap-1 rounded-[10px] p-1"
+          >
+            <ShareModeButton active={activeView === 'read'} icon={<BookOpen size={14} />} label="阅读" onClick={() => setShareViewMode('read')} />
+            <ShareModeButton active={activeView === 'galaxy'} icon={<Orbit size={14} />} label="知识星球" onClick={() => setShareViewMode('galaxy')} />
+            <ShareModeButton active={activeView === 'universe'} icon={<Network size={14} />} label="双链图" title="Obsidian 风格双链图" onClick={() => setShareViewMode('universe')} />
+          </div>
+        </nav>
       )}
 
       <div className="flex-1 min-h-0 flex flex-col">
@@ -376,48 +411,43 @@ function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onC
     { mode: 'updated-desc', label: '最近更新' },
   ];
   return (
-    <div className="flex items-center gap-1 px-1" aria-label="文章排序">
-      <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
-      {options.map((option) => {
-        const active = option.mode === value;
-        return (
-          <button
-            key={option.mode}
-            type="button"
-            onClick={() => onChange(option.mode)}
-            aria-pressed={active}
-            className="shrink-0 rounded-[6px] px-2 py-1 text-[11px] transition-colors"
-            style={active
-              ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
-              : { color: 'var(--text-muted)' }}
-          >
-            {option.label}
-          </button>
-        );
-      })}
+    <div className="flex items-center gap-1.5" aria-label="文章排序">
+      <span className="shrink-0 text-[11px] font-medium text-token-muted">排序</span>
+      <div role="group" aria-label="排序方式" className="surface-inset flex shrink-0 items-center gap-0.5 rounded-[9px] p-0.5">
+        {options.map((option) => {
+          const active = option.mode === value;
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              onClick={() => onChange(option.mode)}
+              aria-pressed={active}
+              className={`shrink-0 whitespace-nowrap rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function ShareModeButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+function ShareModeButton({ active, icon, label, title, onClick }: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  title?: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
+      title={title}
       onClick={onClick}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        height: 30,
-        padding: '0 12px',
-        borderRadius: 8,
-        border: active ? '1px solid rgba(129,140,248,0.55)' : '1px solid rgba(255,255,255,0.10)',
-        background: active ? 'rgba(129,140,248,0.18)' : 'rgba(255,255,255,0.045)',
-        color: active ? 'rgba(224,231,255,0.98)' : 'rgba(255,255,255,0.62)',
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: 'pointer',
-      }}
+      className={`inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
     >
       {icon}
       {label}

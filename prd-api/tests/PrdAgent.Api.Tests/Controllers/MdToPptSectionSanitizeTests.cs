@@ -1,4 +1,5 @@
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -102,5 +103,154 @@ public class MdToPptSectionSanitizeTests
         // 展示代码片段的合法页（1-2 处属性字样在正文中）低于阈值，不误伤
         var codePage = "<section><h2>示例</h2><pre>用法：写 class=\"card\" 即可</pre></section>";
         Assert.False(MdToPptController.LooksCorruptedSection(codePage));
+    }
+
+    [Fact]
+    public void OpenAiCompatibleProfile_UsesGatewayDirect()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
+            Model = "qwen-max",
+        };
+
+        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void AnthropicProfile_UsesGatewayDirect()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Protocol = InfraAgentRuntimeProtocols.Anthropic,
+            Model = "claude-sonnet",
+        };
+
+        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void CustomRuntime_KeepsCdsAgentCompatibilityPath()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Runtime = InfraAgentRuntimes.Custom,
+            Protocol = InfraAgentRuntimeProtocols.Anthropic,
+            Model = "custom-agent-model",
+        };
+
+        Assert.False(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void RunnableSlideFragment_RejectsFullHtmlAndScript()
+    {
+        Assert.False(MdToPptController.IsRunnableSlideFragment("<html><body><section>x</section></body></html>", anchored: false));
+        Assert.False(MdToPptController.IsRunnableSlideFragment("<section><script>alert(1)</script></section>", anchored: false));
+        Assert.True(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>产品发布</h2><div class=\"grid g3\"><div class=\"card\">A</div><div class=\"stat\">42%</div></div></div></section>",
+            anchored: false));
+    }
+
+    [Fact]
+    public void RunnableSlideFragment_RejectsGenericTitleAndPlainBulletPage()
+    {
+        Assert.False(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>封面</h2><ul><li>A</li><li>B</li></ul></div></section>",
+            anchored: false));
+        Assert.False(MdToPptController.IsRunnableSlideFragment(
+            "<section><div class=\"pp-root\"><h2>产品发布</h2><ul><li>A</li><li>B</li><li>C</li></ul></div></section>",
+            anchored: false));
+        Assert.True(MdToPptController.LooksLikeLowQualitySlide(
+            "<section><h2>总结</h2><ul><li>A</li><li>B</li></ul></section>"));
+    }
+
+    [Fact]
+    public void RunnableAnchoredSlide_AcceptsOfficialHtmlPptSectionRoot()
+    {
+        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>产品发布</h1><div class=\"card\">A</div><div class=\"stat\">42%</div></section>";
+        Assert.True(MdToPptController.IsRunnableSlideFragment(slide, anchored: true));
+    }
+
+    [Fact]
+    public void GatewayPageRequest_PinsExpectedModelAndKeepsStream()
+    {
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
+            Model = "qwen-max",
+            TimeoutSeconds = 120,
+        };
+
+        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1");
+
+        Assert.True(request.Stream);
+        Assert.Equal("qwen-max", request.ExpectedModel);
+        Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
+        Assert.Equal("req1", request.Context?.RequestId);
+        Assert.Equal("u1", request.Context?.UserId);
+    }
+
+    [Fact]
+    public void ResolveTargetPages_UsesExplicitPageCountBeforeDefault()
+    {
+        var req = new MdToPptOutlineRequest { Content = "严格生成 2 页高级产品发布会 PPT" };
+        Assert.Equal(2, MdToPptController.ResolveTargetPages(req));
+        Assert.Equal(12, MdToPptController.ParseExplicitPageCount("输出十二页技术方案"));
+    }
+
+    [Fact]
+    public void NormalizeOutlinePayload_TrimsExtraPages()
+    {
+        var raw = "{\"totalPages\":4,\"summary\":\"x\",\"outline\":[" +
+                  "{\"title\":\"A\",\"bullets\":[]}," +
+                  "{\"title\":\"B\",\"bullets\":[]}," +
+                  "{\"title\":\"C\",\"bullets\":[]}]}";
+        var normalized = MdToPptController.NormalizeOutlinePayload(raw, 2);
+        Assert.Equal(2, normalized["totalPages"]?.GetValue<int>());
+        Assert.Equal(2, normalized["outline"]?.AsArray().Count);
+    }
+
+    [Fact]
+    public void ConsoleDashboardBrief_AvoidsPosterTheme()
+    {
+        var theme = MdToPptController.EffectiveThemeForRequest(
+            "sunset-bold",
+            "严格生成 2 页高级控制台操作面板 PPT",
+            null);
+        Assert.Equal("cobalt-grid", theme);
+        Assert.Equal("cobalt-grid", MdToPptController.EffectiveThemeForRequest(
+            "ocean-glass",
+            "高级控制台 dashboard",
+            null));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1 style=\"font-family:Playfair Display;font-style:italic\">控制台总览</h1></div>",
+            "soft-editorial"));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1>CONTROL PANEL KNOWLEDGE PUBLISHER</h1><p>今日生成 342 次</p></div>",
+            "cyber-terminal"));
+        Assert.True(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"slide\"><h1>知识库发布控制台</h1><p>panel status queue preview publish flow task card grid progress 指标 任务队列 发布状态</p></div>",
+            "cobalt-grid"));
+        Assert.False(MdToPptController.LooksLikeConsoleVisualMismatch(
+            "<div class=\"console-dashboard\"><div class=\"panel metric\">指标</div><div class=\"panel queue\">任务队列</div><div class=\"panel preview\">发布状态</div></div>",
+            "cobalt-grid"));
+    }
+
+    [Fact]
+    public void ConsoleDashboardFallbackSlide_UsesOperationalPanels()
+    {
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "控制台总览",
+            Bullets = new List<string> { "知识库引用", "生成海报教程文案 HTML", "自动发布到网页托管", "可预览可编辑" },
+        };
+        var html = MdToPptController.ConsoleDashboardFallbackSlide(null, page, 0, 2);
+        Assert.Contains("console-dashboard", html);
+        Assert.Contains("任务队列", html);
+        Assert.Contains("网页托管预览", html);
+        Assert.Contains("知识库引用", html);
     }
 }

@@ -539,7 +539,10 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           readinessProbe,
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
-          ...(prebuiltImage ? { prebuiltImage: true } : {}),
+          // 显式 false 也必须保留。pending-import 对既有 profile 做 merge；如果旧配置曾是
+          // 预构建站点而新 Compose 改回源码模式，省略 false 会让旧 true 永久残留，最终
+          // runService 跳过源码挂载，容器以 "can't cd to /repo/..." 退出。
+          ...(prebuilt !== undefined ? { prebuiltImage } : {}),
           // 基础级 fallbackImage(裸预构建站点):base service 上直接声明的回退链带到 profile,
           // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),

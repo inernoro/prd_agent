@@ -68,7 +68,7 @@ import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
-import { SkillOpenApiDialog } from '@/pages/marketplace/SkillOpenApiDialog';
+import { ConnectAiDialog } from './ConnectAiDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
@@ -3838,13 +3838,7 @@ export function DocumentStorePage() {
         />
       )}
 
-      {showOpenApi && (
-        <SkillOpenApiDialog
-          presetScopes={['document-store:write']}
-          contextLabel="文档空间（知识库）"
-          onClose={() => setShowOpenApi(false)}
-        />
-      )}
+      {showOpenApi && <ConnectAiDialog onClose={() => setShowOpenApi(false)} />}
 
       {editTarget && (
         <EditStoreDialog

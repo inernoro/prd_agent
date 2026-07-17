@@ -24,41 +24,45 @@
 
 ![图 005 健康状态只告诉普通用户当前能否接入，运行细节留在系统运维](https://cds.miduo.org/api/reports/assets/40cd0d17311ee475c0a6f1814a34898d037fdad0a4c1968cb14cf16359d58871.png)
 
-2. 展开左侧“治理”。外部租户不应看到“系统运维”；看不到就是普通用户路线的成功结果，直接继续[[第 30 章：常见故障逐步排查|第 30 章]]。
+2. 先确认首页“最近请求”仍只展示本租户的 requestId、模型、appCaller 和耗时，再展开左侧“治理”。外部租户不应看到“系统运维”；看不到就是普通用户路线的成功结果，直接继续[[第 30 章：常见故障逐步排查|第 30 章]]。
 
 **图 008 最近请求提供 requestId、模型、appCaller 和耗时入口**
 
 ![图 008 最近请求提供 requestId、模型、appCaller 和耗时入口](https://cds.miduo.org/api/reports/assets/9d6ed93f8b7db29907ac853127b408edac8e5f77df167c2df6ba1e22c11c40f7.png)
 
-3. 若外部租户反而看到容器、迁移或发布详情，停止浏览并按信息越权上报，不点击其中操作。
+3. 若外部租户反而看到下图所示的“系统运维”入口、容器、迁移或发布详情，停止浏览并按信息越权上报，不点击其中操作。下图来自受控内部租户，只用于告诉外部用户“什么不该看到”。
 
-**图 085 审计页按当前租户列出谁在什么时候改了什么**
+**内部参考图 092 只有内部治理租户才能看到“系统运维”入口**
 
-![图 085 审计页按当前租户列出谁在什么时候改了什么](https://cds.miduo.org/api/reports/assets/7bf4e3d80e3ba99d57d77ed5f87ad70292d3e533beba21f903d0c7c51ce301b1.png)
+![内部参考图 092 只有内部治理租户才能看到“系统运维”入口](https://cds.miduo.org/api/reports/assets/a1e17e0bb0ba61f799cd71678d5cd1ec74f0cad224e605d8b60830bdaf1deda3.png)
 
 4. 仅内部运维人员继续：通过顶部租户切换选择自己已被授权的内部治理租户，从左侧“治理”进入“系统运维”。
 
-**本步位置复核：在同一圈选画面完成本步后再继续。**
+**图 092 从左侧“治理”点击“系统运维”，不用猜页面地址**
 
-![图 085 审计页按当前租户列出谁在什么时候改了什么](https://cds.miduo.org/api/reports/assets/7bf4e3d80e3ba99d57d77ed5f87ad70292d3e533beba21f903d0c7c51ce301b1.png)
+![图 092 从左侧“治理”点击“系统运维”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/a1e17e0bb0ba61f799cd71678d5cd1ec74f0cad224e605d8b60830bdaf1deda3.png)
 
 5. 先读页面的当前 revision 与健康检查结果。容器拓扑只是说明各节点职责的参考地图，不是每个服务的实时健康仪表；实时结论以页面明确健康项和公网探测为准。
 
-**图 090 Exchange 首屏用三步说明创建映射、加入池和用 requestId 验证**
+**图 093 系统运维先展示当前 revision、发布 Gate 和协议覆盖**
 
-![图 090 Exchange 首屏用三步说明创建映射、加入池和用 requestId 验证](https://cds.miduo.org/api/reports/assets/7de827d0a2445a72180471bfa9da7691a1ffe65cec8857a3cc196c0f0fc33dd3.png)
+![图 093 系统运维先展示当前 revision、发布 Gate 和协议覆盖](https://cds.miduo.org/api/reports/assets/a1b955632badabe6bcb2e94d2214f7b5f6387561d7451832855cb81a082b5d48.png)
 
 6. 只有已审批发布记录给出目标提交和回滚版本时，才对照页面 revision、构建、测试、镜像、部署和公网入口。没有发布记录时明确写“本轮未做发布对齐验收”，不猜数据。
 
-**图 101 从左侧导航点击“控制台设置”，不用猜页面地址**
+**内部运维核对卡：revision、构建测试、三个镜像、CDS、公网与回滚版本必须指向同一发布记录**
 
-![图 101 从左侧导航点击“控制台设置”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/0021d15f354a77cdb249a8bccc665a19882e2bafc7b3c354eee47a026caf6042.png)
+![内部运维核对卡：六项证据必须指向同一提交](https://cds.miduo.org/api/reports/assets/acbf842db25d6285fb3b72e99567de7799a86b2699892ba565fb5a64bf0f6c06.png)
+
+**图 094 容器拓扑补充说明三个 Gateway 镜像各自承担什么职责**
+
+![图 094 容器拓扑补充说明三个 Gateway 镜像各自承担什么职责](https://cds.miduo.org/api/reports/assets/80a06237ae3bf9e4f8fe8b3de116a6c0675a3fbcd0653c2c9d33a90d21af57eb.png)
 
 7. 不论走哪条路，本章都不修改生产账号、密码、密钥、模型池或迁移状态。返回教程外部租户后继续[[第 30 章：常见故障逐步排查|第 30 章]]。
 
-**本步位置复核：在同一圈选画面完成本步后再继续。**
+**本步边界复核：只读检查完成后返回外部租户，不在教程中执行发布或迁移。**
 
-![图 101 从左侧导航点击“控制台设置”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/0021d15f354a77cdb249a8bccc665a19882e2bafc7b3c354eee47a026caf6042.png)
+![图 093 发布 Gate 只负责展示证据与下一步，不替代已审批发布流程](https://cds.miduo.org/api/reports/assets/a1b955632badabe6bcb2e94d2214f7b5f6387561d7451832855cb81a082b5d48.png)
 
 ## 看到什么算成功
 

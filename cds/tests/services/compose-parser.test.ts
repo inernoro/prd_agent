@@ -476,6 +476,29 @@ services:
 });
 
 describe('parseStandardCompose — 预构建镜像 app 站点(cds.prebuilt-image + subdomain)', () => {
+  it('显式 prebuilt-image=false 会保留 false，允许 pending import 清理旧的预构建状态', () => {
+    const cfg = parseCdsCompose(`
+services:
+  llmgw-web:
+    image: node:20-slim
+    working_dir: /repo
+    volumes:
+      - .:/repo
+    ports:
+      - "8100"
+    command: cd /repo/llmgw/web && pnpm exec vite --host 0.0.0.0 --port 8100
+    labels:
+      cds.prebuilt-image: "false"
+      cds.subdomain: llmgw-web
+`);
+
+    const bp = cfg?.buildProfiles.find((profile) => profile.id === 'llmgw-web');
+    expect(bp).toBeDefined();
+    expect(bp).toHaveProperty('prebuiltImage', false);
+    expect(bp?.workDir).toBe('.');
+    expect(bp?.containerWorkDir).toBe('/repo');
+  });
+
   it('纯 image + cds.prebuilt-image + cds.subdomain（无 volume/build）→ 解析为 app BuildProfile', () => {
     const yaml = `
 services:

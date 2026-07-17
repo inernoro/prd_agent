@@ -1224,7 +1224,7 @@ export const GLOBAL_ENV_SCOPE = '_global';
  *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
  * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
  */
-export type DeployDurationMode = 'release' | 'source';
+export type DeployDurationMode = 'release' | 'source' | 'restart';
 
 /**
  * 部署耗时样本桶（2026-06-20）。
@@ -1568,6 +1568,12 @@ export interface CdsState {
    * （取 max(profile.timeoutSeconds, 此下限)），运行期重启/唤醒保持各 profile 短超时。
    */
   deployReadinessFloorSeconds?: number;
+  /**
+   * 2026-07-16：系统级「全局构建并发上限」（build-gate）。未设时默认 3。
+   * 运行时经「CDS 系统设置」调整立即生效（含唤醒排队者），无需重启；
+   * 环境变量 CDS_MAX_CONCURRENT_BUILDS 是运维最终 override（优先于本值）。
+   */
+  maxConcurrentBuilds?: number;
   /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部

@@ -30,6 +30,22 @@ export interface BranchOperationRequest {
   actor?: string | null;
   requestId?: string | null;
   commitSha?: string | null;
+  /**
+   * 不可变部署版本重部署时携带（body.versionId）。带版本的 manual deploy
+   * **不参与**合并去重：pending 重放只送 commitSha，会丢失版本捕获的
+   * profiles/config（Codex P2「Preserve requested versions in merged deploys」），
+   * 维持撞车 409 的旧行为。
+   */
+  versionId?: string | null;
+  /**
+   * 请求携带一次性选项时为 true（?force=1 绕过项目暂停 / ?ignoreRequired=1
+   * 跳过必填 env 检查 / body.targetExecutorId 显式指定执行器）。pending 重放
+   * 只送 commitSha，这些选项会丢失——强制部署会在重放时被暂停闸门拦下、
+   * env 豁免失效、执行器指定被自动选择覆盖，用户却已被告知「已排队」。
+   * 故带一次性选项的 manual deploy 不参与合并去重，维持撞车 409
+   * （Codex P2「Reject manual deploy merges with one-shot options」）。
+   */
+  hasOneShotOptions?: boolean;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -123,6 +139,39 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
   return req.trigger === 'webhook' && (req.kind === 'deploy' || req.kind === 'deploy-profile');
 }
 
+/**
+ * manual 整分支 deploy 也可合并（2026-07-16 队列堵死复盘）：此前 manual deploy
+ * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
+ * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
+ * 现在与 webhook 同样合并为「当前部署完成后自动执行的最新待部署请求」
+ * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
+ * restart 语义按单服务隔离，合并归属不明确，维持 409。
+ * 带 versionId 的版本重部署不合并（pending 重放会丢版本捕获配置，Codex P2）。
+ * 带一次性选项（force/ignoreRequired/targetExecutorId）的请求同理不合并
+ * （pending 重放只送 commitSha，选项丢失后重放可能直接失败，Codex P2）。
+ * 注意：仅在 incoming **不能**压过（supersede）在途操作时才走合并——优先级
+ * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
+ */
+function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
+  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId && !req.hasOneShotOptions;
+}
+
+/**
+ * manual deploy 只允许合并在**部署类**在途操作后面（Codex P2「Restrict manual
+ * deploy merges to deploy blockers」）：若在途的是 stop/reset/delete 等终止类
+ * 操作，合并的 pending 会在 complete() 后立刻派发——运维刚停下的分支被自动
+ * 重启，抵消停止意图。此时维持 409 旧行为，让调用方自己决定停后是否再部署。
+ */
+const MANUAL_MERGE_BEHIND_KINDS = new Set<BranchOperationKind>([
+  'deploy',
+  'deploy-profile',
+  'force-rebuild',
+  'restart',
+  'auto-restart',
+  'auto-lifecycle-redeploy',
+  'database-init',
+]);
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -189,6 +238,40 @@ export class BranchOperationCoordinator {
         this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
       }
       return this.start(request);
+    }
+
+    // manual 整分支 deploy 压不过在途操作时不再 409，而是与 webhook 同通道
+    // 合并为最新待部署请求（治重试风暴：agent 重试不再叠加新部署/新排队）。
+    // 仅限部署类在途操作（stop/reset/delete 在途时维持 409，见
+    // MANUAL_MERGE_BEHIND_KINDS 注释）。
+    if (isMergeableManualDeploy(request) && MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind)) {
+      const existing = this.pendingWebhookDeploys.get(branchId);
+      const generation = this.nextGeneration(branchId);
+      const operationId = existing?.operationId || this.createOperationId();
+      this.pendingWebhookDeploys.set(branchId, {
+        operationId,
+        branchId,
+        generation,
+        request,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        updatedAt: nowIso(),
+      });
+      this.record('branch.operation.merged', request, operationId, generation, 'info', {
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        commitSha: request.commitSha || null,
+        manualMerge: true,
+      });
+      return {
+        status: 'merged',
+        operationId,
+        generation,
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        pendingCommitSha: request.commitSha || null,
+        reason: 'manual deploy merged into latest pending operation',
+      };
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(branchId), 'warn', {
@@ -404,6 +487,43 @@ export class BranchOperationCoordinator {
         this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`);
       }
       return this.start(request);
+    }
+
+    // manual 整分支 deploy 撞上保留的续约时同样合并为 pending，不再 409：
+    // 已合并的 pending 会在其他 profile 操作 complete() 后被内部重放，若此刻
+    // 分支上还挂着未消费的 force-rebuild 续约，重放走到这里被拒绝 = 静默丢弃
+    // 「已排队」的承诺（Codex P2「Preserve pending deploys while a continuation
+    // is reserved」）。必须放在 requestMatchesContinuation 之后——force-rebuild
+    // 自己的 deploy 续约仍优先接续执行，不能被合并吞掉。
+    if (isMergeableManualDeploy(request)) {
+      const existing = this.pendingWebhookDeploys.get(request.branchId);
+      const generation = this.nextGeneration(request.branchId);
+      const operationId = existing?.operationId || this.createOperationId();
+      this.pendingWebhookDeploys.set(request.branchId, {
+        operationId,
+        branchId: request.branchId,
+        generation,
+        request,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        updatedAt: nowIso(),
+      });
+      this.record('branch.operation.merged', request, operationId, generation, 'info', {
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        reservedContinuation: true,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        commitSha: request.commitSha || null,
+        manualMerge: true,
+      });
+      return {
+        status: 'merged',
+        operationId,
+        generation,
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        pendingCommitSha: request.commitSha || null,
+        reason: 'manual deploy merged while force-rebuild waits for its deploy continuation',
+      };
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(request.branchId), 'warn', {

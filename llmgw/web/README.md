@@ -28,7 +28,7 @@ src/
 │   ├── types.ts             自包含类型（LLM 日志子集）
 │   └── logsHelpers.ts       列定义/格式化/协议色/deriveLifecycle 注册表
 ├── pages/
-│   ├── LoginPage.tsx        独立登录页
+│   ├── LoginPage.tsx        独立登录页（匿名健康状态、租户数据边界、账号说明）
 │   └── LogsPage.tsx         请求记录页（LogsView）
 └── components/
     ├── ui.tsx               自包含 UI 原语（Button/Chip/Card/TabBar/Spinner）
@@ -55,3 +55,9 @@ src/
 | GET | `{BASE}/logs/:id` | → `{ success, data: LlmLogDetail }` |
 
 所有响应认 `{ success, data, error }` 信封；401 自动清 session 并跳登录页。
+
+## 未登录页面不是数据首页
+
+未登录访问根路径会跳到 `/login`。页面只调用匿名 `/gw/healthz` 展示服务是否连通，并说明登录后可见的 Quickstart、Activity、模型、密钥和费用范围。租户真实数据不会在未登录页面公开；“看起来没有数据”不能通过硬编码示例或放宽鉴权解决。
+
+正式 `map.ebcone.net/llmgw/`、CDS 命名服务子域和独立品牌域名共用同一构建产物。独立 `*.ebcone.net` 域名上的“返回 MAP 首页”固定回到 `https://map.ebcone.net/`，避免在品牌域名根路径原地循环。

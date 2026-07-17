@@ -25,6 +25,20 @@ export interface InitialSharedEntryOptions {
   sortMode: DocBrowserSortMode;
 }
 
+export function buildOwnedDocumentStorePath(storeId: string): string {
+  const normalized = storeId.trim();
+  if (!normalized) return '/document-store';
+  const params = new URLSearchParams({ store: normalized });
+  return `/document-store?${params.toString()}`;
+}
+
+export function resolveShareKnowledgeBaseReturnPath(
+  storeId: string,
+  canOpenStore: boolean,
+): string {
+  return canOpenStore ? buildOwnedDocumentStorePath(storeId) : '/document-store';
+}
+
 export function resolveControlledSharedEntryId(
   selectedEntryId: string | undefined,
   initialSelectedId: string | undefined,

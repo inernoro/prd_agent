@@ -1,13 +1,18 @@
 // 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 sessionStorage → 跳控制台首页。
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Activity, ArrowLeft, Building2, KeyRound, Lock, User } from 'lucide-react';
+import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { getHealth } from '@/lib/api';
 import { Button } from '@/components/ui';
 
 type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
 
 export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {
+  if (location.hostname.endsWith('.ebcone.net') && location.hostname !== 'map.ebcone.net') {
+    return `${location.protocol}//map.ebcone.net/`;
+  }
+
   const firstDot = location.hostname.indexOf('.');
   if (firstDot < 0) return '/';
 
@@ -29,6 +34,21 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [healthState, setHealthState] = useState<'checking' | 'ok' | 'unavailable'>('checking');
+
+  useEffect(() => {
+    let active = true;
+    getHealth()
+      .then((res) => {
+        if (active) setHealthState(res.success && res.data?.status === 'ok' ? 'ok' : 'unavailable');
+      })
+      .catch(() => {
+        if (active) setHealthState('unavailable');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,139 +67,93 @@ export function LoginPage() {
     }
   };
 
-  const inputWrap: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--radius-sm)',
-    padding: '0 12px',
-    height: 42,
-  };
-  const inputStyle: React.CSSProperties = {
-    flex: 1,
-    background: 'transparent',
-    border: 'none',
-    outline: 'none',
-    color: 'var(--text-primary)',
-    fontSize: 14,
-  };
+  const healthCopy = healthState === 'ok'
+    ? 'Gateway 服务正常'
+    : healthState === 'checking'
+      ? '正在检查 Gateway 服务'
+      : '暂时无法确认服务状态';
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        background: 'var(--bg-page)',
-      }}
-    >
-      <div
-        style={{
-          width: 'min(400px, 100%)',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--radius)',
-          boxShadow: 'var(--shadow-card)',
-          padding: 32,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: 'var(--accent-soft)',
-              color: 'var(--accent)',
-            }}
-          >
-            <Activity size={20} />
-          </span>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>LLM Gateway 控制台</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>管理租户、密钥、路由、请求与费用</div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 14px',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--bg-elevated)',
-            color: 'var(--text-secondary)',
-            fontSize: 12,
-            lineHeight: 1.65,
-          }}
-        >
-          <strong style={{ display: 'block', marginBottom: 6, color: 'var(--text-primary)' }}>账号从哪里来</strong>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <Building2 size={15} style={{ marginTop: 3, flexShrink: 0 }} />
-            <span>MAP 账号与 Gateway 控制台账号彼此独立。已有租户请让 Owner 或 Admin 在“团队与成员”中添加你。</span>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 6 }}>
-            <KeyRound size={15} style={{ marginTop: 3, flexShrink: 0 }} />
-            <span><code>gwk_</code> 开头的是应用接入密钥，只给应用调用网关，不能用来登录这里。</span>
-          </div>
-        </div>
-
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-          <label style={inputWrap}>
-            <User size={16} style={{ color: 'var(--text-muted)' }} />
-            <input
-              style={inputStyle}
-              placeholder="用户名"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </label>
-          <label style={inputWrap}>
-            <Lock size={16} style={{ color: 'var(--text-muted)' }} />
-            <input
-              style={inputStyle}
-              type="password"
-              placeholder="密码"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-
-          {error ? (
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--err)',
-                background: 'var(--err-bg)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '8px 10px',
-              }}
-            >
-              {error}
+    <main className="lg-login-page">
+      <section className="lg-login-shell" aria-labelledby="llmgw-login-title">
+        <div className="lg-login-intro">
+          <div className="lg-login-brand">
+            <span className="lg-login-brand-icon" aria-hidden="true"><Activity size={21} /></span>
+            <div>
+              <strong>LLM Gateway</strong>
+              <span>独立租户控制台</span>
             </div>
-          ) : null}
+          </div>
 
-          <Button type="submit" variant="primary" size="md" disabled={submitting} style={{ marginTop: 4 }}>
-            {submitting ? '登录中…' : '登 录'}
-          </Button>
-        </form>
+          <div className="lg-login-hero">
+            <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
+              <span className="lg-login-health-dot" />
+              {healthCopy}
+            </div>
+            <h1 id="llmgw-login-title">登录后，查看属于你的租户数据</h1>
+            <p>这里不是空白演示站。为了避免跨租户泄露，首页、请求、模型、密钥和费用只会在身份校验通过后出现。</p>
+          </div>
 
-        <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          新环境的首位管理员使用部署时提供的初始账号，首次登录后按页面提示设置自己的密码。没有账号时请联系本租户管理员，不要尝试共享他人的账号或密钥。
+          <div className="lg-login-capabilities" aria-label="登录后可用功能">
+            <div><Rocket size={18} /><span><strong>快速接入</strong><small>生成应用密钥，网页内直接测试四种协议</small></span></div>
+            <div><BarChart3 size={18} /><span><strong>使用与费用</strong><small>查看请求趋势、模型、用户和费用可信度</small></span></div>
+            <div><ShieldCheck size={18} /><span><strong>租户隔离</strong><small>只展示会话所属租户的配置、日志与审计</small></span></div>
+          </div>
+
+          <a href={resolveMapHomeHref()} className="lg-login-back-link">
+            <ArrowLeft size={15} />返回 MAP 首页
+          </a>
         </div>
-        <a href={resolveMapHomeHref()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14, color: 'var(--text-secondary)', fontSize: 12, textDecoration: 'none' }}>
-          <ArrowLeft size={14} />返回 MAP 首页
-        </a>
-      </div>
-    </div>
+
+        <div className="lg-login-panel">
+          <div className="lg-login-panel-heading">
+            <span>租户工作区</span>
+            <h2>登录 Gateway 控制台</h2>
+            <p>使用租户管理员为你创建的控制台账号。</p>
+          </div>
+
+          <form onSubmit={submit} className="lg-login-form">
+            <label htmlFor="llmgw-username">用户名</label>
+            <div className="lg-login-input-wrap">
+              <User size={17} aria-hidden="true" />
+              <input
+                id="llmgw-username"
+                placeholder="输入用户名"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <label htmlFor="llmgw-password">密码</label>
+            <div className="lg-login-input-wrap">
+              <Lock size={17} aria-hidden="true" />
+              <input
+                id="llmgw-password"
+                type="password"
+                placeholder="输入密码"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+
+            {error ? (
+              <div className="lg-login-error" role="alert">{error}</div>
+            ) : null}
+
+            <Button type="submit" variant="primary" size="md" disabled={submitting} className="lg-login-submit">
+              {submitting ? '正在验证账号…' : '进入租户工作区'}
+            </Button>
+          </form>
+
+          <div className="lg-login-account-help">
+            <strong>没有控制台账号？</strong>
+            <div><Building2 size={15} /><span>请让租户 Owner 或 Admin 在“团队与成员”中添加你。</span></div>
+            <div><KeyRound size={15} /><span><code>gwk_</code> 是应用调用密钥，不能登录控制台。</span></div>
+          </div>
+          <p className="lg-login-security-note">MAP 账号与 Gateway 账号彼此独立。新环境首位管理员首次登录后需要设置自己的密码，请勿共享他人的账号或密钥。</p>
+        </div>
+      </section>
+    </main>
   );
 }

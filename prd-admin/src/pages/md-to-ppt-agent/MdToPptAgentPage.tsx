@@ -305,8 +305,84 @@ const QUICK_STARTS = [
   },
 ];
 
-// 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
-function estimatePages(content: string): number {
+const MOBILE_CREATION_MODES = [
+  {
+    label: 'PPT',
+    desc: '完整演示文稿',
+    prompt: '帮我生成一份结构完整、视觉精致的 PPT，共 8 页，内容要有清晰故事线和可直接演示的页面。',
+  },
+  {
+    label: '发布会',
+    desc: '强视觉表达',
+    prompt: '帮我做一份产品发布会 PPT，共 8 页，面向客户，强调产品价值、核心亮点、应用场景和行动号召。',
+  },
+  {
+    label: '教程',
+    desc: '步骤化讲解',
+    prompt: '把我的内容整理成教程型 PPT，共 10 页，包含学习目标、步骤拆解、示例、检查点和总结。',
+  },
+  {
+    label: '文案',
+    desc: '传播型叙事',
+    prompt: '把我的素材整理成适合传播的文案型 PPT，共 6 页，突出标题、卖点、证明材料和结尾行动。',
+  },
+];
+
+function getStartedPageIndexes(diagLines: MdToPptDiagEvent[]): number[] {
+  const indexes = new Set<number>();
+  for (const line of diagLines) {
+    if (line.stage !== 'page_start') continue;
+    const index = typeof line.index === 'number' ? line.index : Number(line.index);
+    if (Number.isInteger(index) && index >= 0) indexes.add(index);
+  }
+  return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function formatDiagStage(stage?: string): string {
+  switch (stage) {
+    case 'design_contract':
+      return '设计系统锁定';
+    case 'page_start':
+      return '页面生成已发起';
+    case 'send':
+      return '请求已发送';
+    case 'first_event':
+      return '已收到首个事件';
+    case 'first_text_delta':
+      return '模型开始输出';
+    default:
+      return stage || '准备中';
+  }
+}
+
+export function parseChineseSmallNumber(raw: string): number | null {
+  if (!raw) return null;
+  const digits: Record<string, number> = {
+    一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+  };
+  if (raw === '十') return 10;
+  const tenIdx = raw.indexOf('十');
+  if (tenIdx >= 0) {
+    const tens = tenIdx === 0 ? 1 : (digits[raw[0]] ?? 0);
+    const ones = tenIdx === raw.length - 1 ? 0 : (digits[raw[raw.length - 1]] ?? 0);
+    const value = tens * 10 + ones;
+    return value > 0 ? value : null;
+  }
+  return raw.length === 1 ? (digits[raw] ?? null) : null;
+}
+
+export function parseExplicitPages(content: string): number | null {
+  const match = content.match(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p)/i);
+  if (!match) return null;
+  const raw = match[1];
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
+  return parsed && parsed > 0 ? Math.max(1, Math.min(30, parsed)) : null;
+}
+
+// 按显式页数优先，其次按内容长度估算页数（约 700 字/页，夹在 4~20 页）
+export function estimatePages(content: string): number {
+  const explicit = parseExplicitPages(content);
+  if (explicit) return explicit;
   const len = content.trim().length;
   if (len === 0) return 8;
   return Math.max(4, Math.min(20, Math.round(len / 700)));
@@ -563,9 +639,9 @@ function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): 
   const degraded = run.degraded ?? 0;
   if (degraded > 0) {
     const tp = run.total || 0;
-    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因页面生成失败` +
       '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
-      '或检查 CDS Agent 运行状态后整体重新生成。';
+      '或切换模型运行配置后整体重新生成。';
   }
   return 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。';
 }
@@ -573,10 +649,16 @@ function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): 
 function warnIfDegraded(run: { degraded?: number }): void {
   if ((run.degraded ?? 0) > 0) {
     toast.warning(
-      `有 ${run.degraded} 页未走 Agent 设计`,
-      'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+      `有 ${run.degraded} 页未完成设计生成`,
+      '部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
     );
   }
+}
+
+function profileRunsOnGateway(profile: MdToPptProfileItem | null): boolean {
+  if (!profile) return true;
+  const runtime = (profile.runtime ?? '').toLowerCase();
+  return runtime !== 'codex' && runtime !== 'custom' && runtime !== 'cds-agent';
 }
 
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
@@ -957,8 +1039,8 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 export function MdToPptAgentPage() {
   const navigate = useNavigate();
 
-  // ─── CDS 连接门禁：PPT 生成完全依赖 CDS Agent，未连接整页禁用并引导去授权。
-  // 'checking' 期间显示加载，'disconnected' 走 blocked 早返回（不挂载任何生成 UI）。
+  // ─── CDS 连接状态：openai-compatible 配置优先走 LLM Gateway 直出；
+  // 这里只作为 CDS Agent 兼容路径的状态提示，不再整页禁用。
   const [connStatus, setConnStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
 
   // ─── Session lazy-load: run BEFORE any other useState so saveSession
@@ -966,8 +1048,8 @@ export function MdToPptAgentPage() {
   const [savedSession] = useState<SessionState | null>(loadSession);
 
   // ─── Global settings (收进设置区，不占对话空间）
-  // 引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出），无引擎/模型选择；
-  // 模型由 Agent 运行配置决定，经 SSE model 事件回显（ai-model-visibility）。
+  // 引擎由运行配置决定：openai-compatible 走 LLM Gateway 直出，anthropic/CDS 配置走 CDS Agent 兼容。
+  // 实际模型经 SSE model 事件回显（ai-model-visibility）。
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
   // 自定义模板（上传参考图 → 视觉模型提取风格规范，生成时优先于官方主题）
   const [templateId, setTemplateId] = useState<string | null>(savedSession?.templateId ?? null);
@@ -1016,7 +1098,7 @@ export function MdToPptAgentPage() {
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
   // 模型池直选（2026-06-11 用户提案：池里配过的 baseUrl/key 不再手抄；
-  // 无池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求）
+  // 选中哪个就把哪个运行配置交给后端，由后端按 protocol 选择 Gateway 直出或 CDS 兼容路径。
   const [poolModels, setPoolModels] = useState<MdToPptPoolModelItem[]>([]);
   const [poolQuery, setPoolQuery] = useState('');
   const [poolBusyId, setPoolBusyId] = useState<string | null>(null);
@@ -1034,12 +1116,15 @@ export function MdToPptAgentPage() {
       ?? profiles[0]
       ?? null;
   }, [profiles, selectedProfileId]);
+  const runtimeIsGateway = profileRunsOnGateway(effectiveProfile);
+  const runtimeRouteLabel = runtimeIsGateway ? 'LLM Gateway 直出' : 'CDS Agent 兼容';
 
   // ─── 换模板确认（2026-06-11 诉求 8）：有产物时切模板 = AI 整体重绘约 1 分钟，
   //     误触代价大，必须先确认再执行
   const [pendingTemplateSwitch, setPendingTemplateSwitch] = useState<
     { kind: 'official'; value: string; label: string } | { kind: 'custom'; tpl: MdToPptTemplateItem } | null
   >(null);
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
 
   // ─── 生成期流式可视化（2 秒定理：等待时屏幕必须有持续变化的内容）
   //     delta 先进 ref，150ms 节流刷进 state，避免大 HTML 每个 token 触发整页 re-render。
@@ -1179,6 +1264,7 @@ export function MdToPptAgentPage() {
     setFrameAnchored(false);
     setPagesTotal(0);
     setPagesDone({});
+    setDiagLines([]);
     setPatchingSlide(null);
   }, []);
 
@@ -1270,8 +1356,9 @@ export function MdToPptAgentPage() {
   const presentIframeRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const mobileInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // ─── CDS 连接门禁：进入页面即检测，未连接整页禁用（item 1）
+  // ─── CDS 连接状态：进入页面即检测，给兼容路径提示使用。
   // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
   const connCheckSeqRef = useRef(0);
   const runConnectionCheck = useCallback(() => {
@@ -1781,7 +1868,7 @@ export function MdToPptAgentPage() {
                 : m
             )
           );
-          // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完（产物即体验）
+          // 预热运行环境：Gateway 直出配置后端会静默跳过，CDS 兼容配置才会创建预热会话。
           prewarmMdToPpt(selectedProfileId);
           finish();
         },
@@ -1872,7 +1959,7 @@ export function MdToPptAgentPage() {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === genMsg.id
-                ? { ...m, content: `设计系统已确定，${Math.min(4, f.total)} 路子智能体开始并行绘制 ${f.total} 页...` }
+                ? { ...m, content: `设计系统已确定，${Math.min(4, f.total)} 路页面生成器开始并行绘制 ${f.total} 页...` }
                 : m
             )
           );
@@ -1929,8 +2016,8 @@ export function MdToPptAgentPage() {
           const totalPg = result.total ?? pageCount ?? 0;
           if (degraded > 0) {
             toast.warning(
-              `有 ${degraded} 页未走 Agent 设计`,
-              'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+              `有 ${degraded} 页未完成设计生成`,
+              '部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
             );
           }
           setMessages((prev) =>
@@ -1940,9 +2027,9 @@ export function MdToPptAgentPage() {
                     ...m,
                     content:
                       degraded > 0
-                        ? `PPT 已生成${totalPg ? `，共 ${totalPg} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+                        ? `PPT 已生成${totalPg ? `，共 ${totalPg} 页` : ''}，但其中 ${degraded} 页因页面生成失败` +
                           '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
-                          '或检查 CDS Agent 运行状态后整体重新生成。'
+                          '或切换模型运行配置后整体重新生成。'
                         : `PPT 已生成${pageCount ? `，共 ${pageCount} 页` : ''}` +
                           (titleSample ? `（${titleSample} 等）` : '') +
                           '！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」；' +
@@ -2481,70 +2568,65 @@ export function MdToPptAgentPage() {
     } catch { /* ignore */ }
   }, [resetStreamPreview]);
 
+  const lastUserPrompt = useMemo(() => {
+    return [...messages].reverse().find((m) => m.role === 'user')?.content?.trim() ?? '';
+  }, [messages]);
+
+  const lastAssistantProblem = useMemo(() => {
+    const last = [...messages].reverse().find((m) => m.role === 'assistant');
+    const content = last?.content ?? '';
+    return last?.phase === 'error' || content.includes('退化为') || content.includes('生成失败') || content.includes('异常');
+  }, [messages]);
+
+  const handleRegenerateDeck = useCallback(() => {
+    if (isProcessing) return;
+    setStylePanelOpen(false);
+    if (outlineDraft) {
+      const fullContent =
+        outlineDraft.sourceText +
+        serializeClarifyAnswers(outlineDraft) +
+        `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(outlineDraft.outline)}`;
+      pushMsg({ role: 'user', content: '重新生成整份 PPT' });
+      launchConvert(
+        fullContent,
+        outlineDraft.totalPages || outlineDraft.outline.length || null,
+        outlineDraft.outline,
+        outlineDraft.summary
+      );
+      return;
+    }
+    if (lastUserPrompt) {
+      setInput(lastUserPrompt);
+      setGeneratedHtml('');
+      setArtifactPhase('idle');
+      inputRef.current?.focus();
+      toast.info('已带回上次需求', '检查后点发送即可重新开始。');
+      return;
+    }
+    handleReset();
+  }, [isProcessing, outlineDraft, serializeClarifyAnswers, serializeOutline, pushMsg, launchConvert, lastUserPrompt, handleReset]);
+
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
+  const startedPageIndexes = useMemo(() => getStartedPageIndexes(diagLines), [diagLines]);
+  const runningPageIndexes = useMemo(
+    () => startedPageIndexes.filter((index) => pagesDone[index] == null),
+    [startedPageIndexes, pagesDone]
+  );
+  const latestDiag = diagLines.length > 0 ? diagLines[diagLines.length - 1] : null;
+  const visibleProgressTotal = pagesTotal || expectedPages || outlineDraft?.outline.length || 0;
+  const visibleDoneCount = pagesTotal > 0 ? pagesDoneIdxs.length : slideProgress.titles.length;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
-
-  // ─── CDS 未连接门禁（item 1）：整页禁用，仅保留标题 + 引导卡，不挂载任何生成 UI
-  if (connStatus !== 'connected') {
-    return (
-      <div className="flex flex-col h-full min-h-0">
-        {/* Header（与正常态一致，保留页面身份） */}
-        <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-white/8">
-          <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
-            <FileText size={13} className="text-purple-400" />
-          </div>
-          <span className="text-sm font-semibold text-[var(--text-primary)]">PPT 创作工作台</span>
-        </div>
-
-        {connStatus === 'checking' ? (
-          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-[var(--text-tertiary)]">
-            <MapSpinner size={18} />
-            <span className="text-xs">正在检查 CDS Agent 连接...</span>
-          </div>
-        ) : (
-          <div className="flex-1 min-h-0 flex items-center justify-center p-6">
-            <div className="max-w-md w-full flex flex-col items-center text-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-8 py-10">
-              <div className="w-12 h-12 rounded-xl bg-amber-500/15 flex items-center justify-center">
-                <AlertCircle size={22} className="text-amber-400" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <h2 className="text-base font-semibold text-[var(--text-primary)]">未连接 CDS Agent，无法生成 PPT</h2>
-                <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
-                  PPT 创作完全依赖 CDS Agent 运行环境来生成带版式与配色的设计稿。当前没有可用的 CDS
-                  连接，若强行生成只会退化成裸标题 + 要点列表，因此本页已禁用。请先在「基础设施服务」完成
-                  CDS 授权连接，再回来创作。
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/infra-services')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-purple-500/85 text-white hover:bg-purple-500 transition-colors"
-              >
-                前往连接 CDS Agent
-                <ChevronRight size={13} />
-              </button>
-              <button
-                onClick={runConnectionCheck}
-                className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] underline"
-              >
-                已完成连接？点此重新检测
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/8">
+      <div className="hidden md:flex shrink-0 items-center justify-between px-4 py-2.5 border-b border-white/8">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
             <FileText size={13} className="text-purple-400" />
           </div>
-          <span className="text-sm font-semibold text-[var(--text-primary)]">PPT 创作工作台</span>
+          <span className="text-sm font-semibold text-[var(--text-primary)]">MD 转 PPT 控制台</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -2559,14 +2641,29 @@ export function MdToPptAgentPage() {
           )}
 
           {generatedHtml && !isStreaming && (
-            <button
-              onClick={() => void handlePublish()}
-              disabled={isPublishing}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 disabled:opacity-50"
-            >
-              {isPublishing ? <MapSpinner size={11} /> : <Globe size={11} />}
-              {isPublishing ? '发布中...' : '发布为网页'}
-            </button>
+            <>
+              <button
+                onClick={handleRegenerateDeck}
+                disabled={isProcessing}
+                className={[
+                  'flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold border disabled:opacity-50',
+                  lastAssistantProblem
+                    ? 'bg-red-500/15 text-red-200 border-red-400/30 hover:bg-red-500/20'
+                    : 'bg-purple-500/15 text-purple-200 border-purple-400/25 hover:bg-purple-500/20',
+                ].join(' ')}
+              >
+                <RotateCcw size={11} />
+                重新生成
+              </button>
+              <button
+                onClick={() => void handlePublish()}
+                disabled={isPublishing}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 disabled:opacity-50"
+              >
+                {isPublishing ? <MapSpinner size={11} /> : <Globe size={11} />}
+                {isPublishing ? '发布中...' : '发布为网页'}
+              </button>
+            </>
           )}
 
           <button
@@ -2582,10 +2679,11 @@ export function MdToPptAgentPage() {
 
           <button
             onClick={handleReset}
-            title="新建对话"
-            className="flex items-center justify-center w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+            title="清空当前结果，重新开始一个新 PPT"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
           >
             <RotateCcw size={12} />
+            新建
           </button>
         </div>
       </div>
@@ -2600,10 +2698,17 @@ export function MdToPptAgentPage() {
         onChange={(e) => void handleTemplateFile(e)}
         className="hidden"
       />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".md,.txt,.markdown,.pdf,.doc,.docx"
+        onChange={(e) => void handleFileChange(e)}
+        className="hidden"
+      />
 
       {/* Published URL banner */}
       {publishedUrl && (
-        <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 bg-green-500/8 border-b border-green-500/15 text-xs text-green-400">
+        <div className="hidden md:flex shrink-0 items-center gap-2 px-4 py-1.5 bg-green-500/8 border-b border-green-500/15 text-xs text-green-400">
           <Globe size={12} />
           <span>已发布：</span>
           <a href={publishedUrl} target="_blank" rel="noreferrer" className="underline hover:text-green-300">
@@ -2612,8 +2717,313 @@ export function MdToPptAgentPage() {
         </div>
       )}
 
+      <div
+        className={[
+          'hidden md:flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2 border-b text-xs',
+          runtimeIsGateway
+            ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-300'
+            : connStatus === 'connected'
+              ? 'bg-sky-500/8 border-sky-500/15 text-sky-300'
+              : 'bg-amber-500/8 border-amber-500/15 text-amber-300',
+        ].join(' ')}
+      >
+        <div className="min-w-0 flex flex-wrap items-center gap-2">
+          {connStatus === 'checking' && !runtimeIsGateway ? <MapSpinner size={12} /> : <AlertCircle size={12} />}
+          <span className="font-semibold">{runtimeRouteLabel}</span>
+          <span className="text-current/80">·</span>
+          <span className="min-w-[220px] flex-1 leading-relaxed">
+            {runtimeIsGateway
+              ? '生产默认走 LLM Gateway 可运行路径，生成页会做 HTML 片段校验；用户创意输入仍保留在设计约束内。'
+              : connStatus === 'checking'
+                ? '当前模型使用 CDS Agent 兼容路径，正在检查连接状态。'
+                : connStatus === 'connected'
+                  ? '当前模型使用 CDS Agent 兼容路径，建议仅用于明确依赖 Agent runtime 的旧配置。'
+                  : '当前模型需要 CDS Agent 兼容路径，但尚未检测到可用连接。'}
+          </span>
+        </div>
+        <div className="shrink-0 flex flex-wrap items-center gap-1.5 text-[10px]">
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">HTML 片段校验</span>
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">模板风格锁定</span>
+          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">创意方向可控</span>
+          {!runtimeIsGateway && (
+            <>
+              <button
+                onClick={() => navigate('/infra-services')}
+                className="px-2 py-0.5 rounded border border-current/25 hover:bg-white/10"
+              >
+                基础设施服务
+              </button>
+              <button
+                onClick={runConnectionCheck}
+                className="px-2 py-0.5 rounded border border-current/20 opacity-80 hover:bg-white/10"
+              >
+                重新检测
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Mobile: single-column creation desk */}
+      <div
+        className="md:hidden flex-1 min-h-0 overflow-y-auto bg-[var(--bg-base)] px-4 pt-4 pb-[calc(94px+env(safe-area-inset-bottom))]"
+        style={{ overscrollBehavior: 'contain' }}
+        data-testid="md-to-ppt-mobile-desk"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/20 bg-emerald-400/8 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                {runtimeRouteLabel}
+              </div>
+              <h1 className="mt-3 text-2xl font-semibold leading-tight text-white">MD 转 PPT</h1>
+              <p className="mt-1 text-xs leading-relaxed text-white/48">
+                写想法、引知识库、加附件，先出大纲，再生成可编辑演示稿。
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {generatedHtml && !isStreaming && (
+                <button
+                  onClick={() => void handlePublish()}
+                  disabled={isPublishing}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-400/25 bg-blue-400/10 text-blue-200 disabled:opacity-50"
+                  title="发布为网页"
+                >
+                  {isPublishing ? <MapSpinner size={14} /> : <Globe size={15} />}
+                </button>
+              )}
+              <button
+                onClick={openHistory}
+                disabled={isStreaming}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                title="历史"
+              >
+                <History size={15} />
+              </button>
+              <button
+                onClick={handleReset}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65"
+                title="新建"
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
+          </div>
+
+          {publishedUrl && (
+            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-emerald-100/80">
+              <div className="font-semibold text-emerald-100">已发布为网页</div>
+              <a href={publishedUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate underline decoration-emerald-200/40">
+                {publishedUrl}
+              </a>
+            </div>
+          )}
+
+          <div className="overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            <div className="flex min-w-max gap-2">
+              {MOBILE_CREATION_MODES.map((mode) => (
+                <button
+                  key={mode.label}
+                  onClick={() => {
+                    setInput(mode.prompt);
+                    mobileInputRef.current?.focus();
+                  }}
+                  className="w-[126px] rounded-lg border border-white/10 bg-white/[0.045] px-3 py-2 text-left hover:border-purple-300/35 hover:bg-purple-400/10"
+                >
+                  <div className="text-sm font-semibold text-white/90">{mode.label}</div>
+                  <div className="mt-1 text-[11px] text-white/42">{mode.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/12 bg-[var(--panel-solid)] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
+            {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {pendingAttachments.map((a, i) => (
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-white/10 bg-white/6 px-2 py-1 text-[10px] text-white/65">
+                    <Upload size={10} />
+                    <span className="max-w-[180px] truncate">{a.name}</span>
+                    <button onClick={() => removeAttachment(i)}><X size={10} /></button>
+                  </span>
+                ))}
+                {pendingKbRefs.map((r, i) => (
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-blue-100/80">
+                    <BookOpen size={10} />
+                    <span className="max-w-[180px] truncate">{r.entryTitle}</span>
+                    <button onClick={() => removeKbRef(i)}><X size={10} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={mobileInputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              disabled={isProcessing}
+              rows={7}
+              placeholder="描述你的创意，或先引用知识库。比如：把这份产品资料做成 8 页发布会 PPT，视觉要高级，内容要能直接讲。"
+              className="min-h-[172px] w-full resize-none bg-transparent text-[15px] leading-7 text-white outline-none placeholder:text-white/32 disabled:opacity-50"
+              style={{ overscrollBehavior: 'contain' }}
+            />
+            <div className="mt-2 flex items-center gap-2 border-t border-white/8 pt-3">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing}
+                className="flex h-10 w-10 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                title="添加文件"
+              >
+                <Plus size={18} />
+              </button>
+              <button
+                onClick={() => setShowKbPicker(true)}
+                disabled={isProcessing}
+                className="flex h-10 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-sm font-medium text-white/72 disabled:opacity-40"
+              >
+                <BookOpen size={15} />
+                知识库
+              </button>
+              {profiles.length > 0 && (
+                <button
+                  onClick={() => {
+                    setShowModelPicker((v) => !v);
+                    if (!poolLoadedRef.current) {
+                      poolLoadedRef.current = true;
+                      void getMdToPptPoolModels().then(setPoolModels);
+                    }
+                  }}
+                  disabled={isProcessing}
+                  className="min-w-0 flex h-10 flex-1 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 text-[11px] font-mono text-white/58 disabled:opacity-40"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
+                  <span className="truncate">{(effectiveProfile?.model ?? '默认模型').split('/').pop()}</span>
+                </button>
+              )}
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isProcessing}
+                className="flex h-10 items-center gap-2 rounded-md bg-purple-500 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isProcessing ? <MapSpinner size={15} /> : <Send size={15} />}
+                发送
+              </button>
+            </div>
+          </div>
+
+          {showModelPicker && profiles.length > 0 && (
+            <div className="rounded-lg border border-white/10 bg-[var(--bg-elevated)] p-2">
+              <div className="px-1 pb-2 text-[11px] font-semibold text-white/48">选择后续生成模型</div>
+              <div className="max-h-[240px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {profiles.map((p) => {
+                  const active = effectiveProfile?.id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProfileId(p.id);
+                        setShowModelPicker(false);
+                        if (outlineDraft) prewarmMdToPpt(p.id);
+                      }}
+                      className={[
+                        'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left',
+                        active ? 'bg-purple-400/12 text-purple-100' : 'text-white/65',
+                      ].join(' ')}
+                    >
+                      <span className={['h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-purple-300' : 'bg-white/25'].join(' ')} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-mono">{p.model}</span>
+                        <span className="block truncate text-[10px] text-white/36">{p.name}{p.isEffectiveDefault ? ' · 默认' : ''}</span>
+                      </span>
+                      {active && <Check size={13} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {messages.length === 0 && !generatedHtml && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-white/54">创意起点</div>
+              {QUICK_STARTS.map((q) => (
+                <button
+                  key={q.label}
+                  onClick={() => {
+                    setInput(q.text);
+                    mobileInputRef.current?.focus();
+                  }}
+                  className="w-full rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2.5 text-left"
+                >
+                  <div className="text-sm font-semibold text-white/86">{q.label}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">{q.text}</div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {(messages.length > 0 || generatedHtml || isStreaming) && (
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-white/86">
+                    {generatedHtml ? '演示稿已生成' : isStreaming ? '正在生成' : '对话进行中'}
+                  </div>
+                  <div className="mt-1 text-xs text-white/42">
+                    {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、下载或发布为网页' : '继续输入即可调整方向'}
+                  </div>
+                </div>
+                {isStreaming && (
+                  <button onClick={handleAbort} className="rounded-md border border-red-400/25 px-2.5 py-1.5 text-xs text-red-200">
+                    中止
+                  </button>
+                )}
+              </div>
+              {isStreaming && (
+                <div className="mt-3 rounded-md border border-purple-300/15 bg-purple-300/8 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-purple-100/80">
+                    <span>{formatDiagStage(latestDiag?.stage)}</span>
+                    <span className="tabular-nums">
+                      {visibleProgressTotal > 0
+                        ? `${visibleDoneCount}/${visibleProgressTotal} 页`
+                        : `${elapsedSec}s`}
+                    </span>
+                  </div>
+                  {visibleProgressTotal > 0 && (
+                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/8">
+                      <div
+                        className="h-full rounded-full bg-purple-300 transition-all duration-500"
+                        style={{ width: `${Math.max(visibleDoneCount > 0 ? 8 : 3, Math.min(96, (visibleDoneCount / visibleProgressTotal) * 100))}%` }}
+                      />
+                    </div>
+                  )}
+                  {runningPageIndexes.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {runningPageIndexes.slice(0, 8).map((index) => (
+                        <span key={index} className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/52">
+                          第 {index + 1} 页生成中
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-2 text-[10px] leading-relaxed text-white/38">
+                    8 页会按 4 路并行生成；首批页面返回前，主要耗时在模型生成单页 HTML 和片段校验。
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Main: left chat + right artifact */}
-      <div className="flex flex-1 min-h-0">
+      <div className="hidden md:flex flex-1 min-h-0">
 
         {/* ─── Left: Chat panel（宽度可拖拽，右缘手柄） ───────────────────── */}
         <div
@@ -2731,10 +3141,25 @@ export function MdToPptAgentPage() {
                         </div>
                         {isStreaming && streamPreview.length === 0 && thinkingPreview.length === 0 && diagLines.length > 0 && (
                           <div className="text-[9px] font-mono text-[var(--text-tertiary)]">
-                            环境准备 {diagLines.slice(-1)[0].stage}
-                            {typeof diagLines.slice(-1)[0].elapsedMs === 'number'
-                              ? ` ${Math.round((diagLines.slice(-1)[0].elapsedMs as number) / 100) / 10}s`
+                            {formatDiagStage(latestDiag?.stage)}
+                            {typeof latestDiag?.elapsedMs === 'number'
+                              ? ` ${Math.round((latestDiag.elapsedMs as number) / 100) / 10}s`
                               : ''}
+                          </div>
+                        )}
+                        {isStreaming && runningPageIndexes.length > 0 && (
+                          <div className="rounded-md border border-purple-400/15 bg-purple-400/6 px-2 py-1.5">
+                            <div className="text-[9px] text-purple-200/80">
+                              已发起 {startedPageIndexes.length}{visibleProgressTotal ? ` / ${visibleProgressTotal}` : ''} 页，
+                              已完成 {visibleDoneCount}{visibleProgressTotal ? ` / ${visibleProgressTotal}` : ''} 页
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {runningPageIndexes.slice(0, 6).map((index) => (
+                                <span key={index} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]">
+                                  第 {index + 1} 页生成中
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         )}
                         {isStreaming && thinkingPreview.length > 0 && (
@@ -2767,16 +3192,57 @@ export function MdToPptAgentPage() {
 
                   {/* Assistant: error */}
                   {msg.role === 'assistant' && msg.phase === 'error' && (
-                    <div className="flex items-start gap-2 text-red-400">
-                      <AlertCircle size={11} className="mt-0.5 shrink-0" />
-                      <span>{msg.content}</span>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-start gap-2 text-red-400">
+                        <AlertCircle size={11} className="mt-0.5 shrink-0" />
+                        <span>{msg.content}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={handleRegenerateDeck}
+                          disabled={isProcessing}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-100 hover:bg-red-500/16 disabled:opacity-50"
+                        >
+                          <RotateCcw size={11} />
+                          重新生成
+                        </button>
+                        <button
+                          onClick={handleReset}
+                          disabled={isProcessing}
+                          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                        >
+                          新建一份
+                        </button>
+                      </div>
                     </div>
                   )}
 
                   {/* Assistant: done / text */}
                   {msg.role === 'assistant' &&
                     (msg.phase === 'done' || msg.phase === 'text' || !msg.phase) && (
-                      <p>{msg.content}</p>
+                      <div className="flex flex-col gap-2">
+                        <p>{msg.content}</p>
+                        {msg.role === 'assistant' && msg.phase === 'done' && msg.content.includes('退化为') && (
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              onClick={handleRegenerateDeck}
+                              disabled={isProcessing}
+                              className="inline-flex items-center gap-1 rounded-md border border-purple-400/25 bg-purple-500/12 px-2 py-1 text-[11px] font-semibold text-purple-100 hover:bg-purple-500/18 disabled:opacity-50"
+                            >
+                              <RotateCcw size={11} />
+                              重新生成整份
+                            </button>
+                            <button
+                              onClick={redrawCurrentPage}
+                              disabled={isProcessing || editMode || !slidePos}
+                              className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                            >
+                              <Sparkles size={11} />
+                              重绘当前页
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                 </div>
               </div>
@@ -2788,8 +3254,8 @@ export function MdToPptAgentPage() {
           {/* ─── Input area（composer-shell 卡片式，借鉴 open-design：
                 输入区是一张完整卡片——附件 chips 在卡内顶部、textarea 无边框透明、
                 底部工具行（+ 菜单 / 快捷键提示 / 实底发送主按钮），focus-within 高亮整卡。
-                底部额外留白避免被 CDS 预览挂件（左下角 fixed 条）遮挡。 */}
-          <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
+                移动端额外让出底部导航和系统安全区，避免主操作被遮挡。 */}
+          <div className="shrink-0 border-t border-white/8 px-3 pt-3 pb-[calc(86px+env(safe-area-inset-bottom))] md:pb-[34px]">
             <div
               data-testid="composer-shell"
               /* 禁止在这层加 transform（如 -translate-y）：transform 会创建新 stacking context，
@@ -3051,14 +3517,6 @@ export function MdToPptAgentPage() {
             </div>
           </div>
 
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".md,.txt,.markdown,.pdf,.doc,.docx"
-            onChange={(e) => void handleFileChange(e)}
-            className="hidden"
-          />
         </div>
 
         {/* ─── Right: Artifact panel ──────────────────────────────────────── */}
@@ -3443,7 +3901,7 @@ export function MdToPptAgentPage() {
                       className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
                       style={{ outline: 'none', boxShadow: 'none', minHeight: 64 }}
                     />
-                    {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给子智能体 */}
+                    {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给页面生成器 */}
                     <input
                       type="text"
                       value={slide.design ?? ''}
@@ -3455,7 +3913,7 @@ export function MdToPptAgentPage() {
                         })
                       }
                       placeholder="设计意图：版式 / 视觉装置 / 排字..."
-                      title="本页设计意图（版式/视觉装置/排字/强调），生成时子智能体优先遵循"
+                      title="本页设计意图（版式/视觉装置/排字/强调），生成时页面生成器优先遵循"
                       data-testid={'outline-design-' + i}
                       className="mt-1.5 w-full text-[10px] italic bg-transparent text-purple-300/75 placeholder-[var(--text-tertiary)] border border-transparent focus:border-purple-500/30 rounded-md px-2 py-1 outline-none"
                     />
@@ -3592,7 +4050,7 @@ export function MdToPptAgentPage() {
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
             const stageText = pagesMode
               ? doneCount === 0
-                ? `${pagesTotal} 路子智能体并行绘制中（每页独立设计）...`
+                ? `${pagesTotal} 路页面生成器并行绘制中（每页独立设计）...`
                 : doneCount < pagesTotal
                   ? `已完成 ${doneCount} / ${pagesTotal} 页（并行绘制中，可点亮起的页卡先看）...`
                   : '全部页面完成，正在拼装 deck...'
@@ -3601,7 +4059,7 @@ export function MdToPptAgentPage() {
                   ? '模型深度思考中（推理模型先想后写，思考过程见下方）...'
                   : agentPrepared
                     ? '模型已就绪，正在构思整体设计与版式...'
-                    : '正在连接 CDS Agent 环境...'
+                    : `正在连接${runtimeRouteLabel}...`
                 : doneCount > 0 || building
                   ? building
                     ? `正在绘制第 ${doneCount + 1} 页${expectedPages ? `（共约 ${expectedPages} 页）` : ''}...`
@@ -3645,6 +4103,27 @@ export function MdToPptAgentPage() {
                     />
                   </div>
                 )}
+
+                <div className="shrink-0 flex flex-wrap items-center gap-1.5">
+                  {[
+                    modelInfo?.platform ?? runtimeRouteLabel,
+                    frameAnchored ? '成品模板锁定' : '统一设计系统',
+                    '创意方向可控',
+                    'HTML 片段校验',
+                  ].map((label) => (
+                    <span
+                      key={label}
+                      className="px-2 py-0.5 rounded border border-white/8 bg-white/[0.03] text-[10px] text-[var(--text-tertiary)]"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                  {diagLines.length > 0 && (
+                    <span className="px-2 py-0.5 rounded border border-purple-400/20 bg-purple-400/8 text-[10px] text-purple-200">
+                      {formatDiagStage(diagLines[diagLines.length - 1]?.stage)}
+                    </span>
+                  )}
+                </div>
 
                 {/* 主视觉：实况渲染的真实幻灯页（无脚本静态铺版，新页完成才更新，不闪烁） */}
                 <div
@@ -3821,47 +4300,115 @@ export function MdToPptAgentPage() {
                     <ChevronRight size={14} />
                   </button>
 
-                  {/* 模板色点：点击 = AI 参照该模板整体重绘（约 1 分钟，全程流式可见）。
-                        官方 10 套 + 自定义模板（参考图提取） */}
-                  <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
-                    {THEME_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => switchTheme(opt.value)}
-                        disabled={isStreaming}
-                        title={'换模板（AI 整体重绘，约 1 分钟）：' + opt.label}
-                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
-                        style={{
-                          background: opt.dotBg,
-                          border: '2px solid ' + opt.dotRing,
-                          boxShadow: templateId == null && theme === opt.value ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
-                        }}
-                      />
-                    ))}
-                    {customTemplates.length > 0 && <span className="w-px h-3.5 bg-white/10" />}
-                    {customTemplates.slice(0, 6).map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => selectCustomTemplate(t)}
-                        disabled={isStreaming}
-                        title={'换模板（AI 整体重绘，约 1 分钟）：' + t.name}
-                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
-                        style={{
-                          background: t.bgColor,
-                          border: '2px solid ' + t.accentColor,
-                          boxShadow: templateId === t.id ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
-                        }}
-                      />
-                    ))}
+                  <div className="relative ml-2 pl-2.5 border-l border-white/10" data-testid="theme-menu">
+                    <button
+                      onClick={() => setStylePanelOpen((v) => !v)}
+                      disabled={isStreaming}
+                      title="换风格：展开后选择模板，确认后 AI 会整体重绘"
+                      className={[
+                        'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                        stylePanelOpen
+                          ? 'bg-purple-500/20 text-purple-200 border-purple-400/35'
+                          : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                      ].join(' ')}
+                    >
+                      <Wand2 size={11} />
+                      换风格
+                    </button>
+
+                    {stylePanelOpen && !isStreaming && (
+                      <div
+                        data-testid="theme-panel"
+                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-white/10 bg-[var(--panel-solid)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--text-primary)]">选择设计风格</div>
+                            <div className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">会按新风格整体重绘，内容与页数保持不变</div>
+                          </div>
+                          <button
+                            onClick={() => setStylePanelOpen(false)}
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-white/6 hover:text-[var(--text-primary)]"
+                            title="关闭"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          {THEME_OPTIONS.map((opt) => {
+                            const active = templateId == null && theme === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                onClick={() => {
+                                  switchTheme(opt.value);
+                                  setStylePanelOpen(false);
+                                }}
+                                className={[
+                                  'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                  active
+                                    ? 'border-purple-400/50 bg-purple-500/14'
+                                    : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                    style={{ background: opt.dotBg, border: '2px solid ' + opt.dotRing }}
+                                  />
+                                  <span className="truncate text-[11px] font-semibold text-[var(--text-primary)]">{opt.label}</span>
+                                </div>
+                                <div className="mt-1 line-clamp-2 text-[10px] leading-snug text-[var(--text-tertiary)]">{opt.desc}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {customTemplates.length > 0 && (
+                          <>
+                            <div className="mt-3 border-t border-white/8 pt-3 text-[10px] font-semibold text-[var(--text-tertiary)]">自定义模板</div>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              {customTemplates.slice(0, 6).map((t) => {
+                                const active = templateId === t.id;
+                                return (
+                                  <button
+                                    key={t.id}
+                                    onClick={() => {
+                                      selectCustomTemplate(t);
+                                      setStylePanelOpen(false);
+                                    }}
+                                    className={[
+                                      'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                      active
+                                        ? 'border-purple-400/50 bg-purple-500/14'
+                                        : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                    ].join(' ')}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                        style={{ background: t.bgColor, border: '2px solid ' + t.accentColor }}
+                                      />
+                                      <span className="truncate text-[11px] font-semibold text-[var(--text-primary)]">{t.name}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {/* 模型 chip：只读展示本次生成实际使用的模型（CDS Agent 运行配置决定） */}
+                  {/* 模型 chip：只读展示本次生成实际使用的模型与运行路径 */}
                   {modelInfo && (
                     <span
                       data-testid="model-chip"
-                      title="本次生成使用的模型（由 CDS Agent 运行配置决定）"
+                      title="本次生成使用的模型与运行路径"
                       className="px-2 py-1 rounded-md text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] border border-white/8 max-w-[200px] truncate"
                     >
                       {modelInfo.model} · {modelInfo.platform}
