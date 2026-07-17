@@ -395,13 +395,15 @@ public class ReportAgentController : ControllerBase
         };
     }
 
-    /// <summary>Table 列名清洗：去空白、截断超限，空列表兜底为默认列</summary>
+    /// <summary>
+    /// Table 列名清洗：截断超限、空名占位为"列N"（保列数不减——改名瞬时为空撞上自动保存时，
+    /// 若直接过滤空名会让列数骤减、整列单元格被截丢），空列表兜底为默认列。
+    /// </summary>
     private static List<string> SanitizeTableColumns(List<string>? columns)
     {
         var cleaned = (columns ?? new List<string>())
-            .Select(c => c?.Trim() ?? string.Empty)
-            .Where(c => !string.IsNullOrWhiteSpace(c))
             .Take(ReportInputType.MaxTableColumns)
+            .Select((c, i) => string.IsNullOrWhiteSpace(c) ? $"列{i + 1}" : c.Trim())
             .ToList();
         return cleaned.Count > 0 ? cleaned : ReportInputType.DefaultTableColumns.ToList();
     }
@@ -1861,7 +1863,10 @@ public class ReportAgentController : ControllerBase
                 TemplateSection = templateSection,
                 Items = req.Sections[i].Items?.Select(item =>
                 {
-                    var cells = isTable ? NormalizeTableCells(item.Cells, columnCount) : null;
+                    // cells 缺失（如旧版前端）时按 content 的 " | " 镜像反拆兜底，避免清空整行
+                    var sourceCells = item.Cells
+                        ?? (string.IsNullOrEmpty(item.Content) ? null : item.Content.Split(" | ").ToList());
+                    var cells = isTable ? NormalizeTableCells(sourceCells, columnCount) : null;
                     return new WeeklyReportItem
                     {
                         // table 行的 content 保存 " | " 拼接镜像，供总结/海报等只读 content 的旧链路降级展示

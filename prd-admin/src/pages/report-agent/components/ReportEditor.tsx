@@ -298,7 +298,7 @@ function TableSectionEditor({
   onRenameColumn: (colIdx: number, name: string) => void;
 }) {
   const borderColor = isLight ? 'rgba(15, 23, 42, 0.10)' : 'rgba(148, 163, 184, 0.18)';
-  const headerBg = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.04)';
+  const headerBg = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(148, 163, 184, 0.08)';
   const cellStyle: CSSProperties = {
     border: `1px solid ${borderColor}`,
     padding: 0,

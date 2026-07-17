@@ -40,7 +40,7 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
                   fontWeight: 600,
                   textAlign: 'left',
                   color: 'var(--text-secondary)',
-                  background: isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.04)',
+                  background: isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(148, 163, 184, 0.08)',
                 }}
               >
                 {col}
