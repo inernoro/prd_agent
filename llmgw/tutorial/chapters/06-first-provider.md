@@ -60,9 +60,21 @@ Provider 告诉 Gateway“去哪里以及怎样连接上游”。Provider 通讯
 
 ![图 026 上游 key 只在保存表单输入，列表只显示已配置](https://cds.miduo.org/api/reports/assets/5d9ee2bd282d8d4d31205e8a26a89588de47b98e75313cce84a92b41eff2fe66.png)
 
+8. 点击 Provider 名称下方的“查看接口”。不离开当前列表，核对接口类型、API 地址、供应方标识、最大并发和配置来源；抽屉只显示“通讯密钥已配置”，不显示密钥内容，也不会试连上游。
+
+**Provider 接口就地预览：当前页看清地址、协议、并发和密钥状态**
+
+![Provider 接口就地预览](https://cds.miduo.org/api/reports/assets/8bce54c7f3d4656fa9ceb0af4849c0b30b4e039578cf7d0c70f5e7bdd35cef49.png)
+
+## 移动端复核
+
+在手机宽度下，先从左侧抽屉进入 Provider，再点“查看接口”。预览应占满可用宽度并在内部上下滚动；如果页面整体左右晃动，说明出现了横向溢出，应停止并报告。
+
+![移动端 Provider 关联预览保持单列滚动](https://cds.miduo.org/api/reports/assets/6d9688955cc9e1acacea2194b033041cc90f834e85fcf9fc48dd1ae8d7092043.png)
+
 ## 看到什么算成功
 
-页面提示 Provider 已保存、通讯密钥已加密并可继续添加模型。列表出现“教程假上游”，状态为启用，密钥列只显示“已配置”。刷新页面后记录仍在，但任何位置都没有真实通讯密钥。
+页面提示 Provider 已保存、通讯密钥已加密并可继续添加模型。列表出现“教程假上游”，状态为启用，密钥列和预览都只显示“已配置”。刷新页面后记录仍在，但任何位置都没有真实通讯密钥。
 
 ## 失败怎么办
 

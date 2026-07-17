@@ -25,41 +25,51 @@
 
 ![图 089 从左侧导航点击“Exchange”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/1859b9a8b590ff623a69d43e6680c8971ddbb37d00b817526c03aea0bdca4f30.png)
 
-2. 名称填写“教程假上游映射”；“上游接口类型”选择“直接转发”，“认证方式”选择“Bearer”。
+2. 名称填写“教程假上游映射”；“上游接口类型”选择“直接转发”，“认证方式”选择“Bearer”。这里的 adapter 就是“翻译规则”，`passthrough` 表示“不改请求内容，原样转发”，Bearer 表示“把上游通讯密钥放进标准认证头”，都不是 Gateway 租户 key。
 
-**图 090 Exchange 首屏用三步说明创建映射、加入池和用 requestId 验证**
+**图 093 创建表单内直接选择转发方式和认证方式**
 
-![图 090 Exchange 首屏用三步说明创建映射、加入池和用 requestId 验证](https://cds.miduo.org/api/reports/assets/7de827d0a2445a72180471bfa9da7691a1ffe65cec8857a3cc196c0f0fc33dd3.png)
+![图 093 创建表单内直接选择转发方式和认证方式](https://cds.miduo.org/api/reports/assets/d3bd7d40f6e2daf7851f1d1f925332d7ee891b039613395032c0da3937d0b286.png)
 
 3. “目标地址”完整填写 `https://map.ebcone.net/api/v1/stub/v1/chat/completions`；“通讯密钥”填写固定教程标记 `tutorial-stub-only`。页面保存后只应显示“密钥已配置”，绝不能再次读回内容。
-
-**图 091 已有 Exchange 卡片展示目标、认证方式、模型映射和密钥状态**
-
-![图 091 已有 Exchange 卡片展示目标、认证方式、模型映射和密钥状态](https://cds.miduo.org/api/reports/assets/ac1d6967f0bc538fd46a98345e6b9597e1dbd12d476b709893205ba4f289b7fb.png)
-
-4. 在“模型映射”填写：上游模型标识 `stub-chat`，显示名称“教程 Exchange 对话”，模型用途选择“文字对话”，保持启用。本章只建这一条，避免凭空猜 vision 配置。
-
-**图 092 点击“新建 Exchange”进入自助接入表单**
-
-![图 092 点击“新建 Exchange”进入自助接入表单](https://cds.miduo.org/api/reports/assets/e18a45a0ee1bef96b32b54f0b22b87d1d79f15e5d7f4b63c9d8768680b4db4b9.png)
-
-5. 点击“创建并读回”。看到服务端读回卡片后，记下 Exchange id，并点击“打开本次审计”核对创建记录。
-
-**图 093 创建表单要求目标地址、通讯密钥、认证方式和模型映射**
-
-![图 093 创建表单要求目标地址、通讯密钥、认证方式和模型映射](https://cds.miduo.org/api/reports/assets/d3bd7d40f6e2daf7851f1d1f925332d7ee891b039613395032c0da3937d0b286.png)
-
-6. 点击“去模型池”，找到默认对话池并点击“查看与维护”。先记录当前成员总数；在“选择模型”中找到标有 Exchange 来源的“教程 Exchange 对话”，再点击平台托管池的“追加模型”。
 
 **图 094 通讯密钥创建时必填，加密保存且不进入响应和审计**
 
 ![图 094 通讯密钥创建时必填，加密保存且不进入响应和审计](https://cds.miduo.org/api/reports/assets/9f03f7b8aa98c0b6e999f2eed1eeebe35d2d45a69b7713ef511571e271821b82.png)
 
-7. 点击前，候选项必须明确带 `Exchange ·` 来源标记；点击后，成员总数应只增加 1，该候选应从可追加列表消失，“模型成员”里新增一条 `stub-chat`。成员行当前不再重复显示 Exchange id，而且既有 Provider 也可能使用同名模型，所以不要声称某一行单独证明来源；“添加前的带来源候选 + 添加后数量增加 1 + 同一候选消失”三步合在一起才是页面证据。已有 Provider 成员不被删除或覆盖。
+4. 在“模型映射”填写：上游模型标识 `stub-chat`，显示名称“教程 Exchange 对话”，模型用途选择“文字对话”，保持启用。本章只建这一条，避免凭空猜 vision 配置。
 
 **图 095 每条上游模型标识必须映射到明确用途并可独立启用**
 
 ![图 095 每条上游模型标识必须映射到明确用途并可独立启用](https://cds.miduo.org/api/reports/assets/0d9f2bf2db600405f09834cf6b90c5d30a5b023dbe4352844aabfde90ab3a8d0.png)
+
+5. 点击“创建并读回”。看到服务端读回卡片后，记下 Exchange id，并点击“打开本次审计”核对创建记录。
+
+**图 091 服务端读回卡片展示目标、认证方式、模型映射和密钥状态**
+
+![图 091 服务端读回卡片展示教程假上游映射、stub-chat、目标地址和密钥状态](https://cds.miduo.org/api/reports/assets/0da62055cc8ab05dbd901f82a52dcdb283839b46276236b58b84abde70f23aca.png)
+
+**图 085 打开本次审计后，按当前租户核对创建动作、对象和时间**
+
+![图 085 打开本次审计后，按当前租户核对创建动作、对象和时间](https://cds.miduo.org/api/reports/assets/7bf4e3d80e3ba99d57d77ed5f87ad70292d3e533beba21f903d0c7c51ce301b1.png)
+
+6. 回到 Exchange 卡片，点击目标地址下方的“查看路由”。在当前页核对 adapter、目标地址、认证方式、配置来源和模型映射；安全边界必须明确写着不显示密钥、不访问上游、不改变路由。
+
+**Exchange 路由就地预览：adapter、目标接口和模型映射一次看清**
+
+![Exchange 路由就地预览](https://cds.miduo.org/api/reports/assets/20f335f370186a5770d5157bf007f185c07195748dae81252eb3d0a94da8d369.png)
+
+7. 点击“去模型池”，找到默认对话池并点击“查看与维护”。先记录当前成员总数；在“选择模型”中找到标有 Exchange 来源的“教程 Exchange 对话”，再点击平台托管池的“追加模型”。
+
+**追加前实图：默认对话池明确选中 Exchange · 教程假上游映射 / 教程 Exchange 对话**
+
+![追加前实图：默认对话池明确选中 Exchange · 教程假上游映射 / 教程 Exchange 对话](https://cds.miduo.org/api/reports/assets/f0ccd34792ab4b15ee8c7fbceb26f61a56e9b6aac91edb5dfd98fd5d5e5b8d6c.png)
+
+8. 点击前，候选项必须明确带 `Exchange ·` 来源标记；点击后，成员总数应只增加 1，该候选应从可追加列表消失，“模型成员”里新增一条 `stub-chat`。成员行当前不再重复显示 Exchange id，而且既有 Provider 也可能使用同名模型，所以不要声称某一行单独证明来源；“添加前的带来源候选 + 添加后数量增加 1 + 同一候选消失”三步合在一起才是页面证据。已有 Provider 成员不被删除或覆盖。
+
+**追加后实图：成员新增 stub-chat、候选归零，教程聊天模型保持不变**
+
+![追加后实图：成员新增 stub-chat、候选归零，教程聊天模型保持不变](https://cds.miduo.org/api/reports/assets/c57a8dbd92478c80f20ef599e1cfbc11f3add5f7ce314c04e98440d993183acf.png)
 
 ## 看图核对
 

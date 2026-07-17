@@ -20,25 +20,25 @@
 
 1. 从请求详情记下 ServiceKeyId，打开“开发者”下的“接入密钥”，找到对应行。看 client、test 环境、客服组、appCaller、协议和 scope。
 
-**图 013 业务预算和业务速率在 appCaller 管理**
+**图 054 接入密钥列表按接入方、环境、appCaller、协议、速率和有效期展示**
 
-![图 013 业务预算和业务速率在 appCaller 管理](https://cds.miduo.org/api/reports/assets/e376a42cfffd63bc374a801573d108cee7e968e2dad7c0f15d01e1cde9555d66.png)
+![图 054 接入密钥列表按接入方、环境、appCaller、协议、速率和有效期展示](https://cds.miduo.org/api/reports/assets/6dc1f580e61d83fd7e0f70131b4b18e229a7c2235852814bfead14493c65a6aa.png)
 
-**图 014 单个接入方的速率与撤销在接入密钥管理**
+**图 014 单个接入方的速率与撤销也在接入密钥管理**
 
-![图 014 单个接入方的速率与撤销在接入密钥管理](https://cds.miduo.org/api/reports/assets/394491eb2ee240f07aa006741c2591f53961609b4b90b8ec23bd69eff8e7f7eb.png)
+![图 014 单个接入方的速率与撤销也在接入密钥管理](https://cds.miduo.org/api/reports/assets/394491eb2ee240f07aa006741c2591f53961609b4b90b8ec23bd69eff8e7f7eb.png)
 
 2. 打开“工作区”下的“appCaller”，搜索 `tutorial.gateway-book::chat`。看它的业务标题、请求类型、团队和 `auto` 路由方式。
-
-**图 038 模型成员逐项展示健康、优先级、协议、能力和价格币种**
-
-![图 038 模型成员逐项展示健康、优先级、协议、能力和价格币种](https://cds.miduo.org/api/reports/assets/2016514decea89d72156a671c2e6eb283c4e1863ee99cbea009d6d400fa9017a.png)
-
-3. `auto` 没有专属模型池链接。单独打开“路由”下的“模型池”，找到默认对话池，理解 chat 用途会从这里选择候选成员；这次 dry-run 在模型解析前结束，不能拿它证明实际命中了某个池。
 
 **图 043 appCallerCode 是业务用途身份，OpenRouter App 显示为 G-加 appCallerCode**
 
 ![图 043 appCallerCode 是业务用途身份，OpenRouter App 显示为 G-加 appCallerCode](https://cds.miduo.org/api/reports/assets/7483f209d1fe7d83dbe4e41ddb7b0760ac817ad7a560795c77b3db8900d7305b.png)
+
+3. `auto` 没有专属模型池链接。单独打开“路由”下的“模型池”，找到默认对话池，理解 chat 用途会从这里选择候选成员；这次 dry-run 在模型解析前结束，不能拿它证明实际命中了某个池。
+
+**图 038 模型成员逐项展示健康、优先级、协议、能力和价格币种**
+
+![图 038 模型成员逐项展示健康、优先级、协议、能力和价格币种](https://cds.miduo.org/api/reports/assets/2016514decea89d72156a671c2e6eb283c4e1863ee99cbea009d6d400fa9017a.png)
 
 4. 做一次口头演练：如果 key 泄露，撤销 key；如果客服改为新业务用途，新建 appCaller；如果教程聊天模型不可用，模型池按规则选其他兼容成员。
 
@@ -48,9 +48,9 @@
 
 5. 回到请求详情，按“key、appCaller、池、模型、Provider”的顺序把字段一一对应。
 
-**图 054 接入密钥列表按接入方、环境、appCaller、协议、速率和有效期展示**
+**图 075 请求详情用 requestId 串起 key、appCaller、池、模型和 Provider**
 
-![图 054 接入密钥列表按接入方、环境、appCaller、协议、速率和有效期展示](https://cds.miduo.org/api/reports/assets/6dc1f580e61d83fd7e0f70131b4b18e229a7c2235852814bfead14493c65a6aa.png)
+![图 075 请求详情用 requestId 串起 key、appCaller、池、模型和 Provider](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
 6. 在 appCaller 表格找到 chat 行，月预算填 `5` USD、单次预算预占填 `0.05` USD、RPM 填 `30`，点击该行“保存”。这是一组容易观察的教程测试值，不是生产推荐值。
 
@@ -69,6 +69,12 @@
 **图 059 单把 key 的每分钟上限可比 appCaller 更严格**
 
 ![图 059 单把 key 的每分钟上限可比 appCaller 更严格](https://cds.miduo.org/api/reports/assets/2b88455d6623093368e0937c06f2234fc41c15e840ee1f643acfb450a137e76e.png)
+
+### 明确绑定模型池时怎么核对
+
+本书主线使用 `auto`，因此 appCaller 行不会伪造一个专属池链接。如果管理员把特殊业务明确绑定到某个模型池，池名下会出现“查看模型池”。点击后可以在当前页查看池用途、策略、候选模型、健康和最近流量；预览当前表单关系，只有点击保存才会改变运行配置。
+
+![appCaller 关联模型池就地预览](https://cds.miduo.org/api/reports/assets/d6ed02a5558eb0f45a49ec2b0f0b3dba729f2aa9b404ce7beff44a7901ce16ad.png)
 
 ### 再加上租户，你就得到完整的五层管理图
 

@@ -5,6 +5,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 
@@ -430,6 +431,7 @@ function AppCallerRow({
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((p) => !item.requestType || p.modelType.toLowerCase() === item.requestType.toLowerCase());
+  const selectedPool = compatiblePools.find((pool) => pool.id === draft.modelPoolId);
   const observedPolicy = [item.lastObservedModelPolicy, item.lastObservedModelPoolId].filter(Boolean).join(' / ');
   const observedParameter = item.lastObservedParameterPolicy ? `参数 ${item.lastObservedParameterPolicy}` : '';
   const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
@@ -457,10 +459,53 @@ function AppCallerRow({
       </td>
       <td style={td}>{item.sourceSystem || '—'}</td>
       <td style={td}>
-        {canWrite ? <select value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={{ ...selectStyle, width: 180 }}>
-          <option value="">默认 auto</option>
-          {compatiblePools.map((p) => <option key={p.id} value={p.id}>{p.name || p.code || p.id}</option>)}
-        </select> : <span>{compatiblePools.find((pool) => pool.id === item.modelPoolId)?.name || item.modelPoolId || '默认 auto'}</span>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {canWrite ? <select value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={{ ...selectStyle, width: 180 }}>
+            <option value="">默认 auto</option>
+            {compatiblePools.map((p) => <option key={p.id} value={p.id}>{p.name || p.code || p.id}</option>)}
+          </select> : <span>{selectedPool?.name || item.modelPoolId || '默认 auto'}</span>}
+          {selectedPool ? (
+            <EntityPreviewDrawer
+              buttonLabel="查看模型池"
+              kicker="appCaller 关联的模型池"
+              title={selectedPool.name || selectedPool.code || selectedPool.id}
+              summary={`这条模型池决定“${item.appCallerCode}”会从哪些候选模型中选择。预览的是当前表单选中的关系，点击保存后才会改变运行配置。`}
+              status={[
+                { label: poolHealthLabel(selectedPool.health), tone: selectedPool.health === 'healthy' ? 'good' : 'warning' },
+                { label: selectedPool.isDefaultForType ? `${selectedPool.modelType} 默认池` : '专用模型池' },
+                { label: `${selectedPool.models.length} 个模型成员` },
+              ]}
+              sections={[
+                {
+                  title: '路由角色',
+                  fields: [
+                    { label: '模型类型', value: selectedPool.modelType || '未配置' },
+                    { label: '选择策略', value: poolStrategyLabel(selectedPool.strategyType) },
+                    { label: '池优先级', value: selectedPool.priority },
+                    { label: '绑定 appCaller', value: `${selectedPool.boundAppCallerCount ?? 0} 个` },
+                  ],
+                },
+                {
+                  title: '候选模型',
+                  description: '按优先级展示前六个成员；成员健康决定请求是否能真正被承接。',
+                  fields: selectedPool.models.slice().sort((a, b) => a.priority - b.priority).slice(0, 6).map((model) => ({
+                    label: model.modelId,
+                    value: `${model.healthStatusLabel || '状态未知'} · 优先级 ${model.priority}${model.protocol ? ` · ${model.protocol}` : ''}`,
+                  })),
+                },
+                {
+                  title: '最近运行',
+                  fields: [
+                    { label: '近 7 天请求', value: selectedPool.recentRequests ?? 0 },
+                    { label: '成功率', value: selectedPool.recentSuccessRatePercent == null ? '暂无数据' : `${selectedPool.recentSuccessRatePercent}%` },
+                    { label: '健康成员', value: `${selectedPool.healthyMembers ?? 0} 个` },
+                    { label: '不可用成员', value: `${selectedPool.unavailableMembers ?? 0} 个` },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
+        </div>
       </td>
       <td style={td}>
         {canWrite ? <div style={{ display: 'flex', gap: 6 }}>
@@ -563,6 +608,14 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
       ))}
     </div>
   );
+}
+
+function poolHealthLabel(value: ModelPool['health']) {
+  return ({ healthy: '运行健康', degraded: '部分模型异常', unavailable: '无可用模型', empty: '尚未配置模型' } as Record<ModelPool['health'], string>)[value] ?? '状态未知';
+}
+
+function poolStrategyLabel(value: number) {
+  return ({ 0: '优先级', 1: '轮询', 2: '加权', 3: '最少连接', 4: '随机', 5: '故障转移' } as Record<number, string>)[value] || `策略 ${value}`;
 }
 
 function parseNonNegativeNumber(value: string): number {
