@@ -30,6 +30,7 @@ import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvT
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
+import { checkoutSelfUpdateTarget, resolveSelfUpdateTargetBranch } from '../services/self-update-checkout.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
@@ -547,7 +548,7 @@ async function computeSelfStatusPayload(
     }
   };
 
-  const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+  const currentBranch = resolveSelfUpdateTargetBranch(await safeExec('git rev-parse --abbrev-ref HEAD'));
   const headSha = await safeExec('git rev-parse --short HEAD');
   const headIso = await safeExec('git log -1 --format=%cI HEAD');
 
@@ -20540,7 +20541,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       try {
         const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot }))
           .stdout.trim();
-        branch = currentBranch && currentBranch !== 'HEAD' ? currentBranch : 'main';
+        branch = currentBranch && currentBranch !== 'HEAD'
+          ? resolveSelfUpdateTargetBranch(currentBranch)
+          : 'main';
       } catch {
         branch = 'main';
       }
@@ -20649,31 +20652,35 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           return;
         }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
-        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
-        const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
-        if (checkoutResult.exitCode !== 0) {
-          // Try creating tracking branch from remote
-          const fallbackResult = await shell.exec(`git checkout -f -b ${branch} origin/${branch}`, { cwd: repoRoot });
-          if (fallbackResult.exitCode !== 0) {
-            const errMsg = (fallbackResult.stderr || fallbackResult.stdout || '未知错误').trim();
-            send('checkout', 'error', `切换分支失败: ${errMsg}`);
-            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
-            res.end();
-            recordFailure(`切换分支失败: ${errMsg}`);
-            return;
-          }
+        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
+        // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
+        // 不移动应用工作树使用的本地分支引用。
+        const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, branch);
+        if (!checkoutResult.ok) {
+          const errMsg = checkoutResult.error || '未知错误';
+          send('checkout', 'error', `切换分支失败: ${errMsg}`);
+          sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
+          res.end();
+          recordFailure(`切换分支失败: ${errMsg}`);
+          return;
         }
         // Verify the checkout actually worked
         const verifyResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
         const actualBranch = verifyResult.stdout.trim();
-        if (actualBranch !== branch) {
-          send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
+        if (actualBranch !== checkoutResult.actualBranch) {
+          send('checkout', 'error', `切换失败: 期望 ${checkoutResult.actualBranch}，实际仍在 ${actualBranch}`);
           sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
           res.end();
           recordFailure(`分支切换未生效: 仍在 ${actualBranch}`);
           return;
         }
-        send('checkout', 'done', `已切换到 ${branch}`);
+        send(
+          'checkout',
+          'done',
+          checkoutResult.usedRuntimeBranch
+            ? `已通过控制面隔离分支对齐 ${branch}`
+            : `已切换到 ${branch}`,
+        );
       }
 
       // 2026-05-04 fix:fetch 之后先校验 origin/<target> ref 存在,
@@ -21427,7 +21434,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       let target = branch;
       if (!target) {
         const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
-        target = cur.stdout.trim() || 'main';
+        target = resolveSelfUpdateTargetBranch(cur.stdout.trim() || 'main');
       }
       if (!isSafeGitRef(target)) {
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
@@ -21463,32 +21470,33 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // tracking. self-update does this right; we were missing it.
       // Caught by Cursor Bugbot #450 round 7 (HIGH).
       send('checkout', 'running', `切换到 ${target} 分支...`);
-      const coRes = await shell.exec(`git checkout -f ${target}`, { cwd: repoRoot, timeout: 30_000 });
-      if (coRes.exitCode !== 0) {
-        // Fallback: create tracking branch from origin if it doesn't exist
-        // locally yet (same dance self-update performs).
-        const fbRes = await shell.exec(`git checkout -f -b ${target} origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
-        if (fbRes.exitCode !== 0) {
-          const errMsg = (combinedOutput(fbRes) || '未知错误').trim();
-          send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
-          sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
-          res.end();
-          recordFailure(`无法切换到 ${target}: ${errMsg}`);
-          return;
-        }
+      const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, target);
+      if (!checkoutResult.ok) {
+        const errMsg = checkoutResult.error || '未知错误';
+        send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
+        sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
+        res.end();
+        recordFailure(`无法切换到 ${target}: ${errMsg}`);
+        return;
       }
       // Verify we actually ended up on the target branch — catch any
       // silent checkout-succeeds-but-HEAD-elsewhere edge case.
       const verify = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
       const actual = verify.stdout.trim();
-      if (actual !== target) {
-        send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
+      if (actual !== checkoutResult.actualBranch) {
+        send('checkout', 'error', `切换未生效: 期望 ${checkoutResult.actualBranch},实际 ${actual}`);
         sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
         res.end();
         recordFailure(`git checkout 未生效: 仍在 ${actual}`);
         return;
       }
-      send('checkout', 'done', `已切到 ${target}`);
+      send(
+        'checkout',
+        'done',
+        checkoutResult.usedRuntimeBranch
+          ? `已通过控制面隔离分支对齐 ${target}`
+          : `已切到 ${target}`,
+      );
 
       // Step 3b: hard-reset to origin/<target>
       send('reset', 'running', `硬对齐 HEAD → origin/${target}`);
