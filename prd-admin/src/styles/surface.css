@@ -336,6 +336,22 @@
   display: none;
 }
 
+/* 单行不换行 + 溢出横向滚动（隐藏滚动条）。用于窄弹窗里成排的 chips / 记录信息行，
+   治「筛选行、同步记录的对端/时间/耗时行折成多行导致布局错乱」（同步中心 RunCard 等）。
+   直接子元素不收缩，保证各项按内容宽度排布、放不下走横向滚动而非换行。 */
+.sync-row-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sync-row-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.sync-row-scroll > * {
+  flex: 0 0 auto;
+}
+
 /* 移动端 headbar 统一形态：单行、紧凑、主内容优先。 */
 @media (max-width: 767px) {
   .surface-nav-bar {
