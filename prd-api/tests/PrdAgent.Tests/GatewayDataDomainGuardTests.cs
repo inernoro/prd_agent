@@ -3440,7 +3440,7 @@ public class GatewayDataDomainGuardTests
         Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
         Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
 
-        Assert.Contains("scopes: ['invoke', 'route:read']", quickstart);
+        Assert.Contains("scopes: ['invoke', 'stream:invoke', 'route:read']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
         Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);
         Assert.Contains("requestType,", quickstart);

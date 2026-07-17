@@ -282,7 +282,7 @@ export function ServiceKeysPage() {
             <div className="lg-service-key-advanced-grid">
               {isInternalTenant
                 ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
-                : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>由服务端固定，不能伪装为 MAP。</span></label>}
+                : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 11 }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
               <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
               <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
               {isInternalTenant
