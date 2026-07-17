@@ -1417,9 +1417,11 @@ public class GatewayKeyGateContractTests
                 }),
             };
             resolve.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            resolve.Headers.Add("X-Gateway-Source", "external");
             var resolveResponse = await app.GetTestClient().SendAsync(resolve);
 
             resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.SourceSystem.ShouldBe("external");
             gateway.LastResolveTenantId.ShouldBe("tenant-test");
 
             var pools = new HttpRequestMessage(
@@ -1434,6 +1436,62 @@ public class GatewayKeyGateContractTests
         finally
         {
             await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ResolvePreview_DeniesOtherTeamWithoutMutatingAppCallerActivity()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_resolve_team_scope_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            await callers.InsertOneAsync(new GatewayAppCallerRecord
+            {
+                TenantId = "tenant-test",
+                TeamId = "other-team",
+                AppCallerCode = "external.resolve.shared::chat",
+                RequestType = "chat",
+                TotalSeen = 7,
+                LastObservedRequestId = "existing-request",
+            });
+            var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+            var gateway = new EchoingGateway(contextAccessor);
+            var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "route:read");
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: authorizer,
+                contextAccessor: contextAccessor,
+                gatewayData: data);
+            await app.StartAsync();
+
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/resolve")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "external.resolve.shared::chat",
+                    ModelType = "chat",
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-Source", "external");
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            gateway.LastResolveTenantId.ShouldBeNull();
+            var unchanged = await callers.Find(_ => true).SingleAsync();
+            unchanged.TotalSeen.ShouldBe(7);
+            unchanged.LastObservedRequestId.ShouldBe("existing-request");
+            await app.StopAsync();
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
         }
     }
 
