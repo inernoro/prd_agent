@@ -152,6 +152,22 @@ export type DocumentEntry = {
   updatedAt: string;
 };
 
+export type KnowledgeCreativePublishKind = 'poster' | 'tutorial' | 'copy-html' | 'page';
+
+export type KnowledgeCreativePublishInput = {
+  kind: KnowledgeCreativePublishKind;
+  instruction?: string;
+};
+
+export type KnowledgeCreativePublishResult = {
+  siteId: string;
+  siteUrl: string;
+  title: string;
+  kind: KnowledgeCreativePublishKind;
+  kindLabel: string;
+  htmlLength: number;
+};
+
 /** 知识库 Agent Run（字幕生成 + 文档再加工 + 自动补链 + 录音转录共用） */
 export type DocumentStoreAgentRun = {
   id: string;

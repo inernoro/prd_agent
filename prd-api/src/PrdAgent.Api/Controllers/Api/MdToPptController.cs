@@ -28,9 +28,8 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
 ///
-/// 生成引擎：仅 CDS Agent（2026-06-10 用户拍板移除 MAP 直出，PPT 生成完全走
-/// CDS Agent 会话；toolPolicy=deny-all 避免工具循环）。大纲规划仍走 ILlmGateway
-/// （快速 JSON 往返，非 PPT 产物本体）。
+/// 生成引擎：优先走 LLM Gateway 直出页面片段；仅对 anthropic/CDS Agent 运行配置保留
+/// CDS Agent 兼容路径。大纲规划同样走 ILlmGateway。
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
@@ -348,10 +347,10 @@ public class MdToPptController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Content))
             return BadRequest(new { error = "内容不能为空" });
 
-        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var targetPages = ResolveTargetPages(req);
         var systemPrompt =
             "你是专业 PPT 策划师。根据用户内容，输出一份 PPT 大纲（纯 JSON，不要其他任何解释和代码围栏）。\n" +
-            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，实际可根据内容增减 1-2 页）。\n" +
+            $"目标页数：严格 {targetPages} 页，不得增减页数；totalPages 必须等于 {targetPages}，outline 数组长度也必须等于 {targetPages}。\n" +
             "输出格式：\n" +
             "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}],\"clarify\":[{\"id\":\"q1\",\"question\":\"面向投资人还是内部团队？\",\"type\":\"single\",\"options\":[\"投资人\",\"内部团队\"]}]}\n\n" +
             "严格规则：\n" +
@@ -443,8 +442,8 @@ public class MdToPptController : ControllerBase
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
-            return Ok(doc.RootElement.Clone());
+            var normalized = NormalizeOutlinePayload(raw, targetPages);
+            return Ok(normalized);
         }
         catch (JsonException)
         {
@@ -477,11 +476,11 @@ public class MdToPptController : ControllerBase
             return;
         }
 
-        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var targetPages = ResolveTargetPages(req);
         var systemPrompt =
             "你是顶级演示设计总监。根据用户内容输出 PPT 大纲，格式为 JSONL（每行一个独立 JSON 对象，行内禁止换行，输出完一行立即换行）。" +
             "不得有 markdown 围栏、前后缀解释。\n" +
-            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，可按内容增减 1-2 页）。\n" +
+            $"目标页数：严格 {targetPages} 页，不得增减页数；meta.totalPages 必须等于 {targetPages}，page 行总数也必须等于 {targetPages}。\n" +
             "第 1 行必须是 meta：\n" +
             "{\"type\":\"meta\",\"totalPages\":8,\"summary\":\"一句话总结\",\"design\":{\"palette\":\"整体配色策略（主色/强调色/底色气质，一句话）\",\"typography\":\"字体与排字策略（标题字重/正文密度/对齐，一句话）\",\"mood\":\"3-5 个气质关键词\"},\"clarify\":[{\"id\":\"q1\",\"question\":\"...\",\"type\":\"single\",\"options\":[\"...\"]}]}\n" +
             "随后每页一行：\n" +
@@ -566,13 +565,20 @@ public class MdToPptController : ControllerBase
                 {
                     emittedMeta = true;
                     metaObj = JsonNode.Parse(root.GetRawText()) as JsonObject;
-                    await WriteEventAsync("meta", root.Clone());
+                    if (metaObj != null) metaObj["totalPages"] = targetPages;
+                    if (metaObj != null) await WriteEventAsync("meta", metaObj);
+                    else await WriteEventAsync("meta", root.Clone());
                 }
                 else if (type == "page")
                 {
+                    if (emittedPages >= targetPages) return;
                     emittedPages++;
-                    if (JsonNode.Parse(root.GetRawText()) is JsonObject pg) pageArr.Add(pg);
-                    await WriteEventAsync("page", root.Clone());
+                    if (JsonNode.Parse(root.GetRawText()) is JsonObject pg)
+                    {
+                        pg["index"] = emittedPages;
+                        pageArr.Add(pg.DeepClone());
+                        await WriteEventAsync("page", pg);
+                    }
                 }
             }
             catch (JsonException)
@@ -658,7 +664,7 @@ public class MdToPptController : ControllerBase
                         var meta = new JsonObject
                         {
                             ["type"] = "meta",
-                            ["totalPages"] = root.TryGetProperty("totalPages", out var tpEl) ? tpEl.GetInt32() : 0,
+                            ["totalPages"] = targetPages,
                             ["summary"] = root.TryGetProperty("summary", out var smEl) ? smEl.GetString() : null,
                         };
                         if (root.TryGetProperty("clarify", out var clEl)) meta["clarify"] = JsonNode.Parse(clEl.GetRawText());
@@ -669,7 +675,7 @@ public class MdToPptController : ControllerBase
                     if (root.TryGetProperty("outline", out var olEl) && olEl.ValueKind == JsonValueKind.Array)
                     {
                         var idx = 0;
-                        foreach (var pg in olEl.EnumerateArray())
+                        foreach (var pg in olEl.EnumerateArray().Take(targetPages))
                         {
                             idx++;
                             var page = new JsonObject
@@ -723,6 +729,63 @@ public class MdToPptController : ControllerBase
             if (last > 0) raw = raw[..last].TrimEnd();
         }
         return raw.Trim();
+    }
+
+    internal static int ResolveTargetPages(MdToPptOutlineRequest req)
+    {
+        if (req.TargetPages is > 0)
+            return Math.Clamp(req.TargetPages.Value, 1, 30);
+        var text = string.Join("\n", new[] { req.Content, req.AttachmentText, req.KbContext, req.ChatHistory }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+        var explicitPages = ParseExplicitPageCount(text);
+        return explicitPages.HasValue ? Math.Clamp(explicitPages.Value, 1, 30) : 8;
+    }
+
+    internal static int? ParseExplicitPageCount(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(text,
+            "(?:严格|共|生成|做|制作|输出|约|大约|总共)?\\s*(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*(?:页|p|P)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var raw = m.Groups[1].Value;
+        if (int.TryParse(raw, out var n)) return n;
+        return ParseChineseSmallNumber(raw);
+    }
+
+    private static int? ParseChineseSmallNumber(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (raw == "十") return 10;
+        var digits = new Dictionary<char, int>
+        {
+            ['一'] = 1, ['二'] = 2, ['两'] = 2, ['三'] = 3, ['四'] = 4, ['五'] = 5,
+            ['六'] = 6, ['七'] = 7, ['八'] = 8, ['九'] = 9,
+        };
+        var tenIdx = raw.IndexOf('十');
+        if (tenIdx >= 0)
+        {
+            var tens = tenIdx == 0 ? 1 : digits.GetValueOrDefault(raw[0], 0);
+            var ones = tenIdx == raw.Length - 1 ? 0 : digits.GetValueOrDefault(raw[^1], 0);
+            var value = tens * 10 + ones;
+            return value > 0 ? value : null;
+        }
+        if (raw.Length == 1 && digits.TryGetValue(raw[0], out var single)) return single;
+        return null;
+    }
+
+    internal static JsonObject NormalizeOutlinePayload(string rawJson, int targetPages)
+    {
+        var root = JsonNode.Parse(rawJson) as JsonObject ?? throw new JsonException("outline root must be object");
+        var outline = root["outline"] as JsonArray ?? new JsonArray();
+        var normalized = new JsonArray();
+        foreach (var item in outline.Take(Math.Clamp(targetPages, 1, 30)))
+        {
+            if (item is JsonObject obj) normalized.Add(obj.DeepClone());
+        }
+        root["totalPages"] = normalized.Count;
+        root["outline"] = normalized;
+        return root;
     }
 
     // ─────────────────────────────────────────────
@@ -930,6 +993,7 @@ public class MdToPptController : ControllerBase
             name = p.Name,
             model = p.Model,
             runtime = p.Runtime,
+            protocol = p.Protocol,
             isDefault = p.IsDefault,
             isEffectiveDefault = def != null && def.Id == p.Id,
             owned = p.CreatedByUserId == userId,
@@ -1014,6 +1078,7 @@ public class MdToPptController : ControllerBase
                 name = view.Name,
                 model = view.Model,
                 runtime = view.Runtime,
+                protocol = view.Protocol,
                 isDefault = view.IsDefault,
                 isEffectiveDefault = false,
                 owned = true,
@@ -1040,9 +1105,10 @@ public class MdToPptController : ControllerBase
         }
 
         var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
         var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, requestedProfileId);
         if (profile == null) return Ok(new { sessionId = (string?)null, reason = "no_profile" });
+        if (ShouldUseGatewayDirect(profile)) return Ok(new { sessionId = (string?)null, reason = "gateway_direct" });
+        if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
 
         try
         {
@@ -1112,8 +1178,8 @@ public class MdToPptController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>
-    /// 当前是否存在可用的 active CDS 连接。PPT 生成完全依赖 CDS Agent，
-    /// 前端用它在未连接时整页禁用（给引导而非让用户撞到「全页降级成裸要点」的兜底）。
+    /// 当前是否存在可用的 active CDS 连接。openai-compatible 配置优先走 LLM Gateway 直出；
+    /// 前端只把它作为 CDS Agent 兼容路径的状态提示。
     /// </summary>
     [HttpGet("connection-status")]
     public async Task<IActionResult> ConnectionStatus()
@@ -1357,6 +1423,54 @@ public class MdToPptController : ControllerBase
     // 并行逐页编排：壳子确定 → 子智能体并行各画一页 → page 事件实时进度 → 拼装
     // ─────────────────────────────────────────────
 
+    internal static bool IsConsoleDashboardBrief(string? content, string? summary = null)
+    {
+        var text = ((content ?? string.Empty) + "\n" + (summary ?? string.Empty)).ToLowerInvariant();
+        return text.Contains("控制台")
+            || text.Contains("操作面板")
+            || text.Contains("仪表盘")
+            || text.Contains("dashboard")
+            || text.Contains("console")
+            || text.Contains("工作台");
+    }
+
+    internal static string EffectiveThemeForRequest(string? theme, string? content, string? summary = null)
+    {
+        var t = (theme ?? string.Empty).Trim().ToLowerInvariant();
+        if (!IsConsoleDashboardBrief(content, summary)) return theme ?? "tech-dark";
+        if (t is "aurora-gradient" or "tech-dark" or "cobalt-grid") return t;
+        return "cobalt-grid";
+    }
+
+    internal static bool LooksLikeConsoleVisualMismatch(string fragment, string? anchorName = null)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return true;
+        var anchor = (anchorName ?? string.Empty).Trim().ToLowerInvariant();
+        if (anchor is "soft-editorial" or "vellum" or "bold-poster" or "retro-zine" or "grove" or "coral" or "monochrome")
+            return true;
+
+        var t = fragment.ToLowerInvariant();
+        if (System.Text.RegularExpressions.Regex.IsMatch(t,
+                "(playfair|newsreader|cursive|calligraphy|handwriting|font-style\\s*:\\s*italic|poster|zine|vellum|editorial)"))
+            return true;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(t, "class\\s*=\\s*['\"][^'\"]*console-dashboard[^'\"]*['\"]"))
+            return true;
+
+        var operationalTokens = System.Text.RegularExpressions.Regex.Matches(t,
+            "(console-dashboard|panel|metric|kpi|queue|task|status|preview|card|grid|flow|step|progress|publish|任务队列|预览|发布状态|指标|流程)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        return operationalTokens < 3;
+    }
+
+    private static string BuildConsoleDashboardGuard(string? content, string? summary)
+    {
+        if (!IsConsoleDashboardBrief(content, summary)) return string.Empty;
+        return "控制台/操作面板硬约束：本页必须像成熟 SaaS dashboard 或产品控制台，不像海报、书法、报刊或白皮书。" +
+               "可见结构至少包含两类：顶部状态栏、侧边导航、数据指标卡、任务队列、流程轨道、预览画布、发布状态、操作按钮组、日志/版本面板。" +
+               "标题字体必须使用清晰无衬线或等宽产品字体语气，禁止手写感、书法感、cursive 展示字、复古报刊标题；" +
+               "一级标题不许占满整页，不许使用大号斜体衬线；信息层级要适合反复操作和扫描，避免大段抒情文案。\n";
+    }
+
     private static readonly string[] PageLayoutHints =
     {
         "数据看板 Big Numbers（.stat 大数字格 + kicker），数字压住版面",
@@ -1368,7 +1482,7 @@ public class MdToPptController : ControllerBase
         "要点卡片（.grid.g3 每卡一要点，禁止裸列表）",
     };
 
-    private static string BuildPageSystemPrompt(string? theme, int index, int total)
+    internal static string BuildPageSystemPrompt(string? theme, int index, int total)
     {
         var (_, tone) = ThemeTokens(theme);
         return
@@ -1378,7 +1492,13 @@ public class MdToPptController : ControllerBase
             "## 本次风格\n" + tone + "\n\n" +
             "## 设计自由（重要，反「套模板」）\n" +
             "组件类是工具箱不是模板——为本页内容定制独特版式：可自由用内联 style 排布、混搭或完全不用组件类；" +
-            "但所有颜色必须取自 CSS 变量、字体必须符合本风格。目标是「这一页像为内容量身设计的」，不是把内容塞进固定骨架。\n\n" +
+            "但所有颜色必须取自 CSS 变量、字体必须符合本风格。用户给出的创意方向、比喻、场景、行业感可以影响视觉装置与叙事方式，" +
+            "但不能改掉整份 deck 的色板、字体和页面秩序。目标是「这一页像为内容量身设计的」，不是把内容塞进固定骨架。\n\n" +
+            "## 全局一致性契约\n" +
+            "- 与其他页面共用同一套色板、字体、圆角、线条粗细、页脚/页码气质；禁止每页临时发明一套新风格\n" +
+            "- 每页允许有不同版式，但必须看得出属于同一份控制台级专业演示\n" +
+            "- 自定义创意只作为视觉表达，不得牺牲可读性、信息密度和代码正确性\n\n" +
+            HtmlPptSkillContract() + "\n" +
             "## 内容要求\n" +
             "信息充实：结构化正文（卡片/数据/对比/列表至少一种）+ 至少一个视觉装置（光晕/强调条/大数字/独特大字编排）。" +
             "绝不允许一句话居中、四周大片空白。\n\n" +
@@ -1391,6 +1511,7 @@ public class MdToPptController : ControllerBase
             "## 输出（最高优先级）\n" +
             $"只输出本页（第 {index + 1}/{total} 页）一个完整的 <section>...</section> HTML 片段：" +
             "首字符是 <，末字符是 >；不含 <html>/<head>/<style>/<script>，不含 markdown 围栏与任何解释；" +
+            "所有标签必须闭合，禁止占位符、问号空容器、未结束属性；" +
             "禁止任何 emoji；禁止对文字使用 color:transparent + background-clip:text；禁止调用工具。";
     }
 
@@ -1423,6 +1544,8 @@ public class MdToPptController : ControllerBase
         if (next != null) sb.Append($"下一页标题：「{next}」\n");
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("本页设计意图（大纲阶段已与用户确认，优先遵循）：").Append(page.Design.Trim()).Append('\n');
+        var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
+        if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
         sb.Append("版式建议（可不采纳，但必须与相邻页差异化）：").Append(hint);
         return sb.ToString();
     }
@@ -1433,10 +1556,11 @@ public class MdToPptController : ControllerBase
     // 子智能体拿"人工精调版式范本"只换内容不造布局，从根上杜绝重叠/溢出
     // ─────────────────────────────────────────────
 
-    private static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
+    internal static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
     {
         return
             "你在一套人工精调的成品演示设计系统内工作（不允许自由发挥布局）。\n" +
+            HtmlPptSkillContract() + "\n" +
             "## 铁律（违反会被系统剥离或整页重做）\n" +
             "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
             "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；同构列表项允许增删 1-2 个\n" +
@@ -1445,9 +1569,23 @@ public class MdToPptController : ControllerBase
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
             "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；范本里的页脚（如页码、栏目名）原样保留位置\n" +
             "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置，必须用本页真实或代表性的数值与标签填满（数字来自要点、缺数据就给合理示意值），严禁留空容器、占位问号、或只有标题没有内容的空装置\n" +
-            $"8. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
+            "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
+            "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n" +
+            $"10. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
+    }
+
+    internal static string HtmlPptSkillContract()
+    {
+        return
+            "## GitHub html-ppt 技能契约\n" +
+            "来源：nexu-io/open-design 的 plugins/_official/examples/html-ppt（上游 lewislulu/html-ppt-skill）。\n" +
+            "- 始终从现有布局范本出发：把 templates/single-page 的 cover、toc、section-divider、bullets、two-column、three-column、kpi-grid、table、chart、terminal、flow、timeline、roadmap、comparison、cta、thanks 等布局映射到当前页面语义，再替换真实内容\n" +
+            "- 一页只输出一个 slide 根块；根块保留 class 中的 slide 身份，能加属性时补 data-title=\"本页标题\"，方便缩略图、概览和导出链路识别\n" +
+            "- 使用主题 token 与现有 CSS 变量，不写新的十六进制色值，不临时引入外部运行时，不破坏键盘预览、导出和静态托管兼容性\n" +
+            "- 版式选择要覆盖文本、数据、对比、流程、代码、图表、结语等场景，连续页面避免重复同一种布局\n" +
+            "- 如需要讲稿或创作说明，只能放进隐藏的 .notes 或 aside.notes，禁止把 presenter-only 文案显示在 slide 上\n";
     }
 
     private static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
@@ -1462,6 +1600,11 @@ public class MdToPptController : ControllerBase
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
+        var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
+        if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
+        sb.Append("创意与质量要求：把用户意图转成具体发布会文案、数字、对比标签或流程节点；");
+        sb.Append("可在范本同构区域内调整词序和标签，但不得输出泛化标题“封面/目录/总结/标题”；");
+        sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
         sb.Append("把范本占位内容替换为以上真实内容，输出整个 slide 块。");
         return sb.ToString();
     }
@@ -1506,15 +1649,40 @@ public class MdToPptController : ControllerBase
         return result;
     }
 
-    /// <summary>锚定兜底页：范本结构保留，正文区粗暴替换为标题+要点（结构不塌的最低限度退化）</summary>
+    /// <summary>锚定兜底页：范本结构保留，正文区替换为可演示的设计块，避免退化成标题加列表。</summary>
     internal static string AnchoredFallbackSlide(MdToPptAnchors.AnchorSlide layout, MdToPptOutlinePageDto page, int index)
     {
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
-        var lis = string.Join("", (page.Bullets ?? new List<string>())
+        var bullets = (page.Bullets ?? new List<string>())
             .Where(b => !string.IsNullOrWhiteSpace(b))
-            .Select(b => $"<li style=\"margin:0 0 10px\">{enc(b)}</li>"));
-        var content = $"<div style=\"padding:6% 8%;position:relative;z-index:2\">" +
-                      $"<h2>{enc(page.Title)}</h2><ul style=\"line-height:1.8\">{lis}</ul></div>";
+            .Take(4)
+            .ToList();
+        while (bullets.Count < 3) bullets.Add("聚焦关键信息，压缩文字密度，保留可讲述的视觉层级");
+
+        var cardHtml = string.Join("", bullets.Take(3).Select((b, n) =>
+        {
+            var text = b.Trim();
+            var title = text.Length > 16 ? text[..16] : text;
+            return "<div class=\"mdppt-fallback-card\" style=\"border:1px solid currentColor;border-radius:18px;padding:18px 20px;background:rgba(255,255,255,.08)\">" +
+                   $"<div style=\"font-size:12px;letter-spacing:.18em;text-transform:uppercase;opacity:.62;margin-bottom:12px\">{(n + 1):00}</div>" +
+                   $"<div style=\"font-size:20px;font-weight:800;line-height:1.18;margin-bottom:8px\">{enc(title)}</div>" +
+                   $"<div style=\"font-size:14px;line-height:1.55;opacity:.76\">{enc(text)}</div>" +
+                   "</div>";
+        }));
+        var statLabel = bullets.Count >= 4 ? enc(bullets[3]) : enc(page.Title);
+        var content =
+            "<div class=\"mdppt-fallback-layout\" style=\"padding:5.5% 7%;position:relative;z-index:2;display:grid;grid-template-columns:1.05fr .95fr;gap:38px;align-items:center\">" +
+            "<div>" +
+            $"<div style=\"font-size:12px;letter-spacing:.22em;text-transform:uppercase;opacity:.66;margin-bottom:18px\">第 {index + 1:00} 页 / 设计兜底</div>" +
+            $"<h1 style=\"font-size:clamp(44px,6vw,76px);line-height:.98;margin:0 0 22px;font-weight:900;letter-spacing:-.035em\">{enc(page.Title)}</h1>" +
+            $"<p style=\"font-size:20px;line-height:1.5;margin:0;opacity:.78;max-width:34em\">{enc(bullets[0])}</p>" +
+            "<div style=\"width:88px;height:6px;background:currentColor;margin-top:30px;border-radius:999px;opacity:.88\"></div>" +
+            "</div>" +
+            "<div style=\"display:grid;gap:14px\">" + cardHtml +
+            "<div style=\"display:flex;align-items:end;justify-content:space-between;border-top:1px solid currentColor;padding-top:16px;opacity:.82\">" +
+            $"<div style=\"font-size:46px;line-height:1;font-weight:900\">{Math.Max(3, bullets.Count):00}</div>" +
+            $"<div style=\"font-size:13px;line-height:1.45;text-align:right;max-width:18em\">{statLabel}</div>" +
+            "</div></div></div>";
         // 兜底页不再裸奔（2026-06-12 用户视觉验收：兜底页无模板装饰、像贴了张白纸）：
         // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG）与页脚，
         // 即使子智能体两次输出都无效，这页也穿着设计系统的衣服降级。
@@ -1691,6 +1859,47 @@ public class MdToPptController : ControllerBase
         return hits >= 3;
     }
 
+    internal static bool LooksLikeLowQualitySlide(string fragment)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return true;
+        var heading = FirstVisibleHeading(fragment);
+        if (IsGenericSlideHeading(heading)) return true;
+
+        var strongVisualTokens = System.Text.RegularExpressions.Regex.Matches(fragment,
+            "\\b(card|stat|grid|feat|table|quote|step|timeline|roadmap|compare|chart|kpi|metric|hero|panel|module|split|poster|matrix|badge|chip|donut|legend|swatch|tile|service|pillar|insight|callout|figure|diagram|node|flow|stage|bar|ring|progress|pie)\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        if (strongVisualTokens >= 2) return false;
+        if (System.Text.RegularExpressions.Regex.IsMatch(fragment, "<(svg|table)\\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return false;
+
+        var liCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<li\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var containerCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<(div|section|article|aside)\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var headingCount = System.Text.RegularExpressions.Regex.Matches(fragment, "<h[1-3]\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var hasPlainList = System.Text.RegularExpressions.Regex.IsMatch(fragment, "<ul\\b|<ol\\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return hasPlainList && liCount >= 2 && headingCount <= 2 && containerCount <= 3;
+    }
+
+    private static string FirstVisibleHeading(string html)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(html, "<h[1-3]\\b[^>]*>([\\s\\S]*?)</h[1-3]>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return string.Empty;
+        var text = System.Text.RegularExpressions.Regex.Replace(m.Groups[1].Value, "<[^>]+>", " ");
+        return System.Net.WebUtility.HtmlDecode(text).Trim();
+    }
+
+    private static bool IsGenericSlideHeading(string heading)
+    {
+        if (string.IsNullOrWhiteSpace(heading)) return false;
+        var normalized = heading.Trim().Trim('：', ':', '-', ' ', '\t', '\r', '\n');
+        return normalized is "封面" or "目录" or "总结" or "标题" or "本页标题" or "概览" or "结束页";
+    }
+
     /// <summary>
     /// 子智能体产出的 section 消毒（2026-06-11 P0：页 2 黑屏根因修复）。
     /// 根因：子智能体把 display:flex / min-height:100vh 写在 section 根元素 inline style 上——
@@ -1753,11 +1962,242 @@ public class MdToPptController : ControllerBase
     private static string FallbackSection(MdToPptOutlinePageDto page, int index)
     {
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
-        var lis = string.Join("", (page.Bullets ?? new List<string>())
+        var bullets = (page.Bullets ?? new List<string>())
             .Where(b => !string.IsNullOrWhiteSpace(b))
-            .Select(b => $"<li>{enc(b)}</li>"));
-        return $"<section><div class=\"eyebrow\">第 {index + 1} 页</div>" +
-               $"<h2 class=\"title-md\">{enc(page.Title)}</h2><ul>{lis}</ul></section>";
+            .Take(4)
+            .ToList();
+        while (bullets.Count < 3) bullets.Add("保留核心观点，压缩次要文本，避免低密度空白页");
+        var cards = string.Join("", bullets.Take(3).Select((b, n) =>
+            $"<div class=\"card\"><div class=\"chip\">{(n + 1):00}</div><h3>{enc(b.Length > 16 ? b[..16] : b)}</h3><p>{enc(b)}</p></div>"));
+        return "<section>" +
+               $"<div class=\"eyebrow\">第 {index + 1:00} 页 / 设计兜底</div>" +
+               $"<h2 class=\"title-xl\">{enc(page.Title)}</h2>" +
+               $"<p class=\"lead\">{enc(bullets[0])}</p>" +
+               "<div class=\"bar\"></div>" +
+               $"<div class=\"grid g3\">{cards}</div>" +
+               "</section>";
+    }
+
+    internal static string ConsoleDashboardFallbackSlide(MdToPptAnchors.AnchorSlide? layout, MdToPptOutlinePageDto page, int index, int total)
+    {
+        var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
+        var bullets = (page.Bullets ?? new List<string>())
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .Take(5)
+            .ToList();
+        while (bullets.Count < 4) bullets.Add("把知识库内容转成可预览、可编辑、可发布的结构化产物");
+
+        var metricCards = string.Join("", bullets.Take(3).Select((b, n) =>
+            "<div class=\"panel metric\" style=\"border:1px solid currentColor;border-radius:10px;padding:16px;background:rgba(255,255,255,.08)\">" +
+            $"<div style=\"font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.62\">STEP {(n + 1):00}</div>" +
+            $"<div style=\"font-size:24px;font-weight:850;line-height:1.05;margin-top:10px\">{enc(b.Length > 12 ? b[..12] : b)}</div>" +
+            $"<div style=\"font-size:12px;line-height:1.45;opacity:.68;margin-top:8px\">{enc(b)}</div>" +
+            "</div>"));
+        var queueRows = string.Join("", bullets.Take(4).Select((b, n) =>
+            "<div style=\"display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.12);padding:10px 0\">" +
+            $"<span style=\"width:22px;height:22px;border-radius:7px;border:1px solid currentColor;display:grid;place-items:center;font-size:11px;opacity:.72\">{n + 1}</span>" +
+            $"<span style=\"font-size:13px;line-height:1.35;opacity:.82\">{enc(b)}</span>" +
+            "</div>"));
+        var flow = string.Join("", new[] { "知识库引用", "内容生成", "实时预览", "人工精修", "网页发布" }.Select((b, n) =>
+            "<div style=\"display:flex;align-items:center;gap:8px;min-width:0\">" +
+            $"<span style=\"width:26px;height:26px;border-radius:999px;background:currentColor;color:#101624;display:grid;place-items:center;font-size:11px;font-weight:800\">{n + 1}</span>" +
+            $"<span style=\"font-size:12px;white-space:nowrap;opacity:.8\">{b}</span>" +
+            "</div>"));
+
+        var dashboard =
+            "<div class=\"console-dashboard\" style=\"padding:42px 50px;display:grid;grid-template-rows:auto 1fr auto;gap:24px;min-height:620px;font-family:Inter,'PingFang SC',system-ui,sans-serif\">" +
+            "<div style=\"display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.18);padding-bottom:16px\">" +
+            $"<div><div style=\"font-size:11px;letter-spacing:.22em;text-transform:uppercase;opacity:.58\">CONTROL PANEL / {index + 1:00} OF {total:00}</div>" +
+            $"<h1 style=\"margin:8px 0 0;font-size:38px;line-height:1.08;font-weight:880;letter-spacing:0;color:currentColor\">{enc(page.Title)}</h1></div>" +
+            "<div style=\"display:flex;gap:8px\"><span style=\"border:1px solid currentColor;border-radius:999px;padding:7px 10px;font-size:12px;opacity:.78\">HTML 校验</span><span style=\"border:1px solid currentColor;border-radius:999px;padding:7px 10px;font-size:12px;opacity:.78\">自动发布</span></div>" +
+            "</div>" +
+            "<div style=\"display:grid;grid-template-columns:1fr 1.08fr;gap:22px;min-height:0\">" +
+            "<div style=\"display:grid;grid-template-rows:auto 1fr;gap:16px\">" +
+            $"<div style=\"display:grid;grid-template-columns:repeat(3,1fr);gap:12px\">{metricCards}</div>" +
+            "<div class=\"panel queue\" style=\"border:1px solid currentColor;border-radius:12px;padding:18px 20px;background:rgba(255,255,255,.06)\">" +
+            "<div style=\"font-size:13px;font-weight:800;margin-bottom:6px\">任务队列</div>" + queueRows + "</div></div>" +
+            "<div class=\"panel preview\" style=\"border:1px solid currentColor;border-radius:14px;padding:18px;background:rgba(255,255,255,.05);display:grid;grid-template-rows:auto 1fr auto;gap:14px\">" +
+            "<div style=\"display:flex;justify-content:space-between;align-items:center\"><strong style=\"font-size:14px\">网页托管预览</strong><span style=\"font-size:12px;opacity:.7\">ready to publish</span></div>" +
+            "<div style=\"border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(0,0,0,.18);display:grid;place-items:center;min-height:210px\">" +
+            $"<div style=\"text-align:center;max-width:26em\"><div style=\"font-size:46px;font-weight:900;line-height:1\">{Math.Max(2, total):00}</div><p style=\"font-size:14px;line-height:1.55;opacity:.76;margin:12px 0 0\">{enc(bullets[0])}</p></div></div>" +
+            $"<div style=\"display:flex;justify-content:space-between;gap:10px\">{flow}</div></div></div>" +
+            "<div style=\"display:flex;justify-content:space-between;align-items:center;font-size:12px;opacity:.62;border-top:1px solid rgba(255,255,255,.14);padding-top:14px\"><span>runtime: LLM Gateway</span><span>publish target: web hosting</span></div>" +
+            "</div>";
+
+        if (layout == null) return "<section>" + dashboard + "</section>";
+        var rootOpen = System.Text.RegularExpressions.Regex.Match(layout.Html,
+            "<(div|section|article)\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!rootOpen.Success) return "<section>" + dashboard + "</section>";
+        var tag = rootOpen.Groups[1].Value.ToLowerInvariant();
+        return rootOpen.Value + dashboard + $"</{tag}>";
+    }
+
+    internal static bool ShouldUseGatewayDirect(InfraAgentRuntimeProfile profile)
+    {
+        var runtime = string.IsNullOrWhiteSpace(profile.Runtime)
+            ? InfraAgentRuntimes.ClaudeSdk
+            : profile.Runtime.Trim();
+
+        // MD 转 PPT 的页级生成只需要模型调用，不需要文件系统/工具调用 runtime。
+        // 生产默认 profile 是 claude-sdk + anthropic，也应走 LLM Gateway 的可运行直出路径；
+        // 只有明确依赖 Agent runtime 语义的 codex/custom 保留 CDS Agent 兼容路径。
+        return !string.Equals(runtime, InfraAgentRuntimes.Codex, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(runtime, "cds-agent", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)
+        => ShouldUseGatewayDirect(profile) ? "LLM Gateway" : "CDS Agent";
+
+    internal static GatewayRequest BuildGatewayPageRequest(
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string appCallerCode,
+        string? requestId = null,
+        string? userId = null,
+        string? title = null)
+    {
+        return new GatewayRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = string.IsNullOrWhiteSpace(profile.Model) ? null : profile.Model.Trim(),
+            Stream = true,
+            IncludeThinking = false,
+            TimeoutSeconds = Math.Clamp(profile.TimeoutSeconds > 0 ? profile.TimeoutSeconds : 180, 60, 300),
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user",   ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.48,
+                ["max_tokens"] = 6144,
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                UserId = userId,
+                SourceSystem = "map",
+                IngressProtocol = "gw-native",
+                AppCallerTitle = title,
+                ModelPolicy = "pinned",
+                ParameterPolicy = "md-to-ppt-page",
+            },
+        };
+    }
+
+    internal static bool IsRunnableSlideFragment(string fragment, bool anchored)
+    {
+        if (string.IsNullOrWhiteSpace(fragment)) return false;
+        var trimmed = fragment.Trim();
+        if (trimmed.StartsWith("```", StringComparison.Ordinal)) return false;
+        if (trimmed.Contains("<script", StringComparison.OrdinalIgnoreCase)) return false;
+        if (trimmed.Contains("<html", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<head", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<body", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("<style", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (LooksCorruptedSection(trimmed)) return false;
+        if (anchored)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<(div|section|article)\\b[^>]*class\\s*=\\s*\"[^\"]*\\bslide\\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return false;
+        }
+        else if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, "^\\s*<section\\b[\\s\\S]*</section>\\s*$",
+                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            return false;
+        }
+
+        return System.Text.RegularExpressions.Regex.Matches(trimmed, "<").Count >= 2
+            && !LooksLikeLowQualitySlide(trimmed);
+    }
+
+    private static string NormalizeGeneratedSlideFragment(string? text, bool anchored)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var fragment = anchored
+            ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty
+            : ExtractSection(text);
+        return IsRunnableSlideFragment(fragment, anchored) ? fragment : string.Empty;
+    }
+
+    private async Task<(string? text, string? error)> RunGatewayPageOnceAsync(
+        string userId,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title)
+    {
+        try
+        {
+            var requestId = Guid.NewGuid().ToString("N");
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: null,
+                SessionId: null,
+                UserId: userId,
+                ViewRole: null,
+                DocumentChars: userPrompt.Length,
+                DocumentHash: null,
+                SystemPromptRedacted: "[MdToPpt-Page]",
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+
+            var request = BuildGatewayPageRequest(
+                profile,
+                systemPrompt,
+                userPrompt,
+                AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                requestId,
+                userId,
+                title);
+
+            var fullText = new StringBuilder();
+            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                    continue;
+                }
+
+                if (chunk.Type == GatewayChunkType.Error)
+                {
+                    return (null, chunk.Error ?? "LLM Gateway 页面生成失败");
+                }
+            }
+
+            var raw = fullText.ToString();
+            return string.IsNullOrWhiteSpace(raw) ? (null, "LLM Gateway 未返回页面 HTML") : (raw, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt-Page] gateway page generation failed: {Msg}", ex.Message);
+            return (null, ex.Message);
+        }
+    }
+
+    private async Task<(string? text, string? error)> RunPageOnceAsync(
+        string userId,
+        InfraConnection? connection,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title,
+        InfraAgentSessionView? presession)
+    {
+        if (ShouldUseGatewayDirect(profile))
+            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title);
+
+        if (connection == null)
+            return (null, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+
+        return await RunAgentOnceAsync(userId, connection, profile, systemPrompt, userPrompt, title, presession);
     }
 
     /// <summary>单次 agent 会话往返：创建/复用 → 发送 → 轮询至 done，返回最终文本（页级子任务用）</summary>
@@ -1856,13 +2296,6 @@ public class MdToPptController : ControllerBase
             finally { sseLock.Release(); }
         }
 
-        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        if (connection == null)
-        {
-            await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
-            await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
-            return;
-        }
         var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
         if (profile == null)
         {
@@ -1870,12 +2303,22 @@ public class MdToPptController : ControllerBase
             await EmitAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
             return;
         }
-        await EmitAsync("model", new { model = profile.Model, platform = "CDS Agent" });
+        var platform = GenerationPlatformLabel(profile);
+        var connection = ShouldUseGatewayDirect(profile) ? null : await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (!ShouldUseGatewayDirect(profile) && connection == null)
+        {
+            await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+            await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
+            return;
+        }
+        await EmitAsync("model", new { model = profile.Model, platform });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
         // 锚定资产缺失时回落旧 reveal 壳子（不应发生，保险）
-        var anchor = MdToPptAnchors.Resolve(req.Theme);
+        var effectiveTheme = EffectiveThemeForRequest(req.Theme, req.Content, req.Summary);
+        var consoleDashboardMode = IsConsoleDashboardBrief(req.Content, req.Summary);
+        var anchor = MdToPptAnchors.Resolve(effectiveTheme);
         string head, suffix;
         if (anchor != null)
         {
@@ -1884,11 +2327,20 @@ public class MdToPptController : ControllerBase
         }
         else
         {
-            (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
+            (head, suffix) = BuildDeckShell(effectiveTheme, deckTitle);
         }
-        await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name });
-        await EmitAsync("diag", new { stage = "pages_start", total, parallel = 4 });
-        _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total}", userId, total);
+        await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name, skill = "github-html-ppt" });
+        await EmitAsync("diag", new
+        {
+            stage = "design_contract",
+            total,
+            parallel = 4,
+            route = ShouldUseGatewayDirect(profile) ? "gateway-direct" : "cds-agent",
+            skill = "github-html-ppt",
+            skillSource = "nexu-io/open-design/plugins/_official/examples/html-ppt",
+            quality = "style-consistency-and-html-validation"
+        });
+        _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total} platform={Platform}", userId, total, platform);
 
         // 心跳：并行期间 SSE 不断流
         var clientGone = false;
@@ -1915,8 +2367,10 @@ public class MdToPptController : ControllerBase
         });
 
         var sections = new string[total];
-        var gate = new SemaphoreSlim(4, 4); // 并行度：4 路子智能体
-        var presession = await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
+        var gate = new SemaphoreSlim(4, 4); // 并行度：4 路页面生成
+        var presession = ShouldUseGatewayDirect(profile)
+            ? null
+            : await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
         var doneCount = 0;
         // 退化为「范本/裸要点」兜底页：按页打标（每页一个槽位，写两次仍是 true，幂等），
         // 避免用共享计数器在「retry 兜底后 EmitAsync 又抛 → 外层 catch 再加一次」时重复计数（Bugbot Medium）
@@ -1941,28 +2395,54 @@ public class MdToPptController : ControllerBase
                     }
                     else
                     {
-                        sys = BuildPageSystemPrompt(req.Theme, i, total);
+                        sys = BuildPageSystemPrompt(effectiveTheme, i, total);
                         usr = BuildPageUserPrompt(req, i, total);
                     }
-                    var (text, err) = await RunAgentOnceAsync(
+                    await EmitAsync("diag", new
+                    {
+                        stage = "page_start",
+                        index = i,
+                        total,
+                        title = pages[i].Title,
+                        elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds
+                    });
+                    if (consoleDashboardMode)
+                    {
+                        var dashboardSection = ConsoleDashboardFallbackSlide(layout, pages[i], i, total);
+                        sections[i] = dashboardSection;
+                        var dashboardDone = Interlocked.Increment(ref doneCount);
+                        var dashboardMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                        _logger.LogInformation("[MdToPpt-Pages] page {Idx} dashboard-rendered {N}/{Total} elapsedMs={Ms}", i, dashboardDone, total, dashboardMs);
+                        await EmitAsync("page", new { index = i, total, html = dashboardSection, done = dashboardDone });
+                        return;
+                    }
+                    var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
-                    var section = text != null
-                        ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
-                        : string.Empty;
+                    var section = NormalizeGeneratedSlideFragment(text, anchor != null);
+                    if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
+                    {
+                        _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch anchor={Anchor}, retrying", i, anchor?.Name);
+                        section = string.Empty;
+                    }
                     if (string.IsNullOrEmpty(section))
                     {
                         // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
                         if (err == null || text != null)
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid block, retrying", i);
-                        var (text2, _) = await RunAgentOnceAsync(
+                        var (text2, _) = await RunPageOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
-                        section = text2 != null
-                            ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
-                            : string.Empty;
+                        section = NormalizeGeneratedSlideFragment(text2, anchor != null);
+                        if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
+                        {
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch after retry anchor={Anchor}, using dashboard fallback", i, anchor?.Name);
+                            section = string.Empty;
+                        }
                         if (string.IsNullOrEmpty(section))
                         {
                             fallbackFlags[i] = true;
-                            section = anchor != null && layout != null
+                            section = consoleDashboardMode
+                                ? ConsoleDashboardFallbackSlide(layout, pages[i], i, total)
+                                : anchor != null && layout != null
                                 ? AnchoredFallbackSlide(layout, pages[i], i)
                                 : SanitizeSection(FallbackSection(pages[i], i));
                         }
@@ -1978,7 +2458,9 @@ public class MdToPptController : ControllerBase
                       // 单页全链路兜底：任何异常都不许杀整本
                       _logger.LogError(pageEx, "[MdToPpt-Pages] page {Idx} hard-failed, fallback slide", i);
                       fallbackFlags[i] = true;
-                      var fb = anchor != null
+                      var fb = consoleDashboardMode
+                          ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null, pages[i], i, total)
+                          : anchor != null
                           ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i)
                           : SanitizeSection(FallbackSection(pages[i], i));
                       sections[i] = fb;
@@ -1997,7 +2479,7 @@ public class MdToPptController : ControllerBase
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
-            await PersistRunDoneAsync(run, html, profile.Model, "CDS Agent", fallbackCount, total);
+            await PersistRunDoneAsync(run, html, profile.Model, platform, fallbackCount, total);
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
         catch (Exception ex)
@@ -2031,12 +2513,21 @@ public class MdToPptController : ControllerBase
         }
         if (blocks.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > blocks.Count) return false;
 
-        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-        var profile = connection == null ? null : await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
-        if (connection == null || profile == null) return false; // 回落整篇路径（它有自己的错误提示）
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
+        if (profile == null) return false; // 回落整篇路径（它有自己的错误提示）
+        var connection = ShouldUseGatewayDirect(profile) ? null : await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (!ShouldUseGatewayDirect(profile) && connection == null) return false; // 回落整篇路径（它有自己的错误提示）
 
-        await WriteEventAsync("model", new { model = profile.Model, platform = "CDS Agent" });
-        await WriteDiagAsync(new { stage = "page_patch_start", page = oneBasedIndex, total = blocks.Count });
+        var platform = GenerationPlatformLabel(profile);
+        await WriteEventAsync("model", new { model = profile.Model, platform });
+        await WriteDiagAsync(new
+        {
+            stage = "page_patch_start",
+            page = oneBasedIndex,
+            total = blocks.Count,
+            route = ShouldUseGatewayDirect(profile) ? "gateway-direct" : "cds-agent",
+            quality = "style-consistency-and-html-validation"
+        });
         _logger.LogInformation("[MdToPpt-PagePatch] start userId={UserId} page={Page}/{Total}", userId, oneBasedIndex, blocks.Count);
 
         // 心跳：单页重画 1-3 分钟，SSE 不能断流（Cloudflare 100s 缓冲）
@@ -2074,17 +2565,13 @@ public class MdToPptController : ControllerBase
                 "硬约束：未被修改要求点名的信息内容必须逐字保留（数字、名称、要点一字不差）；" +
                 "重新设计排版时严格遵守画布与版面硬约束。";
 
-            var (text, err) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
-            var section = text != null
-                ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
-                : string.Empty;
+            var (text, err) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
+            var section = NormalizeGeneratedSlideFragment(text, patchAnchor != null);
             if (string.IsNullOrEmpty(section))
             {
                 _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
-                var (text2, err2) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
-                section = text2 != null
-                    ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
-                    : string.Empty;
+                var (text2, err2) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
+                section = NormalizeGeneratedSlideFragment(text2, patchAnchor != null);
                 if (string.IsNullOrEmpty(section))
                 {
                     var msg = err2 ?? err ?? "单页重绘失败，请重试";
@@ -2095,7 +2582,7 @@ public class MdToPptController : ControllerBase
             }
 
             var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
-            await PersistRunDoneAsync(run, newHtml, profile.Model, "CDS Agent");
+            await PersistRunDoneAsync(run, newHtml, profile.Model, platform);
             await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
             _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);

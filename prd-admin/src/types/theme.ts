@@ -15,6 +15,15 @@ export type SidebarGlassMode = 'auto' | 'always' | 'never';
 export type PerformanceMode = 'auto' | 'quality' | 'performance';
 
 /**
+ * 界面材质（2026-07-16 系统级统一，用户定）：
+ * - solid：素色实底面板（默认）。无 backdrop-filter、无棱光高光，安静克制。
+ * - glass：液态玻璃。保留为可选材质，不删除。
+ * 一处切换全站生效：所有 .surface-* / GlassCard / 玻璃 token 消费方统一跟随，
+ * 像苹果的 Material 一样集中调配，不必逐页更新。
+ */
+export type MaterialMode = 'solid' | 'glass';
+
+/**
  * 完整皮肤配置
  */
 export interface ThemeConfig {
@@ -35,6 +44,12 @@ export interface ThemeConfig {
 
   /** 性能模式：auto 自动检测平台, quality 始终高质量, performance 始终性能优先 */
   performanceMode: PerformanceMode;
+
+  /**
+   * 界面材质：solid 素色实底（默认）/ glass 液态玻璃。
+   * 旧配置无此字段——所有消费处必须用 `config.material ?? DEFAULT_THEME_CONFIG.material` 兜底。
+   */
+  material?: MaterialMode;
 }
 
 /** 默认主题配置 */
@@ -47,7 +62,20 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   // 默认开液态玻璃（2026-06-16，用户定）：此前默认 'performance' 导致 GlassCard 全站走实底降级，
   // 液态玻璃从不渲染。改 'quality' 后未显式设置过性能模式的用户都将看到（已调优的 B 方案）玻璃。
   performanceMode: 'quality',
+  // 默认素色（2026-07-16，用户定）：玻璃「浮肿」，素色实底成为系统的新默认气质；
+  // 液态玻璃保留为可选材质（设置 → 皮肤设置 → 界面材质）。
+  material: 'solid',
 };
+
+/** 界面材质选项（设置页用） */
+export const MATERIAL_OPTIONS: Array<{
+  value: MaterialMode;
+  label: string;
+  description: string;
+}> = [
+  { value: 'solid', label: '素色', description: '实底面板，安静克制，内容优先（推荐）' },
+  { value: 'glass', label: '液态玻璃', description: '半透明模糊玻璃质感，视觉更华丽' },
+];
 
 /**
  * 内嵌 div 块样式配置（用于页面内的子容器）

@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/authStore';
 export interface OutlineSlide {
   title: string;
   bullets: string[];
-  /** 页级设计意图（版式/视觉装置/排字/强调），随大纲定稿喂给并行子智能体 */
+  /** 页级设计意图（版式/视觉装置/排字/强调），随大纲定稿喂给并行页面生成器 */
   design?: string;
 }
 
@@ -168,12 +168,11 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
   return () => abortController.abort();
 }
 
-// ============ CDS 连接状态（未连接时整页禁用）============
+// ============ CDS 连接状态（仅作为兼容路径提示）============
 
 /**
- * 当前是否存在可用的 active CDS 连接。PPT 生成完全依赖 CDS Agent，
- * 未连接时前端整页禁用并引导用户去「基础设施服务」完成 CDS 授权。
- * 查询失败时按「未连接」处理（保守：不放行到必然失败的生成）。
+ * 当前是否存在可用的 active CDS 连接。openai-compatible 模型配置优先走 LLM Gateway
+ * 直出；只有 CDS Agent 兼容路径才需要这个状态。
  */
 export async function getMdToPptConnectionStatus(): Promise<boolean> {
   try {
@@ -184,12 +183,11 @@ export async function getMdToPptConnectionStatus(): Promise<boolean> {
   }
 }
 
-// ============ Prewarm（大纲确认期间预热 CDS Agent 会话）============
+// ============ Prewarm（大纲确认期间预热运行环境）============
 
 /**
- * 预创建并启动 CDS Agent 会话（幂等、失败静默）。
- * 在大纲生成成功后 fire-and-forget 调用，把 5-15s 的 Agent 环境启动开销
- * 藏进用户阅读/确认大纲的时间里；Convert 时后端自动复用预热好的会话。
+ * 预创建并启动运行环境（幂等、失败静默）。
+ * Gateway 直出配置后端会直接跳过，CDS 兼容配置会把会话启动开销藏进用户阅读大纲的时间里。
  */
 export function prewarmMdToPpt(runtimeProfileId?: string | null): void {
   void apiRequest('/api/md-to-ppt/prewarm', {
@@ -207,6 +205,7 @@ export interface MdToPptProfileItem {
   name: string;
   model: string;
   runtime: string;
+  protocol?: string;
   isDefault: boolean;
   isEffectiveDefault: boolean;
   owned: boolean;
@@ -230,7 +229,7 @@ export interface MdToPptPoolModelItem {
   unavailableReason?: string | null;
 }
 
-/** 模型池候选（弹层「从模型池直选」）：选中即物化为运行配置，配置原样传给 CDS */
+/** 模型池候选（弹层「从模型池直选」）：选中即物化为运行配置，后端按 protocol 选择运行路径 */
 export async function getMdToPptPoolModels(): Promise<MdToPptPoolModelItem[]> {
   const res = await apiRequest<MdToPptPoolModelItem[]>('/api/md-to-ppt/pool-models');
   return res.success && Array.isArray(res.data) ? res.data : [];
@@ -247,7 +246,7 @@ export async function createMdToPptProfileFromPool(modelId: string): Promise<MdT
 
 // ============ Types ============
 
-// 生成引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出）。
+// 生成引擎优先走 LLM Gateway 直出，CDS Agent 只作为兼容路径。
 // 类型保留用于历史 run 记录展示（旧 run 的 engine 字段可能是 'map'）。
 export type MdToPptEngine = 'map' | 'agent';
 
@@ -390,9 +389,9 @@ export interface MdToPptConvertSseOptions {
   theme?: string;
   /** 自定义模板 ID（优先于 theme 生效，后端取模板风格规范作为生成参照） */
   templateId?: string;
-  /** 结构化大纲（触发并行逐页生成：壳子确定后子智能体各画一页，page 事件实时进度） */
+  /** 结构化大纲（触发并行逐页生成：壳子确定后页面生成器各画一页，page 事件实时进度） */
   outlinePages?: OutlineSlide[];
-  /** PPT 一句话主题（逐页模式给子智能体的全局语境） */
+  /** PPT 一句话主题（逐页模式给页面生成器的全局语境） */
   summary?: string;
   /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
   runtimeProfileId?: string;

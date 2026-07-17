@@ -351,9 +351,9 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .app-aurora { animation: none; }
 }
-/* 性能模式(玻璃关闭):停掉 aurora 动画并回退实底,避免全屏大渐变持续重绘。
-   玻璃关时本就没有可折射底色的需求,去掉这层视觉负载与性能模式语义一致。 */
+/* 性能模式:只停 aurora 漂移动画(重绘大头),不再抹掉渐变底色——
+   2026-07-17 起材质与性能解耦,玻璃材质+性能模式仍需可折射的静态底色,
+   素色材质的底色由 legacy.css 的 data-material 规则接管(Codex P2)。 */
 html[data-perf-mode="performance"] .app-aurora {
   animation: none !important;
-  background: var(--bg-base) !important;
 }

@@ -1992,6 +1992,7 @@ export {
   getDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  publishDocumentEntryCreative,
   listEntryVersions,
   getEntryVersion,
   restoreEntryVersion,
@@ -2037,6 +2038,9 @@ export type {
   DocumentStoreViewEvent,
   DocumentStoreViewStats,
   DocumentInlineComment,
+  KnowledgeCreativePublishKind,
+  KnowledgeCreativePublishInput,
+  KnowledgeCreativePublishResult,
 } from '@/services/contracts/documentStore';
 
 // ── Emergence Explorer 涌现探索器 ──

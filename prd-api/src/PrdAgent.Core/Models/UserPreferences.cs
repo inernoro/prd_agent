@@ -99,6 +99,9 @@ public class ThemeConfig
 
     /// <summary>性能模式：auto | quality | performance</summary>
     public string PerformanceMode { get; set; } = "performance";
+
+    /// <summary>界面材质：solid 素色实底（默认）| glass 液态玻璃</summary>
+    public string Material { get; set; } = "solid";
 }
 
 /// <summary>

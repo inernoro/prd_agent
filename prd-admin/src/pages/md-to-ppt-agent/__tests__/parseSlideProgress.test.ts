@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLiveSlideDoc,
+  estimatePages,
   extractCompletedSections,
   extractHeadAssets,
+  parseExplicitPages,
   parseSlideProgress,
 } from '../MdToPptAgentPage';
 
@@ -41,6 +43,15 @@ describe('parseSlideProgress', () => {
   it('无标题的页给空串占位（渲染层兜底显示"已生成"）', () => {
     const p = parseSlideProgress('<section><p>only text</p></section>');
     expect(p.titles).toEqual(['']);
+  });
+});
+
+describe('estimatePages', () => {
+  it('优先识别用户显式页数', () => {
+    expect(parseExplicitPages('严格生成 2 页高级产品发布会 PPT')).toBe(2);
+    expect(parseExplicitPages('做一份两页控制台演示')).toBe(2);
+    expect(parseExplicitPages('输出十二页技术方案')).toBe(12);
+    expect(estimatePages('严格生成 2 页高级产品发布会 PPT，' + '内容很长'.repeat(500))).toBe(2);
   });
 });
 

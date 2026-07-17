@@ -13,6 +13,7 @@
 - 当前仍停留在[[第 11 章：点击安全测试|第 11 章]]的 vision 已生成配置；如果已经刷新或离开 Quickstart，先按[[第 10 章：一键生成第一把 key|第 10 章]]相同字段重新生成一把明确限定的 vision test key，再继续，不使用页面恢复后的默认身份。
 - [[第 10 章：一键生成第一把 key|第 10 章]]已经安全保存 chat key 与 chat 接入片段；本章当前复制的是 vision 片段，两类片段不要混用。
 - 当前仍为安全模式，示例包含 `X-Gateway-Dry-Run: quickstart`。
+- 当前 Gateway 地址若刚被修改，真实模式会自动失效；在新地址路由预检成功前，cURL 和 Agent Skill 都必须继续保留 dry-run。
 - 明确真实业务采用哪种 SDK 兼容协议；不知道时从 OpenAI 兼容开始验证。
 
 ## 跟我做
@@ -25,7 +26,7 @@
 
 ![图 062 Gateway 地址由当前网址自动生成，不让用户手工猜域名](https://cds.miduo.org/api/reports/assets/ef89c0849710b5f8536e5e0d837398a0859eb4a3cee6d881800a5226b7ebf1da.png)
 
-2. 对每个协议查看 cURL 正文，确认不是同一 JSON 生搬硬套；vision 示例还应使用内嵌测试图片形状。
+2. 对每个协议查看 cURL 正文，确认不是同一 JSON 生搬硬套；vision 示例还应使用内嵌测试图片形状。GW Native 片段先生成一个 `REQUEST_ID`，请求头和正文必须引用同一个值，避免一条调用出现两个审计标识。
 
 **图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议**
 
@@ -55,7 +56,7 @@
 
 ![图 097 学习中心先用三步讲清第一条请求，不要求先懂全部术语](https://cds.miduo.org/api/reports/assets/5b663dc659eb61f03554e6147a1f6b08de72fde553f14100520a9785236155e6.png)
 
-7. 完成测试后仍保留 dry-run header。只有生产清单批准真实调用时才删除。
+7. 完成测试后仍保留 dry-run header。只有当前 Gateway 地址的路由预检成功并由用户明确切换“真实模型”后，页面才会生成不带 dry-run 的真实片段；地址变化或预检失效时，片段自动退回安全模式。
 
 ![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
 
@@ -71,7 +72,7 @@
 
 ## 看到什么算成功
 
-三种标签都能一键复制，四协议各有正确路径和请求形状。示例不要求用户输入 tenantId，也不暴露 Provider 通讯密钥。Agent 能从环境变量读取 Gateway 地址和 key，并知道用 requestId 在“请求记录”回查。
+三种标签都能一键复制，四协议各有正确路径和请求形状。示例不要求用户输入 tenantId，也不暴露 Provider 通讯密钥。Agent 能从环境变量读取 Gateway 地址和 key，并知道用 requestId 在“请求记录”回查；GW Native 的 header 与 body 使用同一个 requestId，未通过当前地址路由预检时无法复制出真实调用片段。
 
 ## 失败怎么办
 

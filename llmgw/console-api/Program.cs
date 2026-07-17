@@ -3774,6 +3774,7 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
     AddExactFilter("SourceSystem", body.SourceSystem);
     AddExactFilter("IngressProtocol", body.IngressProtocol);
     AddExactFilter("RequestType", body.RequestType);
+    AddExactFilter("ModelPoolId", body.ModelPoolId);
     var driftFilter = BuildAppCallerDriftFilter(body.Drift);
     if (driftFilter is not null)
     {
