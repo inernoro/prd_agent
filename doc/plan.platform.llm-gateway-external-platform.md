@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.29 | **日期**：2026-07-17 | **状态**：全部完成并生产交付
+> **版本**：v1.30 | **日期**：2026-07-17 | **状态**：全部完成并生产交付
 
 ## 1. 目标
 
@@ -360,9 +360,11 @@ Tenant
 
 PR #1168 在不重做 full-http、模型迁移、模型池算法或发布 Gate 的前提下，关闭了最后一组用户体验和独立部署缺口：Provider、模型关联 Provider、appCaller 显式模型池和 Exchange 路由均可在当前列表打开只读抽屉；抽屉不返回密钥明文、不发写请求，支持 Escape、Tab 焦点约束、关闭后焦点恢复和 390px 内部滚动。Quickstart、费用、Activity、租户、策略与模型池既有主链未被复制。
 
-提交 `6a0d128fe04a49f967d526de64030b7cbc49a8ba` 的 Build & Test、Server、CDS、Docker、三个 Gateway 镜像、CI Status 和 CDS Deploy 全绿，Codex Review 覆盖最终提交且没有修改意见；Bugbot 因用户停止续费记为不适用。CDS 部署 `dr_9f651c309df8cc1254e27b33` 以五个源码 profile 运行同一提交，自动 smoke 3/3；`llmgw-web` 不再依赖旧 `branch-main` 预构建镜像，Console API、Serving 和 Web 可以随 prd-agent 作为独立服务更新。为防存量 profile 从预构建切回源码时仍跳过 worktree 挂载，Compose 与解析器同时保留显式 `prebuilt=false`，定向解析测试 51/51 通过。
+证据按提交边界分别记录，禁止把不同 SHA 的结果混写。功能提交 `6a0d128fe04a49f967d526de64030b7cbc49a8ba` 共 16 项检查通过或按条件跳过，其中 Build & Test、Server、CDS、Docker、三个 Gateway 镜像、CI Status 和 CDS Deploy 均为成功，CDS 部署 `dr_5716a46ddd7b0afb5a25ca03` 运行该精确提交。PR #1168 合并前末端提交 `c1b99dbbf87d58d2e79d4e0804d9652a0b7d230b` 的 Build & Test、Server、CDS Build & Test、Docker 和三个 Gateway 镜像通过；squash 合并提交 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3` 由主分支部署 `dr_28c1eb47d2faa9ee5f74ac1b` 验证为 5/5 服务运行且自动 smoke 3/3。Bugbot 因用户停止续费记为不适用。
 
-公网独立网关子域的首页、Provider、模型、appCaller、Exchange、Quickstart、Activity、用量、治理和学习中心共 10 个页面以及 Console/Serving 双健康端点均返回 200；GW Native、OpenAI、Claude、Gemini 四入口没有 Gateway Key 时全部返回 401，没有调用付费上游。远端源码页面完成 113/113 浏览器截图和 Exchange 连续故事 3/3，自动发现、功能缺陷、console error 与 network error 均为 0。[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 64,337 字节、12 个步骤、12 张内容寻址图片和 4 个验收深链。PR #1168 已 squash 合并为 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3`；生产发布 `rel_aaae1903c97652b6` 首次更新 37 项，第二次 37 项全部 noop；只读复核 `rel_3c0ae6c6fc0ce838` 确认备份 SHA256 匹配、临时发布 Key 活跃数为 0 且最新 Key 已撤销。公共教程分享页和 API 返回 200，四类关联预览说明均可从对应章节读回；旧 49% 临时进度条目已原位更新为 100% 最终验收总览，公共正文哈希与本地目标一致。CDS 目标恢复原命令后已禁用。因此本段状态结算为“已合并、已生产发布、已安全收尾”。
+`llmgw-web` 不再依赖旧 `branch-main` 预构建镜像，Console API、Serving 和 Web 可以随 prd-agent 作为独立服务更新。为防存量 profile 从预构建切回源码时仍跳过 worktree 挂载，Compose 与解析器同时保留显式 `prebuilt=false`，定向解析测试 51/51 通过。合并后复核还发现非默认项目只给 profile id 加项目后缀、没有同步改写应用间 `dependsOn`，部署拓扑会把未知依赖误判为已满足并让 Web 抢跑。PR #1169 同时在 Quickstart 写入和部署读取两处归一化项目内应用依赖；只有同项目目标真实存在时才改写，MongoDB、Redis 等基础设施依赖保持原名。CDS TypeScript 构建、作用域纯函数 4/4、Quickstart 路由回归和 CDS 全量 2849/2849 测试通过，另有 1 个既有 Docker 条件测试跳过；因此升级前的存量 profile 不需要删除重建。
+
+公网独立网关子域的首页、Provider、模型、appCaller、Exchange、Quickstart、Activity、用量、治理和学习中心共 10 个页面以及 Console/Serving 双健康端点均返回 200；GW Native、OpenAI、Claude、Gemini 四入口没有 Gateway Key 时全部返回 401，没有调用付费上游。远端源码页面完成 113/113 浏览器截图和 Exchange 连续故事 3/3，自动发现、功能缺陷、console error 与 network error 均为 0。[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 64,337 字节、12 个步骤、12 张内容寻址图片和 4 个验收深链。PR #1168 已 squash 合并为 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3`；生产发布 `rel_aaae1903c97652b6` 首次更新 37 项，第二次 37 项全部 noop；只读复核 `rel_3c0ae6c6fc0ce838` 确认备份 SHA256 匹配、临时发布 Key 活跃数为 0 且最新 Key 已撤销。公共教程分享页和 API 返回 200，四类关联预览说明均可从对应章节读回；旧 49% 临时进度条目已原位更新为 100% 最终验收总览，公共正文哈希与本地目标一致。CDS 目标恢复原命令后已禁用。因此本段状态结算为“功能已合并、教程已生产发布、临时权限已安全收尾；启动顺序加固由 PR #1169 独立闭环”。
 
 ## 10. 不做
 

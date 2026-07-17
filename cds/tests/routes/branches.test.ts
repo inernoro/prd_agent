@@ -3835,6 +3835,61 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('POST /api/quickstart project-scoped dependencies', () => {
+    it('scopes application dependencies while preserving infra dependencies', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'gateway-project',
+        slug: 'gateway-project',
+        name: 'Gateway Project',
+        kind: 'git',
+        repoPath: tmpDir,
+        createdAt: now,
+        updatedAt: now,
+      });
+      fs.writeFileSync(path.join(tmpDir, 'cds-compose.yml'), [
+        'services:',
+        '  gateway-api:',
+        '    image: node:20-slim',
+        '    volumes:',
+        '      - ./api:/repo/api',
+        '    working_dir: /repo/api',
+        '    command: node server.js',
+        '    ports:',
+        '      - "8080"',
+        '  gateway-web:',
+        '    image: node:20-slim',
+        '    volumes:',
+        '      - ./web:/repo/web',
+        '    working_dir: /repo/web',
+        '    command: node server.js',
+        '    ports:',
+        '      - "5173"',
+        '    depends_on:',
+        '      - gateway-api',
+        '      - mongodb',
+        '  mongodb:',
+        '    image: mongo:8.0',
+        '    ports:',
+        '      - "27017"',
+      ].join('\n'));
+
+      const res = await request(server, 'POST', '/api/quickstart?project=gateway-project');
+
+      expect(res.status).toBe(201);
+      const saved = stateService.getBuildProfilesForProject('gateway-project');
+      expect(saved.map((item) => item.id).sort()).toEqual([
+        'gateway-api-gateway-project',
+        'gateway-web-gateway-project',
+      ]);
+      expect(saved.find((item) => item.id === 'gateway-web-gateway-project')?.dependsOn).toEqual([
+        'gateway-api-gateway-project',
+        'mongodb',
+      ]);
+      expect(stateService.getInfraServicesForProject('gateway-project').map((item) => item.id)).toContain('mongodb');
+    });
+  });
+
   // ── Infra services (P4 Part 16: B1 fix) ──
 
   describe('POST /api/infra (project scoping)', () => {

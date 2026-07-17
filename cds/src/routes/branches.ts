@@ -29,6 +29,7 @@ import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog,
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
@@ -11931,6 +11932,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // ── Compute startup layers (topological sort by dependsOn) ──
+      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
+      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
+      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
+      const deployProjectId = entry.projectId || 'default';
+      const deployProfileSuffix = deployProjectId === 'default'
+        ? ''
+        : `-${deployProject?.slug || deployProjectId}`;
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
+
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
       // this project. Avoids cross-project bleed where project A's
@@ -16432,15 +16442,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       const parsed = parseCdsCompose(composeYaml);
       if (parsed && parsed.buildProfiles.length > 0) {
-        const seeded: BuildProfile[] = [];
-        for (const bp of parsed.buildProfiles) {
-          const profile: BuildProfile = {
-            ...bp,
-            id: `${bp.id}${idSuffix}`,
-            projectId,
-          };
+        const scopedProfiles = parsed.buildProfiles.map((bp): BuildProfile => ({
+          ...bp,
+          id: `${bp.id}${idSuffix}`,
+          projectId,
+        }));
+        const seeded = normalizeProjectProfileDependencies(scopedProfiles, idSuffix);
+        for (const profile of seeded) {
           stateService.addBuildProfile(profile);
-          seeded.push(profile);
         }
 
         // Merge envVars — never clobber user-authored vars. Since the
