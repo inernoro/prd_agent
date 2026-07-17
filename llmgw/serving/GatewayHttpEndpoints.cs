@@ -746,7 +746,8 @@ public static class GatewayHttpEndpoints
             HttpContext http,
             ResolveRequestDto body,
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-            ILLMRequestContextAccessor accessor) =>
+            ILLMRequestContextAccessor accessor,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var resolveModelPolicy = NormalizeModelPolicy(body.ModelPolicy)
                                      ?? NormalizeModelPolicy(body.Context?.ModelPolicy);
@@ -782,6 +783,19 @@ public static class GatewayHttpEndpoints
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
+            if (!await CanPreviewAppCallerForTeamAsync(services, ingress, CancellationToken.None))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_TEAM_OWNERSHIP_DENIED",
+                        message = "appCaller 已归属其他团队",
+                        appCallerCode = body.AppCallerCode,
+                        requestType = body.ModelType,
+                    },
+                }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
+            }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
             var resolution = await gateway.ResolveModelAsync(
                 body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
@@ -4821,6 +4835,43 @@ public static class GatewayHttpEndpoints
             // 拒绝结果保持 fail-closed；审计存储异常不能放行跨团队请求。
         }
         return false;
+    }
+
+    private static async Task<bool> CanPreviewAppCallerForTeamAsync(
+        IServiceProvider services,
+        GatewayIngressRequest ingress,
+        CancellationToken ct)
+    {
+        var requestedTeamId = ingress.Context?.TeamId;
+        if (string.IsNullOrWhiteSpace(requestedTeamId)
+            || string.IsNullOrWhiteSpace(ingress.AppCallerCode)
+            || string.IsNullOrWhiteSpace(ingress.RequestType))
+        {
+            return true;
+        }
+
+        var gatewayData = services.GetService<LlmGatewayDataContext>();
+        if (gatewayData is null) return true;
+        var tenantId = ingress.Context?.TenantId;
+        if (string.IsNullOrWhiteSpace(tenantId)) return false;
+
+        var identityFilter = Builders<GatewayAppCallerRecord>.Filter.And(
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.AppCallerCode, GatewayAppCallerIdentity.NormalizePart(ingress.AppCallerCode)),
+            Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.RequestType, GatewayAppCallerIdentity.NormalizePart(ingress.RequestType)));
+        try
+        {
+            var registered = await gatewayData.Database
+                .GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+                .Find(identityFilter, new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+                .FirstOrDefaultAsync(ct);
+            return registered is null || string.Equals(registered.TeamId, requestedTeamId, StringComparison.Ordinal);
+        }
+        catch
+        {
+            // 团队范围无法被权威存储证明时保持 fail-closed，避免 route:read 泄漏其他团队的路由元数据。
+            return false;
+        }
     }
 
     private static string? NormalizeOptionalTraceId(string? value)

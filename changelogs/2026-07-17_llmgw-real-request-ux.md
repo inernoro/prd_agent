@@ -13,3 +13,4 @@
 | fix | llmgw | GW Native cURL 的请求头和正文复用同一个动态 requestId，避免日志串号与重复审计标识 |
 | fix | llmgw | appCaller 模型池深链筛选加入可见筛选条件及服务端批量治理过滤，防止越池更新 |
 | fix | llmgw-serving | resolve 路由预览支持 header-only 来源校验且不再写入 appCaller 活跃度 |
+| security | llmgw-serving | resolve 在不写活跃度的前提下保留 appCaller 团队所有权校验，拒绝同租户跨团队路由探测 |

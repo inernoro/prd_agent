@@ -635,6 +635,8 @@ public class GatewayDataDomainGuardTests
         var resolveEnd = endpoints.IndexOf("async Task<IResult> HandleNativeInvokeAsync", resolveStart, StringComparison.Ordinal);
         Assert.True(resolveStart >= 0 && resolveEnd > resolveStart);
         Assert.DoesNotContain("RecordDiscoveredAppCallerAsync", endpoints[resolveStart..resolveEnd]);
+        Assert.Contains("CanPreviewAppCallerForTeamAsync", endpoints[resolveStart..resolveEnd]);
+        Assert.Contains("registered is null || string.Equals(registered.TeamId, requestedTeamId", endpoints);
     }
 
     [Fact]
