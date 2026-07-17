@@ -3467,6 +3467,75 @@ describe('Branch Routes', () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it('normalizes project-scoped dependencies before dispatching to a remote executor', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'gateway-project',
+        slug: 'gateway-project',
+        name: 'Gateway Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (const profile of [
+        { id: 'console-gateway-project', name: 'Console', dependsOn: undefined },
+        { id: 'serving-gateway-project', name: 'Serving', dependsOn: undefined },
+        { id: 'web-gateway-project', name: 'Web', dependsOn: ['console', 'serving'] },
+      ]) {
+        stateService.addBuildProfile({
+          ...profile,
+          projectId: 'gateway-project',
+          dockerImage: 'node:20-slim',
+          command: 'node server.js',
+          workDir: '.',
+          containerPort: 3000,
+        });
+      }
+      stateService.addBranch({
+        id: 'gateway-project-remote',
+        projectId: 'gateway-project',
+        branch: 'feature/remote',
+        worktreePath: path.join(tmpDir, 'worktrees', 'gateway-project-remote'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      registryNodes.push({
+        id: 'exec-gateway',
+        host: '127.0.0.1',
+        port: 9102,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+
+      let dispatchedBody: any;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        dispatchedBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const result = await request(server, 'POST', '/api/branches/gateway-project-remote/deploy', {
+          targetExecutorId: 'exec-gateway',
+        });
+
+        expect(result.status).toBe(200);
+        expect(dispatchedBody.profiles.find((profile: any) => profile.id === 'web-gateway-project')?.dependsOn).toEqual([
+          'console-gateway-project',
+          'serving-gateway-project',
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('POST /api/branches/:id/set-default', () => {

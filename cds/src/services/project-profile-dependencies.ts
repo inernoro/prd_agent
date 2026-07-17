@@ -1,4 +1,7 @@
-import type { BuildProfile } from '../types.js';
+interface DependencyProfile {
+  id: string;
+  dependsOn?: string[];
+}
 
 /**
  * 将 Compose 中的项目内服务依赖对齐到 CDS 持久化后的 profile id。
@@ -10,10 +13,10 @@ import type { BuildProfile } from '../types.js';
  * 此函数同时用于 Quickstart 写入和部署时兼容。后者保证升级前已经
  * 存在的 profile 也能立即获得正确启动顺序，无需删除后重建。
  */
-export function normalizeProjectProfileDependencies(
-  profiles: BuildProfile[],
+export function normalizeProjectProfileDependencies<T extends DependencyProfile>(
+  profiles: T[],
   idSuffix: string,
-): BuildProfile[] {
+): T[] {
   if (!idSuffix) return profiles;
 
   const profileIds = new Set(profiles.map((profile) => profile.id));

@@ -3018,9 +3018,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
     // auto-publish 表面成功实际没切容器。
     // 分支实际部署清单 = 项目底座 + 本分支临时额外服务(branch-local);未声明额外服务 = 项目原样。
-    const profiles = context.profiles || stateService
+    const rawProfiles = context.profiles || stateService
       .getEffectiveProfilesForBranch(entry)
       .map((p) => resolveEffectiveProfile(p, entry));
+    const remoteProjectId = entry.projectId || 'default';
+    const remoteProject = stateService.getProject(remoteProjectId);
+    const remoteProfileSuffix = remoteProjectId === 'default'
+      ? ''
+      : `-${remoteProject?.slug || remoteProjectId}`;
+    const profiles = normalizeProjectProfileDependencies(rawProfiles, remoteProfileSuffix);
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
     const env = getMergedEnv(entry.projectId || 'default', entry.id);

@@ -224,6 +224,51 @@ describe('Executor /exec/deploy', () => {
     expect(entry!.worktreePath).not.toContain('/worktrees/default/');
   });
 
+  it('honors dependency layers even when the remote payload is out of order', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'gateway-project',
+      slug: 'gateway-project',
+      name: 'Gateway Project',
+      kind: 'git',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'gateway-project-feature',
+      branchName: 'feature/gateway',
+      projectId: 'gateway-project',
+      profiles: [
+        {
+          id: 'web-gateway-project', name: 'Web', dockerImage: 'node:20-slim', workDir: '.',
+          command: 'node web.js', containerPort: 3002, dependsOn: ['console', 'serving'],
+        },
+        {
+          id: 'serving-gateway-project', name: 'Serving', dockerImage: 'node:20-slim', workDir: '.',
+          command: 'node serving.js', containerPort: 3001,
+        },
+        {
+          id: 'console-gateway-project', name: 'Console', dockerImage: 'node:20-slim', workDir: '.',
+          command: 'node console.js', containerPort: 3000,
+        },
+      ],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    const startupPlan = result.events.find((event) => event.event === 'step' && event.data?.step === 'startup-plan');
+    expect(startupPlan?.data?.layers).toEqual([
+      { layer: 0, services: ['serving-gateway-project', 'console-gateway-project'] },
+      { layer: 1, services: ['web-gateway-project'] },
+    ]);
+    const runningSteps = result.events
+      .filter((event) => event.event === 'step' && event.data?.status === 'running' && String(event.data?.step).startsWith('build-'))
+      .map((event) => event.data?.step);
+    expect(runningSteps.indexOf('build-console-gateway-project')).toBeLessThan(runningSteps.indexOf('build-web-gateway-project'));
+    expect(runningSteps.indexOf('build-serving-gateway-project')).toBeLessThan(runningSteps.indexOf('build-web-gateway-project'));
+  });
+
   it('falls back to resolveProjectForAutoBuild when master omits projectId (older master)', async () => {
     // Simulate post-rename: legacy project flipped to 'prd-agent'.
     const legacy = stateService.getLegacyProject()!;

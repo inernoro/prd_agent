@@ -8,6 +8,7 @@ import type { ContainerService } from '../services/container.js';
 import { WorktreeService } from '../services/worktree.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 
 export interface ExecutorRouterDeps {
   stateService: StateService;
@@ -81,7 +82,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     // 缺省 profiles 视为空清单（Bugbot Low「Executor deploy missing profiles guard」）：旧 master 或手工
     // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
     // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
-    const profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
+    let profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
 
     // SSE response
     res.writeHead(200, {
@@ -124,6 +125,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         }
         resolvedProjectId = owner.id;
       }
+
+      // 新 master 会在派发前完成归一化；这里再做一次兼容，覆盖旧 master、
+      // 手工调用和 executor 已同步项目元数据的场景。后续拓扑排序只消费
+      // 归一化后的依赖，避免 Web 先于 Console/Serving 启动。
+      const executorProject = stateService.getProject(resolvedProjectId);
+      const executorProfileSuffix = resolvedProjectId === 'default'
+        ? ''
+        : `-${executorProject?.slug || resolvedProjectId}`;
+      profilesData = normalizeProjectProfileDependencies(profilesData, executorProfileSuffix);
 
       let entry = stateService.getBranch(branchId);
       if (!entry) {
@@ -234,32 +244,63 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // the wrong project's scope.
       const mergedEnv = { ...getMergedEnv(entry.projectId || resolvedProjectId), ...(envOverrides || {}) };
 
-      for (const profile of profilesData) {
-        sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
-        const svc = entry.services[profile.id];
-        svc.status = 'building';
+      const runningInfraIds = new Set(
+        stateService.getInfraServicesForProject(entry.projectId || resolvedProjectId)
+          .filter((service) => service.status === 'running')
+          .map((service) => service.id),
+      );
+      const { layers, warnings } = topoSortLayers(
+        profilesData,
+        (profile) => profile.id,
+        (profile) => profile.dependsOn || [],
+        runningInfraIds,
+      );
+      sendEvent('step', {
+        step: 'startup-plan',
+        status: 'info',
+        title: `启动计划: ${layers.length} 层, ${profilesData.length} 服务`,
+        layers: layers.map((layer) => ({ layer: layer.layer, services: layer.items.map((profile) => profile.id) })),
+        ...(warnings.length > 0 ? { warnings } : {}),
+      });
 
-        // PR_B.1：BuildProfile.projectId 改为必填，executor 接收的 profile
-        // 没有这个字段 — 用 resolvedProjectId（与 entry.projectId 同源）补上。
-        const profileWithProject = { ...profile, projectId: resolvedProjectId };
-        try {
-          await containerService.runService(entry, profileWithProject, svc, (chunk) => {
-            sendEvent('log', { profileId: profile.id, chunk });
-          }, mergedEnv, {
-            requestId: requestId || null,
-            operationId: operationId || null,
-            actor: actor || 'executor',
-            trigger: trigger || 'executor-deploy',
-          });
+      for (const layer of layers) {
+        sendEvent('step', {
+          step: `startup-layer-${layer.layer}`,
+          status: 'running',
+          title: `启动第 ${layer.layer} 层`,
+        });
+        for (const profile of layer.items) {
+          sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
+          const svc = entry.services[profile.id];
+          svc.status = 'building';
 
-          svc.status = 'running';
-          svc.errorMessage = undefined;
-          sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
-        } catch (err) {
-          svc.status = 'error';
-          svc.errorMessage = (err as Error).message;
-          sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message });
+          // PR_B.1：BuildProfile.projectId 改为必填，executor 接收的 profile
+          // 没有这个字段 — 用 resolvedProjectId（与 entry.projectId 同源）补上。
+          const profileWithProject = { ...profile, projectId: resolvedProjectId };
+          try {
+            await containerService.runService(entry, profileWithProject, svc, (chunk) => {
+              sendEvent('log', { profileId: profile.id, chunk });
+            }, mergedEnv, {
+              requestId: requestId || null,
+              operationId: operationId || null,
+              actor: actor || 'executor',
+              trigger: trigger || 'executor-deploy',
+            });
+
+            svc.status = 'running';
+            svc.errorMessage = undefined;
+            sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
+          } catch (err) {
+            svc.status = 'error';
+            svc.errorMessage = (err as Error).message;
+            sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message });
+          }
         }
+        sendEvent('step', {
+          step: `startup-layer-${layer.layer}`,
+          status: 'done',
+          title: `第 ${layer.layer} 层完成`,
+        });
       }
 
       // 注：期望清单收敛（移除 payload 之外的孤儿服务容器）已上移到 pull 之前，避免 git 失败把
