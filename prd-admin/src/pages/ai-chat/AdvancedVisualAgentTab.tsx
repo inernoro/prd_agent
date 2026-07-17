@@ -67,6 +67,7 @@ import {
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
+import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -3830,7 +3831,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const uiSizeToken = forcedSize ? `(@size:${forcedSize}) ` : '';
     const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
     const uiModelToken = modelPoolName ? `(@model:${modelPoolName}) ` : '';
-    const userMsgForBackend = `${uiSizeToken}${uiModelToken}${display || reqText}`;
+    // 展示/存储的用户消息绝不回退到 reqText 原文（含【引用图片】文字块 + 文件名，模型层专用）。
+    // display 为空时用"@imgN 引用标记 + 清洗后的正文"兜底：引用由渲染层还原为视觉 chip。
+    const displayForMsg =
+      display ||
+      [
+        imageRefs
+          .filter((r) => typeof r.refId === 'number' && r.refId > 0)
+          .map((r) => `@img${r.refId}`)
+          .join(' '),
+        parseVisualMessageDisplay(reqText).text,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    const userMsgForBackend = `${uiSizeToken}${uiModelToken}${displayForMsg}`;
     pushMsg('User', userMsgForBackend);
 
     // ========== 统一图片引用：如果有选中图片但没有 @imgN，也加入 imageRefs ==========

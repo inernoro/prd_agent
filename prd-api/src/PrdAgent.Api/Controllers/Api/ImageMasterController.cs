@@ -1679,10 +1679,12 @@ public class ImageMasterController : ControllerBase
             // 服务器权威性：后端自动保存 User 消息到 image_master_messages
             try
             {
-                // 优先使用前端传入的完整用户消息（含标签/引用），回退到纯 prompt
+                // 优先使用前端传入的完整用户消息（含标签/引用）。
+                // 缺失时禁止直接存模型层 prompt（含生图前缀 + 【引用图片】文字块 + 文件名），
+                // 走清洗兜底：只保留用户可读文本 + @imgN 引用标记（前端渲染为视觉 chip）。
                 var userMsgContent = !string.IsNullOrWhiteSpace(request?.UserMessageContent)
                     ? request!.UserMessageContent!.Trim()
-                    : prompt;
+                    : BuildFallbackUserMessageContent(prompt);
                 var userMsg = new ImageMasterMessage
                 {
                     Id = Guid.NewGuid().ToString("N"),
@@ -1715,6 +1717,52 @@ public class ImageMasterController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"创建生图任务失败（traceId={traceId}）"));
         }
+    }
+
+    /// <summary>
+    /// UserMessageContent 缺失时的兜底：从模型层 prompt 中剥离生图意图前缀与
+    /// 【引用图片（按顺序）】文字块（含 "- @imgN: 文件名" 行），避免把模型 prompt
+    /// 泄漏进 image_master_messages 的可见消息。引用块中的 @imgN 序号以内联标记补回，
+    /// 由前端渲染为视觉 chip；清洗后无内容则存空字符串。不影响真正发给模型的 prompt。
+    /// </summary>
+    private static string BuildFallbackUserMessageContent(string? prompt)
+    {
+        var s = prompt ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+
+        // 1. 剥离生图意图前缀（防御性循环：历史内容可能叠加多层）
+        var prefixRe = new Regex(@"^\s*Generate an image based on the following description:\s*", RegexOptions.IgnoreCase);
+        for (var i = 0; i < 5 && prefixRe.IsMatch(s); i++)
+        {
+            s = prefixRe.Replace(s, string.Empty, 1);
+        }
+
+        // 2. 收集引用块中的 @imgN 序号（保序去重）
+        var refIds = new List<int>();
+        foreach (Match m in Regex.Matches(s, @"^\s*-\s*@?img(\d+)\s*[:：].*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+        {
+            if (int.TryParse(m.Groups[1].Value, out var id) && id > 0 && !refIds.Contains(id)) refIds.Add(id);
+        }
+
+        // 3. 剥离【…引用图片…】块头与 "- @imgN: 文件名" 行
+        s = Regex.Replace(s, @"【[^】]*引用图片[^】]*】", " ");
+        s = Regex.Replace(s, @"^\s*-\s*@?img\d+\s*[:：].*$", " ", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+        // 4. 折叠空白
+        s = Regex.Replace(s, @"[ \t]{2,}", " ");
+        s = Regex.Replace(s, @"\n{3,}", "\n\n").Trim();
+
+        // 5. 正文中未内联出现的引用序号以 @imgN 标记补回（(?!\d) 防 @img1 命中 @img12）
+        var missing = refIds
+            .Where(id => !Regex.IsMatch(s, $@"@img{id}(?!\d)", RegexOptions.IgnoreCase))
+            .Select(id => $"@img{id}")
+            .ToList();
+        if (missing.Count > 0)
+        {
+            var markers = string.Join(" ", missing);
+            s = string.IsNullOrEmpty(s) ? markers : $"{markers} {s}";
+        }
+        return s;
     }
 
     private async Task UpsertWorkspaceCanvasPlaceholderAsync(
