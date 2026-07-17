@@ -192,6 +192,12 @@
     ]
   },
   {
+    "code": "document-store.creative-publish::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "document-store.reprocess::chat",
     "modelTypes": [
       "chat"

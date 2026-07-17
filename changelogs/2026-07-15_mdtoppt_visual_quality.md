@@ -7,3 +7,4 @@
 | fix | prd-admin | 修复 MD 转 PPT 控制台移动端和浮层硬编码深色背景，避免浅色主题下出现暗块并通过双皮肤棘轮 |
 | test | prd-api | 增加 MD 转 PPT HTML 质量闸门和兜底页结构回归测试 |
 | test | prd-admin | 增加 MD 转 PPT 显式页数解析回归测试 |
+| test | prd-api | 同步知识库一键创作发布 AppCallerCode 的注册表 golden 快照，修复合并态后端 CI |
