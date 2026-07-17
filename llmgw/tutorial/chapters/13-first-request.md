@@ -24,45 +24,51 @@
 
 ![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
 
-2. 先粘贴标记为 chat 的完整 requestId。筛选会自动生效，不需要寻找“执行查找”按钮。
+2. 先粘贴标记为 chat 的完整 requestId。筛选会自动生效；如果当前租户只匹配一条记录，详情会直接打开，不需要再点表格行，也不需要寻找“执行查找”按钮。
 
 **图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度**
 
 ![图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
 
-3. 打开唯一匹配记录，先核对时间、成功状态、入口协议和 appCaller `tutorial.gateway-book::chat`。
+3. 在“概览”页签先核对时间、状态、入口协议、appCaller、实际模型和 Provider。上方六项指标回答 token、费用、速度和总耗时；下方“上游响应”逐次列出 Provider、模型、模型池、结果和回退原因。
 
-**图 071 请求趋势和状态分布让用户先看有没有流量与失败**
+**图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏**
 
-![图 071 请求趋势和状态分布让用户先看有没有流量与失败](https://cds.miduo.org/api/reports/assets/af4fb1eb6028d571e6923c337b807fab3c0872eff1a16817fa744082a486bb37.png)
+![图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏](https://cds.miduo.org/api/reports/assets/1074b176d0aec40e050455586b52a21904877e77835702a0474b668be151ecd0.png)
 
-4. 核对可见身份字段：团队为客服组，ServiceKeyId 对应刚创建的 key，环境为 test。页面不展示 TenantId；当前租户由会话确定，不能靠详情里的客户端字段证明。
+4. 切到“请求与响应”，核对请求身份中的 App、Key 前缀、Request ID、Generation ID、入口协议和流式状态，再按需查看请求、响应或原始数据。App 应显示为 `G-` 加 appCallerCode；这里只显示 key 前缀，不显示完整 key。
 
-**图 072 费用可信度条区分价格覆盖、unknown 与原币种金额**
+**图 106 请求与响应页签集中展示调用身份和脱敏后的原始证据**
 
-![图 072 费用可信度条区分价格覆盖、unknown 与原币种金额](https://cds.miduo.org/api/reports/assets/d6875f1f274fb6106f00336d5889877e1911c7077c9b98980bf25bd69e19fb0e.png)
+![图 106 请求与响应页签集中展示调用身份和脱敏后的原始证据](https://cds.miduo.org/api/reports/assets/ceb8dc2af38d5ac805469ce974916357407bf6e12edeefe4a22baf9d91afbaf9.png)
 
-5. 打开详情的“Request”标签，在请求正文中找到 `upstreamCalled=false`；它说明 dry-run 在上游前结束，而不是伪造一个实际模型成功结果。
+5. 切到“路由”，按顺序看期望路由、实际模型、Provider、模型池、参数策略和 PromptPolicy。安全直测应显示未调用上游；真实请求则必须能解释实际走到哪个 Provider，以及前一次失败后为什么继续尝试。
 
-**图 073 请求、上游调用、会话和后台任务四个页签回答不同问题**
+**图 107 路由页签把期望、实际、参数处理和提示词策略串成一条轨迹**
 
-![图 073 请求、上游调用、会话和后台任务四个页签回答不同问题](https://cds.miduo.org/api/reports/assets/381b0bb85f777a44ed90be5ef4298f323f2839c12decf45b96e011a3d4d1d9c9.png)
+![图 107 路由页签把期望、实际、参数处理和提示词策略串成一条轨迹](https://cds.miduo.org/api/reports/assets/6cc6a319556a216b005450d17a349fa82e6a502ffcabfb59260a34a1befb3004.png)
 
-6. 查看费用：unknown 应显示为未知或破折号，不应变成 0；没有实际账单时也不应显示 reconciled。
+6. 切到“审计”，核对网关估算、供应商实际、价格快照、汇率凭证、对账状态和调用身份。unknown 必须显示为“未知”或破折号，不能显示成 0；CNY 与 USD 没有汇率凭证时必须分开显示。
 
-**图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份**
+**图 108 审计页签把费用可信度、身份和时间证据放在一起**
 
-![图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份](https://cds.miduo.org/api/reports/assets/6905aa13616c5bd2191b0971714064d307f8e9a5d9f543fd302d4c4b3989d1a4.png)
+![图 108 审计页签把费用可信度、身份和时间证据放在一起](https://cds.miduo.org/api/reports/assets/688f6882390ff9b8daf9204532c2c43019e0c4435b6ccc4e9e5d4b2f9f7f36a0.png)
 
-7. 返回列表，换成标记为 vision 的 requestId，核对内容组、vision appCaller 和另一条 ServiceKeyId。最后返回概览，确认“最近请求”和 Top appCaller 开始出现这两条测试数据。
+7. 关闭详情，换成标记为 vision 的 requestId。新的精确匹配会再次自动打开详情；核对 vision appCaller、另一条 Key 前缀、内容类型和路由。关闭详情后不会因为同一个筛选值反复弹开，只有换成新的 requestId 才自动打开。
 
 **图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
 
 ![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
 
+8. 最后返回概览，确认“最近请求”和 Top appCaller 开始出现 chat 与 vision 两条测试数据；再点最近请求应回到同一详情。
+
+**图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份**
+
+![图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份](https://cds.miduo.org/api/reports/assets/6905aa13616c5bd2191b0971714064d307f8e9a5d9f543fd302d4c4b3989d1a4.png)
+
 ## 看到什么算成功
 
-requestId 精确命中一条当前租户日志，可见身份字段与 Quickstart 配置一致；日志不含 key 明文。“Request”标签明确出现 `upstreamCalled=false`，费用保持未知。概览的最近请求也能回到这条详情。
+requestId 精确命中一条当前租户日志并自动打开详情；四个详情页签分别回答结果、内容、路由和审计问题。可见身份字段与 Quickstart 配置一致，日志不含 key 明文；安全直测明确显示未调用上游，unknown 费用保持未知。概览的最近请求也能回到这条详情。
 
 ## 失败怎么办
 

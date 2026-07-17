@@ -695,6 +695,7 @@ public sealed class BulkUpdateGatewayAppCallersRequest
     public string? RequestType { get; set; }
     public string? Drift { get; set; }
     public string? Search { get; set; }
+    public string? ModelPoolId { get; set; }
     public string? TargetStatus { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
