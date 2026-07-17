@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateThemeConfig } from '@/services';
-import type { ThemeConfig, ColorDepthLevel, OpacityLevel, SidebarGlassMode, PerformanceMode } from '@/types/theme';
+import type { ThemeConfig, ColorDepthLevel, OpacityLevel, SidebarGlassMode, PerformanceMode, MaterialMode } from '@/types/theme';
 import { DEFAULT_THEME_CONFIG } from '@/types/theme';
 import { applyThemeToDOM } from '@/lib/themeApplier';
 import type { ThemeConfigResponse } from '@/services/contracts/userPreferences';
@@ -34,6 +34,9 @@ function parseThemeConfigResponse(response: ThemeConfigResponse): Partial<ThemeC
   }
   if (response.performanceMode && ['auto', 'quality', 'performance'].includes(response.performanceMode)) {
     result.performanceMode = response.performanceMode as PerformanceMode;
+  }
+  if (response.material && ['solid', 'glass'].includes(response.material)) {
+    result.material = response.material as MaterialMode;
   }
 
   return result;
@@ -78,7 +81,8 @@ export const useThemeStore = create<ThemeState>()(
               serverConfig.opacity !== currentConfig.opacity ||
               serverConfig.enableGlow !== currentConfig.enableGlow ||
               serverConfig.sidebarGlass !== currentConfig.sidebarGlass ||
-              serverConfig.performanceMode !== currentConfig.performanceMode;
+              serverConfig.performanceMode !== currentConfig.performanceMode ||
+              (serverConfig.material ?? 'solid') !== (currentConfig.material ?? 'solid');
 
             if (isDifferent) {
               set({ config: serverConfig, loaded: true });

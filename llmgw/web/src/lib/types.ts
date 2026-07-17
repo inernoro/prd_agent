@@ -840,6 +840,7 @@ export type BulkUpdateGatewayAppCallersRequest = {
   requestType?: string;
   drift?: string;
   search?: string;
+  modelPoolId?: string;
   targetStatus?: string;
   modelPolicy?: string;
   parameterPolicy?: string;

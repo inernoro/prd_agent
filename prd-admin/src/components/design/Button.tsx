@@ -108,7 +108,9 @@ export const Button = React.forwardRef<
     <button
       ref={ref}
       type={type}
-      className={cn(base, sizeCls, variantCls, hoverCls, className)}
+      // map-btn-{variant}：素色材质的扁平化 CSS 钩子（见 legacy.css [data-material="solid"]），
+      // 集中调配按钮观感，不改每个调用点
+      className={cn(base, sizeCls, variantCls, hoverCls, `map-btn map-btn-${variant}`, className)}
       style={style}
       {...props}
     />

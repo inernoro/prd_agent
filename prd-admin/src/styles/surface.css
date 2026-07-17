@@ -57,10 +57,10 @@
 .surface-raised {
   position: relative;
   border: 1px solid var(--glass-border);
+  /* 2026-07-17 去斜面棱：同 GlassCard/nav-bar，边缘只留发丝顶光 */
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.20),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.20),
-    0 24px 48px -12px rgba(10, 10, 14, 0.6);
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 20px 44px -16px rgba(10, 10, 14, 0.55);
   isolation: isolate;
 }
 .surface-raised::before {
@@ -287,10 +287,10 @@
     linear-gradient(180deg, rgba(48, 48, 56, 0.94) 0%, rgba(36, 36, 44, 0.90) 100%),
     linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  /* 2026-07-17 去斜面棱：顶部内描边降为发丝柔光、去掉底部暗线（塑料感来源） */
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.15),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.15),
-    0 12px 32px -8px rgba(10, 10, 14, 0.30);
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 12px 32px -12px rgba(10, 10, 14, 0.30);
   backdrop-filter: blur(40px) saturate(200%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(200%) brightness(1.1);
 }
@@ -299,9 +299,8 @@
   background:
     linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%);
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.20),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.15),
-    0 12px 32px -8px rgba(10, 10, 14, 0.40);
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 12px 32px -12px rgba(10, 10, 14, 0.40);
 }
 
 .surface-nav-bar[data-variant="plain"] {
@@ -1652,6 +1651,26 @@
 .glass-card-interactive:active {
   transform: translateY(-1px);
   transition-duration: 0.1s;
+}
+
+/* ── 知识库卡片（.kb-store-card）──
+   2026-07-16 起素色/玻璃由系统级界面材质统一接管（data-material，见 legacy.css）：
+   素色下 GlassCard 全站走纯平实底 + 安静 hover，知识库不再特例化，
+   本区仅保留置顶落点闪烁动画。 */
+
+/* ── 置顶/取消置顶的落点提示 ──
+   配合卡片 FLIP 位移动画：动完在落点处外圈琥珀描边 1.6s 渐隐，一眼看到它挪去了哪。
+   用 outline 而非 box-shadow——底表面的 box-shadow 带 !important，动画层压不过。 */
+.kb-card-flash {
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: kbCardFlash 1.6s ease-out 1;
+}
+
+@keyframes kbCardFlash {
+  0% { outline-color: rgba(234, 179, 8, 0.9); }
+  60% { outline-color: rgba(234, 179, 8, 0.4); }
+  100% { outline-color: transparent; }
 }
 
 /* ===== 百宝箱 — 最近使用横条 ===== */
