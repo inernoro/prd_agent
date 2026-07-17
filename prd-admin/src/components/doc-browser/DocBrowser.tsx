@@ -2857,16 +2857,13 @@ export function DocBrowser({
       return;
     }
     if (isMobile || entries.length === 0) return;
-    // DFS 按当前排序找第一篇文档（置顶/主文档已排最前，文件夹内继续下钻）
+    // 按当前树序（视觉顺序）中序 DFS 找第一篇文档：遇到文件夹先下钻再看后续兄弟——
+    // 书籍型知识库「第一章」在排序最前的文件夹里，不能被根级散文档抢先（Codex P2）
     const findFirstDoc = (list: DocBrowserEntry[]): DocBrowserEntry | undefined => {
       for (const e of list) {
         if (!e.isFolder) return e;
-      }
-      for (const e of list) {
-        if (e.isFolder) {
-          const hit = findFirstDoc(childrenMap.get(e.id) ?? []);
-          if (hit) return hit;
-        }
+        const hit = findFirstDoc(childrenMap.get(e.id) ?? []);
+        if (hit) return hit;
       }
       return undefined;
     };

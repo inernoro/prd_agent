@@ -26,3 +26,4 @@
 | fix | prd-admin | 修复材质开关在性能模式/Windows 自动降级/系统「减少动态效果」下完全失灵：材质 100% 跟随用户选择，性能路径只压动画不劫持表面 |
 | fix | prd-admin | 头像菜单「液态玻璃」开关接到界面材质 SSOT（旧实现切 performanceMode 已断线导致切换无效），与设置页材质开关联动 |
 | style | prd-admin | 液态玻璃去斜面棱：50% 白顶部内描边/侧缘线/底部暗线（塑料感来源）改为发丝级柔光，blur 升一档补材质厚度（GlassCard/nav-bar/raised 同步） |
+| fix | prd-admin | 回应 Codex 五条 P2：素色弹窗实底兜底 / 进库首篇按真实树序中序 DFS / 选玻璃清隐藏 performance 存量值 / reduced-motion 不再清 blur（玻璃不碎）/ 侧栏不再读已下线的 sidebarGlass 存量值 |

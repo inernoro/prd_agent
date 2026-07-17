@@ -528,19 +528,18 @@ export default function AppShell() {
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const activeNavItem = visibleItems.find((it) => it.key === activeKey);
   const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
-  const isLabPage = location.pathname.startsWith('/lab');
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
-  // 读取主题配置中的侧边栏玻璃效果设置
-  const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
   // 液态玻璃一键开关（头像菜单内）：2026-07-17 起接到「界面材质」SSOT——
   // 与 设置 → 皮肤设置 的材质开关同一个 config.material，两处联动。
   // 旧实现切的是 performanceMode，材质系统上线后已断线（用户「切换没有任何区别」的根因）。
   const setThemeConfig = useThemeStore((s) => s.setConfig);
   const materialChoice = useThemeStore((s) => s.config.material ?? 'solid');
   const glassOn = materialChoice === 'glass';
-  // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
-  const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
+  // 侧边栏玻璃恒开：sidebarGlass 已归一化为系统预设 always（素色材质下由 token 自动压平）。
+  // 不再读存量 config.sidebarGlass——旧值 never/auto 的用户已无 UI 可改，读原始值会让
+  // 侧栏永远丢玻璃处理（Codex P2）。
+  const useSidebarGlass = true;
 
   const asideWidth = collapsed ? 68 : 176;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
@@ -1540,7 +1539,10 @@ export default function AppShell() {
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={(e) => {
                     e.preventDefault();
-                    setThemeConfig({ material: glassOn ? 'solid' : 'glass' });
+                    // 开玻璃时顺手清隐藏的 performanceMode='performance' 存量值（与设置页同口径，Codex P2）
+                    setThemeConfig(glassOn
+                      ? { material: 'solid' }
+                      : { material: 'glass', performanceMode: 'quality' });
                   }}
                 >
                   <Droplets size={16} className="shrink-0" />

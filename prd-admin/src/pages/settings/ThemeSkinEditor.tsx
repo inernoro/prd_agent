@@ -89,7 +89,11 @@ export function ThemeSkinEditor() {
               return (
                 <button
                   key={option.value}
-                  onClick={() => setConfig({ material: option.value as MaterialMode })}
+                  // 选玻璃 = 明确要完整华丽效果：顺手清掉隐藏的 performanceMode='performance'
+                  // 存量值（后端旧默认，会静音 aurora/压动画让玻璃发闷，且已无 UI 可改——Codex P2）
+                  onClick={() => setConfig(option.value === 'glass'
+                    ? { material: 'glass', performanceMode: 'quality' }
+                    : { material: option.value as MaterialMode })}
                   className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
