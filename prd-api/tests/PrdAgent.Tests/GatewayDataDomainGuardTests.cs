@@ -3347,13 +3347,18 @@ public class GatewayDataDomainGuardTests
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
 
-        Assert.Contains("请求详情", drawer);
+        Assert.Contains("生成详情", drawer);
         Assert.Contains("上游耗时", drawer);
         Assert.Contains("生成速度", drawer);
         Assert.Contains("未知：缺 token 或价格快照", drawer);
         Assert.Contains("<ProviderResponses detail={detail}", drawer);
         Assert.Contains("上游响应", drawer);
-        Assert.Contains("查看路由、费用凭证和完整审计字段", drawer);
+        Assert.Contains("['overview', '概览']", drawer);
+        Assert.Contains("['content', '请求与响应']", drawer);
+        Assert.Contains("['routing', '路由']", drawer);
+        Assert.Contains("['audit', '审计']", drawer);
+        Assert.Contains("无法打开这条生成记录", drawer);
+        Assert.Contains("请求详情加载失败，请稍后重试", drawer);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
