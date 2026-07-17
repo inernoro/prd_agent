@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, type ClipboardEvent, type CSSProperties } from 'react';
 import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload, GripVertical } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -23,7 +23,7 @@ import {
   getTeamDefaultTemplate,
 } from '@/services';
 import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
-import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode } from '@/services/contracts/reportAgent';
+import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode, DEFAULT_TABLE_COLUMNS, MAX_TABLE_COLUMNS } from '@/services/contracts/reportAgent';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { MarkdownImportModal } from './MarkdownImportModal';
 import { useDataTheme, type DataTheme } from '../hooks/useDataTheme';
@@ -125,7 +125,7 @@ function resolveFallbackReasonLabel(reason?: string): string {
   return FALLBACK_REASON_LABELS[reason] || '模型结果不可用';
 }
 
-/** 编辑器内每个 item 的草稿状态（比 WeeklyReportItem 略宽,包含 IssueList 扩展字段） */
+/** 编辑器内每个 item 的草稿状态（比 WeeklyReportItem 略宽,包含 IssueList / Table 扩展字段） */
 interface ItemDraft {
   content: string;
   source: string;
@@ -133,10 +133,19 @@ interface ItemDraft {
   issueCategoryKey?: string;
   issueStatusKey?: string;
   imageUrls?: string[];
+  /** Table 专用: 单元格值（按章节 tableColumns 列序对齐） */
+  cells?: string[];
+}
+
+/** 编辑器内每个章节的草稿状态 */
+interface SectionDraft {
+  items: ItemDraft[];
+  /** Table 专用: 本份周报内的列定义（可增删/改名，仅随本份周报保存） */
+  tableColumns?: string[];
 }
 
 /** 把后端 WeeklyReportItem 映射为本地草稿（保留所有字段） */
-function toItemDraft(i: { content: string; source: string; sourceRef?: string; issueCategoryKey?: string; issueStatusKey?: string; imageUrls?: string[] }): ItemDraft {
+function toItemDraft(i: { content: string; source: string; sourceRef?: string; issueCategoryKey?: string; issueStatusKey?: string; imageUrls?: string[]; cells?: string[] }): ItemDraft {
   return {
     content: i.content,
     source: i.source,
@@ -144,7 +153,48 @@ function toItemDraft(i: { content: string; source: string; sourceRef?: string; i
     issueCategoryKey: i.issueCategoryKey,
     issueStatusKey: i.issueStatusKey,
     imageUrls: i.imageUrls ? [...i.imageUrls] : undefined,
+    cells: i.cells ? [...i.cells] : undefined,
   };
+}
+
+/** Table 行单元格补齐/截断到列数；无 cells 的历史行按 " | " 镜像拆分兜底 */
+function normalizeRowCells(item: ItemDraft, columnCount: number): string[] {
+  const raw = item.cells && item.cells.length > 0
+    ? [...item.cells]
+    : (item.content ? item.content.split(' | ') : []);
+  const cells = raw.slice(0, columnCount);
+  while (cells.length < columnCount) cells.push('');
+  return cells;
+}
+
+/** Table 行的 content 镜像（供完成度统计 / 旧链路降级展示） */
+function tableCellsToContent(cells: string[]): string {
+  return cells.map((c) => c.trim()).filter((c) => c.length > 0).join(' | ');
+}
+
+/** 把后端周报 sections 映射为编辑器草稿（table 章节初始化列定义 + 行 cells） */
+function toSectionDrafts(reportSections: WeeklyReport['sections']): SectionDraft[] {
+  return reportSections.map((s) => {
+    const isTable = s.templateSection.inputType === ReportInputType.Table;
+    if (!isTable) {
+      return {
+        items: s.items.length > 0
+          ? s.items.map(toItemDraft)
+          : [{ content: '', source: 'manual' }],
+      };
+    }
+    const columns = s.templateSection.tableColumns && s.templateSection.tableColumns.length > 0
+      ? [...s.templateSection.tableColumns]
+      : [...DEFAULT_TABLE_COLUMNS];
+    const rows = s.items.length > 0
+      ? s.items.map((i) => {
+          const draft = toItemDraft(i);
+          const cells = normalizeRowCells(draft, columns.length);
+          return { ...draft, cells, content: tableCellsToContent(cells) };
+        })
+      : [{ content: '', source: 'manual', cells: columns.map(() => '') }];
+    return { items: rows, tableColumns: columns };
+  });
 }
 
 /** IssueList 单项卡片：富文本 textarea + 分类/状态下拉 + 预览。
@@ -230,10 +280,156 @@ function IssueItemCard({
   );
 }
 
+/** Table 章节编辑器：真实表格形态，支持增删行 / 增删列 / 列改名（列与行仅保存进本份周报快照，不回写模板） */
+function TableSectionEditor({
+  columns, rows, canEdit, isLight, maxItems,
+  onCellChange, onAddRow, onRemoveRow, onAddColumn, onRemoveColumn, onRenameColumn,
+}: {
+  columns: string[];
+  rows: ItemDraft[];
+  canEdit: boolean;
+  isLight: boolean;
+  maxItems?: number;
+  onCellChange: (rowIdx: number, colIdx: number, value: string) => void;
+  onAddRow: () => void;
+  onRemoveRow: (rowIdx: number) => void;
+  onAddColumn: () => void;
+  onRemoveColumn: (colIdx: number) => void;
+  onRenameColumn: (colIdx: number, name: string) => void;
+}) {
+  const borderColor = isLight ? 'rgba(15, 23, 42, 0.10)' : 'rgba(148, 163, 184, 0.18)';
+  const headerBg = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.04)';
+  const cellStyle: CSSProperties = {
+    border: `1px solid ${borderColor}`,
+    padding: 0,
+    minWidth: 96,
+    verticalAlign: 'top',
+  };
+  const inputStyle: CSSProperties = {
+    background: 'transparent',
+    color: 'var(--text-primary)',
+    border: 'none',
+    outline: 'none',
+    width: '100%',
+    padding: '8px 10px',
+    fontSize: 13,
+    lineHeight: 1.5,
+  };
+  const rowLimitReached = maxItems != null && rows.length >= maxItems;
+
+  return (
+    <div className="px-2 py-1.5">
+      <div style={{ overflowX: 'auto', overscrollBehavior: 'contain' }}>
+        <table
+          className="w-full"
+          style={{ borderCollapse: 'collapse', tableLayout: 'auto' }}
+        >
+          <thead>
+            <tr>
+              {columns.map((col, cIdx) => (
+                <th key={cIdx} style={{ ...cellStyle, background: headerBg }}>
+                  <div className="flex items-center group/col">
+                    <input
+                      style={{ ...inputStyle, fontWeight: 600, fontSize: 12.5, color: 'var(--text-secondary)' }}
+                      value={col}
+                      onChange={(e) => onRenameColumn(cIdx, e.target.value)}
+                      onBlur={(e) => { if (!e.target.value.trim()) onRenameColumn(cIdx, `列${cIdx + 1}`); }}
+                      placeholder={`列${cIdx + 1}`}
+                      disabled={!canEdit}
+                      aria-label={`列名 ${cIdx + 1}`}
+                    />
+                    {canEdit && columns.length > 1 && (
+                      <button
+                        type="button"
+                        className="p-1 mr-1 rounded opacity-0 group-hover/col:opacity-100 hover:bg-[rgba(239,68,68,0.08)] transition-all flex-shrink-0"
+                        onClick={() => onRemoveColumn(cIdx)}
+                        title="删除该列"
+                        aria-label={`删除列 ${col || cIdx + 1}`}
+                      >
+                        <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    )}
+                  </div>
+                </th>
+              ))}
+              {canEdit && (
+                <th style={{ border: `1px solid ${borderColor}`, background: headerBg, width: 36, padding: 0 }}>
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-center py-2 transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onClick={onAddColumn}
+                    disabled={columns.length >= MAX_TABLE_COLUMNS}
+                    title={columns.length >= MAX_TABLE_COLUMNS ? `最多 ${MAX_TABLE_COLUMNS} 列` : '添加列'}
+                    aria-label="添加列"
+                  >
+                    <Plus size={13} />
+                  </button>
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rIdx) => {
+              const cells = normalizeRowCells(row, columns.length);
+              return (
+                <tr key={rIdx} className="group/row">
+                  {columns.map((_, cIdx) => (
+                    <td key={cIdx} style={cellStyle}>
+                      <input
+                        style={inputStyle}
+                        value={cells[cIdx]}
+                        onChange={(e) => onCellChange(rIdx, cIdx, e.target.value)}
+                        placeholder={rIdx === 0 && cIdx === 0 ? '请输入内容...' : ''}
+                        disabled={!canEdit}
+                        aria-label={`第 ${rIdx + 1} 行 ${columns[cIdx] || `列${cIdx + 1}`}`}
+                      />
+                    </td>
+                  ))}
+                  {canEdit && (
+                    <td style={{ border: `1px solid ${borderColor}`, width: 36, padding: 0, verticalAlign: 'middle' }}>
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center py-2 opacity-0 group-hover/row:opacity-100 hover:bg-[rgba(239,68,68,0.08)] transition-all"
+                        onClick={() => onRemoveRow(rIdx)}
+                        disabled={rows.length <= 1}
+                        title="删除该行"
+                        aria-label={`删除第 ${rIdx + 1} 行`}
+                      >
+                        <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && (
+        <button
+          className="self-start mt-2 mb-1 inline-flex items-center gap-1.5 text-[12px] rounded-md transition-all duration-150"
+          style={{
+            color: 'var(--text-muted)',
+            background: 'transparent',
+            border: `1px dashed ${isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.18)'}`,
+            padding: '4px 10px',
+          }}
+          onClick={onAddRow}
+          disabled={rowLimitReached}
+          title={rowLimitReached ? `最多 ${maxItems} 行` : undefined}
+        >
+          <Plus size={12} /> 添加行
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props) {
   const { teams, templates, updateReportInList, addReportToList, removeReportFromList } = useReportAgentStore();
   const [report, setReport] = useState<WeeklyReport | null>(null);
-  const [sections, setSections] = useState<{ items: ItemDraft[] }[]>([]);
+  const [sections, setSections] = useState<SectionDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -384,13 +580,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
       const res = await getWeeklyReport({ id: reportId });
       if (res.success && res.data) {
         setReport(res.data.report);
-        setSections(
-          res.data.report.sections.map((s) => ({
-            items: s.items.length > 0
-              ? s.items.map(toItemDraft)
-              : [{ content: '', source: 'manual' }],
-          }))
-        );
+        setSections(toSectionDrafts(res.data.report.sections));
         setIsNew(false);
       } else {
         // 不再静默白屏:显式 toast + 渲染 fallback,避免按钮看似消失
@@ -426,13 +616,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     setCreateModeLoading(null);
     if (res.success && res.data) {
       setReport(res.data.report);
-      setSections(
-        res.data.report.sections.map((s) => ({
-          items: s.items.length > 0
-            ? s.items.map(toItemDraft)
-            : [{ content: '', source: 'manual' }],
-        }))
-      );
+      setSections(toSectionDrafts(res.data.report.sections));
       setIsNew(false);
       addReportToList(res.data.report);
       if (creationMode === WeeklyReportCreationMode.AiDraft) {
@@ -544,13 +728,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           return;
         }
         setReport(updated);
-        setSections(
-          updated.sections.map((s) => ({
-            items: s.items.length > 0
-              ? s.items.map(toItemDraft)
-              : [{ content: '', source: 'manual' }],
-          }))
-        );
+        setSections(toSectionDrafts(updated.sections));
         updateReportInList(updated);
         autosave.markSaved();
         if (updated.autoGeneratedBy === 'rule-fallback') {
@@ -636,6 +814,88 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         ...next[sectionIdx],
         items: next[sectionIdx].items.filter((_, i) => i !== itemIdx),
       };
+      return next;
+    });
+  };
+
+  // ===== Table 章节：单元格 / 行 / 列操作 =====
+
+  /** 更新某个单元格，并同步 content 镜像（供完成度统计 / 旧链路降级） */
+  const updateTableCell = (sectionIdx: number, rowIdx: number, colIdx: number, value: string) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? DEFAULT_TABLE_COLUMNS;
+      next[sectionIdx] = {
+        ...next[sectionIdx],
+        items: next[sectionIdx].items.map((item, i) => {
+          if (i !== rowIdx) return item;
+          const cells = normalizeRowCells(item, columns.length);
+          cells[colIdx] = value;
+          return { ...item, cells, content: tableCellsToContent(cells) };
+        }),
+      };
+      return next;
+    });
+  };
+
+  const addTableRow = (sectionIdx: number) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? DEFAULT_TABLE_COLUMNS;
+      next[sectionIdx] = {
+        ...next[sectionIdx],
+        items: [...next[sectionIdx].items, { content: '', source: 'manual', cells: columns.map(() => '') }],
+      };
+      return next;
+    });
+  };
+
+  const addTableColumn = (sectionIdx: number) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? [...DEFAULT_TABLE_COLUMNS];
+      if (columns.length >= MAX_TABLE_COLUMNS) {
+        toast.error(`最多 ${MAX_TABLE_COLUMNS} 列`);
+        return prev;
+      }
+      const newColumns = [...columns, `列${columns.length + 1}`];
+      next[sectionIdx] = {
+        tableColumns: newColumns,
+        items: next[sectionIdx].items.map((item) => {
+          const cells = [...normalizeRowCells(item, columns.length), ''];
+          return { ...item, cells, content: tableCellsToContent(cells) };
+        }),
+      };
+      return next;
+    });
+  };
+
+  const removeTableColumn = (sectionIdx: number, colIdx: number) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? [...DEFAULT_TABLE_COLUMNS];
+      if (columns.length <= 1) {
+        toast.error('至少保留一列');
+        return prev;
+      }
+      const newColumns = columns.filter((_, i) => i !== colIdx);
+      next[sectionIdx] = {
+        tableColumns: newColumns,
+        items: next[sectionIdx].items.map((item) => {
+          const cells = normalizeRowCells(item, columns.length).filter((_, i) => i !== colIdx);
+          return { ...item, cells, content: tableCellsToContent(cells) };
+        }),
+      };
+      return next;
+    });
+  };
+
+  const renameTableColumn = (sectionIdx: number, colIdx: number, name: string) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? [...DEFAULT_TABLE_COLUMNS];
+      const newColumns = columns.map((c, i) => (i === colIdx ? name : c));
+      next[sectionIdx] = { ...next[sectionIdx], tableColumns: newColumns };
       return next;
     });
   };
@@ -905,13 +1165,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               weekNumber={weekNumber}
               onImported={(imported) => {
                 setReport(imported);
-                setSections(
-                  imported.sections.map((s) => ({
-                    items: s.items.length > 0
-                      ? s.items.map(toItemDraft)
-                      : [{ content: '', source: 'manual' }],
-                  }))
-                );
+                setSections(toSectionDrafts(imported.sections));
                 setIsNew(false);
                 addReportToList(imported);
               }}
@@ -1283,6 +1537,22 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
 
                 {/* Items */}
                 <div className="px-3 py-2 flex flex-col">
+                  {section.templateSection.inputType === ReportInputType.Table ? (
+                    <TableSectionEditor
+                      columns={sections[sIdx]?.tableColumns ?? DEFAULT_TABLE_COLUMNS}
+                      rows={sections[sIdx]?.items || []}
+                      canEdit={canEdit}
+                      isLight={isLight}
+                      maxItems={section.templateSection.maxItems ?? undefined}
+                      onCellChange={(rIdx, cIdx, value) => updateTableCell(sIdx, rIdx, cIdx, value)}
+                      onAddRow={() => addTableRow(sIdx)}
+                      onRemoveRow={(rIdx) => removeItem(sIdx, rIdx)}
+                      onAddColumn={() => addTableColumn(sIdx)}
+                      onRemoveColumn={(cIdx) => removeTableColumn(sIdx, cIdx)}
+                      onRenameColumn={(cIdx, name) => renameTableColumn(sIdx, cIdx, name)}
+                    />
+                  ) : (
+                  <>
                   {(sections[sIdx]?.items || []).map((item, iIdx) => {
                     const itemsLen = sections[sIdx]?.items?.length ?? 0;
                     const dragKey = `${sIdx}:${iIdx}`;
@@ -1475,6 +1745,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                     >
                       <Plus size={12} /> 添加一条
                     </button>
+                  )}
+                  </>
                   )}
                 </div>
               </section>

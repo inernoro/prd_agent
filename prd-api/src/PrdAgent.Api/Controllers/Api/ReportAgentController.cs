@@ -375,20 +375,47 @@ public class ReportAgentController : ControllerBase
         return (weekYear, weekNumber, monday, sunday);
     }
 
-    private static ReportTemplateSection MapSection(TemplateSectionInput s, int i) => new()
+    private static ReportTemplateSection MapSection(TemplateSectionInput s, int i)
     {
-        Title = s.Title?.Trim() ?? $"章节{i + 1}",
-        Description = s.Description,
-        InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
-        IsRequired = s.IsRequired ?? true,
-        SortOrder = s.SortOrder ?? i,
-        DataSourceHint = s.DataSourceHint,
-        MaxItems = s.MaxItems,
-        SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
-        DataSources = s.DataSources,
-        IssueCategories = s.IssueCategories?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
-        IssueStatuses = s.IssueStatuses?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
-    };
+        var inputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList;
+        return new()
+        {
+            Title = s.Title?.Trim() ?? $"章节{i + 1}",
+            Description = s.Description,
+            InputType = inputType,
+            IsRequired = s.IsRequired ?? true,
+            SortOrder = s.SortOrder ?? i,
+            DataSourceHint = s.DataSourceHint,
+            MaxItems = s.MaxItems,
+            SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
+            DataSources = s.DataSources,
+            IssueCategories = s.IssueCategories?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
+            IssueStatuses = s.IssueStatuses?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
+            TableColumns = inputType == ReportInputType.Table ? SanitizeTableColumns(s.TableColumns) : null,
+        };
+    }
+
+    /// <summary>Table 列名清洗：去空白、截断超限，空列表兜底为默认列</summary>
+    private static List<string> SanitizeTableColumns(List<string>? columns)
+    {
+        var cleaned = (columns ?? new List<string>())
+            .Select(c => c?.Trim() ?? string.Empty)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Take(ReportInputType.MaxTableColumns)
+            .ToList();
+        return cleaned.Count > 0 ? cleaned : ReportInputType.DefaultTableColumns.ToList();
+    }
+
+    /// <summary>Table 行单元格归一化：补齐/截断到列数，null 元素转空串</summary>
+    private static List<string> NormalizeTableCells(List<string>? cells, int columnCount)
+    {
+        var normalized = (cells ?? new List<string>())
+            .Select(c => c ?? string.Empty)
+            .Take(columnCount)
+            .ToList();
+        while (normalized.Count < columnCount) normalized.Add(string.Empty);
+        return normalized;
+    }
 
     private static IssueOption? MapIssueOption(IssueOptionInput i)
     {
@@ -1595,7 +1622,12 @@ public class ReportAgentController : ControllerBase
                     IsRequired = s.IsRequired,
                     SortOrder = s.SortOrder,
                     DataSourceHint = s.DataSourceHint,
-                    MaxItems = s.MaxItems
+                    MaxItems = s.MaxItems,
+                    SectionType = s.SectionType,
+                    DataSources = s.DataSources != null ? new List<string>(s.DataSources) : null,
+                    IssueCategories = s.IssueCategories?.Select(o => new IssueOption { Key = o.Key, Label = o.Label, Color = o.Color }).ToList(),
+                    IssueStatuses = s.IssueStatuses?.Select(o => new IssueOption { Key = o.Key, Label = o.Label, Color = o.Color }).ToList(),
+                    TableColumns = s.InputType == ReportInputType.Table ? SanitizeTableColumns(s.TableColumns) : null,
                 },
                 Items = new List<WeeklyReportItem>()
             }).ToList()
@@ -1810,21 +1842,39 @@ public class ReportAgentController : ControllerBase
         if (req.Sections == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "周报内容不能为空"));
 
-        // 更新 sections 内容，保留模板快照
+        // 更新 sections 内容，保留模板快照（table 章节例外：填写者可增删/改名列，列定义合并进本份周报的快照）
         var updatedSections = new List<WeeklyReportSection>();
         for (int i = 0; i < report.Sections.Count && i < req.Sections.Count; i++)
         {
+            var templateSection = report.Sections[i].TemplateSection;
+            var isTable = templateSection.InputType == ReportInputType.Table;
+            if (isTable && req.Sections[i].TableColumns != null)
+            {
+                templateSection.TableColumns = SanitizeTableColumns(req.Sections[i].TableColumns);
+            }
+            var columnCount = isTable
+                ? (templateSection.TableColumns?.Count ?? ReportInputType.DefaultTableColumns.Length)
+                : 0;
+
             updatedSections.Add(new WeeklyReportSection
             {
-                TemplateSection = report.Sections[i].TemplateSection,
-                Items = req.Sections[i].Items?.Select(item => new WeeklyReportItem
+                TemplateSection = templateSection,
+                Items = req.Sections[i].Items?.Select(item =>
                 {
-                    Content = item.Content ?? string.Empty,
-                    Source = item.Source ?? "manual",
-                    SourceRef = item.SourceRef,
-                    IssueCategoryKey = item.IssueCategoryKey,
-                    IssueStatusKey = item.IssueStatusKey,
-                    ImageUrls = item.ImageUrls != null && item.ImageUrls.Count > 0 ? item.ImageUrls : null,
+                    var cells = isTable ? NormalizeTableCells(item.Cells, columnCount) : null;
+                    return new WeeklyReportItem
+                    {
+                        // table 行的 content 保存 " | " 拼接镜像，供总结/海报等只读 content 的旧链路降级展示
+                        Content = cells != null
+                            ? string.Join(" | ", cells.Select(c => c.Trim()).Where(c => c.Length > 0))
+                            : item.Content ?? string.Empty,
+                        Source = item.Source ?? "manual",
+                        SourceRef = item.SourceRef,
+                        IssueCategoryKey = item.IssueCategoryKey,
+                        IssueStatusKey = item.IssueStatusKey,
+                        ImageUrls = item.ImageUrls != null && item.ImageUrls.Count > 0 ? item.ImageUrls : null,
+                        Cells = cells,
+                    };
                 }).ToList() ?? new List<WeeklyReportItem>()
             });
         }
@@ -2226,6 +2276,8 @@ public class ReportAgentController : ControllerBase
         public List<IssueOptionInput>? IssueCategories { get; set; }
         /// <summary>IssueList 专用：问题状态预设</summary>
         public List<IssueOptionInput>? IssueStatuses { get; set; }
+        /// <summary>Table 专用：列名定义</summary>
+        public List<string>? TableColumns { get; set; }
     }
 
     public class IssueOptionInput
@@ -2279,6 +2331,8 @@ public class ReportAgentController : ControllerBase
     public class UpdateReportSectionInput
     {
         public List<UpdateReportItemInput>? Items { get; set; }
+        /// <summary>Table 专用：本份周报内的列定义（增删/改名列后随保存提交，仅 table 章节生效）</summary>
+        public List<string>? TableColumns { get; set; }
     }
 
     public class UpdateReportItemInput
@@ -2292,6 +2346,8 @@ public class ReportAgentController : ControllerBase
         public string? IssueStatusKey { get; set; }
         /// <summary>IssueList 专用：图片 URL 列表</summary>
         public List<string>? ImageUrls { get; set; }
+        /// <summary>Table 专用：单元格值（按章节列序对齐）</summary>
+        public List<string>? Cells { get; set; }
     }
 
     public class ReturnReportRequest

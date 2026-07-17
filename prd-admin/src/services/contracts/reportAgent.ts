@@ -91,6 +91,8 @@ export interface ReportTemplateSection {
   issueCategories?: IssueOption[];
   /** IssueList 专用: 问题状态预设 */
   issueStatuses?: IssueOption[];
+  /** Table 专用: 列名定义（模板里是默认列，周报快照里可被填写者增删/改名） */
+  tableColumns?: string[];
 }
 
 /** 问题分类 / 状态预设项（IssueList 章节用） */
@@ -162,6 +164,8 @@ export interface WeeklyReportItem {
   issueStatusKey?: string;
   /** IssueList 专用: 附加图片 URL */
   imageUrls?: string[];
+  /** Table 专用: 单元格值（一行 = 一个 item，按章节 tableColumns 列序对齐） */
+  cells?: string[];
 }
 
 export interface ReportUser {
@@ -348,7 +352,14 @@ export const ReportInputType = {
   KeyValue: 'key-value',
   ProgressTable: 'progress-table',
   IssueList: 'issue-list',
+  Table: 'table',
 } as const;
+
+/** Table 类型的默认列（与后端 ReportInputType.DefaultTableColumns 对齐） */
+export const DEFAULT_TABLE_COLUMNS = ['内容', '进度', '备注'];
+
+/** Table 类型允许的最大列数（与后端 ReportInputType.MaxTableColumns 对齐） */
+export const MAX_TABLE_COLUMNS = 6;
 
 /** v2.0 板块类型 */
 export const ReportSectionType = {
@@ -541,7 +552,11 @@ export type UpdateWeeklyReportContract = (input: {
       issueCategoryKey?: string;
       issueStatusKey?: string;
       imageUrls?: string[];
+      /** Table 专用: 单元格值 */
+      cells?: string[];
     }[];
+    /** Table 专用: 本份周报内的列定义（增删/改名列后随保存提交） */
+    tableColumns?: string[];
   }[];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 

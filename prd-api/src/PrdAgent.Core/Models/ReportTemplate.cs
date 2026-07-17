@@ -86,6 +86,9 @@ public class ReportTemplateSection
 
     /// <summary>IssueList 专用：问题状态预设（仅 InputType = issue-list 时生效）</summary>
     public List<IssueOption>? IssueStatuses { get; set; }
+
+    /// <summary>Table 专用：列名定义（仅 InputType = table 时生效；模板里是默认列，周报快照里可被填写者增删/改名）</summary>
+    public List<string>? TableColumns { get; set; }
 }
 
 /// <summary>
@@ -113,8 +116,15 @@ public static class ReportInputType
     public const string KeyValue = "key-value";
     public const string ProgressTable = "progress-table";
     public const string IssueList = "issue-list";
+    public const string Table = "table";
 
-    public static readonly string[] All = { BulletList, RichText, KeyValue, ProgressTable, IssueList };
+    public static readonly string[] All = { BulletList, RichText, KeyValue, ProgressTable, IssueList, Table };
+
+    /// <summary>Table 类型的默认列（新建表格章节 / 列缺失时兜底）</summary>
+    public static readonly string[] DefaultTableColumns = { "内容", "进度", "备注" };
+
+    /// <summary>Table 类型允许的最大列数（UI 宽度约束）</summary>
+    public const int MaxTableColumns = 6;
 }
 
 /// <summary>
