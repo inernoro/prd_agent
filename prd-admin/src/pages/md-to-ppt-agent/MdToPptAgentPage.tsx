@@ -2766,7 +2766,7 @@ export function MdToPptAgentPage() {
 
       {/* Mobile: single-column creation desk */}
       <div
-        className="md:hidden flex-1 min-h-0 overflow-y-auto bg-[#131419] px-4 pt-4 pb-[calc(94px+env(safe-area-inset-bottom))]"
+        className="md:hidden flex-1 min-h-0 overflow-y-auto bg-[var(--bg-base)] px-4 pt-4 pb-[calc(94px+env(safe-area-inset-bottom))]"
         style={{ overscrollBehavior: 'contain' }}
         data-testid="md-to-ppt-mobile-desk"
       >
@@ -2838,7 +2838,7 @@ export function MdToPptAgentPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/12 bg-[#1d1e24] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
+          <div className="rounded-lg border border-white/12 bg-[var(--panel-solid)] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
             {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {pendingAttachments.map((a, i) => (
@@ -2918,7 +2918,7 @@ export function MdToPptAgentPage() {
           </div>
 
           {showModelPicker && profiles.length > 0 && (
-            <div className="rounded-lg border border-white/10 bg-[#1a1b21] p-2">
+            <div className="rounded-lg border border-white/10 bg-[var(--bg-elevated)] p-2">
               <div className="px-1 pb-2 text-[11px] font-semibold text-white/48">选择后续生成模型</div>
               <div className="max-h-[240px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {profiles.map((p) => {
@@ -4319,7 +4319,7 @@ export function MdToPptAgentPage() {
                     {stylePanelOpen && !isStreaming && (
                       <div
                         data-testid="theme-panel"
-                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-white/10 bg-[#18191f] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
+                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-white/10 bg-[var(--panel-solid)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div>
