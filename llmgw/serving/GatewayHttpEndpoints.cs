@@ -2440,26 +2440,53 @@ public static class GatewayHttpEndpoints
             var now = DateTime.UtcNow;
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
             var windows = gatewayData.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows");
+            var windowId = "appcaller-rate:" + Sha256Hex(JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                tenantId,
+                appCallerCode = normalizedAppCallerCode,
+                requestType = normalizedRequestType,
+                windowStart = windowStart.Ticks,
+            }));
             var windowFilter = Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
                 Builders<BsonDocument>.Filter.Eq("AppCallerCode", normalizedAppCallerCode),
                 Builders<BsonDocument>.Filter.Eq("RequestType", normalizedRequestType),
                 Builders<BsonDocument>.Filter.Eq("WindowStart", windowStart));
-            var updated = await windows.FindOneAndUpdateAsync(
-                windowFilter,
-                Builders<BsonDocument>.Update
+            var windowUpdate = Builders<BsonDocument>.Update
+                    .SetOnInsert("_id", windowId)
                     .SetOnInsert("TenantId", tenantId)
                     .SetOnInsert("AppCallerCode", normalizedAppCallerCode)
                     .SetOnInsert("RequestType", normalizedRequestType)
                     .SetOnInsert("WindowStart", windowStart)
                     .Set("ExpiresAt", windowStart.AddMinutes(10))
-                    .Inc("Count", 1),
-                new FindOneAndUpdateOptions<BsonDocument>
-                {
-                    IsUpsert = true,
-                    ReturnDocument = ReturnDocument.After,
-                },
-                ct);
+                    .Inc("Count", 1);
+            BsonDocument updated;
+            try
+            {
+                updated = await windows.FindOneAndUpdateAsync(
+                    windowFilter,
+                    windowUpdate,
+                    new FindOneAndUpdateOptions<BsonDocument>
+                    {
+                        IsUpsert = true,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct);
+            }
+            catch (MongoException ex) when (IsDuplicateKeyError(ex))
+            {
+                // 同一分钟第一批请求会同时看到“窗口不存在”。确定性 _id 只允许一条窗口，
+                // 竞争者在插入冲突后改为非 upsert 原子递增，不能放大为多个独立限流窗口。
+                updated = await windows.FindOneAndUpdateAsync(
+                    windowFilter,
+                    windowUpdate,
+                    new FindOneAndUpdateOptions<BsonDocument>
+                    {
+                        IsUpsert = false,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct) ?? throw new InvalidOperationException("appCaller rate window disappeared after duplicate upsert");
+            }
             var count = ReadBsonLong(updated, "Count") ?? 0;
             var rateLimit = count > limit
                 ? AppCallerRateLimitDecision.Reject(appCallerCode, requestType, limit, count, windowStart)
@@ -5089,6 +5116,10 @@ public static class GatewayHttpEndpoints
         using var sha = SHA256.Create();
         return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
     }
+
+    private static bool IsDuplicateKeyError(MongoException ex)
+        => ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey }
+           || ex is MongoCommandException { Code: 11000 or 11001 or 12582 };
 
     private static async Task WriteRejectedGatewayRequestLogAsync(
         HttpContext http,

@@ -1615,6 +1615,75 @@ public sealed class GatewayRuntimeGovernanceTests
         window.Count.ShouldBe(20);
     }
 
+    [Fact]
+    public async Task ScopedKey_ConcurrentLimitsAreIndependentAcrossTenantsAndAuditsKeepTenantId()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string keyA = "llmgw_test_tenant_a_concurrent_key";
+        const string keyB = "llmgw_test_tenant_b_concurrent_key";
+        var recordA = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "tenant-a-concurrent-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(keyA),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            RateLimitPerMinute = 5,
+        };
+        var recordB = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-b",
+            Name = "tenant-b-concurrent-key",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(keyB),
+            SourceSystem = "external",
+            AppCallerCodes = ["caller"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+            RateLimitPerMinute = 5,
+        };
+        await InsertServiceKeyAsync(scope.Context, recordA);
+        await InsertServiceKeyAsync(scope.Context, recordB);
+        var windows = scope.Context.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows");
+        await windows.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyRateWindowRecord>(
+            Builders<GatewayServiceKeyRateWindowRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ServiceKeyId)
+                .Ascending(x => x.WindowStart),
+            new CreateIndexOptions { Unique = true }));
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        async Task<(string TenantId, GatewayKeyAuthorization Result)> AuthorizeAsync(string tenantId, string key)
+            => (tenantId, await authorizer.AuthorizeAsync(
+                key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
+                null, CancellationToken.None));
+
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 20).Select(_ => AuthorizeAsync("tenant-a", keyA))
+                .Concat(Enumerable.Range(0, 20).Select(_ => AuthorizeAsync("tenant-b", keyB))));
+
+        results.Count(x => x.Result.Allowed).ShouldBe(10);
+        results.Count(x => x.Result.StatusCode == 429).ShouldBe(30);
+        results.Count(x => x.TenantId == "tenant-a" && x.Result.Allowed).ShouldBe(5);
+        results.Count(x => x.TenantId == "tenant-b" && x.Result.Allowed).ShouldBe(5);
+
+        var persistedWindows = await windows.Find(_ => true).ToListAsync();
+        persistedWindows.Count.ShouldBe(2);
+        persistedWindows.Single(x => x.TenantId == "tenant-a").Count.ShouldBe(20);
+        persistedWindows.Single(x => x.TenantId == "tenant-b").Count.ShouldBe(20);
+
+        var audits = await scope.Context.Database.GetCollection<BsonDocument>("llmgw_operation_audits")
+            .Find(Builders<BsonDocument>.Filter.Eq("Action", "service_key.rate_limited"))
+            .ToListAsync();
+        audits.Count.ShouldBe(30);
+        audits.Count(x => x["TenantId"] == "tenant-a").ShouldBe(15);
+        audits.Count(x => x["TenantId"] == "tenant-b").ShouldBe(15);
+    }
+
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
