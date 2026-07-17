@@ -4,6 +4,20 @@ STATIC_RELEASE_SWITCH_PERFORMED="${STATIC_RELEASE_SWITCH_PERFORMED:-0}"
 STATIC_RELEASE_TARGET="${STATIC_RELEASE_TARGET:-}"
 STATIC_RELEASE_ROLLBACK_TARGET="${STATIC_RELEASE_ROLLBACK_TARGET:-}"
 
+static_release_make_web_readable() {
+  web_root="$1"
+  if [ ! -d "$web_root" ]; then
+    echo "ERROR: static web root is missing: $web_root" >&2
+    return 1
+  fi
+
+  # CDS production release commands intentionally use umask 077 for secrets.
+  # A staged web tree inherits that umask, but nginx workers are unprivileged
+  # and must be able to traverse every directory and read every asset.
+  find "$web_root" -type d -exec chmod 755 {} +
+  find "$web_root" -type f -exec chmod 644 {} +
+}
+
 static_release_atomic_link() {
   link_path="$1"
   link_target="$2"
@@ -43,6 +57,7 @@ static_release_activate() {
     return 1
   fi
   mkdir -p "$releases_dir"
+  chmod 755 "$static_root" "$releases_dir"
 
   original_current_target="$(readlink "$static_root/current" 2>/dev/null || true)"
   original_previous_target="$(readlink "$static_root/previous" 2>/dev/null || true)"
@@ -67,10 +82,12 @@ static_release_activate() {
       rm -rf "$legacy_dir"
       return 1
     fi
+    static_release_make_web_readable "$legacy_dir"
     rollback_target="$legacy_target"
   fi
 
   mv "$staging_dir" "$release_dir"
+  static_release_make_web_readable "$release_dir"
 
   STATIC_RELEASE_TARGET="$release_target"
   STATIC_RELEASE_ROLLBACK_TARGET="$rollback_target"
