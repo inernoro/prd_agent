@@ -53,6 +53,12 @@ function initialQueryValue(key: string) {
   return new URLSearchParams(window.location.search).get(key) ?? '';
 }
 
+function appLabel(item: Pick<LlmLogListItem, 'appCallerCode' | 'appCallerCodeDisplayName' | 'appCallerTitle'>) {
+  const code = item.appCallerCode?.trim();
+  if (code) return code.startsWith('G-') ? code : `G-${code}`;
+  return item.appCallerCodeDisplayName || item.appCallerTitle || DASH;
+}
+
 export function LogsView() {
   const location = useLocation();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
@@ -286,7 +292,7 @@ export function LogsView() {
       case 'date': {
         const lc = deriveLifecycle(it);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-secondary)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, color: 'var(--text-secondary)' }}>
             <span
               title={`生命周期：${lc.label}`}
               className={lc.pulse ? 'lg-pulse' : undefined}
@@ -300,7 +306,7 @@ export function LogsView() {
         return (
           <span
             className="lg-truncate"
-            style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
             title={it.requestId || it.id}
           >
             {it.requestId || it.id || DASH}
@@ -311,7 +317,7 @@ export function LogsView() {
         const tp = getTransportMeta(it.transport);
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            <span className="lg-truncate" style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
+            <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
               {it.model || DASH}
             </span>
             {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
@@ -321,52 +327,52 @@ export function LogsView() {
       }
       case 'provider':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)' }} title={it.platformName || it.provider}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={it.platformName || it.provider}>
             {it.platformName || it.provider || DASH}
           </span>
         );
       case 'app':
         return (
           <span style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: 2 }} title={`调用身份：${it.clientCode || '历史未标注'}；业务用途：${it.appCallerCode || '未标注'}`}>
-            <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }}>{it.clientCode || DASH}</span>
-            <span className="lg-truncate" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{it.appCallerCodeDisplayName || it.appCallerCode || DASH}</span>
+            <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'ui-monospace, monospace' }}>{appLabel(it)}</span>
+            <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-muted)' }}>{it.clientCode || '历史未标注身份'}{it.environment ? ` · ${it.environment}` : ''}</span>
           </span>
         );
       case 'input':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}</span>;
       case 'output':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}</span>;
       case 'tokens':
         return (
-          <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
       case 'cost':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'usage':
-        return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{it.requestType || DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
         const t = computeTokPerSec(it.outputTokens, it.durationMs);
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{t == null ? DASH : `${t}`}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{t == null ? DASH : `${t}`}</span>;
       }
       case 'finish':
-        return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{it.finishReason || DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{it.finishReason || DASH}</span>;
       case 'user':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)' }} title={userLabel(it)}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={userLabel(it)}>
             {userLabel(it)}
           </span>
         );
       case 'stream':
         return (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>
             {it.isStreaming == null ? DASH : it.isStreaming ? '流式' : '非流'}
           </span>
         );
@@ -378,18 +384,18 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
+          <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
             {it.model || DASH}
           </span>
         );
       case 'provider':
-        return <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{it.platformName || it.provider || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.platformName || it.provider || DASH}</span>;
       case 'genId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
             {it.requestId || DASH}
           </span>
         );
@@ -398,15 +404,15 @@ export function LogsView() {
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
-        return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>;
       case 'fallback':
         return it.isFallback ? (
           <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>否</span>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>否</span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       default:
         return null;
     }
@@ -416,27 +422,27 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return (
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
             {fmtDate(it.start)}
             {it.end && it.end !== it.start ? ` ~ ${fmtShortTime(it.end)}` : ''}
           </span>
         );
       case 'sessionId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
             {it.sessionId || DASH}
           </span>
         );
       case 'app':
         return (
-          <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
             {it.appCallerCode || DASH}
           </span>
         );
       case 'primaryModel':
-        return <span className="lg-truncate" style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }}>{it.primaryModel || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>{it.primaryModel || DASH}</span>;
       case 'primaryProvider':
-        return <span className="lg-truncate" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
       case 'supporting':
         return it.supportingModels.length ? (
           <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -448,10 +454,10 @@ export function LogsView() {
             ) : null}
           </span>
         ) : (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>
         );
       case 'requests':
-        return <span className="tabular" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
       default:
         return null;
     }
@@ -482,7 +488,8 @@ export function LogsView() {
             style={{
               display: 'grid',
               gap: 10,
-              padding: '9px 12px',
+              minHeight: 46,
+              padding: '11px 14px',
               flexShrink: 0,
               gridTemplateColumns: gridCols,
               borderBottom: '1px solid var(--border-subtle)',
@@ -493,7 +500,7 @@ export function LogsView() {
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ fontSize: 14, fontWeight: 500, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
               >
                 {c.label}
                 {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
@@ -511,8 +518,8 @@ export function LogsView() {
                     style={{
                       display: 'grid',
                       gap: 10,
-                      minHeight: 42,
-                      padding: '7px 12px',
+                      minHeight: 46,
+                      padding: '10px 14px',
                       alignItems: 'center',
                       cursor: onRow ? 'pointer' : 'default',
                       gridTemplateColumns: gridCols,
@@ -542,7 +549,7 @@ export function LogsView() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 12px',
-          fontSize: 11,
+          fontSize: 14,
           color: 'var(--text-muted)',
           borderTop: '1px solid var(--border-subtle)',
         }}
@@ -569,7 +576,7 @@ export function LogsView() {
     borderRadius: 'var(--radius-sm)',
     height: 32,
     padding: '0 9px',
-    fontSize: 12,
+    fontSize: 14,
   };
   const inputStyle: CSSProperties = {
     ...selectStyle,
@@ -645,14 +652,14 @@ export function LogsView() {
           minWidth: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, color: 'var(--text-muted)' }}>
           {icon}
           {label}
         </div>
         <div className="tabular" style={{ marginTop: 5, fontSize: 18, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>
           {value}
         </div>
-        <div style={{ marginTop: 3, fontSize: 10, color: 'var(--text-muted)' }}>{sub}</div>
+        <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{sub}</div>
       </div>
     );
   }
@@ -671,9 +678,9 @@ export function LogsView() {
     const visible = (items ?? []).filter((x) => x.key && x.count > 0).slice(0, 6);
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
         {visible.length === 0 ? (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>
         ) : (
           visible.map((item) => {
             const active = selected === item.key;
@@ -694,7 +701,7 @@ export function LogsView() {
                   border: active ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
                   background: active ? 'var(--accent-soft)' : 'var(--bg-input)',
                   color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontSize: 11,
+                  fontSize: 14,
                   cursor: 'pointer',
                 }}
               >
@@ -714,9 +721,9 @@ export function LogsView() {
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>调用观测</div>
+          <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 4 }}>调用观测</div>
           <div style={{ fontSize: 22, lineHeight: 1.15, fontWeight: 650, color: 'var(--text-primary)' }}>请求记录</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>所选时间范围内共 {fmtCompact(summary?.total ?? totalReq)} 条请求；这里对应部分平台所称的 Activity。</div>
+          <div style={{ marginTop: 4, fontSize: 14, color: 'var(--text-muted)' }}>所选时间范围内共 {fmtCompact(summary?.total ?? totalReq)} 条请求；这里对应部分平台所称的 Activity。</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
@@ -727,7 +734,7 @@ export function LogsView() {
                 style={{
                   padding: '0 10px',
                   height: 32,
-                  fontSize: 11,
+                  fontSize: 14,
                   fontWeight: 500,
                   border: 'none',
                   borderLeft: p.key === TIME_RANGE_PRESETS[0].key ? 'none' : '1px solid var(--border-subtle)',
@@ -889,7 +896,7 @@ export function LogsView() {
         <div
           style={{
             flexShrink: 0,
-            fontSize: 12,
+            fontSize: 14,
             color: 'var(--err)',
             padding: '8px 12px',
             borderRadius: 'var(--radius-sm)',
@@ -1010,7 +1017,7 @@ export function LogsView() {
             }}
           >
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>Jobs（批处理任务）</div>
-            <div style={{ fontSize: 12, maxWidth: 420, color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 14, maxWidth: 420, color: 'var(--text-muted)' }}>
               当前网关没有 OpenRouter 意义上的批处理（Batch）任务概念，此处不展示占位假数据。待后端定义批任务后接入。
             </div>
           </div>

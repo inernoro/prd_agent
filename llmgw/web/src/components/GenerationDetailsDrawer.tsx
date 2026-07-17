@@ -15,15 +15,15 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
       style={{
         flexShrink: 0,
         borderRadius: 'var(--radius-sm)',
-        padding: '8px 10px',
-        minWidth: 132,
+        padding: '11px 12px',
+        minWidth: 0,
         border: '1px solid var(--border-subtle)',
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{title}</div>
-      <div className="tabular" style={{ marginTop: 3, fontSize: 14, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)' }}>{note}</div> : null}
+      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{title}</div>
+      <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
+      {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -41,10 +41,10 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
         borderBottom: '1px solid var(--border-subtle)',
       }}
     >
-      <span style={{ fontSize: 12, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
+      <span style={{ fontSize: 14, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
       <span
         style={{
-          fontSize: 12,
+          fontSize: 14,
           textAlign: 'right',
           wordBreak: 'break-all',
           color: 'var(--text-secondary)',
@@ -58,7 +58,7 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
             onClick={() => navigator.clipboard?.writeText(v)}
             title="复制"
           >
-            <Copy size={11} />
+            <Copy size={14} />
           </button>
         ) : null}
       </span>
@@ -76,7 +76,7 @@ function CodeBlock({ body, empty = 'No data' }: { body?: string | null; empty?: 
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        fontSize: 11,
+        fontSize: 13,
         lineHeight: 1.55,
         color: body ? 'var(--text-secondary)' : 'var(--text-muted)',
         background: 'var(--bg-base)',
@@ -109,7 +109,7 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-primary)' }}>Router trace</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>路由过程</div>
           <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)' }}>
             {trace?.mode || detail.modelResolutionType || 'unknown'} · {trace?.transport || detail.transport || 'unknown transport'}
           </div>
@@ -121,15 +121,15 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
         ) : null}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 10 }}>
-        <TraceMini label="Source" value={trace?.sourceSystem || detail.sourceSystem} />
-        <TraceMini label="Ingress" value={trace?.ingressProtocol || detail.ingressProtocol} />
-        <TraceMini label="Run" value={trace?.runId || detail.runId} mono />
-        <TraceMini label="Policy" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
-        <TraceMini label="Requested" value={trace?.requestedModel || detail.expectedModel} mono />
-        <TraceMini label="Actual" value={trace?.actualModel || detail.model} mono />
-        <TraceMini label="Requested pool" value={trace?.modelPoolId || detail.modelPoolId} mono />
-        <TraceMini label="Actual pool" value={trace?.modelGroupName || detail.modelGroupName || trace?.modelGroupId || detail.modelGroupId} />
-        <TraceMini label="Platform" value={trace?.platformName || detail.platformName || trace?.platformId || detail.platformId} />
+        <TraceMini label="来源" value={trace?.sourceSystem || detail.sourceSystem} />
+        <TraceMini label="入口" value={trace?.ingressProtocol || detail.ingressProtocol} />
+        <TraceMini label="运行 ID" value={trace?.runId || detail.runId} mono />
+        <TraceMini label="路由策略" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
+        <TraceMini label="期望模型" value={trace?.requestedModel || detail.expectedModel} mono />
+        <TraceMini label="实际模型" value={trace?.actualModel || detail.model} mono />
+        <TraceMini label="请求模型池" value={trace?.modelPoolId || detail.modelPoolId} mono />
+        <TraceMini label="实际模型池" value={trace?.modelGroupName || detail.modelGroupName || trace?.modelGroupId || detail.modelGroupId} />
+        <TraceMini label="Provider" value={trace?.platformName || detail.platformName || trace?.platformId || detail.platformId} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {steps.map((step) => {
@@ -150,57 +150,70 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
           {trace?.fallbackReason || detail.fallbackReason}
         </div>
       ) : null}
-      <ProviderAttempts attempts={detail.providerAttempts || []} />
     </div>
   );
 }
 
-function ProviderAttempts({ attempts }: { attempts: NonNullable<LlmLogDetail['providerAttempts']> }) {
-  if (!attempts.length) return null;
+function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
+  const attempts: NonNullable<LlmLogDetail['providerAttempts']> = detail.providerAttempts?.length
+    ? detail.providerAttempts
+    : [{
+        order: 1,
+        stage: 'provider',
+        status: detail.status,
+        statusCode: detail.statusCode,
+        provider: detail.provider,
+        platformName: detail.platformName,
+        platformId: detail.platformId,
+        model: detail.model,
+        durationMs: detail.durationMs,
+        transport: detail.transport,
+        error: detail.error,
+        reason: detail.resolutionReason,
+      }];
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
-      <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }}>Provider attempts</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <section>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>上游响应</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {attempts.map((attempt) => {
           const warning = attempt.status === 'skipped' || attempt.status === 'failed';
           const provider = attempt.platformName || attempt.provider || attempt.platformId || DASH;
           const pool = attempt.modelGroupName || attempt.modelGroupId;
           return (
             <div
+              className="lg-provider-response-row"
               key={`${attempt.order}-${attempt.stage}-${attempt.model || provider}`}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '34px 92px minmax(0, 1fr)',
-                gap: 8,
+                gridTemplateColumns: '40px 120px minmax(0, 1fr) auto',
+                gap: 10,
                 alignItems: 'start',
                 borderRadius: 'var(--radius-sm)',
-                padding: '7px 8px',
+                padding: '11px 12px',
                 background: warning ? 'rgba(245,158,11,0.08)' : 'var(--bg-input)',
                 border: '1px solid var(--border-subtle)',
               }}
             >
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
-              <span style={{ fontSize: 11, color: warning ? '#f59e0b' : 'var(--text-secondary)' }}>{attempt.status || attempt.stage}</span>
-              <span style={{ minWidth: 0, fontSize: 11, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
+              <span style={{ fontSize: 14, color: warning ? 'var(--warn)' : 'var(--text-secondary)' }}>{provider}</span>
+              <span style={{ minWidth: 0, fontSize: 14, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
                 <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{attempt.model || DASH}</span>
-                <span style={{ color: 'var(--text-muted)' }}> · {provider}</span>
                 {pool ? <span style={{ color: 'var(--text-muted)' }}> · {pool}</span> : null}
-                <span style={{ display: 'block', marginTop: 2, color: 'var(--text-muted)' }}>
-                  {attempt.statusCode ? `HTTP ${attempt.statusCode}` : 'HTTP pending'}
-                  {attempt.durationMs == null ? '' : ` · ${fmtMs(attempt.durationMs)}`}
-                  {attempt.transport ? ` · ${attempt.transport}` : ''}
-                </span>
                 {attempt.error || attempt.reason ? (
-                  <span style={{ display: 'block', marginTop: 2, color: warning ? '#f59e0b' : 'var(--text-muted)' }}>
+                  <span style={{ display: 'block', marginTop: 3, color: warning ? 'var(--warn)' : 'var(--text-muted)' }}>
                     {attempt.error || attempt.reason}
                   </span>
                 ) : null}
+              </span>
+              <span className="tabular" style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {attempt.statusCode ? `HTTP ${attempt.statusCode}` : attempt.status || '待响应'}
+                <span style={{ display: 'block', marginTop: 2 }}>{attempt.durationMs == null ? DASH : fmtMs(attempt.durationMs)}</span>
               </span>
             </div>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -234,6 +247,12 @@ function prettyJson(body?: string | null): string | null {
 
 function transportLabel(transport?: string | null): string {
   return transport && transport.trim() ? transport.trim() : DASH;
+}
+
+function generationAppName(detail: LlmLogDetail): string {
+  const code = detail.appCallerCode?.trim();
+  if (code) return code.startsWith('G-') ? code : `G-${code}`;
+  return detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim() || DASH;
 }
 
 function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg: string }[] {
@@ -311,7 +330,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           top: 0,
           right: 0,
           height: '100vh',
-          width: 'min(760px, 94vw)',
+          width: 'min(820px, 96vw)',
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--bg-page)',
@@ -325,29 +344,28 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 16px',
+            padding: '15px 18px',
             borderBottom: '1px solid var(--border-subtle)',
           }}
         >
           <div>
-            <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)' }}>Generation</div>
-            <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-              {detail?.requestId || logId}
-            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>请求详情</div>
+            {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
+              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 14 }}>{detail.model || DASH}</span>
+              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 14 }}>{detail.platformName || detail.provider || DASH}</span>
+            </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
           <button aria-label="关闭详情" onClick={onClose} style={{ background: 'none', border: 'none', opacity: 0.7, color: 'var(--text-secondary)' }}>
             <X size={18} />
           </button>
         </div>
 
-        <div style={{ flex: 1, padding: '12px 16px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        <div style={{ flex: 1, padding: '16px 18px 24px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {loading || !detail ? (
             <SectionLoader text="正在加载详情…" />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>{detail.model || DASH}</span>
-                {detail.provider ? <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· {detail.provider}</span> : null}
                 {(() => {
                   const lc = deriveLifecycle(detail);
                   return (
@@ -358,9 +376,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                         alignItems: 'center',
                         gap: 4,
                         borderRadius: 999,
-                        padding: '0 8px',
-                        height: 20,
-                        fontSize: 10,
+                        padding: '0 9px',
+                        height: 26,
+                        fontSize: 13,
                         fontWeight: 600,
                         color: lc.color,
                         background: lc.bg,
@@ -380,8 +398,8 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                       alignItems: 'center',
                       borderRadius: 999,
                       padding: '0 8px',
-                      height: 20,
-                      fontSize: 10,
+                      height: 26,
+                      fontSize: 13,
                       fontWeight: 600,
                       color: c.color,
                       background: c.bg,
@@ -392,79 +410,96 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 ))}
               </div>
 
-              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
-                <MetricCard title="Provider latency" value={fmtMs(detail.durationMs)} />
-                <MetricCard title="First byte" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
-                <MetricCard title="Throughput" value={tps == null ? DASH : `${tps} tok/s`} />
+              <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
+                <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
+                <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
                 <MetricCard
-                  title="Estimated cost"
-                  value={fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)}
-                  note={detail.estimatedCost == null ? '缺价格快照' : undefined}
+                  title="费用"
+                  value={detail.providerReportedCost == null
+                    ? fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)
+                    : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
+                  note={detail.providerReportedCost != null
+                    ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
+                    : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
                 />
+                <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" />
                 <MetricCard
-                  title="Provider actual"
-                  value={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
-                  note={detail.providerReportedCost == null ? '供应商账单尚未对账' : detail.reconciliationStatus ?? undefined}
-                />
-                <MetricCard title="Tokens" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} />
-                <MetricCard
-                  title="Fallbacks"
+                  title="回退"
                   value={detail.isFallback ? '是' : '否'}
                   note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
                 />
               </div>
 
-              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 2 }}>
-                <div style={{ fontSize: 12, fontWeight: 650, margin: '8px 0 4px', color: 'var(--text-primary)' }}>Overview</div>
-                <Row k="Model ID" v={detail.model} mono />
-                <Row k="Protocol" v={detail.protocol} />
-                <Row k="Transport" v={transportLabel(detail.transport)} />
-                <Row k="Status" v={detail.status} />
-                <Row k="Status code" v={detail.statusCode == null ? null : String(detail.statusCode)} />
-                <Row k="Expected model" v={detail.expectedModel} mono />
-                <Row k="Price currency" v={detail.priceCurrency} />
-                <Row k="Input price / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
-                <Row k="Output price / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
-                <Row k="Price per call" v={detail.pricePerCall == null ? null : String(detail.pricePerCall)} />
-                <Row k="Estimated input cost" v={fmtCost(detail.estimatedInputCost, detail.estimatedCostCurrency)} />
-                <Row k="Estimated output cost" v={fmtCost(detail.estimatedOutputCost, detail.estimatedCostCurrency)} />
-                <Row k="Estimated call cost" v={fmtCost(detail.estimatedCallCost, detail.estimatedCostCurrency)} />
-                <Row k="Provider actual cost" v={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)} />
-                <Row k="Reconciliation status" v={detail.reconciliationStatus} />
-                <Row k="Reconciliation delta" v={fmtCost(detail.reconciliationDelta, detail.estimatedCostCurrency)} />
-                <Row k="FX snapshot" v={detail.fxSnapshotId} mono />
-                <Row k="Price snapshot hash" v={detail.priceSnapshotHash} mono copy />
-              </div>
+              <section>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>概览</div>
+                <Row k="实际模型" v={detail.model} mono copy />
+                <Row k="期望模型" v={detail.expectedModel} mono />
+                <Row k="Provider" v={detail.platformName || detail.provider} />
+                <Row k="协议" v={detail.protocol || detail.ingressProtocol} />
+                <Row k="传输方式" v={transportLabel(detail.transport)} />
+                <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
+              </section>
 
-              <RouterTracePanel detail={detail} />
-
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 4, color: 'var(--text-primary)' }}>Request metadata</div>
-                <Row k="App" v={detail.appCallerCodeDisplayName ?? detail.appCallerTitle ?? detail.appCallerCode} />
-                <Row k="App caller code" v={detail.appCallerCode} mono />
-                <Row k="Team" v={detail.teamId} mono />
-                <Row k="Client code" v={detail.clientCode} mono />
-                <Row k="Environment" v={detail.environment} />
-                <Row k="Service key" v={detail.serviceKeyId} mono copy />
-                <Row k="Key prefix snapshot" v={detail.serviceKeyPrefix} mono />
-                <Row k="Source system" v={detail.sourceSystem} />
-                <Row k="Ingress protocol" v={detail.ingressProtocol} />
+              <section>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>请求</div>
+                <Row k="应用" v={generationAppName(detail)} />
+                <Row k="团队" v={detail.teamId} mono />
+                <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
                 <Row k="Request ID" v={detail.requestId} mono copy />
-                <Row k="Provider request ID" v={detail.providerRequestId} mono copy />
                 <Row k="Generation ID" v={detail.id} mono copy />
-                <Row k="Started" v={detail.startedAt} mono />
-                <Row k="First byte" v={detail.firstByteAt} mono />
-                <Row k="Ended" v={detail.endedAt} mono />
-                <Row k="Finish reason" v={detail.finishReason} />
-                <Row k="Streaming" v={streaming} />
-                <Row k="Model policy" v={detail.modelPolicy} />
-                <Row k="Requested model pool" v={detail.modelPoolId} mono />
-                <Row k="Resolution" v={detail.resolutionReason} />
-                <Row k="Parameter policy" v={detail.parameterPolicy} />
-                <Row k="Dropped parameters" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
-                <Row k="提示词策略" v={detail.promptPolicyId ? `${detail.promptPolicyId} / v${detail.promptPolicyVersion ?? '—'}` : null} mono />
-                <Row k="提示词策略 hash" v={detail.promptPolicyHash} mono />
-              </div>
+                <Row k="结束原因" v={detail.finishReason} />
+                <Row k="流式响应" v={streaming} />
+              </section>
+
+              <ProviderResponses detail={detail} />
+
+              <details className="lg-generation-advanced">
+                <summary>查看路由、费用凭证和完整审计字段</summary>
+                <div>
+                  <RouterTracePanel detail={detail} />
+                  <section>
+                    <h3>费用与对账</h3>
+                    <Row k="价格币种" v={detail.priceCurrency} />
+                    <Row k="输入价格 / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
+                    <Row k="输出价格 / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
+                    <Row k="单次价格" v={detail.pricePerCall == null ? null : String(detail.pricePerCall)} />
+                    <Row k="Gateway 输入估算" v={fmtCost(detail.estimatedInputCost, detail.estimatedCostCurrency)} />
+                    <Row k="Gateway 输出估算" v={fmtCost(detail.estimatedOutputCost, detail.estimatedCostCurrency)} />
+                    <Row k="Gateway 单次估算" v={fmtCost(detail.estimatedCallCost, detail.estimatedCostCurrency)} />
+                    <Row k="Provider 实际费用" v={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)} />
+                    <Row k="对账状态" v={detail.reconciliationStatus} />
+                    <Row k="对账差额" v={fmtCost(detail.reconciliationDelta, detail.estimatedCostCurrency)} />
+                    <Row k="汇率快照" v={detail.fxSnapshotId} mono />
+                    <Row k="价格快照 hash" v={detail.priceSnapshotHash} mono copy />
+                  </section>
+                  <section>
+                    <h3>身份与时间</h3>
+                    <Row k="appCallerCode" v={detail.appCallerCode} mono />
+                    <Row k="业务标题" v={detail.appCallerTitle || detail.appCallerCodeDisplayName} />
+                    <Row k="Client code" v={detail.clientCode} mono />
+                    <Row k="环境" v={detail.environment} />
+                    <Row k="Service key ID" v={detail.serviceKeyId} mono copy />
+                    <Row k="密钥前缀快照" v={detail.serviceKeyPrefix} mono />
+                    <Row k="来源系统" v={detail.sourceSystem} />
+                    <Row k="入口协议" v={detail.ingressProtocol} />
+                    <Row k="Provider request ID" v={detail.providerRequestId} mono copy />
+                    <Row k="开始时间" v={detail.startedAt} mono />
+                    <Row k="首字节时间" v={detail.firstByteAt} mono />
+                    <Row k="结束时间" v={detail.endedAt} mono />
+                  </section>
+                  <section>
+                    <h3>治理策略</h3>
+                    <Row k="模型策略" v={detail.modelPolicy} />
+                    <Row k="请求模型池" v={detail.modelPoolId} mono />
+                    <Row k="解析原因" v={detail.resolutionReason} />
+                    <Row k="参数策略" v={detail.parameterPolicy} />
+                    <Row k="被丢弃参数" v={detail.droppedParameters?.length ? detail.droppedParameters.join(', ') : null} mono />
+                    <Row k="提示词策略" v={detail.promptPolicyId ? `${detail.promptPolicyId} / v${detail.promptPolicyVersion ?? '—'}` : null} mono />
+                    <Row k="提示词策略 hash" v={detail.promptPolicyHash} mono />
+                  </section>
+                </div>
+              </details>
 
               {detail.error ? (
                 <div
@@ -475,10 +510,10 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     border: '1px solid rgba(248,113,113,0.28)',
                   }}
                 >
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--err)' }}>Error</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--err)' }}>错误</div>
                   <pre
                     style={{
-                      fontSize: 11,
+                          fontSize: 13,
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-all',
                       color: 'var(--text-secondary)',
@@ -529,9 +564,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border-subtle)' }}>
                   {[
-                    ['request', 'Request'],
-                    ['response', 'Response'],
-                    ['raw', 'Raw'],
+                    ['request', '请求内容'],
+                    ['response', '响应内容'],
+                    ['raw', '原始数据'],
                   ].map(([key, label]) => {
                     const active = bodyTab === key;
                     return (
@@ -543,7 +578,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                           border: 'none',
                           borderBottom: active ? '1px solid var(--text-primary)' : '1px solid transparent',
                           color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                          fontSize: 12,
+                          fontSize: 14,
                           fontWeight: active ? 650 : 500,
                           padding: '9px 10px',
                           marginBottom: -1,
@@ -554,9 +589,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     );
                   })}
                 </div>
-                {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="No request payload recorded" /> : null}
-                {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="No response payload recorded" /> : null}
-                {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="No raw payload recorded" /> : null}
+                {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="未记录请求内容" /> : null}
+                {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="未记录响应内容" /> : null}
+                {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="未记录原始数据" /> : null}
               </div>
             </div>
           )}

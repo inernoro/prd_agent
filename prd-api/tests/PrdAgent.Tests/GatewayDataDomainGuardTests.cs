@@ -3281,7 +3281,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("X-Gateway-Dry-Run", quickstart);
         Assert.Contains("const definition = protocolDefinition(protocol);", quickstart);
         Assert.Contains("PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
-        var quickstartTestStart = quickstart.IndexOf("const runDryRun", StringComparison.Ordinal);
+        var quickstartTestStart = quickstart.IndexOf("const runTest", StringComparison.Ordinal);
         var quickstartTestEnd = quickstart.IndexOf("const editIdentity", quickstartTestStart, StringComparison.Ordinal);
         Assert.True(quickstartTestStart >= 0 && quickstartTestEnd > quickstartTestStart);
         Assert.DoesNotContain("bundle.protocol", quickstart[quickstartTestStart..quickstartTestEnd]);
@@ -3326,12 +3326,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Provider 接口预览", platforms);
         Assert.Contains("查看接口", platforms);
         Assert.Contains("查看 Provider", models);
-        Assert.Contains("查看模型池", appCallers);
+        Assert.Contains("预览模型池", appCallers);
         Assert.Contains("Exchange 路由预览", exchanges);
         Assert.Contains("查看路由", exchanges);
 
         Assert.DoesNotContain("apiKey={", preview);
         Assert.DoesNotContain("bundle.key", preview);
+    }
+
+    [Fact]
+    public void Console_GenerationDetails_PrioritizesResultsAndProgressivelyDisclosesAuditFields()
+    {
+        var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
+        var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+
+        Assert.Contains("请求详情", drawer);
+        Assert.Contains("上游耗时", drawer);
+        Assert.Contains("生成速度", drawer);
+        Assert.Contains("未知：缺 token 或价格快照", drawer);
+        Assert.Contains("<ProviderResponses detail={detail}", drawer);
+        Assert.Contains("上游响应", drawer);
+        Assert.Contains("查看路由、费用凭证和完整审计字段", drawer);
+        Assert.Contains("Provider 实际费用", drawer);
+        Assert.Contains("汇率快照", drawer);
+        Assert.Contains("请求内容", drawer);
+        Assert.Contains("响应内容", drawer);
+        Assert.Contains("原始数据", drawer);
+        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", drawer);
+        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
+        Assert.DoesNotContain("fontSize: 10", logs);
+        Assert.DoesNotContain("fontSize: 11", logs);
     }
 
     [Fact]
@@ -3374,7 +3398,7 @@ public class GatewayDataDomainGuardTests
         Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
         Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
 
-        Assert.Contains("scopes: ['invoke']", quickstart);
+        Assert.Contains("scopes: ['invoke', 'route:read']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
         Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);
         Assert.Contains("requestType,", quickstart);
@@ -3383,7 +3407,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("visionClaudeContent", quickstart);
         Assert.Contains("visionGeminiParts", quickstart);
         Assert.Contains("upstreamCalled=false", quickstart);
-        Assert.Contains("本页不提供关闭开关", quickstart);
+        Assert.Contains("type TestMode = 'safe' | 'real'", quickstart);
+        Assert.Contains("const checkRealRoute", quickstart);
+        Assert.Contains("const prepareRealRoute", quickstart);
+        Assert.Contains("testMode === 'safe'", quickstart);
+        Assert.Contains("testMode === 'real'", quickstart);
+        Assert.Contains("canRunRealTest(routePreview)", quickstart);
         Assert.Contains("/prompt-policy", quickstart);
         Assert.Contains("const identityLocked = Boolean(bundle) || creatingStage !== null", quickstart);
         Assert.Contains("disabled={!canCreateAccess || identityLocked}", quickstart);
