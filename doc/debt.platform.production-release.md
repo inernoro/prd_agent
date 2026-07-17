@@ -1,10 +1,10 @@
 # 生产发布安全 · 债务台账
 
-> **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v1.2 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 总览
 
-当前 open: 0 / paid: 6 / 总计: 6
+当前 open: 0 / paid: 7 / 总计: 7
 
 ## 债务列表
 
@@ -22,6 +22,7 @@
 | 2026-07-12-release-command-compatibility | PR #1174 | 2026-07-17 | `./exec_dep.sh release` 明确映射 latest 并输出迁移提示，`--help` 同时展示兼容命令和不可变 `--commit` 推荐路径；不可变静态产物不再允许跳过 SHA256。 |
 | 2026-07-12-release-forensic-ledger | PR #1174 | 2026-07-17 | 每次执行写不可覆盖 JSON，记录操作者、主机、release shell PID、开始结束时间、目标 ref、产物 URL/实际与期望 SHA256、校验结论、切换前后 owner/mode/current/previous、公网探针、首个失败阶段与回滚结果。2026-07-12 首次把目录改为 `700` 的历史进程无法追溯，属于不可恢复历史事实；后续发布已具备归因链。 |
 | 2026-07-17-independent-public-surface-watch | PR #1174 | 2026-07-17 | `LLM Gateway Shadow Watch` 新增无密钥 `public-surface` 独立 job，每 6 小时先验证 MAP 根页、真实资源、API 与网关双健康，再以独立 Gateway 模式验证网关产品标识、真实 JS/CSS、Console/Serving 精确提交和 GW Native、OpenAI、Claude、Gemini 四协议无密钥 401；两份 JSON 均上传保存，不依赖发布动作。 |
+| 2026-07-17-static-release-umask-worker-access | PR #1176 | 2026-07-17 | 生产发布在 `umask 077` 下创建的 `.releases` 和版本根目录为 `700`，完整产物仍会被 Nginx worker 拒绝并导致根页 500。发布表面探针拒绝完成后，通过发布前静态与 Nginx 精确备份恢复根页 200，网关容器 ID/IP 保持不变。PR #1176 在原子切换前把目录固定为 `755`、文件固定为 `644`，增加严格 umask 单测、真实 Nginx worker 测试和独立 CI 门禁。 |
 
 ## 关闭条件
 
