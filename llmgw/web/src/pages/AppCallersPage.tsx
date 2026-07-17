@@ -155,7 +155,8 @@ export function AppCallersPage() {
   }, []);
 
   const pages = useMemo(() => Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE)), [data?.total]);
-  const hasBulkFilter = !!(search || status || sourceSystem || ingressProtocol || requestType || drift);
+  const hasBulkFilter = !!(search || status || sourceSystem || ingressProtocol || requestType || drift || modelPoolId);
+  const activePoolName = pools.find((pool) => pool.id === modelPoolId)?.name || modelPoolId;
   const hasBulkUpdate = !!(
     bulkDraft.targetStatus ||
     bulkDraft.modelPolicy ||
@@ -236,6 +237,7 @@ export function AppCallersPage() {
       requestType: requestType || undefined,
       drift: drift || undefined,
       search: search || undefined,
+      modelPoolId: modelPoolId || undefined,
       targetStatus: bulkDraft.targetStatus || undefined,
       modelPolicy: bulkDraft.modelPolicy || undefined,
       parameterPolicy: bulkDraft.parameterPolicy || undefined,
@@ -275,6 +277,7 @@ export function AppCallersPage() {
           placeholder="搜索 appCaller、标题或 requestId"
           aria-label="搜索 appCaller"
         />
+        {modelPoolId ? <div className="lg-app-caller-active-filter"><span>模型池</span><strong title={modelPoolId}>{activePoolName}</strong><button type="button" onClick={() => { setPage(1); setModelPoolId(''); }}>移除</button></div> : null}
         <details className="lg-app-caller-filters">
           <summary>筛选{hasBulkFilter ? '（已启用）' : ''}</summary>
           <div>
@@ -283,7 +286,7 @@ export function AppCallersPage() {
             <FilterSelect label="全部入口" value={ingressProtocol} options={data.ingressProtocols} onChange={(v) => { setPage(1); setIngressProtocol(v); }} style={selectStyle} />
             <FilterSelect label="全部类型" value={requestType} options={data.requestTypes} onChange={(v) => { setPage(1); setRequestType(v); }} style={selectStyle} />
             <select value={drift} onChange={(e) => { setPage(1); setDrift(e.target.value); }} style={selectStyle}><option value="">全部漂移</option>{DRIFT_FILTERS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}</select>
-            {hasBulkFilter || modelPoolId ? <Button size="sm" variant="ghost" onClick={() => { setPage(1); setSearch(''); setStatus(''); setSourceSystem(''); setIngressProtocol(''); setRequestType(''); setDrift(''); setModelPoolId(''); }}>清除筛选</Button> : null}
+            {hasBulkFilter ? <Button size="sm" variant="ghost" onClick={() => { setPage(1); setSearch(''); setStatus(''); setSourceSystem(''); setIngressProtocol(''); setRequestType(''); setDrift(''); setModelPoolId(''); }}>清除筛选</Button> : null}
           </div>
         </details>
         {canWrite ? <details className="lg-app-caller-bulk">

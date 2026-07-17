@@ -9,3 +9,7 @@
 | test | llmgw | 更新生成详情数据域保护断言，覆盖四类页签与加载失败兜底 |
 | docs | llmgw | 更正 CDS Quickstart 真实请求证据并沉淀 OpenRouter 微观体验基线 |
 | docs | llmgw | 更新模型网关权威教程的 Generation details 四页签、requestId 自动打开和会话边界说明，并增加四张实测图 |
+| security | llmgw | Quickstart 真实模式与复制片段绑定当前 Gateway 地址的路由预检，地址变化后自动退回安全模式 |
+| fix | llmgw | GW Native cURL 的请求头和正文复用同一个动态 requestId，避免日志串号与重复审计标识 |
+| fix | llmgw | appCaller 模型池深链筛选加入可见筛选条件及服务端批量治理过滤，防止越池更新 |
+| fix | llmgw-serving | resolve 路由预览支持 header-only 来源校验且不再写入 appCaller 活跃度 |

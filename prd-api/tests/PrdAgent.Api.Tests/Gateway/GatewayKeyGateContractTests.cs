@@ -1414,7 +1414,6 @@ public class GatewayKeyGateContractTests
                 {
                     AppCallerCode = "external.resolve::chat",
                     ModelType = "chat",
-                    Context = new { SourceSystem = "external" },
                 }),
             };
             resolve.Headers.Add("X-Gateway-Key", "scoped-test-key");

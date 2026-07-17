@@ -615,7 +615,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("context: { sourceSystem: 'external' }", quickstart);
         Assert.Contains("payload.success ?? payload.Success", quickstart);
-        Assert.Contains("normalizeRoutePreview(payload)", quickstart);
+        Assert.Contains("normalizeRoutePreview(payload, normalizedBaseUrl)", quickstart);
+        Assert.Contains("preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)", quickstart);
+        Assert.Contains("disabled={!realRouteReady || routeChecking}", quickstart);
+        Assert.Contains("const snippetMode: TestMode", quickstart);
+        Assert.Contains("X-Request-Id: \\$REQUEST_ID", quickstart);
+        Assert.DoesNotContain("quickstart-curl", quickstart);
         Assert.Contains("/gw/v1/invoke", quickstart);
         Assert.Contains("VITE_LLMGW_SERVING_BASE_URL", quickstart);
         Assert.DoesNotContain("hostname.replace('-llmgw-web.', '.')", quickstart);
@@ -624,7 +629,12 @@ public class GatewayDataDomainGuardTests
 
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         Assert.Contains("SourceSystem = body.Context?.SourceSystem", endpoints);
+        Assert.Contains("path.Equals(\"/gw/v1/resolve\", StringComparison.OrdinalIgnoreCase) ? headerSource : null", endpoints);
         Assert.DoesNotContain("|| path.Equals(\"/gw/v1/resolve\", StringComparison.OrdinalIgnoreCase);", endpoints);
+        var resolveStart = endpoints.IndexOf("app.MapPost(\"/gw/v1/resolve\"", StringComparison.Ordinal);
+        var resolveEnd = endpoints.IndexOf("async Task<IResult> HandleNativeInvokeAsync", resolveStart, StringComparison.Ordinal);
+        Assert.True(resolveStart >= 0 && resolveEnd > resolveStart);
+        Assert.DoesNotContain("RecordDiscoveredAppCallerAsync", endpoints[resolveStart..resolveEnd]);
     }
 
     [Fact]
@@ -3377,6 +3387,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<colgroup>", appCallers);
         Assert.Contains("lg-app-caller-mobile-list", appCallers);
         Assert.Contains("function AppCallerMobileCard", appCallers);
+        Assert.Contains("requestType || drift || modelPoolId", appCallers);
+        Assert.Contains("modelPoolId: modelPoolId || undefined", appCallers);
+        Assert.Contains("lg-app-caller-active-filter", appCallers);
+
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var bulkStart = console.IndexOf("app.MapPost(\"/gw/app-callers/bulk-governance\"", StringComparison.Ordinal);
+        var bulkEnd = console.IndexOf("RequireAuthorization(\"ConfigWrite\")", bulkStart, StringComparison.Ordinal);
+        Assert.True(bulkStart >= 0 && bulkEnd > bulkStart);
+        Assert.Contains("AddExactFilter(\"ModelPoolId\", body.ModelPoolId)", console[bulkStart..bulkEnd]);
     }
 
     [Fact]
@@ -3433,7 +3452,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("const prepareRealRoute", quickstart);
         Assert.Contains("testMode === 'safe'", quickstart);
         Assert.Contains("testMode === 'real'", quickstart);
-        Assert.Contains("canRunRealTest(routePreview)", quickstart);
+        Assert.Contains("canRunRealTest(currentRoutePreview, baseUrl)", quickstart);
         Assert.Contains("/prompt-policy", quickstart);
         Assert.Contains("const identityLocked = Boolean(bundle) || creatingStage !== null", quickstart);
         Assert.Contains("disabled={!canCreateAccess || identityLocked}", quickstart);

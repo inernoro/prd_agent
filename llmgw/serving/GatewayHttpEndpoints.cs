@@ -746,8 +746,7 @@ public static class GatewayHttpEndpoints
             HttpContext http,
             ResolveRequestDto body,
             PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-            ILLMRequestContextAccessor accessor,
-            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+            ILLMRequestContextAccessor accessor) =>
         {
             var resolveModelPolicy = NormalizeModelPolicy(body.ModelPolicy)
                                      ?? NormalizeModelPolicy(body.Context?.ModelPolicy);
@@ -783,19 +782,6 @@ public static class GatewayHttpEndpoints
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
-            if (!await RecordDiscoveredAppCallerAsync(services, ingress, CancellationToken.None))
-            {
-                return Results.Json(new
-                {
-                    error = new
-                    {
-                        code = "APP_CALLER_TEAM_OWNERSHIP_DENIED",
-                        message = "appCaller 已归属其他团队",
-                        appCallerCode = body.AppCallerCode,
-                        requestType = body.ModelType,
-                    },
-                }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
-            }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
             var resolution = await gateway.ResolveModelAsync(
                 body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
@@ -1773,7 +1759,12 @@ public static class GatewayHttpEndpoints
                 }
 
                 var handlerForcesMap = path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase);
-                var bodySource = handlerForcesMap ? "map" : ReadNestedJsonString(root, "Context", "SourceSystem") ?? "map";
+                var bodySource = handlerForcesMap
+                    ? "map"
+                    : FirstNonEmpty(
+                        ReadNestedJsonString(root, "Context", "SourceSystem"),
+                        path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase) ? headerSource : null,
+                        "map")!;
                 if (!string.IsNullOrWhiteSpace(headerSource)
                     && !string.Equals(headerSource, bodySource, StringComparison.OrdinalIgnoreCase))
                 {

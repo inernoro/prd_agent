@@ -2910,6 +2910,39 @@ a:focus-visible {
   font-size: 14px;
 }
 
+.lg-app-caller-active-filter {
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.lg-app-caller-active-filter strong {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-app-caller-active-filter button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
 .lg-app-caller-filters,
 .lg-app-caller-bulk {
   position: relative;

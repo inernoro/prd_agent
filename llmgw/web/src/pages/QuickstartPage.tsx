@@ -14,6 +14,7 @@ type TestMode = 'safe' | 'real';
 
 type RoutePreview = {
   success: boolean;
+  checkedBaseUrl: string;
   errorMessage?: string;
   resolutionType?: string;
   actualModel?: string;
@@ -127,11 +128,14 @@ export function QuickstartPage() {
     environment: bundle?.environment ?? environment,
     teamId: bundle?.teamId ?? teamId,
   };
+  const currentRoutePreview = routePreview?.checkedBaseUrl === normalizeBaseUrl(baseUrl) ? routePreview : null;
+  const realRouteReady = canRunRealTest(currentRoutePreview, baseUrl);
+  const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, testMode),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode),
     env: environmentSnippet(displayBundle),
-    skill: agentSkillSnippet(displayBundle, testMode),
-  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, testMode]);
+    skill: agentSkillSnippet(displayBundle, snippetMode),
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, snippetMode]);
   const visibleSnippet = snippets[snippetTab];
 
   const copyText = async (name: string, value: string) => {
@@ -205,7 +209,7 @@ export function QuickstartPage() {
   const checkRealRoute = async (target = bundle) => {
     if (!target) return;
     setRouteChecking(true);
-    const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     try {
       const response = await fetch(new URL('/gw/v1/resolve', `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
@@ -225,12 +229,12 @@ export function QuickstartPage() {
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!response.ok) {
-        setRoutePreview({ success: false, errorMessage: readErrorMessage(payload) || `路由预检失败，HTTP ${response.status}` });
+        setRoutePreview({ success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: readErrorMessage(payload) || `路由预检失败，HTTP ${response.status}` });
         return;
       }
-      setRoutePreview(normalizeRoutePreview(payload) ?? { success: false, errorMessage: 'Gateway 未返回可识别的路由结果' });
+      setRoutePreview(normalizeRoutePreview(payload, normalizedBaseUrl) ?? { success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: 'Gateway 未返回可识别的路由结果' });
     } catch (error) {
-      setRoutePreview({ success: false, errorMessage: error instanceof Error ? error.message : '无法连接 Gateway' });
+      setRoutePreview({ success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: error instanceof Error ? error.message : '无法连接 Gateway' });
     } finally {
       setRouteChecking(false);
     }
@@ -273,12 +277,12 @@ export function QuickstartPage() {
   };
 
   const runTest = async () => {
-    if (!bundle || (testMode === 'real' && !canRunRealTest(routePreview))) return;
+    if (!bundle || (testMode === 'real' && !realRouteReady)) return;
     setTesting(true);
     setTestResult(null);
     setActionError(null);
     const definition = protocolDefinition(protocol);
-    const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     const requestId = createRequestId();
     try {
       const headers: Record<string, string> = {
@@ -305,8 +309,8 @@ export function QuickstartPage() {
       } else if (testMode === 'safe') {
         setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
       } else {
-        const actualModel = readActualModel(payload) || routePreview?.actualModel || '已解析模型';
-        const provider = routePreview?.actualPlatformName || routePreview?.actualPlatformId || '已解析 Provider';
+        const actualModel = readActualModel(payload) || currentRoutePreview?.actualModel || '已解析模型';
+        const provider = currentRoutePreview?.actualPlatformName || currentRoutePreview?.actualPlatformId || '已解析 Provider';
         setTestResult({ ok: true, message: `真实上游已返回，Provider：${provider}，模型：${actualModel}。请用 requestId 核对实际模型、耗时和费用。`, requestId: actualRequestId });
       }
     } catch (error) {
@@ -336,6 +340,13 @@ export function QuickstartPage() {
     });
     setTestResult(null);
     setRoutePreview(null);
+  };
+
+  const changeBaseUrl = (next: string) => {
+    setBaseUrl(next);
+    setRoutePreview(null);
+    setTestMode('safe');
+    setTestResult(null);
   };
 
   return (
@@ -402,7 +413,7 @@ export function QuickstartPage() {
             <label style={labelStyle}>Gateway 地址<code className="lg-derived-base-url">{baseUrl}</code></label>
             <label style={labelStyle}>测试路径<code className="lg-derived-base-url">{selectedProtocol.path}</code></label>
           </div>
-          <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={setBaseUrl} /></details>
+          <details className="lg-advanced-base-url"><summary>使用其他 Gateway 地址</summary><Field label="自定义 Gateway 地址" value={baseUrl} onChange={changeBaseUrl} /></details>
 
           <div className="lg-quickstart-actions">
             <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议，默认限制 60 次/分钟；切换协议后可直接测试。` : '不会创建通配 key；密钥默认限制 60 次/分钟，也不会调用付费模型。'}</small></div>
@@ -430,17 +441,17 @@ export function QuickstartPage() {
 
           <div className="lg-route-preview" style={{ marginTop: 12 }}>
             <div className="lg-route-preview-heading"><Server size={17} /><span><strong>真实路由预览</strong><small>由 Gateway 按当前租户、appCaller 和模型池解析；页面不会相信请求自报的 tenantId。</small></span></div>
-            {!bundle ? <p>生成 appCaller 与 key 后自动检查。</p> : routeChecking ? <p>正在检查模型池、Provider 和实际模型。</p> : routePreview?.success ? (
+            {!bundle ? <p>生成 appCaller 与 key 后自动检查。</p> : routeChecking ? <p>正在检查模型池、Provider 和实际模型。</p> : currentRoutePreview?.success ? (
               <div className="lg-route-facts">
-                <RouteFact label="模型池" value={routePreview.modelGroupName || routePreview.modelGroupId || '默认池'} />
-                <RouteFact label="Provider" value={routePreview.actualPlatformName || routePreview.actualPlatformId || '未命名 Provider'} />
-                <RouteFact label="实际模型" value={routePreview.actualModel || '未返回'} />
-                <RouteFact label="上游协议" value={routePreview.protocol || routePreview.platformType || '自动适配'} />
+                <RouteFact label="模型池" value={currentRoutePreview.modelGroupName || currentRoutePreview.modelGroupId || '默认池'} />
+                <RouteFact label="Provider" value={currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || '未命名 Provider'} />
+                <RouteFact label="实际模型" value={currentRoutePreview.actualModel || '未返回'} />
+                <RouteFact label="上游协议" value={currentRoutePreview.protocol || currentRoutePreview.platformType || '自动适配'} />
               </div>
             ) : (
               <div className="lg-route-blocked">
                 <strong>真实请求尚未就绪</strong>
-                <span>{routePreview?.errorMessage || '当前 appCaller 还没有可解析的真实模型。'}</span>
+                <span>{currentRoutePreview?.errorMessage || '当前地址尚未通过真实路由预检。请先点击重新检查。'}</span>
                 {tenant?.isInternal && canManagePromptPolicy ? <Button size="sm" variant="secondary" disabled={!bundle || preparingRoute} onClick={() => void prepareRealRoute()}>{preparingRoute ? '正在只补缺失配置' : '一键准备现有真实上游'}</Button> : null}
                 {!tenant?.isInternal ? <span>请先为当前租户添加 Provider 密钥、启用模型，并把模型加入此类型的默认池。</span> : null}
               </div>
@@ -452,9 +463,9 @@ export function QuickstartPage() {
             <div><Play size={17} /><span><strong>发送测试请求</strong><small>安全连通只验证密钥、团队、协议和审计；真实模型会调用上方预览的非桩上游，可能产生费用。</small></span></div>
             <div className="lg-test-mode" role="group" aria-label="测试模式">
               <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
-              <button type="button" className={testMode === 'real' ? 'is-active' : ''} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
+              <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '请先让当前 Gateway 地址通过真实路由预检' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
             </div>
-            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing || (testMode === 'real' && !canRunRealTest(routePreview))} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{canCreateAccess ? (testMode === 'real' ? '仅在路由就绪且不是明显开发桩时可用' : '明确返回 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
+            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{canCreateAccess ? (testMode === 'real' ? '仅在当前地址路由就绪且不是明显开发桩时可用' : '明确返回 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
             {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
           </div>
 
@@ -478,7 +489,7 @@ export function QuickstartPage() {
             <pre style={preStyle}><code>{visibleSnippet}</code></pre>
             <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
           </div>
-          <p style={hintStyle}>{testMode === 'safe' ? <>当前示例带 <code>X-Gateway-Dry-Run: quickstart</code>，不会产生上游费用。</> : <>当前示例不带 dry-run，会执行一次真实模型调用；请先核对上方路由预览。</>} 不要把密钥提交到仓库、截图、URL 或日志。</p>
+          <p style={hintStyle}>{snippetMode === 'safe' ? <>当前示例带 <code>X-Gateway-Dry-Run: quickstart</code>，不会产生上游费用。</> : <>当前示例不带 dry-run，会执行一次真实模型调用；请先核对上方路由预览。</>} 不要把密钥提交到仓库、截图、URL 或日志。</p>
         </section>
 
         <section className="lg-quickstart-detail-grid" style={{ ...gridStyle, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
@@ -610,13 +621,14 @@ function readActualModel(payload: Record<string, unknown> | null) {
     || stringValue(resolution?.actual_model);
 }
 
-function normalizeRoutePreview(payload: Record<string, unknown> | null): RoutePreview | null {
+function normalizeRoutePreview(payload: Record<string, unknown> | null, checkedBaseUrl: string): RoutePreview | null {
   if (!payload) return null;
   const success = payload.success ?? payload.Success;
   if (typeof success !== 'boolean') return null;
   const value = (camel: string, pascal: string) => stringValue(payload[camel]) || stringValue(payload[pascal]);
   return {
     success,
+    checkedBaseUrl,
     errorMessage: value('errorMessage', 'ErrorMessage'),
     resolutionType: value('resolutionType', 'ResolutionType'),
     actualModel: value('actualModel', 'ActualModel'),
@@ -631,8 +643,12 @@ function normalizeRoutePreview(payload: Record<string, unknown> | null): RoutePr
   };
 }
 
-function canRunRealTest(preview: RoutePreview | null) {
-  if (!preview?.success || !preview.actualModel) return false;
+function normalizeBaseUrl(value: string) {
+  return value.trim().replace(/\/$/, '');
+}
+
+function canRunRealTest(preview: RoutePreview | null, baseUrl: string) {
+  if (!preview?.success || !preview.actualModel || preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)) return false;
   const identity = [preview.actualModel, preview.actualPlatformName, preview.actualPlatformId, preview.apiUrl]
     .filter(Boolean)
     .join(' ')
@@ -688,13 +704,16 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 
 function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode) {
   const definition = protocolDefinition(protocol);
+  const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
-  -H "X-Request-Id: quickstart-\$(date +%s)"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, 'quickstart-curl'), null, 2);
+  -H "X-Request-Id: \$REQUEST_ID"`;
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken), null, 2)
+    .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
-  return `curl "${baseUrl}${definition.path}" \\
+  return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"
+curl "${baseUrl}${definition.path}" \\
   ${common}${extra} \\
   -H "Content-Type: application/json" \\
   -d '${body}'`;
