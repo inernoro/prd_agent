@@ -8,3 +8,4 @@
 | fix | llmgw-web | 请求记录的 requestId 深链在唯一命中后自动打开生成详情，避免移动端还要点击拥挤表格 |
 | test | llmgw | 更新生成详情数据域保护断言，覆盖四类页签与加载失败兜底 |
 | docs | llmgw | 更正 CDS Quickstart 真实请求证据并沉淀 OpenRouter 微观体验基线 |
+| docs | llmgw | 更新模型网关权威教程的 Generation details 四页签、requestId 自动打开和会话边界说明，并增加四张实测图 |

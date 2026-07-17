@@ -24,51 +24,57 @@
 
 ![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
 
-2. 打开详情，确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
+2. 粘贴完整 requestId 后，唯一匹配会自动打开详情。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
 
 **图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度**
 
 ![图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
 
-3. 再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId，核对时间、状态、协议、appCaller `tutorial.gateway-book::chat`、ServiceKeyId 和客服组。密钥这里只显示身份或遮盖信息。
+3. 再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。先在“概览”核对时间、状态、协议、App `G-tutorial.gateway-book::chat`、模型、Provider、token、速度和总耗时；密钥这里只显示前缀或遮盖信息。
 
-**图 071 请求趋势和状态分布让用户先看有没有流量与失败**
+**图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试**
 
-![图 071 请求趋势和状态分布让用户先看有没有流量与失败](https://cds.miduo.org/api/reports/assets/af4fb1eb6028d571e6923c337b807fab3c0872eff1a16817fa744082a486bb37.png)
+![图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试](https://cds.miduo.org/api/reports/assets/1074b176d0aec40e050455586b52a21904877e77835702a0474b668be151ecd0.png)
 
-4. 在这条非 dry-run 详情中读取模型池、实际模型 `stub-chat`、Provider 和耗时；只有这条记录能证明真实路由经过教程桩。
+4. 切到“请求与响应”，核对 Request ID、Generation ID、Key 前缀、流式状态和请求内容。需要交给同事排查时只复制 requestId；不要复制整页原始数据，也不要把可能包含业务内容的请求正文贴到公开群。
 
-**图 072 费用可信度条区分价格覆盖、unknown 与原币种金额**
+**图 106 请求与响应页签保留定位字段，同时把业务正文放在可控的查看区**
 
-![图 072 费用可信度条区分价格覆盖、unknown 与原币种金额](https://cds.miduo.org/api/reports/assets/d6875f1f274fb6106f00336d5889877e1911c7077c9b98980bf25bd69e19fb0e.png)
+![图 106 请求与响应页签保留定位字段，同时把业务正文放在可控的查看区](https://cds.miduo.org/api/reports/assets/ceb8dc2af38d5ac805469ce974916357407bf6e12edeefe4a22baf9d91afbaf9.png)
 
-5. 查看 PromptPolicy 证据。应显示 policy id、version、hash，不应出现策略正文。
+5. 切到“路由”，读取模型池、实际模型、Provider、参数策略和每次上游尝试。只有非 dry-run 记录能证明真实路由；一次失败后继续尝试时，原因必须在这里能解释。
 
-**图 073 请求、上游调用、会话和后台任务四个页签回答不同问题**
+**图 107 路由页签说明从期望模型到实际 Provider 的完整选择过程**
 
-![图 073 请求、上游调用、会话和后台任务四个页签回答不同问题](https://cds.miduo.org/api/reports/assets/381b0bb85f777a44ed90be5ef4298f323f2839c12decf45b96e011a3d4d1d9c9.png)
+![图 107 路由页签说明从期望模型到实际 Provider 的完整选择过程](https://cds.miduo.org/api/reports/assets/6cc6a319556a216b005450d17a349fa82e6a502ffcabfb59260a34a1befb3004.png)
 
-6. 查看费用状态和原币种。[[第 7 章：配置第一个模型|第 7 章]]没有为教程桩填写价格，因此这里应保持 unknown，不能读成 0。
+6. 在同一“路由”页签查看 PromptPolicy 证据。只应出现 policy id、version 和 hash，不应出现策略正文；没有策略时应明确写未应用，不能猜测。
 
-**图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份**
+**图 107 路由页签只展示提示词策略的身份和版本证据**
 
-![图 074 每条请求显示模型、Provider、App、token、费用、速度和 key 身份](https://cds.miduo.org/api/reports/assets/6905aa13616c5bd2191b0971714064d307f8e9a5d9f543fd302d4c4b3989d1a4.png)
+![图 107 路由页签只展示提示词策略的身份和版本证据](https://cds.miduo.org/api/reports/assets/6cc6a319556a216b005450d17a349fa82e6a502ffcabfb59260a34a1befb3004.png)
 
-7. 如果记录本身带 session，再切到“会话”或使用“会话 ID”筛选。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
+7. 切到“审计”，查看费用状态和原币种。[[第 7 章：配置第一个模型|第 7 章]]没有为教程桩填写价格，因此这里应保持 unknown，不能读成 0；没有供应商逐请求账单时也不能写成 reconciled。
 
-**图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
+**图 108 审计页签把估算、实际、价格快照、汇率和身份时间分开说明**
 
-![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+![图 108 审计页签把估算、实际、价格快照、汇率和身份时间分开说明](https://cds.miduo.org/api/reports/assets/688f6882390ff9b8daf9204532c2c43019e0c4435b6ccc4e9e5d4b2f9f7f36a0.png)
 
-8. 复制定位所需的 requestId，而不是复制整页可能含业务内容的详情。
+8. 关闭详情。如果记录本身带 session，再切页面上方的“会话”页签或使用“会话 ID”筛选；这个“会话”是请求记录页面的同级视图，不是详情抽屉的第五个页签。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
 
-**本步位置复核：在同一圈选画面完成本步后再继续。**
+**图 073 请求、上游调用、会话和后台任务四个页面级页签回答不同问题**
 
-![图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试](https://cds.miduo.org/api/reports/assets/c559463c5a6e0df620dda4560687de11cbbe0821170450ecb8ab0a116a561dd4.png)
+![图 073 请求、上游调用、会话和后台任务四个页面级页签回答不同问题](https://cds.miduo.org/api/reports/assets/381b0bb85f777a44ed90be5ef4298f323f2839c12decf45b96e011a3d4d1d9c9.png)
+
+9. 需要再次定位时，从“请求与响应”复制 requestId，而不是复制整页可能含业务内容的详情。
+
+**图 106 请求身份区提供可安全传递的 Request ID 和 Generation ID**
+
+![图 106 请求身份区提供可安全传递的 Request ID 和 Generation ID](https://cds.miduo.org/api/reports/assets/ceb8dc2af38d5ac805469ce974916357407bf6e12edeefe4a22baf9d91afbaf9.png)
 
 ## 看到什么算成功
 
-两条 requestId 各自定位一条当前租户记录：dry-run 明确显示未调用模型，教程桩记录能说明 key、appCaller、模型池、Provider 和策略证据。没有 session 时不虚构会话，敏感明文也没有泄露。
+两条 requestId 各自定位一条当前租户记录并自动打开详情：dry-run 明确显示未调用模型，非 dry-run 记录能用概览、请求与响应、路由、审计四页签说明 key、appCaller、模型池、Provider、策略和费用证据。没有 session 时不虚构会话，敏感明文也没有泄露。
 
 ## 失败怎么办
 
