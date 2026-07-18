@@ -31,6 +31,12 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
             self.source,
         )
 
+    def test_smoke_sends_scoped_identity_headers(self) -> None:
+        smoke_source = (ROOT / "scripts" / "gw-smoke.py").read_text(encoding="utf-8")
+        self.assertIn('r.add_header("X-Gateway-Source", source_system)', smoke_source)
+        self.assertIn('r.add_header("X-Gateway-App-Caller", app_caller)', smoke_source)
+        self.assertIn('path.startswith("/pools?")', smoke_source)
+
 
 if __name__ == "__main__":
     unittest.main()
