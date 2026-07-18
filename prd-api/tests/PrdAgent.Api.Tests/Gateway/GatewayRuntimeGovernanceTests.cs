@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json.Nodes;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -609,6 +610,118 @@ public sealed class GatewayRuntimeGovernanceTests
             .GetCollection<BsonDocument>("llmgw_operation_audits")
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "service_key.scope_denied"));
         auditCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ScopedKey_CanInferItsOnlyAppCallerForHeaderlessCompatibleClients()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+
+        const string key = "llmgw_headerless_client_key";
+        var keyRecord = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "cherry-studio",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key),
+            SourceSystem = "external",
+            ClientCode = "cherry-studio",
+            Environment = "production",
+            Purpose = "external-platform",
+            KeyPrefix = "gwk_cherry",
+            AppCallerCodes = ["cherry-studio.desktop::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke", "stream:invoke"],
+        };
+        await InsertServiceKeyAsync(scope.Context, keyRecord);
+
+        var result = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external",
+            AppCallerRegistry.PageAgent.Generate,
+            "openai-compatible",
+            "invoke",
+            null,
+            CancellationToken.None,
+            allowSingleAppCallerInference: true);
+
+        result.Allowed.ShouldBeTrue();
+        result.ResolvedAppCallerCode.ShouldBe("cherry-studio.desktop::chat");
+        result.TenantId.ShouldBe("tenant-a");
+
+        var streamed = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            key,
+            "legacy-key",
+            "external",
+            AppCallerRegistry.PageAgent.Generate,
+            "openai-compatible",
+            "stream:invoke",
+            null,
+            CancellationToken.None,
+            allowSingleAppCallerInference: true);
+
+        streamed.Allowed.ShouldBeTrue();
+        streamed.ResolvedAppCallerCode.ShouldBe("cherry-studio.desktop::chat");
+
+        const string ambiguousKey = "llmgw_ambiguous_client_key";
+        await InsertServiceKeyAsync(scope.Context, new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "shared-client",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(ambiguousKey),
+            SourceSystem = "external",
+            ClientCode = "shared-client",
+            Environment = "production",
+            Purpose = "external-platform",
+            KeyPrefix = "gwk_shared",
+            AppCallerCodes = ["client.one::chat", "client.two::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        });
+        var ambiguous = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            ambiguousKey,
+            "legacy-key",
+            "external",
+            AppCallerRegistry.PageAgent.Generate,
+            "openai-compatible",
+            "invoke",
+            null,
+            CancellationToken.None,
+            allowSingleAppCallerInference: true);
+
+        ambiguous.Allowed.ShouldBeFalse();
+        ambiguous.ErrorCode.ShouldBe("GATEWAY_KEY_SCOPE_DENIED");
+
+        const string wildcardKey = "llmgw_wildcard_client_key";
+        await InsertServiceKeyAsync(scope.Context, new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-a",
+            Name = "wildcard-client",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(wildcardKey),
+            SourceSystem = "external",
+            ClientCode = "wildcard-client",
+            Environment = "production",
+            Purpose = "external-platform",
+            KeyPrefix = "gwk_wildcard",
+            AppCallerCodes = ["*", "client.one::chat"],
+            IngressProtocols = ["openai-compatible"],
+            Scopes = ["invoke"],
+        });
+        var wildcard = await new GatewayScopedKeyAuthorizer(scope.Context).AuthorizeAsync(
+            wildcardKey,
+            "legacy-key",
+            "external",
+            AppCallerRegistry.PageAgent.Generate,
+            "openai-compatible",
+            "invoke",
+            null,
+            CancellationToken.None,
+            allowSingleAppCallerInference: true);
+
+        wildcard.Allowed.ShouldBeTrue();
+        wildcard.ResolvedAppCallerCode.ShouldBe(AppCallerRegistry.PageAgent.Generate);
     }
 
     [Fact]

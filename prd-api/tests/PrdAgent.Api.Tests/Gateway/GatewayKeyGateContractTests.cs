@@ -812,6 +812,61 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task HeaderlessCompatibleClient_UsesSingleAppCallerResolvedFromScopedKey()
+    {
+        var gateway = new EchoingGateway();
+        var authorizer = new CapturingScopedKeyAuthorizer(
+            _ => true,
+            resolvedAppCallerCode: "cherry-studio.desktop::chat");
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    messages = new[] { new { role = "user", content = "hello" } },
+                    stream = false,
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.AllowSingleAppCallerInference.ShouldBeTrue();
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.AppCallerCode.ShouldBe("cherry-studio.desktop::chat");
+
+            using var streamRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    messages = new[] { new { role = "user", content = "hello" } },
+                    stream = true,
+                }),
+            };
+            streamRequest.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            streamRequest.Headers.Add("X-Gateway-Source", "external");
+
+            using var streamResponse = await app.GetTestClient().SendAsync(streamRequest);
+
+            streamResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.AppCallerCode.ShouldBe("cherry-studio.desktop::chat");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task OpenAiCompatibleEndpoint_PreservesLogprobsExtension()
     {
         await using var app = BuildHostWithGateway(new EchoingGateway());
@@ -2723,13 +2778,19 @@ public class GatewayKeyGateContractTests
     private sealed class CapturingScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     {
         private readonly Func<string, bool> _scopeAllowed;
+        private readonly string? _resolvedAppCallerCode;
 
-        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed) => _scopeAllowed = scopeAllowed;
+        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed, string? resolvedAppCallerCode = null)
+        {
+            _scopeAllowed = scopeAllowed;
+            _resolvedAppCallerCode = resolvedAppCallerCode;
+        }
 
         public int CallCount { get; private set; }
         public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
+        public bool AllowSingleAppCallerInference { get; private set; }
 
         public Task<GatewayKeyAuthorization> AuthorizeAsync(
             string providedKey,
@@ -2739,12 +2800,14 @@ public class GatewayKeyGateContractTests
             string ingressProtocol,
             string requiredScope,
             System.Net.IPAddress? remoteIp,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
         {
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
+            AllowSingleAppCallerInference = allowSingleAppCallerInference;
             var allowed = _scopeAllowed(requiredScope);
             return Task.FromResult(new GatewayKeyAuthorization(
                 allowed,
@@ -2757,7 +2820,8 @@ public class GatewayKeyGateContractTests
                 "team-test",
                 ClientCode: "content-agent",
                 Environment: "test",
-                KeyPrefixSnapshot: "gwk_test"));
+                KeyPrefixSnapshot: "gwk_test",
+                ResolvedAppCallerCode: _resolvedAppCallerCode));
         }
     }
 
@@ -2771,7 +2835,8 @@ public class GatewayKeyGateContractTests
             string ingressProtocol,
             string requiredScope,
             System.Net.IPAddress? remoteIp,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
         {
             var teamId = providedKey switch
             {

@@ -106,7 +106,8 @@ public static class GatewayHttpEndpoints
                         authorizationInputs.IngressProtocol,
                         authorizationInputs.RequiredScope,
                         context.Connection.RemoteIpAddress,
-                        context.RequestAborted);
+                        context.RequestAborted,
+                        authorizationInputs.AllowSingleAppCallerInference);
                 if (!authorization.Allowed)
                 {
                     await WriteRejectedGatewayRequestLogAsync(
@@ -122,6 +123,14 @@ public static class GatewayHttpEndpoints
                         error = new { code = authorization.ErrorCode, message = authorization.Detail },
                     }, jsonOpts));
                     return;
+                }
+                if (authorizationInputs.AllowSingleAppCallerInference
+                    && !string.IsNullOrWhiteSpace(authorization.ResolvedAppCallerCode))
+                {
+                    authorizationInputs = authorizationInputs with
+                    {
+                        AppCallerCode = authorization.ResolvedAppCallerCode,
+                    };
                 }
                 context.Items["llmgw.key.authorization"] = authorization;
                 context.Items["llmgw.key.authorization.inputs"] = authorizationInputs;
@@ -294,7 +303,7 @@ public static class GatewayHttpEndpoints
                 RequestId = requestId,
                 SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
                 IngressProtocol = "openai-compatible",
-                AppCallerCode = ResolveHeader(http, "X-Gateway-App-Caller") ?? defaultAppCaller,
+                AppCallerCode = ResolveVerifiedAppCaller(http, defaultAppCaller),
                 AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
                 RequestType = requestType,
                 ModelPolicy = modelPolicy,
@@ -361,7 +370,7 @@ public static class GatewayHttpEndpoints
                 RequestId = requestId,
                 SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
                 IngressProtocol = "openai-compatible",
-                AppCallerCode = ResolveHeader(http, "X-Gateway-App-Caller") ?? AppCallerRegistry.OpenApi.Proxy.Generation,
+                AppCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.OpenApi.Proxy.Generation),
                 AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
                 RequestType = ModelTypes.ImageGen,
                 ModelPolicy = modelPolicy,
@@ -432,7 +441,7 @@ public static class GatewayHttpEndpoints
                 RequestId = requestId,
                 SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
                 IngressProtocol = "openai-compatible",
-                AppCallerCode = ResolveHeader(http, "X-Gateway-App-Caller") ?? AppCallerRegistry.OpenApi.Proxy.Generation,
+                AppCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.OpenApi.Proxy.Generation),
                 AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
                 RequestType = ModelTypes.ImageGen,
                 ModelPolicy = modelPolicy,
@@ -481,8 +490,7 @@ public static class GatewayHttpEndpoints
             IServiceProvider services) =>
         {
             var requestId = TrackGatewayRequestId(http);
-            var appCallerCode = ResolveHeader(http, "X-Gateway-App-Caller")
-                                ?? AppCallerRegistry.PageAgent.Generate;
+            var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
             var userId = ResolveHeader(http, "X-Gateway-User-Id");
 
             var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
@@ -595,7 +603,7 @@ public static class GatewayHttpEndpoints
                 RequestId = requestId,
                 SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
                 IngressProtocol = "claude-compatible",
-                AppCallerCode = ResolveHeader(http, "X-Gateway-App-Caller") ?? defaultAppCaller,
+                AppCallerCode = ResolveVerifiedAppCaller(http, defaultAppCaller),
                 AppCallerTitle = ResolveHeader(http, "X-Gateway-App-Title"),
                 RequestType = requestType,
                 ModelPolicy = modelPolicy,
@@ -702,7 +710,7 @@ public static class GatewayHttpEndpoints
                 RequestId = requestId,
                 SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
                 IngressProtocol = "gemini-compatible",
-                AppCallerCode = ResolveHeader(http, "X-Gateway-App-Caller") ?? defaultAppCaller,
+                AppCallerCode = ResolveVerifiedAppCaller(http, defaultAppCaller),
                 AppCallerTitle = ResolveHeader(http, "X-Gateway-App-Title"),
                 RequestType = requestType,
                 ModelPolicy = modelPolicy,
@@ -1655,6 +1663,15 @@ public static class GatewayHttpEndpoints
             ? inputs
             : throw new UnauthorizedAccessException("verified gateway authorization inputs are unavailable");
 
+    private static string ResolveVerifiedAppCaller(HttpContext context, string fallback)
+    {
+        var header = ResolveHeader(context, "X-Gateway-App-Caller");
+        if (!string.IsNullOrWhiteSpace(header)) return header;
+        return context.Items["llmgw.key.authorization.inputs"] is GatewayAuthorizationInputs { AppCallerCode.Length: > 0 } inputs
+            ? inputs.AppCallerCode
+            : fallback;
+    }
+
     private static string ResolveIngressProtocol(string path)
     {
         if (path.StartsWith("/v1beta/", StringComparison.OrdinalIgnoreCase)
@@ -1708,6 +1725,8 @@ public static class GatewayHttpEndpoints
         var ingressProtocol = ResolveIngressProtocol(path);
         var sourceSystem = headerSource ?? "external";
         var appCallerCode = headerAppCaller ?? string.Empty;
+        var allowSingleAppCallerInference = !string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal)
+                                            && string.IsNullOrWhiteSpace(headerAppCaller);
         var requiredScope = ResolveRequiredScope(path);
 
         if (!string.Equals(ingressProtocol, "gw-native", StringComparison.Ordinal)
@@ -1737,14 +1756,14 @@ public static class GatewayHttpEndpoints
         }
 
         if (!ShouldInspectAuthorizationBody(path))
-            return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+            return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope, AllowSingleAppCallerInference: allowSingleAppCallerInference);
 
         context.Request.EnableBuffering();
         try
         {
             using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
             if (body.RootElement.ValueKind != JsonValueKind.Object)
-                return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+                return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope, AllowSingleAppCallerInference: allowSingleAppCallerInference);
 
             var root = body.RootElement;
             if (ReadJsonBool(root, "stream") && string.Equals(requiredScope, "invoke", StringComparison.Ordinal))
@@ -1798,7 +1817,7 @@ public static class GatewayHttpEndpoints
             context.Request.Body.Position = 0;
         }
 
-        return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope);
+        return new(sourceSystem, appCallerCode, ingressProtocol, requiredScope, AllowSingleAppCallerInference: allowSingleAppCallerInference);
     }
 
     private static bool ShouldInspectAuthorizationBody(string path)
@@ -5148,7 +5167,8 @@ public static class GatewayHttpEndpoints
         string IngressProtocol,
         string RequiredScope,
         string? ErrorCode = null,
-        string? ErrorDetail = null);
+        string? ErrorDetail = null,
+        bool AllowSingleAppCallerInference = false);
 
     private sealed record AppCallerStatusDecision(
         bool Rejected,
