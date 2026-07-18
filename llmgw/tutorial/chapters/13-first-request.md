@@ -28,31 +28,31 @@
 
 **图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格**
 
-![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
 
 3. 在“概览”页签先核对时间、状态、入口协议、appCaller、实际模型和 Provider。上方六项指标回答 token、费用、速度和总耗时；下方“上游响应”逐次列出 Provider、模型、模型池、结果和回退原因。
 
 **图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏**
 
-![图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏](https://cds.miduo.org/api/reports/assets/1074b176d0aec40e050455586b52a21904877e77835702a0474b668be151ecd0.png)
+![图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏](https://cds.miduo.org/api/reports/assets/461587f1666bbdd38fab1b2c96bbefbd1aa81576478f15d41497dc978070f199.jpg)
 
 4. 切到“请求与响应”，核对请求身份中的 App、Key 前缀、Request ID、Generation ID、入口协议和流式状态，再按需查看请求、响应或原始数据。App 应显示为 `G-` 加 appCallerCode；这里只显示 key 前缀，不显示完整 key。
 
 **图 106 请求与响应页签集中展示调用身份和脱敏后的原始证据**
 
-![图 106 请求与响应页签集中展示调用身份和脱敏后的原始证据](https://cds.miduo.org/api/reports/assets/ceb8dc2af38d5ac805469ce974916357407bf6e12edeefe4a22baf9d91afbaf9.png)
+![图 106 请求与响应页签集中展示调用身份和脱敏后的原始证据](https://cds.miduo.org/api/reports/assets/79a6b38e273abd3500a55b1f318d574d8cd799b34df06e9a4ee5a1de708dbc92.jpg)
 
 5. 切到“路由”，按顺序看期望路由、实际模型、Provider、模型池、参数策略和 PromptPolicy。安全直测应显示未调用上游；真实请求则必须能解释实际走到哪个 Provider，以及前一次失败后为什么继续尝试。
 
 **图 107 路由页签把期望、实际、参数处理和提示词策略串成一条轨迹**
 
-![图 107 路由页签把期望、实际、参数处理和提示词策略串成一条轨迹](https://cds.miduo.org/api/reports/assets/6cc6a319556a216b005450d17a349fa82e6a502ffcabfb59260a34a1befb3004.png)
+![图 107 路由页签把期望、实际、参数处理和提示词策略串成一条轨迹](https://cds.miduo.org/api/reports/assets/c40bedc0d0d216462c49970ac257de3ff2f55fdf703097c35301206022120c34.jpg)
 
 6. 切到“审计”，核对网关估算、供应商实际、价格快照、汇率凭证、对账状态和调用身份。unknown 必须显示为“未知”或破折号，不能显示成 0；CNY 与 USD 没有汇率凭证时必须分开显示。
 
 **图 108 审计页签把费用可信度、身份和时间证据放在一起**
 
-![图 108 审计页签把费用可信度、身份和时间证据放在一起](https://cds.miduo.org/api/reports/assets/688f6882390ff9b8daf9204532c2c43019e0c4435b6ccc4e9e5d4b2f9f7f36a0.png)
+![图 108 审计页签把费用可信度、身份和时间证据放在一起](https://cds.miduo.org/api/reports/assets/38435bbbfdecaed01838c587b2b1aecf52a33bf2a6c4b7c94706d75997c0b013.jpg)
 
 7. 关闭详情，在同一个搜索框换成标记为 vision 的 requestId 并再次提交。新的精确匹配会自动打开详情；核对 vision appCaller、另一条 Key 前缀、内容类型和路由。关闭详情后不会因为同一个筛选值反复弹开，只有提交新的 requestId 才自动打开。
 

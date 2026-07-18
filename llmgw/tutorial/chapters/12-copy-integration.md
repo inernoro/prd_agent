@@ -70,7 +70,7 @@
 
 10. 在 Cherry Studio 新建对话，选择 LLM Gateway / auto，只发送一次“只回复 `LLMGW_OK`”。回 Gateway 请求记录，用时间、service key 前缀和 appCaller `cherry-studio.desktop::chat` 定位这次调用。客户端不能自报 tenantId；租户必须来自服务端解析的 key。
 
-![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
 
 11. 回 Quickstart 清除当前一次性明文，选择“OpenClaw”，点击“生成 OpenClaw 配置”。复制页面给出的三行命令块并粘贴到已安装 OpenClaw 的终端。第一行增量合并 `llmgw` Provider，第二行设为默认模型，第三行校验配置；不会替换其他 Provider。
 
@@ -78,7 +78,7 @@
 
 12. 按终端提示重启 OpenClaw Gateway，运行 `openclaw chat`，只发送一次“只回复 `LLMGW_OK`”。再用 appCaller `openclaw.gateway::chat` 到请求记录核对实际模型、状态、耗时与费用可信度。
 
-![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
 
 13. 两个客户端都只使用各自刚生成的 key。不要把 Cherry Studio key 复制到 OpenClaw，也不要让两个客户端共用同一个 clientCode；这样撤销、限速、审计和费用才能分别定位。
 
