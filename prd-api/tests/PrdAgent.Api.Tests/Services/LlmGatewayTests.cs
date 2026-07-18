@@ -1462,6 +1462,84 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task StreamAsync_WhenTerminalFrameHasNoDoneOrEof_ShouldCompleteImmediately()
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "platform-a",
+                Name = "Provider A",
+                PlatformType = "openai",
+                ApiUrl = "https://provider-a.example.com",
+                Enabled = true
+            }, "sk-a")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "pool-a",
+                Name = "Pool A",
+                Code = "pool-a",
+                ModelType = "chat",
+                IsDefaultForType = true,
+                Priority = 0,
+                Models =
+                [
+                    new ModelGroupItem
+                    {
+                        PlatformId = "platform-a",
+                        ModelId = "model-a",
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                ]
+            });
+        var upstream = """
+            data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+
+            """;
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            resolver,
+            new TerminalThenBlockingHttpClientFactory(upstream),
+            new TestLogger<LlmGateway>(),
+            logWriter);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var chunks = new List<GatewayStreamChunk>();
+
+        var collect = Task.Run(async () =>
+        {
+            await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = "prd-agent-web.lab::chat",
+                ModelType = "chat",
+                RequestBody = new JsonObject
+                {
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                    }
+                }
+            }, cts.Token))
+            {
+                chunks.Add(chunk);
+            }
+        }, cts.Token);
+
+        var completed = await Task.WhenAny(collect, Task.Delay(TimeSpan.FromSeconds(1)));
+        if (completed != collect)
+            cts.Cancel();
+        await collect;
+
+        Assert.Same(collect, completed);
+        Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Text && chunk.Content == "OK");
+        Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Done && chunk.FinishReason == "stop");
+        Assert.DoesNotContain(chunks, chunk => chunk.Type == GatewayChunkType.Error);
+        Assert.NotNull(logWriter.Done);
+        Assert.Equal("stop", logWriter.Done!.FinishReason);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate()
     {
         var resolution = new GatewayModelResolution
@@ -2248,6 +2326,60 @@ internal sealed class SequenceHttpMessageHandler(
         {
             Content = content
         });
+    }
+}
+
+internal sealed class TerminalThenBlockingHttpClientFactory(string body) : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new(new TerminalThenBlockingHttpMessageHandler(body));
+}
+
+internal sealed class TerminalThenBlockingHttpMessageHandler(string body) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var content = new StreamContent(new TerminalThenBlockingStream(body));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+    }
+}
+
+internal sealed class TerminalThenBlockingStream(string body) : Stream
+{
+    private readonly byte[] _bytes = System.Text.Encoding.UTF8.GetBytes(body);
+    private int _position;
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => _position; set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (_position >= _bytes.Length) return 0;
+        var copied = Math.Min(count, _bytes.Length - _position);
+        Array.Copy(_bytes, _position, buffer, offset, copied);
+        _position += copied;
+        return copied;
+    }
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (_position < _bytes.Length)
+        {
+            var copied = Math.Min(buffer.Length, _bytes.Length - _position);
+            _bytes.AsMemory(_position, copied).CopyTo(buffer);
+            _position += copied;
+            return copied;
+        }
+
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        return 0;
     }
 }
 

@@ -34,6 +34,8 @@ SELF_TEST = os.environ.get("GW_SMOKE_SELF_TEST", "").strip().lower() in {"1", "t
 SMOKE_PROMPT = os.environ.get("GW_SMOKE_PROMPT", "Reply exactly OK. No explanation.").strip() or "Reply exactly OK. No explanation."
 SMOKE_MAX_TOKENS = int(os.environ.get("GW_SMOKE_MAX_TOKENS", "4"))
 SMOKE_REQUEST_TIMEOUT = int(os.environ.get("GW_SMOKE_REQUEST_TIMEOUT_SECONDS", os.environ.get("GW_TIMEOUT", "120")))
+SMOKE_SOURCE_SYSTEM = os.environ.get("GW_SMOKE_SOURCE_SYSTEM", "release-probe").strip() or "release-probe"
+SMOKE_APP_CALLER = os.environ.get("GW_SMOKE_APP_CALLER", "report-agent.generate::chat").strip() or "report-agent.generate::chat"
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 # 默认只跑低成本 chat provider canary；intent/vision 需要通过 GW_SMOKE_MODEL_TYPES 显式打开。
@@ -76,6 +78,18 @@ def _req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(url, data=data, method=method)
     r.add_header("X-Gateway-Key", KEY)
+    source_system = SMOKE_SOURCE_SYSTEM
+    app_caller = SMOKE_APP_CALLER
+    if isinstance(body, dict):
+        app_caller = str(body.get("AppCallerCode") or app_caller).strip()
+        context = body.get("Context")
+        if isinstance(context, dict):
+            source_system = str(context.get("SourceSystem") or source_system).strip()
+    if method == "GET" and path.startswith("/pools?"):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+        app_caller = str((query.get("appCallerCode") or [app_caller])[0]).strip()
+    r.add_header("X-Gateway-Source", source_system)
+    r.add_header("X-Gateway-App-Caller", app_caller)
     # 预览域名走 Cloudflare：默认 Python-urllib UA 会被 CF 按浏览器签名拦截（error 1010 / 403）。
     # 带一个正常浏览器 UA 即可放行（与真人浏览器/curl 一致）。
     r.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) gw-smoke/1.0")
