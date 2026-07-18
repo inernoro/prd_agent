@@ -1074,18 +1074,27 @@ def _static_checks() -> list[dict]:
     upstream_executable = bool(upstream_readiness_path.exists() and (upstream_readiness_path.stat().st_mode & stat.S_IXUSR))
     preflight_idx = prod_stage.find("run_prod_preflight\n\nrun_upstream_readiness_evidence")
     upstream_idx = prod_stage.find("run_upstream_readiness_evidence\n\nrun_provider_audit_evidence")
-    provider_idx = prod_stage.find("run_provider_audit_evidence\n\nif [ -n \"$repo\" ]")
+    provider_idx = prod_stage.find("run_provider_audit_evidence\n\nforce_redeploy_reason=")
     fast_idx = prod_stage.find("run_or_print ./fast.sh")
+    prod_health_idx = prod_stage.find("run_prod_health_preflight\n\nensure_serving_probe_evidence")
+    serving_probe_idx = prod_stage.find("ensure_serving_probe_evidence\n\nrun_protocol_canary_evidence")
+    protocol_canary_idx = prod_stage.find("run_protocol_canary_evidence\n\nrun_video_canary_evidence")
     video_canary_idx = prod_stage.find("run_video_canary_evidence\n\nrun_asr_http_canary_evidence")
     asr_canary_idx = prod_stage.find("run_asr_http_canary_evidence\n\nrun_shadow_seed_evidence")
+    shadow_seed_idx = prod_stage.find("run_shadow_seed_evidence\n\nif [ \"$execute\" = \"1\" ]")
     release_tree_before_status_idx = prod_stage.find("validate_release_tree\nrun_protocol_router_audit_evidence\nrun_rollout_status_ready_gate")
     upstream_before_deploy = (
         preflight_idx >= 0
         and upstream_idx >= 0
         and provider_idx >= 0
+        and prod_health_idx >= 0
+        and serving_probe_idx >= 0
+        and protocol_canary_idx >= 0
         and video_canary_idx >= 0
         and asr_canary_idx >= 0
-        and preflight_idx < upstream_idx < provider_idx < fast_idx < video_canary_idx < asr_canary_idx
+        and shadow_seed_idx >= 0
+        and preflight_idx < upstream_idx < provider_idx < fast_idx < prod_health_idx
+        < serving_probe_idx < protocol_canary_idx < video_canary_idx < asr_canary_idx < shadow_seed_idx
     )
     release_tree_before_status = release_tree_before_status_idx >= 0
     ledger_ok, ledger_detail = _contains_all(
@@ -1310,8 +1319,8 @@ def _static_checks() -> list[dict]:
             "LLMGW_GATE_MIN_COVERAGE_HOURS",
             "--min-coverage-hours $gate_min_coverage_hours",
             "默认要求 shadow 证据覆盖 24 小时",
-            "same-commit shadow evidence only; commit probe runs after compose up",
-            "--shadow-release-commit $expect_commit",
+            "shadow_release_commit=\"$(printf '%s' \"${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}\" | xargs || true)\"",
+            "args=\"$args --shadow-release-commit $shadow_release_commit\"",
             "--health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3}",
             "probe_args=\"$probe_args --expect-commit $expect_commit\"",
             "LLMGW_GATE_FULL_HTTP_APP_CALLERS",
@@ -1354,7 +1363,9 @@ def _static_checks() -> list[dict]:
             "LLMGW_GATE_CANARY_APP_KINDS",
             "canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标",
             "LLMGW_GATE_RUN_SMOKE",
-            "GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
+            "LLMGW_POST_DEPLOY_SERVICE_KEY",
+            "LLMGW_POST_DEPLOY_SMOKE_KEY=\"${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}\"",
+            "GW_BASE=\"$gate_base\" GW_KEY=\"$smoke_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py",
             "LLMGW_GATE_RUN_SERVING_PROBE",
             "LLMGW_SERVING_PROBE_JSON_OUT",
             "scripts/llmgw-disk-space-guard.sh",
@@ -1382,9 +1393,10 @@ def _static_checks() -> list[dict]:
             "mkdir -p \"$protocol_canary_md_dir\"",
             "LLM Gateway post-deploy protocol canary: required before runtime gates",
             "LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates",
-            "python3 scripts/llmgw-protocol-canary.py",
+            "GW_KEY=\"$smoke_key\" python3 scripts/llmgw-protocol-canary.py",
             "protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"",
             "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only",
+            "GW_KEY=\"$gate_key\" python3 scripts/llmgw-release-gate.py",
             "$protocol_canary_arg --require-runtime-gates",
             "--allow-pending-http-full-ledger",
             "LLMGW_SKIP_RELEASE_GATE=1",

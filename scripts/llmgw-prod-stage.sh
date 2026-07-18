@@ -48,6 +48,9 @@ Required environment for deploy stages:
   LLMGW_STAGE_RUN_VIDEO_CANARY=1 enables /gw/v1/raw video exchange canary evidence
   LLMGW_CONSOLE_BASE and LLMGW_CONSOLE_TOKEN, or LLMGW_CONSOLE_USER/PASSWORD
                               Required for config-authority and http-full stages
+  LLMGW_POST_DEPLOY_SERVICE_KEY
+                              Optional scoped service key for post-deploy smoke/protocol canary.
+                              Global shadow/runtime gates continue to use LLMGW_GATE_KEY.
   LLMGW_STAGE_MIN_FREE_MB minimum free disk MB before execute deploy stages, default 4096
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
 

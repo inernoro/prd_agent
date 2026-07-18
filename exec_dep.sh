@@ -45,6 +45,8 @@ set -eu
 #     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层 smoke / protocol canary 使用的 scoped service key；
+#     未设时兼容回退 LLMGW_GATE_KEY。全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke 复用 legacy key。
 #   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -1145,6 +1147,7 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_VERIFY_NEEDED=0
   LLMGW_POST_DEPLOY_GATE_BASE=""
   LLMGW_POST_DEPLOY_GATE_KEY=""
+  LLMGW_POST_DEPLOY_SMOKE_KEY=""
   LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
 
   mode_raw="$(llmgw_mode_value)"
@@ -1310,6 +1313,7 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_VERIFY_NEEDED=1
   LLMGW_POST_DEPLOY_GATE_BASE="$gate_base"
   LLMGW_POST_DEPLOY_GATE_KEY="$gate_key"
+  LLMGW_POST_DEPLOY_SMOKE_KEY="${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}"
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
   if [ "$maintenance_release" = "1" ]; then
@@ -1447,6 +1451,7 @@ run_llmgw_post_deploy_verification_if_needed() {
 
   gate_base="${LLMGW_POST_DEPLOY_GATE_BASE:-}"
   gate_key="${LLMGW_POST_DEPLOY_GATE_KEY:-}"
+  smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
 
   if [ -z "$gate_base" ]; then
@@ -1455,6 +1460,10 @@ run_llmgw_post_deploy_verification_if_needed() {
   fi
   if [ -z "$gate_key" ]; then
     echo "ERROR: LLM Gateway post-deploy verification missing gate key." >&2
+    exit 1
+  fi
+  if [ -z "$smoke_key" ]; then
+    echo "ERROR: LLM Gateway post-deploy verification missing scoped smoke key." >&2
     exit 1
   fi
 
@@ -1480,7 +1489,7 @@ run_llmgw_post_deploy_verification_if_needed() {
 
   if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
-    GW_BASE="$gate_base" GW_KEY="$gate_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
+    GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
   else
     echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
   fi
@@ -1520,7 +1529,7 @@ run_llmgw_post_deploy_verification_if_needed() {
       fi
       echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
       # shellcheck disable=SC2086
-      GW_KEY="$gate_key" python3 scripts/llmgw-protocol-canary.py \
+      GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py \
         --base "$gate_base" \
         --expect-commit "$expect_commit" \
         --execute \
