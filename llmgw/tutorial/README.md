@@ -6,12 +6,23 @@
 
 ```bash
 python3 llmgw/tutorial/publisher.py check
-python3 -m unittest llmgw/tutorial/test_publisher.py
+python3 -m unittest llmgw/tutorial/test_publisher.py llmgw/tutorial/test_maintenance.py
 ```
 
 检查会确认 0 至 32 章连续存在、每章具备完整操作与排错结构、下一章衔接正确，并拒绝图片占位符、疑似明文密钥和请求自报 `tenantId`。本轮视觉增密已经形成 136 个不同图片地址、222 个功能证据映射；修订后的 255 个编号步骤均在步骤下方直接跟图，共 294 次内联图片。全部截图逐张读回，不用“图片总数”代替功能覆盖。
 
 跨章节引用必须写成 `[[完整章节标题|第 N 章]]`。公开分享页会把它解析成库内跳转并同步 `?entry=` 深链，读者点击后直接进入目标章节。发布器校验会拒绝遗留的纯文字跨章节引用；代码块、行内代码、图片和已有链接不参与转换。
+
+## 每日漂移巡检
+
+`.github/workflows/llmgw-tutorial-drift.yml` 每天扫描最近一天的 LLMGW 页面增量。`maintenance-map.json` 把页面映射到受影响章节，并对关键稳定文案执行页面与教程双向对账；新页面没有章节映射记为 P1，已有稳定锚点消失记为 P0。巡检只生成 JSON、Markdown 健康报告和 `advanced` 更新提醒草稿，不自动修改正文、DailyTips seed 或远端知识库。
+
+本地可按时间窗口或基准提交执行：
+
+```bash
+python3 llmgw/tutorial/maintenance.py --since "1 day ago" --fail-on-drift
+python3 llmgw/tutorial/maintenance.py --base-ref origin/main --fail-on-drift
+```
 
 目录顺序以 `manifest.json` 的 `sortOrder` 为作者定义的书籍顺序。基础篇、中级篇、高级篇及各自章节使用递增值，分享页选择“书籍顺序”后按该值展示；缺少 `sortOrder` 时按自然数字标题兜底。
 

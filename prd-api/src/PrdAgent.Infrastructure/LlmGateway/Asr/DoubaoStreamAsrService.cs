@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -15,7 +16,8 @@ public interface IDoubaoStreamAsrExecutor
         string accessKey,
         byte[] audioData,
         Dictionary<string, object>? config = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool requirePublicPinnedWebSocket = false);
 }
 
 /// <summary>
@@ -35,10 +37,14 @@ public interface IDoubaoStreamAsrExecutor
 public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
 {
     private readonly ILogger<DoubaoStreamAsrService> _logger;
+    private readonly ISafeOutboundWebSocketConnector? _safeWebSocketConnector;
 
-    public DoubaoStreamAsrService(ILogger<DoubaoStreamAsrService> logger)
+    public DoubaoStreamAsrService(
+        ILogger<DoubaoStreamAsrService> logger,
+        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null)
     {
         _logger = logger;
+        _safeWebSocketConnector = safeWebSocketConnector;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -85,7 +91,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         string accessKey,
         byte[] audioData,
         Dictionary<string, object>? config = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool requirePublicPinnedWebSocket = false)
     {
         var result = new StreamAsrResult();
         var diag = InitializeDiagnostic(result, wsUrl, appKey, accessKey, config);
@@ -222,11 +229,21 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         using var ws = new ClientWebSocket();
         foreach (var (key, value) in headers)
             ws.Options.SetRequestHeader(key, value);
+        IDisposable? safeTransport = null;
 
         try
         {
             // 1. 连接
-            await ws.ConnectAsync(new Uri(wsUrl), ct);
+            if (requirePublicPinnedWebSocket)
+            {
+                if (_safeWebSocketConnector is null)
+                    throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
+                safeTransport = await _safeWebSocketConnector.ConnectAsync(ws, wsUrl, ct);
+            }
+            else
+            {
+                await ws.ConnectAsync(new Uri(wsUrl), ct);
+            }
             _logger.LogInformation("[DoubaoStreamAsr] WebSocket 已连接: {Url}", wsUrl);
 
             var seq = 1;
@@ -336,6 +353,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                 try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
                 catch { /* ignore close errors */ }
             }
+            safeTransport?.Dispose();
         }
 
         return result;
@@ -359,7 +377,6 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             result.Error = "音频数据为空";
             return result;
         }
-
         // 诊断信息：从入参立即捕获，握手前/握手中/握手后逐步补充
         var diag = result.Diagnostic;
         diag.WsUrl = wsUrl;

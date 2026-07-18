@@ -8186,10 +8186,12 @@ static async Task WriteLoginAuditAsync(
 static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, CancellationToken ct)
 {
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
-        || uri.Scheme is not ("http" or "https"))
+        || uri.Scheme is not ("http" or "https" or "wss"))
     {
-        return "外部租户 Exchange 只允许 HTTP 或 HTTPS 上游；WebSocket 上游暂不开放";
+        return "外部租户 Exchange 只允许 HTTP、HTTPS 或 WSS 上游；WebSocket 必须使用 WSS 加密连接";
     }
+    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+        return "外部租户 Exchange URL 不允许携带 userinfo";
 
     var host = uri.Host.Trim().TrimEnd('.');
     if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))

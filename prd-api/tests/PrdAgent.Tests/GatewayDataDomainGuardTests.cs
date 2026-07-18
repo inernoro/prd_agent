@@ -930,7 +930,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("上游接口类型", page);
         Assert.Contains("上游模型标识重复", page);
         Assert.Contains("当前填写的内容仍保留", page);
-        Assert.Contains("option.value !== 'doubao-asr-stream'", page);
+        Assert.Contains("外部租户的 WebSocket 必须使用 WSS", page);
         Assert.Contains("transformerType === 'fal-image'", page);
         Assert.Contains("transformerType === 'doubao-asr'", page);
         Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
@@ -938,9 +938,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("body: req", api);
         Assert.Contains("IsExternalTenant(tenantId)", gateway);
         Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
-        Assert.Contains("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", gateway);
+        Assert.Contains("requirePublicPinnedWebSocket: externalTenant", gateway);
         Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
         Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
+        Assert.Contains("ISafeOutboundWebSocketConnector", serving);
+        var safeWebSocket = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundWebSocketConnector.cs");
+        Assert.Contains("AllowAutoRedirect = false", safeWebSocket);
+        Assert.Contains("UseProxy = false", safeWebSocket);
+        Assert.Contains("ConnectCallback", safeWebSocket);
+        Assert.Contains("TargetHost = target.Uri.IdnHost", safeWebSocket);
+        Assert.Contains("SslPolicyErrors.None", safeWebSocket);
         var poolsPage = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
         Assert.Contains("getExchanges({ enabled: true })", poolsPage);
         Assert.Contains("toExchangeModelCandidates", poolsPage);
@@ -3150,15 +3157,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<DistributionStrip label=\"入口协议\"", logsView);
-        Assert.Contains("items={summary?.ingressProtocolDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterIngressProtocol}", logsView);
-        Assert.Contains("<DistributionStrip label=\"路由策略\"", logsView);
-        Assert.Contains("items={summary?.modelPolicyDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterModelPolicy}", logsView);
-        Assert.Contains("<DistributionStrip label=\"来源系统\"", logsView);
-        Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
+        Assert.Contains("<details className=\"lg-log-filters\">", logsView);
+        Assert.Contains("meta.ingressProtocols.map", logsView);
+        Assert.Contains("setFilterIngressProtocol", logsView);
+        Assert.Contains("meta.modelPolicies.map", logsView);
+        Assert.Contains("setFilterModelPolicy", logsView);
+        Assert.Contains("meta.sourceSystems.map", logsView);
+        Assert.Contains("setFilterSourceSystem", logsView);
+        Assert.DoesNotContain("<DistributionStrip", logsView);
     }
 
     [Fact]
@@ -3183,7 +3189,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("estimatedCostUsd?: number | null", consoleTypes);
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
-        Assert.Contains("按价格快照原币种分组，不做无汇率换算", logsView);
+        Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
+        Assert.Contains("缺价格保持未知，不显示为 0", logsView);
     }
 
     [Fact]
@@ -3384,7 +3391,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
         Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.DoesNotContain("fontSize: 11", logs);
+        Assert.Contains("fontSize: 11, fontWeight: 600", logs);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);

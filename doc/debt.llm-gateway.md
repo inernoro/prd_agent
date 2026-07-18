@@ -1,12 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.6 | **日期**：2026-07-18 | **状态**：开发中
+> **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
 
 ## 总览
 
-当前 open: 22 / in-progress: 4 / paid: 21 / 总计: 47
+当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.llm-gateway-unification.md`。
 
@@ -19,7 +19,7 @@
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
 | 2026-07-15-cross-tenant-membership-invitation | high | 2026-07-15 | 为阻止用户名枚举和未经本人确认的跨租户挂载，成员自助页首版只允许创建租户专属新账号；同一既有用户加入第二个租户尚缺少一次性邀请、本人接受、过期和撤销流程 | 需要让已有 Gateway 用户加入另一个外部租户时 | open | 新增 tenant-scoped invitation，邀请明文只展示一次，落库只存 hash；接受者必须以自己的服务端会话确认，创建 membership 时再次校验 TenantId、角色、团队、过期时间和撤销状态；完成前教程不得宣称可直接添加已有其他租户账号 |
-| 2026-07-15-external-exchange-websocket | medium | 2026-07-15 | 外部租户自助 Exchange 的 HTTP 上游已使用固定 DNS 解析结果的安全出站连接；WebSocket 客户端尚不能固定已验证地址，直接放开会留下 DNS 重绑定进入内网的风险，因此首版明确拒绝外部 WebSocket Exchange | 外部租户需要接入 WebSocket ASR 或其他长连接上游时 | open | 实现可固定已验证 IP、校验证书主机名并拒绝跳转与私网地址的安全 WebSocket 连接器；完成前控制台和教程必须明确只允许外部 HTTP/HTTPS，内部租户既有私网 WebSocket 拓扑保持不变 |
+| 2026-07-15-external-exchange-websocket | medium | 2026-07-15 | 外部租户自助 Exchange 的 HTTP 上游已使用固定 DNS 解析结果的安全出站连接；WebSocket 客户端尚不能固定已验证地址，直接放开会留下 DNS 重绑定进入内网的风险，因此首版明确拒绝外部 WebSocket Exchange | 外部租户需要接入 WebSocket ASR 或其他长连接上游时 | paid | 外部 Exchange 只开放 WSS；保存和执行均拒绝 userinfo、localhost、私网及保留地址，运行时重新解析并固定全部已验证公网 IP，以原始主机名校验证书且禁用代理和跳转。内部租户既有私网 WebSocket 路径保持不变，定向安全测试和每日教程漂移巡检防止边界回退 |
 | 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | paid | PR #1088 已区分 estimated/unknown、按币种汇总并展示价格覆盖率；unknown cost 不再显示为 0，CNY/USD 不再无汇率相加 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |

@@ -324,7 +324,6 @@ export function ExchangesPage() {
           mode={formMode}
           form={form}
           meta={meta}
-          isInternalTenant={tenant?.isInternal === true}
           busy={formMode === 'create'
             ? busyId === 'create-exchange'
             : editingId !== null && busyId === editingId}
@@ -455,11 +454,10 @@ export function ExchangesPage() {
   );
 }
 
-function ExchangeForm({ mode, form, meta, isInternalTenant, busy, onChange, onUpdateModel, onSave, onCancel }: {
+function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave, onCancel }: {
   mode: 'create' | 'edit';
   form: ExchangeFormState;
   meta: ExchangeMetaData;
-  isInternalTenant: boolean;
   busy: boolean;
   onChange: (value: ExchangeFormState) => void;
   onUpdateModel: (index: number, patch: Partial<ExchangeModelWriteRequest>) => void;
@@ -474,9 +472,7 @@ function ExchangeForm({ mode, form, meta, isInternalTenant, busy, onChange, onUp
     'doubao-asr-stream': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
     'volcengine-video': 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',
   } as Record<string, string>)[form.transformerType] || 'https://provider.example.com/v1/invoke';
-  const transformerOptions = isInternalTenant
-    ? meta.transformerTypes
-    : meta.transformerTypes.filter((option) => option.value !== 'doubao-asr-stream');
+  const transformerOptions = meta.transformerTypes;
   const changeTransformer = (transformerType: string) => {
     const targetAuthScheme = transformerType === 'gemini-native'
       ? 'x-goog-api-key'
@@ -496,7 +492,7 @@ function ExchangeForm({ mode, form, meta, isInternalTenant, busy, onChange, onUp
       </div>
       <div className="lg-exchange-form-grid">
         <label>Exchange 名称<input value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="例如：我的 Gemini 原生接口" /></label>
-        <label>上游接口类型<select value={form.transformerType} onChange={(event) => changeTransformer(event.target.value)}>{transformerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{meta.transformerTypes.find((option) => option.value === form.transformerType)?.description}。选择类型后会自动推荐认证方式。外部租户首版只开放 HTTP/HTTPS。</small></label>
+        <label>上游接口类型<select value={form.transformerType} onChange={(event) => changeTransformer(event.target.value)}>{transformerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{meta.transformerTypes.find((option) => option.value === form.transformerType)?.description}。选择类型后会自动推荐认证方式。外部租户的 WebSocket 必须使用 WSS，运行时会固定已验证公网 IP 并校验证书主机名。</small></label>
         <label>认证方式<select value={form.targetAuthScheme} onChange={(event) => onChange({ ...form, targetAuthScheme: event.target.value })}>{meta.authSchemes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{meta.authSchemes.find((option) => option.value === form.targetAuthScheme)?.description}</small></label>
         <label className="is-wide">目标地址<input value={form.targetUrl} onChange={(event) => onChange({ ...form, targetUrl: event.target.value })} placeholder={targetPlaceholder} /><small>请填写上游真实接口地址；需要动态模型名时使用 {'{model}'}。通讯密钥必须放在密钥字段，不要放进 URL。</small></label>
         {mode === 'create' ? <label className="is-wide">通讯密钥<input type="password" autoComplete="new-password" value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder="创建时必填" /><small>密钥加密保存，不进入响应和操作审计。</small></label> : null}

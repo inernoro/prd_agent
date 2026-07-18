@@ -4,3 +4,5 @@
 | fix | llmgw | 新增租户与成员 provisioning 硬退出恢复操作，按精确对象 ID 回滚半成品并周期接管过期修复 |
 | security | llmgw | 将最后 owner 保护改为租户权威集合与原子 fencing generation，移除可过期的进程锁 |
 | test | llmgw | 新增 provisioning 硬退出、修复器接管、并发 owner 移除和 owner 变更收口测试 |
+| security | llmgw | 外部租户 Exchange 安全开放 WSS，运行时固定已验证公网地址并校验证书主机名，拒绝明文 WS、私网、代理和跳转 |
+| docs | llmgw | 同步 Exchange WSS 教程，并新增每日页面到章节漂移巡检、告警报告和更新提醒草稿 |

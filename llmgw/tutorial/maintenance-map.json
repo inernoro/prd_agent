@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "surfaces": [
+    {"id":"home","pagePath":"llmgw/web/src/pages/OverviewPage.tsx","tutorialSourceIds":["chapter-03"]},
+    {"id":"logs","pagePath":"llmgw/web/src/pages/LogsPage.tsx","tutorialSourceIds":["chapter-13","chapter-21","chapter-30"]},
+    {"id":"app-callers","pagePath":"llmgw/web/src/pages/AppCallersPage.tsx","tutorialSourceIds":["chapter-09","chapter-14"]},
+    {"id":"prompt-policy","pagePath":"llmgw/web/src/pages/PromptPolicyPage.tsx","tutorialSourceIds":["chapter-20","chapter-24"]},
+    {"id":"model-pools","pagePath":"llmgw/web/src/pages/ModelPoolsPage.tsx","tutorialSourceIds":["chapter-08","chapter-17","chapter-18"]},
+    {"id":"providers","pagePath":"llmgw/web/src/pages/PlatformsPage.tsx","tutorialSourceIds":["chapter-06"]},
+    {"id":"models","pagePath":"llmgw/web/src/pages/ModelsPage.tsx","tutorialSourceIds":["chapter-07"]},
+    {
+      "id":"exchanges",
+      "pagePath":"llmgw/web/src/pages/ExchangesPage.tsx",
+      "tutorialSourceIds":["chapter-19","chapter-30"],
+      "anchors":[
+        {"name":"创建入口","product":"新建 Exchange","tutorial":"新建 Exchange"},
+        {"name":"WSS 安全边界","product":"外部租户的 WebSocket 必须使用 WSS","tutorial":"外部租户的 WebSocket 必须使用 WSS"},
+        {"name":"运行时固定公网地址","product":"运行时会固定已验证公网 IP","tutorial":"运行时会重新解析并固定公网 IP"}
+      ]
+    },
+    {"id":"audits","pagePath":"llmgw/web/src/pages/AuditsPage.tsx","tutorialSourceIds":["chapter-24"]},
+    {"id":"service-keys","pagePath":"llmgw/web/src/pages/ServiceKeysPage.tsx","tutorialSourceIds":["chapter-10","chapter-15","chapter-16","chapter-26"]},
+    {"id":"quickstart","pagePath":"llmgw/web/src/pages/QuickstartPage.tsx","tutorialSourceIds":["chapter-10","chapter-11","chapter-12","chapter-27"]},
+    {"id":"learning-center","pagePath":"llmgw/web/src/pages/LearningCenterPage.tsx","tutorialSourceIds":["chapter-00","chapter-32"]},
+    {"id":"organization","pagePath":"llmgw/web/src/pages/OrganizationPage.tsx","tutorialSourceIds":["chapter-04","chapter-05","chapter-25","chapter-26"]},
+    {"id":"shadow","pagePath":"llmgw/web/src/pages/ShadowPage.tsx","tutorialSourceIds":["chapter-29"]},
+    {"id":"governance","pagePath":"llmgw/web/src/pages/GovernancePage.tsx","tutorialSourceIds":["chapter-22","chapter-29","chapter-31"]},
+    {"id":"settings","pagePath":"llmgw/web/src/pages/SettingsPage.tsx","tutorialSourceIds":["chapter-02","chapter-32"]},
+    {"id":"usage","pagePath":"llmgw/web/src/pages/UsagePage.tsx","tutorialSourceIds":["chapter-22","chapter-23","chapter-28"]}
+  ]
+}

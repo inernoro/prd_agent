@@ -36,4 +36,30 @@ public class SafeOutboundUrlValidatorTests
         Assert.False(_validator.IsSafeAddress(System.Net.IPAddress.Parse("169.254.169.254")));
         Assert.True(_validator.IsSafeAddress(System.Net.IPAddress.Parse("93.184.216.34")));
     }
+
+    [Theory]
+    [InlineData("ws://93.184.216.34/asr")]
+    [InlineData("wss://127.0.0.1/asr")]
+    [InlineData("wss://10.0.0.8/asr")]
+    [InlineData("wss://169.254.169.254/latest/meta-data")]
+    [InlineData("wss://user:secret@93.184.216.34/asr")]
+    public async Task SafeWebSocket_PrepareBlocksInsecurePrivateAndCredentialTargets(string url)
+    {
+        var connector = new SafeOutboundWebSocketConnector(_validator);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => connector.PrepareAsync(url));
+    }
+
+    [Fact]
+    public async Task SafeWebSocket_PreparePinsPublicLiteralWithoutChangingCertificateHost()
+    {
+        var connector = new SafeOutboundWebSocketConnector(_validator);
+
+        var target = await connector.PrepareAsync("wss://93.184.216.34:443/asr");
+
+        Assert.Equal("wss", target.Uri.Scheme);
+        Assert.Equal("93.184.216.34", target.Uri.IdnHost);
+        Assert.Single(target.Addresses);
+        Assert.Equal("93.184.216.34", target.Addresses[0].ToString());
+    }
 }
