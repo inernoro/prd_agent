@@ -296,8 +296,8 @@ export function LogsView() {
         const proto = getProtocolMeta(it.protocol);
         const tp = getTransportMeta(it.transport);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            <span className="lg-truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
               {it.model || DASH}
             </span>
             {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
