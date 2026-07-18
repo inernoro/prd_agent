@@ -13,7 +13,7 @@ import {
   setMyDefaultTemplate,
   clearMyDefaultTemplate,
 } from '@/services';
-import { ReportInputType, ReportTeamRole, type ReportTemplate, type IssueOption } from '@/services/contracts/reportAgent';
+import { ReportInputType, ReportTeamRole, DEFAULT_TABLE_COLUMNS, MAX_TABLE_COLUMNS, type ReportTemplate, type IssueOption } from '@/services/contracts/reportAgent';
 import { useDataTheme } from '../hooks/useDataTheme';
 
 const inputTypeLabels: Record<string, string> = {
@@ -22,6 +22,7 @@ const inputTypeLabels: Record<string, string> = {
   [ReportInputType.KeyValue]: '键值对',
   [ReportInputType.ProgressTable]: '进度表',
   [ReportInputType.IssueList]: '问题',
+  [ReportInputType.Table]: '表格',
 };
 
 interface SectionInput {
@@ -32,6 +33,7 @@ interface SectionInput {
   sortOrder: number;
   issueCategories?: IssueOption[];
   issueStatuses?: IssueOption[];
+  tableColumns?: string[];
 }
 
 /** 默认问题分类（新建"问题"章节时初始填入） */
@@ -129,6 +131,91 @@ function IssueOptionEditor({
         <Button variant="ghost" size="sm" onClick={handleAdd}>
           <Plus size={11} /> 添加
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/** 表格列名内嵌编辑器：改名 / 上下移排序 / 追加 / 删除（模板默认列，周报内可再增删） */
+function TableColumnEditor({
+  columns, onChange,
+}: {
+  columns: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const handleAdd = () => {
+    const label = draft.trim();
+    if (!label) return;
+    if (columns.some((c) => c.trim() === label)) { toast.error('列名已存在'); return; }
+    if (columns.length >= MAX_TABLE_COLUMNS) { toast.error(`最多 ${MAX_TABLE_COLUMNS} 列`); return; }
+    onChange([...columns, label]);
+    setDraft('');
+  };
+  const handleRemove = (i: number) => {
+    if (columns.length <= 1) { toast.error('至少保留一列'); return; }
+    onChange(columns.filter((_, idx) => idx !== i));
+  };
+  const handleRename = (i: number, name: string) => {
+    onChange(columns.map((c, idx) => (idx === i ? name : c)));
+  };
+  const handleMove = (i: number, dir: -1 | 1) => {
+    const target = i + dir;
+    if (target < 0 || target >= columns.length) return;
+    const next = [...columns];
+    [next[i], next[target]] = [next[target], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>表格列</div>
+      <div className="flex flex-col gap-1">
+        {columns.map((col, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono w-4 text-center flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+              {i + 1}
+            </span>
+            <input
+              className="flex-1 min-w-0 px-2.5 py-1 rounded-lg text-[11px]"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              value={col}
+              placeholder={`列${i + 1}`}
+              onChange={(e) => handleRename(i, e.target.value)}
+              onBlur={(e) => { if (!e.target.value.trim()) handleRename(i, `列${i + 1}`); }}
+              aria-label={`列名 ${i + 1}`}
+            />
+            <Button variant="ghost" size="sm" onClick={() => handleMove(i, -1)} disabled={i === 0} aria-label={`列 ${col || i + 1} 上移`}>
+              <ChevronUp size={12} />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleMove(i, 1)} disabled={i === columns.length - 1} aria-label={`列 ${col || i + 1} 下移`}>
+              <ChevronDown size={12} />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleRemove(i)} disabled={columns.length <= 1} aria-label={`删除列 ${col || i + 1}`}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          className="flex-1 px-2.5 py-1 rounded-lg text-[11px]"
+          style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+          placeholder="新增列（如：内容 / 进度 / 备注）"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
+        />
+        <Button variant="ghost" size="sm" onClick={handleAdd}>
+          <Plus size={11} /> 添加
+        </Button>
+      </div>
+      <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        这里定义的是默认列；成员填写周报时可在自己的周报里继续增删列、调整列名。
       </div>
     </div>
   );
@@ -240,6 +327,7 @@ export function TemplateManager() {
       sortOrder: s.sortOrder,
       issueCategories: s.issueCategories ? [...s.issueCategories] : undefined,
       issueStatuses: s.issueStatuses ? [...s.issueStatuses] : undefined,
+      tableColumns: s.tableColumns ? [...s.tableColumns] : undefined,
     })));
     setShowDialog(true);
   };
@@ -382,6 +470,10 @@ export function TemplateManager() {
         if (!next.issueCategories || next.issueCategories.length === 0) next.issueCategories = [...DEFAULT_ISSUE_CATEGORIES];
         if (!next.issueStatuses || next.issueStatuses.length === 0) next.issueStatuses = [...DEFAULT_ISSUE_STATUSES];
       }
+      // 首次切到"表格"类型,自动填入默认列
+      if (field === 'inputType' && value === ReportInputType.Table) {
+        if (!next.tableColumns || next.tableColumns.length === 0) next.tableColumns = [...DEFAULT_TABLE_COLUMNS];
+      }
       return next;
     }));
   };
@@ -389,6 +481,11 @@ export function TemplateManager() {
   /** 更新章节的分类/状态预设项列表 */
   const updateSectionIssueOptions = (idx: number, field: 'issueCategories' | 'issueStatuses', options: IssueOption[]) => {
     setSections((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: options } : s));
+  };
+
+  /** 更新表格章节的列定义 */
+  const updateSectionTableColumns = (idx: number, columns: string[]) => {
+    setSections((prev) => prev.map((s, i) => i === idx ? { ...s, tableColumns: columns } : s));
   };
 
   const sortedTemplates = useMemo(() => {
@@ -783,6 +880,14 @@ export function TemplateManager() {
                     value={sec.description}
                     onChange={(e) => updateSection(idx, 'description', e.target.value)}
                   />
+                  {sec.inputType === ReportInputType.Table && (
+                    <div className="ml-7 flex flex-col gap-2 pt-2">
+                      <TableColumnEditor
+                        columns={sec.tableColumns && sec.tableColumns.length > 0 ? sec.tableColumns : DEFAULT_TABLE_COLUMNS}
+                        onChange={(columns) => updateSectionTableColumns(idx, columns)}
+                      />
+                    </div>
+                  )}
                   {sec.inputType === ReportInputType.IssueList && (
                     <div className="ml-7 flex flex-col gap-2 pt-2">
                       <IssueOptionEditor

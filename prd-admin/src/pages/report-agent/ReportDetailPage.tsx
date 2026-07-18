@@ -14,6 +14,7 @@ import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
+import { ReportTableSectionView } from './components/ReportTableSectionView';
 import { RightRailPanel } from './components/RightRailPanel';
 import { useDataTheme } from './hooks/useDataTheme';
 import { useStatusChipConfig } from './hooks/useStatusChipConfig';
@@ -504,6 +505,10 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                           </div>
                         );
                       })}
+                    </div>
+                  ) : section.templateSection.inputType === ReportInputType.Table ? (
+                    <div className="ml-10">
+                      <ReportTableSectionView section={section} isLight={isLight} />
                     </div>
                   ) : section.templateSection.inputType === ReportInputType.RichText ? (
                     <div className="space-y-2 ml-10">

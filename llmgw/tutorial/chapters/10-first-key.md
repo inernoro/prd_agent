@@ -10,7 +10,7 @@
 
 ## 开始前检查
 
-- Quickstart 中选择“文字对话”“客服组”“测试”，code 为 `tutorial.gateway-book::chat`，Client code 为教程专用短名。
+- Quickstart 先选择“API 与 Agent”。如需修改默认身份，再展开“自定义身份、协议和 Gateway 地址”，选择“文字对话”“客服组”“测试”，code 为 `tutorial.gateway-book::chat`，Client code 为教程专用短名。
 - Gateway 地址由当前部署自动给出；除非管理员明确要求，不展开“使用其他 Gateway 地址”。
 - 密码保管工具已打开，屏幕不会被录制或共享。
 
@@ -24,13 +24,13 @@
 
 ![图 060 从左侧导航点击“Quickstart”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/c453d2ff0528b069d5190357623162da65608352ec05f73576031b8801178cbb.png)
 
-2. 四协议先选“OpenAI”。这只影响当前示例和测试，生成的 Quickstart key 会限定页面列出的四种协议，而不是通配所有协议。
+2. 保持“API 与 Agent”，展开“自定义身份、协议和 Gateway 地址”，四协议先选“OpenAI”。这只影响当前示例和测试，生成的 Quickstart key 会限定页面列出的四种协议，而不是通配所有协议。
 
 **图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议**
 
 ![图 066 同一页提供 GW Native、OpenAI、Claude、Gemini 四协议](https://cds.miduo.org/api/reports/assets/cc15dcc8a820b1f5167a710645aa3476740b268de0f9478bb717d917d2e0b40e.png)
 
-3. 点击“一键生成 appCaller 与 key”。等待页面依次显示“正在创建 appCaller”和“正在签发团队密钥”。页面会说明新 key 默认限制 60 次/分钟；这是防止误接入失控的安全默认值，不是租户总额度。
+3. 点击“生成 API 与 Agent 配置”。等待页面依次显示“正在创建 appCaller”和“正在签发团队密钥”。页面会说明新 key 默认限制 60 次/分钟；这是防止误接入失控的安全默认值，不是租户总额度。
 
 **图 064 一键生成 appCaller 与 key，缺 key 不能跳过身份直接测试**
 
@@ -60,7 +60,7 @@
 
 ![图 065 页面只在当前时刻展示完整 key，后续只保留前缀或 key id](https://cds.miduo.org/api/reports/assets/6dc1b657df8a373550e7064b1b4b904e41a954ff39ae624d06f7f67878d9648b.png)
 
-8. 不要刷新页面。先在当前页点击“点击测试”，确认 chat 返回 requestId 且明确写着未访问上游；[[第 11 章：点击安全测试|第 11 章]]会教你完整读懂这次测试。
+8. 不要刷新页面。找到“控制台直测”，保持“安全连通”，点击“验证接入边界”。确认 chat 返回 requestId 且明确写着未访问上游；[[第 11 章：点击安全测试|第 11 章]]会教你完整读懂这次测试。
 
 **图 067 点击测试固定使用安全 dry-run，结果必须带 requestId 且未访问上游**
 
@@ -72,7 +72,7 @@
 
 ![图 064 一键生成 appCaller 与 key，缺 key 不能跳过身份直接测试](https://cds.miduo.org/api/reports/assets/fa5352db762895c9cb2fc2ff2bb5ec9f102f1e3242cd7a73968445a1ddb8c7eb.png)
 
-10. 调用类型改为“图片理解”，团队选择“内容组”，确认 code 自动变为 `tutorial.gateway-book::vision`，环境仍为“测试”，再点击“一键生成 appCaller 与 key”。把 vision key 保存为另一条 Secret，不覆盖 chat key。
+10. 调用类型改为“图片理解”，团队选择“内容组”，确认 code 自动变为 `tutorial.gateway-book::vision`，环境仍为“测试”，再点击“生成 API 与 Agent 配置”。把 vision key 保存为另一条 Secret，不覆盖 chat key。
 
 **图 063 图片理解会自动同步 vision 后缀，避免类型与 code 错配**
 
