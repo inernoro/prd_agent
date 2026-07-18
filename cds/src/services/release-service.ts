@@ -404,6 +404,8 @@ export class ReleaseService {
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
     if (!target?.ssh) throw new Error('回滚需要站点发布目标');
+    if (target.lifecycle === 'archived') throw new Error(`${target.name} 已归档，禁止回滚`);
+    if (!target.isEnabled) throw new Error(`${target.name} 已禁用，禁止回滚`);
     const previous = targetReleaseId
       ? this.stateService.getReleaseRun(targetReleaseId)
       : current.previousReleaseId

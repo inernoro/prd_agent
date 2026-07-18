@@ -97,6 +97,37 @@ describe('release control plane project-scope isolation', () => {
     };
   }
 
+  function addRollbackRuns(targetId = 'target-a'): void {
+    const now = new Date().toISOString();
+    stateService.addReleaseRun({
+      releaseId: 'run-a-current',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-current',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-current', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId,
+      planId: 'proj-a:ssh-script',
+      status: 'failed',
+      startedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+    stateService.addReleaseRun({
+      releaseId: 'run-a-previous',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-previous',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-previous', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId,
+      planId: 'proj-a:ssh-script',
+      status: 'success',
+      startedAt: now,
+      finishedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+  }
+
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-scope-'));
     configuredWorktreeBase = path.join(tmpDir, 'configured-worktrees');
@@ -469,34 +500,7 @@ describe('release control plane project-scope isolation', () => {
   });
 
   it('creates a rollback run for the selected successful target version', async () => {
-    const now = new Date().toISOString();
-    stateService.addReleaseRun({
-      releaseId: 'run-a-current',
-      projectId: 'proj-a',
-      branchId: 'branch-a',
-      commitSha: 'branch-a-current',
-      artifact: { type: 'branch-preview', commitSha: 'branch-a-current', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
-      targetId: 'target-a',
-      planId: 'proj-a:ssh-script',
-      status: 'failed',
-      startedAt: now,
-      logs: [],
-      seq: 0,
-    } as ReleaseRun);
-    stateService.addReleaseRun({
-      releaseId: 'run-a-previous',
-      projectId: 'proj-a',
-      branchId: 'branch-a',
-      commitSha: 'branch-a-previous',
-      artifact: { type: 'branch-preview', commitSha: 'branch-a-previous', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
-      targetId: 'target-a',
-      planId: 'proj-a:ssh-script',
-      status: 'success',
-      startedAt: now,
-      finishedAt: now,
-      logs: [],
-      seq: 0,
-    } as ReleaseRun);
+    addRollbackRuns();
 
     const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
       targetReleaseId: 'run-a-previous',
@@ -507,5 +511,33 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.run.rollbackOf).toBe('run-a-current');
     expect(res.body.run.rollbackTargetReleaseId).toBe('run-a-previous');
     expect(res.body.run.commitSha).toBe('branch-a-previous');
+  });
+
+  it('rejects rollback requests for archived release targets before creating a run', async () => {
+    addRollbackRuns();
+    const target = stateService.getReleaseTarget('target-a')!;
+    stateService.upsertReleaseTarget({ ...target, lifecycle: 'archived', isEnabled: false });
+
+    const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
+      targetReleaseId: 'run-a-previous',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已归档，禁止回滚');
+    expect(stateService.getReleaseRuns({ projectId: 'proj-a' })).toHaveLength(2);
+  });
+
+  it('rejects rollback requests for disabled active release targets before creating a run', async () => {
+    addRollbackRuns();
+    const target = stateService.getReleaseTarget('target-a')!;
+    stateService.upsertReleaseTarget({ ...target, lifecycle: 'active', isEnabled: false });
+
+    const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
+      targetReleaseId: 'run-a-previous',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已禁用，禁止回滚');
+    expect(stateService.getReleaseRuns({ projectId: 'proj-a' })).toHaveLength(2);
   });
 });
