@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -244,6 +245,89 @@ public class GatewayKeyGateContractTests
             var deniedAudits = await data.Database.GetCollection<BsonDocument>("llmgw_operation_audits")
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "app_caller.team_ownership_denied"));
             deniedAudits.ShouldBe(1);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentAppCallerRateLimit_IsTenantScopedAndOnlyAdmittedRequestsReachFakeUpstream()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_appcaller_rate_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            await callers.Indexes.CreateOneAsync(new CreateIndexModel<GatewayAppCallerRecord>(
+                Builders<GatewayAppCallerRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType),
+                new CreateIndexOptions
+                {
+                    Unique = true,
+                    Collation = GatewayAppCallerIdentity.Collation,
+                }));
+            await callers.InsertManyAsync(
+            [
+                AppCaller("tenant-a", limit: 4),
+                AppCaller("tenant-b", limit: 4),
+            ]);
+
+            var gateway = new TenantCountingGateway();
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: new TenantScopedTestAuthorizer(),
+                gatewayData: data);
+            await app.StartAsync();
+            var http = app.GetTestClient();
+
+            static GatewayAppCallerRecord AppCaller(string tenantId, int limit) => new()
+            {
+                TenantId = tenantId,
+                AppCallerCode = "concurrency.client::chat",
+                RequestType = "chat",
+                Status = "active",
+                RateLimitPerMinute = limit,
+            };
+
+            static HttpRequestMessage Request(string key, int index) => new(HttpMethod.Post, "/gw/v1/send")
+            {
+                Headers =
+                {
+                    { "X-Gateway-Key", key },
+                    { "X-Request-Id", $"concurrency-{key}-{index}" },
+                },
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "concurrency.client::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                    Context = new { SourceSystem = "external" },
+                }),
+            };
+
+            var responses = await Task.WhenAll(
+                Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
+                    .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
+
+            responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(8);
+            responses.Count(x => x.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(32);
+            gateway.CountFor("tenant-a").ShouldBe(4);
+            gateway.CountFor("tenant-b").ShouldBe(4);
+
+            var windows = await data.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows")
+                .Find(_ => true)
+                .ToListAsync();
+            windows.Count.ShouldBe(2);
+            windows.Single(x => x["TenantId"] == "tenant-a")["Count"].ToInt64().ShouldBe(20);
+            windows.Single(x => x["TenantId"] == "tenant-b")["Count"].ToInt64().ShouldBe(20);
         }
         finally
         {
@@ -2854,6 +2938,65 @@ public class GatewayKeyGateContractTests
                 "tenant-a",
                 teamId));
         }
+    }
+
+    private sealed class TenantScopedTestAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(
+            string providedKey,
+            string legacySharedKey,
+            string sourceSystem,
+            string appCallerCode,
+            string ingressProtocol,
+            string requiredScope,
+            System.Net.IPAddress? remoteIp,
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
+        {
+            var tenantId = providedKey switch
+            {
+                "tenant-a-key" => "tenant-a",
+                "tenant-b-key" => "tenant-b",
+                _ => null,
+            };
+            return Task.FromResult(new GatewayKeyAuthorization(
+                tenantId is not null,
+                true,
+                tenantId is null ? 401 : 200,
+                tenantId is null ? "GATEWAY_KEY_INVALID" : string.Empty,
+                tenantId is null ? "invalid" : "allowed",
+                providedKey,
+                tenantId));
+        }
+    }
+
+    private sealed class TenantCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.Ordinal);
+
+        public int CountFor(string tenantId) => _counts.GetValueOrDefault(tenantId);
+
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        {
+            var tenantId = request.Context?.TenantId ?? "missing";
+            _counts.AddOrUpdate(tenantId, 1, static (_, count) => count + 1);
+            return Task.FromResult(GatewayResponse.Ok("ok", new GatewayModelResolution
+            {
+                Success = true,
+                ActualModel = "fake-model",
+            }));
+        }
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 
     private sealed class ConcurrentCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
