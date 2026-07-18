@@ -1238,3 +1238,5 @@
 | 2026-06-26 | 新增 | `report.frontend.prd-admin-surface-style-migration` | prd-admin 样式统一统计报表 |
 | 2026-07-10 | 新增 | `debt.cds.reports` | CDS 验收中心报告治理债务台账（存量未归类迁移 / 保留策略 / 批量操作 / 日期文件夹归并） |
 | 2026-07-16 | 新增 | `debt.cds.build-gate` | CDS 构建闸债务台账（队列堵死事故修复后的延期项 + 修复主线回溯） |
+- design.visual-agent.canvas-composer.md — 视觉创作画布/两阶段引用/上传生命周期/持久化原理（迁移考古 SSOT）
+- plan.visual-agent.optimization-backlog.md — 视觉创作优化 backlog（缺陷/体验/增强/工程健康 14 项）
