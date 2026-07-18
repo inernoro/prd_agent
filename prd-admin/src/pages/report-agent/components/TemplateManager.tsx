@@ -136,7 +136,7 @@ function IssueOptionEditor({
   );
 }
 
-/** 表格列名内嵌编辑器：追加/删除列（模板默认列，周报内可再增删） */
+/** 表格列名内嵌编辑器：改名 / 上下移排序 / 追加 / 删除（模板默认列，周报内可再增删） */
 function TableColumnEditor({
   columns, onChange,
 }: {
@@ -147,7 +147,7 @@ function TableColumnEditor({
   const handleAdd = () => {
     const label = draft.trim();
     if (!label) return;
-    if (columns.includes(label)) { toast.error('列名已存在'); return; }
+    if (columns.some((c) => c.trim() === label)) { toast.error('列名已存在'); return; }
     if (columns.length >= MAX_TABLE_COLUMNS) { toast.error(`最多 ${MAX_TABLE_COLUMNS} 列`); return; }
     onChange([...columns, label]);
     setDraft('');
@@ -156,26 +156,44 @@ function TableColumnEditor({
     if (columns.length <= 1) { toast.error('至少保留一列'); return; }
     onChange(columns.filter((_, idx) => idx !== i));
   };
+  const handleRename = (i: number, name: string) => {
+    onChange(columns.map((c, idx) => (idx === i ? name : c)));
+  };
+  const handleMove = (i: number, dir: -1 | 1) => {
+    const target = i + dir;
+    if (target < 0 || target >= columns.length) return;
+    const next = [...columns];
+    [next[i], next[target]] = [next[target], next[i]];
+    onChange(next);
+  };
   return (
     <div className="flex flex-col gap-1.5">
       <div className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>表格列</div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-col gap-1">
         {columns.map((col, i) => (
-          <span
-            key={`${col}-${i}`}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px]"
-            style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-          >
-            {col}
-            <button
-              type="button"
-              onClick={() => handleRemove(i)}
-              className="ml-0.5 opacity-60 hover:opacity-100"
-              aria-label={`删除列 ${col}`}
-            >
-              ×
-            </button>
-          </span>
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono w-4 text-center flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+              {i + 1}
+            </span>
+            <input
+              className="flex-1 min-w-0 px-2.5 py-1 rounded-lg text-[11px]"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              value={col}
+              placeholder={`列${i + 1}`}
+              onChange={(e) => handleRename(i, e.target.value)}
+              onBlur={(e) => { if (!e.target.value.trim()) handleRename(i, `列${i + 1}`); }}
+              aria-label={`列名 ${i + 1}`}
+            />
+            <Button variant="ghost" size="sm" onClick={() => handleMove(i, -1)} disabled={i === 0} aria-label={`列 ${col || i + 1} 上移`}>
+              <ChevronUp size={12} />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleMove(i, 1)} disabled={i === columns.length - 1} aria-label={`列 ${col || i + 1} 下移`}>
+              <ChevronDown size={12} />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleRemove(i)} disabled={columns.length <= 1} aria-label={`删除列 ${col || i + 1}`}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
         ))}
       </div>
       <div className="flex items-center gap-1.5">
