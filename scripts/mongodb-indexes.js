@@ -2,6 +2,74 @@
 // Run with: mongosh <connection-uri>/<database> scripts/mongodb-indexes.js
 // This file is the executable DBA index catalog; applications must not run it at startup.
 
+// Some historical startup definitions used a uniq_* name without enabling the unique option.
+// Convert those same-name indexes in place so this catalog can converge existing databases.
+// prepareUnique blocks new duplicates while the catalog reports existing duplicate groups;
+// failures are collected so unrelated indexes are still applied before the script exits non-zero.
+const tightenedUniqueIndexMigrationFailures = []
+
+function ensureTightenedUniqueIndex(collectionName, keys, options) {
+  const collection = db.getCollection(collectionName)
+  const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
+  const existing = collectionExists
+    ? collection.getIndexes().find(index => index.name === options.name)
+    : undefined
+
+  if (existing && existing.unique !== true) {
+    const actualPartial = existing.partialFilterExpression || {}
+    const expectedPartial = options.partialFilterExpression || {}
+    if (
+      JSON.stringify(existing.key) !== JSON.stringify(keys) ||
+      JSON.stringify(actualPartial) !== JSON.stringify(expectedPartial)
+    ) {
+      tightenedUniqueIndexMigrationFailures.push(
+        `${collectionName}.${options.name}: existing index definition differs from the catalog`
+      )
+      return
+    }
+
+    try {
+      db.runCommand({
+        collMod: collectionName,
+        index: { name: options.name, prepareUnique: true }
+      })
+
+      const duplicateId = {}
+      Object.keys(keys).forEach(field => {
+        duplicateId[field] = `$${field}`
+      })
+      const pipeline = []
+      if (options.partialFilterExpression) {
+        pipeline.push({ $match: options.partialFilterExpression })
+      }
+      pipeline.push(
+        { $group: { _id: duplicateId, count: { $sum: 1 } } },
+        { $match: { count: { $gt: 1 } } },
+        { $limit: 5 }
+      )
+      const duplicateGroups = collection.aggregate(pipeline).toArray()
+      if (duplicateGroups.length > 0) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `${collectionName}.${options.name}: duplicate groups must be cleaned: ${JSON.stringify(duplicateGroups)}`
+        )
+        return
+      }
+
+      db.runCommand({
+        collMod: collectionName,
+        index: { name: options.name, unique: true }
+      })
+    } catch (error) {
+      tightenedUniqueIndexMigrationFailures.push(
+        `${collectionName}.${options.name}: ${error.message || error}`
+      )
+      return
+    }
+  }
+
+  collection.createIndex(keys, options)
+}
+
 // collection: users
 db.users.createIndex({ "Username": 1 })
 
@@ -52,7 +120,7 @@ db.messages.createIndex(
 )
 
 // groupId + groupSeq：群消息顺序键（SSE 断线续传/严格有序）
-db.messages.createIndex(
+ensureTightenedUniqueIndex("messages",
   { "GroupId": 1, "GroupSeq": 1 },
   {
     name: "uniq_messages_group_seq",
@@ -140,7 +208,7 @@ db.image_assets.createIndex({ "OwnerUserId": 1, "CreatedAt": -1 })
 db.image_assets.createIndex({ "WorkspaceId": 1, "CreatedAt": -1 })
 
 // Workspace 内按 sha256 去重（仅对 WorkspaceId 为字符串的文档生效）
-db.image_assets.createIndex(
+ensureTightenedUniqueIndex("image_assets",
   { "WorkspaceId": 1, "Sha256": 1 },
   {
     name: "uniq_image_assets_workspace_sha256",
@@ -168,7 +236,7 @@ db.image_master_workspaces.createIndex({ "MemberUserIds": 1 })
 
 // collection: image_gen_size_caps
 // modelId 唯一（仅对存在 ModelId 字段的文档生效）
-db.image_gen_size_caps.createIndex(
+ensureTightenedUniqueIndex("image_gen_size_caps",
   { "ModelId": 1 },
   {
     name: "uniq_image_gen_size_caps_modelId",
@@ -178,7 +246,7 @@ db.image_gen_size_caps.createIndex(
 )
 
 // platformId + modelName 唯一（仅对两个字段都存在的文档生效）
-db.image_gen_size_caps.createIndex(
+ensureTightenedUniqueIndex("image_gen_size_caps",
   { "PlatformId": 1, "ModelName": 1 },
   {
     name: "uniq_image_gen_size_caps_platformId_modelName",
@@ -195,7 +263,7 @@ db.image_gen_runs.createIndex({ "OwnerAdminId": 1, "CreatedAt": -1 })
 db.image_gen_runs.createIndex({ "Status": 1, "CreatedAt": 1 })
 
 // 幂等键：同一 admin 下唯一（仅对 IdempotencyKey 为字符串的文档生效）
-db.image_gen_runs.createIndex(
+ensureTightenedUniqueIndex("image_gen_runs",
   { "OwnerAdminId": 1, "IdempotencyKey": 1 },
   {
     name: "uniq_image_gen_runs_owner_idem",
@@ -207,7 +275,7 @@ db.image_gen_runs.createIndex(
 // collection: image_gen_run_items
 db.image_gen_run_items.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
 
-db.image_gen_run_items.createIndex(
+ensureTightenedUniqueIndex("image_gen_run_items",
   { "RunId": 1, "ItemIndex": 1, "ImageIndex": 1 },
   { name: "uniq_image_gen_run_items_run_pos", unique: true }
 )
@@ -215,7 +283,7 @@ db.image_gen_run_items.createIndex(
 // collection: image_gen_run_events
 db.image_gen_run_events.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
 
-db.image_gen_run_events.createIndex(
+ensureTightenedUniqueIndex("image_gen_run_events",
   { "RunId": 1, "Seq": 1 },
   { name: "uniq_image_gen_run_events_run_seq", unique: true }
 )
@@ -227,14 +295,14 @@ db.upload_artifacts.createIndex({ "Sha256": 1, "CreatedAt": -1 })
 
 // collection: admin_prompt_overrides
 // 同一管理员 + key 唯一
-db.admin_prompt_overrides.createIndex(
+ensureTightenedUniqueIndex("admin_prompt_overrides",
   { "OwnerAdminId": 1, "Key": 1 },
   { name: "uniq_admin_prompt_overrides_owner_key", unique: true }
 )
 
 // collection: admin_idempotency
 // 同一管理员 + scope + idemKey 唯一（仅对 idempotencyKey 为字符串的文档生效）
-db.admin_idempotency.createIndex(
+ensureTightenedUniqueIndex("admin_idempotency",
   { "ownerAdminId": 1, "scope": 1, "idempotencyKey": 1 },
   {
     name: "uniq_admin_idempotency_owner_scope_key_v2",
@@ -264,7 +332,7 @@ db.desktop_asset_keys.createIndex(
 
 // collection: desktop_assets
 // Key + Skin 唯一（仅对 Skin 为字符串的文档生效）
-db.desktop_assets.createIndex(
+ensureTightenedUniqueIndex("desktop_assets",
   { "Key": 1, "Skin": 1 },
   {
     name: "uniq_desktop_assets_key_skin",
@@ -300,7 +368,7 @@ db.model_groups.createIndex({ "CreatedAt": -1 })
 
 // collection: llm_app_callers
 // 按 appCode 唯一
-db.llm_app_callers.createIndex(
+ensureTightenedUniqueIndex("llm_app_callers",
   { "AppCode": 1 },
   { name: "uniq_llm_app_callers_app_code", unique: true }
 )
@@ -1135,3 +1203,9 @@ db.home_recent_opens.createIndex(
   { "UserId": 1, "AgentKey": 1, "EntityId": 1 },
   { name: "uniq_home_recent_opens_user_entity", unique: true }
 )
+
+if (tightenedUniqueIndexMigrationFailures.length > 0) {
+  throw new Error(
+    `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
+  )
+}
