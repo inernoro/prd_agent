@@ -2,6 +2,7 @@ using System.Security.Claims;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Models;
+using PrdAgent.LlmGw.Provisioning;
 
 namespace PrdAgent.LlmGw.Auth;
 
@@ -123,7 +124,7 @@ public static class TenantAccess
             return null;
 
         var tenant = await tenants.Find(x => x.Id == tenantId && x.Status == "active").FirstOrDefaultAsync(ct);
-        if (tenant is null) return null;
+        if (tenant is null || !TenantOwnerAuthority.IsEffectiveOwner(tenant, membership)) return null;
 
         var activeTeamIds = membership.TeamIds.Count == 0
             ? new List<string>()

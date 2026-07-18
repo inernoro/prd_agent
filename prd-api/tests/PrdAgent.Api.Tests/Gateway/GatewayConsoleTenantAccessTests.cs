@@ -73,6 +73,173 @@ public sealed class GatewayConsoleTenantAccessTests
     }
 
     [Fact]
+    public async Task HardExitRepairer_RollsBackExpiredTenantAndMemberProvisioningByExactIds()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var users = scope.Database.GetCollection<LlmGwUser>("llmgw_console_users");
+        var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
+        var teams = scope.Database.GetCollection<LlmGwTeam>("llmgw_teams");
+        var memberships = scope.Database.GetCollection<LlmGwMembership>("llmgw_memberships");
+        var operations = scope.Database.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
+        var owner = new LlmGwUser { Id = "owner", Username = "owner", TenantIds = ["home", "tenant-crashed"] };
+        var tenantMembership = new LlmGwMembership
+        {
+            Id = "owner-crashed",
+            TenantId = "tenant-crashed",
+            UserId = owner.Id,
+            Role = LlmGwTenantRoles.Owner,
+        };
+        await users.InsertOneAsync(owner);
+        await tenants.InsertManyAsync([
+            new LlmGwTenant
+            {
+                Id = "tenant-crashed",
+                Name = "Crashed",
+                OwnerAuthorityInitialized = true,
+                ActiveOwnerMembershipIds = [tenantMembership.Id],
+                OwnerFenceGeneration = 1,
+            },
+            new LlmGwTenant
+            {
+                Id = "tenant-stable",
+                Name = "Stable",
+                OwnerAuthorityInitialized = true,
+                ActiveOwnerMembershipIds = ["stable-owner", "member-crashed"],
+                OwnerFenceGeneration = 2,
+            },
+        ]);
+        await teams.InsertOneAsync(new LlmGwTeam { Id = "team-crashed", TenantId = "tenant-crashed", Name = "Default" });
+        await memberships.InsertManyAsync([
+            tenantMembership,
+            new LlmGwMembership { Id = "stable-owner", TenantId = "tenant-stable", UserId = "stable-user", Role = LlmGwTenantRoles.Owner },
+            new LlmGwMembership { Id = "member-crashed", TenantId = "tenant-stable", UserId = "member-user", Role = LlmGwTenantRoles.Owner },
+        ]);
+        await users.InsertOneAsync(new LlmGwUser { Id = "member-user", Username = "member-user", TenantIds = ["tenant-stable"] });
+        await operations.InsertManyAsync([
+            new GatewayRecoveryOperation
+            {
+                Id = "op-tenant",
+                Kind = GatewayRecoveryKinds.TenantCreate,
+                TenantId = "tenant-crashed",
+                UserId = owner.Id,
+                TeamId = "team-crashed",
+                MembershipId = tenantMembership.Id,
+                LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+            },
+            new GatewayRecoveryOperation
+            {
+                Id = "op-member",
+                Kind = GatewayRecoveryKinds.MemberCreate,
+                Status = "repairing",
+                TenantId = "tenant-stable",
+                UserId = "member-user",
+                MembershipId = "member-crashed",
+                RepairToken = "crashed-repairer",
+                RepairGeneration = 1,
+                LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+            },
+        ]);
+
+        (await GatewayRecoveryOperations.RepairExpiredAsync(scope.Database)).ShouldBe(2);
+
+        (await tenants.CountDocumentsAsync(x => x.Id == "tenant-crashed")).ShouldBe(0);
+        (await teams.CountDocumentsAsync(x => x.TenantId == "tenant-crashed")).ShouldBe(0);
+        (await memberships.CountDocumentsAsync(x => x.Id == tenantMembership.Id || x.Id == "member-crashed")).ShouldBe(0);
+        (await users.CountDocumentsAsync(x => x.Id == "member-user")).ShouldBe(0);
+        (await users.Find(x => x.Id == owner.Id).SingleAsync()).TenantIds.ShouldBe(["home"]);
+        (await tenants.Find(x => x.Id == "tenant-stable").SingleAsync()).ActiveOwnerMembershipIds.ShouldBe(["stable-owner"]);
+        (await operations.CountDocumentsAsync(x => x.Status == "repaired")).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task OwnerAuthority_ConcurrentRemovalsAtomicallyPreserveOneOwner()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
+        await tenants.InsertOneAsync(new LlmGwTenant
+        {
+            Id = "tenant-a",
+            Name = "Tenant A",
+            OwnerAuthorityInitialized = true,
+            ActiveOwnerMembershipIds = ["owner-a", "owner-b"],
+            OwnerFenceGeneration = 7,
+        });
+
+        var decisions = await Task.WhenAll(
+            TenantOwnerAuthority.TryRemoveAsync(tenants, "tenant-a", "owner-a"),
+            TenantOwnerAuthority.TryRemoveAsync(tenants, "tenant-a", "owner-b"));
+
+        decisions.Count(x => x.Result == OwnerRemovalResult.Removed).ShouldBe(1);
+        decisions.Count(x => x.Result == OwnerRemovalResult.LastOwner).ShouldBe(1);
+        var tenant = await tenants.Find(x => x.Id == "tenant-a").SingleAsync();
+        tenant.ActiveOwnerMembershipIds.Count.ShouldBe(1);
+        tenant.OwnerFenceGeneration.ShouldBe(8);
+    }
+
+    [Fact]
+    public async Task OwnerMutationRepairer_CompletesHardExitAfterAuthoritativeRemovalAndPromotion()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
+        var memberships = scope.Database.GetCollection<LlmGwMembership>("llmgw_memberships");
+        var operations = scope.Database.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
+        await tenants.InsertOneAsync(new LlmGwTenant
+        {
+            Id = "tenant-a",
+            Name = "Tenant A",
+            OwnerAuthorityInitialized = true,
+            ActiveOwnerMembershipIds = ["owner-a", "owner-b"],
+            OwnerFenceGeneration = 3,
+        });
+        await memberships.InsertManyAsync([
+            new LlmGwMembership { Id = "owner-a", TenantId = "tenant-a", UserId = "user-a", Role = LlmGwTenantRoles.Owner, Version = 1 },
+            new LlmGwMembership { Id = "owner-b", TenantId = "tenant-a", UserId = "user-b", Role = LlmGwTenantRoles.Owner, Version = 1 },
+            new LlmGwMembership { Id = "admin-c", TenantId = "tenant-a", UserId = "user-c", Role = LlmGwTenantRoles.Admin, Version = 1 },
+        ]);
+        (await TenantOwnerAuthority.TryRemoveAsync(tenants, "tenant-a", "owner-a")).Result.ShouldBe(OwnerRemovalResult.Removed);
+        await memberships.UpdateOneAsync(
+            x => x.Id == "admin-c",
+            Builders<LlmGwMembership>.Update.Set(x => x.Role, LlmGwTenantRoles.Owner).Set(x => x.Version, 2));
+        await operations.InsertManyAsync([
+            new GatewayRecoveryOperation
+            {
+                Id = "op-remove",
+                Kind = GatewayRecoveryKinds.OwnerMutation,
+                TenantId = "tenant-a",
+                MembershipId = "owner-a",
+                ExpectedMembershipVersion = 1,
+                TargetRole = LlmGwTenantRoles.Admin,
+                TargetStatus = "active",
+                LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+            },
+            new GatewayRecoveryOperation
+            {
+                Id = "op-add",
+                Kind = GatewayRecoveryKinds.OwnerMutation,
+                TenantId = "tenant-a",
+                MembershipId = "admin-c",
+                ExpectedMembershipVersion = 1,
+                TargetRole = LlmGwTenantRoles.Owner,
+                TargetStatus = "active",
+                LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+            },
+        ]);
+
+        (await GatewayRecoveryOperations.RepairExpiredAsync(scope.Database)).ShouldBe(2);
+
+        (await memberships.Find(x => x.Id == "owner-a").SingleAsync()).Role.ShouldBe(LlmGwTenantRoles.Admin);
+        var tenant = await tenants.Find(x => x.Id == "tenant-a").SingleAsync();
+        tenant.ActiveOwnerMembershipIds.OrderBy(x => x).ShouldBe(["admin-c", "owner-b"]);
+        (await operations.CountDocumentsAsync(x => x.Status == "repaired")).ShouldBe(2);
+    }
+
+    [Fact]
     public async Task AdversarialMatrix_TwoTenantsTwoTeamsTwoUsersAndTwoKeysPerTeamStayIsolated()
     {
         var database = await TryCreateDatabaseAsync();

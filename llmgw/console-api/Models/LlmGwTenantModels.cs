@@ -36,6 +36,9 @@ public sealed class LlmGwTenant
     [BsonRepresentation(BsonType.Decimal128)]
     public decimal? BudgetReservationUsd { get; set; }
     public int? RateLimitPerMinute { get; set; }
+    public bool OwnerAuthorityInitialized { get; set; }
+    public List<string> ActiveOwnerMembershipIds { get; set; } = new();
+    public long OwnerFenceGeneration { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

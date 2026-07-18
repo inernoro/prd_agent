@@ -3749,6 +3749,7 @@ public class GatewayDataDomainGuardTests
         var user = ReadRepoFile("llmgw/console-api/Models/LlmGwUser.cs");
         var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var recovery = ReadRepoFile("llmgw/console-api/Provisioning/GatewayRecoveryOperations.cs");
         var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
 
@@ -3765,7 +3766,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TEAM_SCOPE_REQUIRED", console);
         Assert.Contains("APP_CALLER_TEAM_MISMATCH", console);
         Assert.Contains("membership.invalidate_sessions", console);
-        Assert.Contains("TryAcquireTenantOwnerMutationLockAsync", console);
+        Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", console);
+        Assert.Contains("ActiveOwnerMembershipIds", recovery);
+        Assert.Contains("OwnerFenceGeneration", recovery);
+        Assert.Contains("GatewayRecoveryOperations.RepairExpiredAsync", console);
+        Assert.DoesNotContain("OwnerMutationLock", console);
         Assert.Contains("MEMBERSHIP_VERSION_CONFLICT", console);
         Assert.Contains("idempotentReplay = true", console);
         Assert.Contains("invalidatedMemberships", console);
