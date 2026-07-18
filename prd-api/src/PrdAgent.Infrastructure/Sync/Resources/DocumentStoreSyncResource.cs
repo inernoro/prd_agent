@@ -130,6 +130,21 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
                 content = (await _documentService.GetByIdAsync(e.DocumentId))?.RawContent;
 
+            // 该条目的附件（若有）与它是否为「可跨节点传输的文件条目」：有附件且附件有可下载 URL →
+            // 走 peerAttachment，接收方据此下载重传重建文件（此时 content 保持 null，交由二进制分支处理）。
+            Attachment? att = null;
+            if (!e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId))
+                attById.TryGetValue(e.AttachmentId!, out att);
+            var transferableFile = att != null && !string.IsNullOrWhiteSpace(att.Url);
+
+            // 关键修复（对端收不到文档）：文本条目（非文件夹、且不是可传输文件条目）必须以「非 null 正文」导出。
+            // 接收方 ApplyRecords 用 `fe.Content == null` 判定为「二进制」，无 peerAttachment 就静默 skipped，
+            // 于是「DocumentId 为空 / ParsedPrd 缺失 / 空文档 / 仅有附件提取文本但附件无下载 URL」这类条目会在对端
+            // 被当二进制丢弃、永远建不出来，而发送方却记 skipped=已一致、显示同步成功（用户实测：对端只剩文件夹、0 B）。
+            // 与 GetEntryContent 的渲染兜底同口径：优先正文 → 退附件提取文本 → 兜底空串，保证文本条目始终按文本在对端建出。
+            if (!e.IsFolder && !transferableFile && string.IsNullOrEmpty(content))
+                content = (att != null ? att.ExtractedText : null) ?? string.Empty;
+
             string? parentLineage = null;
             if (!string.IsNullOrEmpty(e.ParentId) && byId.TryGetValue(e.ParentId, out var parent))
                 parentLineage = LineageOf(parent);
@@ -153,27 +168,28 @@ public class DocumentStoreSyncResource : ISyncableResource
                 UpdatedAt = e.UpdatedAt,
                 LastChangedAt = e.LastChangedAt,
             };
-            // 文件条目：带上附件访问信息，接收方据此下载重传重建（content 为 null 不再被跳过）。
+            // 可传输文件条目（纯二进制：无 DocumentId 正文 + 有附件 URL）：带上附件访问信息，接收方据此下载重传重建。
+            // 双形态条目（DocumentId + AttachmentId 并存）content 非 null，走文本分支、不带 peerAttachment（见 debt B4），
+            // 故此处仍以 `content == null` 收口，行为与旧版一致。
             // sourceId = 规范的「源头身份」：本条目若本身来自对端（metadata 有 peerSourceAttachmentUrl），
             // 再导出时必须沿用原始源头 URL 而非本地副本 URL，否则 both（push 再 pull）回流时源头认不出自己的文件，
             // 两侧 peerSourceAttachmentUrl 互相错位 → 双向同步永不收敛（Codex P1）。
             // url = 本节点实际可下载地址（始终对本节点可达），与 sourceId 分离：身份做幂等/签名，url 做取字节。
-            if (content == null && !e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId)
-                && attById.TryGetValue(e.AttachmentId!, out var att) && !string.IsNullOrWhiteSpace(att.Url))
+            if (transferableFile && content == null)
             {
                 var sourceId = e.Metadata != null
                     && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var psu) && !string.IsNullOrEmpty(psu)
-                    ? psu : att.Url;
+                    ? psu : att!.Url;
                 record.Extras["peerAttachment"] = JsonSerializer.SerializeToElement(new
                 {
                     sourceId,
-                    url = att.Url,
-                    mimeType = att.MimeType,
-                    fileName = att.FileName,
-                    size = att.Size,
-                    type = att.Type.ToString(),
-                    thumbnailUrl = att.ThumbnailUrl,
-                    extractedText = att.ExtractedText,
+                    url = att!.Url,
+                    mimeType = att!.MimeType,
+                    fileName = att!.FileName,
+                    size = att!.Size,
+                    type = att!.Type.ToString(),
+                    thumbnailUrl = att!.ThumbnailUrl,
+                    extractedText = att!.ExtractedText,
                 });
             }
             records.Add(record);

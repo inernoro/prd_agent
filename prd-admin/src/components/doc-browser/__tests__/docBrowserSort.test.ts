@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sortDocBrowserEntries } from '../docBrowserSort';
+import { computeReorderUpdates, sortDocBrowserEntries } from '../docBrowserSort';
 
 const base = {
   isFolder: false,
@@ -46,6 +46,69 @@ describe('docBrowserSort', () => {
     expect(sortDocBrowserEntries(entries, { mode: 'created-desc' }).map((entry) => entry.id)).toEqual([
       'newer',
       'older',
+    ]);
+  });
+});
+
+describe('computeReorderUpdates（拖拽自定义排序）', () => {
+  const doc = (id: string, sortOrder?: number) => ({ id, title: id, isFolder: false, sortOrder });
+
+  it('两侧邻居都有 sortOrder 时只写被拖条目一个中点值', () => {
+    const siblings = [doc('a', 10), doc('b', 20), doc('c', 30)];
+    expect(computeReorderUpdates(siblings, 'c', 'a', 'after')).toEqual([
+      { entryId: 'c', sortOrder: 15 },
+    ]);
+  });
+
+  it('拖到头部时给「首项 - 步长」', () => {
+    const siblings = [doc('a', 10), doc('b', 20)];
+    expect(computeReorderUpdates(siblings, 'b', 'a', 'before')).toEqual([
+      { entryId: 'b', sortOrder: 0 },
+    ]);
+  });
+
+  it('拖到尾部时给「末项 + 步长」', () => {
+    const siblings = [doc('a', 10), doc('b', 20)];
+    expect(computeReorderUpdates(siblings, 'a', 'b', 'after')).toEqual([
+      { entryId: 'a', sortOrder: 30 },
+    ]);
+  });
+
+  it('邻居缺 sortOrder 时整组重编号，只回传变化项', () => {
+    const siblings = [doc('a'), doc('b'), doc('c')];
+    const updates = computeReorderUpdates(siblings, 'c', 'a', 'before');
+    expect(updates).toEqual([
+      { entryId: 'c', sortOrder: 10 },
+      { entryId: 'a', sortOrder: 20 },
+      { entryId: 'b', sortOrder: 30 },
+    ]);
+  });
+
+  it('重编号时已在位且值相同的条目不重复回传', () => {
+    const siblings = [doc('a', 10), doc('b'), doc('c', 30)];
+    const updates = computeReorderUpdates(siblings, 'b', 'a', 'after');
+    // a 已经是 10 → 不回传；b 插到 20；c 已经是 30 → 不回传
+    expect(updates).toEqual([{ entryId: 'b', sortOrder: 20 }]);
+  });
+
+  it('拖到自身 / 目标不存在时返回空', () => {
+    const siblings = [doc('a', 10), doc('b', 20)];
+    expect(computeReorderUpdates(siblings, 'a', 'a', 'before')).toEqual([]);
+    expect(computeReorderUpdates(siblings, 'a', 'ghost', 'before')).toEqual([]);
+  });
+
+  it('被拖条目来自其他父级（跨文件夹拖入）也能插入编号', () => {
+    const siblings = [doc('a', 10), doc('b', 20)];
+    expect(computeReorderUpdates(siblings, 'outsider', 'a', 'after')).toEqual([
+      { entryId: 'outsider', sortOrder: 15 },
+    ]);
+  });
+
+  it('文件夹（章节）同级换位与文档走同一套编号逻辑', () => {
+    const folder = (id: string, sortOrder?: number) => ({ id, title: id, isFolder: true, sortOrder });
+    const siblings = [folder('基础篇', 100), folder('中级篇', 200), folder('高级篇', 300)];
+    expect(computeReorderUpdates(siblings, '高级篇', '基础篇', 'before')).toEqual([
+      { entryId: '高级篇', sortOrder: 90 },
     ]);
   });
 });

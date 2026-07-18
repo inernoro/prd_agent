@@ -1,26 +1,26 @@
 /**
- * 皮肤/主题编辑器组件
- * 允许用户配置色深、透明度、glow 效果等
+ * 皮肤/主题编辑器（2026-07-17 极简重做，用户定）：
+ * 用户只决定两件属于"自己"的事——外观（深色/浅色）与界面材质（素色/液态玻璃）。
+ * 色深、透明度、光晕、侧边栏玻璃、性能模式是设计参数，由系统统一决定
+ * （themeApplier.normalizeThemeConfig 归一化为设计预设），不再转嫁给用户。
  */
 
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel } from '@/lib/glassStyles';
 import { useThemeStore } from '@/stores/themeStore';
-import {
-  COLOR_DEPTH_MAP,
-  OPACITY_MAP,
-  SIDEBAR_GLASS_OPTIONS,
-  PERFORMANCE_MODE_OPTIONS,
-  type ColorDepthLevel,
-  type OpacityLevel,
-  type SidebarGlassMode,
-  type PerformanceMode,
-} from '@/types/theme';
-import { isWindowsPlatform } from '@/lib/themeApplier';
-import { RotateCcw, Sparkles, Palette, Layers, PanelLeft, Save, Gauge } from 'lucide-react';
+import { useMobileThemeStore, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { MATERIAL_OPTIONS, DEFAULT_THEME_CONFIG, type MaterialMode } from '@/types/theme';
+import { Moon, Sun, Square, Save } from 'lucide-react';
+
+const APPEARANCE_OPTIONS: Array<{ value: MobileThemeMode; label: string; description: string; icon: React.ReactNode }> = [
+  { value: 'dark', label: '深色', description: '夜晚与暗光环境（默认）', icon: <Moon size={14} /> },
+  { value: 'light', label: '浅色', description: '白天与明亮环境，纸感浅色', icon: <Sun size={14} /> },
+];
 
 export function ThemeSkinEditor() {
-  const { config, setConfig, reset, saving } = useThemeStore();
+  const { config, setConfig, saving } = useThemeStore();
+  const appearance = useMobileThemeStore((s) => s.mode);
+  const setAppearance = useMobileThemeStore((s) => s.setMode);
+  const material = config.material ?? DEFAULT_THEME_CONFIG.material;
 
   return (
     <GlassCard glow animated accentHue={234} className="h-full flex flex-col">
@@ -31,190 +31,41 @@ export function ThemeSkinEditor() {
             皮肤设置
           </h2>
           <p className="mt-1 text-xs text-token-muted">
-            自定义界面外观与主题配色
+            两个选择：白天还是黑夜，玻璃还是素色。其余交给系统。
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {saving && (
-            <span className="flex items-center gap-1 text-xs text-token-muted">
-              <Save size={12} className="animate-pulse" />
-              保存中...
-            </span>
-          )}
-          <button
-            onClick={reset}
-            className="surface-action flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors hover:text-token-primary"
-          >
-            <RotateCcw size={12} />
-            重置默认
-          </button>
-        </div>
+        {saving && (
+          <span className="flex items-center gap-1 text-xs text-token-muted">
+            <Save size={12} className="animate-pulse" />
+            保存中...
+          </span>
+        )}
       </div>
 
-      {/* 设置项网格 */}
       <div className="flex-1 overflow-y-auto space-y-6">
-        {/* 色深选择 */}
+        {/* 外观：深色 / 浅色（全局生效，与首页移动端切换同一偏好） */}
         <SettingSection
-          icon={<Palette size={14} />}
-          title="色深"
-          description="调整界面背景的深浅程度"
+          icon={<Sun size={14} />}
+          title="外观"
+          description="深色或浅色，全站生效"
         >
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(COLOR_DEPTH_MAP) as ColorDepthLevel[]).map((level) => {
-              const item = COLOR_DEPTH_MAP[level];
-              const isActive = config.colorDepth === level;
-              return (
-                <button
-                  key={level}
-                  onClick={() => setConfig({ colorDepth: level })}
-                  className="p-3 rounded-lg transition-all text-left"
-                  style={{
-                    background: isActive
-                      ? 'rgba(99, 102, 241, 0.15)'
-                      : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
-                  }}
-                >
-                  <div
-                    className="w-full h-6 rounded mb-2"
-                    style={{ background: item.bgBase }}
-                  />
-                  <div
-                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
-                  >
-                    {item.label}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </SettingSection>
-
-        {/* 透明度选择 */}
-        <SettingSection
-          icon={<Layers size={14} />}
-          title="透明度"
-          description="调整玻璃效果的透明程度"
-        >
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(OPACITY_MAP) as OpacityLevel[]).map((level) => {
-              const item = OPACITY_MAP[level];
-              const isActive = config.opacity === level;
-              return (
-                <button
-                  key={level}
-                  onClick={() => setConfig({ opacity: level })}
-                  className="p-3 rounded-lg transition-all text-left"
-                  style={{
-                    background: isActive
-                      ? 'rgba(99, 102, 241, 0.15)'
-                      : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
-                  }}
-                >
-                  <div
-                    className="w-full h-6 rounded mb-2 relative overflow-hidden"
-                    style={{
-                      background: `linear-gradient(180deg, rgba(255,255,255,${item.glassStart}) 0%, rgba(255,255,255,${item.glassEnd}) 100%)`,
-                      border: `1px solid rgba(255, 255, 255, ${item.border})`,
-                    }}
-                  >
-                    {/* 模拟背景网格 */}
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        backgroundImage: `
-                          linear-gradient(45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
-                          linear-gradient(-45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
-                          linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.05) 75%),
-                          linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.05) 75%)
-                        `,
-                        backgroundSize: '8px 8px',
-                        backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0',
-                      }}
-                    />
-                  </div>
-                  <div
-                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
-                  >
-                    {item.label}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </SettingSection>
-
-        {/* Glow 效果开关 */}
-        <SettingSection
-          icon={<Sparkles size={14} />}
-          title="光晕效果"
-          description="卡片顶部的渐变光晕"
-        >
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setConfig({ enableGlow: true })}
-              className="flex-1 p-3 rounded-lg transition-all flex items-center justify-center gap-2"
-              style={{
-                background: config.enableGlow
-                  ? 'rgba(99, 102, 241, 0.15)'
-                  : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${config.enableGlow ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
-              }}
-            >
-              <Sparkles
-                size={14}
-                className={config.enableGlow ? 'text-token-accent' : 'text-token-muted'}
-              />
-              <span
-                className={`text-xs font-medium ${config.enableGlow ? 'text-token-accent' : 'text-token-primary'}`}
-              >
-                启用
-              </span>
-            </button>
-            <button
-              onClick={() => setConfig({ enableGlow: false })}
-              className="flex-1 p-3 rounded-lg transition-all flex items-center justify-center gap-2"
-              style={{
-                background: !config.enableGlow
-                  ? 'rgba(99, 102, 241, 0.15)'
-                  : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${!config.enableGlow ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
-              }}
-            >
-              <span
-                className={`text-xs font-medium ${!config.enableGlow ? 'text-token-accent' : 'text-token-primary'}`}
-              >
-                禁用
-              </span>
-            </button>
-          </div>
-        </SettingSection>
-
-        {/* 侧边栏玻璃效果 */}
-        <SettingSection
-          icon={<PanelLeft size={14} />}
-          title="侧边栏玻璃效果"
-          description="控制侧边栏的液态玻璃效果"
-        >
-          <div className="space-y-2">
-            {SIDEBAR_GLASS_OPTIONS.map((option) => {
-              const isActive = config.sidebarGlass === option.value;
+          <div className="grid grid-cols-2 gap-2">
+            {APPEARANCE_OPTIONS.map((option) => {
+              const isActive = appearance === option.value;
               return (
                 <button
                   key={option.value}
-                  onClick={() => setConfig({ sidebarGlass: option.value as SidebarGlassMode })}
-                  className="w-full p-3 rounded-lg transition-all text-left"
+                  onClick={() => setAppearance(option.value)}
+                  className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
                       ? 'rgba(99, 102, 241, 0.15)'
-                      : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                      : 'var(--nested-block-bg)',
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'var(--nested-block-border)'}`,
                   }}
                 >
-                  <div
-                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
-                  >
+                  <div className={`flex items-center gap-1.5 text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}>
+                    {option.icon}
                     {option.label}
                   </div>
                   <div className="mt-0.5 text-xs text-token-muted">
@@ -226,30 +77,32 @@ export function ThemeSkinEditor() {
           </div>
         </SettingSection>
 
-        {/* 性能模式 */}
+        {/* 界面材质：素色 / 液态玻璃（系统级统一调配，一处切换全站跟随） */}
         <SettingSection
-          icon={<Gauge size={14} />}
-          title="性能模式"
-          description={isWindowsPlatform() ? 'Windows 检测到，建议使用自动或性能优先' : '调整渲染特效强度'}
+          icon={<Square size={14} />}
+          title="界面材质"
+          description="素色实底或液态玻璃，一处切换全站生效"
         >
-          <div className="space-y-2">
-            {PERFORMANCE_MODE_OPTIONS.map((option) => {
-              const isActive = config.performanceMode === option.value;
+          <div className="grid grid-cols-2 gap-2">
+            {MATERIAL_OPTIONS.map((option) => {
+              const isActive = material === option.value;
               return (
                 <button
                   key={option.value}
-                  onClick={() => setConfig({ performanceMode: option.value as PerformanceMode })}
-                  className="w-full p-3 rounded-lg transition-all text-left"
+                  // 选玻璃 = 明确要完整华丽效果：顺手清掉隐藏的 performanceMode='performance'
+                  // 存量值（后端旧默认，会静音 aurora/压动画让玻璃发闷，且已无 UI 可改——Codex P2）
+                  onClick={() => setConfig(option.value === 'glass'
+                    ? { material: 'glass', performanceMode: 'quality' }
+                    : { material: option.value as MaterialMode })}
+                  className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive
                       ? 'rgba(99, 102, 241, 0.15)'
-                      : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                      : 'var(--nested-block-bg)',
+                    border: `1px solid ${isActive ? 'rgba(99, 102, 241, 0.4)' : 'var(--nested-block-border)'}`,
                   }}
                 >
-                  <div
-                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
-                  >
+                  <div className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}>
                     {option.label}
                   </div>
                   <div className="mt-0.5 text-xs text-token-muted">
@@ -258,51 +111,6 @@ export function ThemeSkinEditor() {
                 </button>
               );
             })}
-          </div>
-        </SettingSection>
-
-        {/* 实时预览 */}
-        <SettingSection
-          icon={<Palette size={14} />}
-          title="实时预览"
-          description="当前配置的效果预览"
-        >
-          <div className="grid grid-cols-2 gap-3">
-            {/* 预览卡片 1 - 默认 */}
-            <div
-              className="p-3 rounded-lg"
-              style={{
-                ...glassPanel,
-                background: `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
-                border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-              }}
-            >
-              <div className="text-xs font-medium text-token-primary">
-                默认卡片
-              </div>
-              <div className="mt-1 text-xs text-token-muted">
-                标准液态玻璃效果
-              </div>
-            </div>
-
-            {/* 预览卡片 2 - 带 Glow */}
-            <div
-              className="p-3 rounded-lg relative overflow-hidden"
-              style={{
-                ...glassPanel,
-                background: config.enableGlow
-                  ? `radial-gradient(ellipse 100% 60% at 50% -10%, rgba(99, 102, 241, 0.25) 0%, transparent 65%), linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`
-                  : `linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.08)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)`,
-                border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
-              }}
-            >
-              <div className="text-xs font-medium text-token-primary">
-                光晕卡片
-              </div>
-              <div className="mt-1 text-xs text-token-muted">
-                {config.enableGlow ? '已启用光晕' : '光晕已禁用'}
-              </div>
-            </div>
           </div>
         </SettingSection>
       </div>

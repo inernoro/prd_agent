@@ -732,7 +732,8 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 440,
     width: '90%',
     borderRadius: 20,
-    background: 'rgba(0, 0, 0, 0.55)',
+    // 素色材质会全局清除 backdrop-filter：底色必须自身够不透明（承载密码表单），不能靠 blur 救可读性
+    background: 'rgba(14, 15, 20, 0.92)',
     backdropFilter: 'blur(40px) saturate(130%)',
     WebkitBackdropFilter: 'blur(40px) saturate(130%)',
     border: '1px solid rgba(255, 255, 255, 0.08)',

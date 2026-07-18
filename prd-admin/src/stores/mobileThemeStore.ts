@@ -1,10 +1,11 @@
 /**
- * 移动端全局明暗偏好（2026-07-12 定稿，同日用户改口：黑皮肤为默认）：
- * 暗色默认，浅色可手动切换。
+ * 全局明暗（外观）偏好 SSOT（2026-07-17 升级：从移动端专属扩展到全站）：
+ * 暗色默认，浅色可手动切换；桌面与移动共用本 store，
+ * 入口有两个——首页移动端右上角切换、设置 → 皮肤设置「外观」。
+ * 由 AppShell 统一把 mode 落到 <html data-theme="light">
+ * （tokens.css 已有全量白天 token 覆盖；纸面身份页自管主题，壳层不插手）。
  *
- * 与桌面端主题体系（themeStore 的 colorDepth 深浅档位）互不干扰：
- * 本 store 只在移动端（<768px）生效，由 AppShell 把 mode 落到
- * <html data-theme="light">（tokens.css 已有全量白天 token 覆盖）。
+ * 历史：2026-07-12 作为移动端偏好定稿（黑皮肤默认）；文件名保留避免无谓改动面。
  *
  * 存储用 localStorage（.claude/rules/no-localstorage.md 例外清单：
  * 纯 UI 偏好、发版后旧值无害、用户期望关浏览器也记住）。
