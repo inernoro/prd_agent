@@ -264,7 +264,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
         display: 'flex',
         flexDirection: 'column',
         borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(18, 18, 24, 0.6)',
+        background: 'rgba(18, 18, 24, 0.94)',
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
       }}

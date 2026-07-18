@@ -89,7 +89,10 @@ export function GlassCard({
   onPointerDown,
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
+  const material = useThemeStore((s) => s.config.material ?? 'solid');
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
+  // 表面材质 100% 跟随用户选择（2026-07-17 修正：性能模式不再劫持材质，只管动画）
+  const solidSurface = material === 'solid';
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 
@@ -120,13 +123,13 @@ export function GlassCard({
 
   // 使用 useMemo 缓存样式计算
   const cardStyle = useMemo((): React.CSSProperties => {
-    // ── 性能模式：Obsidian 实底暗色表面 ──
-    if (isPerf) {
+    // ── 素色材质 / 性能模式：Obsidian 实底暗色表面 ──
+    if (solidSurface) {
       return buildObsidianStyle(variant, accentHue, glow, isLight, style);
     }
-    // ── 质量模式：液态玻璃 ──
+    // ── 液态玻璃材质 ──
     return buildGlassStyle(variant, accentHue, glow, isLight, style);
-  }, [variant, accentHue, glow, isPerf, isLight, style]);
+  }, [variant, accentHue, glow, solidSurface, isLight, style]);
 
   // 入场动画样式
   const animatedStyle: React.CSSProperties = animated && !isPerf
@@ -165,7 +168,7 @@ export function GlassCard({
         className={cn(
           radiusClass,
           'relative no-focus-ring',
-          !isPerf && !flush && 'glass-blur-pseudo',
+          !solidSurface && !flush && 'glass-blur-pseudo',
           !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
           overflowClass[overflow],
           paddingClass,
@@ -195,16 +198,16 @@ function buildObsidianStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // 背景：使用 CSS 变量（已在 themeComputed 中切换为实底值）
+  // 背景：使用 CSS 变量（已在 themeComputed 中切换为纯平实底值）。
+  // 2026-07-16 现代化重做：去掉白色顶部镜面高光——那是「塑料亚克力感」的来源；
+  // 素色的层级只靠 细描边 + 底色阶梯 表达（Linear/Vercel 式扁平）。
+  // gold / accentHue 变体保留一层极轻的色彩顶部氛围（身份色，不是镜面反光）。
   let background = `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`;
-
-  // 顶部微光：用 linear-gradient 模拟顶边高光
-  const topHighlight = variant === 'gold'
-    ? 'linear-gradient(180deg, rgba(99, 102, 241, 0.08) 0%, transparent 50%)'
-    : accentHue !== undefined
-      ? `linear-gradient(180deg, hsla(${accentHue}, 50%, 60%, 0.06) 0%, transparent 50%)`
-      : 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 50%)';
-  background = `${topHighlight}, ${background}`;
+  if (variant === 'gold') {
+    background = `linear-gradient(180deg, rgba(99, 102, 241, 0.05) 0%, transparent 55%), ${background}`;
+  } else if (accentHue !== undefined) {
+    background = `linear-gradient(180deg, hsla(${accentHue}, 50%, 60%, 0.04) 0%, transparent 55%), ${background}`;
+  }
 
   // 光晕效果（radial-gradient，GPU-friendly，不需要 backdrop-filter）
   if (glow) {
@@ -224,12 +227,13 @@ function buildObsidianStyle(
       ? `hsla(${accentHue}, 50%, 60%, 0.15)`
       : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
-  // 阴影：精调内高光与底部暗边，塑造伪 3D 棱感
-  let boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.5)';
+  // 阴影：静息态近乎无影（现代扁平——分离靠描边），仅一条发丝级落影防止表面与底色粘连；
+  // gold/accent 变体多一层极轻的彩色氛围，浮层类阴影由 surface-popover 等自己负责
+  let boxShadow = '0 1px 2px rgba(0, 0, 0, 0.22)';
   if (variant === 'gold') {
-    boxShadow = '0 8px 24px -4px rgba(99, 102, 241, 0.18), 0 8px 16px -4px rgba(0, 0, 0, 0.5)';
+    boxShadow = '0 8px 24px -12px rgba(99, 102, 241, 0.12), 0 1px 2px rgba(0, 0, 0, 0.22)';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5)`;
+    boxShadow = `0 8px 24px -12px hsla(${accentHue}, 60%, 50%, 0.10), 0 1px 2px rgba(0, 0, 0, 0.22)`;
   }
 
   // 浅色"纸感"卡片:走 token 暖咖啡微影,无白色 inset 高光(在白底上无效)、无黑色 inset 暗边(违反纸感)。
@@ -262,14 +266,14 @@ function buildGlassStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先。
-  // 玻璃感来自「边缘棱光 + 镜面反光 + 饱和度提升」，不靠重模糊——blur 半径大幅下调，
-  // 背景透得清楚（评估页 labs/liquid-glass 实测 current blur(40px) 把背景糊成一坨）。
+  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先，玻璃感靠饱和度与柔和顶光。
+  // 2026-07-17 微调（用户：「边缘塑料感」）：blur 略升一档补材质厚度，
+  // 玻璃感不再依赖强镜面棱光（那是塑料感来源，见下方 shadowLayers）。
   const blurValues = {
-    default: 'blur(14px) saturate(180%) brightness(1.08)',
-    gold: 'blur(16px) saturate(200%) brightness(1.12)',
-    frost: 'blur(22px) saturate(220%) brightness(1.1)',
-    subtle: 'blur(10px) saturate(160%) brightness(1.04)',
+    default: 'blur(16px) saturate(180%) brightness(1.08)',
+    gold: 'blur(18px) saturate(200%) brightness(1.12)',
+    frost: 'blur(24px) saturate(220%) brightness(1.1)',
+    subtle: 'blur(12px) saturate(160%) brightness(1.04)',
   };
 
   const borderMultiplier = { default: 1, gold: 1.3, frost: 1.4, subtle: 0.7 };
@@ -297,13 +301,13 @@ function buildGlassStyle(
     `;
   }
 
-  // B 方案棱光：顶边镜面高光（光从上方打下来）+ 侧缘光 + 底部内反光，让低模糊也读作"玻璃"。
+  // 2026-07-17 去斜面棱（用户：「越看越假、边缘塑料感」）：旧版 50% 白顶部内描边 +
+  // 侧缘线 + 底部暗线组成了 2000 年代的「斜面塑料」。现代玻璃（macOS 材质）的边缘
+  // 是发丝级柔光：顶光降到 0.16 且无扩散、去掉侧缘与底部明暗线，厚度感交给 blur 与投影。
   const shadowLayers = [
-    '0 16px 32px -8px rgba(10, 10, 14, 0.5)',
-    `inset 0 1px 1px rgba(255, 255, 255, ${0.5 * borderMult})`,
-    'inset 1px 0 0 rgba(255, 255, 255, 0.12)',
-    'inset 0 -10px 20px -16px rgba(255, 255, 255, 0.16)',
-    'inset 0 -1px 1px rgba(0, 0, 0, 0.15)',
+    '0 16px 32px -12px rgba(10, 10, 14, 0.45)',
+    `inset 0 1px 0 rgba(255, 255, 255, ${0.16 * borderMult})`,
+    'inset 0 -14px 28px -24px rgba(255, 255, 255, 0.10)',
   ];
   if (variant === 'gold') {
     shadowLayers.push('0 8px 32px -8px rgba(99, 102, 241, 0.35)');
