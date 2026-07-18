@@ -11,8 +11,41 @@ export interface SelfUpdateCheckoutResult {
 }
 
 export function resolveSelfUpdateTargetBranch(currentBranch: string): string {
-  if (!currentBranch.startsWith(SELF_UPDATE_RUNTIME_BRANCH_PREFIX)) return currentBranch;
-  return currentBranch.slice(SELF_UPDATE_RUNTIME_BRANCH_PREFIX.length);
+  const normalized = currentBranch.trim();
+  if (!normalized || normalized === 'HEAD') return '';
+  if (!normalized.startsWith(SELF_UPDATE_RUNTIME_BRANCH_PREFIX)) return normalized;
+  return normalized.slice(SELF_UPDATE_RUNTIME_BRANCH_PREFIX.length);
+}
+
+/** 将 origin/HEAD 的符号引用解析为可用于自更新的真实分支名。 */
+export function resolveRemoteDefaultBranch(remoteRef: string): string {
+  const normalized = remoteRef.trim()
+    .replace(/^refs\/remotes\/origin\//, '')
+    .replace(/^origin\//, '');
+  if (!normalized || normalized === 'HEAD' || normalized === 'origin') return '';
+  return resolveSelfUpdateTargetBranch(normalized);
+}
+
+/**
+ * CDS 处于 detached HEAD 时，选择一个稳定且可解释的更新目标。
+ * 优先级：当前逻辑分支 > origin/HEAD > main > master > 最近的远端分支。
+ */
+export function recommendSelfUpdateTargetBranch(
+  currentBranch: string,
+  remoteBranches: string[],
+  remoteDefaultBranch = '',
+): string {
+  const current = resolveSelfUpdateTargetBranch(currentBranch);
+  if (current) return current;
+
+  const available = remoteBranches
+    .map(resolveSelfUpdateTargetBranch)
+    .filter((branch): branch is string => Boolean(branch));
+  const remoteDefault = resolveRemoteDefaultBranch(remoteDefaultBranch);
+  if (remoteDefault && (available.length === 0 || available.includes(remoteDefault))) return remoteDefault;
+  if (available.includes('main')) return 'main';
+  if (available.includes('master')) return 'master';
+  return available[0] || 'main';
 }
 
 /**

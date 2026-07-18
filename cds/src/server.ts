@@ -81,6 +81,11 @@ import type { BranchOperationCoordinator } from './services/branch-operation-coo
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
+import {
+  recommendSelfUpdateTargetBranch,
+  resolveRemoteDefaultBranch,
+  resolveSelfUpdateTargetBranch,
+} from './services/self-update-checkout.js';
 import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
@@ -2644,7 +2649,16 @@ export function createServer(deps: ServerDeps): express.Express {
       }
     };
     try {
-      const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+      const rawCurrentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+      const currentBranch = resolveSelfUpdateTargetBranch(rawCurrentBranch);
+      const detachedHead = rawCurrentBranch.trim() === 'HEAD';
+      const recommendedBranch = recommendSelfUpdateTargetBranch(
+        currentBranch,
+        [],
+        resolveRemoteDefaultBranch(
+          await safeExec('git symbolic-ref --quiet --short refs/remotes/origin/HEAD'),
+        ),
+      );
       const headSha = await safeExec('git rev-parse --short HEAD');
       const headIso = await safeExec('git log -1 --format=%cI HEAD');
 
@@ -2697,6 +2711,8 @@ export function createServer(deps: ServerDeps): express.Express {
 
       res.json({
         currentBranch,
+        detachedHead,
+        recommendedBranch,
         headSha,
         headIso,
         // 顶层版不调 git fetch — 远端检查留给 /api/self-status?probe=remote(详见 branches.ts)
@@ -2720,6 +2736,8 @@ export function createServer(deps: ServerDeps): express.Express {
       // 兜底:即使前面所有 try/catch 都崩,也返 200 让前端不至于显示 "400 banner"。
       res.json({
         currentBranch: '',
+        detachedHead: false,
+        recommendedBranch: 'main',
         headSha: '',
         headIso: '',
         fetchOk: false,
