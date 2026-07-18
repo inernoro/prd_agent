@@ -72,6 +72,12 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).not.toContain("publicDirectory: '/opt/site-web'");
   });
 
+  it('clears a hidden script rollback command when the selected strategy is generated', () => {
+    expect(releaseCenterSource).toContain(
+      "rollbackCommand: draft.strategyMode === 'existing-script' ? draft.rollbackCommand.trim() : ''",
+    );
+  });
+
   it('keeps branch release confirmation in user-facing site language', () => {
     expect(branchListSource).toContain('从已验收预览分支发布到站点。');
     expect(branchListSource).toContain('发布站点');

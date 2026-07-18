@@ -1444,7 +1444,7 @@ function buildTargetBody(draft: SiteDraft, projectId: string): Record<string, un
     privateKeyRef: draft.privateKeyRef.trim(),
     appPath: draft.sitePath.trim(),
     deployCommand: draft.strategyMode === 'existing-script' ? draft.deployCommand.trim() : '',
-    rollbackCommand: draft.rollbackCommand.trim(),
+    rollbackCommand: draft.strategyMode === 'existing-script' ? draft.rollbackCommand.trim() : '',
     healthcheckUrl: buildHealthcheckUrl(draft),
     environment: 'production',
     isCanonical: draft.isCanonical,

@@ -49,15 +49,14 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const projectId = resolveReadableProjectId(req, res);
     if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
-    const targets = deps.stateService.getReleaseTargets(projectId);
-    const archivedTargets = deps.stateService
-      .getReleaseTargets(projectId, { includeArchived: true })
-      .filter((target) => target.lifecycle === 'archived');
+    const provisionedTargets = deps.stateService.getReleaseTargets(projectId, { includeArchived: true });
+    const targets = provisionedTargets.filter((target) => target.lifecycle !== 'archived');
+    const archivedTargets = provisionedTargets.filter((target) => target.lifecycle === 'archived');
     // RemoteHost 无 projectId 归属（系统级资源）。项目级调用方只能看到本项目发布目标
     // 实际引用（ssh.privateKeyRef）的主机——与 rejectPrivateKeyRefMismatch 同款归属口径，
     // 避免泄露其他项目的 SSH 主机。无项目语境（系统级调用）时才返回全部。
     const referencedHostIds = projectId
-      ? new Set(targets.map((t) => t.ssh?.privateKeyRef).filter((ref): ref is string => !!ref))
+      ? new Set(provisionedTargets.map((t) => t.ssh?.privateKeyRef).filter((ref): ref is string => !!ref))
       : null;
     res.json({
       targets,
@@ -127,7 +126,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         privateKeyRef: String(body.privateKeyRef).trim(),
         appPath: String(body.appPath).trim(),
         deployCommand: strategy.mode === 'existing-script' ? strategy.command!.trim() : '',
-        rollbackCommand: typeof body.rollbackCommand === 'string' ? body.rollbackCommand.trim() : '',
+        rollbackCommand: strategy.mode === 'existing-script' && typeof body.rollbackCommand === 'string'
+          ? body.rollbackCommand.trim()
+          : '',
         healthcheckUrl: String(body.healthcheckUrl).trim(),
       },
     };
@@ -296,7 +297,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         privateKeyRef: String(mergedBody.privateKeyRef).trim(),
         appPath: String(mergedBody.appPath).trim(),
         deployCommand: strategy.mode === 'existing-script' ? strategy.command!.trim() : '',
-        rollbackCommand: typeof mergedBody.rollbackCommand === 'string' ? mergedBody.rollbackCommand.trim() : '',
+        rollbackCommand: strategy.mode === 'existing-script' && typeof mergedBody.rollbackCommand === 'string'
+          ? mergedBody.rollbackCommand.trim()
+          : '',
         healthcheckUrl: String(mergedBody.healthcheckUrl).trim(),
       },
     };
@@ -569,7 +572,7 @@ function rejectPrivateKeyRefMismatch(
   if (!projectKey) return false;
   if (projectKey.projectId !== projectId) return false;
   const alreadyProvisionedForProject = stateService
-    .getReleaseTargets(projectId)
+    .getReleaseTargets(projectId, { includeArchived: true })
     .some((target) => target.ssh?.privateKeyRef === privateKeyRef);
   if (alreadyProvisionedForProject) return false;
 

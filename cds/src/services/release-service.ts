@@ -440,7 +440,9 @@ export class ReleaseService {
       strategy: rollbackStrategy,
     };
     this.stateService.addReleaseRun(run);
-    const strategy = target.ssh.rollbackCommand?.trim() ? 'rollbackCommand' : '重新发布历史版本';
+    const strategy = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand)
+      ? 'rollbackCommand'
+      : '重新发布历史版本';
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.runRollback(rollbackId, target, previous).catch((err) => {
       this.failRun(rollbackId, err, 'rollback_failed');
@@ -487,7 +489,7 @@ export class ReleaseService {
     if (!rollbackRun) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const rollbackCommand = ssh.rollbackCommand?.trim();
     const rollbackMode = rollbackRun.executionSnapshot?.mode || effectiveReleaseStrategy(target).mode;
-    if (rollbackCommand) {
+    if (shouldUseCustomRollbackCommand(rollbackMode, rollbackCommand)) {
       this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
       await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
     } else {
@@ -674,6 +676,13 @@ export function isDefaultScriptChain(rawCommand: string, scripts = extractReleas
 export function isLocalProdReleaseCommand(rawCommand: string): boolean {
   return extractReleaseScriptPaths(rawCommand)
     .some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh');
+}
+
+export function shouldUseCustomRollbackCommand(
+  mode: ReleaseExecutionMode,
+  rollbackCommand: string | undefined,
+): rollbackCommand is string {
+  return mode === 'existing-script' && Boolean(rollbackCommand?.trim());
 }
 
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {

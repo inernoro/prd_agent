@@ -260,6 +260,22 @@ describe('release control plane project-scope isolation', () => {
     expect(stateService.getReleaseTarget('target-a')?.isCanonical).not.toBe(true);
   });
 
+  it('clears a stale script rollback command when patching a target to a generated strategy', async () => {
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      strategy: {
+        mode: 'generated-static',
+        buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
+        artifactDirectory: 'dist',
+        publicDirectory: '/opt/proj-a-web',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.target.strategy.mode).toBe('generated-static');
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    expect(res.body.target.ssh.rollbackCommand).toBe('');
+  });
+
   it('archives a wrong-project target with evidence and removes it from active lists', async () => {
     const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
       reason: '该站点不属于 proj-a，保留事故证据后归档',
@@ -274,6 +290,34 @@ describe('release control plane project-scope isolation', () => {
     const list = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
     expect(list.body.targets.map((target: ReleaseTarget) => target.id)).not.toContain('target-a');
     expect(list.body.archivedTargets.map((target: ReleaseTarget) => target.id)).toContain('target-a');
+  });
+
+  it('keeps archived target credentials available for a project-scoped replacement target', async () => {
+    const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
+      reason: '替换旧生产目标前保留凭据归属证据',
+    });
+    expect(archive.status).toBe(200);
+
+    const list = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
+    expect(list.body.targets.map((target: ReleaseTarget) => target.id)).not.toContain('target-a');
+    expect(list.body.remoteHosts.map((host: { id: string }) => host.id)).toContain('proj-a-host-key');
+    expect(list.body.remoteHosts.map((host: { id: string }) => host.id)).not.toContain('proj-b-host-key');
+
+    const replacement = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      id: 'target-a-replacement',
+      projectId: 'proj-a',
+      name: 'A replacement production',
+      host: '127.0.0.1',
+      port: 22,
+      user: 'root',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/proj-a-replacement',
+      deployCommand: './deploy.sh',
+      healthcheckUrl: 'https://a-replacement.example.test/healthz',
+    });
+
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.target.ssh.privateKeyRef).toBe('proj-a-host-key');
   });
 
   it('detects release strategies from the selected project branch only', async () => {

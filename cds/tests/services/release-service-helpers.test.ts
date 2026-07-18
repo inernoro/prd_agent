@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, probeReleaseSurface, releaseScriptPhase } from '../../src/services/release-service.js';
+import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, probeReleaseSurface, releaseScriptPhase, shouldUseCustomRollbackCommand } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -74,6 +74,13 @@ describe('release service script preflight helpers', () => {
   it('recognizes local production release commands', () => {
     expect(isLocalProdReleaseCommand("CDS_LOCAL_PROD_DIR='/opt/a-prod/current' '/opt/cds/current/scripts/local-prod-release.sh'")).toBe(true);
     expect(isLocalProdReleaseCommand('./deploy.sh')).toBe(false);
+  });
+
+  it('uses custom rollback commands only for existing-script releases', () => {
+    expect(shouldUseCustomRollbackCommand('existing-script', './rollback.sh')).toBe(true);
+    expect(shouldUseCustomRollbackCommand('generated-compose', './rollback.sh')).toBe(false);
+    expect(shouldUseCustomRollbackCommand('generated-static', './rollback.sh')).toBe(false);
+    expect(shouldUseCustomRollbackCommand('existing-script', '   ')).toBe(false);
   });
 
   it('checks that the remote app path is the Git root and extracts a canonical repository identity', () => {
