@@ -15,7 +15,7 @@
 
 ### 1. 一个工程 = 一块看板，放在 `doc/plan.{appname}.{topic}.md` 顶部
 
-- 看板是该工程 `plan.*` 文档的**第一屏**（标题下第一节，pin 在最上），不是散落各处。网关剥离的看板就在 `doc/plan.llm-gateway.rollout.md` 顶部。
+- 看板是该工程 `plan.*` 文档的**第一屏**（标题下第一节，pin 在最上），不是散落各处。网关旧路径退场的当前看板是 `doc/plan.llm-gateway.full-cutover.md`。
 - 命名遵守 `doc/rule.doc.naming.md`：`plan.` 前缀 + appname 优先。禁止另起一份 `status-xxx.md` 裸文件（会和 plan 漂移）。
 - 看板是 SSOT：design 文档写「怎么做」、debt 文档写「欠什么」、看板只写「现在在哪、卡在哪、下一步、证据」。三者互相链接，不互相抄。
 
@@ -63,4 +63,4 @@
 - `blocked-state-circuit-breaker.md`：看板的「进度停滞 / 反复重写却无状态翻转」正是熔断触发信号；本规则提供可观测的判定面。
 - `doc-types.md` / `doc/rule.doc.naming.md`：看板归 `plan.*`，appname 优先，禁裸文件。
 - `debt.*`：blocker 中「已知边界 / 后续可补」要落对应 `debt.{module}.md`，看板只做索引，不重复台账。
-- 本次工程的看板实例：`doc/plan.llm-gateway.rollout.md`。
+- 本次工程的看板实例：`doc/plan.llm-gateway.full-cutover.md`。

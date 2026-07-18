@@ -316,12 +316,12 @@ db.watermark_font_assets.createIndex(
 
 // collection: watermark_configs
 db.watermark_configs.createIndex(
-  { "UserId": 1, "UpdatedAt": -1 },
+  { "userId": 1, "updatedAt": -1 },
   { name: "idx_watermark_configs_user_updated" }
 )
 
 db.watermark_configs.createIndex(
-  { "UserId": 1, "AppKeys": 1 },
+  { "userId": 1, "appKeys": 1 },
   { name: "idx_watermark_configs_user_appkeys" }
 )
 
