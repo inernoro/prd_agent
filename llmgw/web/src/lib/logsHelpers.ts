@@ -82,13 +82,12 @@ export function statusBadgeStyle(
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
 }
 
-// ── 4 个子 tab ──
-export type LogsSubTab = 'generations' | 'upstream' | 'sessions' | 'jobs';
+// ── 仅注册后端有真实数据来源的视图 ──
+export type LogsSubTab = 'generations' | 'upstream' | 'sessions';
 export const LOGS_SUBTABS: { key: LogsSubTab; label: string }[] = [
   { key: 'generations', label: '请求' },
   { key: 'upstream', label: '上游调用' },
   { key: 'sessions', label: '会话' },
-  { key: 'jobs', label: '后台任务' },
 ];
 
 // ── 列定义（注册表）──

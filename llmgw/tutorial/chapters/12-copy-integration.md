@@ -62,15 +62,27 @@
 
 8. 完成当前片段保存后，点击“修改身份”，选择“Cherry Studio”，再点击“生成 Cherry Studio 配置”。页面自动生成专属 appCaller 和 scoped key。
 
+![Quickstart 同屏提供自动 Gateway 地址、协议标签、生成和测试](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/3bo2a6hgv3a6zvtepm4a5thbdi.png)
+
 9. 按页面三步做：在 Cherry Studio 添加 OpenAI 类型的 LLM Gateway 服务商；逐项复制 API 地址、API Key、模型 `auto` 和服务商名称；启用服务商并点击“检查”。Cherry Studio 会自己拼接 `/v1/chat/completions`，API 地址只填页面给出的根域名。
+
+![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
 
 10. 在 Cherry Studio 新建对话，选择 LLM Gateway / auto，只发送一次“只回复 `LLMGW_OK`”。回 Gateway 请求记录，用时间、service key 前缀和 appCaller `cherry-studio.desktop::chat` 定位这次调用。客户端不能自报 tenantId；租户必须来自服务端解析的 key。
 
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+
 11. 回 Quickstart 清除当前一次性明文，选择“OpenClaw”，点击“生成 OpenClaw 配置”。复制页面给出的三行命令块并粘贴到已安装 OpenClaw 的终端。第一行增量合并 `llmgw` Provider，第二行设为默认模型，第三行校验配置；不会替换其他 Provider。
+
+![Quickstart 同屏提供自动 Gateway 地址、协议标签、生成和测试](https://md-private-1251304948.cos.ap-guangzhou.myqcloud.com/data/cds/img/3bo2a6hgv3a6zvtepm4a5thbdi.png)
 
 12. 按终端提示重启 OpenClaw Gateway，运行 `openclaw chat`，只发送一次“只回复 `LLMGW_OK`”。再用 appCaller `openclaw.gateway::chat` 到请求记录核对实际模型、状态、耗时与费用可信度。
 
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+
 13. 两个客户端都只使用各自刚生成的 key。不要把 Cherry Studio key 复制到 OpenClaw，也不要让两个客户端共用同一个 clientCode；这样撤销、限速、审计和费用才能分别定位。
+
+![图 068 生成后可复制 curl、配置和 Agent 技能接入方式](https://cds.miduo.org/api/reports/assets/e1a12b0d45aae1ecd284a51bcc7973294f2db418c35914f92ac91f1d12b6c2be.png)
 
 ## 看图核对
 

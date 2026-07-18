@@ -24,11 +24,11 @@
 
 ![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
 
-2. 先粘贴标记为 chat 的完整 requestId。筛选会自动生效；如果当前租户只匹配一条记录，详情会直接打开，不需要再点表格行，也不需要寻找“执行查找”按钮。
+2. 在顶部唯一的 `requestId` 搜索框粘贴标记为 chat 的完整编号，按 Enter 或点击“查找”。输入过程中不会反复请求；提交后如果当前租户只匹配一条记录，详情会直接打开，不需要再点表格行。
 
-**图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度**
+**图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格**
 
-![图 070 Activity 是当前租户请求活动记录，顶部先给趋势、状态和费用可信度](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
+![图 070 Logs 首屏直接给 requestId 搜索、高频筛选和高密度请求表格](https://cds.miduo.org/api/reports/assets/77109e68f951f9787a9c1c3d1394562bd9688ddd32c02f2628f61b9d41af5a99.png)
 
 3. 在“概览”页签先核对时间、状态、入口协议、appCaller、实际模型和 Provider。上方六项指标回答 token、费用、速度和总耗时；下方“上游响应”逐次列出 Provider、模型、模型池、结果和回退原因。
 
@@ -54,7 +54,7 @@
 
 ![图 108 审计页签把费用可信度、身份和时间证据放在一起](https://cds.miduo.org/api/reports/assets/688f6882390ff9b8daf9204532c2c43019e0c4435b6ccc4e9e5d4b2f9f7f36a0.png)
 
-7. 关闭详情，换成标记为 vision 的 requestId。新的精确匹配会再次自动打开详情；核对 vision appCaller、另一条 Key 前缀、内容类型和路由。关闭详情后不会因为同一个筛选值反复弹开，只有换成新的 requestId 才自动打开。
+7. 关闭详情，在同一个搜索框换成标记为 vision 的 requestId 并再次提交。新的精确匹配会自动打开详情；核对 vision appCaller、另一条 Key 前缀、内容类型和路由。关闭详情后不会因为同一个筛选值反复弹开，只有提交新的 requestId 才自动打开。
 
 **图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
 
@@ -68,7 +68,7 @@
 
 ## 看到什么算成功
 
-requestId 精确命中一条当前租户日志并自动打开详情；四个详情页签分别回答结果、内容、路由和审计问题。可见身份字段与 Quickstart 配置一致，日志不含 key 明文；安全直测明确显示未调用上游，unknown 费用保持未知。概览的最近请求也能回到这条详情。
+requestId 提交后精确命中一条当前租户日志并自动打开详情；请求、上游调用、会话三个列表视图都有真实数据来源，四个详情页签分别回答结果、内容、路由和审计问题。可见身份字段与 Quickstart 配置一致，日志不含 key 明文；安全直测明确显示未调用上游，unknown 费用保持未知。概览的最近请求也能回到这条详情。
 
 ## 失败怎么办
 
