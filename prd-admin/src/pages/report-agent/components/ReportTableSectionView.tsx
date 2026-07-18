@@ -17,6 +17,10 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
   const columns = section.templateSection.tableColumns && section.templateSection.tableColumns.length > 0
     ? section.templateSection.tableColumns
     : DEFAULT_TABLE_COLUMNS;
+  // 列宽：0 = 自动；任一列有自定义宽度则整表切 fixed 布局，与编辑器观感一致
+  const widths = columns.map((_, i) => section.templateSection.tableColumnWidths?.[i] ?? 0);
+  const hasCustomWidths = widths.some((w) => w > 0);
+  const tableMinWidth = widths.reduce((sum, w) => sum + (w > 0 ? w : 110), 0);
   const borderColor = isLight ? 'rgba(15, 23, 42, 0.10)' : 'rgba(148, 163, 184, 0.18)';
   const cellStyle: CSSProperties = {
     border: `1px solid ${borderColor}`,
@@ -29,7 +33,19 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
 
   return (
     <div style={{ overflowX: 'auto', overscrollBehavior: 'contain' }}>
-      <table className="w-full" style={{ borderCollapse: 'collapse' }}>
+      <table
+        className="w-full"
+        style={{
+          borderCollapse: 'collapse',
+          tableLayout: hasCustomWidths ? 'fixed' : 'auto',
+          minWidth: tableMinWidth,
+        }}
+      >
+        <colgroup>
+          {widths.map((w, i) => (
+            <col key={i} style={w > 0 ? { width: w } : undefined} />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             {columns.map((col, cIdx) => (
@@ -54,7 +70,7 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
             return (
               <tr key={rIdx}>
                 {cells.map((cell, cIdx) => (
-                  <td key={cIdx} style={{ ...cellStyle, color: 'var(--text-secondary)' }}>
+                  <td key={cIdx} style={{ ...cellStyle, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {cell || ''}
                   </td>
                 ))}

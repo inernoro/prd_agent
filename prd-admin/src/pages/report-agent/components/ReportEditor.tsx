@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ClipboardEvent, type CSSProperties } from 'react';
+import { useState, useEffect, useCallback, useRef, type ClipboardEvent, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload, GripVertical } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -23,7 +23,7 @@ import {
   getTeamDefaultTemplate,
 } from '@/services';
 import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
-import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode, DEFAULT_TABLE_COLUMNS, MAX_TABLE_COLUMNS } from '@/services/contracts/reportAgent';
+import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode, DEFAULT_TABLE_COLUMNS, MAX_TABLE_COLUMNS, MIN_TABLE_COLUMN_WIDTH, MAX_TABLE_COLUMN_WIDTH } from '@/services/contracts/reportAgent';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { MarkdownImportModal } from './MarkdownImportModal';
 import { useDataTheme, type DataTheme } from '../hooks/useDataTheme';
@@ -142,6 +142,8 @@ interface SectionDraft {
   items: ItemDraft[];
   /** Table 专用: 本份周报内的列定义（可增删/改名，仅随本份周报保存） */
   tableColumns?: string[];
+  /** Table 专用: 列宽 px（与列按下标对齐，0 = 自动） */
+  tableColumnWidths?: number[];
 }
 
 /** 把后端 WeeklyReportItem 映射为本地草稿（保留所有字段） */
@@ -167,9 +169,9 @@ function normalizeRowCells(item: ItemDraft, columnCount: number): string[] {
   return cells;
 }
 
-/** Table 行的 content 镜像（供完成度统计 / 旧链路降级展示） */
+/** Table 行的 content 镜像（供完成度统计 / 旧链路降级展示；单元格内换行压成空格） */
 function tableCellsToContent(cells: string[]): string {
-  return cells.map((c) => c.trim()).filter((c) => c.length > 0).join(' | ');
+  return cells.map((c) => c.replace(/\s+/g, ' ').trim()).filter((c) => c.length > 0).join(' | ');
 }
 
 /** 把后端周报 sections 映射为编辑器草稿（table 章节初始化列定义 + 行 cells） */
@@ -186,6 +188,7 @@ function toSectionDrafts(reportSections: WeeklyReport['sections']): SectionDraft
     const columns = s.templateSection.tableColumns && s.templateSection.tableColumns.length > 0
       ? [...s.templateSection.tableColumns]
       : [...DEFAULT_TABLE_COLUMNS];
+    const widths = columns.map((_, i) => s.templateSection.tableColumnWidths?.[i] ?? 0);
     const rows = s.items.length > 0
       ? s.items.map((i) => {
           const draft = toItemDraft(i);
@@ -193,7 +196,7 @@ function toSectionDrafts(reportSections: WeeklyReport['sections']): SectionDraft
           return { ...draft, cells, content: tableCellsToContent(cells) };
         })
       : [{ content: '', source: 'manual', cells: columns.map(() => '') }];
-    return { items: rows, tableColumns: columns };
+    return { items: rows, tableColumns: columns, tableColumnWidths: widths };
   });
 }
 
@@ -280,12 +283,46 @@ function IssueItemCard({
   );
 }
 
-/** Table 章节编辑器：真实表格形态，支持增删行 / 增删列 / 列改名（列与行仅保存进本份周报快照，不回写模板） */
+/** 单元格多行文本输入：随内容自动增高（列宽变化经 reflowKey 触发重算） */
+function AutoGrowCellTextarea({
+  value, onChange, disabled, placeholder, ariaLabel, style, reflowKey,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  ariaLabel?: string;
+  style?: CSSProperties;
+  reflowKey?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value, reflowKey]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      style={{ ...style, resize: 'none', overflow: 'hidden', display: 'block' }}
+    />
+  );
+}
+
+/** Table 章节编辑器：真实表格形态，支持增删行 / 增删列 / 列改名 / 拖拽调列宽 / 单元格多行文本（均仅保存进本份周报快照，不回写模板） */
 function TableSectionEditor({
-  columns, rows, canEdit, isLight, maxItems,
-  onCellChange, onAddRow, onRemoveRow, onAddColumn, onRemoveColumn, onRenameColumn,
+  columns, columnWidths, rows, canEdit, isLight, maxItems,
+  onCellChange, onAddRow, onRemoveRow, onAddColumn, onRemoveColumn, onRenameColumn, onResizeColumn,
 }: {
   columns: string[];
+  columnWidths?: number[];
   rows: ItemDraft[];
   canEdit: boolean;
   isLight: boolean;
@@ -296,6 +333,7 @@ function TableSectionEditor({
   onAddColumn: () => void;
   onRemoveColumn: (colIdx: number) => void;
   onRenameColumn: (colIdx: number, name: string) => void;
+  onResizeColumn: (colIdx: number, width: number) => void;
 }) {
   const borderColor = isLight ? 'rgba(15, 23, 42, 0.10)' : 'rgba(148, 163, 184, 0.18)';
   const headerBg = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(148, 163, 184, 0.08)';
@@ -317,17 +355,56 @@ function TableSectionEditor({
   };
   const rowLimitReached = maxItems != null && rows.length >= maxItems;
 
+  // 列宽：0 = 自动。任一列被手动调宽后整表切 fixed 布局，宽度可被精确控制
+  const widths = columns.map((_, i) => columnWidths?.[i] ?? 0);
+  const hasCustomWidths = widths.some((w) => w > 0);
+  const reflowKey = widths.join(',');
+  // 表最小宽度：保证窄屏下单元格不被压瘪，横向滚动兜底
+  const tableMinWidth = widths.reduce((sum, w) => sum + (w > 0 ? w : 120), 0) + (canEdit ? 36 : 0);
+
+  /** 拖拽表头右缘调列宽 */
+  const startResize = (cIdx: number, e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!canEdit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.currentTarget as HTMLElement).closest('th');
+    const startWidth = widths[cIdx] > 0 ? widths[cIdx] : (th?.offsetWidth ?? 120);
+    const startX = e.clientX;
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.round(startWidth + (ev.clientX - startX));
+      onResizeColumn(cIdx, Math.min(MAX_TABLE_COLUMN_WIDTH, Math.max(MIN_TABLE_COLUMN_WIDTH, next)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
     <div className="px-2 py-1.5">
       <div style={{ overflowX: 'auto', overscrollBehavior: 'contain' }}>
         <table
           className="w-full"
-          style={{ borderCollapse: 'collapse', tableLayout: 'auto' }}
+          style={{
+            borderCollapse: 'collapse',
+            tableLayout: hasCustomWidths ? 'fixed' : 'auto',
+            minWidth: tableMinWidth,
+          }}
         >
+          <colgroup>
+            {widths.map((w, i) => (
+              <col key={i} style={w > 0 ? { width: w } : undefined} />
+            ))}
+            {canEdit && <col style={{ width: 36 }} />}
+          </colgroup>
           <thead>
             <tr>
               {columns.map((col, cIdx) => (
-                <th key={cIdx} style={{ ...cellStyle, background: headerBg }}>
+                <th key={cIdx} style={{ ...cellStyle, background: headerBg, position: 'relative' }}>
                   <div className="flex items-center group/col">
                     <input
                       style={{ ...inputStyle, fontWeight: 600, fontSize: 12.5, color: 'var(--text-secondary)' }}
@@ -350,6 +427,23 @@ function TableSectionEditor({
                       </button>
                     )}
                   </div>
+                  {canEdit && (
+                    <div
+                      onPointerDown={(e) => startResize(cIdx, e)}
+                      title="拖拽调整列宽"
+                      aria-label={`调整列 ${col || cIdx + 1} 宽度`}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: -3,
+                        width: 7,
+                        height: '100%',
+                        cursor: 'col-resize',
+                        zIndex: 1,
+                        touchAction: 'none',
+                      }}
+                    />
+                  )}
                 </th>
               ))}
               {canEdit && (
@@ -376,13 +470,14 @@ function TableSectionEditor({
                 <tr key={rIdx} className="group/row">
                   {columns.map((_, cIdx) => (
                     <td key={cIdx} style={cellStyle}>
-                      <input
+                      <AutoGrowCellTextarea
                         style={inputStyle}
                         value={cells[cIdx]}
-                        onChange={(e) => onCellChange(rIdx, cIdx, e.target.value)}
-                        placeholder={rIdx === 0 && cIdx === 0 ? '请输入内容...' : ''}
+                        onChange={(value) => onCellChange(rIdx, cIdx, value)}
+                        placeholder={rIdx === 0 && cIdx === 0 ? '请输入内容（回车换行）...' : ''}
                         disabled={!canEdit}
-                        aria-label={`第 ${rIdx + 1} 行 ${columns[cIdx] || `列${cIdx + 1}`}`}
+                        ariaLabel={`第 ${rIdx + 1} 行 ${columns[cIdx] || `列${cIdx + 1}`}`}
+                        reflowKey={reflowKey}
                       />
                     </td>
                   ))}
@@ -859,8 +954,10 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         return prev;
       }
       const newColumns = [...columns, `列${columns.length + 1}`];
+      const widths = newColumns.map((_, i) => next[sectionIdx].tableColumnWidths?.[i] ?? 0);
       next[sectionIdx] = {
         tableColumns: newColumns,
+        tableColumnWidths: widths,
         items: next[sectionIdx].items.map((item) => {
           const cells = [...normalizeRowCells(item, columns.length), ''];
           return { ...item, cells, content: tableCellsToContent(cells) };
@@ -879,13 +976,27 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         return prev;
       }
       const newColumns = columns.filter((_, i) => i !== colIdx);
+      const oldWidths = columns.map((_, i) => next[sectionIdx].tableColumnWidths?.[i] ?? 0);
       next[sectionIdx] = {
         tableColumns: newColumns,
+        tableColumnWidths: oldWidths.filter((_, i) => i !== colIdx),
         items: next[sectionIdx].items.map((item) => {
           const cells = normalizeRowCells(item, columns.length).filter((_, i) => i !== colIdx);
           return { ...item, cells, content: tableCellsToContent(cells) };
         }),
       };
+      return next;
+    });
+  };
+
+  /** 拖拽调整表格列宽（px；随本份周报保存） */
+  const setTableColumnWidth = (sectionIdx: number, colIdx: number, width: number) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const columns = next[sectionIdx].tableColumns ?? [...DEFAULT_TABLE_COLUMNS];
+      const widths = columns.map((_, i) => next[sectionIdx].tableColumnWidths?.[i] ?? 0);
+      widths[colIdx] = width;
+      next[sectionIdx] = { ...next[sectionIdx], tableColumnWidths: widths };
       return next;
     });
   };
@@ -1540,6 +1651,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   {section.templateSection.inputType === ReportInputType.Table ? (
                     <TableSectionEditor
                       columns={sections[sIdx]?.tableColumns ?? DEFAULT_TABLE_COLUMNS}
+                      columnWidths={sections[sIdx]?.tableColumnWidths}
                       rows={sections[sIdx]?.items || []}
                       canEdit={canEdit}
                       isLight={isLight}
@@ -1550,6 +1662,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       onAddColumn={() => addTableColumn(sIdx)}
                       onRemoveColumn={(cIdx) => removeTableColumn(sIdx, cIdx)}
                       onRenameColumn={(cIdx, name) => renameTableColumn(sIdx, cIdx, name)}
+                      onResizeColumn={(cIdx, width) => setTableColumnWidth(sIdx, cIdx, width)}
                     />
                   ) : (
                   <>

@@ -392,6 +392,9 @@ public class ReportAgentController : ControllerBase
             IssueCategories = s.IssueCategories?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
             IssueStatuses = s.IssueStatuses?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
             TableColumns = inputType == ReportInputType.Table ? SanitizeTableColumns(s.TableColumns) : null,
+            TableColumnWidths = inputType == ReportInputType.Table
+                ? SanitizeTableColumnWidths(s.TableColumnWidths, SanitizeTableColumns(s.TableColumns).Count)
+                : null,
         };
     }
 
@@ -406,6 +409,19 @@ public class ReportAgentController : ControllerBase
             .Select((c, i) => string.IsNullOrWhiteSpace(c) ? $"列{i + 1}" : c.Trim())
             .ToList();
         return cleaned.Count > 0 ? cleaned : ReportInputType.DefaultTableColumns.ToList();
+    }
+
+    /// <summary>Table 列宽归一化：与列数对齐（补 0 = 自动），非 0 值收进 [MinTableColumnWidth, MaxTableColumnWidth]</summary>
+    private static List<int> SanitizeTableColumnWidths(List<int>? widths, int columnCount)
+    {
+        var normalized = (widths ?? new List<int>())
+            .Take(columnCount)
+            .Select(w => w <= 0
+                ? 0
+                : Math.Clamp(w, ReportInputType.MinTableColumnWidth, ReportInputType.MaxTableColumnWidth))
+            .ToList();
+        while (normalized.Count < columnCount) normalized.Add(0);
+        return normalized;
     }
 
     /// <summary>Table 行单元格归一化：补齐/截断到列数，null 元素转空串</summary>
@@ -1630,6 +1646,9 @@ public class ReportAgentController : ControllerBase
                     IssueCategories = s.IssueCategories?.Select(o => new IssueOption { Key = o.Key, Label = o.Label, Color = o.Color }).ToList(),
                     IssueStatuses = s.IssueStatuses?.Select(o => new IssueOption { Key = o.Key, Label = o.Label, Color = o.Color }).ToList(),
                     TableColumns = s.InputType == ReportInputType.Table ? SanitizeTableColumns(s.TableColumns) : null,
+                    TableColumnWidths = s.InputType == ReportInputType.Table
+                        ? SanitizeTableColumnWidths(s.TableColumnWidths, SanitizeTableColumns(s.TableColumns).Count)
+                        : null,
                 },
                 Items = new List<WeeklyReportItem>()
             }).ToList()
@@ -1857,6 +1876,10 @@ public class ReportAgentController : ControllerBase
             var columnCount = isTable
                 ? (templateSection.TableColumns?.Count ?? ReportInputType.DefaultTableColumns.Length)
                 : 0;
+            if (isTable && req.Sections[i].TableColumnWidths != null)
+            {
+                templateSection.TableColumnWidths = SanitizeTableColumnWidths(req.Sections[i].TableColumnWidths, columnCount);
+            }
 
             updatedSections.Add(new WeeklyReportSection
             {
@@ -1869,9 +1892,11 @@ public class ReportAgentController : ControllerBase
                     var cells = isTable ? NormalizeTableCells(sourceCells, columnCount) : null;
                     return new WeeklyReportItem
                     {
-                        // table 行的 content 保存 " | " 拼接镜像，供总结/海报等只读 content 的旧链路降级展示
+                        // table 行的 content 保存 " | " 拼接镜像（单元格内换行压成空格），供总结/海报等只读 content 的旧链路降级展示
                         Content = cells != null
-                            ? string.Join(" | ", cells.Select(c => c.Trim()).Where(c => c.Length > 0))
+                            ? string.Join(" | ", cells
+                                .Select(c => System.Text.RegularExpressions.Regex.Replace(c, @"\s+", " ").Trim())
+                                .Where(c => c.Length > 0))
                             : item.Content ?? string.Empty,
                         Source = item.Source ?? "manual",
                         SourceRef = item.SourceRef,
@@ -2283,6 +2308,8 @@ public class ReportAgentController : ControllerBase
         public List<IssueOptionInput>? IssueStatuses { get; set; }
         /// <summary>Table 专用：列名定义</summary>
         public List<string>? TableColumns { get; set; }
+        /// <summary>Table 专用：列宽（px，与列按下标对齐，0 = 自动）</summary>
+        public List<int>? TableColumnWidths { get; set; }
     }
 
     public class IssueOptionInput
@@ -2338,6 +2365,8 @@ public class ReportAgentController : ControllerBase
         public List<UpdateReportItemInput>? Items { get; set; }
         /// <summary>Table 专用：本份周报内的列定义（增删/改名列后随保存提交，仅 table 章节生效）</summary>
         public List<string>? TableColumns { get; set; }
+        /// <summary>Table 专用：列宽（px，与列按下标对齐，0 = 自动；拖拽调宽后随保存提交）</summary>
+        public List<int>? TableColumnWidths { get; set; }
     }
 
     public class UpdateReportItemInput

@@ -89,6 +89,9 @@ public class ReportTemplateSection
 
     /// <summary>Table 专用：列名定义（仅 InputType = table 时生效；模板里是默认列，周报快照里可被填写者增删/改名）</summary>
     public List<string>? TableColumns { get; set; }
+
+    /// <summary>Table 专用：列宽（px，与 TableColumns 按下标对齐；0 = 自动。填写者拖拽调宽后随周报快照保存）</summary>
+    public List<int>? TableColumnWidths { get; set; }
 }
 
 /// <summary>
@@ -125,6 +128,12 @@ public static class ReportInputType
 
     /// <summary>Table 类型允许的最大列数（UI 宽度约束）</summary>
     public const int MaxTableColumns = 6;
+
+    /// <summary>Table 列宽下限（px；0 表示自动不受此限）</summary>
+    public const int MinTableColumnWidth = 60;
+
+    /// <summary>Table 列宽上限（px）</summary>
+    public const int MaxTableColumnWidth = 800;
 }
 
 /// <summary>
