@@ -303,7 +303,7 @@ db.llm_app_callers.createIndex({ "LastCalledAt": -1 })
 // collection: watermark_font_assets
 // 同一用户 + fontKey 唯一
 db.watermark_font_assets.createIndex(
-  { "OwnerUserId": 1, "FontKey": 1 },
+  { "ownerUserId": 1, "fontKey": 1 },
   { name: "uniq_watermark_font_owner_key", unique: true }
 )
 
@@ -725,6 +725,42 @@ db.tutorial_email_enrollments.createIndex(
   { name: "uniq_tutorial_email_enrollments_user_seq", unique: true }
 )
 
+// collection: teams
+// 按邀请码查询
+db.teams.createIndex(
+  { "InviteCode": 1 },
+  { name: "idx_teams_invite_code" }
+)
+
+// collection: team_members
+// (TeamId, UserId) 唯一；按 UserId 查询用户所在团队
+db.team_members.createIndex(
+  { "TeamId": 1, "UserId": 1 },
+  { name: "uniq_team_members_team_user", unique: true }
+)
+
+db.team_members.createIndex(
+  { "UserId": 1 },
+  { name: "idx_team_members_user" }
+)
+
+// collection: team_activity_logs
+db.team_activity_logs.createIndex(
+  { "TeamId": 1, "CreatedAt": -1 },
+  { name: "idx_team_activity_team_created" }
+)
+
+// 团队作用域过滤
+db.hosted_sites.createIndex(
+  { "SharedTeamIds": 1 },
+  { name: "idx_hosted_sites_shared_teams" }
+)
+
+db.document_stores.createIndex(
+  { "SharedTeamIds": 1 },
+  { name: "idx_document_stores_shared_teams" }
+)
+
 // collection: report_teams
 db.report_teams.createIndex(
   { "LeaderUserId": 1 },
@@ -865,6 +901,23 @@ db.hosted_sites.createIndex(
 db.hosted_sites.createIndex(
   { "OwnerUserId": 1, "Folder": 1 },
   { name: "idx_hosted_sites_owner_folder" }
+)
+
+// collection: document_store_share_links
+// 按 Token 唯一；按创建者或知识库倒序查询
+db.document_store_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_document_store_share_links_token", unique: true }
+)
+
+db.document_store_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_document_store_share_links_creator_created" }
+)
+
+db.document_store_share_links.createIndex(
+  { "StoreId": 1, "CreatedAt": -1 },
+  { name: "idx_document_store_share_links_store_created" }
 )
 
 // collection: web_page_share_links
