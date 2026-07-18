@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXEC_DEP = ROOT / "exec_dep.sh"
+STANDALONE_NGINX = ROOT / "deploy" / "nginx" / "conf.d" / "branches" / "_standalone.conf"
 
 
 class ReleaseDualKeyContractTests(unittest.TestCase):
@@ -36,6 +37,14 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
         self.assertIn('r.add_header("X-Gateway-Source", source_system)', smoke_source)
         self.assertIn('r.add_header("X-Gateway-App-Caller", app_caller)', smoke_source)
         self.assertIn('path.startswith("/pools?")', smoke_source)
+
+    def test_public_llmgw_proxy_does_not_cut_off_gateway_timeout(self) -> None:
+        nginx_source = STANDALONE_NGINX.read_text(encoding="utf-8")
+        public_proxy = nginx_source.split("proxy_pass http://llmgw-web:80;", maxsplit=1)[1]
+        self.assertIn("proxy_buffering off;", public_proxy)
+        self.assertIn("proxy_cache off;", public_proxy)
+        self.assertIn("proxy_read_timeout 3600s;", public_proxy)
+        self.assertNotIn("proxy_read_timeout 60s;", public_proxy)
 
 
 if __name__ == "__main__":
