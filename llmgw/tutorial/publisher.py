@@ -84,6 +84,7 @@ class TutorialSource:
     primary_source_id: str
     manifest_sha256: str
     nodes: list[SourceNode]
+    category: str = "模型网关权威教程"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -314,6 +315,7 @@ def load_and_validate(manifest_path: Path = DEFAULT_MANIFEST) -> TutorialSource:
         primary_source_id=primary,
         manifest_sha256=sha256_text(raw),
         nodes=nodes,
+        category=str(manifest.get("category") or manifest.get("title") or "模型网关权威教程"),
     )
 
 
@@ -427,7 +429,7 @@ def _request_body(source: TutorialSource, item: PlanItem, run_id: str, revision:
         "contentType": "text/markdown",
         "content": node.content,
         "tags": node.tags,
-        "category": "模型网关权威教程",
+        "category": source.category,
         "sortOrder": node.sort_order,
         "metadata": node.metadata,
     }

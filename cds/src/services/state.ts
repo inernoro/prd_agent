@@ -708,13 +708,14 @@ export class StateService {
   }
 
   /**
-   * PR_A: Seed legacy 全局字段（state.customEnv['_global'] / defaultBranch /
+   * PR_A: Seed legacy 全局字段（defaultBranch /
    * previewMode / commentTemplate）到每个 Project 的对应位。每次启动都跑，
    * 但只对 "项目还没设这个字段" 的情况下行动 —— 已经迁过的字段不会被覆盖，
    * 用户 PR_A.6 后在新 settings UI 改的值也不会被旧 state 覆盖回去。
    *
    * 复制规则：
-   *  - customEnv: 整个 _global bucket 完整克隆到 project.customEnv
+   *  - customEnv: 不再复制。`_global` 是控制面作用域，项目环境必须显式配置；
+   *    旧版把整个 bucket 扇出到所有项目会造成数据库/队列/第三方配置串项目。
    *  - defaultBranch: 仅当 legacy 默认分支属于该项目时才 seed
    *  - previewMode: 全局值复制给每个项目（用户偏好类，复制无副作用）
    *  - commentTemplate: 同上
@@ -722,8 +723,6 @@ export class StateService {
   private migrateGlobalsToProjects(): void {
     const projects = this.state.projects || [];
     if (projects.length === 0) return;
-    const globalEnv = this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {};
-    const globalEnvKeys = Object.keys(globalEnv);
     const legacyDefault = this.state.defaultBranch ?? null;
     const legacyDefaultBranch = legacyDefault
       ? (this.state.branches || {})[legacyDefault]
@@ -734,12 +733,6 @@ export class StateService {
     let changed = false;
     const nowIso = new Date().toISOString();
     for (const project of projects) {
-      // customEnv: 仅当项目尚未持有自己的 customEnv 时把 _global 整体复制过去
-      if (project.customEnv === undefined && globalEnvKeys.length > 0) {
-        project.customEnv = { ...globalEnv };
-        project.updatedAt = nowIso;
-        changed = true;
-      }
       // defaultBranch: 仅当 legacy 默认分支属于该项目，避免把 A 项目的分支
       // 错误地登记到 B 项目里。
       if (
@@ -1983,10 +1976,11 @@ export class StateService {
 
   // ── Release targets / plans / runs (preview → production control plane) ──
 
-  getReleaseTargets(projectId?: string): ReleaseTarget[] {
+  getReleaseTargets(projectId?: string, options: { includeArchived?: boolean } = {}): ReleaseTarget[] {
     if (!this.state.releaseTargets) return [];
     return Object.values(this.state.releaseTargets)
-      .filter((target) => !projectId || target.projectId === projectId);
+      .filter((target) => !projectId || target.projectId === projectId)
+      .filter((target) => options.includeArchived || target.lifecycle !== 'archived');
   }
 
   getReleaseTarget(id: string): ReleaseTarget | undefined {
@@ -2001,6 +1995,20 @@ export class StateService {
     // 直接抛冲突（路由侧捕获返回 409），禁止盲合并覆盖他人项目的发布目标。
     if (existing && existing.projectId !== target.projectId) {
       throw new Error(`发布目标 '${target.id}' 已属于其他项目，无法跨项目覆盖`);
+    }
+    if (target.lifecycle !== 'archived' && target.isEnabled && target.isCanonical) {
+      const environment = target.environment || 'production';
+      const conflict = Object.values(this.state.releaseTargets).find((candidate) => (
+        candidate.id !== target.id
+        && candidate.projectId === target.projectId
+        && candidate.lifecycle !== 'archived'
+        && candidate.isEnabled
+        && candidate.isCanonical
+        && (candidate.environment || 'production') === environment
+      ));
+      if (conflict) {
+        throw new Error(`项目 ${target.projectId} 的 ${environment} 环境已有主发布目标: ${conflict.name}`);
+      }
     }
     this.state.releaseTargets[target.id] = {
       ...existing,
@@ -2652,8 +2660,8 @@ export class StateService {
   //
   // Storage lives in this.state.customEnv as a nested map:
   //   { _global: {...}, <projectId>: {...} }
-  // Project scopes override _global at container launch time; a key set
-  // in a project wins over the same key in _global.
+  // `_global` 默认只供 CDS 控制面使用。只有 project.inheritGlobalEnv=true 时
+  // 才作为项目基线；项目自己的值始终优先。
   //
   // Callers usually fall into one of three cases:
   //   1. Startup / server-wide config  → pass nothing → global-only view
@@ -2667,8 +2675,8 @@ export class StateService {
   /**
    * Merged custom env for a given scope.
    * - projectId omitted → just legacy `_global` bucket (pre-P4 behaviour)
-   * - projectId supplied → 4 层叠加，**靠后的层级覆盖靠前**：
-   *     ① state.customEnv['_global']            ← 旧全局 bucket
+   * - projectId supplied → 项目层叠加，**靠后的层级覆盖靠前**：
+   *     ① state.customEnv['_global']            ← 仅 inheritGlobalEnv=true 时加入
    *     ② state.customEnv[<projectId>]          ← 旧 project-scope bucket
    *     ③ project.customEnv                     ← P5 新位（per-project 主存）
    *
@@ -2682,9 +2690,10 @@ export class StateService {
     if (!projectId || projectId === GLOBAL_ENV_SCOPE) {
       return { ...global };
     }
-    const legacyProjectScope = store[projectId] || {};
     const project = this.getProject(projectId);
-    return { ...global, ...legacyProjectScope, ...(project?.customEnv || {}) };
+    const legacyProjectScope = store[projectId] || {};
+    const inheritedGlobal = project?.inheritGlobalEnv === true ? global : {};
+    return { ...inheritedGlobal, ...legacyProjectScope, ...(project?.customEnv || {}) };
   }
 
   /**

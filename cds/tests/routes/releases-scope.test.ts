@@ -97,6 +97,37 @@ describe('release control plane project-scope isolation', () => {
     };
   }
 
+  function addRollbackRuns(targetId = 'target-a'): void {
+    const now = new Date().toISOString();
+    stateService.addReleaseRun({
+      releaseId: 'run-a-current',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-current',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-current', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId,
+      planId: 'proj-a:ssh-script',
+      status: 'failed',
+      startedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+    stateService.addReleaseRun({
+      releaseId: 'run-a-previous',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-previous',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-previous', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId,
+      planId: 'proj-a:ssh-script',
+      status: 'success',
+      startedAt: now,
+      finishedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+  }
+
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-scope-'));
     configuredWorktreeBase = path.join(tmpDir, 'configured-worktrees');
@@ -188,6 +219,148 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('project_mismatch');
     expect(stateService.getReleaseTarget('target-b-hijack')).toBeUndefined();
+  });
+
+  it('requires AI callers to use a project-scoped key when mutating release targets', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-AI-Access-Key': 'global-ai-key' }, {
+      projectId: 'proj-a',
+      name: 'unscoped AI target',
+      host: 'prod.example.test',
+      port: 22,
+      user: 'deploy',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/app',
+      deployCommand: './deploy.sh',
+      healthcheckUrl: 'https://prod.example.test/healthz',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_key_required');
+  });
+
+  it('creates a no-script compose target with server-owned project identity', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      id: 'target-a-compose',
+      projectId: 'proj-a',
+      name: 'A compose production',
+      host: '127.0.0.1',
+      port: 22,
+      user: 'root',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/proj-a',
+      healthcheckUrl: 'https://a.example.test/healthz',
+      isCanonical: true,
+      strategy: {
+        mode: 'generated-compose',
+        composeFile: 'compose.yml',
+        composeProject: 'proj-a-prod',
+      },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    expect(res.body.target.strategy.mode).toBe('generated-compose');
+    expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+  });
+
+  it('stamps server-owned project identity when patching a legacy target', async () => {
+    expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toBeUndefined();
+
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      name: 'A production updated',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.target.name).toBe('A production updated');
+    expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+    expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+  });
+
+  it('returns 409 when patching a second active canonical target into the same environment', async () => {
+    stateService.upsertReleaseTarget({
+      ...releaseTarget('target-a-primary', 'proj-a'),
+      isCanonical: true,
+      environment: 'production',
+    });
+
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      isCanonical: true,
+      environment: 'production',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已有主发布目标');
+    expect(stateService.getReleaseTarget('target-a')?.isCanonical).not.toBe(true);
+  });
+
+  it('clears a stale script rollback command when patching a target to a generated strategy', async () => {
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      strategy: {
+        mode: 'generated-static',
+        buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
+        artifactDirectory: 'dist',
+        publicDirectory: '/opt/proj-a-web',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.target.strategy.mode).toBe('generated-static');
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    expect(res.body.target.ssh.rollbackCommand).toBe('');
+  });
+
+  it('archives a wrong-project target with evidence and removes it from active lists', async () => {
+    const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
+      reason: '该站点不属于 proj-a，保留事故证据后归档',
+    });
+    expect(archive.status).toBe(200);
+    expect(archive.body.target).toMatchObject({
+      id: 'target-a',
+      lifecycle: 'archived',
+      isEnabled: false,
+      isCanonical: false,
+    });
+    const list = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
+    expect(list.body.targets.map((target: ReleaseTarget) => target.id)).not.toContain('target-a');
+    expect(list.body.archivedTargets.map((target: ReleaseTarget) => target.id)).toContain('target-a');
+  });
+
+  it('keeps archived target credentials available for a project-scoped replacement target', async () => {
+    const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
+      reason: '替换旧生产目标前保留凭据归属证据',
+    });
+    expect(archive.status).toBe(200);
+
+    const list = await request(server, 'GET', '/api/releases/targets', { 'X-Test-Key': KEY_A });
+    expect(list.body.targets.map((target: ReleaseTarget) => target.id)).not.toContain('target-a');
+    expect(list.body.remoteHosts.map((host: { id: string }) => host.id)).toContain('proj-a-host-key');
+    expect(list.body.remoteHosts.map((host: { id: string }) => host.id)).not.toContain('proj-b-host-key');
+
+    const replacement = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      id: 'target-a-replacement',
+      projectId: 'proj-a',
+      name: 'A replacement production',
+      host: '127.0.0.1',
+      port: 22,
+      user: 'root',
+      privateKeyRef: 'proj-a-host-key',
+      appPath: '/srv/proj-a-replacement',
+      deployCommand: './deploy.sh',
+      healthcheckUrl: 'https://a-replacement.example.test/healthz',
+    });
+
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.target.ssh.privateKeyRef).toBe('proj-a-host-key');
+  });
+
+  it('detects release strategies from the selected project branch only', async () => {
+    const worktree = stateService.getBranch('branch-a')!.worktreePath;
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'compose.yml'), 'services: {}\n');
+    const res = await request(server, 'POST', '/api/releases/projects/proj-a/discover', { 'X-Test-Key': KEY_A }, {
+      branchId: 'branch-a',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.projectIdentity.projectId).toBe('proj-a');
+    expect(res.body.candidates.map((candidate: { mode: string }) => candidate.mode)).toContain('generated-compose');
   });
 
   it('creates a simplified local production target with inferred script and healthcheck', async () => {
@@ -327,34 +500,7 @@ describe('release control plane project-scope isolation', () => {
   });
 
   it('creates a rollback run for the selected successful target version', async () => {
-    const now = new Date().toISOString();
-    stateService.addReleaseRun({
-      releaseId: 'run-a-current',
-      projectId: 'proj-a',
-      branchId: 'branch-a',
-      commitSha: 'branch-a-current',
-      artifact: { type: 'branch-preview', commitSha: 'branch-a-current', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
-      targetId: 'target-a',
-      planId: 'proj-a:ssh-script',
-      status: 'failed',
-      startedAt: now,
-      logs: [],
-      seq: 0,
-    } as ReleaseRun);
-    stateService.addReleaseRun({
-      releaseId: 'run-a-previous',
-      projectId: 'proj-a',
-      branchId: 'branch-a',
-      commitSha: 'branch-a-previous',
-      artifact: { type: 'branch-preview', commitSha: 'branch-a-previous', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
-      targetId: 'target-a',
-      planId: 'proj-a:ssh-script',
-      status: 'success',
-      startedAt: now,
-      finishedAt: now,
-      logs: [],
-      seq: 0,
-    } as ReleaseRun);
+    addRollbackRuns();
 
     const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
       targetReleaseId: 'run-a-previous',
@@ -365,5 +511,33 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.run.rollbackOf).toBe('run-a-current');
     expect(res.body.run.rollbackTargetReleaseId).toBe('run-a-previous');
     expect(res.body.run.commitSha).toBe('branch-a-previous');
+  });
+
+  it('rejects rollback requests for archived release targets before creating a run', async () => {
+    addRollbackRuns();
+    const target = stateService.getReleaseTarget('target-a')!;
+    stateService.upsertReleaseTarget({ ...target, lifecycle: 'archived', isEnabled: false });
+
+    const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
+      targetReleaseId: 'run-a-previous',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已归档，禁止回滚');
+    expect(stateService.getReleaseRuns({ projectId: 'proj-a' })).toHaveLength(2);
+  });
+
+  it('rejects rollback requests for disabled active release targets before creating a run', async () => {
+    addRollbackRuns();
+    const target = stateService.getReleaseTarget('target-a')!;
+    stateService.upsertReleaseTarget({ ...target, lifecycle: 'active', isEnabled: false });
+
+    const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
+      targetReleaseId: 'run-a-previous',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已禁用，禁止回滚');
+    expect(stateService.getReleaseRuns({ projectId: 'proj-a' })).toHaveLength(2);
   });
 });

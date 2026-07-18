@@ -69,6 +69,11 @@ import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
+import {
+  parseDocumentStoreDeepLink,
+  withDocumentStoreEntry,
+  withoutOrphanedDocumentStoreEntry,
+} from './documentStoreDeepLink';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
@@ -855,19 +860,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
   onOpenLegacySyncPanel: () => void;
-  /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
+  /** 当前深链指定的文档；首次进入及浏览器前进/后退时均需同步 */
   initialEntryId?: string;
   /** 进入时自动触发的新增动作（外层知识库列表「+」选库后带入；挂载时消费一次） */
   initialAction?: 'doc' | 'record' | 'upload' | 'video';
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
   // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
@@ -911,11 +917,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     document.addEventListener('wikilink:click', handler);
     return () => document.removeEventListener('wikilink:click', handler);
   }, [entries]);
-  // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
+  // URL 深链变化或账号统计跳转时，跟随外层传入的目标文档。
   useEffect(() => {
-    if (initialEntryId) setSelectedEntryId(initialEntryId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setSelectedEntryId(initialEntryId);
+  }, [initialEntryId]);
+
+  // 当前文档也是知识库深链的一部分。双链跳转、文件树切换和刷新都应落在同一个 store + entry。
+  useEffect(() => {
+    const currentDeepLink = parseDocumentStoreDeepLink(location.search);
+    // store 的历史由外层 hook 维护；等它写入后再补 entry，避免 mount 时 push/replace 竞争。
+    if (currentDeepLink.storeId !== storeId) return;
+    const nextSearch = withDocumentStoreEntry(location.search, storeId, selectedEntryId);
+    if (nextSearch === location.search) return;
+    navigate({ pathname: location.pathname, search: nextSearch, hash: location.hash }, { replace: true });
+  }, [location.hash, location.pathname, location.search, navigate, selectedEntryId, storeId]);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
@@ -2462,7 +2477,9 @@ const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
 // ── 主页面 ──
 export function DocumentStorePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
+  const initialDeepLinkRef = useRef(parseDocumentStoreDeepLink(location.search));
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   // 团队 id → 团队名（团队空间「全部」聚合视图给卡片标归属团队用）
   const myTeams = useTeamStore((s) => s.teams);
@@ -2497,7 +2514,11 @@ export function DocumentStorePage() {
   useEffect(() => { setOpenCardMenuId(null); setCardMenuAnchor(null); setCardCtxMenu(null); }, [tab]);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
-    return sessionStorage.getItem('doc-store-selected-id');
+    return initialDeepLinkRef.current.storeId ?? sessionStorage.getItem('doc-store-selected-id');
+  });
+  // 当前文档与 store 一起构成可刷新、可复制、可前进后退的知识库深链。
+  const [pendingEntryId, setPendingEntryId] = useState<string | null>(() => {
+    return initialDeepLinkRef.current.storeId ? initialDeepLinkRef.current.entryId : null;
   });
   // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
   const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
@@ -2508,13 +2529,19 @@ export function DocumentStorePage() {
   useHistoryBackedView({
     param: 'store',
     value: selectedStoreId,
-    onExit: () => setSelectedStoreId(null),
-    onRestore: (id) => { setSelectedStoreId(id); },
+    onExit: () => {
+      setSelectedStoreId(null);
+      setPendingEntryId(null);
+    },
+    onRestore: (id) => {
+      const deepLink = parseDocumentStoreDeepLink(window.location.search);
+      setSelectedStoreId(id);
+      setPendingEntryId(deepLink.storeId === id ? deepLink.entryId : null);
+    },
   });
 
   // 深链 ?tab=xxx：清空详情视图 + 切到该 tab，
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
-  const location = useLocation();
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
     const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
@@ -2530,6 +2557,19 @@ export function DocumentStorePage() {
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, location.hash, location.pathname, navigate]);
+
+  // 同一知识库内若 URL 的 entry 发生变化，需要单独恢复选中文档。
+  useEffect(() => {
+    const deepLink = parseDocumentStoreDeepLink(location.search);
+    if (deepLink.storeId === selectedStoreId) setPendingEntryId(deepLink.entryId);
+  }, [location.search, selectedStoreId]);
+
+  // store 被 history hook 清除后同步清掉孤立 entry，避免列表页残留不可恢复的半条深链。
+  useEffect(() => {
+    const nextSearch = withoutOrphanedDocumentStoreEntry(location.search);
+    if (nextSearch === location.search) return;
+    navigate({ pathname: location.pathname, search: nextSearch, hash: location.hash }, { replace: true });
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   // 置顶 ID 服务端加载（跨设备/重登录保持）
   useEffect(() => {
@@ -2800,7 +2840,6 @@ export function DocumentStorePage() {
   // 列表页「统计」入口：打开账号级访客报表抽屉（聚合全部知识库）
   const [showAccountViewers, setShowAccountViewers] = useState(false);
   // 从账号统计点击文档跳转时，待打开的 entryId（store 切换后由 StoreDetailView 消费）
-  const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
   const openDocument = useCallback((sid: string, entryId: string) => {
     setShowAccountViewers(false);
     setPendingEntryId(entryId);

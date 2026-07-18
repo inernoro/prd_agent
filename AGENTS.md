@@ -421,6 +421,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **production-hotfix-release** | `/hotfix-prod` | 输入生产环境 + 指定分支/提交 → 基于线上当前 revision 最小 cherry-pick，走 CI 产物 + 生产脚本热发布，严禁保存或输出敏感信息 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
 | **cds** | `/cds` | 输入项目/分支 → CDS 全生命周期管理：扫描生成 compose YAML + Agent 鉴权 + 推送部署 + 等待就绪 + 分层冒烟 + 故障诊断自动排查，内置 cdscli Python 封装所有 CDS REST API |
+| **cds-release** | `/cds-release` | 输入项目、生产域名与服务器 → 强制项目级 Key 和项目身份校验，自动检测现有脚本/无脚本 Compose/无脚本静态站，配置正式发布目标并完成预检、最终入口验收、回滚与错误目标归档 |
 | **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
 | **agent-guide** | `/help` | 无需输入 → 读取 `.agent-workspace/` 进度文件，告知当前阶段和下一步操作 |
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |

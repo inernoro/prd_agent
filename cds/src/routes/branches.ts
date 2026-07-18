@@ -3783,7 +3783,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return null;
     }
 
-    // 走 per-branch merged env：branch 覆盖 project/global。
+    // 走 per-branch merged env：branch 覆盖 project；_global 仅在项目显式 opt-in 时继承。
     const mergedEnv = getMergedEnv(entry.projectId, entry.id);
     const accessKey = (mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
@@ -13459,7 +13459,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //
   // AI_ACCESS_KEY 从 request body 或 project-scoped customEnv 里取,
   // CDS 自身的 state.json 不落库 plaintext(operator 每次触发都要粘,
-  // 或一次性写进项目 env 的 _global 作用域即可)。
+  // 或一次性写进该项目 env)。控制面 _global 默认不得下沉到项目冒烟。
   //
   // 设计约束 (对齐 .claude/rules/server-authority.md):
   //   - 使用 CancellationToken.None 等价语义: 客户端断 SSE 不杀 bash
@@ -13512,13 +13512,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failFast?: boolean;
     };
 
-    // AI_ACCESS_KEY resolution order (走 getCustomEnv 4 层合并)：
+    // AI_ACCESS_KEY resolution order：
     //   1. request body `accessKey` (operator paste)
     //   2. project.customEnv.AI_ACCESS_KEY (per-project 主存)
     //   3. state.customEnv[<projectId>].AI_ACCESS_KEY (旧 project bucket 兜底)
-    //   4. state.customEnv._global.AI_ACCESS_KEY (旧全局兜底)
-    // Never reads from process.env — that would leak the CDS process
-    // env into the smoke target.
+    // 不读取 _global 或 process.env，避免 CDS 控制面密钥进入任意项目冒烟进程。
     const mergedEnv = getMergedEnv(entry.projectId, entry.id);
     const accessKey = (body.accessKey || mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {

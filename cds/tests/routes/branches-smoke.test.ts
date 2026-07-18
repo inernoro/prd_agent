@@ -203,8 +203,15 @@ describe('POST /api/branches/:id/smoke', () => {
     expect((res.body as any).error).toBe('access_key_missing');
   });
 
-  it('falls back to _global.AI_ACCESS_KEY when body key missing', async () => {
+  it('does not leak _global.AI_ACCESS_KEY into a project smoke process', async () => {
     stateService.setCustomEnvVar('AI_ACCESS_KEY', 'fallback-key', '_global');
+    const res = await request(server, 'POST', '/api/branches/my-branch/smoke', {});
+    expect(res.status).toBe(400);
+    expect((res.body as any).error).toBe('access_key_missing');
+  });
+
+  it('falls back to the project-scoped AI_ACCESS_KEY when body key is missing', async () => {
+    stateService.setCustomEnvVar('AI_ACCESS_KEY', 'project-key', 'default');
     const res = await request(server, 'POST', '/api/branches/my-branch/smoke', {});
     expect(res.status).toBe(200);
     const events = parseSseEvents(res.raw);
