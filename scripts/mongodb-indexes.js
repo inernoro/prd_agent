@@ -8,23 +8,93 @@
 // failures are collected so unrelated indexes are still applied before the script exits non-zero.
 const tightenedUniqueIndexMigrationFailures = []
 
-function ensureTightenedUniqueIndex(collectionName, keys, options) {
+function sameIndexDefinition(index, keys, partialFilterExpression) {
+  return (
+    JSON.stringify(index.key) === JSON.stringify(keys) &&
+    JSON.stringify(index.partialFilterExpression || {}) === JSON.stringify(partialFilterExpression || {})
+  )
+}
+
+function findDuplicateGroups(collection, keys, partialFilterExpression) {
+  const duplicateId = {}
+  Object.keys(keys).forEach(field => {
+    duplicateId[field] = `$${field}`
+  })
+  const pipeline = []
+  if (partialFilterExpression) {
+    pipeline.push({ $match: partialFilterExpression })
+  }
+  pipeline.push(
+    { $group: { _id: duplicateId, count: { $sum: 1 } } },
+    { $match: { count: { $gt: 1 } } },
+    { $limit: 5 }
+  )
+  return collection.aggregate(pipeline).toArray()
+}
+
+function restorableIndexOptions(index) {
+  const options = { name: index.name }
+  const supportedOptions = [
+    "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
+  ]
+  supportedOptions.forEach(option => {
+    if (index[option] !== undefined) {
+      options[option] = index[option]
+    }
+  })
+  return options
+}
+
+function replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options) {
+  const duplicateGroups = findDuplicateGroups(collection, keys, options.partialFilterExpression)
+  if (duplicateGroups.length > 0) {
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: duplicate groups must be cleaned before replacing the legacy index: ${JSON.stringify(duplicateGroups)}`
+    )
+    return
+  }
+
+  const restoreOptions = restorableIndexOptions(existing)
+  try {
+    collection.dropIndex(existing.name)
+    collection.createIndex(keys, options)
+  } catch (error) {
+    let rollbackMessage = ""
+    try {
+      collection.createIndex(existing.key, restoreOptions)
+    } catch (rollbackError) {
+      rollbackMessage = `; rollback failed: ${rollbackError.message || rollbackError}`
+    }
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: ${error.message || error}${rollbackMessage}`
+    )
+  }
+}
+
+function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = []) {
   const collection = db.getCollection(collectionName)
   const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
   const existing = collectionExists
     ? collection.getIndexes().find(index => index.name === options.name)
     : undefined
 
-  if (existing && existing.unique !== true) {
-    const actualPartial = existing.partialFilterExpression || {}
-    const expectedPartial = options.partialFilterExpression || {}
-    if (
-      JSON.stringify(existing.key) !== JSON.stringify(keys) ||
-      JSON.stringify(actualPartial) !== JSON.stringify(expectedPartial)
-    ) {
-      tightenedUniqueIndexMigrationFailures.push(
-        `${collectionName}.${options.name}: existing index definition differs from the catalog`
+  if (existing) {
+    if (!sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+      const isKnownLegacyDefinition = legacyDefinitions.some(definition =>
+        sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
       )
+      if (isKnownLegacyDefinition) {
+        replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)
+      } else {
+        tightenedUniqueIndexMigrationFailures.push(
+          `${collectionName}.${options.name}: existing index definition differs from the catalog`
+        )
+      }
+      return
+    }
+
+    if (existing.unique === true) {
+      collection.createIndex(keys, options)
       return
     }
 
@@ -34,20 +104,7 @@ function ensureTightenedUniqueIndex(collectionName, keys, options) {
         index: { name: options.name, prepareUnique: true }
       })
 
-      const duplicateId = {}
-      Object.keys(keys).forEach(field => {
-        duplicateId[field] = `$${field}`
-      })
-      const pipeline = []
-      if (options.partialFilterExpression) {
-        pipeline.push({ $match: options.partialFilterExpression })
-      }
-      pipeline.push(
-        { $group: { _id: duplicateId, count: { $sum: 1 } } },
-        { $match: { count: { $gt: 1 } } },
-        { $limit: 5 }
-      )
-      const duplicateGroups = collection.aggregate(pipeline).toArray()
+      const duplicateGroups = findDuplicateGroups(collection, keys, options.partialFilterExpression)
       if (duplicateGroups.length > 0) {
         tightenedUniqueIndexMigrationFailures.push(
           `${collectionName}.${options.name}: duplicate groups must be cleaned: ${JSON.stringify(duplicateGroups)}`
@@ -72,6 +129,10 @@ function ensureTightenedUniqueIndex(collectionName, keys, options) {
 
 // collection: users
 db.users.createIndex({ "Username": 1 })
+db.users.createIndex(
+  { "MiduoSsoSubjectType": 1, "MiduoSsoSubjectHash": 1 },
+  { sparse: true }
+)
 
 // collection: system_roles
 db.system_roles.createIndex({ "Key": 1 })
@@ -214,7 +275,11 @@ ensureTightenedUniqueIndex("image_assets",
     name: "uniq_image_assets_workspace_sha256",
     unique: true,
     partialFilterExpression: { "WorkspaceId": { $type: "string" } }
-  }
+  },
+  [{
+    keys: { "WorkspaceId": 1, "Sha256": 1 },
+    partialFilterExpression: { "workspaceId": { $type: "string" } }
+  }]
 )
 
 // collection: image_master_canvases
