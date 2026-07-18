@@ -230,14 +230,14 @@ db.admin_prompt_overrides.createIndex(
 // collection: admin_idempotency
 // 同一管理员 + scope + idemKey 唯一（仅对 idempotencyKey 为字符串的文档生效）
 db.admin_idempotency.createIndex(
-  { "OwnerAdminId": 1, "Scope": 1, "IdempotencyKey": 1 },
+  { "ownerAdminId": 1, "scope": 1, "idempotencyKey": 1 },
   {
     name: "uniq_admin_idempotency_owner_scope_key_v2",
     partialFilterExpression: { "idempotencyKey": { $type: "string" } }
   }
 )
 
-db.admin_idempotency.createIndex({ "CreatedAt": -1 })
+db.admin_idempotency.createIndex({ "createdAt": -1 })
 
 // collection: desktop_asset_skins
 db.desktop_asset_skins.createIndex(
