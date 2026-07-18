@@ -1,342 +1,78 @@
-# 图片引用日志 & 消息服务器权威持久化 · 设计
+# 图片引用日志与消息持久化 · 设计
 
-> **版本**：v1.0 | **日期**：2026-02-08 | **状态**：已实现
-
----
+> **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 管理摘要
 
-- **解决什么问题**：LLM 请求日志中参考图因 base64 截断无法显示，重绘消息因前端 fire-and-forget 模式导致刷新后丢失
-- **方案概述**：引入 ImageReferences 独立字段存储 COS URL 避免截断问题，将消息持久化从前端异步调用改为后端 Controller/Worker 自动保存
-- **业务价值**：LLM 日志中参考图可正常查看，消息持久化不再依赖前端网络状态，刷新后历史完整保留
-- **影响范围**：LLM Gateway（ImageReferences 透传）、ImageMasterController（消息保存重构）、前端 LlmLogsPage 和 VisualAgentTab
-- **预计风险**：低 — 旧日志降级到 extractInlineImagesFromBody，旧消息无 refSrc 时不显示参考图
+- **问题**：图片请求体中的 base64 会在日志脱敏或截断后失效；由前端异步保存的视觉创作消息会因网络抖动或页面切换丢失。
+- **决策**：图片引用以独立元数据随 LLM 日志保存；消息由创建 Run 的 Controller 与执行 Worker 在服务端持久化。
+- **结果**：日志可展示可访问的参考图，刷新后可恢复完整消息历史；前端只负责显示和订阅 SSE。
+- **范围**：LLM Gateway、视觉创作 Run、LLM 日志页和视觉创作聊天面板。
 
-## 一、问题根因
+## 问题边界
 
-### 问题 1：参考图显示 base64
+请求体中的 base64 是传输细节，不是适合日志展示的长期数据。日志系统对大字段截断后，前端即使识别出 data URL 也无法渲染完整图片。
 
-```
-  ┌──────────────────────────────────────────────────────────────┐
-  │  旧流程：base64 被截断导致图片无法显示                          │
-  └──────────────────────────────────────────────────────────────┘
+同样，消息持久化属于业务事实，不能依赖浏览器的 fire-and-forget 请求。浏览器只能乐观显示；服务端必须在接受任务和产出结果的两个权威时点写库。
 
-  OpenAIImageClient                 LlmGateway                LlmRequestLogWriter
-  ┌──────────────┐             ┌──────────────────┐        ┌───────────────────┐
-  │ 构建请求 JSON  │────────────▶│ 转发 + 记日志     │───────▶│  StartAsync()     │
-  │ body 含 base64│             │                  │        │                   │
-  │ data:image/.. │             │ RequestBody 原文  │        │ TruncateJson      │
-  │ (200KB+)      │             │ 传给日志系统       │        │ Values(100 chars) │
-  └──────────────┘             └──────────────────┘        │        ↓          │
-                                                           │ "data:image/pn..." │
-                                                           │   ← 被截断！       │
-                                                           │   图片不可用 ✗     │
-                                                           └───────────────────┘
+## 核心决策
 
-  前端 LlmLogsPage:
-    extractInlineImagesFromBody(requestBodyRedacted)
-    → 解析出 "data:image/pn...[TRUNCATED]"
-    → <img src="data:image/pn..."> ← 无法渲染 ✗
-```
+### 图片引用独立保存
 
-**根因**：`LlmRequestLogWriter.TruncateJsonStringValues()` 将所有 JSON 字符串值截断到 100 字符，
-base64 图片数据 (通常 200KB+) 被截断后无法作为 `<img>` 的 src 使用。
+每条 LLM 请求日志可带 `imageReferences`，不从截断后的 `requestBody` 反推图片。每个引用只保存展示与追溯所需的信息：
 
-### 问题 2：消息刷新后丢失
+| 字段 | 用途 |
+|---|---|
+| `sha256` | 内容校验、去重和关联 |
+| `cosUrl` | 前端安全展示的图片地址 |
+| `label` | 说明图片在请求中的用途，例如参考图或蒙版 |
+| `mimeType` | 展示和下载的媒体类型 |
+| `sizeBytes` | 审计与容量判断 |
 
-```
-  ┌──────────────────────────────────────────────────────────────┐
-  │  旧流程：前端 fire-and-forget 导致消息丢失                      │
-  └──────────────────────────────────────────────────────────────┘
+引用沿着“图片客户端 → Gateway 请求上下文 → 日志开始事件 → 请求日志”单向透传。日志页优先使用 `imageReferences`；历史日志没有该字段时，才降级解析旧请求体中的内联图片。
 
-  前端 AdvancedVisualAgentTab                          后端
-  ┌──────────────────────────┐                   ┌──────────────┐
-  │ 1. pushMsg(userMsg)      │                   │              │
-  │    ├─ UI: 显示消息 ✓     │                   │              │
-  │    └─ API: addMessage()  │──── async ────────▶│ 保存到 DB    │
-  │         .catch(warn) ←───── 可能静默失败 ✗    │              │
-  │                          │                   │              │
-  │ 2. SSE: imageDone        │◀──────────────────│ Worker 完成   │
-  │    ├─ UI: 显示结果 ✓     │                   │              │
-  │    └─ API: addMessage()  │──── async ────────▶│ 保存到 DB    │
-  │         .catch(warn) ←───── 可能静默失败 ✗    │              │
-  │                          │                   │              │
-  │ 3. 用户刷新页面          │                   │              │
-  │    loadMessages() → 空！  │◀──────────────────│ DB 无记录 ✗  │
-  └──────────────────────────┘                   └──────────────┘
+### 服务端权威消息持久化
 
-  问题：消息持久化依赖前端异步调用，网络抖动/页面快速切换均可导致丢失
-```
+| 时点 | 权威写入方 | 保存内容 |
+|---|---|---|
+| 创建 Run | `ImageMasterController` | 用户输入消息；旧客户端未提供正文时兼容回退到提示词 |
+| 图片生成完成 | `ImageGenRunWorker` | 生成结果、参考图、提示词、Run 标识、模型池和生成类型 |
+| 图片生成失败 | `ImageGenRunWorker` | 错误信息、Run 标识和生成上下文 |
 
----
+SSE 事件只通知客户端刷新显示，不能作为持久化的唯一来源。页面刷新时由消息读取接口从数据库恢复用户和助手消息。
 
-## 二、解决方案架构
+## 交互与数据流
 
-### 方案 1：ImageReferences 独立字段
+1. 用户发起生成或重绘，Controller 创建 Run 并保存用户消息。
+2. Worker 加载参考图，调用 LLM Gateway 时同时提供请求体和图片引用元数据。
+3. Gateway 写入请求日志，日志保留可展示的图片引用而非完整 base64。
+4. Worker 将生成图上传到对象存储，保存助手消息后发出完成或失败 SSE。
+5. 前端收到事件后更新界面；历史会话统一通过消息读取接口恢复。
 
-```
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  新流程：COS URL 通过 ImageReferences 独立存储                     │
-  └──────────────────────────────────────────────────────────────────┘
+视觉创作消息中的完成态可同时显示生成图和参考图缩略图；缺少 `refSrc` 的旧消息只显示生成图。
 
-  OpenAIImageClient              GatewayRequest              LlmRequestLogWriter
-  ┌──────────────┐          ┌──────────────────┐         ┌────────────────────┐
-  │ 加载参考图     │          │                  │         │                    │
-  │ imageRefs:    │          │ Context:         │         │ StartAsync():      │
-  │  ├ Sha256     │──build──▶│  ImageReferences │──pass──▶│   log.ImageRefs =  │
-  │  ├ CosUrl  ✓  │          │   ├ Sha256       │         │     start.ImageRefs│
-  │  ├ Label      │          │   ├ CosUrl    ✓  │         │                    │
-  │  └ MimeType   │          │   ├ Label        │         │  RequestBody 仍然   │
-  └──────────────┘          │   └ MimeType     │         │  截断（无影响）      │
-                            └──────────────────┘         └─────────┬──────────┘
-                                                                   │
-                                                                   ▼
-                                                          ┌────────────────┐
-                                                          │  MongoDB       │
-                                                          │  llm_request   │
-                                                          │  _logs         │
-                                                          │                │
-                                                          │ imageReferences│
-                                                          │  ├ sha256      │
-                                                          │  ├ cosUrl   ✓  │
-                                                          │  ├ label       │
-                                                          │  ├ mimeType    │
-                                                          │  └ sizeBytes   │
-                                                          └───────┬────────┘
-                                                                  │
-                                                                  ▼
-                                                          ┌────────────────┐
-                                                          │  前端          │
-                                                          │  LlmLogsPage  │
-                                                          │                │
-                                                          │  优先使用       │
-                                                          │  imageReferences│
-                                                          │  的 cosUrl     │
-                                                          │  显示图片 ✓    │
-                                                          │                │
-                                                          │  旧日志降级：   │
-                                                          │  extractInline │
-                                                          │  ImagesFromBody│
-                                                          └────────────────┘
-```
+## 兼容与安全
 
-**数据模型**：
+| 场景 | 行为 |
+|---|---|
+| 历史日志没有 `imageReferences` | 降级解析旧请求体中的内联图片 |
+| 历史消息没有参考图字段 | 不显示参考图，不影响生成图和正文 |
+| 旧客户端未传用户正文 | 服务端从提示词回退构造用户消息 |
+| 对象地址不可用 | 日志仍保留引用元数据；界面按普通加载失败处理 |
 
-```
-  LlmImageReference
-  ┌───────────────────┐
-  │ sha256:  string?  │  ← 图片内容 SHA256（用于去重/校验）
-  │ cosUrl:  string?  │  ← COS 公开访问 URL（直接用于 <img>）
-  │ label:   string?  │  ← 图片用途标签（"参考图"/"蒙版"）
-  │ mimeType:string?  │  ← MIME 类型（image/png, image/jpeg）
-  │ sizeBytes:long?   │  ← 原始文件大小
-  └───────────────────┘
-```
+请求体仍可按日志规则截断或脱敏；图片展示依赖独立引用，不放宽日志隐私边界。
 
-**传递路径**：
+## 实现边界与来源
 
-```
-  ImageRefData (已有模型)
-       │
-       │ .Select(r => new LlmImageReference { ... })
-       ▼
-  GatewayRequest.Context.ImageReferences
-       │
-       │ 透传
-       ▼
-  LlmLogStart.ImageReferences
-       │
-       │ 直接赋值
-       ▼
-  LlmRequestLog.ImageReferences  →  MongoDB  →  前端展示
-```
+| 层级 | 权威实现 |
+|---|---|
+| 请求日志模型与写入 | `prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs`、`PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs` |
+| Gateway 上下文与图片请求 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs` |
+| Run 与消息持久化 | `prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs`、`PrdAgent.Api/Services/ImageGenRunWorker.cs` |
+| 日志和视觉创作界面 | `prd-admin/src/pages/LlmLogsPage.tsx`、`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` |
 
-### 方案 2：服务器权威消息持久化
+## 关联文档
 
-```
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  新流程：后端自动保存消息，前端仅更新 UI                            │
-  └──────────────────────────────────────────────────────────────────┘
-
-  前端                              后端 Controller              后端 Worker
-  ┌─────────────┐              ┌──────────────────┐         ┌────────────────┐
-  │             │              │                  │         │                │
-  │ 1.创建 Run  │── POST ─────▶│ CreateRun()      │         │                │
-  │   传入      │              │  ├ 创建 Run      │         │                │
-  │   userMsg   │              │  ├ 保存 UserMsg  │────┐    │                │
-  │   Content   │              │  │  到 DB ✓      │    │    │                │
-  │             │              │  └ 返回 RunId    │    │    │                │
-  │             │◀── 200 ──────│                  │    │    │                │
-  │             │              └──────────────────┘    │    │                │
-  │ 2.pushMsg   │                                      │    │                │
-  │   仅更新 UI │                                      │    │                │
-  │   不调 API  │                                      ▼    │                │
-  │             │                               ┌──────────┐│                │
-  │             │                               │ MongoDB  ││ 3.Worker 处理  │
-  │             │                               │ image_   ││   LLM 调用     │
-  │             │                               │ master_  ││   生成图片     │
-  │             │                               │ messages ││                │
-  │             │                               │          ││ 4.imageDone:   │
-  │             │              ┌─── SSE ────────│ ←────────││  保存 AsstMsg  │
-  │             │◀─────────────│ savedMessageId │          ││  到 DB ✓       │
-  │ 5.收到 SSE  │              └────────────────│          ││                │
-  │   显示结果  │                               │          ││ 5.imageError:  │
-  │   + 参考图  │                               │ ←────────││  保存 ErrMsg   │
-  │             │                               │          ││  到 DB ✓       │
-  └─────────────┘                               └──────────┘└────────────────┘
-
-  刷新页面后：
-  ┌─────────────┐              ┌──────────────────┐
-  │ loadMessages│── GET ──────▶│ 从 DB 加载       │
-  │             │              │ 所有消息 ✓       │
-  │ 显示完整    │◀── 200 ──────│ User + Assistant  │
-  │ 历史记录 ✓  │              │ 都在 ✓           │
-  └─────────────┘              └──────────────────┘
-```
-
-**消息保存时机**：
-
-```
-  ┌──────────────────────────────────────────────┐
-  │              消息生命周期                      │
-  ├──────────────┬───────────────────────────────┤
-  │   时机        │  保存方                        │
-  ├──────────────┼───────────────────────────────┤
-  │ CreateRun    │  Controller 保存 User 消息     │
-  │              │  内容 = userMessageContent     │
-  │              │  或 fallback 到 prompt         │
-  ├──────────────┼───────────────────────────────┤
-  │ imageDone    │  Worker 保存 Assistant 消息    │
-  │   (SSE)      │  内容 = [GEN_DONE]{json}      │
-  │              │  json 含 src, refSrc, prompt,  │
-  │              │  runId, modelPool, genType,    │
-  │              │  imageRefShas                  │
-  ├──────────────┼───────────────────────────────┤
-  │ imageError   │  Worker 保存 Assistant 消息    │
-  │   (SSE)      │  内容 = [GEN_ERROR]{json}     │
-  │              │  json 含 error, refSrc, runId, │
-  │              │  genType                       │
-  └──────────────┴───────────────────────────────┘
-```
-
-### genDone 渲染：参考图 + 生成图并排
-
-```
-  ┌──────────────────────────────────────────────────┐
-  │  编辑窗消息渲染 (genDone)                          │
-  ├──────────────────────────────────────────────────┤
-  │                                                  │
-  │  ┌──────────┐  ┌──────────────────────────────┐  │
-  │  │ 参考图    │  │                              │  │
-  │  │ (64×64)  │  │       生成结果图              │  │
-  │  │ refSrc   │  │       (最大宽度)              │  │
-  │  │          │  │       src                    │  │
-  │  └──────────┘  │                              │  │
-  │   ↑ 新增显示   │                              │  │
-  │                │                              │  │
-  │                └──────────────────────────────┘  │
-  │                                                  │
-  │  提示词: "xxx"          模型池: yyy               │
-  │  运行ID: zzz                                     │
-  └──────────────────────────────────────────────────┘
-
-  旧行为：只显示生成结果图，不显示参考图
-  新行为：左侧 64px 参考图缩略图 + 右侧生成结果图
-```
-
----
-
-## 三、数据流全景图
-
-```
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                    Visual Agent 图片生成全流程                            │
-  └─────────────────────────────────────────────────────────────────────────┘
-
-  ①                    ②                    ③                    ④
-  用户操作              Controller           Worker               前端渲染
-  ─────────            ──────────           ──────               ────────
-
-  [发送重绘]     ───▶  CreateRun()
-                       │
-                       ├─ 创建 Run 记录
-                       ├─ 保存 User 消息
-                       │   到 DB ✓
-                       └─ 返回 RunId
-
-  [等待 SSE]                                Worker 启动
-                                            │
-                                            ├─ 加载 ImageRefs
-                                            │   (从 COS 获取)
-                                            │
-                                            ├─ 构建 LLM 请求
-                                            │   ├─ base64 in body
-                                            │   └─ COS URLs in
-                                            │      ImageReferences ←── 新增
-                                            │
-                                            ├─ Gateway.SendAsync()
-                                            │   ├─ LlmRequestLog
-                                            │   │   .ImageReferences ←── 新增
-                                            │   └─ 调用 Platform Adapter
-                                            │
-                                            ├─ 上传结果到 COS
-                                            │
-                                            ├─ 保存 Assistant 消息
-                                            │   到 DB ✓ ←──────────── 新增
-                                            │
-                                            └─ SSE: imageDone
-                                                 + savedMessageId ←── 新增
-
-  [收到 SSE]                                                     渲染 genDone:
-                                                                  ├─ 参考图 64px ←── 新增
-                                                                  └─ 生成图 full
-
-  [刷新页面]    ───▶  loadMessages()
-                       └─ 从 DB 加载                              渲染历史消息
-                          全部消息 ✓                               完整显示 ✓
-```
-
----
-
-## 四、涉及文件清单
-
-### 后端 (C#)
-
-| 文件 | 变更类型 | 说明 |
-|------|----------|------|
-| `Core/Models/LlmRequestLog.cs` | 新增字段 | `ImageReferences` + `LlmImageReference` 类 |
-| `Core/Interfaces/ILlmRequestLogWriter.cs` | 新增参数 | `LlmLogStart.ImageReferences` |
-| `Infrastructure/LLM/LlmRequestLogWriter.cs` | 赋值 | 保存 ImageReferences 到日志 |
-| `Infrastructure/LlmGateway/GatewayRequest.cs` | 新增字段 | `GatewayRequestContext.ImageReferences` |
-| `Infrastructure/LlmGateway/LlmGateway.cs` | 透传 | WriteStartLogAsync 传递 ImageReferences |
-| `Infrastructure/LLM/OpenAIImageClient.cs` | 构建 | 3 处构建 ImageReferences (Exchange/Vision/Multi) |
-| `Api/Controllers/Api/ImageMasterController.cs` | 重构 | CreateRun 自动保存 User 消息 |
-| `Api/Services/ImageGenRunWorker.cs` | 重构 | imageDone/imageError 自动保存 Assistant 消息 |
-
-### 前端 (TypeScript)
-
-| 文件 | 变更类型 | 说明 |
-|------|----------|------|
-| `types/admin.ts` | 新增类型 | `LlmImageReference` 接口 |
-| `pages/LlmLogsPage.tsx` | 渲染逻辑 | 优先 imageReferences COS URL，降级 extractInline |
-| `pages/ai-chat/AdvancedVisualAgentTab.tsx` | 渲染 + 持久化 | genDone 显示 refSrc；pushMsg 改为纯 UI |
-| `services/contracts/visualAgent.ts` | 新增字段 | `userMessageContent` |
-
----
-
-## 五、向后兼容
-
-| 场景 | 处理方式 |
-|------|----------|
-| 旧 LLM 日志无 `imageReferences` | 前端降级到 `extractInlineImagesFromBody()` |
-| 旧消息无 `refSrc` 字段 | genDone 渲染时 `refSrc` 为空则不显示参考图 |
-| 前端旧版本不传 `userMessageContent` | Controller fallback 到 `prompt` 字段 |
-
----
-
-## 六、设计原则遵循
-
-- **服务器权威性** (CLAUDE.md)：消息由后端在处理流程中保存，不依赖前端异步调用
-- **日志自包含** (CLAUDE.md)：ImageReferences 与日志一起存储，查询时无需二次解析
-- **LLM Gateway 统一调用** (CLAUDE.md)：ImageReferences 通过 Gateway 标准流程传递
-- **前端仅作观察者** (CLAUDE.md)：pushMsg 改为纯 UI 更新，不再负责消息持久化
+- `design.visual-agent.md`：视觉创作能力与消息展示上下文。
+- `design.platform.llm-gateway.md`：统一 Gateway 调用与日志边界。
+- `rule.platform.server-authority.md`：服务端保存业务事实的约束。

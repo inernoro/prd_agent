@@ -1,6 +1,7 @@
-# CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
+# CDS Agent SDK Runtime 侵入 MAP 主系统调查（grandfather 保留） · 报告
 
-> 日期：2026-05-18
+> **版本**：v1.0 | **日期**：2026-05-18 | **状态**：已落地
+
 > 最新复核：2026-05-18 17:24 Asia/Shanghai，远程清理后复查
 > 范围：`prd-agent` 业务项目、`shared-sidecar-pool-mp4anabh` 共享运行池、MAP runtime discovery
 > 结论：结构性隔离失败，不是页面误报，也不是 Claude Agent SDK 官方包本身的问题。

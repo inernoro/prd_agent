@@ -1,12 +1,12 @@
 # LLM 网关与模型池统一 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-24 | **状态**：草案
+> **版本**：v1.0 | **日期**：2026-06-24 | **状态**：已落地
+
 > **关联实现**：`prd-api/.../LlmGateway/LlmGateway.cs`、`ModelResolver.cs`、`LlmGateway/Adapters/*`、`LlmGateway/Transformers/*`、`Infrastructure/LLM/OpenAIImageClient.cs`、`Infrastructure/ModelPool/*`、`Core/Models/AppCallerRegistry.cs`
 > **关联取证**：`scripts/llm-gateway-phase0-forensics.mongo.js`
 > **关联债务**：`debt.llm-gateway.md`
 > **一句话**：把"接口模式挂在平台上、图片自成一套、池子背着 6 个没人用的策略引擎"的混乱调度，收敛为"协议挂在模型上、文本与图片共用一个网关、池退化成短兜底链、OpenRouter 做默认协议"的轻量体系——稳定优先、灵活兼容、易统计。
 
----
 
 ## 1. 管理摘要
 

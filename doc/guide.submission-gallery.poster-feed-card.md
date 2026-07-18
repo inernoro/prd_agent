@@ -1,12 +1,11 @@
 # 多平台博主订阅 → 首页海报弹窗 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-07 | **状态**：已落地
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 把 TikTok / 抖音 / B 站 / 小红书 / YouTube 任一博主的最新 N 条作品，自动拉过来 + 媒体迁移到 COS + 落到首页登录弹窗海报。**不需要写代码**，工作流编辑器拖几步就搭出来。
 
 本文档面向：第一次使用此功能的运营 / 管理员 / 开发同事。
 
----
 
 ## 1. 这套东西做了什么
 
@@ -82,8 +81,8 @@ weekly_posters 集合 → 登录后所有用户首页弹窗
 | 小红书 | user_id（24 位 hex） | 博主主页 URL `xiaohongshu.com/user/profile/{user_id}` 末段 | `5f8a9b2c000000000100abcd` |
 | YouTube | channelId（UCxxxxx）| 频道页「关于」标签里看 channelId | `UCBR8-60-B28hp2BmDPdntcQ` |
 
-⚠ **B 站常见错误**：填 BV 号（`BV1xx...`）—— 不对，要填 mid 数字
-⚠ **YouTube 常见错误**：填 `@username` 或频道 URL slug —— 不对，要填 `UCxxxxx` 的 channelId
+警告 **B 站常见错误**：填 BV 号（`BV1xx...`）—— 不对，要填 mid 数字
+警告 **YouTube 常见错误**：填 `@username` 或频道 URL slug —— 不对，要填 `UCxxxxx` 的 channelId
 
 5. 点「**执行**」按钮
 6. 看节点逐个变绿。失败节点会标红，点开看 logs
@@ -132,7 +131,7 @@ https://{tail}-{prefix}-{projectSlug}.miduo.org/
 
 海报弹窗右上角的 **X 按钮 = 收起到右下角胶囊**（不是直接关闭）。胶囊上有：
 - 缩略图 + 标题 + 页码 → 点击重新展开（pageIndex 不丢）
-- ✕ 红色按钮（hover 高亮）→ 这才是真的彻底关闭，dismiss 写到本地存储
+- 红色关闭按钮（hover 高亮）→ 这才是真的彻底关闭，dismiss 写到本地存储
 
 设计意图：仿照抖音 PiP / Slack reminder，让用户即使误点也能找回海报。
 
@@ -147,7 +146,7 @@ https://{tail}-{prefix}-{projectSlug}.miduo.org/
 3. 拖一个 `timer` 节点替换上去
 4. 配置 cron 表达式（如 `0 */6 * * *` 每 6 小时）
 
-⚠ `timer` 胶囊目前在 `wip:true` 状态。如本部署版本 cron 不可用，备选方案：
+警告 `timer` 胶囊目前在 `wip:true` 状态。如本部署版本 cron 不可用，备选方案：
 - 走外部 cron（如 GitHub Actions 定时）调 `POST /api/workflow-agent/workflows/{id}/execute`
 - 或等任务 D（抖音 OAuth + 真订阅闭环）正式落地
 
@@ -217,7 +216,7 @@ videoUrl,coverUrl,authorAvatarUrl
 
 ## 关联文档
 
-- `doc/plan.emergence.tiktok-douyin-poster.md`：本功能完整设计与三阶段交付历史
+- `doc/plan.emergence.tiktok-douyin-poster.md`：抖音与 TikTok 真订阅的未完成闭环
 - `doc/debt.workflow-agent.md`：本功能已知边界与未还债务（含 dotnet watch 卡进程根因）
 - `.claude/rules/marketplace.md`：把工作流模板分享到海鲜市场
 - `.claude/rules/server-authority.md`：Run/Worker 模式（cron 调度真订阅时必读）

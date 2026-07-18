@@ -1,17 +1,15 @@
-# CDS 蓝绿改造 — 交接文档(已被 forwarder 取代,留档备查)
+# CDS 蓝绿改造 — 交接文档(已被 forwarder 取代,留档备查) · 指南
 
-> **版本**:v1.0 final | **日期**:2026-05-08 | **状态**:**蓝绿方案已废弃,改为独立 forwarder 进程**
->
+> **版本**：v1.0 | **日期**：2026-05-08 | **状态**：已落地
+
 > 2026-05-09 更新:蓝绿方案因 verify-target stage 反复卡住未达成"业务流量永不抖动"目标,
 > 改为更简单的"独立 forwarder 进程"方案 —— 见 `doc/report.cds.forwarder-success.md` +
 > `doc/guide.cds.forwarder-deploy.md`。蓝绿相关代码(supervisor / standby-controller /
 > active-color-store / nginx-upstream-writer / blue-green-bootstrap 等)已全部从仓库
 > 删除,本文档仅作为踩坑教训和决策记录留档。
->
 > 下面的内容是 2026-05-08 收工当晚的失败状态快照,所有 commit hash 真实,
 > 但文中提到的代码路径都已被删除。**不要按本文档继续蓝绿改造,直接读 forwarder 文档**。
 
----
 
 ## 一、当前状态(2026-05-08 收工时)
 
@@ -23,11 +21,11 @@
 ### 蓝绿主流程当前进度
 冒烟最后一次 SSE(17:08:16 ~ 17:08:27)实际走到的 stage:
 ```
-✅ blue-green-lock          切换锁已获取
-✅ blue-green-spawn         spawn green:9901 pid=3672154
-✅ blue-green-healthz       新 daemon 健康(用了 lightweight=1 的 fix)
-✅ blue-green-nginx         写 nginx 配置(cds_master 名字 fix + docker cp 后)
-❌ blue-green-verify        verify probe failed: verify probe timeout    ← **卡在这一步**
+是 blue-green-lock          切换锁已获取
+是 blue-green-spawn         spawn green:9901 pid=3672154
+是 blue-green-healthz       新 daemon 健康(用了 lightweight=1 的 fix)
+是 blue-green-nginx         写 nginx 配置(cds_master 名字 fix + docker cp 后)
+否 blue-green-verify        verify probe failed: verify probe timeout    ← **卡在这一步**
    → 自动 fallback restart  老路径成功,daemon 重启,业务无感
 ```
 
@@ -43,32 +41,32 @@
 
 | # | commit | 修复内容 | 验证状态 |
 |---|---|---|---|
-| 1 | `a007f467` | admin daemon `--standby` 模式 + `/api/_internal/promote` | ✅ 27 测试全过 |
-| 2 | `4fc24d5e` | nginx-upstream-writer 原子写 + nginx -t + reload + 回滚 | ✅ 16 测试 |
-| 3 | `8293107f` | graceful-shutdown SIGTERM drain | ✅ 15 测试 |
-| 4 | `2aff8680` | forwarder 4 模块(数据面就绪,未启用) | ✅ 55 测试 |
-| 5 | `8c80dabb` | blue-green-supervisor 编排 | ✅ 18 测试 |
-| 6 | `57a596a0` | network-topology API + build-sha chip | ✅ 32 测试 |
-| 7 | `0299eddc` | self-update 接入 supervisor | ✅ 39 集成测试 |
-| 8 | `31a6d140` | **C-4.1 token 认证**(替代失效的 IP 校验)+ 默认开启蓝绿(去 ENABLE 开关) | ✅ 真生产验证 |
-| 9 | `549571fd` | `config.masterPort` 读 env(初版,后被 IIFE bug 推翻) | ⚠️ 部分有效 |
-| 10 | `de2cf5f4` | nginx 主模板 `include cds-active-upstream.conf` + bootstrap 创建文件 + UI 失败红色横幅 | ✅ |
-| 11 | `bd2176b7` | `docker cp` 同步 host conf 到容器(绕过 bind mount stale inode) | ✅ |
-| 12 | `57b692f1` | daemon 启动自动清 `.cds/blue-green-disabled`(避免熔断锁死) | ✅ |
-| 13 | `6eccf522` | disabled 文件路径修正(supervisor 用 `<cdsRoot>/.cds`) | ✅ |
-| 14 | `9f1e806b` | bootstrap 同步 cds-site.conf 到容器(stale inode 兜底) | ✅ |
-| 15 | `a55839a7` | standby daemon 跳过 reconcile + docker cp(防自我误杀) | ✅ |
-| 16 | `0092a2a2` | 暴露 `GET /api/cds-system/blue-green-daemon-log` 诊断 API | ✅ |
-| 17 | `593ab845` | 暴露 `GET /api/cds-system/probe-port` 诊断 API | ✅ |
-| 18 | `8fe765d3` | spawn 用 argv `--port` 替代 env(env 被 load-env 覆盖) | ⚠️ 后被 IIFE 推翻 |
-| 19 | `c3cf1e73` | self-update git reset 后调 `nginx-render`(模板更新) | ✅ |
-| 20 | `4d49a707` | exec_cds.sh 实现 `nginx-render` 子命令(注释提到但缺失) | ✅ |
-| 21 | `9f024536` | upstream 名字 `cds_admin` → `cds_master`(我自己 design bug) | ✅ |
-| 22 | `5b5b5167` | `config.masterPort` 改 lazy getter(后发现 spread 杀 getter) | ⚠️ |
-| 23 | `49885c1e` | argv `--port` 直接写回 `config.masterPort`(spread 真根因) | ✅ |
-| 24 | `b3023e0d` | `/healthz?lightweight=1` 跳过 docker check(2s timeout 不够 docker 3s) | ✅ |
-| 25 | `d19d6f7d` | `verifyAdminTargetUrl` 也用 `lightweight=1` | ✅ |
-| 26 | **用户 SSH** | **`KillMode=process`** 加到 `/etc/systemd/system/cds-master.service`(防 systemd cgroup 杀绿 daemon)| ✅ 真生产验证 |
+| 1 | `a007f467` | admin daemon `--standby` 模式 + `/api/_internal/promote` | 是 27 测试全过 |
+| 2 | `4fc24d5e` | nginx-upstream-writer 原子写 + nginx -t + reload + 回滚 | 是 16 测试 |
+| 3 | `8293107f` | graceful-shutdown SIGTERM drain | 是 15 测试 |
+| 4 | `2aff8680` | forwarder 4 模块(数据面就绪,未启用) | 是 55 测试 |
+| 5 | `8c80dabb` | blue-green-supervisor 编排 | 是 18 测试 |
+| 6 | `57a596a0` | network-topology API + build-sha chip | 是 32 测试 |
+| 7 | `0299eddc` | self-update 接入 supervisor | 是 39 集成测试 |
+| 8 | `31a6d140` | **C-4.1 token 认证**(替代失效的 IP 校验)+ 默认开启蓝绿(去 ENABLE 开关) | 是 真生产验证 |
+| 9 | `549571fd` | `config.masterPort` 读 env(初版,后被 IIFE bug 推翻) | 警告 部分有效 |
+| 10 | `de2cf5f4` | nginx 主模板 `include cds-active-upstream.conf` + bootstrap 创建文件 + UI 失败红色横幅 | 是 |
+| 11 | `bd2176b7` | `docker cp` 同步 host conf 到容器(绕过 bind mount stale inode) | 是 |
+| 12 | `57b692f1` | daemon 启动自动清 `.cds/blue-green-disabled`(避免熔断锁死) | 是 |
+| 13 | `6eccf522` | disabled 文件路径修正(supervisor 用 `<cdsRoot>/.cds`) | 是 |
+| 14 | `9f1e806b` | bootstrap 同步 cds-site.conf 到容器(stale inode 兜底) | 是 |
+| 15 | `a55839a7` | standby daemon 跳过 reconcile + docker cp(防自我误杀) | 是 |
+| 16 | `0092a2a2` | 暴露 `GET /api/cds-system/blue-green-daemon-log` 诊断 API | 是 |
+| 17 | `593ab845` | 暴露 `GET /api/cds-system/probe-port` 诊断 API | 是 |
+| 18 | `8fe765d3` | spawn 用 argv `--port` 替代 env(env 被 load-env 覆盖) | 警告 后被 IIFE 推翻 |
+| 19 | `c3cf1e73` | self-update git reset 后调 `nginx-render`(模板更新) | 是 |
+| 20 | `4d49a707` | exec_cds.sh 实现 `nginx-render` 子命令(注释提到但缺失) | 是 |
+| 21 | `9f024536` | upstream 名字 `cds_admin` → `cds_master`(我自己 design bug) | 是 |
+| 22 | `5b5b5167` | `config.masterPort` 改 lazy getter(后发现 spread 杀 getter) | 警告 |
+| 23 | `49885c1e` | argv `--port` 直接写回 `config.masterPort`(spread 真根因) | 是 |
+| 24 | `b3023e0d` | `/healthz?lightweight=1` 跳过 docker check(2s timeout 不够 docker 3s) | 是 |
+| 25 | `d19d6f7d` | `verifyAdminTargetUrl` 也用 `lightweight=1` | 是 |
+| 26 | **用户 SSH** | **`KillMode=process`** 加到 `/etc/systemd/system/cds-master.service`(防 systemd cgroup 杀绿 daemon)| 是 真生产验证 |
 | 27 | `141835ad` | probeHttp `agent:false` 强制新 socket(防 keep-alive 复用 stale) | **未完整验证**(SSE 被 daemon 重启切断)|
 
 ---

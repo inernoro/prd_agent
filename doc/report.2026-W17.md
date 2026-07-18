@@ -1,14 +1,13 @@
 # 2026-W17 (2026-04-20 ~ 2026-04-26) · 周报
 
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 > **总计 363 次提交 | 827 个文件变更 | +55,345 行 / -4,638 行 | 43 个 PR 合并（详见附录）**
->
 > **贡献者**：Claude (277 commits)、inernoro (39 commits)、InerNoro (38 commits)、RuXiuWEi (6 commits)、Cursor Agent (3 commits)
->
 > **统计口径**：仅统计 `origin/main` 主干分支，按提交日期文本（`%cd --date=short`）过滤 `2026-04-20 ~ 2026-04-26`，PR 边界以 git log %cd 文本判断（不依赖 GitHub mergedAt UTC 时区），文件 / 行变更口径为 `git diff --shortstat FIRST^..LAST`。
 
 **本周趋势**：W17 是过去十周内 PR 数和提交密度都明显爆表的"开闸 + 多线并行"周——43 个 PR / 363 commits，PR 数量比 W16 的 38 高 13%，提交数比 W16 的 329 高 10%，远高于 W18 的 223 / 23 PR 和 W19 的 310 / 15 PR。本周节奏最特别的是它**没有一根独占的主线**，而是同时铺开了七条平行高速：周报 Agent 浅色模式三波打磨与 Markdown 导入、海鲜市场技能板块开 API 化与 sk-ak 长效凭据、CDS 多项目隔离 + 暗黑/白天主题双色一劳永逸 + 6 轮 Bugbot 围剿、Daily Tips 全栈式新增（13+ 演示 + Cmd+K 命令面板）、LLM Gateway compute-then-send 重构两阶段（终结一周的"选 A 给 B"血泪）、移动端首页 Apple Today 风改造 + 移动端黑屏修复、用户自定义导航 + 默认导航管理。fix 占比 42.4% 与 feat 23.1% 拉开差距但没有压倒，说明本周是"既开新坑又压旧坑"的正常发育节奏，不像 W19 那样 56% 都是修补。最大的隐线是**架构升级**（compute-then-send 规则确立 + skill marketplace open API + agent_api_keys 集合落地 + external authorization 中心），把 W16 P1 提的"多项目 + GitHub + 技能同步文档化"方向一次性完成大半。
 
----
 
 ## 关键更新脉络
 
@@ -97,7 +96,7 @@ timeline
 
 - PR #471：feat 主线——`DailyTip` Model + `DailyTipsController` (329 行) + `AdminDailyTipsController` (197 行) + `User.DailyTipPreferences` 字段 + Quick Links 四卡左对齐 + 智能体/工具/基础设施三桶分类 + 推送/统计奥卡姆剃刀版。
 - PR #475：第二波——跨页 Tour + 多选批量推 + 场景 chip + 苹果风列表重设计 + 撒花改用真 canvas 算法（SuccessConfettiButton）+ Cursor Bugbot 三轮（autoClick 同病 / rect flash / dock 重复 dispatch / 超时卡 / 铃铛双向同步 / 常量共享）+ 11 步「大全套」showcase 用于回归测试。
-- 文档：`doc/design.daily-tips.md`（原理）+ `doc/plan.daily-tips.remaining-work.md` + `doc/plan.daily-tips.scenarios-and-staleness.md`（剩余工作交接）。
+- 文档：`doc/design.daily-tips.md`（原理）+ `doc/plan.daily-tips.scenarios-and-staleness.md`（当前剩余工作交接）。
 - 11 个 changelog 碎片记录 11 个独立交付节点（Ctrl+B/K 演示、撒花、跨页 Tour、Tab Cmd+K、apple 风列表等）。
 - 相关 PR：#471（5 commits）、#475（10 commits）。
 
@@ -107,7 +106,7 @@ timeline
 
 - PR #484：项目隔离 8 处修复 + `doc/rule.cds.project-isolation-audit.md` 反思 MECE 矩阵盲区。
 - PR #498：第 6 轮收尾——legacy-cleanup status 走 needsMigration 路径 + initialize 容器名用 entry.id 替代裸 mainSlug + 跨项目隔离的 4 处认证漏洞 + 2 处数据泄露 + 系统性扫除 default 硬编码 + 区分"需要迁移"与"仅剩残留" + 一键清理接口（共 1619+86 行）。
-- PR #472：UI 大整理——header 精简 + Agent Key modal 白天模式修复 + Activity Monitor 去冗余 + 暗黑/白天 4 个具体 bug + 一劳永逸清理僵尸 token + MEM/CPU 上顶 + 分支排序 + 手机端 ☰ 菜单导航 + capacity+MEM/CPU 胶囊合并 + 项目列表 ⚙ 菜单去 emoji + 「白天主题彻底禁止暗色背景 + 把规则钉成最高优先级」（关联 `.claude/rules/cds-theme-tokens.md`）+ 启动审计 + API label 补全。
+- PR #472：UI 大整理——header 精简 + Agent Key modal 白天模式修复 + Activity Monitor 去冗余 + 暗黑/白天 4 个具体 bug + 一劳永逸清理僵尸 token + MEM/CPU 上顶 + 分支排序 + 手机端  菜单导航 + capacity+MEM/CPU 胶囊合并 + 项目列表 工作流 菜单去 emoji + 「白天主题彻底禁止暗色背景 + 把规则钉成最高优先级」（关联 `.claude/rules/cds-theme-tokens.md`）+ 启动审计 + API label 补全。
 - PR #489：备份/回滚/热更新一揽子 + Dockerfile BuildKit cache mount + dotnet-restart 热更新 + 强制重建 + 字节码核验 + 二级菜单 + 可编辑构建命令 + AI 控制可结束 + 全局批量改部署命令。
 - PR #459：预览就绪三层兜底（彻底消灭构建/重启窗口的 Cloudflare 502）+ 已删除分支子域名友好化。
 - PR #457：GitHub Webhook 噪声事件过滤 + 断开 500 重试循环 + 部署去重 + `doc/guide.cds.github-webhook-events.md`。
@@ -134,7 +133,7 @@ timeline
 > **价值**：把"每周生成一张可分享的周报海报"从想法变成产品。LLM 真流式打字机面板 + AI 配图 + 5 项验收反馈整顿（去掉「周报」绑定让任何主题都能海报化 / SSE 流式 / 多数据源 / 预览 fix / 返回按钮）+ 服务器权威化（Worker + RunId）+ 主页周报海报轮播弹窗 + 资源管理「海报设计」入口。
 
 - PR #476：主线落地（4738+3 行）——`PosterAutopilotService`（601 行）+ `PosterTemplateRegistry`（96 行）+ `AppCallerCodeRegistryGuardTests` 测试基础设施 + 向导页液态玻璃 + 编辑器「生成图片」按钮真点击即生成 + LLM 输出改 Markdown 分段 + body 真 markdown 预览 + 修 runtime error。
-- 文档：`doc/plan.report-agent.weekly-poster-handoff.md` 交接文档。
+- 文档：海报设计器交接信息已由现行实现与 Git 历史承接。
 - 相关 PR：#476（10 commits）。
 
 ### 9. 更新中心改造 — AI 总结 + GitHub 时间秒级 + NEW 徽标 + 知识库选择
@@ -263,7 +262,7 @@ timeline
 | --- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
 | P0  | LLM Gateway 完成 compute-then-send 全量推广 | #490 已落地核心 + 删除装饰器，但其他 LLM 调用类（OpenAIChatClient / Anthropic / DeepSeek 各 Adapter）还需逐个审计是否有"二次 Resolve" 反模式残留，本周建立的规则要全量贯穿。 |
 | P0  | Mongo 单后端 runbook 收口（W16 遗留两周）       | backup / restore / failover / 切换回 JSON 的兜底路径必须文档化。两周未推进，下周必须排上日程。                               |
-| P1  | Daily Tips 真实运营回归 + 接力交接落地          | `doc/plan.daily-tips.remaining-work.md` + `doc/plan.daily-tips.scenarios-and-staleness.md` 两个交接文档已立。下周需要把"用户实际使用率 / 撒花完成率 / 跳过率 / 7 天后再次推送"等指标接入。 |
+| P1  | Daily Tips 真实运营回归 + 接力交接落地          | 当前交接统一收敛到 `doc/plan.daily-tips.scenarios-and-staleness.md`。下周需要把"用户实际使用率 / 完成率 / 跳过率 / 7 天后再次推送"等指标接入。 |
 | P1  | 周报 Agent UAT 真人验收                   | W17 周报 4 个 PR 改了大量浅色模式 + token + 权限矩阵 + Markdown 导入，需要走 `/uat` 真人验收清单确保多浏览器/多分辨率不退化。       |
 | P1  | Skill Marketplace P3 — AgentOpenEndpoint 落地 | PR #473 已经预留 `agent_open_endpoints` 集合 + `MarketplaceSkill.ReferenceType` 字段。下周应该把"装一个技能 → 自动注册一个 OpenEndpoint → 别的 Agent 可以调"的链路打通。 |
 | P1  | CDS 项目隔离形成 lint 规则                  | PR #498 收口 9 处隔离漏洞，但未来还会有人写出新的 default 硬编码。建议把"CURRENT_PROJECT_ID 不允许 fallback 到 'default'"等规则做成 ESLint custom rule + CI 拦截。 |
@@ -302,7 +301,7 @@ timeline
 | #475  | Daily Tips 第二波 — 跨页 Tour + 11 步大全套 + 多选批量推 + 撒花真 canvas + 3 轮 Bugbot          | prd-admin、prd-api               | 新功能    |
 | #474  | 全局 font-mono 被 VT323 像素字体劫持修复                                                | prd-admin、tokens                | Bug 修复 |
 | #473  | Skill Marketplace 开放 API + sk-ak-* 长效凭据 + findmapskills 官方化虚拟注入 + 演示视频基础设施   | prd-api、prd-admin、scripts      | 新功能    |
-| #472  | CDS 暗黑/白天主题一劳永逸 + Header 精简 + 手机端 ☰ + 僵尸 token 清理 + 主题最高优先级规则               | cds、cds-web                    | UX 细节  |
+| #472  | CDS 暗黑/白天主题一劳永逸 + Header 精简 + 手机端  + 僵尸 token 清理 + 主题最高优先级规则               | cds、cds-web                    | UX 细节  |
 | #471  | Daily Tips 全栈新增 + 全局 ⌘K 命令面板 + 智能体/工具/基础设施三桶分类 + Quick Links 左对齐             | prd-admin、prd-api               | 新功能    |
 | #470  | 海鲜市场技能卡片重设计 + 封面图 + 预览地址                                                      | prd-admin、prd-api               | 新功能    |
 | #469  | 用户自定义导航（横向双区拖拽 + 分隔符 + 恢复如初）+ 死代码清理三条链                                       | prd-admin、prd-api               | 新功能    |

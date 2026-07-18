@@ -1,6 +1,6 @@
 # 文档空间 · 设计
 
-> **版本**：v1.0 | **日期**：2026-04-07 | **状态**：已实现
+> **版本**：v1.0 | **日期**：2026-04-07 | **状态**：已落地
 
 ## 一、管理摘要
 
@@ -13,16 +13,16 @@
 
 | 能力 | 状态 | 实现方式 |
 |------|------|---------|
-| 文档空间 CRUD | ✅ | DocumentStore 模型 + Controller |
-| 文件上传存盘 | ✅ | 借用 IAssetStorage（COS/本地）+ Attachment |
-| 文本提取 | ✅ | 借用 FileContentExtractor（PdfPig + OpenXml） |
-| 文档解析分段 | ✅ | 借用 DocumentService → ParsedPrd |
-| 内容预览 | ✅ | GET /entries/{id}/content |
-| 搜索 | ✅ | 标题/摘要 regex 搜索 |
-| 订阅源定期同步 | ✅ | DocumentSyncWorker (BackgroundService + PeriodicTimer) |
-| 手动触发同步 | ✅ | POST /entries/{id}/sync |
-| 全文搜索 | ❌ | 待实现（需 MongoDB Atlas Search 或 embedding） |
-| RAG / 语义检索 | ❌ | 待实现 |
+| 文档空间 CRUD | 是 | DocumentStore 模型 + Controller |
+| 文件上传存盘 | 是 | 借用 IAssetStorage（COS/本地）+ Attachment |
+| 文本提取 | 是 | 借用 FileContentExtractor（PdfPig + OpenXml） |
+| 文档解析分段 | 是 | 借用 DocumentService → ParsedPrd |
+| 内容预览 | 是 | GET /entries/{id}/content |
+| 搜索 | 是 | 标题/摘要 regex 搜索 |
+| 订阅源定期同步 | 是 | DocumentSyncWorker (BackgroundService + PeriodicTimer) |
+| 手动触发同步 | 是 | POST /entries/{id}/sync |
+| 全文搜索 | 否 | 待实现（需 MongoDB Atlas Search 或 embedding） |
+| RAG / 语义检索 | 否 | 待实现 |
 
 ## 三、数据模型
 

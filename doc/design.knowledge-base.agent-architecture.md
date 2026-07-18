@@ -1,8 +1,6 @@
-# design.knowledge-base.agent-architecture
+# CDS Agent 工作区基础设施模型 · 设计
 
-> 状态：active | 所属：prd-api + prd-admin | 最后更新：2026-06-07
-
----
+> **版本**：v2.0 | **日期**：2026-06-07 | **状态**：已落地
 
 ## 管理摘要
 

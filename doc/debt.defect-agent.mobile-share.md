@@ -1,6 +1,7 @@
-# 缺陷管理 · 手机截图分享提交 债务台账
+# 缺陷管理手机截图分享提交 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-07-10 | **状态**：首版已落地（PWA share_target + VLM 自动填充 + 移动全屏面板），下面为主动声明的已知边界
+> **版本**：v1.0 | **日期**：2026-07-10 | **状态**：开发中
+
 > **关联变更**：分支 `claude/map-screenshot-bug-submit-p6lmd4`（prd-admin：manifest.webmanifest / sw.js / defectDeepLink `?action=submit` / DefectSubmitPanel 移动布局与 AI 追加填充）
 
 记录「手机截图 → 系统分享 → 拉起缺陷提交面板 → VLM 自动填充」首版的已知边界与后续可补项，避免下一次 session 没人记得。

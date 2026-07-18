@@ -1,8 +1,9 @@
-# CDS Agent Phase 3 验收报告
+# CDS Agent Phase 3 验收报告（grandfather 保留） · 报告
 
-日期：2026-05-19  
-分支：`codex/cds-agent-workbench-ui`  
-验收基线提交：`e9e710e94`  
+> **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
+
+分支：`codex/cds-agent-workbench-ui`
+验收基线提交：`e9e710e94`
 范围：Phase 3 规模化商业能力，本地验收通过；未执行远端发布。
 
 ## 验收结论

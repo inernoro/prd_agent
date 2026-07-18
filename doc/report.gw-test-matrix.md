@@ -1,6 +1,7 @@
-# 网关测试矩阵全量报告 · 报告
+# 网关测试矩阵全量报告（grandfather 保留） · 报告
 
-> **版本**：自动生成 | **日期**：2026-06-30 | **状态**：开发中
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 > 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +
 > `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。
 > 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：
@@ -381,4 +382,3 @@
 
 > CDS 支持单分支多容器 + 导入审批通过后，`scripts/gw-smoke.py` 对真网关跑全 153 resolve
 > + 抽样真打 + 必败 canary，把 live 结果（model/finish/token/图片URL/requestId）追加到本节。当前为占位。
-

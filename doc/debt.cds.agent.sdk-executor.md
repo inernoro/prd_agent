@@ -1,4 +1,6 @@
-# debt.cds.agent.sdk-executor
+# CDS Agent SDK 执行器 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-07-09 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -6,7 +8,6 @@
 | 状态 | 活跃 |
 | 关联 | `doc/design.cds.agent.sdk-executor.md` |
 
----
 
 ## 已知工程债务
 

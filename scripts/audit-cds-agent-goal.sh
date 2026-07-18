@@ -373,7 +373,7 @@ check_docs_calibration() {
     "migration plan flags historical diagnostics"
   require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
     "migration plan names current runtime pool blockers"
-  require_doc_text "$ROOT_DIR/doc/status.cds-agent-current-progress.md" '`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入' \
+  require_doc_text "$ROOT_DIR/doc/design.cds.agent.commercial-architecture-and-roadmap.md" '`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入' \
     "current progress panel states branch-local sidecar cleanup"
   require_doc_text "$report" '旧 A10 证明“工作台 MVP 能远程干活”，但不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
     "A10 report separates MVP from current SDK gates"
@@ -954,7 +954,7 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           code: "D1",
           title: "CDS-managed runtime 架构纠偏",
           goal: "把当前恢复路径从 external host/env-driven recovery 纠回 CDS-managed runtime/container/sandbox。",
-          evidence: "doc/plan.cds.agent.runtime-correction-limited.md 与 progress consistency pass。",
+          evidence: "doc/design.cds.agent.managed-runtime-fact-source.md 与 progress consistency pass。",
           status: "done",
           blockedBy: null,
           nextActions: [

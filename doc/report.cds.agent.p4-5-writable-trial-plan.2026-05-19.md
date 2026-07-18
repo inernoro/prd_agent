@@ -1,6 +1,6 @@
-# CDS Agent P4-5 writable / PR / KB apply 试用计划
+# CDS Agent P4-5 writable / PR / KB apply 试用计划（grandfather 保留） · 报告
 
-日期：2026-05-19
+> **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
 
 ## 结论
 

@@ -1,5 +1,7 @@
 # CDS AI 起草 cds-compose · 设计
 
+> **版本**：v1.0 | **日期**：2026-06-01 | **状态**：已落地
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | design（How / 技术设计） |
@@ -9,7 +11,6 @@
 | 模块 | CDS（mini-PaaS）/ 项目接入（onboarding）/ cds-compose 契约 |
 | 关联 | `doc/spec.cds.compose-contract.md`、`doc/design.cds.agent.runtime-architecture.md`、`doc/design.cds.agent.api.md`、`doc/debt.cds.agent.md` |
 
----
 
 ## 1. 管理摘要（30 秒）
 

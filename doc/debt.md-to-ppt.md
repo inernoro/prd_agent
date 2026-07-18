@@ -1,9 +1,10 @@
-# debt.md-to-ppt — MD 转网页 PPT 工程债务台账
+# MD 转网页 PPT · 债务台账
 
-> 状态：active | 模块：prd-admin `md-to-ppt-agent` + prd-api `MdToPptController`
+> **版本**：v1.0 | **日期**：2026-06-09 | **状态**：开发中
+
+> 模块：prd-admin `md-to-ppt-agent` + prd-api `MdToPptController`
 > 用途：记录 MD→PPT 已知边界、留尾、必须在「对话式 artifact 重构」里偿还的债务。
 
----
 
 ## 1. 预览 iframe same-origin 安全债（P1，必须在重构里偿还）
 

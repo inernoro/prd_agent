@@ -1,6 +1,6 @@
 # CDS Agent Runtime Pool 恢复与官方 SDK Smoke · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-17 | **状态**：active recovery runbook
+> **版本**：v1.0 | **日期**：2026-05-17 | **状态**：已落地
 
 ## 目标
 

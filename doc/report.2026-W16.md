@@ -1,12 +1,12 @@
 # 2026-W16 (2026-04-13 ~ 2026-04-19) · 周报
 
+> **版本**：v1.0 | **日期**：2026-04-13 | **状态**：已落地
+
 > **总计 329 次提交 | 522 个文件变更 | +74,371 行 / -4,803 行 | 38 个 PR 合并（详见附录）**
->
 > **贡献者**：Claude (266 commits), InerNoro (35 commits), inernoro (22 commits), RuXiuWEi (4 commits), railway-app[bot] (2 commits)
 
-**本周趋势**：W16 是最近三周里最像“收官周”的一周。W15 铺开的 CDS 多项目、GitHub 基础设施、知识库、周报和视频等多条主线，本周都进入“把骨架补齐、把闭环接上、把运维路打通”的阶段。最重要的结果有五个：(1) CDS 多项目 P1-P4 全量落地，项目壳、项目隔离、CRUD、scoping、routing、topology、build profile 和 completion/handoff 基本串成闭环；(2) GitHub 自动部署、Check Runs、slash 命令、live branch stream、smoke tests 与 preview readiness 继续向真正的平台自动化靠拢；(3) Mongo 认证 / 状态存储、自更新和项目级配置进一步收口，CDS 的状态后端和运维模型更稳了；(4) `cds` 统一技能、CLI 和生命周期体系成型，平台能力开始具备对外 drop-in 分发能力；(5) 周报 Agent 和 Video Agent 做了一轮明显的产品化补强，开始从“功能能用”迈向“日常更顺手”。  
+**本周趋势**：W16 是最近三周里最像“收官周”的一周。W15 铺开的 CDS 多项目、GitHub 基础设施、知识库、周报和视频等多条主线，本周都进入“把骨架补齐、把闭环接上、把运维路打通”的阶段。最重要的结果有五个：(1) CDS 多项目 P1-P4 全量落地，项目壳、项目隔离、CRUD、scoping、routing、topology、build profile 和 completion/handoff 基本串成闭环；(2) GitHub 自动部署、Check Runs、slash 命令、live branch stream、smoke tests 与 preview readiness 继续向真正的平台自动化靠拢；(3) Mongo 认证 / 状态存储、自更新和项目级配置进一步收口，CDS 的状态后端和运维模型更稳了；(4) `cds` 统一技能、CLI 和生命周期体系成型，平台能力开始具备对外 drop-in 分发能力；(5) 周报 Agent 和 Video Agent 做了一轮明显的产品化补强，开始从“功能能用”迈向“日常更顺手”。
 
----
 
 ## 关键更新脉络
 
@@ -166,11 +166,11 @@ timeline
 
 | W15 建议方向                        | W16 实际进展                                                      |
 | ------------------------------- | ------------------------------------------------------------- |
-| P0 CDS 多项目与 GitHub 授权进入主线       | ✅ P1-P4 多项目链路与 GitHub OAuth / 绑定 / auto deploy 全部进入主线         |
-| P0 CDS 状态与鉴权持久化                 | ✅ MongoAuthStore、Mongo 主存储、persist URI 和 no-autofallback 继续推进 |
-| P1 GitHub 自动部署、Check Runs 与冒烟闭环 | ✅ Check Runs、slash 命令、smoke Phase 2-6、preview readiness 基本接通  |
-| P1 周报 / 视频 / 知识库做一轮体验收口         | ✅ 周报分享与自动保存、视频统一入口、知识库若干边界修复都已展开                              |
-| P2 统一 `cds` 技能与 drop-in 分发      | ✅ 统一 `cds` 技能、`cdscli`、sync-from-cds、下载技能包全部到位                |
+| P0 CDS 多项目与 GitHub 授权进入主线       | 是 P1-P4 多项目链路与 GitHub OAuth / 绑定 / auto deploy 全部进入主线         |
+| P0 CDS 状态与鉴权持久化                 | 是 MongoAuthStore、Mongo 主存储、persist URI 和 no-autofallback 继续推进 |
+| P1 GitHub 自动部署、Check Runs 与冒烟闭环 | 是 Check Runs、slash 命令、smoke Phase 2-6、preview readiness 基本接通  |
+| P1 周报 / 视频 / 知识库做一轮体验收口         | 是 周报分享与自动保存、视频统一入口、知识库若干边界修复都已展开                              |
+| P2 统一 `cds` 技能与 drop-in 分发      | 是 统一 `cds` 技能、`cdscli`、sync-from-cds、下载技能包全部到位                |
 
 
 ---
@@ -194,41 +194,41 @@ timeline
 
 | PR   | 标题                                             | 分类        |
 | ---- | ---------------------------------------------- | --------- |
-| #413 | CDS 多项目集成主线开闸（Railway platform integration）    | ✨ 新功能     |
-| #414 | Railway 多阶段 Dockerfile 与部署补线                   | 🔧 DevOps |
-| #416 | Railway 部署接线与环境配置修正                            | 🔧 DevOps |
-| #417 | GitHub OAuth 环境变量接入 compose                    | 🔐 权限     |
-| #418 | standalone nginx 默认配置修复与登录 502 收口              | 🔐 权限     |
-| #420 | 项目删除级联清理 branches / profiles / infra / routing | 🐛 Bug 修复 |
-| #421 | 知识库 Markdown 渲染与换行问题修复                         | 🐛 Bug 修复 |
-| #422 | Agent 指南与 release/scope 文档刷新                   | 📝 文档     |
-| #423 | 首页品牌文案与副标题收敛                                   | 🎨 UI/UX  |
-| #424 | 多项目阶段性 completion / handoff / design sync      | 📝 文档     |
-| #425 | weekly updates page 上线                         | ✨ 新功能     |
-| #426 | handoff 报告与 runbook 继续收口                       | 📝 文档     |
-| #427 | Gemini relay 模板与模型管理展示修正                       | 🧠 AI 能力  |
-| #428 | Published document store 导航范围修复                | 🐛 Bug 修复 |
-| #429 | Probe / 统计相关修补                                 | 🐛 Bug 修复 |
-| #430 | 已发布技能列表能力并入                                    | ✨ 新功能     |
-| #431 | 团队周报分享链接与使用指引弹窗重做                              | ✨ 新功能     |
-| #432 | 分享面板与公开分享主线并入                                  | ✨ 新功能     |
-| #433 | onboarding 节点布局与引导优化                           | 🎨 UI/UX  |
-| #434 | 图片上传设置与相关入口补齐                                  | ✨ 新功能     |
-| #435 | 多项目视图 parity / handoff 文档收口                    | 📝 文档     |
-| #436 | ffmpeg 容器与视频依赖接入                               | 🔧 DevOps |
-| #437 | 体验细节优化并入主线                                     | 🎨 UI/UX  |
-| #438 | 公开分享与对外展示链路补强                                  | ✨ 新功能     |
-| #440 | DocumentSyncWorker 超时拖垮 Host 的根因修复             | ⚙️ 工作流    |
-| #441 | 周报草稿自动保存                                       | ✨ 新功能     |
-| #442 | 缺陷提交与表单提示修复                                    | 🐛 Bug 修复 |
-| #443 | 计划校验与若干边界问题修复                                  | 🐛 Bug 修复 |
-| #444 | 项目创建流程修复与 project-scoped 收口                    | 🐛 Bug 修复 |
-| #445 | 质量门禁提示增强与规则瘦身                                  | 🔄 更新     |
-| #446 | OpenRouter app 归属字段支持                          | 🧠 AI 能力  |
-| #447 | CDS 多项目主线收官                                    | ✨ 新功能     |
-| #448 | 周报浏览记录弹窗边界感修复                                  | 🐛 Bug 修复 |
-| #449 | 命令面板卡片与用户空间设置收口                                | 🎨 UI/UX  |
-| #450 | GitHub × CDS 集成与 bugbot hardening              | 🐛 Bug 修复 |
-| #451 | Video Agent 统一入口与 PRD 分镜主线                     | 🏗️ 架构    |
-| #452 | GitHub phase 2 / auto deploy / check-runs 主线补齐 | ✨ 新功能     |
-| #453 | 移动首页与桌面卡片可读性样式增强                               | 🖥️ 桌面端   |
+| #413 | CDS 多项目集成主线开闸（Railway platform integration）    | 新功能 新功能     |
+| #414 | Railway 多阶段 Dockerfile 与部署补线                   | 运维 DevOps |
+| #416 | Railway 部署接线与环境配置修正                            | 运维 DevOps |
+| #417 | GitHub OAuth 环境变量接入 compose                    | 安全 权限     |
+| #418 | standalone nginx 默认配置修复与登录 502 收口              | 安全 权限     |
+| #420 | 项目删除级联清理 branches / profiles / infra / routing | 修复 Bug 修复 |
+| #421 | 知识库 Markdown 渲染与换行问题修复                         | 修复 Bug 修复 |
+| #422 | Agent 指南与 release/scope 文档刷新                   | 文档 文档     |
+| #423 | 首页品牌文案与副标题收敛                                   | 界面 UI/UX  |
+| #424 | 多项目阶段性 completion / handoff / design sync      | 文档 文档     |
+| #425 | weekly updates page 上线                         | 新功能 新功能     |
+| #426 | handoff 报告与 runbook 继续收口                       | 文档 文档     |
+| #427 | Gemini relay 模板与模型管理展示修正                       | AI AI 能力  |
+| #428 | Published document store 导航范围修复                | 修复 Bug 修复 |
+| #429 | Probe / 统计相关修补                                 | 修复 Bug 修复 |
+| #430 | 已发布技能列表能力并入                                    | 新功能 新功能     |
+| #431 | 团队周报分享链接与使用指引弹窗重做                              | 新功能 新功能     |
+| #432 | 分享面板与公开分享主线并入                                  | 新功能 新功能     |
+| #433 | onboarding 节点布局与引导优化                           | 界面 UI/UX  |
+| #434 | 图片上传设置与相关入口补齐                                  | 新功能 新功能     |
+| #435 | 多项目视图 parity / handoff 文档收口                    | 文档 文档     |
+| #436 | ffmpeg 容器与视频依赖接入                               | 运维 DevOps |
+| #437 | 体验细节优化并入主线                                     | 界面 UI/UX  |
+| #438 | 公开分享与对外展示链路补强                                  | 新功能 新功能     |
+| #440 | DocumentSyncWorker 超时拖垮 Host 的根因修复             | 工作流 工作流    |
+| #441 | 周报草稿自动保存                                       | 新功能 新功能     |
+| #442 | 缺陷提交与表单提示修复                                    | 修复 Bug 修复 |
+| #443 | 计划校验与若干边界问题修复                                  | 修复 Bug 修复 |
+| #444 | 项目创建流程修复与 project-scoped 收口                    | 修复 Bug 修复 |
+| #445 | 质量门禁提示增强与规则瘦身                                  | 更新 更新     |
+| #446 | OpenRouter app 归属字段支持                          | AI AI 能力  |
+| #447 | CDS 多项目主线收官                                    | 新功能 新功能     |
+| #448 | 周报浏览记录弹窗边界感修复                                  | 修复 Bug 修复 |
+| #449 | 命令面板卡片与用户空间设置收口                                | 界面 UI/UX  |
+| #450 | GitHub × CDS 集成与 bugbot hardening              | 修复 Bug 修复 |
+| #451 | Video Agent 统一入口与 PRD 分镜主线                     | 架构 架构    |
+| #452 | GitHub phase 2 / auto deploy / check-runs 主线补齐 | 新功能 新功能     |
+| #453 | 移动首页与桌面卡片可读性样式增强                               | 桌面端 桌面端   |

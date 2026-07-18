@@ -1,17 +1,10 @@
----
-title: 每日小贴士 / 路径式教程系统 设计
-type: design
-status: 落地
-owner: daily-tips
-updated: 2026-04-21
----
+# 每日小贴士 / 路径式教程系统 · 设计
 
-# 每日小贴士 / 路径式教程系统
+> **版本**：v1.0 | **日期**：2026-04-21 | **状态**：已落地
 
 > 右下角悬浮「教程小书」+ 落地页 SpotlightOverlay 引导 + 管理后台推送/调试闭环。
 > 2 分钟让新用户学会某个功能的标准套件。
 
----
 
 ## 1. 管理摘要(30 秒懂)
 
@@ -35,7 +28,7 @@ updated: 2026-04-21
 | 出现方式 | 右下角悬浮书,常驻 + 推送自动弹 | 不跟通知铃铛抢右上角位置;不打断当前任务 |
 | 单步 vs 多步 | **只接受 ≥ 2 步的 Tour**(规则硬约束) | "一步的事人类不需要教" |
 | 引导形式 | 脉冲光圈 + 气泡卡 + "下一步"按钮 | JetBrains 风格,用户点下一步时自动 click 当前按钮推进流程 |
-| 永久 dismiss | 🔕 按钮写 `User.DismissedTipIds` | 一条 tip 看腻了可以彻底关闭,不再打扰 |
+| 永久 dismiss |  按钮写 `User.DismissedTipIds` | 一条 tip 看腻了可以彻底关闭,不再打扰 |
 | 本 session dismiss | X 按钮写 sessionStorage | 今天不想看,明天再说 |
 
 ---
@@ -55,7 +48,7 @@ updated: 2026-04-21
 5. 收件用户下一次点书图标或 60s 轮询到,自动弹 → 看到"为你"徽章的新 tip
 
 ### 3.3 用户永久关闭
-- 🔕 → `POST /api/daily-tips/{id}/dismiss-forever` → 写 `User.DismissedTipIds` → 以后 /visible 过滤
+-  → `POST /api/daily-tips/{id}/dismiss-forever` → 写 `User.DismissedTipIds` → 以后 /visible 过滤
 
 ---
 

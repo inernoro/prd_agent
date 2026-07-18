@@ -1,6 +1,6 @@
 # LLM Gateway 统一调用 · 设计
 
-> **状态**：已实现
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
@@ -194,7 +194,7 @@
 | 文档 | 关系 |
 |------|------|
 | `design.platform.model-pool.md` | 三级调度的详细设计（模型组、策略引擎、AppCaller 注册） |
-| `design.platform.model-pool-failover.md` | 故障转移与自动探活的详细设计 |
+| `design.platform.model-pool.md` | 模型池解析、故障转移与自动探活设计 |
 | `design.emergence.system.md` | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
 | `.claude/rules/llm-gateway.md` | Gateway 使用规则（AppCallerCode 命名规范、调度优先级） |
 | `design.platform.llm-gateway-refactor.md` | Compute-then-Send 重构详细设计 |
@@ -215,7 +215,7 @@
 ### 标准调用模式
 
 ```csharp
-// ✅ 正确：先算后发
+// 是 正确：先算后发
 var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelType, expectedModel, ct);
 if (!resolution.Success) { /* 返回错误 */ }
 

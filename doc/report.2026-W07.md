@@ -1,48 +1,48 @@
 # 2026-W07 (02-09 ~ 02-15) · 周报
 
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 > **总计 239 次提交 | 349 个文件变更 | +43,370 行 / -6,539 行 | 33 个 PR 合并 (#94 ~ #126)**
->
 > **贡献者**：Claude (235 commits), Cursor Agent (4 commits)
 
----
 
 ## 一、已合并 Pull Requests (#94 ~ #126)
 
 | PR | 标题 | 分类 |
 |----|------|------|
-| #126 | tapd-data-automation — 工作流引擎全栈实现 | ⚙️ 工作流引擎 |
-| #125 | show-thinking-section — AI 思维链展示 | 🧠 AI 能力 |
-| #124 | streamline-branch-testing — 分支测试器全面升级 | 🔧 DevOps |
-| #123 | add-chinese-writing-prompts — 文学创作中文插图描述 | ✍️ 文学 Agent |
-| #122 | update-quick-ps1-watch — 后端热重载开发脚本 | 🔧 DevOps |
-| #121 | expand-dialog-box — 视觉 Agent 对话面板扩大 | 🎨 视觉 Agent |
-| #120 | fix-panel-color — 面板颜色统一修复 | 🎨 UI/UX |
-| #119 | remove-duplicate-lists — 模型池编辑去重 | 🔧 模型管理 |
-| #118 | refactor-domain-references — 消除硬编码 CDN 域名 | 🏗️ 架构 |
-| #117 | separate-nav-skin-tabs — 皮肤与导航独立 Tab | 🎨 UI/UX |
-| #116 | fix-image-copy-clipboard — Ctrl+C 画布图片复制修复 | 🐛 Bug 修复 |
-| #115 | debug-validation-error — 部署脚本 SHA256 校验改进 | 🔧 DevOps |
-| #114 | fix-ui-consistency — 对话框/按钮/登录页一致性修复 | 🎨 UI/UX |
-| #113 | unify-panel-colors — 全局面板颜色统一为 CSS 变量 | 🎨 UI/UX |
-| #112 | mobile-adaptation-planning — 移动端适配 (全量) | 📱 移动端 |
-| #111 | screenshot-tutorial-email — 截图教程邮件功能 | ✨ 新功能 |
-| #110 | fix-collapsed-elements — 系统提示词编辑器折叠修复 | 🐛 Bug 修复 |
-| #109 | desktop-attachments-skills — 桌面端附件上传 + 技能系统 | 🖥️ 桌面端 |
-| #108 | add-card-effect-toolbox — AI 百宝箱卡片效果 + 导航重构 | 🎨 UI/UX |
-| #107 | fix-admin-performance — 性能模式 + 散装玻璃迁移 | ⚡ 性能 |
-| #106 | fix-image-generation-style — 生图风格推断修复 | 🐛 Bug 修复 |
-| #105 | restore-literary-system — 恢复 PR#102 丢失的文学 Agent 功能 | 🐛 Bug 修复 |
-| #104 | add-gemini-3-pro-config — Gemini 3 Pro 图片生成模型 | 🧠 AI 能力 |
-| #103 | fix-image-url-redraw — 画布交互修复 (dialog/尺寸/Delete键) | 🐛 Bug 修复 |
-| #102 | fix-model-list-retrieval — 模型池查询服务提炼 | 🏗️ 架构 |
-| #101 | literary-prompt-insertion-system — 提示词技能化全栈架构 | ✨ 新功能 |
-| #100 | enable-developer-options — Agent 体验者权限 + 隐藏仪表盘 | 🔐 权限 |
-| #99 | webhook-notification-system — 自动化规则 + Webhook + 模板 | ✨ 新功能 |
-| #98 | weekly-summary-report — 周报生成 | 📝 文档 |
-| #97 | fix-prdagent-update — 桌面端自动更新修复 | 🐛 Bug 修复 |
-| #96 | fix-404-empty-response — 桌面端缺陷 Agent 404 修复 | 🐛 Bug 修复 |
-| #95 | enable-group-creation — 允许所有用户创建群组 | ✨ 新功能 |
-| #94 | postman-curl-env-vars — 冒烟测试环境变量 | 🔧 DevOps |
+| #126 | tapd-data-automation — 工作流引擎全栈实现 | 工作流 工作流引擎 |
+| #125 | show-thinking-section — AI 思维链展示 | AI AI 能力 |
+| #124 | streamline-branch-testing — 分支测试器全面升级 | 运维 DevOps |
+| #123 | add-chinese-writing-prompts — 文学创作中文插图描述 |  文学 Agent |
+| #122 | update-quick-ps1-watch — 后端热重载开发脚本 | 运维 DevOps |
+| #121 | expand-dialog-box — 视觉 Agent 对话面板扩大 | 界面 视觉 Agent |
+| #120 | fix-panel-color — 面板颜色统一修复 | 界面 UI/UX |
+| #119 | remove-duplicate-lists — 模型池编辑去重 | 运维 模型管理 |
+| #118 | refactor-domain-references — 消除硬编码 CDN 域名 | 架构 架构 |
+| #117 | separate-nav-skin-tabs — 皮肤与导航独立 Tab | 界面 UI/UX |
+| #116 | fix-image-copy-clipboard — Ctrl+C 画布图片复制修复 | 修复 Bug 修复 |
+| #115 | debug-validation-error — 部署脚本 SHA256 校验改进 | 运维 DevOps |
+| #114 | fix-ui-consistency — 对话框/按钮/登录页一致性修复 | 界面 UI/UX |
+| #113 | unify-panel-colors — 全局面板颜色统一为 CSS 变量 | 界面 UI/UX |
+| #112 | mobile-adaptation-planning — 移动端适配 (全量) |  移动端 |
+| #111 | screenshot-tutorial-email — 截图教程邮件功能 | 新功能 新功能 |
+| #110 | fix-collapsed-elements — 系统提示词编辑器折叠修复 | 修复 Bug 修复 |
+| #109 | desktop-attachments-skills — 桌面端附件上传 + 技能系统 | 桌面端 桌面端 |
+| #108 | add-card-effect-toolbox — AI 百宝箱卡片效果 + 导航重构 | 界面 UI/UX |
+| #107 | fix-admin-performance — 性能模式 + 散装玻璃迁移 |  性能 |
+| #106 | fix-image-generation-style — 生图风格推断修复 | 修复 Bug 修复 |
+| #105 | restore-literary-system — 恢复 PR#102 丢失的文学 Agent 功能 | 修复 Bug 修复 |
+| #104 | add-gemini-3-pro-config — Gemini 3 Pro 图片生成模型 | AI AI 能力 |
+| #103 | fix-image-url-redraw — 画布交互修复 (dialog/尺寸/Delete键) | 修复 Bug 修复 |
+| #102 | fix-model-list-retrieval — 模型池查询服务提炼 | 架构 架构 |
+| #101 | literary-prompt-insertion-system — 提示词技能化全栈架构 | 新功能 新功能 |
+| #100 | enable-developer-options — Agent 体验者权限 + 隐藏仪表盘 | 安全 权限 |
+| #99 | webhook-notification-system — 自动化规则 + Webhook + 模板 | 新功能 新功能 |
+| #98 | weekly-summary-report — 周报生成 | 文档 文档 |
+| #97 | fix-prdagent-update — 桌面端自动更新修复 | 修复 Bug 修复 |
+| #96 | fix-404-empty-response — 桌面端缺陷 Agent 404 修复 | 修复 Bug 修复 |
+| #95 | enable-group-creation — 允许所有用户创建群组 | 新功能 新功能 |
+| #94 | postman-curl-env-vars — 冒烟测试环境变量 | 运维 DevOps |
 
 ---
 
@@ -65,10 +65,10 @@
 
 | 分类 | 舱类型 | 说明 |
 |------|--------|------|
-| **触发器 (4)** | Timer | Cron 定时触发 (🚧 需 Cron 调度器) |
-| | Webhook Receiver | 外部 POST 请求触发 (🚧 需后端端点) |
+| **触发器 (4)** | Timer | Cron 定时触发 ( 需 Cron 调度器) |
+| | Webhook Receiver | 外部 POST 请求触发 ( 需后端端点) |
 | | Manual Trigger | 手动点击执行 |
-| | File Upload | 上传 CSV/JSON/TXT 数据源 (🚧 需文件选择器) |
+| | File Upload | 上传 CSV/JSON/TXT 数据源 ( 需文件选择器) |
 | **处理器 (8)** | TAPD Collector | 拉取 TAPD 缺陷/需求数据 |
 | | HTTP Request | 通用 REST API 调用 + JSONPath 提取 |
 | | Smart HTTP | 粘贴 cURL 命令，AI 自动检测分页全量拉取 |
@@ -302,11 +302,11 @@
 
 | W06 建议方向 | W07 实际进展 |
 |-------------|-------------|
-| P0 PRD Agent 体验重构 | ✅ 技能系统全栈落地，Agent 体验者权限体系 |
-| P0 总裁面板 | ✅ Team Insights 全景战力面板 + 去 Mock 化 |
-| P1 新手教程 | ✅ 教程邮件系统 (AI 生成 + 分屏布局) |
-| P2 移动端 | ✅ **超额完成** — 5-Tab 架构 + 全量页面适配 |
-| P2 工作流引擎 | ✅ **超额完成** — 完整 DAG 引擎 + 18 种舱 + 可视化画布 + SSE 实时推送 |
+| P0 PRD Agent 体验重构 | 是 技能系统全栈落地，Agent 体验者权限体系 |
+| P0 总裁面板 | 是 Team Insights 全景战力面板 + 去 Mock 化 |
+| P1 新手教程 | 是 教程邮件系统 (AI 生成 + 分屏布局) |
+| P2 移动端 | 是 **超额完成** — 5-Tab 架构 + 全量页面适配 |
+| P2 工作流引擎 | 是 **超额完成** — 完整 DAG 引擎 + 18 种舱 + 可视化画布 + SSE 实时推送 |
 
 ---
 
@@ -314,7 +314,7 @@
 
 | 优先级 | 方向 | 建议动作 |
 |--------|------|----------|
-| P0 | 工作流引擎稳定化 | 启用 Timer/Webhook/FileUpload 三个 🚧 触发器，端到端集成测试 |
+| P0 | 工作流引擎稳定化 | 启用 Timer/Webhook/FileUpload 三个  触发器，端到端集成测试 |
 | P0 | 思维链体验打磨 | Gateway thinking 隔离验证 + 前端折叠/展开交互优化 |
 | P1 | 移动端 QA | 多设备/多浏览器兼容性测试，触控交互细节打磨 |
 | P1 | 知识库 MVP | 文档上传 + 向量索引 + 对话引用 |

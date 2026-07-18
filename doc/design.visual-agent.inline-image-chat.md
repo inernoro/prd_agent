@@ -1,860 +1,115 @@
-# 内联图片聊天分析功能改进 · 设计
+# 内联图片聊天分析 · 设计
 
-> **版本**：v1.0 | **日期**：2026-01-28 | **状态**：进行中
-
----
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 管理摘要
 
-- **解决什么问题**：Visual Agent 的三个图片输入链路（左侧画布、右下角输入、首页带入）各自独立处理图片引用，数据模型割裂且 RichComposer 的 imageRefs 被浪费
-- **方案概述**：引入统一的 ImageRefResolver 门卫，所有链路经过单一入口进行验证、去重和标准化，采用契约优先 + 并行对比的渐进式迁移策略
-- **业务价值**：统一三个输入链路的图片引用处理逻辑，消除悬空引用风险，提供实时验证和 UI 警告
-- **影响范围**：prd-admin 前端（RichComposer、AdvancedVisualAgentTab、新增 imageRefResolver）
-- **预计风险**：低 — 试验场隔离验证，并行对比后渐进切换，每步可独立回滚
+- **解决的问题**：Visual Agent 的画布选择、聊天编辑器和页面带入图片曾各自解析引用，容易出现重复、悬空或文字标记与真实图片不一致。
+- **核心方案**：以结构化 `imageRefs` 为事实来源，所有入口经统一 Resolver 校验、去重和标准化，再把文本标记与图片载荷一并交给后端。
+- **当前状态**：RichComposer 结构化输出、两阶段选择、统一契约、Resolver 和后端多图意图分析均已落地。
+- **边界**：对象分割、区域级引用和任意富文本布局不是当前契约的一部分。
 
-## 一、背景与目标
+## 问题背景
 
-### 1.1 用户需求
+Visual Agent 同时存在画布图片、聊天中插入的图片 Chip 和从其他页面带入的图片。若发送时重新从文本正则推断引用，会丢失编辑器已经维护的结构化身份；若每条入口自行拼装，又会让相同图片产生不同编号或状态。
 
-用户观察到竞品图片编辑平台具有以下高级功能：
+图片引用需要同时解决两个问题：用户看到的文字位置与图片关系，以及请求真正携带的图片数据。二者必须由同一个解析结果驱动。
 
-1. **点击识别 (Click-to-Segment)**: 使用 Cmd+鼠标点击可识别图片中被点击的对象
-2. **内联图片嵌入**: 在聊天输入框中，图片/div 可以嵌入到文字中间，像文字的一部分
-3. **两阶段选择**: 先预选图片（灰色），点击输入框后确认（变成 chip）
+## 设计目标
 
-### 1.2 当前痛点
+1. 所有图片入口使用统一引用契约和解析器。
+2. 图片在编辑器中可先预选、再确认进入本轮请求。
+3. 发送前发现悬空、重复或失效引用，并给出可理解反馈。
+4. 文本中的引用编号与请求图片数组保持一一对应。
+5. 保留画布容量和历史图片等既有保护，不因内联能力绕过限制。
+6. 后端按规则优先、模型兜底的方式判断多图意图。
 
-| 痛点 | 描述 |
+## 核心决策
+
+| 决策 | 说明 |
 |------|------|
-| 参考图位置固定 | 参考图是独立 `<p>` 标签，在输入框上方，无法与文字交织 |
-| 关联性不明确 | 用户分不清图片和文字的先后顺序、引用关系 |
-| imageRefs 被浪费 | `getStructuredContent()` 返回的 imageRefs 没有被使用，改用正则重新提取 |
-| 三链路割裂 | 左侧添加、右下角输入、首页带入三个入口各自处理，体验不统一 |
+| 结构化引用优先 | 使用 `getStructuredContent()` 返回的 `imageRefs`，不以正则重新发明事实 |
+| 单一 Resolver | 校验、去重、排序、编号和错误统一在 `resolveImageRefs` 完成 |
+| 文字与载荷同源 | 展示文本和后端图片数组由同一解析结果生成 |
+| 两阶段选择 | 预选只改变候选状态，确认后才成为 Composer 内的有效引用 |
+| 规则优先 | 明确的“合成、比较、编辑”等表达先走确定性规则，不确定时再调用意图模型 |
+| 渐进扩展 | 区域框、遮罩和对象 ID 预留在后续协议，不混入当前基础引用 |
 
-### 1.3 改进目标
+## 引用契约
 
-1. **统一三个输入链路的数据模型**
-2. **正确使用 RichComposer 提供的 imageRefs**
-3. **提供实时验证，防止引用失效的图片**
-4. **不破坏现有的溢出保护和 UI 优化**
-
----
-
-## 二、现状分析
-
-### 2.1 三个输入链路
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         当前架构                                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   链路1: 左侧画布              链路2: 右下角输入           链路3: 首页带入  │
-│   ┌──────────────┐            ┌──────────────┐           ┌──────────────┐│
-│   │ onUploadImages│           │ RichComposer │           │ initialPrompt││
-│   │ setCanvas()   │           │ @img chip    │           │ [IMAGE=...]  ││
-│   │ selectedKeys  │           │ imageRefs    │           │ parseInline  ││
-│   └──────┬───────┘            └──────┬───────┘           └──────┬───────┘│
-│          │                           │                          │        │
-│          └───────────────────────────┼──────────────────────────┘        │
-│                                      ↓                                   │
-│                        ┌─────────────────────────┐                       │
-│                        │  buildRequestTextWithRefs │                      │
-│                        │  (用正则重新解析)          │                      │
-│                        └─────────────────────────┘                       │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### 2.2 关键代码位置
-
-| 文件 | 行号 | 用途 |
-|------|------|------|
-| `prd-admin/src/components/RichComposer/index.tsx` | 全文 252 行 | 富文本编辑器主体 |
-| `prd-admin/src/components/RichComposer/ImageChipNode.tsx` | 全文 238 行 | 图片 chip 节点 |
-| `prd-admin/src/components/RichComposer/ImageMentionPlugin.tsx` | 全文 340 行 | @img 下拉菜单 |
-| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 3190-3206 | onSendRich 函数 |
-| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 3074-3125 | buildRequestTextWithRefs |
-| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 3030-3057 | initialPrompt 处理 |
-| `prd-admin/src/lib/visualAgentPromptUtils.ts` | 全文 200 行 | parseInlinePrompt 等 |
-
-### 2.3 当前问题代码
-
-```typescript
-// AdvancedVisualAgentTab.tsx:3194
-// ❌ 只取了 text，完全忽略了 imageRefs
-const { text } = composer.getStructuredContent();
-
-// 然后在 buildRequestTextWithRefs 中用正则重新提取
-const refsByText = extractReferencedImagesInOrder(rawText);
-// ↑ 这是在重复工作！ImageChipNode 已经有完整的元数据
-```
-
-### 2.4 已有的溢出保护（不可破坏）
-
-```
-ImageChipNode 的保护措施:
-┌─────────────────────────────────────────────────────────────────┐
-│  chip 结构:                                                     │
-│  ┌──────┬──────┬───────────────┐                                │
-│  │序号  │ 缩略图│ 标签          │                                │
-│  │14px  │ 14px │ max 80px      │                                │
-│  │固定  │ 固定 │ JS截断+ellipsis│                                │
-│  └──────┴──────┴───────────────┘                                │
-│                                                                 │
-│  保护1: displayLabel = label.slice(0, 6) + '...'  (JS 截断)     │
-│  保护2: maxWidth: 80, textOverflow: ellipsis      (CSS 截断)    │
-│  保护3: flexShrink: 0                             (不被压缩)    │
-│  保护4: 容器 overflowY: 'auto', maxHeight: 120    (滚动)        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**重要约定**: 任何修改都不得破坏上述保护措施。
-
----
-
-## 三、改进计划
-
-### 3.1 核心思想：契约优先 + 单一数据源
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         目标架构                                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   链路1        链路2        链路3                                        │
-│     │            │            │                                         │
-│     └────────────┼────────────┘                                         │
-│                  ↓                                                      │
-│   ┌──────────────────────────────────────┐                              │
-│   │  ImageRefResolver (统一门卫)          │  ← 单一入口                  │
-│   │                                      │                              │
-│   │  职责:                               │                              │
-│   │  1. 验证 refId 是否在 canvas 范围内  │                              │
-│   │  2. 合并多来源的引用（去重、排序）    │                              │
-│   │  3. 处理旧格式兼容                   │                              │
-│   │  4. 返回标准化的结果                 │                              │
-│   └──────────────────────────────────────┘                              │
-│                  ↓                                                      │
-│   ┌──────────────────────────────────────┐                              │
-│   │  sendText() / runFromText()          │                              │
-│   └──────────────────────────────────────┘                              │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 新增文件清单
-
-| 文件 | 用途 | 状态 |
-|------|------|------|
-| `prd-admin/src/lib/imageRefContract.ts` | 类型定义（契约） | ✅ 已创建 |
-| `prd-admin/src/lib/imageRefResolver.ts` | 统一解析器 | ✅ 已创建 |
-| `prd-admin/src/lib/imageRefResolver.test.ts` | 单元测试 | ⏳ 待创建 |
-| `prd-admin/src/pages/_dev/RichComposerLab.tsx` | 试验场页面（独立） | ✅ 已创建 |
-| `prd-admin/src/pages/lab-workshop/WorkshopLabTab.tsx` | 试验车间（Lab 内嵌） | ✅ 已创建 |
-
----
-
-## 四、实施步骤与进度
-
-### Step 1: 创建试验场（不碰现有代码）
-- **状态**: ✅ 已完成
-- **风险**: 零
-- **回滚**: 删除文件
-- **内容**:
-  - ✅ 创建 `/lab?tab=workshop` 试验车间
-  - ✅ 创建 `/_dev/rich-composer-lab` 独立页面
-  - ✅ 模拟画布、窄容器测试、边界测试用例
-  - ✅ 实时显示 `getStructuredContent()` 输出
-  - ✅ 验收检查清单
-
-### Step 2: 创建契约和解析器（不碰 UI）
-- **状态**: ✅ 已完成
-- **风险**: 零
-- **回滚**: 删除文件
-- **内容**:
-  - ✅ 新增 `imageRefContract.ts` - 类型定义
-  - ✅ 新增 `imageRefResolver.ts` - 统一解析器
-  - ⏳ 新增测试文件（可选）
-
-### Step 3: 并行运行新旧逻辑
-- **状态**: ✅ 已完成
-- **风险**: 零
-- **回滚**: 删除代码
-- **内容**:
-  - ✅ 在 `onSendRich` 中并行调用 `resolveImageRefs`
-  - ✅ 仅 `console.log` 对比结果，不实际切换
-  - ⏳ 收集对比数据（待用户测试）
-
-### Step 4: 确认结果一致后切换
-- **状态**: ⏳ 待开始
-- **风险**: 低
-- **回滚**: 恢复旧代码
-- **内容**:
-  - 切换到新解析器
-  - 保留旧代码注释
-
-### Step 5: 添加 UI 实时验证
-- **状态**: ⏳ 待开始
-- **风险**: 低
-- **回滚**: 删除组件
-- **内容**:
-  - 失效 chip 红色边框提示
-  - 发送前警告
-
-### Step 6: 清理旧代码
-- **状态**: ⏳ 待开始
-- **风险**: 中
-- **回滚**: git revert
-- **内容**:
-  - 删除 `buildRequestTextWithRefs`
-  - 删除 `extractReferencedImagesInOrder`
-
----
-
-## 五、难点与风险
-
-### 5.1 已识别的难点
-
-| 难点 | 描述 | 应对策略 |
-|------|------|----------|
-| chip 超出输入框宽度 | 图片标签+名称长度可能超出容器 | **已有保护**，不做改动 |
-| 旧 [IMAGE] 格式兼容 | 首页带入可能使用旧格式 | 在 resolver 中统一处理 |
-| 三链路体验统一 | 左侧/右下/首页三入口各自处理 | 强制所有入口经过统一 resolver |
-| refId 悬空引用 | 用户删除图片后 chip 仍引用 | 实时验证 + UI 警告 |
-
-### 5.2 绝对不能做的事
-
-1. **不得修改 ImageChipNode 的现有样式**（溢出保护）
-2. **不得删除 JS 层面的标签截断逻辑**（`displayLabel = label.slice(0, 6) + '...'`）
-3. **不得在未验证的情况下直接切换逻辑**
-4. **不得破坏现有的三个链路功能**
-
-### 5.3 风险缓解
-
-- **试验场隔离**: 所有新功能先在 `/_dev/` 页面验证
-- **并行对比**: 新旧逻辑同时运行，console.log 对比
-- **渐进切换**: 每一步都可独立回滚
-- **测试覆盖**: 必须通过所有边界测试
-
----
-
-## 六、验收标准
-
-### 6.1 功能验收
-
-| 测试用例 | 预期结果 | 状态 |
-|----------|----------|------|
-| 链路1: 选中单张图片发送 | refs 包含该图片 | ⏳ |
-| 链路1: 选中多张图片发送 | refs 按 selectedKeys 顺序 | ⏳ |
-| 链路2: 输入 @img1 发送 | refs 包含 refId=1 的图片 | ⏳ |
-| 链路2: 输入多个 @img 发送 | refs 按文本中出现顺序 | ⏳ |
-| 链路3: 从首页带 [IMAGE=...] 进来 | 正确解析并清理旧格式 | ⏳ |
-| 边界: chip 引用已删除的图片 | 产生警告，refs 中不包含 | ⏳ |
-| 边界: 空白消息 | 返回 ok=false，errors 包含提示 | ⏳ |
-| 边界: 重复引用 | 自动去重 | ⏳ |
-
-### 6.2 UI 验收
-
-| 测试用例 | 预期结果 | 状态 |
-|----------|----------|------|
-| 超长标签 (50 个字) | 正常截断，不溢出 | ⏳ |
-| 多个 chip 连续 | 自动换行，不超出容器 | ⏳ |
-| chip + 长文字混合 | 排版正常 | ⏳ |
-| 窄容器 (200px) | 不破坏布局 | ⏳ |
-| 引用不存在的 @img99 | 显示警告样式 | ⏳ |
-
-### 6.3 兼容性验收
-
-| 测试用例 | 预期结果 | 状态 |
-|----------|----------|------|
-| 旧格式 `[IMAGE=url\|name]` | 正确解析 | ⏳ |
-| 新格式 `[IMAGE src=... name=...]` | 正确解析 | ⏳ |
-| 现有功能不受影响 | 所有现有流程正常 | ⏳ |
-
----
-
-## 七、约定与规则
-
-### 7.1 代码约定
-
-```typescript
-// 1. 所有图片引用必须经过 ImageRefResolver
-// ✅ 正确
-const result = resolveImageRefs({ rawText, chipRefs, selectedKeys, canvas });
-if (result.ok) await send(result);
-
-// ❌ 错误：绕过 resolver
-const refs = extractReferencedImagesInOrder(text);
-```
-
-```typescript
-// 2. 优先级顺序
-// chipRefs > 文本中的 @imgN > selectedKeys > inlineImage
-```
-
-```typescript
-// 3. 类型定义必须使用契约文件
-import type { ResolvedImageRef, ImageRefResolveResult } from '@/lib/imageRefContract';
-```
-
-### 7.2 测试约定
-
-- 每个新功能必须有对应的单元测试
-- 边界情况必须覆盖
-- 测试文件命名: `*.test.ts`
-
-### 7.3 文档约定
-
-- 任何改动必须更新本文档的进度
-- 新增文件必须在"新增文件清单"中登记
-- 验收标准完成后标记 ✅
-
----
-
-## 八、技术选型
-
-### 8.1 已确认使用
-
-| 技术 | 用途 | 理由 |
-|------|------|------|
-| Lexical | 富文本编辑器 | 已在使用 |
-| DecoratorNode | ImageChipNode | 已实现 |
-| 原生 ResizeObserver | 容器尺寸监听 | 项目中已有使用 |
-| 纯 CSS max-width | chip 宽度限制 | 已有，不做改动 |
-
-### 8.2 暂不实现（未来考虑）
-
-| 功能 | 理由 |
+| 概念 | 用途 |
 |------|------|
-| Click-to-Segment (SAM) | 需要 GPU 服务，工作量大，优先级 P3 |
-| 拖拽图片到输入框 | 当前优先解决数据流问题 |
-| 多图权重控制 | 超出当前范围 |
-
----
-
-## 九、业务逻辑规范
-
-### 9.1 两阶段选择机制
-
-用户选择图片分为两个阶段：**预选** 和 **确认**。
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          两阶段选择流程                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  阶段1: 预选 (Pre-select)                                                   │
-│  ──────────────────────────────────────────────────────────────────────    │
-│  触发方式:                                                                  │
-│    • 单击图片 → 预选该图片                                                  │
-│    • 鼠标拖拽框选 → 预选多张图片                                             │
-│                                                                             │
-│  视觉状态:                                                                  │
-│    ┌──────┐  ┌──────┐  ┌──────┐                                            │
-│    │ 🖼   │  │ 🖼   │  │ 🖼   │                                            │
-│    │      │  │ ░░░░ │  │ ░░░░ │  ← 灰色边框/遮罩 = 预选中                   │
-│    │ #1   │  │ #2 ✓ │  │ #3 ✓ │                                            │
-│    └──────┘  └──────┘  └──────┘                                            │
-│    (未选)    (预选)    (预选)                                               │
-│                                                                             │
-│  特性:                                                                      │
-│    • 预选状态可取消（再次点击取消）                                          │
-│    • 预选状态可替换（点击其他图片）                                          │
-│    • 支持多选（框选或连续单击不同图片）                                       │
-│                                                                             │
-│  阶段2: 确认选择 (Confirm)                                                  │
-│  ──────────────────────────────────────────────────────────────────────    │
-│  触发条件:                                                                  │
-│    • 点击输入框（focus）                                                    │
-│    • 或开始输入文字                                                         │
-│                                                                             │
-│  结果:                                                                      │
-│    1. 预选的图片 → 转换为 chip 插入输入框光标位置                            │
-│    2. 预选状态清空                                                          │
-│    3. 图片恢复为可选状态（可以继续选择更多）                                  │
-│                                                                             │
-│  输入框状态:                                                                │
-│    ┌────────────────────────────────────────────────────────────┐          │
-│    │ [2][🖼][人物图] [3][🖼][产品图] |                           │          │
-│    └────────────────────────────────────────────────────────────┘          │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 9.2 图片状态定义
-
-| 状态 | 视觉样式 | 含义 | 可执行操作 |
-|------|----------|------|------------|
-| 未选中 | 普通边框 | 可被选择 | 单击预选、框选预选 |
-| 预选中 | 灰色边框 + 半透明遮罩 | "我打算用这张" | 取消、替换、确认 |
-| 已确认 | 蓝紫色 chip 在输入框中 | 已插入消息 | 在输入框中删除 |
-
-### 9.3 快捷键规划
-
-| 快捷键 | 当前功能 | 未来功能（保留） |
-|--------|----------|------------------|
-| 单击图片 | 预选该图片 | - |
-| 拖拽框选 | 预选多张图片 | - |
-| Cmd/Ctrl + 单击 | **保留** | 多层级选择（识别图片中的元素） |
-| Esc | 取消预选 | - |
-
-> **注意**: `Cmd/Ctrl + 单击` 保留给未来的"多层级选择"功能（Click-to-Segment），
-> 可识别图片中的具体元素（如"触摸屏显示器"），暂不实现。
-
----
-
-## 十、后端请求规范
-
-### 10.1 核心问题
-
-**如何让 AI 模型理解每张图片的顺序和用户意图？**
-
-单纯发送图片 URL 列表，AI 无法理解：
-- 哪张是要修改的目标图
-- 哪张是风格参考
-- 用户期望的操作是什么
-
-### 10.2 行业做法对比
-
-| 平台 | 方案 | 优点 | 缺点 |
-|------|------|------|------|
-| **Midjourney** | 位置+权重语法 `img1::0.5 img2::1.5` | 精确控制 | 学习成本高 |
-| **Leonardo** | 拖拽到不同槽位 (Reference/Target) | 直观 | 需要预定义槽位 |
-| **GPT-4V/Claude** | 在 prompt 中说明角色 | 灵活 | 依赖语言描述准确性 |
-| **ControlNet** | 不同输入通道 (depth/pose/edge) | 专业 | 仅适用于特定场景 |
-
-### 10.3 我们的方案：结构化图片引用
-
-采用 **结构化 prompt + 图片元数据** 的方式，确保 AI 能理解图片角色。
-
-#### 10.3.1 请求数据结构
-
-```typescript
-interface ImageGenRequest {
-  /** 用户输入的原始文本（包含 @imgN 引用） */
-  prompt: string;
-
-  /** 图片引用列表（按用户引用顺序） */
-  imageRefs: Array<{
-    /** 引用 ID（对应 @img1, @img2...） */
-    refId: number;
-    /** 图片 URL */
-    url: string;
-    /** 图片角色（可选，由 AI 推断或用户指定） */
-    role?: 'target' | 'reference' | 'style' | 'background';
-    /** 用户给的标签/描述 */
-    label?: string;
-    /** 图片中被选中的区域（未来 SAM 功能） */
-    region?: {
-      point?: { x: number; y: number };
-      mask?: string;  // base64 或 URL
-      elementLabel?: string;  // "触摸屏显示器"
-    };
-  }>;
-
-  /** 生成尺寸 */
-  size?: string;
-}
-```
-
-#### 10.3.2 发送给 AI 的 Prompt 格式
-
-```
-用户请求: 把 @img1 的背景换成 @img2 的风格
-
-【图片引用（按顺序）】
-- @img1: 生产设备.jpg（目标图 - 要修改的图片）
-- @img2: 风景背景.jpg（参考图 - 风格参考）
-
-【任务理解】
-请将第一张图（生产设备）的背景替换为第二张图（风景）的风格。
-保留前景的生产设备不变，仅修改背景区域。
-```
-
-#### 10.3.3 图片角色推断规则
-
-当用户没有明确指定角色时，按以下规则推断：
-
-| 场景 | 推断规则 |
-|------|----------|
-| 单图 + "修改/换/改" | 该图为 target |
-| 单图 + "生成类似/参考" | 该图为 reference |
-| 双图 + "把A换成B" | A=target, B=reference |
-| 双图 + "A的风格+B的内容" | A=style, B=target |
-| 多图无明确指示 | 第一张为 target，其余为 reference |
-
-### 10.4 未来扩展：区域选择
-
-当实现 Click-to-Segment (SAM) 功能后，可以精确指定图片中的元素：
-
-```typescript
-// 用户 Cmd+点击了图片中的"触摸屏显示器"
-imageRefs: [{
-  refId: 1,
-  url: '...',
-  region: {
-    point: { x: 0.35, y: 0.42 },  // 点击位置（0-1）
-    elementLabel: '触摸屏显示器',  // SAM 识别结果
-    mask: 'data:image/png;base64,...'  // 分割掩码
-  }
-}]
-```
-
-Prompt 会变成：
-```
-用户请求: 把 @img1 中的触摸屏显示器换成更大的屏幕
-
-【图片引用】
-- @img1: 生产线照片
-  - 选中区域: 触摸屏显示器 (位置: 35%, 42%)
-
-【任务理解】
-请将图片中标记的"触摸屏显示器"替换为更大的屏幕，保持其他元素不变。
-```
-
----
-
-## 十一、意图分析 Agent 规划
-
-> **状态**: ⏳ 待实现
-> **优先级**: P2
-> **依赖**: Step 3 完成后
-
-### 11.1 设计原则
-
-**不在前端代码中做意图切词/分析**，而是：
-- **单图场景**：沿用原有逻辑，直接发送，不额外调用 Agent
-- **多图场景**：交给后端 Agent 分析意图，前端只负责收集数据
-
-### 11.2 流程设计
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        前端处理流程                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   用户输入: "把 @img1 和 @img2 融合成新图"                        │
-│                    ↓                                            │
-│   ┌────────────────────────────────────────┐                    │
-│   │  ImageRefResolver 解析                  │                    │
-│   │  → refs: [{refId:1}, {refId:2}]        │                    │
-│   │  → cleanText: "把 和 融合成新图"        │                    │
-│   └────────────────────────────────────────┘                    │
-│                    ↓                                            │
-│   ┌────────────────────────────────────────┐                    │
-│   │  判断: refs.length > 1 ?               │                    │
-│   └────────────────────────────────────────┘                    │
-│          ↓ NO (单图)          ↓ YES (多图)                      │
-│   ┌──────────────────┐  ┌──────────────────────────┐            │
-│   │  原有逻辑         │  │  调用 visual-intent Agent │            │
-│   │  直接生成图片     │  │                          │            │
-│   │                  │  │  POST /api/visual-agent/ │            │
-│   │                  │  │       analyze-intent     │            │
-│   └──────────────────┘  └──────────────────────────┘            │
-│                                   ↓                             │
-│                    ┌──────────────────────────────┐             │
-│                    │  Agent 返回结构化意图         │             │
-│                    │  {                           │             │
-│                    │    action: "blend",          │             │
-│                    │    target: {refId: 1},       │             │
-│                    │    references: [{refId: 2}], │             │
-│                    │    enhancedPrompt: "..."     │             │
-│                    │  }                           │             │
-│                    └──────────────────────────────┘             │
-│                                   ↓                             │
-│                    ┌──────────────────────────────┐             │
-│                    │  使用增强后的 prompt 生成图片  │             │
-│                    └──────────────────────────────┘             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 11.3 后端 Agent 设计
-
-**位置**: `VisualAgentController.cs`
-
-**新增端点**: `POST /api/visual-agent/analyze-intent`
-
-```csharp
-// 请求
-{
-  "text": "把这两张图融合",
-  "imageRefs": [
-    { "refId": 1, "url": "...", "label": "风景图" },
-    { "refId": 2, "url": "...", "label": "人物图" }
-  ]
-}
-
-// 响应
-{
-  "action": "blend",           // blend/replace/style_transfer/composite
-  "target": { "refId": 1 },    // 要修改的图
-  "references": [{ "refId": 2 }],  // 参考图
-  "styleRef": null,            // 风格参考（如有）
-  "enhancedPrompt": "将风景图与人物图融合，保留人物主体，背景替换为风景",
-  "confidence": 0.85
-}
-```
-
-**Agent 注册**: 在 `PromptStages` 中注册 `visual-intent-analyzer`
-
-### 11.4 前端调用时机
-
-```typescript
-// AdvancedVisualAgentTab.tsx
-const sendText = async (rawText: string) => {
-  const result = resolveImageRefs({ rawText, chipRefs, selectedKeys, canvas });
-
-  // 单图：原有逻辑
-  if (result.refs.length <= 1) {
-    await runFromText(rawText, ...);
-    return;
-  }
-
-  // 多图：调用意图分析 Agent
-  const intent = await api.post('/api/visual-agent/analyze-intent', {
-    text: result.cleanText,
-    imageRefs: result.refs.map(r => ({
-      refId: r.refId,
-      url: r.src,
-      label: r.label,
-    })),
-  });
-
-  // 使用增强后的 prompt
-  await runFromText(intent.enhancedPrompt, ...);
-};
-```
-
-### 11.5 实施步骤
-
-| 步骤 | 内容 | 状态 |
-|------|------|------|
-| 1 | 完成 Step 3（并行对比新旧解析器） | ✅ 已完成 |
-| 2 | 后端创建 `MultiImageDomainService` | ✅ 已完成 |
-| 3 | 后端 Controller/Worker 支持 `imageRefs` 参数 | ✅ 已完成 |
-| 4 | 前端传递 `imageRefs` 数组 | ✅ 已完成 |
-| 5 | 测试：单图/双图/多图场景 | ⏳ 待测试 |
-
-### 11.6 后端多图处理架构（已实现）
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        多图处理流程                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   前端                          后端                             │
-│   ──────                        ──────                          │
-│   用户输入: "@img16@img17"       Controller:                     │
-│   imageRefs: [                   - 接收 imageRefs 数组           │
-│     {refId:16, sha256:...},      - 存入 ImageGenRun             │
-│     {refId:17, sha256:...}                                      │
-│   ]                                     ↓                       │
-│                                  Worker:                        │
-│                                  - MultiImageDomainService      │
-│                                  - 解析 @imgN 引用               │
-│                                  - 构建增强 prompt               │
-│                                  - 加载图片资产                   │
-│                                  - 调用生图 API                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 11.7 Agent Prompt 模板（修订版）
-
-**设计原则变更**：不返回 JSON，直接返回可用的 prompt
-
-```
-你是一个视觉创作助手。用户在对话框中输入了包含图片引用的请求。
-
-【用户输入】
-{用户原始 prompt}
-
-【图片对照表】
-- @img1 → 图片URL: {url1}, 标签: {label1}
-- @img2 → 图片URL: {url2}, 标签: {label2}
-...
-
-【你的任务】
-将用户的描述中的 @imgN 标记替换为对图片的清晰描述，使生图模型能准确理解每张图片的作用。
-保留用户的原始意图和措辞，不要过度解释或改写。
-
-【输出】
-直接输出处理后的提示词，不要输出 JSON 或其他格式。
-```
-
-**示例**：
-- 用户输入: `把 @img1 的风格应用到 @img2`
-- 输出: `把第一张图（风景背景.jpg）的风格应用到第二张图（产品图.jpg）`
-
-### 11.8 关键文件清单
-
-| 文件 | 用途 | 状态 |
-|------|------|------|
-| `PrdAgent.Core/Models/MultiImage/ImageRefInput.cs` | 图片引用输入模型 | ✅ 新增 |
-| `PrdAgent.Core/Models/MultiImage/MultiImageParseResult.cs` | 解析结果模型 | ✅ 新增 |
-| `PrdAgent.Core/Interfaces/IMultiImageDomainService.cs` | 领域服务接口 | ✅ 新增 |
-| `PrdAgent.Infrastructure/Services/MultiImageDomainService.cs` | 领域服务实现 | ✅ 新增 |
-| `PrdAgent.Api.Tests/Services/MultiImageDomainServiceTests.cs` | 单元测试 | ✅ 新增 |
-| `PrdAgent.Core/Models/ImageGenRun.cs` | 添加 ImageRefs 字段 | ✅ 修改 |
-| `PrdAgent.Api/Controllers/Api/ImageMasterController.cs` | 接收 imageRefs | ✅ 修改 |
-| `PrdAgent.Api/Services/ImageGenRunWorker.cs` | 处理多图 | ✅ 修改 |
-| `prd-admin/src/services/contracts/visualAgent.ts` | 前端类型定义 | ✅ 修改 |
-| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 传递 imageRefs | ✅ 修改 |
-
----
-
-## 十二、参考资料
-
-### 12.1 竞品分析
-
-| 功能 | Midjourney | Leonardo | 我们当前 | 改进后 |
-|------|------------|----------|----------|--------|
-| 内联图片引用 | ✅ | ✅ | ⚠️ @img chip | ✅ 完善数据流 |
-| 多图混合 | ✅ | ✅ | ⚠️ 支持但体验差 | ✅ 清晰顺序 |
-| 区域选择 | ✅ | ✅ | ❌ | ❌ (未来) |
-
-### 12.2 相关文档
-
-- `agent.literary-agent.md` - 文学创作 Agent 设计
-- `rule.app-feature-definition.md` - 应用功能定义规范
-- `2.srs.md` - 系统需求规格说明书
-
----
-
-## 十三、技术经验沉淀
-
-### 13.1 Lexical DecoratorNode 状态更新
-
-**问题**: 修改 DecoratorNode 内部状态后，React 组件不重新渲染
-
-**原因**: Lexical 的 `updateDOM` 返回 `false` 时，不会触发 React 组件重新挂载
-
-**解决方案**: **替换节点** 而非修改状态
-```typescript
-// ❌ 错误：只修改状态，不会触发重渲染
-node.setReady(true);
-
-// ✅ 正确：创建新节点替换旧节点
-const newNode = $createImageChipNode({
-  canvasKey: node.getCanvasKey(),
-  refId: node.getRefId(),
-  src: node.getSrc(),
-  label: node.getLabel(),
-  ready: true,  // 新状态
-});
-node.replace(newNode);
-```
-
-### 13.2 Chip 状态 API 设计
-
-**设计决策**: 采用 `ready` 而非 `pending` 作为状态属性
-
-| 方案 | 默认值 | 灰色 | 蓝色 | 问题 |
-|------|--------|------|------|------|
-| `pending: true/false` | false | `pending: true` | 无属性 | 新元素默认是蓝色，不安全 |
-| `ready: true/false` | false | 无属性 | `ready: true` | 新元素默认是灰色，安全 ✅ |
-
-**最终 API**:
-```typescript
-// 插入待选（灰色）- 默认状态
-composer.insertImageChip(option);
-
-// 插入就绪（蓝色）- 明确指定
-composer.insertImageChip(option, { ready: true });
-
-// 将所有待选标记为就绪
-composer.markChipsReady();
-```
-
-### 13.3 无选区时插入节点
-
-**问题**: 页面刷新后首次点击图片，chip 不插入
-
-**原因**: Lexical 编辑器没有有效的 selection，`$isRangeSelection(selection)` 返回 `false`
-
-**解决方案**: 先 `selectEnd()` 再插入
-```typescript
-let selection = $getSelection();
-if (!$isRangeSelection(selection)) {
-  const root = $getRoot();
-  root.selectEnd();  // 将光标移到末尾
-  selection = $getSelection();
-}
-// 现在可以安全插入
-```
-
-### 13.4 类型安全的节点遍历
-
-**问题**: `para.getChildren()` TypeScript 报错 "不存在于 LexicalNode"
-
-**原因**: 只有 ElementNode 有 `getChildren` 方法
-
-**解决方案**: 使用 `$isElementNode` 类型守卫
-```typescript
-import { $isElementNode } from 'lexical';
-
-for (const para of root.getChildren()) {
-  if (!$isElementNode(para)) continue;  // 类型守卫
-  const children = para.getChildren();  // 现在类型安全
-  // ...
-}
-```
-
----
-
-## 十四、变更记录
-
-| 日期 | 变更内容 | 作者 |
-|------|----------|------|
-| 2026-01-31 | 实现多图后端架构：MultiImageDomainService + Worker 处理 | AI Assistant |
-| 2026-01-31 | 实现前端 imageRefs 传递：Controller DTO + 前端请求构建 | AI Assistant |
-| 2026-01-31 | 修订意图分析 Prompt：不返回 JSON，直接输出可用提示词 | AI Assistant |
-| 2026-01-29 | 添加技术经验沉淀（第十三章） | AI Assistant |
-| 2026-01-29 | 重构 chip 状态 API：pending → ready | AI Assistant |
-| 2026-01-29 | 添加合并计划书和多图 AI 交互计划书 | AI Assistant |
-| 2026-01-28 | 添加意图分析 Agent 规划（第十一章） | AI Assistant |
-| 2026-01-28 | 实现两阶段选择功能（预选→确认） | AI Assistant |
-| 2026-01-28 | 完成 Step 2：创建契约和解析器 | AI Assistant |
-| 2026-01-28 | 修复试验场测试用例（@img 解析为 chip） | AI Assistant |
-| 2026-01-28 | 添加业务逻辑规范：两阶段选择、后端请求规范 | AI Assistant |
-| 2026-01-28 | 完成 Step 1：创建试验车间 | AI Assistant |
-| 2026-01-27 | 创建文档 | AI Assistant |
-
----
-
-## 附录：契约类型定义（预览）
-
-```typescript
-// imageRefContract.ts
-
-/**
- * 统一的图片引用描述
- */
-export interface ResolvedImageRef {
-  canvasKey: string;
-  refId: number;
-  src: string;
-  label: string;
-  source: 'chip' | 'selected' | 'inline' | 'text';
-}
-
-/**
- * 解析结果
- */
-export interface ImageRefResolveResult {
-  ok: boolean;
-  cleanText: string;
-  refs: ResolvedImageRef[];
-  warnings: string[];
-  errors: string[];
-}
-
-/**
- * 统一入口的输入参数
- */
-export interface ImageRefResolveInput {
-  rawText: string;
-  chipRefs?: Array<{ canvasKey: string; refId: number }>;
-  selectedKeys?: string[];
-  inlineImage?: { src: string; name?: string };
-  canvas: CanvasImageItem[];
-}
-```
+| Canvas Item | 画布中的真实图片，包含稳定 canvas key 与资产信息 |
+| Chip Ref | Composer 中的结构化引用，指向 canvas key 和显示编号 |
+| Resolve Input | 当前文字、结构化引用和可用画布图片集合 |
+| Resolve Result | 有效引用、规范文本、警告、错误和可发送图片顺序 |
+
+引用身份使用稳定 key，不使用数组下标作为长期身份。显示编号可以随本轮有效引用重新排列，但 key 与真实资产映射不能变化。
+
+## 两阶段交互
+
+1. 用户在画布中选择图片，图片进入预选状态。
+2. 用户确认或把图片插入 Composer，生成结构化 Chip。
+3. Composer 负责维护 Chip 的增删、顺序和序列化。
+4. 发送时读取纯文本和结构化引用。
+5. Resolver 用当前画布集合校验引用并形成规范顺序。
+6. 有阻断错误时停止发送并定位问题；只有可降级警告时继续。
+7. 请求同时携带规范文本和按相同顺序加载的图片数据。
+
+用户删除 Chip 后，该图片不再属于本轮请求；删除画布图片后，残留 Chip 必须在发送前被识别为悬空引用。
+
+## Resolver 规则
+
+| 规则 | 处理 |
+|------|------|
+| 相同 key 重复出现 | 保留首次有效引用并报告重复 |
+| key 不存在于画布 | 标记悬空，阻止静默发送错误图片 |
+| 显示编号冲突 | 由 Resolver 重新编号，不信任旧编号 |
+| 文字有标记但无结构化引用 | 报告不一致，不从文字猜测资产 |
+| 结构化引用存在但文字缺标记 | 由统一文本构建器补齐规范标记 |
+| 超出允许数量 | 按现有容量规则拒绝或提示，不绕过上限 |
+
+## 后端多图处理
+
+后端收到解析完成的图片集合后：
+
+1. 解析文本中的图片标记并绑定已加载图片。
+2. 对明确意图执行规则匹配，例如比较、多图合成或基于参考图编辑。
+3. 规则无法确定时调用多图意图分析能力。
+4. 将意图结果交给 ImageGen Run/Worker 选择对应生成路径。
+5. 参考图加载不完整时明确失败，不静默降级为纯文生图。
+
+## 失败与兼容
+
+- Resolver 错误在调用模型前暴露，避免用错误资产产生不可逆结果。
+- 首页带入、画布选择和 Composer 插入最终都必须转换为相同契约。
+- 旧文本中的引用标记可以用于展示兼容，但不能替代结构化引用事实。
+- 参考图片下载、持久化与消息回放由图片引用基础设施负责，本文不重复定义。
+- Click-to-Segment、区域蒙版和对象级引用需要新的资产与坐标契约，仍属于后续能力。
+
+## 事实来源
+
+| 文件 | 职责 |
+|------|------|
+| `prd-admin/src/lib/imageRefContract.ts` | 前端图片引用契约 |
+| `prd-admin/src/lib/imageRefResolver.ts` | 校验、去重和规范化 |
+| `prd-admin/src/components/RichComposer/index.tsx` | 结构化图片 Chip 编辑器 |
+| `prd-admin/src/components/RichComposer/TwoPhaseRichComposer.tsx` | 两阶段选择封装 |
+| `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx` | 画布、Composer 与发送链路集成 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs` | 多图意图分析契约 |
+| `prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs` | 规则匹配与模型兜底 |
+| `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs` | 参考图加载与生成编排 |
+
+## 验证重点
+
+1. 三个图片入口对同一组图片产生相同引用顺序。
+2. 重复、删除和重新排序 Chip 后，请求文本与图片数组仍一致。
+3. 画布图片被删除时，悬空 Chip 阻止发送并可定位。
+4. 多图比较、合成和编辑意图优先命中规则，模糊表达才调用模型。
+5. 参考图缺失时不降级为文生图。
+
+## 关联文档
+
+- `design.platform.image-ref-and-persistence.md`：图片引用与消息持久化。
+- `design.visual-agent.multi-image-compose.md`：多图合成能力。
+- `design.visual-agent.multi-image-vision-api.md`：多图理解与协议边界。

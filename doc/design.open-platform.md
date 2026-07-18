@@ -1,402 +1,120 @@
 # 开放平台功能概要 · 设计
 
-> **版本**：v1.0 | **日期**：2025-01-10 | **状态**：已实现并测试
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+## 管理摘要
 
-## 一、管理摘要
+- **解决的问题**：外部系统需要以稳定协议调用 PRD 问答、通用聊天和图片生成能力，同时受到身份、模型、配额与审计约束。
+- **核心方案**：开放平台分为“应用型 PRD 对话代理”和“通用 Agent OpenAPI”两条兼容 OpenAI 的接入面，共用 API Key 鉴权和 LLM Gateway。
+- **当前状态**：应用管理、PRD 对话、通用 Chat Completion、生图、模型列表、密钥自省、配额、限流和调用日志均已落地。
+- **关键边界**：两类密钥的用途和数据模型不同，不能把应用配置与通用 M2M Scope 混用。
 
-- **解决什么问题**：第三方应用无法以标准化方式调用 PRD Agent 的 PRD 问答和 LLM 能力
-- **方案概述**：提供兼容 OpenAI 格式的开放 API，支持 API Key 认证、PRD 问答模式和 LLM 代理模式两种工作模式
-- **业务价值**：将 PRD 问答能力开放给外部系统（CI/CD、文档平台、协作工具），统一管理团队 LLM 调用和 Token 用量
-- **影响范围**：后端（OpenPlatformChatController、API Key 认证中间件）、管理后台（应用管理 + 日志查看）
-- **预计风险**：中 — 涉及外部 API 暴露，需关注安全（API Key 管理、速率限制、权限隔离）
+## 问题背景
 
----
+早期开放平台只提供绑定用户和群组的 PRD 问答应用。后来外部 Agent 还需要通用聊天、生图、海鲜市场和其他按 Scope 开放的能力，因此增加了 `AgentApiKey` 与标准 `/api/v1` 网关。
 
-## 功能简介
+如果把两套能力合并成一个万能 Key，会让 PRD 专属配置、Webhook、模型白名单和资源 Scope 相互污染。当前设计保留两个清晰接入面，并在认证层按密钥前缀和存储类型分流。
 
-开放平台（Open Platform）允许第三方应用通过 API Key 认证，以兼容 OpenAI 的方式调用 PRD Agent 服务，支持两种工作模式：
+## 设计目标
 
-1. **PRD 问答模式**（`model=prdagent`）：基于群组 PRD 文档的智能问答
-2. **LLM 代理模式**（`model=其他`）：直接转发到主模型，作为通用 LLM 服务
+1. 外部调用方可使用 OpenAI 兼容客户端接入。
+2. PRD 问答能绑定用户、群组、系统提示和通知策略。
+3. 通用网关以最小 Scope、模型白名单、限流和每日配额控制风险。
+4. 所有模型请求经 LLM Gateway 调度并记录实际模型。
+5. API Key 只存哈希，明文只在创建时返回。
+6. 流式与非流式响应保持可诊断的错误和用量语义。
 
-## 核心价值
+## 两类接入面
 
-### 对外部开发者
-- 使用熟悉的 OpenAI SDK 即可接入
-- 无需关心底层 PRD 解析和会话管理
-- 统一的 API 接口，降低集成成本
+| 能力 | 应用型开放平台 | Agent OpenAPI |
+|------|----------------|---------------|
+| 凭据 | `OpenPlatformApp` 的历史 `sk-` Key | `AgentApiKey` 的 `sk-ak-` Key |
+| 主要用途 | 绑定 PRD 和群组的对话代理 | 通用 M2M Chat、生图和按 Scope 开放接口 |
+| 路由前缀 | `/api/v1/open-platform` | `/api/v1` |
+| 权限 | 应用启用状态、绑定用户与群组 | Scope、有效期、撤销状态与资源权限 |
+| 模型 | `prdagent` 模式或应用代理策略 | 每个 Key 的聊天与生图模型白名单 |
+| 专属配置 | 系统提示、群上下文、Webhook、累计 Token 配额 | 每日配额、速率限制、模型清单与密钥自省 |
 
-### 对系统管理员
-- 灵活的用户和群组绑定
-- 完整的调用日志和 Token 统计
-- API Key 管理（生成、重新生成、禁用）
-- 支持测试 Key 用于开发调试
+## 应用型 PRD 对话
 
-### 对产品团队
-- 将 PRD 问答能力开放给外部系统
-- 支持集成到 CI/CD、文档平台、协作工具
-- 提供通用 LLM 代理服务，统一管理 Token 用量
+`OpenPlatformApp` 是有业务配置的对话代理，不只是鉴权载体。
 
-## 架构设计
+| 配置 | 用途 |
+|------|------|
+| `BoundUserId` | 以哪个用户身份访问文档与会话 |
+| `BoundGroupId` | PRD 问答使用的群组上下文 |
+| `IgnoreUserSystemPrompt` | 是否拒绝外部覆盖系统提示 |
+| `DisableGroupContext` | 是否排除群历史但保留 PRD |
+| `ConversationSystemPrompt` | 应用专属对话约束 |
+| Webhook 配置 | 完成、错误和额度事件通知 |
+| Token 配额 | 应用累计用量上限和预警 |
 
-### 请求流程
+调用 `model=prdagent` 时进入 PRD 问答路径；其他模型行为受应用代理模式和服务端配置约束。外部请求不能绕过绑定用户的文档权限。
 
-```
-外部应用
-    ↓ (HTTP POST + API Key)
-API Key 认证中间件
-    ↓ (验证 & 提取 Claims)
-OpenPlatformChatController
-    ↓ (根据 model 分流)
-    ├─ model=prdagent → PRD 问答模式
-    │   ├─ 验证群组权限
-    │   ├─ 创建会话
-    │   ├─ 调用 ChatService
-    │   └─ 返回 SSE 流
-    │
-    └─ model=其他 → LLM 代理模式
-        ├─ 转换消息格式
-        ├─ 调用 ILLMClient
-        └─ 返回 SSE 流
-```
+## Agent OpenAPI
 
-### 数据模型
+通用网关使用 `open-api:call` Scope，提供：
 
-#### OpenPlatformApp（应用）
-```csharp
-{
-    Id: string,                    // 应用唯一标识
-    AppName: string,               // 应用名称
-    Description: string?,          // 应用描述
-    BoundUserId: string,           // 绑定的用户 ID（必选）
-    BoundGroupId: string?,         // 绑定的群组 ID（可选）
-    ApiKeyHash: string,            // API Key 哈希值（SHA256）
-    IsActive: bool,                // 是否启用
-    CreatedAt: DateTime,           // 创建时间
-    LastUsedAt: DateTime?,         // 最后使用时间
-    TotalRequests: long            // 总请求数
-}
-```
-
-#### OpenPlatformRequestLog（请求日志）
-```csharp
-{
-    Id: string,                    // 日志唯一标识
-    AppId: string,                 // 应用 ID
-    RequestId: string,             // 请求 ID
-    StartedAt: DateTime,           // 请求开始时间
-    EndedAt: DateTime,             // 请求结束时间
-    DurationMs: long,              // 耗时（毫秒）
-    Method: string,                // HTTP 方法
-    Path: string,                  // 请求路径
-    StatusCode: int,               // HTTP 状态码
-    ErrorCode: string?,            // 错误码
-    UserId: string?,               // 用户 ID
-    GroupId: string?,              // 群组 ID
-    SessionId: string?,            // 会话 ID
-    InputTokens: int?,             // 输入 Token 数
-    OutputTokens: int?             // 输出 Token 数
-}
-```
-
-### 认证机制
-
-#### API Key 格式
-- 格式：`sk-` + 32位随机字符（总长 35 字符）
-- 示例：`sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6`
-- 存储：仅存储 SHA256 哈希值
-- 传输：`Authorization: Bearer {apiKey}`
-
-#### 测试 Key
-- 配置文件：`appsettings.json` → `OpenPlatform:TestApiKey`
-- 默认值：`sk-test-permanent-key-for-testing-only`
-- 用途：开发调试，无需数据库验证
-- 绑定：`test-app-id` / `test-user-id`
-
-### 权限模型
-
-```
-应用 (OpenPlatformApp)
-    ├─ 绑定用户（必选）
-    │   └─ 所有请求以该用户身份执行
-    │
-    └─ 绑定群组（可选）
-        ├─ 已绑定：仅可访问该群组
-        └─ 未绑定：可访问用户所属的任何群组（需在请求中指定）
-```
-
-## API 接口
-
-### Chat Completion 接口
-
-**端点**：`POST /api/v1/open-platform/v1/chat/completions`
-
-**认证**：`Authorization: Bearer {apiKey}`
-
-**请求体**：
-```json
-{
-  "model": "prdagent",           // 模型名称（prdagent=PRD问答，其他=LLM代理）
-  "messages": [                  // 消息列表
-    {
-      "role": "user",            // 角色：user / assistant
-      "content": "问题内容"       // 消息内容
-    }
-  ],
-  "groupId": "group-123",        // 群组 ID（PRD 模式必填）
-  "stream": true,                // 是否流式响应（默认 true）
-  "temperature": 0.7             // 温度参数（可选）
-}
-```
-
-**响应格式**（SSE 流）：
-```
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","created":1234567890,"model":"prdagent","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","created":1234567890,"model":"prdagent","choices":[{"index":0,"delta":{"content":"回答内容"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","created":1234567890,"model":"prdagent","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
-
-data: [DONE]
-```
-
-### 管理后台接口
-
-**基础路径**：`/api/v1/admin/open-platform`
-
-| 方法 | 路径 | 说明 |
+| 方法 | 路径 | 用途 |
 |------|------|------|
-| GET | `/apps` | 获取应用列表（分页） |
-| POST | `/apps` | 创建应用 |
-| PUT | `/apps/{id}` | 更新应用 |
-| DELETE | `/apps/{id}` | 删除应用 |
-| POST | `/apps/{id}/regenerate-key` | 重新生成 API Key |
-| POST | `/apps/{id}/toggle` | 启用/禁用应用 |
-| GET | `/logs` | 获取调用日志 |
+| `POST` | `/api/v1/chat/completions` | 流式或非流式聊天 |
+| `POST` | `/api/v1/images/generations` | 图片生成 |
+| `GET` | `/api/v1/models` | 当前 Key 可用模型列表 |
+| `GET` | `/api/v1/key` | 密钥有效期、白名单、配额与当日用量自省 |
 
-## 使用场景
+模型选择遵循白名单：Key 已绑定模型时，调用方只能在清单内选择；未填写模型时使用清单首项。白名单为空则回退到平台默认能力池，外部传入的任意模型名不能突破服务端策略。
 
-### 场景 1：PRD 问答集成
+## 鉴权与授权
 
-**需求**：将 PRD 问答能力集成到团队的文档平台
+1. 认证中间件读取 API Key，并按前缀查找 `AgentApiKey` 或 `OpenPlatformApp`。
+2. 校验哈希、启用状态、撤销、过期和宽限期。
+3. `AgentApiKey` 生成 Owner 身份和 Scope Claims，但不伪造普通 JWT 的 `sub`。
+4. Controller 或权限中间件校验具体 Scope。
+5. 资源层继续校验 Owner、应用绑定和业务权限。
 
-**实现**：
-1. 管理员创建应用，绑定文档平台的服务账号
-2. 绑定到特定群组（如"产品需求评审群"）
-3. 文档平台使用 API Key 调用 `model=prdagent` 接口
-4. 用户在文档平台直接提问，后台转发到 PRD Agent
+Scope 只代表调用某类接口的资格，不自动授予任意数据访问权。
 
-**示例代码**：
-```python
-from openai import OpenAI
+## 配额、限流与输入保护
 
-client = OpenAI(
-    api_key="sk-your-api-key",
-    base_url="https://your-domain.com/api/v1/open-platform/v1"
-)
+- 通用网关按 Key 执行请求速率和每日 Token 配额预占。
+- 模型调用失败时按规则退还尚未消耗的请求配额。
+- 输入字符数和原始请求体均有上限，坏请求在占额前拒绝。
+- 响应提供标准状态码、错误码、重试提示和限流头。
+- 宽限期内的 Key 可继续调用，但响应头明确提示续期。
+- 服务器已接收的模型调用不因客户端断开而取消，遵循服务器权威性设计。
 
-response = client.chat.completions.create(
-    model="prdagent",
-    messages=[
-        {"role": "user", "content": "这个功能的验收标准是什么？"}
-    ],
-    extra_body={"groupId": "group-123"},
-    stream=True
-)
+## 审计与可观测性
 
-for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")
-```
+每次调用记录 Key、请求 ID、能力类型、请求模型、实际模型、成功状态、状态码、错误码、Token、耗时和回退信息。日志不得保存 API Key 明文或完整敏感提示内容。
 
-### 场景 2：LLM 代理服务
+管理后台提供应用、密钥、日志、授权和 OpenAPI 配置视图。通用 Key 可由用户创建、续期、撤销和删除，管理员可管理模型绑定与用量策略。
 
-**需求**：统一管理团队的 LLM 调用，避免每个应用单独配置 API Key
+## 事实来源
 
-**实现**：
-1. 管理员创建应用，绑定到各个业务系统的服务账号
-2. 不绑定群组（LLM 代理模式不需要）
-3. 业务系统使用 API Key 调用 `model=gpt-4` 等接口
-4. PRD Agent 后端统一转发到主模型
+| 文件 | 职责 |
+|------|------|
+| `prd-api/src/PrdAgent.Api/Controllers/OpenPlatform/OpenPlatformChatController.cs` | 应用型 PRD 对话兼容接口 |
+| `prd-api/src/PrdAgent.Api/Controllers/OpenApiController.cs` | 通用 Chat、生图、模型与密钥自省 |
+| `prd-api/src/PrdAgent.Api/Authentication/ApiKeyAuthenticationHandler.cs` | 两类 Key 认证分流 |
+| `prd-api/src/PrdAgent.Api/Authorization/RequireScopeAttribute.cs` | Scope 声明 |
+| `prd-api/src/PrdAgent.Core/Models/OpenPlatformApp.cs` | 应用型代理配置 |
+| `prd-api/src/PrdAgent.Core/Models/AgentApiKey.cs` | 通用 M2M 密钥、白名单与配额 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IOpenApiUsageService.cs` | 用量、限流与回退通知 |
+| `prd-admin/src/pages/OpenPlatformTabsPage.tsx` | 管理后台开放平台入口 |
+| `prd-admin/src/pages/open-platform/OpenApiPanel.tsx` | 通用 OpenAPI 管理界面 |
 
-**示例代码**：
-```javascript
-import OpenAI from 'openai';
+## 验证重点
 
-const client = new OpenAI({
-  apiKey: 'sk-your-api-key',
-  baseURL: 'https://your-domain.com/api/v1/open-platform/v1'
-});
+1. 两类 Key 只能进入各自允许的接口和数据范围。
+2. 撤销、过期、宽限期和 Scope 不足返回稳定错误。
+3. 模型白名单外请求被拒绝，未绑定白名单时只走默认池。
+4. 限流与配额在流式、非流式和失败路径上保持一致。
+5. 客户端断开后，上游调用和用量记录仍能正确收口。
+6. 日志可定位实际模型和回退原因，但不泄漏密钥。
 
-const stream = await client.chat.completions.create({
-  model: 'gpt-4',
-  messages: [{ role: 'user', content: '你好' }],
-  stream: true
-});
+## 关联文档
 
-for await (const chunk of stream) {
-  const content = chunk.choices[0]?.delta?.content;
-  if (content) {
-    process.stdout.write(content);
-  }
-}
-```
-
-### 场景 3：CI/CD 集成
-
-**需求**：在 CI/CD 流程中自动检查 PRD 完整性
-
-**实现**：
-1. 管理员创建 CI 专用应用，绑定到 CI 服务账号
-2. 绑定到"主干需求群"
-3. CI 脚本在每次 PRD 更新后自动提问
-4. 根据回答判断 PRD 是否完整
-
-**示例脚本**：
-```bash
-#!/bin/bash
-
-API_KEY="sk-ci-api-key"
-API_BASE="https://your-domain.com/api/v1/open-platform/v1"
-GROUP_ID="main-requirements-group"
-
-# 检查 PRD 完整性
-response=$(curl -s -X POST "$API_BASE/chat/completions" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"model\": \"prdagent\",
-    \"groupId\": \"$GROUP_ID\",
-    \"messages\": [{
-      \"role\": \"user\",
-      \"content\": \"请列出 PRD 中缺失的关键信息\"
-    }],
-    \"stream\": false
-  }")
-
-# 解析响应并判断
-if echo "$response" | grep -q "缺失"; then
-  echo "PRD 不完整，请补充"
-  exit 1
-else
-  echo "PRD 检查通过"
-  exit 0
-fi
-```
-
-## 安全考虑
-
-### API Key 管理
-- **生成**：使用加密安全的随机数生成器
-- **存储**：仅存储 SHA256 哈希值，永不存储明文
-- **传输**：仅通过 HTTPS 传输
-- **展示**：仅在创建/重新生成时显示一次
-- **日志**：脱敏显示（`sk-***{后8位}`）
-
-### 权限控制
-- **用户绑定**：所有请求以绑定用户身份执行
-- **群组隔离**：绑定群组后仅可访问该群组
-- **成员验证**：未绑定群组时，验证用户是否为群组成员
-- **禁用机制**：可随时禁用应用，立即生效
-
-### 速率限制
-- **建议配置**：
-  - 每个应用：100 请求/分钟
-  - 每个用户：1000 请求/小时
-  - 全局：10000 请求/小时
-- **实现方式**：Redis + 滑动窗口
-
-### 日志审计
-- **记录内容**：
-  - 请求时间、耗时、状态码
-  - 应用 ID、用户 ID、群组 ID
-  - Token 用量、错误码
-  - 请求体（脱敏）
-- **保留期限**：30 天（TTL 索引自动清理）
-- **访问控制**：仅管理员可查看
-
-## 监控指标
-
-### 关键指标
-- **调用量**：总请求数、成功率、失败率
-- **性能**：平均响应时间、P95/P99 延迟
-- **Token 用量**：输入 Token、输出 Token、总用量
-- **错误分布**：按错误码统计
-- **应用排行**：按调用量排序
-
-### 告警规则
-- 错误率 > 5%
-- P99 延迟 > 10s
-- 单应用调用量异常（> 1000/分钟）
-- API Key 认证失败率 > 10%
-
-## 测试指南
-
-详细测试用例请参考：
-- [完整测试指南](./open-platform-complete-test.md)
-- [测试脚本](../e2e-tests/test-open-platform.sh)（Bash）
-- [测试脚本](../e2e-tests/test-open-platform.ps1)（PowerShell）
-
-### 快速测试
-
-```bash
-# 使用测试 Key 进行快速验证
-export TEST_KEY="sk-test-permanent-key-for-testing-only"
-
-# LLM 代理模式
-curl -X POST http://localhost:5000/api/v1/open-platform/v1/chat/completions \
-  -H "Authorization: Bearer $TEST_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4",
-    "messages": [{"role": "user", "content": "你好"}],
-    "stream": true
-  }'
-
-# PRD 问答模式（需要先创建群组）
-curl -X POST http://localhost:5000/api/v1/open-platform/v1/chat/completions \
-  -H "Authorization: Bearer $TEST_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "prdagent",
-    "groupId": "your-group-id",
-    "messages": [{"role": "user", "content": "项目的核心功能是什么？"}],
-    "stream": true
-  }'
-```
-
-## 未来规划
-
-### 短期（v1.1）
-- [ ] 速率限制实现
-- [ ] API Key 过期时间配置
-- [ ] Webhook 通知（调用成功/失败）
-- [ ] 更详细的 Token 用量统计图表
-
-### 中期（v1.2）
-- [ ] 支持更多 OpenAI 接口（embeddings、images）
-- [ ] 批量请求接口
-- [ ] 自定义系统提示词
-- [ ] API Key 权限范围配置
-
-### 长期（v2.0）
-- [ ] 多租户支持
-- [ ] 计费系统集成
-- [ ] API 版本管理
-- [ ] GraphQL 接口
-
-## 相关文档
-
-- [开放平台实施总结](./open-platform-implementation-summary.md)
-- [开放平台完整测试指南](./open-platform-complete-test.md)
-- [SRS - 软件需求规格说明书](./2.srs.md)
-- [PRD - 产品需求文档](./3.prd.md)
-- [开发指南](./4.dev.md)
-
-## 变更历史
-
-| 版本 | 日期 | 变更内容 | 作者 |
-|------|------|----------|------|
-| v1.0 | 2025-01-10 | 初始版本，包含 PRD 问答和 LLM 代理两种模式 | - |
+- `design.open-platform.open-api.md`：通用 OpenAI 兼容网关详细设计。
+- `guide.open-platform.open-api.md`：外部调用指南。
+- `design.platform.external-authorization.md`：外部身份与资源授权。
+- `design.skill.marketplace-open-api.md`：海鲜市场开放接口。

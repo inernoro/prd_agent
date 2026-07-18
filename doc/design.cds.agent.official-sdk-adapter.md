@@ -1,4 +1,6 @@
-# design.cds.agent.official-sdk-adapter
+# CDS Agent 官方 SDK Adapter · 设计
+
+> **版本**：v1.0 | **日期**：2026-05-17 | **状态**：已落地
 
 | 字段 | 内容 |
 | --- | --- |

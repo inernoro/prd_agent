@@ -1,4 +1,6 @@
-# debt.workflow-agent.task-tree
+# Workflow Agent 任务树 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-05-30 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -7,7 +9,6 @@
 | 关联 | `prd-api/.../Controllers/Api/TaskTreeController.cs`、`prd-admin/src/pages/task-tree/`、`changelogs/2026-05-30_task-tree-agent.md` |
 | 提出 | 用户需求：方便地（含对话）摘出个人任务与卡点，按树枝方式呈现进度，给自己/上级看 |
 
----
 
 ## 进度
 

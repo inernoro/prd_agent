@@ -1,268 +1,109 @@
-# 模型中继虚拟平台 (Exchange as Virtual Platform) · 设计
+# 模型中继虚拟平台设计 · 设计
 
-> **版本**：v1.0 | **日期**：2026-04-16 | **状态**：已实现
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
-- **解决什么问题**：模型中继（Exchange）原本是"单入口单别名"的代理，不能携带多个模型；在平台列表中以魔法字符串 `__exchange__` 标识，用户无法自定义名称，UI 展示混乱。
-- **方案概述**：将每条 Exchange 升级为"虚拟平台"——拥有用户自定义名称、管理多个 `ExchangeModel` 子条目，在平台管理页与真实平台并排展示，模型池可直接按 Exchange.Id 绑定。
-- **业务价值**：用户可以用一条 Gemini 中继挂载 5 个模型，给平台取有意义的名字（"我的 Gemini"），在模型管理、模型池、可用模型对话框中均能正常选用。
-- **影响范围**：`ModelExchange`（数据模型）、`ExchangeController`、`PlatformsController`、`ModelResolver`、`LlmGateway`（URL 模板/鉴权），前端 ExchangeManagePage、ModelManagePage、ModelPoolManagePage、PlatformAvailableModelsDialog。
-- **预计风险**：低 — 严格向后兼容，旧 `__exchange__` 模型池条目通过双路径 ModelResolver 继续工作。
-
----
+- **解决什么问题**：非标准模型服务、ASR、图片和视频 API 需要接入统一模型池，但各自的 URL、认证和协议不同。
+- **当前方案**：每条 Exchange 作为可命名的虚拟平台，挂载多个模型，由 transformer 将平台标准请求转换为目标协议。
+- **池化方式**：新模型池使用真实 Exchange ID 作为 PlatformId；`__exchange__` 只保留旧数据兼容。
+- **边界**：Exchange 是协议适配和路由能力，不是绕过模型池、权限、日志和密钥治理的任意 HTTP 代理。
 
-## 2. 背景与问题
+## 1. 核心对象
 
-### 2.1 旧设计痛点
+| 对象 | 责任 |
+|------|------|
+| ModelExchange | 名称、目标 URL、认证方案、转换器、配置和模型列表 |
+| ExchangeModel | 模型 ID、显示名、模型类型和启用状态 |
+| ExchangeTransformer | URL 解析、请求转换、响应转换和额外 Header |
+| Async Exchange Transformer | submit、query 等异步目标协议的轮询适配 |
+| ExchangeTransformerRegistry | 登记并按 transformer type 查找适配器 |
 
-旧 Exchange 是"一条记录 = 一个代理端点 + 一个别名"：
+一条 Exchange 可以挂载多个同类模型。目标 URL 可以包含受控 `{model}` 占位符，实际值只能来自该 Exchange 的有效模型列表。
 
-```
-ModelExchange {
-  ModelAlias: "gemini-2.0-flash"          // 单别名
-  ModelAliases: ["gemini-1.5-pro"]        // 附加别名
-  TargetUrl: "https://generativelanguage.googleapis.com/..."
-}
-```
+## 2. 虚拟平台语义
 
-模型池条目通过硬编码魔法字符串引用中继：
+平台列表把真实模型平台和 Exchange 统一展示，但保留 `kind` 或等价类型用于管理差异。对模型池而言，Exchange ID 是稳定平台标识，模型 ID 标识其子模型。
 
-```
-ModelGroupItem {
-  PlatformId: "__exchange__",   // ← 硬编码魔法字符串，所有中继共享
-  ModelId: "gemini-2.0-flash"
-}
-```
+旧模型池可能使用 `PlatformId=__exchange__` 并仅保存模型别名。Resolver 在兼容期可以按模型反查 Exchange，但新写入不得继续制造该魔法标识。
 
-痛点：
-1. 所有中继共用同一 `__exchange__` 标识，无法区分"我的 Gemini"和"公司 OpenRouter"
-2. 模型只能以字符串别名方式存储，无法携带 DisplayName、ModelType 等元数据
-3. UI 中不支持用户给中继起名字，平台列表里显示"模型中继 (Exchange) · __exchange__"，极不友好
-4. URL 无法携带 `{model}` 模板，每个模型需要不同中继条目
+当多个旧 Exchange 包含相同别名时，兼容解析存在歧义，应要求迁移到真实 Exchange ID，而不是任意选择第一条。
 
-### 2.2 目标
+## 3. 转换器契约
 
-- 每条 Exchange 作为独立虚拟平台（有真实 Id、有自定义 Name）
-- Exchange 可挂载 N 个 `ExchangeModel`（ModelId + DisplayName + ModelType + Enabled）
-- URL 支持 `{model}` 占位符（在 Gateway 分发时替换为实际 ModelId）
-- 向后兼容旧 `__exchange__` 模型池条目
+| 能力 | 约束 |
+|------|------|
+| ResolveTargetUrl | 基于受控模板和标准请求确定目标，不接受任意客户端 URL |
+| TransformRequest | 从平台标准结构生成目标协议请求 |
+| TransformResponse | 把目标响应转换回平台标准结果 |
+| GetExtraHeaders | 只生成该协议允许的附加 Header |
+| Async polling | 有上限、超时、取消和阶段日志 |
 
----
+当前 registry 包含 passthrough、Gemini Native、Fal 图片、豆包 ASR、豆包流式 ASR 和火山视频等适配器。具体列表以 `ExchangeTransformerRegistry` 为准。
 
-## 3. 数据模型
+转换器只处理协议差异，不读取业务数据库、不决定用户权限，也不自行解析第二次模型。
 
-### 3.1 ModelExchange（MongoDB 集合：`model_exchanges`）
+## 4. 认证与密钥
 
-```
-ModelExchange {
-  Id: string (MongoDB ObjectId)
-  Name: string                       // 用户自定义虚拟平台名，如 "我的 Gemini"
-  TargetUrl: string                  // 支持 {model} 占位符
-  TargetApiKeyEncrypted: string
-  TargetAuthScheme: string           // bearer / x-api-key / x-goog-api-key / ...
-  TransformerType: string            // none / gemini-native / ...
-  TransformerConfig: JsonObject?
-  Enabled: bool
+Exchange 保存认证方案和加密凭据，支持 Bearer、API key Header 等明确模式。服务端根据受支持方案设置 Header，客户端不能提交任意 Header 名和值并要求透传。
 
-  // 新字段（主数据）
-  Models: List<ExchangeModel>        // 挂载的模型列表（空则降级读旧字段）
+- API 返回不包含明文密钥。
+- 测试和正式调用使用同一认证构造规则。
+- 日志记录认证方案，不记录凭据。
+- transformer config 中的敏感字段按密钥规则处理。
+- 未知认证方案和转换器类型在保存或执行前拒绝。
 
-  // 旧字段（兼容）
-  ModelAlias: string?                // 单模型旧格式
-  ModelAliases: List<string>?        // 多别名旧格式
+## 5. 模型池与解析
 
-  CreatedAt / UpdatedAt: DateTime
-}
+1. 模型池成员保存 Exchange ID 和 ExchangeModel.ModelId。
+2. Resolver 校验 Exchange 已启用且模型存在、启用、类型匹配。
+3. 解析结果携带目标 URL、认证方案、转换器类型和脱敏配置。
+4. Gateway 在发送阶段使用该解析结果，不重新选择 Exchange。
+5. 调用成功或失败回写对应池成员健康状态和日志。
 
-ExchangeModel {
-  ModelId: string        // 发送给上游 API 的真实模型 ID
-  DisplayName: string?   // 用户友好显示名称
-  ModelType: string      // chat / vision / generation / tts / asr / embedding
-  Description: string?
-  Enabled: bool
-}
-```
+Exchange 模型与真实平台模型遵循同一 appCallerCode、模型类型、能力和健康治理。
 
-**`GetEffectiveModels()` 扩展方法**：若 `Models` 非空则直接返回；否则从旧字段 `ModelAlias`/`ModelAliases` 合成 ExchangeModel 列表（惰性迁移，不回写数据库）。
+## 6. 管理与测试
 
-### 3.2 ModelGroupItem（模型池条目）
+管理页支持创建、编辑、启停、模型列表、模板和单模型试调用。试调用必须显示解析后的目标、转换器、HTTP 状态、阶段和脱敏响应摘要。
 
-```
-ModelGroupItem {
-  PlatformId: string   // 新：Exchange.Id（真实 MongoDB ID）
-                       // 旧："__exchange__"（仍然支持，向后兼容）
-  ModelId: string      // ExchangeModel.ModelId
-}
-```
+模板只是配置起点。用户保存前仍需确认目标 URL、模型、认证和 transformer config，模板更新不能静默覆盖已有 Exchange。
 
----
+流式 ASR、异步 ASR、图片和视频协议应使用各自专用测试路径，不能用普通 chat 成功作为全部能力可用的证据。
 
-## 4. URL 模板机制
+## 7. 安全边界
 
-`TargetUrl` 支持 `{model}` 占位符，Gateway 在分发时替换：
+- TargetUrl 只允许受支持协议和经过校验的目标，阻止本机与内网 SSRF。
+- `{model}` 之外的模板变量必须登记并校验。
+- 响应和日志设置大小上限，避免目标返回大体积数据拖垮网关。
+- 异步轮询有最大次数和总时长，客户端取消向下传播。
+- transformer 异常返回结构化错误，不把原始敏感响应直接暴露给用户。
+- 删除 Exchange 前检查模型池引用，不能制造悬挂成员。
 
-```
-https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-↓
-https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
-```
+## 8. 当前事实入口
 
-实现：`LlmGateway.ResolveEndpointTemplate(urlTemplate, actualModel)`。
+| 能力 | 事实入口 |
+|------|----------|
+| Exchange 模型 | `prd-api/src/PrdAgent.Core/Models/ModelExchange.cs` |
+| 管理和测试 API | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` |
+| 平台聚合 | `prd-api/src/PrdAgent.Api/Controllers/Api/PlatformsController.cs` |
+| 转换器接口 | `prd-api/src/PrdAgent.Core/Interfaces/IExchangeTransformer.cs` |
+| 转换器 registry | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/Transformers/ExchangeTransformerRegistry.cs` |
+| 模型解析 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
+| 网关发送 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
+| 管理页面 | `prd-admin/src/pages/ExchangeManagePage.tsx` |
 
-若 URL 不含 `{model}`，保持原样（单模型场景向后兼容）。
+## 9. 验收标准
 
----
+- 新模型池成员保存真实 Exchange ID，不再生成 `__exchange__`。
+- 多模型 Exchange 能按模型 ID 解析不同目标 URL。
+- 未知转换器、认证方案和模型在发送前被拒绝。
+- 试调用与正式调用使用相同转换和认证规则。
+- 异步与流式协议有持续进度、取消和超时。
+- 日志可追踪 Exchange 和 transformer，但不泄露密钥。
 
-## 5. 鉴权扩展
+## 关联文档
 
-`SetAuthHeader()` 新增两种 Gemini 鉴权方案：
-
-| TargetAuthScheme | HTTP 头 |
-|---|---|
-| `x-goog-api-key` | `x-goog-api-key: {key}` |
-| `xgoogapikey`（别名） | `x-goog-api-key: {key}` |
-
----
-
-## 6. 协议转换器：GeminiNativeTransformer
-
-Gemini REST API 与 OpenAI API 格式不兼容，引入 `GeminiNativeTransformer`：
-
-**请求转换（OpenAI → Gemini）**：
-
-```
-messages[{role, content}]  →  contents[{role, parts:[{text}]}]
-system prompt              →  contents[0].parts[0].text（prepend）
-image_url                  →  inlineData / fileData
-response_modalities        →  generationConfig.responseModalities: ["IMAGE","TEXT"]
-```
-
-**响应转换（Gemini → OpenAI）**：
-
-```
-candidates[0].content.parts[{text}]      →  choices[0].message.content
-candidates[0].content.parts[{inlineData}] →  content[{type:"image_url",image_url:{url:"data:…"}}]
-usageMetadata.{promptTokenCount,…}        →  usage.{prompt_tokens,…}
-```
-
-注册方式：`TransformerRegistry` 中注册为 `"gemini-native"`。
-
----
-
-## 7. API 设计
-
-### 7.1 GET /api/mds/platforms — 返回真实 + 虚拟中继
-
-```json
-[
-  { "id": "abc123", "name": "我的 Gemini", "platformType": "exchange",
-    "kind": "exchange", "isVirtual": true, "transformerType": "gemini-native", ... },
-  { "id": "xyz789", "name": "OpenAI", "platformType": "openai",
-    "kind": "real", "isVirtual": false, ... }
-]
-```
-
-前端通过 `kind` 字段区分，不再依赖 `id === "__exchange__"`。
-
-### 7.2 GET /api/mds/platforms/{id}/available-models
-
-- 若 `id` 是 Exchange.Id → 返回该中继的 ExchangeModel 列表
-- 否则 → 返回真实平台的 LLMModel 列表（原有逻辑不变）
-
-### 7.3 GET /api/mds/exchanges/for-pool
-
-每个启用的 Exchange 下每个启用的 ExchangeModel 展开为一条选项：
-
-```json
-{
-  "modelId": "gemini-2.5-flash",
-  "displayName": "Gemini 2.5 Flash",
-  "platformId": "abc123",          // Exchange.Id（真实 ID）
-  "platformName": "我的 Gemini",
-  "legacyPlatformId": "__exchange__"
-}
-```
-
-### 7.4 POST /api/mds/exchanges/{id}/models/{modelId}/try-it
-
-一键体验端点：用指定模型走完整转换管线，返回与 TestExchange 一致的 `ExchangeTestResult`。
-
----
-
-## 8. ModelResolver 双路径查找
-
-```
-请求到达 ModelResolver.FindExchangeForPoolItemAsync(poolItem)
-│
-├─ poolItem.PlatformId == "__exchange__"（旧格式）
-│   └─ 在所有 Exchange 中找 GetEffectiveModels().Any(m => m.ModelId == poolItem.ModelId)
-│
-└─ poolItem.PlatformId 是具体 Exchange.Id（新格式）
-    └─ 直接按 Exchange.Id 查找，再验证模型存在
-```
-
----
-
-## 9. 前端架构变化
-
-### 9.1 Platform 类型扩展
-
-```ts
-interface Platform {
-  // 新增字段
-  kind?: 'real' | 'exchange';
-  isVirtual?: boolean;
-  transformerType?: string;
-}
-```
-
-### 9.2 ModelManagePage
-
-- 并行拉取 `getExchanges()`，合成 `exchangeSynthModels`（id = `exchange::{exchangeId}::{modelId}`，platformId = Exchange.Id）
-- `isExchangePlatform` 标志：隐藏 API 密钥/地址内联编辑，改为「前往编辑」跳转按钮
-- 右键菜单：Exchange 平台只显示「在「模型中继」页编辑」（跳转 tab）
-- 启用切换：Exchange 平台重定向至中继管理 tab，不调用真实平台 API
-
-### 9.3 ModelPoolManagePage
-
-不再前端合成 `__exchange__` 虚拟平台——后端 `/api/mds/platforms` 直接返回 Exchange 作为虚拟平台条目。
-
-### 9.4 PlatformAvailableModelsDialog
-
-通过 `platform.kind === 'exchange'` 判断虚拟平台，两种平台统一调用 `/api/mds/platforms/{id}/available-models`。
-
----
-
-## 10. 预置模板：gemini-native
-
-`ExchangeTemplates.All` 包含 `gemini-native` 模板，预置 5 个结构化模型：
-
-| ModelId | DisplayName | ModelType |
-|---|---|---|
-| `gemini-2.5-pro` | Gemini 2.5 Pro | chat |
-| `gemini-2.5-flash` | Gemini 2.5 Flash | chat |
-| `gemini-2.0-flash` | Gemini 2.0 Flash | chat |
-| `gemini-2.5-flash-image-preview` | Gemini 2.5 Flash（图像生成） | generation |
-| `gemini-2.5-pro-image-preview` | Gemini 2.5 Pro（图像生成） | generation |
-
-URL 模板：`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-鉴权：`x-goog-api-key`
-
----
-
-## 11. 向后兼容策略
-
-| 场景 | 旧数据 | 处理方式 |
-|---|---|---|
-| 模型池条目 `PlatformId = "__exchange__"` | 继续工作 | ModelResolver 双路径查找 |
-| Exchange 无 `Models` 字段 | 只有 `ModelAlias`/`ModelAliases` | `GetEffectiveModels()` 惰性合成，不回写 |
-| 前端使用 `id === "__exchange__"` 判断 | 旧代码 | 已全部替换为 `kind === 'exchange'` |
-
----
-
-## 12. 关联设计文档
-
-- `doc/rule.platform.data-dictionary.md` — `model_exchanges` 集合字段描述
-- `doc/design.platform.llm-gateway.md` — ILlmGateway 统一调用接口
-- `doc/spec.model-pool.md` — 模型池策略引擎规格
+- `doc/design.platform.model-pool.md`
+- `doc/design.platform.llm-gateway.md`
+- `doc/rule.platform.llm-gateway.md`
