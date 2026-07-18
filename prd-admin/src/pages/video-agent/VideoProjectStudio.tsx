@@ -79,6 +79,11 @@ interface ProjectCoverProps {
 
 const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, mediaType = 'image', status }) => {
   const isGeneratedVideo = Boolean(mediaUrl) && mediaType === 'video';
+  const displayImageUrl = mediaType === 'image' && mediaUrl
+    ? mediaUrl
+    : status === 'Completed'
+      ? STUDIO_PREVIEW_IMAGE
+      : undefined;
   const placeholderLabel = isGeneratedVideo
     ? '视频已生成'
     : status === 'Completed'
@@ -91,11 +96,11 @@ const ProjectCover: React.FC<ProjectCoverProps> = ({ mediaUrl, mediaType = 'imag
         {isGeneratedVideo ? <CirclePlay size={25} /> : <Film size={24} />}
         <span>{placeholderLabel}</span>
       </span>
-      {mediaUrl && mediaType === 'image' && (
+      {displayImageUrl && (
         <span
           className="video-create-project-media"
           aria-hidden="true"
-          style={{ backgroundImage: `url(${JSON.stringify(mediaUrl)})` }}
+          style={{ backgroundImage: `url(${JSON.stringify(displayImageUrl)})` }}
         />
       )}
       <i>{statusLabel(status)}</i>
