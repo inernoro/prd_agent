@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './PlanComparisonPanel';
+import { ReportTableSectionView } from './ReportTableSectionView';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { ReportLikeBar } from './ReportLikeBar';
 import { useDataTheme } from '../hooks/useDataTheme';
@@ -260,6 +261,10 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                             </div>
                           );
                         })}
+                      </div>
+                    ) : section.templateSection.inputType === ReportInputType.Table ? (
+                      <div className="ml-7">
+                        <ReportTableSectionView section={section} isLight={isLight} />
                       </div>
                     ) : section.templateSection.inputType === ReportInputType.RichText ? (
                       <div className="space-y-2 ml-7">

@@ -12,7 +12,7 @@
 
 - 当前 Quickstart 仍显示 vision 的一次性 key 和“接入配置已生成”；chat key 已安全保存，chat requestId 已记在个人核对清单。
 - 协议选择“OpenAI”，调用类型为“图片理解”。
-- “发送测试请求”当前选中“安全连通”，示例明确发送 `X-Gateway-Dry-Run: quickstart`。真实模型按钮只有在当前 Gateway 地址完成路由预检后才可选择。
+- “控制台直测”当前选中“安全连通”，示例明确发送 `X-Gateway-Dry-Run: quickstart`。真实模型按钮只有在当前 Gateway 地址完成路由预检后才可选择。
 
 ## 跟我做
 
@@ -28,7 +28,7 @@
 
 ![图 061 Quickstart 从自动 Gateway 地址开始，三步完成首个可审计请求](https://cds.miduo.org/api/reports/assets/645624ce183b542039cb6bd3b810ca7a13144fe0a2021122ce87fe559518fc59.png)
 
-2. 点击“点击测试”。等待按钮显示“正在测试并写日志”，不要重复点击。
+2. 点击“验证接入边界”。等待按钮显示“正在验证并写日志”，不要重复点击。
 
 **图 062 Gateway 地址由当前网址自动生成，不让用户手工猜域名**
 

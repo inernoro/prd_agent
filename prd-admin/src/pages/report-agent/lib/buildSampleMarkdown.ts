@@ -1,4 +1,5 @@
 import type { ReportTemplate, ReportTemplateSection } from '@/services/contracts/reportAgent';
+import { DEFAULT_TABLE_COLUMNS } from '@/services/contracts/reportAgent';
 import { formatWeekDateRange } from '../utils/weekRange';
 
 /**
@@ -28,6 +29,19 @@ function buildSectionSample(section: ReportTemplateSection): string {
         '账户中心重构: 80%\n' +
         '数据看板 v2: 50%\n'
       );
+    case 'table': {
+      const columns = section.tableColumns && section.tableColumns.length > 0
+        ? section.tableColumns
+        : DEFAULT_TABLE_COLUMNS;
+      const headerRow = `| ${columns.join(' | ')} |`;
+      const dividerRow = `| ${columns.map(() => '---').join(' | ')} |`;
+      const sampleRow = `| ${columns.map((_, i) => (i === 0 ? '示例任务' : i === 1 ? '进行中' : '')).join(' | ')} |`;
+      return (
+        `${hint}${autoStatsHint}` +
+        '<!-- markdown 表格，每行一条记录，列顺序与模板一致 -->\n' +
+        `${headerRow}\n${dividerRow}\n${sampleRow}\n`
+      );
+    }
     case 'issue-list':
       return (
         `${hint}` +

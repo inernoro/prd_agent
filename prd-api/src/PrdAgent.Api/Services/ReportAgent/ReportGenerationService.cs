@@ -481,11 +481,23 @@ public class ReportGenerationService
 
                             if (!string.IsNullOrWhiteSpace(itemContent))
                             {
-                                items.Add(new WeeklyReportItem
+                                var generatedItem = new WeeklyReportItem
                                 {
                                     Content = itemContent,
                                     Source = source
-                                });
+                                };
+                                // table 章节：按 " | " 镜像拆出 cells（生成 prompt 已要求该格式）
+                                if (templateSection.InputType == ReportInputType.Table)
+                                {
+                                    var columnCount = templateSection.TableColumns is { Count: > 0 }
+                                        ? templateSection.TableColumns.Count
+                                        : ReportInputType.DefaultTableColumns.Length;
+                                    var cells = itemContent.Split(" | ").Select(x => x.Trim()).ToList();
+                                    while (cells.Count < columnCount) cells.Add(string.Empty);
+                                    if (cells.Count > columnCount) cells = cells.Take(columnCount).ToList();
+                                    generatedItem.Cells = cells;
+                                }
+                                items.Add(generatedItem);
                             }
                         }
                     }
@@ -1128,6 +1140,14 @@ public class ReportGenerationService
                 case "progress-table":
                     sb.AppendLine("item 结构: { \"content\": \"<任务/里程碑名>\", \"sourceRef\": \"<进度描述，如 80%>\", \"source\": \"markdown-import\" }");
                     break;
+                case "table":
+                    var tableColumns = section.TableColumns is { Count: > 0 }
+                        ? section.TableColumns
+                        : ReportInputType.DefaultTableColumns.ToList();
+                    sb.AppendLine($"表格列（按此顺序）: {string.Join(" | ", tableColumns)}");
+                    sb.AppendLine("item 结构: { \"cells\": [\"<列1值>\", \"<列2值>\", ...], \"source\": \"markdown-import\" }");
+                    sb.AppendLine($"说明: 每个 item 表示表格一行，cells 数组长度必须等于 {tableColumns.Count}（与上面列顺序一一对应），该行没有的值写空字符串 \"\"。");
+                    break;
                 case "issue-list":
                     sb.AppendLine("item 结构: { \"content\": \"<问题/需求描述>\", \"source\": \"markdown-import\", \"issueCategoryKey\": null, \"issueStatusKey\": null, \"imageUrls\": null }");
                     sb.AppendLine("⚠ 硬规则: issueCategoryKey 和 issueStatusKey 必须留 null，由用户在界面中手动补充；不允许硬猜。");
@@ -1196,7 +1216,7 @@ public class ReportGenerationService
                 {
                     foreach (var itemJson in itemsArray.EnumerateArray())
                     {
-                        var item = ParseImportedItem(itemJson, templateSection.InputType);
+                        var item = ParseImportedItem(itemJson, templateSection);
                         if (item != null)
                             items.Add(item);
                     }
@@ -1228,10 +1248,12 @@ public class ReportGenerationService
         }
     }
 
-    private static WeeklyReportItem? ParseImportedItem(JsonElement itemJson, string inputType)
+    private static WeeklyReportItem? ParseImportedItem(JsonElement itemJson, ReportTemplateSection templateSection)
     {
+        var inputType = templateSection.InputType;
         string? contentText = null;
         string? sourceRef = null;
+        List<string>? cells = null;
 
         switch (itemJson.ValueKind)
         {
@@ -1245,10 +1267,38 @@ public class ReportGenerationService
                     contentText = t.GetString();
                 if (itemJson.TryGetProperty("sourceRef", out var sr) && sr.ValueKind == JsonValueKind.String)
                     sourceRef = sr.GetString();
+                if (itemJson.TryGetProperty("cells", out var cellsArr) && cellsArr.ValueKind == JsonValueKind.Array)
+                {
+                    cells = cellsArr.EnumerateArray()
+                        .Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() ?? string.Empty : e.ToString())
+                        .ToList();
+                }
                 break;
             default:
                 return null;
         }
+
+        // table 行：cells 优先；缺 cells 时按 content 的 " | " 镜像拆分兜底
+        if (inputType == ReportInputType.Table)
+        {
+            var columnCount = templateSection.TableColumns is { Count: > 0 }
+                ? templateSection.TableColumns.Count
+                : ReportInputType.DefaultTableColumns.Length;
+            cells ??= string.IsNullOrWhiteSpace(contentText)
+                ? null
+                : contentText!.Split(" | ").ToList();
+            if (cells == null || cells.All(string.IsNullOrWhiteSpace))
+                return null;
+            while (cells.Count < columnCount) cells.Add(string.Empty);
+            if (cells.Count > columnCount) cells = cells.Take(columnCount).ToList();
+            return new WeeklyReportItem
+            {
+                Content = string.Join(" | ", cells.Select(x => x.Trim()).Where(x => x.Length > 0)),
+                Source = MarkdownImportSourceKey,
+                Cells = cells,
+            };
+        }
+
         if (string.IsNullOrWhiteSpace(contentText))
             return null;
 
@@ -1305,7 +1355,7 @@ public class ReportGenerationService
                     || normTitle.Contains(normChunk, StringComparison.Ordinal))
                 {
                     used.Add(j);
-                    sections[i].Items.AddRange(BuildItemsFromChunk(chunks[j].Body, t.InputType));
+                    sections[i].Items.AddRange(BuildItemsFromChunk(chunks[j].Body, t));
                     break;
                 }
             }
@@ -1337,7 +1387,7 @@ public class ReportGenerationService
             if (bestIdx >= 0 && bestScore <= 3)
             {
                 used.Add(bestIdx);
-                sections[i].Items.AddRange(BuildItemsFromChunk(chunks[bestIdx].Body, t.InputType));
+                sections[i].Items.AddRange(BuildItemsFromChunk(chunks[bestIdx].Body, t));
             }
         }
 
@@ -1355,7 +1405,7 @@ public class ReportGenerationService
                     leftover.Select(l => $"## {l.Title}\n{l.Body}".Trim()));
                 if (!string.IsNullOrWhiteSpace(combined))
                 {
-                    sections[targetIdx].Items.AddRange(BuildItemsFromChunk(combined, sections[targetIdx].TemplateSection.InputType));
+                    sections[targetIdx].Items.AddRange(BuildItemsFromChunk(combined, sections[targetIdx].TemplateSection));
                 }
             }
         }
@@ -1392,11 +1442,16 @@ public class ReportGenerationService
         return chunks;
     }
 
-    private static List<WeeklyReportItem> BuildItemsFromChunk(string body, string inputType)
+    private static List<WeeklyReportItem> BuildItemsFromChunk(string body, ReportTemplateSection templateSection)
     {
+        var inputType = templateSection.InputType;
         body = (body ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(body))
             return new();
+
+        // table → 解析 markdown 表格行（| a | b | c |）或 " | " 分隔行为 cells
+        if (inputType == ReportInputType.Table)
+            return BuildTableItemsFromChunk(body, templateSection);
 
         // rich-text / free-text → 整段作为 1 条 item 保留 markdown
         if (inputType == "rich-text" || inputType == "free-text")
@@ -1435,6 +1490,53 @@ public class ReportGenerationService
             {
                 Content = cleaned,
                 Source = MarkdownImportSourceKey
+            });
+        }
+        return items;
+    }
+
+    /// <summary>
+    /// table 章节的规则兜底解析：识别 markdown 表格行（| a | b | c |，跳过表头分隔行和与列名完全相同的表头行），
+    /// 非表格格式的行整行放第一列。cells 按模板列数补齐/截断。
+    /// </summary>
+    private static List<WeeklyReportItem> BuildTableItemsFromChunk(string body, ReportTemplateSection templateSection)
+    {
+        var columns = templateSection.TableColumns is { Count: > 0 }
+            ? templateSection.TableColumns
+            : ReportInputType.DefaultTableColumns.ToList();
+        var items = new List<WeeklyReportItem>();
+
+        foreach (var rawLine in body.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            // 跳过表头分隔行 |---|---| 与注释
+            if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^\|?[\s:|-]+\|?$")) continue;
+            if (line.StartsWith("<!--", StringComparison.Ordinal)) continue;
+
+            List<string> cells;
+            if (line.Contains('|'))
+            {
+                cells = line.Trim('|').Split('|').Select(c => c.Trim()).ToList();
+                // 跳过与列名完全一致的表头行
+                if (cells.Count == columns.Count && cells.SequenceEqual(columns)) continue;
+            }
+            else
+            {
+                var cleaned = System.Text.RegularExpressions.Regex.Replace(line, @"^[-*+]\s+|^\d+[.)]\s+|^>\s+", "").Trim();
+                if (string.IsNullOrEmpty(cleaned)) continue;
+                cells = new List<string> { cleaned };
+            }
+
+            if (cells.All(string.IsNullOrWhiteSpace)) continue;
+            while (cells.Count < columns.Count) cells.Add(string.Empty);
+            if (cells.Count > columns.Count) cells = cells.Take(columns.Count).ToList();
+
+            items.Add(new WeeklyReportItem
+            {
+                Content = string.Join(" | ", cells.Select(c => c.Trim()).Where(c => c.Length > 0)),
+                Source = MarkdownImportSourceKey,
+                Cells = cells,
             });
         }
         return items;
@@ -1778,6 +1880,13 @@ public class ReportGenerationService
                 sb.AppendLine($"数据来源: {string.Join(", ", section.DataSources)}");
             if (section.MaxItems.HasValue)
                 sb.AppendLine($"最多条目: {section.MaxItems}");
+            if (section.InputType == ReportInputType.Table)
+            {
+                var genTableColumns = section.TableColumns is { Count: > 0 }
+                    ? section.TableColumns
+                    : ReportInputType.DefaultTableColumns.ToList();
+                sb.AppendLine($"⚡ 此板块为表格，列为: {string.Join(" | ", genTableColumns)}。每个 item 表示一行，content 用 \" | \" 分隔各列值（顺序与列一一对应，该行没有的列留空）。");
+            }
 
             // 指导 AI 如何处理不同板块类型
             switch (sectionType)
