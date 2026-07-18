@@ -408,6 +408,11 @@ db.marketplace_skill_share_links.createIndex(
   { name: "idx_marketplace_skill_share_links_creator" }
 )
 
+db.marketplace_skill_share_links.createIndex(
+  { "SkillId": 1, "IsRevoked": 1, "ExpiresAt": 1 },
+  { name: "idx_marketplace_skill_share_links_skill_active" }
+)
+
 // collection: defect_fix_reports
 db.defect_fix_reports.createIndex(
   { "ShareLinkId": 1, "CreatedAt": -1 },
@@ -850,6 +855,19 @@ db.report_likes.createIndex(
   { name: "idx_report_likes_report_created" }
 )
 
+// collection: report_view_events
+// 按周报和浏览时间查询浏览轨迹
+db.report_view_events.createIndex(
+  { "ReportId": 1, "ViewedAt": -1 },
+  { name: "idx_report_views_report_viewed" }
+)
+
+// 按周报、用户和浏览时间统计单用户浏览次数
+db.report_view_events.createIndex(
+  { "ReportId": 1, "UserId": 1, "ViewedAt": -1 },
+  { name: "idx_report_views_report_user_viewed" }
+)
+
 // collection: report_team_summaries
 // (TeamId, WeekYear, WeekNumber) 唯一
 db.report_team_summaries.createIndex(
@@ -886,6 +904,12 @@ db.arena_battles.createIndex(
 db.hosted_sites.createIndex(
   { "OwnerUserId": 1, "CreatedAt": -1 },
   { name: "idx_hosted_sites_owner_created" }
+)
+
+// collection: short_video_material_runs
+db.short_video_material_runs.createIndex(
+  { "UserId": 1, "CreatedAt": -1 },
+  { name: "idx_short_video_material_runs_user_created" }
 )
 
 db.hosted_sites.createIndex(
