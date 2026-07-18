@@ -56,6 +56,7 @@ db.messages.createIndex(
   { "GroupId": 1, "GroupSeq": 1 },
   {
     name: "uniq_messages_group_seq",
+    unique: true,
     partialFilterExpression: { "GroupSeq": { $type: "long" } }
   }
 )
@@ -138,12 +139,13 @@ db.image_master_messages.createIndex({ "WorkspaceId": 1, "CreatedAt": 1 })
 db.image_assets.createIndex({ "OwnerUserId": 1, "CreatedAt": -1 })
 db.image_assets.createIndex({ "WorkspaceId": 1, "CreatedAt": -1 })
 
-// Workspace 内按 sha256 去重（仅对 workspaceId 为字符串的文档生效）
+// Workspace 内按 sha256 去重（仅对 WorkspaceId 为字符串的文档生效）
 db.image_assets.createIndex(
-  { "workspaceId": 1, "Sha256": 1 },
+  { "WorkspaceId": 1, "Sha256": 1 },
   {
     name: "uniq_image_assets_workspace_sha256",
-    partialFilterExpression: { "workspaceId": { $type: "string" } }
+    unique: true,
+    partialFilterExpression: { "WorkspaceId": { $type: "string" } }
   }
 )
 
@@ -170,6 +172,7 @@ db.image_gen_size_caps.createIndex(
   { "ModelId": 1 },
   {
     name: "uniq_image_gen_size_caps_modelId",
+    unique: true,
     partialFilterExpression: { "ModelId": { $exists: true } }
   }
 )
@@ -179,6 +182,7 @@ db.image_gen_size_caps.createIndex(
   { "PlatformId": 1, "ModelName": 1 },
   {
     name: "uniq_image_gen_size_caps_platformId_modelName",
+    unique: true,
     partialFilterExpression: {
       "PlatformId": { $exists: true },
       "ModelName": { $exists: true }
@@ -195,6 +199,7 @@ db.image_gen_runs.createIndex(
   { "OwnerAdminId": 1, "IdempotencyKey": 1 },
   {
     name: "uniq_image_gen_runs_owner_idem",
+    unique: true,
     partialFilterExpression: { "IdempotencyKey": { $type: "string" } }
   }
 )
@@ -204,7 +209,7 @@ db.image_gen_run_items.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
 
 db.image_gen_run_items.createIndex(
   { "RunId": 1, "ItemIndex": 1, "ImageIndex": 1 },
-  { name: "uniq_image_gen_run_items_run_pos" }
+  { name: "uniq_image_gen_run_items_run_pos", unique: true }
 )
 
 // collection: image_gen_run_events
@@ -212,7 +217,7 @@ db.image_gen_run_events.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
 
 db.image_gen_run_events.createIndex(
   { "RunId": 1, "Seq": 1 },
-  { name: "uniq_image_gen_run_events_run_seq" }
+  { name: "uniq_image_gen_run_events_run_seq", unique: true }
 )
 
 // collection: upload_artifacts
@@ -224,7 +229,7 @@ db.upload_artifacts.createIndex({ "Sha256": 1, "CreatedAt": -1 })
 // 同一管理员 + key 唯一
 db.admin_prompt_overrides.createIndex(
   { "OwnerAdminId": 1, "Key": 1 },
-  { name: "uniq_admin_prompt_overrides_owner_key" }
+  { name: "uniq_admin_prompt_overrides_owner_key", unique: true }
 )
 
 // collection: admin_idempotency
@@ -233,6 +238,7 @@ db.admin_idempotency.createIndex(
   { "ownerAdminId": 1, "scope": 1, "idempotencyKey": 1 },
   {
     name: "uniq_admin_idempotency_owner_scope_key_v2",
+    unique: true,
     partialFilterExpression: { "idempotencyKey": { $type: "string" } }
   }
 )
@@ -262,6 +268,7 @@ db.desktop_assets.createIndex(
   { "Key": 1, "Skin": 1 },
   {
     name: "uniq_desktop_assets_key_skin",
+    unique: true,
     partialFilterExpression: { "Skin": { $type: "string" } }
   }
 )
@@ -295,7 +302,7 @@ db.model_groups.createIndex({ "CreatedAt": -1 })
 // 按 appCode 唯一
 db.llm_app_callers.createIndex(
   { "AppCode": 1 },
-  { name: "uniq_llm_app_callers_app_code" }
+  { name: "uniq_llm_app_callers_app_code", unique: true }
 )
 
 db.llm_app_callers.createIndex({ "LastCalledAt": -1 })
@@ -454,6 +461,25 @@ db.defect_automation_runs.createIndex(
 db.defect_automation_runs.createIndex(
   { "AgentApiKeyId": 1, "CreatedAt": -1 },
   { name: "idx_defect_automation_runs_key" }
+)
+
+// collection: github_user_connections
+// 每个用户只保留一条 GitHub OAuth 连接
+db.github_user_connections.createIndex(
+  { "UserId": 1 },
+  { name: "uniq_github_user_connections_user", unique: true }
+)
+
+// collection: pr_review_items
+// 按用户和更新时间分页；同一用户的同仓库同 PR 唯一
+db.pr_review_items.createIndex(
+  { "UserId": 1, "UpdatedAt": -1 },
+  { name: "idx_pr_review_items_user_updated" }
+)
+
+db.pr_review_items.createIndex(
+  { "UserId": 1, "Owner": 1, "Repo": 1, "Number": 1 },
+  { name: "uniq_pr_review_items_user_repo_number", unique: true }
 )
 
 // collection: channel_whitelist
