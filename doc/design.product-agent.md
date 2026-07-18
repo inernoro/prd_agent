@@ -1,11 +1,6 @@
----
-type: design
-title: 产品管理智能体设计文档
-status: draft
-updated: 2026-06-02
----
+# 产品管理智能体（product-agent）设计文档 · 设计
 
-# 产品管理智能体（product-agent）设计文档
+> **版本**：v1.0 | **日期**：2026-06-02 | **状态**：草案
 
 ## 一、管理摘要
 

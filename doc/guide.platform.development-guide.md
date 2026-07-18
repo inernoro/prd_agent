@@ -1,11 +1,10 @@
 # PRD Agent 开发文档 · 指南
 
-**文档版本**：v1.0  
-**创建日期**：2024年12月10日  
-**适用版本**：PRD Agent v1.0+  
+> **版本**：v1.0 | **日期**：2024-12-10 | **状态**：已落地
+
+**适用版本**：PRD Agent v1.0+
 **目标读者**：开发工程师、架构师
 
----
 
 ## 目录
 
@@ -68,25 +67,25 @@ flowchart TB
         ReactUI[React Frontend]
         RustCore <--> ReactUI
     end
-    
+
     subgraph admin [Web管理后台]
         AdminUI[React + Radix UI]
     end
-    
+
     subgraph server [后端服务 .NET 8]
         API[Api Layer]
         Core[Core Layer]
         Infra[Infrastructure Layer]
         API --> Core --> Infra
     end
-    
+
     subgraph external [外部依赖]
         LLM[Claude/OpenAI]
         MongoDB[(MongoDB)]
         Redis[(Redis)]
         OSS[对象存储]
     end
-    
+
     client <-->|HTTPS/SSE| server
     admin <-->|HTTPS| server
     server <--> external
@@ -96,10 +95,10 @@ flowchart TB
 
 | 通信路径 | 协议 | 说明 |
 |----------|------|------|
-| 客户端 ↔ 服务端 | HTTPS + SSE | REST API（前台路径 `/{module}`）+ 流式响应 |
-| 管理后台 ↔ 服务端 | HTTPS | REST API（后台路径 `/api/{module}`） |
-| Rust Core ↔ React | Tauri IPC | invoke 命令 / emit 事件 |
-| 服务端 ↔ LLM | HTTPS | 流式调用，超时60s，重试≤3次 |
+| 客户端  服务端 | HTTPS + SSE | REST API（前台路径 `/{module}`）+ 流式响应 |
+| 管理后台  服务端 | HTTPS | REST API（后台路径 `/api/{module}`） |
+| Rust Core  React | Tauri IPC | invoke 命令 / emit 事件 |
+| 服务端  LLM | HTTPS | 流式调用，超时60s，重试≤3次 |
 
 > **路由规范说明**：禁止使用 `/v1/`、`/v2/` 等版本号路径。前台客户端使用 `/{module}` 格式，后台管理使用 `/api/{module}` 格式。
 
@@ -113,13 +112,13 @@ sequenceDiagram
     participant L as LLM API
     participant M as MongoDB
     participant R as Redis
-    
+
     U->>C: 上传PRD文档
     C->>S: POST /documents
     S->>R: 缓存PRD内容
     S->>M: 保存文档元数据
     S-->>C: 返回sessionId
-    
+
     U->>C: 发送问题
     C->>S: POST /sessions/{id}/messages (SSE)
     S->>R: 获取PRD内容
@@ -615,9 +614,9 @@ prd-admin/
 
 | 变量名 | 必需 | 说明 |
 |--------|:----:|------|
-| `MongoDB__ConnectionString` | ✓ | MongoDB连接字符串 |
-| `Redis__ConnectionString` | ✓ | Redis连接字符串 |
-| `Jwt__Secret` | ✓ | JWT签名密钥（32位以上） |
+| `MongoDB__ConnectionString` | 是 | MongoDB连接字符串 |
+| `Redis__ConnectionString` | 是 | Redis连接字符串 |
+| `Jwt__Secret` | 是 | JWT签名密钥（32位以上） |
 | `Jwt__Issuer` | | JWT签发者 |
 | `Session__TimeoutMinutes` | | 会话超时，默认30 |
 | `Storage__Provider` | | 存储服务商（COS/OSS/S3） |
@@ -647,13 +646,13 @@ prd-admin/
 
 | 功能 | PM | DEV | QA | ADMIN |
 |------|:--:|:---:|:--:|:-----:|
-| 上传PRD | ✓ | | | ✓ |
-| 创建群组 | ✓ | | | ✓ |
-| 加入群组 | ✓ | ✓ | ✓ | ✓ |
-| 对话提问 | ✓ | ✓ | ✓ | ✓ |
-| 查看缺失提醒 | ✓ | | | ✓ |
-| 管理群组成员 | ✓(群主) | | | ✓ |
-| Web管理后台 | | | | ✓ |
+| 上传PRD | 是 | | | 是 |
+| 创建群组 | 是 | | | 是 |
+| 加入群组 | 是 | 是 | 是 | 是 |
+| 对话提问 | 是 | 是 | 是 | 是 |
+| 查看缺失提醒 | 是 | | | 是 |
+| 管理群组成员 | 是(群主) | | | 是 |
+| Web管理后台 | | | | 是 |
 
 ### 11.4 性能指标
 

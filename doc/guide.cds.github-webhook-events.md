@@ -1,8 +1,9 @@
-# CDS GitHub Webhook 订阅配置指南
+# CDS GitHub Webhook 订阅配置指南 · 指南
 
-> **类型**：操作指南 (How-to) | **日期**：2026-06-23 | **版本**：v1.1 | **适用**：CDS GitHub App
+> **版本**：v1.0 | **日期**：2026-06-23 | **状态**：已落地
 
----
+> **适用**：CDS GitHub App
+
 
 ## 1. 一句话结论
 
@@ -28,17 +29,17 @@
 
 | 事件 (X-GitHub-Event) | 必要性 | CDS 的动作 | 说明 |
 |---|---|---|---|
-| `push` | ✅ **必订** | 建/刷新分支 worktree + 触发部署 + 更新 check run | 核心触发器。不订,push 即部署就废了 |
-| `pull_request` | ✅ **必订** | opened/reopened → 发预览评论;closed → 停预览容器 | 不订,PR 合并/关闭后容器不会自动回收 |
-| `issue_comment` | ✅ **必订** | 解析 `/cds <cmd>` 斜杠命令 (redeploy/stop/logs/help) | 不订,PR 评论里的 `/cds redeploy` 等命令全部失效 |
-| `check_run` | ✅ **必订** | `rerequested` → 按 check 重跑部署;其他动作仅记录 | 不订,PR Checks 面板的"Re-run" 按钮失效 |
-| `workflow_run` | 🟠 **极速版必订** | `completed` 且工作流为 `branch-image.yml` → 极速版分支按 commit SHA 拉取 CI 镜像部署 | 仅用「极速版（CI 预构建）」模式的项目需要;不订则极速版分支永久卡在「等待 CI 镜像」。需 `Actions: Read-only` 权限。源码/热加载模式无需此事件 |
-| `installation_repositories` | ✅ **必订** | 仓库从 installation 移除时自动解绑项目 | 不订,用户在 GitHub 后台取消授权后 CDS 仍会处理旧 push |
-| `delete` | ✅ **必订** | 远端分支删除 → 停对应 CDS 预览容器 | 不订,删分支不会回收容器,资源持续占用 |
-| `repository` | ✅ **必订** | renamed/transferred/deleted → 解绑项目避免错投 | 不订,仓库改名后 CDS 链接成脏数据 |
-| `ping` | 🟢 自动 | 响应 pong | GitHub 创建/更新 App 时自动发一次,不用单独订 |
-| `installation` | 🟡 可选 | 记录日志,不做任何状态变更 | 订了也无害,GitHub App 生命周期审计用 |
-| `release` | 🟡 预留 | 当前仅 ack,未来接生产标签发布 | 订不订都行,目前无功能影响 |
+| `push` | 是 **必订** | 建/刷新分支 worktree + 触发部署 + 更新 check run | 核心触发器。不订,push 即部署就废了 |
+| `pull_request` | 是 **必订** | opened/reopened → 发预览评论;closed → 停预览容器 | 不订,PR 合并/关闭后容器不会自动回收 |
+| `issue_comment` | 是 **必订** | 解析 `/cds <cmd>` 斜杠命令 (redeploy/stop/logs/help) | 不订,PR 评论里的 `/cds redeploy` 等命令全部失效 |
+| `check_run` | 是 **必订** | `rerequested` → 按 check 重跑部署;其他动作仅记录 | 不订,PR Checks 面板的"Re-run" 按钮失效 |
+| `workflow_run` |  **极速版必订** | `completed` 且工作流为 `branch-image.yml` → 极速版分支按 commit SHA 拉取 CI 镜像部署 | 仅用「极速版（CI 预构建）」模式的项目需要;不订则极速版分支永久卡在「等待 CI 镜像」。需 `Actions: Read-only` 权限。源码/热加载模式无需此事件 |
+| `installation_repositories` | 是 **必订** | 仓库从 installation 移除时自动解绑项目 | 不订,用户在 GitHub 后台取消授权后 CDS 仍会处理旧 push |
+| `delete` | 是 **必订** | 远端分支删除 → 停对应 CDS 预览容器 | 不订,删分支不会回收容器,资源持续占用 |
+| `repository` | 是 **必订** | renamed/transferred/deleted → 解绑项目避免错投 | 不订,仓库改名后 CDS 链接成脏数据 |
+| `ping` |  自动 | 响应 pong | GitHub 创建/更新 App 时自动发一次,不用单独订 |
+| `installation` |  可选 | 记录日志,不做任何状态变更 | 订了也无害,GitHub App 生命周期审计用 |
+| `release` |  预留 | 当前仅 ack,未来接生产标签发布 | 订不订都行,目前无功能影响 |
 
 ---
 
@@ -77,7 +78,7 @@
 3. 选中你的 CDS App → 左侧 **"Permissions & events"**
 4. 下拉到 **"Subscribe to events"** 区块
 
-### 4.2 只勾 §2 表中"✅ 必订"的 7 项
+### 4.2 只勾 §2 表中"是 必订"的 7 项
 
 页面上 GitHub 的命名和事件名有微小差异,按以下对照勾选:
 

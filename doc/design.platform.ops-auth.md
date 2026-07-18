@@ -1,8 +1,6 @@
 # 桌面端更新与分布式登录/会话审计说明 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-27 | **状态**：已实现
-
----
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
@@ -31,7 +29,7 @@
 - GitHub Actions 使用 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 对更新资产签名。
 - 客户端需要内置 **public key** 进行验签：`prd-desktop/src-tauri/tauri.conf.json` 中的 `plugins.updater.pubkey`。
 
-注意：仓库中不会存放任何私钥。`pubkey` 可以公开，但必须与 Actions 里使用的私钥配对，否则客户端会报“验签失败/无法安装更新”。  
+注意：仓库中不会存放任何私钥。`pubkey` 可以公开，但必须与 Actions 里使用的私钥配对，否则客户端会报“验签失败/无法安装更新”。
 
 ### 1.3 Release 资产要求
 Release 必须包含：
@@ -62,16 +60,14 @@ Release 必须包含：
 - **业务会话（Session）**：`SessionService` 使用 `ICacheManager`（Redis）存储会话状态与 TTL，不依赖单实例内存。
 
 ### 2.2 多实例部署的强制约束（必须满足）
-- **所有后端实例必须使用同一份 `Jwt__Secret`**（否则会出现“偶发 401”，看起来像随机掉登录）。  
+- **所有后端实例必须使用同一份 `Jwt__Secret`**（否则会出现“偶发 401”，看起来像随机掉登录）。
   - docker-compose 生产：`docker-compose.yml` 已改为强制要求 `JWT_SECRET` 环境变量。
-- **所有后端实例必须指向同一 Redis（或 Redis Cluster/Sentinel）**。  
+- **所有后端实例必须指向同一 Redis（或 Redis Cluster/Sentinel）**。
   - Redis 不可用时，token 校验会失败，表现为 401（安全兜底）。
 
 ### 2.3 Nginx/网关层建议
-- 你们的 Nginx 已针对 SSE 做了关键设置（`proxy_buffering off` 等）。  
-- 由于认证不是 Cookie Session，不需要 sticky session（如 `ip_hash`）来“保登录”。  
+- 你们的 Nginx 已针对 SSE 做了关键设置（`proxy_buffering off` 等）。
+- 由于认证不是 Cookie Session，不需要 sticky session（如 `ip_hash`）来“保登录”。
 
 ### 2.4 额外注意（可选优化）
 - 当前限流中间件（`RateLimitMiddleware`）使用进程内状态，多实例下限流不一致；如果需要“全局一致限流”，应迁移到 Redis。
-
-

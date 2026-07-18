@@ -1,11 +1,11 @@
 # Remotion 视频质量差距分析 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-27 | **状态**：分析完成
+> **版本**：v1.0 | **日期**：2026-03-27 | **状态**：已落地
+
 > **子类型**：技术分析（质量差距分析）
 
 > 基于 Manus 互联网调研 + 我们 prd-video 源码逐行审计
 
----
 
 ## 一、管理摘要
 
@@ -104,14 +104,14 @@ interface SceneData {
 
 | 官方包 | 功能 | 我们安装了？ |
 |--------|------|-------------|
-| `@remotion/transitions` | 场景转场（Slide/Fade/Wipe/Clock Wipe/Flip） | ❌ 没有 |
-| `@remotion/three` | 3D 渲染（React Three Fiber 集成） | ❌ 没有 |
-| `@remotion/lottie` | After Effects 动画播放 | ❌ 没有 |
-| `@remotion/paths` | SVG 路径描边动画 | ❌ 没有 |
-| `@remotion/noise` | Perlin 噪声生成 | ❌ 没有 |
-| `@remotion/motion-blur` | 运动模糊效果 | ❌ 没有 |
-| `@remotion/media-utils` | 音频分析 + 频谱可视化 | ❌ 没有 |
-| `@remotion/tailwind` | TailwindCSS 集成 | ❌ 没有 |
+| `@remotion/transitions` | 场景转场（Slide/Fade/Wipe/Clock Wipe/Flip） | 否 没有 |
+| `@remotion/three` | 3D 渲染（React Three Fiber 集成） | 否 没有 |
+| `@remotion/lottie` | After Effects 动画播放 | 否 没有 |
+| `@remotion/paths` | SVG 路径描边动画 | 否 没有 |
+| `@remotion/noise` | Perlin 噪声生成 | 否 没有 |
+| `@remotion/motion-blur` | 运动模糊效果 | 否 没有 |
+| `@remotion/media-utils` | 音频分析 + 频谱可视化 | 否 没有 |
+| `@remotion/tailwind` | TailwindCSS 集成 | 否 没有 |
 
 ---
 
@@ -210,12 +210,12 @@ interface SceneData {
 
 | 原因 | 影响 | 严重程度 |
 |------|------|---------|
-| **只装了 3 个基础包**，没有任何官方高级包 | 缺失转场、3D、Lottie、路径动画、音频等所有高级能力 | 🔴 致命 |
-| **动画原语只有 5 个**（springIn、fadeIn/Out、slideIn、typewriter、counter） | 所有元素都是同一种"弹一下"入场方式 | 🔴 致命 |
-| **无转场系统** | 场景之间硬切，像幻灯片 | 🔴 致命 |
-| **数据模型太扁平**（只有 topic + narration） | 无法描述布局、动画时间线、图表数据 | 🟡 严重 |
-| **纯 DOM 渲染** | 粒子数量受限，无法做复杂视觉效果 | 🟡 严重 |
-| **代码块无语法高亮** | 代码全是单色 cyan | 🟡 中等 |
+| **只装了 3 个基础包**，没有任何官方高级包 | 缺失转场、3D、Lottie、路径动画、音频等所有高级能力 |  致命 |
+| **动画原语只有 5 个**（springIn、fadeIn/Out、slideIn、typewriter、counter） | 所有元素都是同一种"弹一下"入场方式 |  致命 |
+| **无转场系统** | 场景之间硬切，像幻灯片 |  致命 |
+| **数据模型太扁平**（只有 topic + narration） | 无法描述布局、动画时间线、图表数据 |  严重 |
+| **纯 DOM 渲染** | 粒子数量受限，无法做复杂视觉效果 |  严重 |
+| **代码块无语法高亮** | 代码全是单色 cyan |  中等 |
 
 ### 5.2 设计债
 

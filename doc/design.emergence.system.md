@@ -1,7 +1,7 @@
 # 系统涌现：从基础组件到协同智能 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-28 | **状态**：已实现
->
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 > 取用之于基础，串联其协同，落地之实际，编之于幻想。
 
 ## 一、管理摘要
@@ -245,12 +245,12 @@ PrdAgent 也是如此——
 
 | 场景 | 涉及模块 | 状态 |
 |------|----------|------|
-| 周报数据自动采集 | Report Agent + Workflow + Git 数据源 | ✅ 已实现 |
-| 抖音内容解析链 | Shortcuts + Workflow + LLM | ✅ 已实现 |
-| 缺陷截图 AI 预分析 | Defect Agent + Vision 模型 | ✅ 已实现 |
-| 文章自动配图 | Literary Agent + ImageGen | ✅ 已实现 |
-| 视频场景代码生成 | Video Agent + LLM | ✅ 已实现 |
-| 事件驱动自动化 | AutomationHub + Workflow | ✅ 已实现 |
+| 周报数据自动采集 | Report Agent + Workflow + Git 数据源 | 是 已实现 |
+| 抖音内容解析链 | Shortcuts + Workflow + LLM | 是 已实现 |
+| 缺陷截图 AI 预分析 | Defect Agent + Vision 模型 | 是 已实现 |
+| 文章自动配图 | Literary Agent + ImageGen | 是 已实现 |
+| 视频场景代码生成 | Video Agent + LLM | 是 已实现 |
+| 事件驱动自动化 | AutomationHub + Workflow | 是 已实现 |
 
 ### 触手可及的涌现（近期）
 
@@ -283,7 +283,7 @@ PrdAgent 也是如此——
 | 文档 | 与涌现的关系 |
 |------|-------------|
 | `design.workflow-agent.engine.md` | 编排层核心 — DAG 引擎设计 |
-| `design.workflow-agent.control-flow-sse.md` | 编排层 — 控制流舱 + SSE 实时推送 |
+| `design.workflow-agent.engine.md` | 编排层 — DAG、控制流舱与 SSE 实时推送 |
 | `design.visual-agent.md` | 能力层 — 视觉创作 Agent 架构 |
 | `design.report-agent.md` | 能力层 — 周报 Agent 架构（含工作流集成） |
 | `design.literary-agent.md` | 能力层 — 文学创作 Agent |

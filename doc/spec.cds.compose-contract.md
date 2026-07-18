@@ -1,10 +1,10 @@
-# cds-compose 契约 · SSOT
+# cds-compose 契约 · SSOT · 规格
 
-> **类型**:spec(规格) | **版本**:1.0 | **最后更新**:2026-05-01 | **状态**:已实现
+> **版本**：v1.0 | **日期**：2026-05-01 | **状态**：已落地
+
 > **依赖**:`cds/src/services/compose-parser.ts`(解析实现)、`cdscli scan/verify`(CLI 端校验)
 > **替换**:废弃 README 里零散的"compose 怎么写"段落,本文为 SSOT
 
----
 
 ## 0. 30 秒读懂
 
@@ -119,7 +119,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 ### 坑 1:env 里 `${VAR}` 嵌套引用未展开 → 容器收到字面量
 
 ```yaml
-# ❌ 出错的写法
+# 否 出错的写法
 x-cds-env:
   MONGO_PASSWORD: aE7aB6zX
   MONGODB_URL: mongodb://root:${MONGO_PASSWORD}@mongodb:27017/admin?authSource=admin
@@ -145,7 +145,7 @@ services:
   backend:
     image: dotnet/sdk:8.0
     volumes: ['./backend:/app']
-    # ❌ 漏写 depends_on,但 backend 内代码连 mongodb:27017
+    # 否 漏写 depends_on,但 backend 内代码连 mongodb:27017
 ```
 
 **根因**:旧版 deploy 路由只起 `dependsOn` 列表里的 infra,漏写就不起。
@@ -177,7 +177,7 @@ services:
 services:
   backend:
     volumes:
-      - ./sgeo/backend:/app   # ❌ 仓库里没有 sgeo/ 目录,实际仓库根是 backend/
+      - ./sgeo/backend:/app   # 否 仓库里没有 sgeo/ 目录,实际仓库根是 backend/
 ```
 
 **根因**:CDS 信赖 yaml 里的 workDir 字段,docker mount 不存在的目录会自动创建空 dir,容器里看到空 /app → 应用一启动就"找不到 manifest"。
@@ -195,7 +195,7 @@ services:
   frontend:
     image: node:20
     command: pnpm dev   # ← webpack.config.js 里 devServer.port=8000
-    ports: ['3000']     # ❌ ports 写 3000,但真实监听 8000
+    ports: ['3000']     # 否 ports 写 3000,但真实监听 8000
 ```
 
 **根因**:CDS proxy 转 hostPort → containerPort=3000,但容器内 webpack 监听 8000,proxy 直接拿到 connection refused。
@@ -222,8 +222,8 @@ services:
 
 ```
 分支 master + 项目 geo
-✅ master-geo.miduo.org
-❌ geo-master.miduo.org   (项目在前,违反 v3 SSOT)
+是 master-geo.miduo.org
+否 geo-master.miduo.org   (项目在前,违反 v3 SSOT)
 ```
 
 **根因**:AI 凭直觉拼 URL,SSOT 在 `cds/src/services/preview-slug.ts:computePreviewSlug`,但人记不住公式。
@@ -350,7 +350,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 
 ## 6. 不要做的事
 
-| ❌ 不要 | 为什么 |
+| 否 不要 | 为什么 |
 |---|---|
 | 在 yaml 里 `services.x.image: ${MYIMG}` —— image 字段不解析 ${VAR} | 标准 compose 行为,只 env 解析 |
 | 把不同项目的 infra 加项目前缀(`projA_mongodb`) | 让 yaml 不通用,Phase 2 已用 containerName 隔离 |

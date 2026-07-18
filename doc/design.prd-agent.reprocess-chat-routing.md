@@ -1,148 +1,56 @@
-# 文档再加工 · 智能体调用路由设计
+# 文档再加工智能体调用路由 · 设计
 
-> **状态**: 已实现；2026-06-08 补充 Agent Universe 与文学配图模式
-> **覆盖范围**: 知识库再加工 Chat 抽屉里的智能体调用方式、业务归属、写回策略。
+> **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
-> 2026-06-08 说明：本文早期版本描述的是 `direct-chat` 收敛方案。当前实现已升级为
-> Agent Universe 能力契约 + 真实适配器/真实业务入口：内置智能体不再统一降级成聊天，
-> 生成型/结构化/业务专属动作必须走各自真实管道。
+## 管理摘要
 
-## 1. 管理摘要
+- **问题**：知识库文档再加工需要在同一抽屉中支持内置智能体、自建百宝箱工具和个人快捷智能体，同时不能把业务专属能力伪装成普通聊天。
+- **决策**：以 Agent Universe 能力契约决定调用管道；文本对话统一使用流式聊天协议，生成型和业务专属动作进入各自真实 Run 或业务端点；最终写回共用知识库内容服务。
+- **结果**：用户始终停留在所选智能体的业务上下文，文本、图片等产物都能以统一方式写回文档。
 
-知识库「文档再加工」抽屉的智能体调用分 **3 个入口、1 条管道、1 个落库口**。所有智能体调用统一走百宝箱的 `POST /api/ai-toolbox/direct-chat` SSE 接口，区别只在"系统提示词从哪里组装"。回包是同一份 SSE 协议（`start` / `text` / `thinking` / `error` / `done`），落库走同一个 `POST /entries/{id}/reprocess/apply-content`。
+## 路由原则
 
-### 1.1 当前策略：按智能体业务身份调用，不仿冒
+1. 已登记的内置智能体必须调用其真实能力适配器或业务入口，不以系统提示词模拟能力。
+2. 用户选择的业务归属不因底层能力复用而跳转。例如文学创作的配图仍归属文学创作，而非切换为视觉创作页面。
+3. 写回是独立能力：文本可替换、追加或另存；图片以 Markdown 引用写入目标文档。
+4. 流式过程遵循统一 SSE 生命周期，界面持续展示开始、思考、文本、错误和完成状态。
 
-当前知识库抽屉遵循三条规则：
+## 调用矩阵
 
-1. **内置智能体走真实能力**：`AgentCapabilityRegistry` 是能力边界 SSOT。已登记的内置智能体必须走真实适配器或真实业务入口，不再用一段 system prompt 假装智能体。
-2. **业务归属不跳转**：用户选中「文学创作智能体」并说“配个图看看”时，UI 仍归属文学创作，图片生成走 `/api/literary-agent/image-gen/runs`，不切到 `visual-agent`。
-3. **写回口统一**：无论产出是文本还是图片，写回知识库仍统一走 `apply-content`：文本可替换/追加/另存，图片以 Markdown 图片写入文档。
+| 选择类型 | 主要入口 | 产出 | 业务边界 |
+|---|---|---|---|
+| 内置智能体的文本能力 | 百宝箱流式聊天与 Agent 能力契约 | 文本 | 后端解析智能体身份与能力 |
+| 文学创作配图 | 文学创作图片生成 Run | 图片 | 使用文学创作的模型池与风格参考图 |
+| 视觉创作生成 | 视觉创作图片生成端点 | 图片 | 使用视觉创作的配置和生成流程 |
+| 自建百宝箱工具 | 百宝箱流式聊天 | 文本或工具结果 | 后端读取工具配置和启用能力 |
+| 个人快捷智能体 | 流式聊天 | 文本 | 仅允许所有者管理其快捷配置 |
 
-```
-知识库文档
-  │
-  └─ AI 文档对话抽屉
-       │
-       ├─ 选择文学创作智能体
-       │    │
-       │    ├─ 用户要求：改写/续写/润色
-       │    │     └─ Agent Universe / literary chat
-       │    │          └─ 输出文本
-       │    │               └─ 替换原文 / 追加末尾 / 另存为新文档
-       │    │
-       │    └─ 用户要求：配图/插图/封面/出图
-       │          └─ 文学配图 mini 面板
-       │               ├─ appKey = literary-agent
-       │               ├─ 模型池 = literary-agent.illustration.*
-       │               ├─ 参考图 = 文学创作配置中激活的风格图
-       │               └─ /api/literary-agent/image-gen/runs
-       │                    └─ imageDone
-       │                         └─ 追加 Markdown 图片到文档
-       │
-       ├─ 选择视觉创作智能体
-       │    └─ 视觉生图 mini 面板
-       │         ├─ appKey = visual-agent
-       │         └─ /api/visual-agent/image-gen/*
-       │
-       └─ 选择自定义/快捷智能体
-            └─ direct chat / custom:{id}
-```
+所有文本型入口使用同一 SSE 协议；业务专属 Run 仍需向抽屉提供可展示的阶段和最终产物。
 
-## 2. 调用图（架构总览）
+## 写回与状态边界
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      文档再加工 · Chat 抽屉                          │
-│                                                                      │
-│   ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐         │
-│   │ 百宝箱内置   │  │ 百宝箱自建   │  │ 我的快捷智能体     │         │
-│   │ (BUILTIN)    │  │ (toolbox     │  │ (DB 中的轻量       │         │
-│   │ 比如        │  │  item.id)    │  │  system prompt)    │         │
-│   │ literary-    │  │              │  │                    │         │
-│   │ agent        │  │              │  │                    │         │
-│   └──────┬───────┘  └──────┬───────┘  └─────────┬──────────┘         │
-│          │                  │                    │                    │
-│          │ agentKey         │ itemId             │ 不传 agentKey      │
-│          │                  │                    │ /itemId            │
-│          │                  │                    │                    │
-│          │                  │              system prompt 拼到 message │
-│          ▼                  ▼                    ▼                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │   POST /api/ai-toolbox/direct-chat (SSE)                     │   │
-│   │   body: { message, agentKey?, itemId?, history? }            │   │
-│   │   message = [智能体角色设定]?\n[参考文档]\n[用户指令]        │   │
-│   └──────────────────────────────┬───────────────────────────────┘   │
-│                                  │                                    │
-│                                  ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │  AiToolboxController.DirectChat (后端组装 system prompt)     │   │
-│   │  ┌───────────────────────────────────────────────────────┐   │   │
-│   │  │ itemId  → item.SystemPrompt + EnabledTools +           │   │   │
-│   │  │           KnowledgeBaseIds 注入                        │   │   │
-│   │  │ agentKey → GetBuiltinAgentSystemPrompt(key) 硬编码映射 │   │   │
-│   │  │ 都没传  → 通用 chat prompt                             │   │   │
-│   │  └───────────────────────────────────────────────────────┘   │   │
-│   └──────────────────────────────┬───────────────────────────────┘   │
-│                                  │                                    │
-│                                  ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │       ILlmGateway (compute-then-send, 单次 Resolve)          │   │
-│   │       AppCallerCode = ai-toolbox.agent.{key}::chat           │   │
-│   └──────────────────────────────┬───────────────────────────────┘   │
-│                                  │                                    │
-│                                  ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │  OpenRouter / 自有 LLM 平台 (流式 SSE)                       │   │
-│   └──────────────────────────────┬───────────────────────────────┘   │
-│                                  │                                    │
-│      SSE 事件流回传:  start → (thinking)* → text* → done             │
-│                                  │                                    │
-│                                  ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │       抽屉渲染（StreamingText 流式动效 + Markdown）          │   │
-│   └──────────────────────────────┬───────────────────────────────┘   │
-│                                  │                                    │
-│              用户点击「替换原文 / 追加末尾 / 另存为新文档」          │
-│                                  │                                    │
-│                                  ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────┐   │
-│   │  POST /entries/{id}/reprocess/apply-content                  │   │
-│   │  body: { mode: replace|append|new, content, title? }         │   │
-│   │  内部复用 ContentReprocessApplyService（无 Run 依赖）        │   │
-│   └──────────────────────────────────────────────────────────────┘   │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-## 3. 三种类型的最小差异
-
-| 维度 | 百宝箱内置 | 百宝箱自建 | 我的快捷智能体 |
-|------|------------|------------|----------------|
-| 注册位置 | `BUILTIN_TOOLS` 前端 + `GetBuiltinAgentSystemPrompt` 后端硬编码 | `toolbox_items` 集合 | `reprocess_agents` 集合 |
-| 标识符 | `agentKey` (e.g. `literary-agent`) | `itemId` (Mongo ObjectId) | 前端用 `key`；后端拼到 message 里 |
-| System Prompt 来源 | `GetBuiltinAgentSystemPrompt(key)` 后端硬编码 | `item.SystemPrompt` 后端读 DB | 前端读 `agent.systemPrompt`，拼到 message 头 |
-| 增强能力 | 无 | EnabledTools + KnowledgeBaseIds 注入 | 无（只是 prompt 覆盖） |
-| AppCallerCode | `GetAgentAppCallerCode(key)` 后端按 key 映射 | `ai-toolbox.orchestration::chat` | 同上 |
-| 用户创建 | 不可（系统内置） | 可（去 `/ai-toolbox` 页创建） | 可（在抽屉里浮层一键创建） |
-
-## 4. 边界与异常路径
+再加工抽屉只负责选择能力、维护对话上下文和展示结果。内容写回统一交给 `apply-content` 相关服务，避免不同智能体分别实现替换、追加和新建文档的权限判断。
 
 | 场景 | 处理 |
-|------|------|
-| 文档无正文 | 抽屉打开时 `getDocumentContent` 已经走过 fallback（DocumentId → ContentIndex），如果都空则消息流空状态展示 |
-| 文档过大（>40KB） | 前端截断到前 40000 字符 + 提示「文档过长，已截取前 40000 字喂给 AI」 |
-| 文件夹 entry | 上层 DocBrowser 不显示「再加工」按钮，进不来 |
-| 流式中切换/再点 chip | `streamingId !== null` 时所有 chip / 输入框 disabled |
-| 流式中关闭抽屉 | useEffect cleanup 调 `cancelStreamRef.current?.()` 中止 fetch |
-| LLM 错误 | onError → 在最后一条 assistant 气泡里渲染失败原因 + 顶部红 banner |
-| 多轮上下文 | 每次发送把全部历史 user/assistant 一并塞进 `history`，让 direct-chat 看到完整对话 |
-| 删除自建快捷智能体 | confirm 后 DELETE，只允许删自己的（visibility=personal && OwnerUserId == userId） |
+|---|---|
+| 空文档 | 以空状态引导，不伪造上下文 |
+| 超长正文 | 在发送前按上限截取，并向用户说明截取范围 |
+| 流式中再次发送或切换能力 | 禁用会产生竞争的控件；关闭抽屉时取消订阅 |
+| 流式失败 | 在当前助手消息中保留失败原因，允许用户重新发起 |
+| 删除个人快捷智能体 | 仅所有者可删除，服务端再次校验归属 |
 
-## 5. 关联文件
+## 实现来源
 
-- 前端: `prd-admin/src/pages/document-store/ReprocessChatDrawer.tsx`
-- 前端 service: `prd-admin/src/services/real/aiToolbox.ts` 的 `streamDirectChat` + `prd-admin/src/services/real/documentStore.ts` 的 `applyReprocessContent` / `listReprocessAgents`
-- 后端: `prd-api/src/PrdAgent.Api/Controllers/Api/AiToolboxController.cs` `DirectChat` 端点 + `prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs` `ApplyContent` 端点
-- 后端模型: `prd-api/src/PrdAgent.Core/Models/ReprocessAgent.cs`
-- 后端 Service: `prd-api/src/PrdAgent.Api/Services/ContentReprocessApplyService.cs` + `ReprocessAgentSeeder.cs`
+| 层级 | 权威实现 |
+|---|---|
+| 再加工抽屉 | `prd-admin/src/pages/document-store/ReprocessChatDrawer.tsx` |
+| 流式聊天与文档服务 | `prd-admin/src/services/real/aiToolbox.ts`、`prd-admin/src/services/real/documentStore.ts` |
+| 百宝箱入口 | `prd-api/src/PrdAgent.Api/Controllers/Api/AiToolboxController.cs` |
+| 文档写回 | `prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs`、`ContentReprocessApplyService.cs` |
+| 快捷智能体模型与初始化 | `PrdAgent.Core/Models/ReprocessAgent.cs`、`ReprocessAgentSeeder.cs` |
+
+## 关联文档
+
+- `doc/debt.agent-universe.md`：能力契约与已知边界。
+- `design.knowledge-base.agent-architecture.md`：知识库智能体架构。
+- `design.visual-agent.md`、`design.literary-agent.md`：生成型智能体的业务入口。

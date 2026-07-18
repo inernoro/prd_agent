@@ -1,6 +1,6 @@
 # 工作流 Agent · 债务台账
 
-> **版本**：v2.0 | **日期**：2026-05-07 | **状态**：维护中
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：开发中
 
 ## 总览
 
@@ -59,7 +59,7 @@
 
 **理想行为**：
 - 选项 A：在 NormalizeBilibiliVideoItem 内追加 `fetch_video_playurl` 二次调用，拿真实 mp4 URL（B 站需 wbi 签名，复杂）
-- 选项 B：feed-card 视图检测 videoUrl 为空时，Play 按钮变成「跳转原平台 ↗」
+- 选项 B：feed-card 视图检测 videoUrl 为空时，Play 按钮变成「跳转原平台 」
 
 **估时**：B 选项 30min；A 选项 2-3h（wbi 签名实现）
 
@@ -136,7 +136,7 @@
 
 ## 相关文档
 
-- `doc/plan.emergence.tiktok-douyin-poster.md`：涌现 1 主计划文档（Phase 1 + 2 + 3 已完成）
+- `doc/plan.emergence.tiktok-douyin-poster.md`：抖音与 TikTok 真订阅的未完成闭环
 - `doc/guide.submission-gallery.poster-feed-card.md`：用户教程（多平台博主订阅 → 首页海报）
 - `doc/debt.video-agent.md`：视频生成 Agent 债务（Remotion 已废弃路径）
 - `.claude/rules/llm-gateway.md`：LlmRequestContext 强制要求

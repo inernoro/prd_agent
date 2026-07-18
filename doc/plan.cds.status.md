@@ -1,217 +1,73 @@
-# CDS 当前状态看板 · 计划
+# CDS 当前工作看板 · 计划
 
-> **类型**:plan(总览看板) · **更新**:2026-07-09 · **状态**:活的 — 每次 handoff 必须更新本文件
->
-> 这是 **CDS 唯一的"我在哪"入口**。任何 AI / 人类接手 CDS 改动前先读本页 30 秒,然后按需深入子文档。
->
-> **不要**给 CDS 新建额外的 handoff/进度文档 — 全部归口本文件 + `plan.cds.backlog-matrix.md`(碎片项 SSOT)。
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
----
+## 〇、配置体系三波演进
 
-## 〇、配置体系三波演进看板(2026-07-06 起,当前主线)
+配置树已经形成“全局、项目、分支、派生分支快照”的服务端权威，repo compose 只承担结构种子。当前不再按旧波次重复记已完成文件，后续只守住四条不变量：
 
-> 背景:用户 2026-07-06 提出「拔高上限的同时降低下限」——配置树(全局→项目→分支→派生分支)、
-> 分支临时容器产品化、配置可观测性。方案定盘:派生=快照拷贝、repo compose=纯结构种子(波4)。
-> 分支:`claude/session-y2bpgw`。
+1. effective config 能解释每个值的来源、覆盖层和敏感性。
+2. 派生分支按已选来源复制快照，不在运行时隐式追随父分支变化。
+3. repo compose 与权威配置的 drift 可扫描、可预览、可选择性应用。
+4. 平台注入密钥、数据库和队列隔离值时，不覆盖用户显式配置，也不向 UI 泄露明文。
 
-| 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
-|---|---|---|---|---|---|
-| 波1 最后一公里(extraProfiles UI+CLI / dbScope 开关 / 看板) | 90 | 进行中 | 无 | push 后灰度真机验证(添加 Nacos 预设 → redeploy → 分支网 → 命名 URL 可达) | vitest 180 文件绿 + pytest 149 绿 + tsc 双侧绿(2026-07-06 本地);真机证据待补 |
-| 波2 配置检查器(env 逐 key 溯源 + effective-config 端点 + 面板) | 90 | 进行中 | 无 | 灰度真机验证(部署热路径重构是合并前置门槛);验证通过后波1+2 一并收 | env-provenance.test.ts 14 例绿 + effective-config 端点 3 例绿 + container.test.ts 43 例行为等价护栏绿 + 全量 vitest 181 文件绿(2026-07-06 本地) |
-| 波3 配置树补全(分支派生快照拷贝 + 快照分支层 + design.cds.config-tree + 建分支来源选择器 UI) | 95 | 进行中 | 无 | 灰度真机验证(与波1/2 一并) | 派生拷贝/copy-config/快照分支层/PR 回填 7 例 + 建分支来源选择器 contract 1 例新测试绿 + 全量 vitest 绿(server-integration 10 例存量环境失败无关)+ web tsc/build 绿(2026-07-06);design.cds.config-tree.md 已归档 |
-| 波4 双SSOT收敛(repo compose 纯结构种子 + drift 巡检 + 还 D1 债) | 100 | 完成 | 无(D1 已 paid) | 可选增强:drift-scan webhook 自动触发 + 面板漂移入口 UI | classifyEnvSeed 5 例 + computeComposeDrift 7 例 + drift-scan 端点 5 例新测试绿。**D1 运行实例验证通过(2026-07-06)**:`cdscli env get --scope prd-agent` 8 个被剥离密钥全 present+非TODO(值脱敏);`branch status` 本分支 commit 8624a95(构建自剥离后 compose)`api-prd-agent: running` → 密钥注入不丢的端到端确证。全量 vitest 2605 passed(server-integration 10 例存量环境失败无关) |
-| 波5 无 Agent 接入(事后栈检测 race-free 后端 + UI 入口) | 90 | 进行中 | 仅剩 CDS 仪表盘 UI 的真视觉截图(见下「验证边界」),非阻塞 | CDS self-update 到本分支后(或本地跑 CDS 仪表盘)双主题截图收尾 | 后端:detect-preview/detect-apply + 6 例端点测试绿。UI:BranchListPage 空项目态引导「检测技术栈」→ DetectStackDialog(shadcn Dialog,主题 token 双色,grep 零硬编码色)→ preview→apply→刷新;contract 测试断言 wiring;backend/web tsc + web build + 全量 vitest 2605 passed。**验证边界**:波3/波5 是 CDS **仪表盘**(cds/web)UI,分支预览域名部署的是 prd-agent **应用**(admin/api),不含 CDS 仪表盘 → 这两处 UI 的真视觉截图须待 CDS self-update 到本分支或本地跑仪表盘,不能走分支预览。已验证:tsc/build/contract/主题 grep + 复用成熟 shadcn 主键 |
+## 一、30 秒现状
 
-**距离可发布**:波4 **完成**(D1 已 paid,运行实例验证密钥注入不丢);波1-3 + 波5 代码完成 + 单测/构建全绿,剩 CDS 仪表盘 UI(波3/波5)的双主题真视觉截图 —— 该截图须待 CDS self-update 到本分支或本地跑仪表盘(分支预览域名部署的是 prd-agent 应用,不含 CDS 仪表盘,故不能走分支预览),非合并阻塞项。
+| 维度 | 当前结论 |
+| --- | --- |
+| 控制面 | Node、Express、MongoDB；默认 `mongo-split` |
+| Web | React 控制台是 dashboard 权威；`web-legacy` 只待物理退场 |
+| 项目 | 多项目、项目网络、GitHub 绑定、手动创建和自动部署已落地 |
+| 分支 | 分支级入口、配置覆盖、额外服务、数据库与队列隔离已有实现 |
+| Agent | 官方 SDK 商业闭环仍受 runtime profile 和真实 provider 证据约束 |
+| 高可用 | 调度与多节点代码存在，真实两 executor 故障迁移证据仍不足 |
+| 存储 | `state.json` 正常写路径尚未退场，是明确债务 |
 
----
+当前主线按优先级只有四条：
 
-## 一、30 秒了解 CDS 现状
+1. 收口 React legacy 功能差距并在授权后删除旧前端。
+2. 关闭 CDS Agent 官方 SDK 的真实 provider、审批与停止证据。
+3. 完成多节点高可用真实部署和故障演练。
+4. 继续拆分 Mongo 权威数据并退场 `state.json` 影子写。
 
-| 维度 | 状态 |
-|---|---|
-| 主分支 | `main` @ `0044f01`(2026-07-03) |
-| 进行中分支 | `claude/session-y2bpgw`(配置体系波1-5,见顶部看板);`claude/cds-code-review-lsxkwx`(R1 四维扫描 24 项修复 + R2 债务台账综合还债 2026-07-09:state 拆 collection Phase1+2 / BULLMQ_PREFIX 注入 / BNI-cleanup / 孤儿 infra 报告 + 残留 app sweep / loading 页 SSOT 2 页 / 极速版入口校验 / export 分页 / agent D4 Lite 直跑 / D16 文案 / smoke 脚本整组退役,台账勾销见各 debt.cds.* 2026-07-09 批注) |
-| 远端实例 | `https://cds.miduo.org` |
-| 后端栈 | Node 20 + Express + MongoDB(`mongo-split` 默认) |
-| 前端栈 | React + Vite + Tailwind + shadcn/ui(`cds/web/`),React Router 为唯一 dashboard 权威;`cds/web-legacy/` 仅作代码对照层不再被服务 |
-| 测试 | vitest 2653 passed / 188 文件(2026-07-09,server-integration 10 例为存量环境失败、基线同现),pytest 149,tsc backend + web 全绿 |
+## 二、里程碑状态
 
----
+| 能力 | 状态 | 当前入口 |
+| --- | --- | --- |
+| 项目与分支基础设施 | 已落地 | `design.cds.md`、`spec.cds.project-model.md` |
+| GitHub 授权与 Webhook | 已落地 | `guide.cds.github-webhook-events.md` |
+| MySQL、Postgres、Mongo 接入 | 已落地，持续兼容验证 | `guide.cds.orm-support.md` |
+| 多项目隔离 | 已落地，残留偿债 | `plan.cds.multi-project-phases.md`、`debt.cds.branch-isolation.md` |
+| React 控制台 | 现行权威，旧代码待删 | `plan.cds.web-migration.md` |
+| Agent 工作台 | Lite 可用，官方 SDK 商业闭环未关闭 | `plan.cds.agent.official-sdk-migration.md` |
+| 高可用与多 executor | 代码已具备，真实运行验证未关闭 | `plan.cds.resilience-rollout.md` |
+| 集群 bootstrap | 规划中 | `design.cds.cluster-bootstrap.md` |
 
-## 二、大期路线图
+## 三、未完成事项归口
 
-```
-2026-Q1                    2026-Q2(now)               2026-Q3+
-─────────────────────────────────────────────────────────────────
+| 类型 | 唯一入口 |
+| --- | --- |
+| 横向产品与体验事项 | `plan.cds.backlog-matrix.md` |
+| 多项目与 workspace | `plan.cds.multi-project-phases.md` |
+| React legacy 退场 | `plan.cds.web-migration.md` |
+| 多节点高可用 | `plan.cds.resilience-rollout.md` |
+| Agent 官方 SDK | `plan.cds.agent.official-sdk-migration.md` |
+| 存储、隔离、迁移与性能风险 | 对应 `debt.cds.*.md` |
 
-✅ 基础设施服务         ✅ 多项目隔离              📋 项目模板库
-✅ 基础设施发现         ✅ MySQL/Postgres 接入       📋 发布代理(Release Agent)
-✅ 一键配置导入         ✅ Onboarding UAT 收尾      🔮 集群部署 + 远程 executor
-✅ Stack 自动检测       🔨 React 迁移(60%+)
-                         🔨 Onboarding 真人验收
-```
+已完成故障、旧分支名、测试数量和临时预览地址不进入本看板；这些由 Git 历史、周报和 CI 证据承担。
 
-### 已完成里程碑
+## 四、开始 CDS 任务的顺序
 
-| 里程碑 | 完成日期 | 关键 PR / commit |
-|---|---|---|
-| Phase 0 基础设施管理 | 2026-03-13 | 早期 |
-| Phase 1 一键配置导入(`/cds-scan` + stack-detector) | 2026-04 | FU-03 nixpacks 推断 |
-| Phase 2 多项目支持(P4 多项目隔离) | 2026-04-19 | PR #450 GitHub webhook |
-| **MySQL/Postgres 接入(7 phase)** | 2026-04-30 | `cds-mysql-phase-1..7` |
-| **Onboarding UAT 收尾(13 friction)** | 2026-05-02 | PR #522 |
-| **mongo-split storage** | 2026-05 | 默认 `CDS_STORAGE_MODE=mongo-split` |
-| **per-branch DB 隔离机制(代码层)** | 2026-05 | `applyPerBranchDbIsolation` + `dbScope='per-branch'` |
-| **Onboarding 收尾第二波(F11/F12 + 3 UI bug)** | 2026-05-03 | `claude/cds-loose-ends-wrap-up` |
-| **分支专属网络隔离(cds-br-*)** | 2026-06-29 | `branch-network.ts`(见 design.cds.branch-network-isolation) |
-| **分支级临时额外服务(后端+API)** | 2026-06-29 | `BranchEntry.extraProfiles` + PUT /extra-services(见 design.cds.branch-local-extra-services) |
-| **临时额外服务产品化(UI+cdscli)+ dbScope 分支开关(波1)** | 2026-07-06 | `claude/session-y2bpgw`(ExtraServicesPanel + cdscli branch extra-services + override 白名单补 dbScope) |
+1. 读本页确认任务归口。
+2. 读对应 design、spec 或 debt，确认当前事实和边界。
+3. 在 `plan.cds.backlog-matrix.md` 搜索稳定 ID，避免重复登记。
+4. 实现后跑 backend/web 类型检查、聚焦单测和行为级冒烟。
+5. 若涉及控制台，走真实导航入口完成双主题验收。
+6. 完成项从计划移除；长期事实更新设计，未偿还边界更新债务。
 
-### 进行中
+## 五、维护规则
 
-| 项 | 进度 | 阻塞 |
-|---|---|---|
-| **配置体系三波演进(§〇)** | 波1 90% | 见顶部看板 |
-| **Onboarding UAT 真人验收剩余 22%** | 待真人浏览器跑 | 需用户跑[剩余清单](report.cds.onboarding-uat.md#真人-uat-剩余清单) |
-| **React 迁移**(`cds/web-legacy/` → `cds/web/`) | ~60% | 见 [plan.cds.web-migration](plan.cds.web-migration.md) |
-
-### 未启动
-
-| 项 | 触发条件 |
-|---|---|
-| 项目模板库(community) | 多项目跑稳定 + 用户主动需要 |
-| Release Agent + 子节点注册 | 团队需要"测试→生产"全链路 |
-| 远程 executor 集群 | 单机性能瓶颈 |
-
----
-
-## 三、当前已知问题状态(F1-F18 + LIM-01..07)
-
-### F 系列(onboarding UAT 暴露的 friction)
-
-| ID | 等级 | 描述 | 状态 |
-|---|---|---|---|
-| F1 | P2 | mongo 单文档写放大 | ✅ 已解(默认 `mongo-split`) |
-| F2 | P2 | 无 mongo→mongo-split 升级 API | ✅ 已解(同上,新装直接 mongo-split) |
-| F3 | P1 | cdscli 缺 project create/clone/delete + branch create | ✅ 已修(Phase 16) |
-| F4 | P1 | clone 后 autoConfigure 静默失败 | ✅ 已修 |
-| F5 | P1 | cds.miduo.org 落后 main | ✅ 已修(self-update) |
-| F6 | P1 | yml 没 x-cds-env-meta envMeta 全空 | ✅ 已修(`env-classifier.ts`) |
-| F7 | P1 | POST /api/branches 字段名歧义 | ✅ 已修(cdscli 抹平) |
-| F8 | P1 | deploy 不 block TODO 占位符 | ✅ 已修(F6 修后既有 412 路径生效) |
-| F9 | P1 | GET /api/branches/:id 端点缺 | ✅ 已修 |
-| F10 | P1 | in-progress logs 空 | ✅ 已修(`liveStreamHint`) |
-| F11 | P3 | demo 必须 push GitHub 才能跑 | ✅ 已修 2026-05-03(`POST /api/projects` 沙盒模式) |
-| F12 | P3 | init.sql 没 UI 上传入口 | ✅ 已修 2026-05-03(`POST /api/projects/:id/files` + EnvSetupDialog 卡片) |
-| F13 | P4 | cdscli scan 不识别 init.sql | ✅ 已修 2026-05-03(verify INFO `infra-init-script-detected`) |
-| F14 | P4 | `schemaful-db-no-migration` 误报 | ✅ 已修 2026-05-03(挂 init.sql 时不再 WARN) |
-| F15 | HIGH | container-exec 输出回显 secret | ✅ 已修(`secret-masker.ts`) |
-| F16 | P2 | per-branch DB 后缀未实施 | ✅ 已修 2026-07-06(波1:override 白名单补 dbScope 透传 + 分支抽屉「数据库隔离」选择器) |
-| F17 | 契约违反 | 预览过渡页是纯文本 | ✅ 已修(SVG 双圈+CDS 字样) |
-| F18 | P4 | repo picker 命名歧义(Tab vs Dialog) | ✅ 已修 2026-05-03(dropdown 直接弹 picker) |
-
-**F 系列状态**:18 项 **全部已修**(F16 于 2026-07-06 波1 收尾)。
-
-### Bug 系列(2026-05-03 用户反馈的 UI bug)
-
-| ID | 描述 | 状态 |
-|---|---|---|
-| Bug A | BranchListPage 加载分支与远程引用 太慢 | ✅ 已修(取消远程 force-fetch 兜底) |
-| Bug B | 运行中 vs 未运行 状态色区分弱 | ✅ 已修(font-semibold + dot + opacity) |
-| Bug C | 服务详情左右分栏 → 顶部 tab | ✅ 已修(grid → flex-col) |
-
-### LIM 系列(设计权衡,不是 bug)
-
-| ID | 限制 | 处理 |
-|---|---|---|
-| LIM-01 | Mongo 16MB 单 doc 限制 | ✅ 已解(`mongo-split`) |
-| LIM-02 | GitHub Device Flow 单租户 | deferred(等 P5 user model) |
-| LIM-03 | Repo Picker 只取前 100 | ✅ 已解(FU-01 分页) |
-| LIM-04 | Executor 不复用 multi-repo | deferred(等 P3 集群) |
-| LIM-05 | Proxy auto-discovery 不跨项目 | wontfix(显式部署不受影响) |
-| LIM-06 | 多 tab 并发 Device Flow race | wontfix(已知低概率) |
-| LIM-07 | Volume / 持久化卷 UI 入口被砍 | ✅ 已解(2026-04-16) |
-
----
-
-## 四、活的子文档(按读取顺序)
-
-### 第一层:开始干活前必读
-1. **本文件** — 当前状态
-2. [plan.cds.backlog-matrix.md](plan.cds.backlog-matrix.md) — 碎片项 SSOT(UF/GAP/L10N/LIM/FU/TEST 系列)
-3. [report.cds.onboarding-uat.md](report.cds.onboarding-uat.md) — Onboarding UAT 完整报告(合并自 5 个子文件)
-
-### 第二层:架构 / 规格(改设计前读)
-- [design.cds.md](design.cds.md) — CDS 主架构
-- [spec.cds.md](spec.cds.md) — CDS 主规格
-- [spec.cds.compose-contract.md](spec.cds.compose-contract.md) — compose 契约(verify 规则源)
-- [spec.cds.project-model.md](spec.cds.project-model.md) — Project / Branch / InfraService 模型
-- [design.cds.multi-project.md](design.cds.multi-project.md) — 多项目隔离设计
-- [design.cds.resilience.md](design.cds.resilience.md) — 容错设计
-- [design.cds.cluster-bootstrap.md](design.cds.cluster-bootstrap.md) — 集群启动(未启动)
-- [design.cds.data-migration.md](design.cds.data-migration.md) — 数据迁移
-- [design.cds.fu-02-auth-store-mongo.md](design.cds.fu-02-auth-store-mongo.md) — Auth store
-- [design.cds.onboarding.md](design.cds.onboarding.md) — Onboarding 设计
-
-### 第三层:操作指南(部署/调试/集成时读)
-- [guide.cds.env.md](guide.cds.env.md) — 环境变量配置(必读)
-- [guide.cds.ai-auth.md](guide.cds.ai-auth.md) — Agent 鉴权(三 Tab 接入)
-- [guide.cds.multi-project-upgrade.md](guide.cds.multi-project-upgrade.md) — 多项目升级流程
-- [guide.cds.multi-branch-db.md](guide.cds.multi-branch-db.md) — per-branch DB 用法
-- [guide.cds.orm-support.md](guide.cds.orm-support.md) — ORM 接入
-- [guide.cds.mysql-validation-runbook.md](guide.cds.mysql-validation-runbook.md) — MySQL 接入实战
-- [guide.cds.mongo-migration.md](guide.cds.mongo-migration.md) — JSON → Mongo 迁移
-- [guide.cds.cluster-setup.md](guide.cds.cluster-setup.md) — 集群部署
-- [guide.cds.github-webhook-events.md](guide.cds.github-webhook-events.md) — webhook 事件
-- [guide.cds.view-parity.md](guide.cds.view-parity.md) — legacy 视图迁移对照
-- [guide.cds.web-migration-runbook.md](guide.cds.web-migration-runbook.md) — React 迁移 runbook
-
-### 第四层:规则(改代码前必查)
-- [rule.cds.mongo-migration.md](rule.cds.mongo-migration.md) — mongo migration 规则
-- [rule.cds.project-isolation-audit.md](rule.cds.project-isolation-audit.md) — 跨项目隔离审计
-- `.claude/rules/cds-theme-tokens.md` — 主题 token(白天禁暗色)
-- `.claude/rules/scope-naming.md` — 系统级 vs 项目级命名
-- `.claude/rules/cds-auto-deploy.md` — push 即部署(2026-04-19 起)
-
-### 第五层:大期计划(架构决策时读)
-- [plan.cds.roadmap.md](plan.cds.roadmap.md) — Phase 0-3 长期路线
-- [plan.cds.multi-project-phases.md](plan.cds.multi-project-phases.md) — P0-P6 多项目大期
-- [plan.cds.web-migration.md](plan.cds.web-migration.md) — React 迁移大期(~60%)
-- [plan.cds.resilience-rollout.md](plan.cds.resilience-rollout.md) — 容错 rollout
-- [plan.cds.deployment.md](plan.cds.deployment.md) — 部署策略
-
-### 第六层:周报(历史)
-- `doc/report.2026-W*.md` — 周报系列(`/weekly` skill 生成)
-
----
-
-## 五、改动 CDS 的标准流程
-
-```
-开始干活
-    ↓
-读本文件 30 秒(知道在哪)
-    ↓
-读 plan.cds.backlog-matrix 看是否已有 ID(避免重复)
-    ↓
-按规则(`.claude/rules/`)动手改代码
-    ↓
-跑 `pnpm tsc --noEmit` + `pnpm vitest run` + `python3 -m pytest .claude/skills/cds/tests/`
-    ↓
-push → cds.miduo.org auto-deploy(等 2-5 分钟)
-    ↓
-真人验收 → 合 PR
-    ↓
-回到本文件 + plan.cds.backlog-matrix 把状态打勾 / 加新发现
-```
-
----
-
-## 六、维护本文件的规则
-
-1. **每次 handoff 必更新**:大期里程碑 / F-Bug-LIM 状态 / 进行中分支
-2. **不要新建独立 handoff 文档**:有内容直接进本文件 §二/§三,要详细推演进 `plan.cds.backlog-matrix`
-3. **历史快照**:由 `doc/report.2026-W*.md` 周报承担,本文件只装 *现在*
-4. **更新顺序**:本文件 → `MEMORY.md` → `doc/index.yml` + `doc/guide.list.directory.md`
-5. **顶部看板与 §一 表必须同一次 handoff 同步更新**:两处的分支名 / 测试数量 / 实例状态不允许出现两个时代的快照(2026-07-09 曾出现顶部写 vitest 2605、§一 还停在 1098 的自相矛盾,「唯一现状入口」自身失真)。改任何一处前先对照另一处
+- 本页只写当前主线和归口，不写分支名、临时 commit、一次性日志或已完成长清单。
+- 同一事项不得同时在 status、roadmap、handoff 和独立 plan 中维护。
+- 新 blocker 必须能归入现有计划或债务；无法归入时先判断是否真的需要新文档。
+- 页面展示、API 状态和本文结论冲突时，以运行时服务端事实为准，并立即校正文档。

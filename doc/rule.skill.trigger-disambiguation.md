@@ -1,7 +1,8 @@
-# rule.skill.trigger-disambiguation
+# 技能触发消歧 · 规则
 
-> **类型**: rule | **状态**: active | **owner**: 平台 | **last-updated**: 2026-05-15
->
+> **版本**：v1.0 | **日期**：2026-05-15 | **状态**：已落地
+
+> **last-updated**: 2026-05-15
 > 当多个技能围绕同一中心系统（如 CDS、Agent 工作流、视觉创作）拆分时，**触发词域必须无交集**，否则会同时命中多个技能造成误选。本文件定义触发词去重的硬规则。
 
 ## 触发的根本问题
@@ -70,12 +71,12 @@ handle credential setup or CDS self-update — those belong to cds (core).
 同族技能共用 CLI / reference 文档时，必须有**单一物理拷贝**，其他技能通过相对路径引用：
 
 ```
-✅ 正确
+是 正确
 .claude/skills/cds/cli/cdscli.py             ← 单一源
 .claude/skills/cds-deploy-pipeline/SKILL.md  ← 引用 ../cds/cli/cdscli.py
 .claude/skills/cds-project-scan/SKILL.md     ← 引用 ../cds/cli/cdscli.py
 
-❌ 错误
+否 错误
 .claude/skills/cds/cli/cdscli.py             (5553 行)
 .claude/skills/cds-deploy-pipeline/cli/cdscli.py  (495 行陈旧 stub)
 ```

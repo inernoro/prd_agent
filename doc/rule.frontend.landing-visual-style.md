@@ -1,10 +1,11 @@
-# rule.frontend.landing-visual-style — 首页 / 登录页视觉语言 · 规则
+# 首页与登录页视觉语言 · 规则
+
+> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
 > **范围**：`prd-admin/src/pages/home/` + 所有对外展示类页面（登录、分享、落地、订阅邮件 H5 等）。
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。
 > **维护原则**：每次更新整页替换，不保留历史变更记录（历史由 git + changelogs 承担）。
 
----
 
 ## 一、风格定位：Linear × Retro-Futurism
 
@@ -40,10 +41,10 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #
 | 独立全屏页（/home、/login 等不走 AppShell 的路由） | `<StaticBackdrop />` | 默认 `mode="fixed"`，`fixed inset-0` 覆盖整个视口 |
 | AppShell 内 Outlet 页（/arena、/dashboard 等有左侧栏/顶栏的路由） | `<div className="relative"><StaticBackdrop mode="absolute" />…</div>` | `absolute inset-0` 仅填满当前容器，不会穿透 AppShell 的侧边栏/顶栏 |
 
-- ❌ 禁止：粒子 canvas、鼠标视差、Three.js 着色器、mesh gradient 连续动画
-- ❌ 禁止：任何 `fixed` 定位的亮带（地平线/太阳/地板），会穿透下方 section 产生"银光"伪影
-- ❌ 禁止：在 AppShell 内 Outlet 页使用默认 `mode="fixed"`——会遮住左侧导航
-- ✅ 允许：局部化（`absolute`）的 retro 装饰，且只限 Hero 段内部（参考 `HeroSection.tsx` 前 100 行）
+- 否 禁止：粒子 canvas、鼠标视差、Three.js 着色器、mesh gradient 连续动画
+- 否 禁止：任何 `fixed` 定位的亮带（地平线/太阳/地板），会穿透下方 section 产生"银光"伪影
+- 否 禁止：在 AppShell 内 Outlet 页使用默认 `mode="fixed"`——会遮住左侧导航
+- 是 允许：局部化（`absolute`）的 retro 装饰，且只限 Hero 段内部（参考 `HeroSection.tsx` 前 100 行）
 
 ### R3 · 三套字体各司其职
 
@@ -179,7 +180,7 @@ border-radius: 22px;                   /* clamp 18-24 */
 
 ## 五、Do / Don't 对照表
 
-| ❌ Don't | ✅ Do |
+| 否 Don't | 是 Do |
 |---------|------|
 | 画一个 canvas 粒子背景 | 用 `StaticBackdrop` |
 | 造新的 `linear-gradient(...)` 当品牌色 | 引入 `HERO_GRADIENT` |

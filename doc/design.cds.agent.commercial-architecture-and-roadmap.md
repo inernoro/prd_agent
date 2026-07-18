@@ -1,12 +1,11 @@
-# CDS Agent 商业级架构与路线图
+# CDS Agent 商业级架构与路线图 · 设计
 
-> **版本**：v2026-05-21
-> **状态**：active authority  
-> **分支**：`codex/cds-agent-workbench-ui`  
-> **读者**：产品、研发、运维、后续接手的 Agent  
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：开发中
+
+> **分支**：`codex/cds-agent-workbench-ui`
+> **读者**：产品、研发、运维、后续接手的 Agent
 > **定位**：这是 CDS Agent 当前唯一权威入口。架构、阶段、验收标准、当前进度、视觉测试和冒烟测试对勾都以本文为准。旧文档继续保留为背景资料和历史记录。
 
----
 
 ## 0. 一句话目标
 
@@ -25,6 +24,13 @@
 | 当前最高优先级 | P4-29 已完成，下一阶段应进入 P4-30：把同一套 commercial smoke 纳入部署后自动验收/告警，补齐 deploy 结果的 `daemonRestarted/webOnly/elapsedSeconds` 明确记录，减少 CDS 控制面 502/超时导致的人工确认成本 |
 | 当前不是主线 | SSH、remote host env、sidecar image registry 都只能作为 operator/debug fallback，不能作为普通用户路径 |
 | 当前风险 | 本轮 smoke 已证明 `/messages` 502 阻塞解除，但 CDS 控制面在部署确认阶段仍出现 `/api/branches` 超时和 Cloudflare 502；deploy 证据中 `daemonRestarted/webOnly/elapsedSeconds` 仍为 null。写文件、知识库改写、PR 仍必须走 writable profile、审批和差异应用机制，不进入默认路径 |
+
+当前运行边界统一如下：
+
+- `prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。
+- Claude SDK Agent 是 CDS-managed runtime/container/sandbox。
+- SSH、remote host env 与 sidecar image registry 只能作为 CDS operator/debug fallback，不能作为普通用户主路径。
+- 运行时事实与 R0 后续动作以 `doc/design.cds.agent.managed-runtime-fact-source.md` 为准。
 
 ---
 
@@ -481,7 +487,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | --- | --- |
 | 本文 | 唯一权威入口，回答目标、架构、阶段、验收、进度和测试对勾 |
 | ~~`doc/status.cds-agent-current-progress.md`~~（不入库） | 旧跳转页，已合并进本文档；不作为 committed 文档存在，引用一律改指本文档 |
-| `doc/plan.cds.agent.workbench.md` | 历史主战场，保留大量上下文 |
+| `doc/plan.cds.agent.official-sdk-migration.md` | 当前未完成的官方 SDK 商业闭环 |
 | `doc/design.cds.agent.runtime-architecture.md` | 旧 runtime 架构说明，后续应按本文校准 |
 | `doc/guide.workflow-agent.md` | 通用工作流使用指南，后续补 `CdsAgentRun` 章节 |
 | `doc/design.knowledge-base.store.md` | 文档空间已实现基础能力 |

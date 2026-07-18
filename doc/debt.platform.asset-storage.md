@@ -1,4 +1,6 @@
-# debt.platform.asset-storage
+# 平台资产存储 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-05-12 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -6,7 +8,6 @@
 | 状态 | 活跃 |
 | 关联 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/` |
 
----
 
 ## 已知工程债务
 

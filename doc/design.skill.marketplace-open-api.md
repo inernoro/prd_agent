@@ -1,6 +1,6 @@
-# 海鲜市场技能开放接口设计 (Skill Marketplace Open API)
+# 海鲜市场技能开放接口设计 (Skill Marketplace Open API) · 设计
 
-> **版本**：v1.0 | **日期**：2026-04-21 | **状态**：P1+P2 已实现；P3 基础设施已铺路，自动桥接待实现
+> **版本**：v1.0 | **日期**：2026-04-21 | **状态**：已落地
 
 ## 一、管理摘要
 
@@ -91,11 +91,11 @@
     │  Authorization: Bearer sk-ak-xxxxxxxx
     ▼
 ApiKeyAuthenticationHandler（识别 sk-ak- 前缀）
-    │  ─── sk-ak-* ───▶ AgentApiKeyService.LookupByPlaintextAsync
+    │  ─── sk-ak-* ─── AgentApiKeyService.LookupByPlaintextAsync
     │                       │ 校验：IsActive / RevokedAt / ExpiresAt + GracePeriodDays
     │                       │ 成功：设置 boundUserId + scope claim × N
     │                       │ 宽限期内：Response.Headers.X-AgentApiKey-Expiring=true
-    │  ─── sk-*   ───▶ IOpenPlatformService.GetAppByApiKeyAsync（历史路径）
+    │  ─── sk-*   ─── IOpenPlatformService.GetAppByApiKeyAsync（历史路径）
     ▼
 [Authorize(AuthenticationSchemes = "ApiKey")]
     ▼
@@ -123,7 +123,7 @@ Controller 方法用 User.FindFirst("boundUserId").Value 当 userId 执行业务
 {
   "id": "official-findmapskills",
   "title": "findmapskills · 海鲜市场操作技能",
-  "iconEmoji": "🛡️",
+  "iconEmoji": "",
   "ownerUserId": "official",
   "ownerUserName": "PrdAgent 官方",
   "zipUrl": "{BASE_URL}/api/official-skills/findmapskills/download",
@@ -131,7 +131,7 @@ Controller 方法用 User.FindFirst("boundUserId").Value 当 userId 执行业务
 }
 ```
 
-`Fork` 端点特判 `id = "official-findmapskills"`，返回官方下载 URL（不+1 count、不落库）。前端 `MarketplaceCard` 识别 `ownerUserId === "official"` 显示 🛡️ 官方 徽章。
+`Fork` 端点特判 `id = "official-findmapskills"`，返回官方下载 URL（不+1 count、不落库）。前端 `MarketplaceCard` 识别 `ownerUserId === "official"` 显示  官方 徽章。
 
 ---
 
@@ -193,7 +193,7 @@ GET /api/official-skills/findmapskills/download
 
 三 Tab 结构：
 - **新建接入（落地页）**：两卡片 "智能体接入" / "手动接入" + 底部 3 步流程条
-- **我的 Key**：列表 ↔ 内联新建表单同一页；顶部主 CTA「新建 Key」+ 次要「下载技能包」
+- **我的 Key**：列表  内联新建表单同一页；顶部主 CTA「新建 Key」+ 次要「下载技能包」
 - **使用指南**：curl / TypeScript / Python 代码样本 + 订阅/修改/续期说明
 
 遵循原则：

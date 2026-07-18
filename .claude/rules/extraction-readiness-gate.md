@@ -71,4 +71,4 @@
 - `compute-then-send.md` / `llm-call-trace`：影子比对捕捉的「选 A 给 B」正是 A 类问题的典型，棘轮直接复用其判据。
 - `cross-project-isolation.md`：容器解密失败 / 密钥 401 与共享密钥通道强相关，Gate 的容器健康判据是它的运行时哨兵。
 - `CLAUDE.md §8`：Gate 是「完成标准」在剥离型工程上的硬化——没到 Gate 全绿不算完成。
-- 本次实例数据源：`GET /gw/v1/shadow-comparisons`、`llmshadow_comparisons` 集合、`LlmGateway:Mode`、`HttpAppCallerAllowlist`、`doc/plan.llm-gateway.rollout.md`。
+- 本次实例数据源：`GET /gw/v1/shadow-comparisons`、`llmshadow_comparisons` 集合、`LlmGateway:Mode`、`HttpAppCallerAllowlist`、`doc/plan.llm-gateway.full-cutover.md`。

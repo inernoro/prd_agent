@@ -1,6 +1,7 @@
-# 登录后首页（Agent 启动页）· 债务台账
+# 登录后首页（Agent 启动页） · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-07-05 | **状态**：方向 C（工作台·内容优先）首版已落地，本文记录已知边界与后续可补项
+> **版本**：v1.0 | **日期**：2026-07-05 | **状态**：开发中
+
 > **关联改动**：`prd-api/src/PrdAgent.Api/Controllers/Api/HomeRecentWorkController.cs`、`prd-admin/src/pages/AgentLauncherPage.tsx`、`prd-admin/src/stores/homeRecentWorkStore.ts`
 
 记录登录后首页重组（继续上次 + 视觉纪律收敛）主动声明的已知边界，避免下一次 session 没人记得。

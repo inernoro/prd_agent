@@ -1,10 +1,11 @@
-# CDS Self-Update 时间体系审视 · report
+# CDS Self-Update 时间体系审视（grandfather 保留） · 报告
 
-> **类型**：report（诊断报告） | **状态**：已落地 v1 | **作者**：Claude (Opus 4.7) · **日期**：2026-05-07
-> **关联**：[plan.cds.resilience-rollout.md](plan.cds.resilience-rollout.md) · [rule.server-authority.md](../.claude/rules/server-authority.md)
+> **版本**：v1.0 | **日期**：2026-05-07 | **状态**：已落地
+
+> **作者**：Claude (Opus 4.7)
+> **关联**：[plan.cds.resilience-rollout.md](plan.cds.resilience-rollout.md) | [rule.server-authority.md](../.claude/rules/server-authority.md)
 > **触发**：用户反馈"在左下角卡了 1 小时"（10 天反复同一抱怨）
 
----
 
 ## 0. 30 秒读懂
 
@@ -24,13 +25,13 @@
 
 | 来源 | 字段 | 含义 | 精度 | 落库吗 |
 |---|---|---|---|---|
-| `branches.ts:8648` `startedAt = Date.now()` | 闭包变量 | self-update 路由进入时刻 | ms | ❌ 仅闭包 |
-| `validateBuildReadiness().timings` | 11 个细分字段 | install_cds_ms / install_web_ms / tsc_cds_ms / tsc_web_ms / total_ms + skipped flags | ms | ❌ 仅 SSE 推送 |
-| `runInProcessWebBuild` heartbeat | SSE `web-build-tick` | 每 5s 推 elapsed,无字段记录 | s | ❌ |
-| `recordSelfUpdate({ durationMs })` | `state.selfUpdateHistory[i].durationMs` | spawn 之前的总流程时间 | ms | ✅ |
-| `active-update.json.lastTickAt` | ISO timestamp | sidecar 心跳,前端判活 | ms | ✅ 落盘 |
-| **新进程启动时刻** | **不存在** | **daemon `server.listen` 完成的时间** | — | ❌ **缺** |
-| **SSE 重连恢复时刻** | **不存在** | **前端 GlobalUpdateBadge 收到 snapshot 的时间** | — | ❌ **缺** |
+| `branches.ts:8648` `startedAt = Date.now()` | 闭包变量 | self-update 路由进入时刻 | ms | 否 仅闭包 |
+| `validateBuildReadiness().timings` | 11 个细分字段 | install_cds_ms / install_web_ms / tsc_cds_ms / tsc_web_ms / total_ms + skipped flags | ms | 否 仅 SSE 推送 |
+| `runInProcessWebBuild` heartbeat | SSE `web-build-tick` | 每 5s 推 elapsed,无字段记录 | s | 否 |
+| `recordSelfUpdate({ durationMs })` | `state.selfUpdateHistory[i].durationMs` | spawn 之前的总流程时间 | ms | 是 |
+| `active-update.json.lastTickAt` | ISO timestamp | sidecar 心跳,前端判活 | ms | 是 落盘 |
+| **新进程启动时刻** | **不存在** | **daemon `server.listen` 完成的时间** | — | 否 **缺** |
+| **SSE 重连恢复时刻** | **不存在** | **前端 GlobalUpdateBadge 收到 snapshot 的时间** | — | 否 **缺** |
 
 ### 1.2 Production 真实数据（最近 10 条 history）
 
@@ -57,10 +58,10 @@ ts                  trigger     status   durationMs  steps  实际感受?
 
 ```
 recordSelfUpdate 算的就是这一段 ↓
-T0  POST /api/self-update  
+T0  POST /api/self-update
  │
  ├─ git fetch         ~1s
- ├─ git checkout      ~0.5s  
+ ├─ git checkout      ~0.5s
  ├─ git reset         ~0.3s
  ├─ validate (pnpm install + tsc --noEmit)   30-60s
  ├─ build-backend (esbuild → dist.next + atomic rename)  5-10s
@@ -104,9 +105,9 @@ T4  用户感知"好了,可以用了"
 
 | 沉默段 | 长度（典型） | 长度（病态） | 当前可见性 |
 |---|---|---|---|
-| process.exit → daemon ready | 15-30s | crashloop = ∞ | ❌ 无字段，banner 仅显 elapsed |
-| daemon ready → SSE 重连 | 3-10s | 网络抖动可达 30s | ❌ 无字段 |
-| SSE 收到 → 浏览器 bundle 重渲染 | <1s | bundle 缓存策略破时可达 5s | ❌ 无字段 |
+| process.exit → daemon ready | 15-30s | crashloop = ∞ | 否 无字段，banner 仅显 elapsed |
+| daemon ready → SSE 重连 | 3-10s | 网络抖动可达 30s | 否 无字段 |
+| SSE 收到 → 浏览器 bundle 重渲染 | <1s | bundle 缓存策略破时可达 5s | 否 无字段 |
 
 **总沉默时间最坏可以无界（crashloop）**，最优也有 20-40s 没记录。
 
@@ -116,12 +117,12 @@ T4  用户感知"好了,可以用了"
 
 | 平台 | 部署时间监测策略 | CDS 当前对照 |
 |---|---|---|
-| **Vercel** | 部署有 5 个明确阶段(Initialized / Building / Deploying / Ready / Error)，每阶段独立 timestamp + duration，UI 显示 timeline 进度条 | ❌ CDS 只有总 durationMs |
-| **Netlify** | Build summary 含 7 段细分(install / postinstall / build script / functions / publish dir / cache save / upload)，超时阈值各异，可在项目设置里改 | ⚠️ CDS 有 validate timings 11 字段但只 SSE 推送不持久化 |
-| **GitLab CI** | Job 状态机 5 态(created / pending / running / success / failed) + 每步 timestamp，**`finished_at - started_at` 永远等于真实时长** | ⚠️ CDS `durationMs` 不含 daemon 重启 |
-| **Argo CD (K8s GitOps)** | App sync 状态机 4 态(OutOfSync / Syncing / Synced / Degraded) + Pod readiness gate 必须 ready 才转 Synced | ❌ CDS 没有 "daemon ready" 显式探活 → 无法判定真"成功"|
-| **Render** | Deploy log 行级 timestamp + 启动后健康检查（HEAD `/`）成功才算 deploy 完 | ❌ CDS 没有 deploy-side health check |
-| **GitHub Actions** | Job logs 每行带 wall-clock + 每 step `step_summary` 记录 user-time / system-time 双指标 | ⚠️ CDS SSE step 事件有 timestamp 但不存 history |
+| **Vercel** | 部署有 5 个明确阶段(Initialized / Building / Deploying / Ready / Error)，每阶段独立 timestamp + duration，UI 显示 timeline 进度条 | 否 CDS 只有总 durationMs |
+| **Netlify** | Build summary 含 7 段细分(install / postinstall / build script / functions / publish dir / cache save / upload)，超时阈值各异，可在项目设置里改 | 警告 CDS 有 validate timings 11 字段但只 SSE 推送不持久化 |
+| **GitLab CI** | Job 状态机 5 态(created / pending / running / success / failed) + 每步 timestamp，**`finished_at - started_at` 永远等于真实时长** | 警告 CDS `durationMs` 不含 daemon 重启 |
+| **Argo CD (K8s GitOps)** | App sync 状态机 4 态(OutOfSync / Syncing / Synced / Degraded) + Pod readiness gate 必须 ready 才转 Synced | 否 CDS 没有 "daemon ready" 显式探活 → 无法判定真"成功"|
+| **Render** | Deploy log 行级 timestamp + 启动后健康检查（HEAD `/`）成功才算 deploy 完 | 否 CDS 没有 deploy-side health check |
+| **GitHub Actions** | Job logs 每行带 wall-clock + 每 step `step_summary` 记录 user-time / system-time 双指标 | 警告 CDS SSE step 事件有 timestamp 但不存 history |
 
 **业界共识 = 三件事**：
 

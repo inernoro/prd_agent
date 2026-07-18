@@ -1,308 +1,125 @@
-# CDS 极简上手设计：一键配置 + 项目扫描技能
+# CDS 项目接入与配置收敛设计 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-13 | **状态**：已实现
->
-> **核心目标**：非程序员用户 5 分钟内完成 CDS 从零到可用。
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
-- **解决什么问题**：CDS 配置流程对非程序员不友好，需手动填写 Docker 镜像、环境变量、路由规则等技术细节
-- **方案概述**：AI 技能自动扫描项目结构生成 CDS Config JSON，用户粘贴到 Dashboard 一键导入验证并应用
-- **业务价值**：将多步手动配置简化为"扫描 + 粘贴"两步，非程序员 5 分钟完成 CDS 从零到可用
-- **影响范围**：新增 cds-project-scan AI 技能、Dashboard 一键导入 UI、CDS Config JSON 规范
-- **预计风险**：低 — AI 扫描结果需人工确认，不会自动执行破坏性操作
+- **解决什么问题**：项目接入 CDS 时，技术栈识别、服务拆分、基础设施判断和运行配置容易依赖人工经验。
+- **当前方案**：由项目扫描技能收集仓库事实，生成待导入草稿；CDS 在服务端再次解析、校验并收敛为项目 Compose 配置。
+- **设计原则**：扫描结果是候选输入，Compose 是运行配置事实源，任何导入都必须先预览和验证。
+- **不再采用**：把一份通用 Config JSON 直接覆盖 Dashboard 多类配置的旧流程。
 
----
+## 1. 目标与边界
 
-## 1. 问题背景
+### 1.1 目标
 
-当前 CDS 配置流程对非程序员不友好：
+- 自动识别仓库中的可部署应用、基础设施和必要环境变量。
+- 让用户在应用前看到服务、端口、工作目录和风险提示。
+- 避免把控制面、sidecar、测试目录或基础设施误识别为业务应用。
+- 让导入结果可追溯、可修订，不绕过 CDS 服务端校验。
 
-| 步骤 | 当前操作 | 痛点 |
-|------|----------|------|
-| 构建配置 | 手动填写 Docker 镜像、命令、端口 | 需要知道 Docker 和构建命令 |
-| 环境变量 | 手动逐条添加 MongoDB/Redis 连接串 | 需要知道变量名和格式 |
-| 基础设施 | 手动创建 MongoDB、Redis 容器 | 需要知道 Docker 运行参数 |
-| 路由规则 | 手动配置域名/头部匹配 | 需要理解反向代理概念 |
+### 1.2 非目标
 
-**目标**：将以上步骤统一为一个操作——**粘贴配置 JSON → 自动验证 → 一键应用**。
+- 不承诺任意仓库都能零确认自动部署。
+- 不从真实密钥文件中复制或展示敏感值。
+- 不用扫描技能替代 Compose 的运行时权威。
+- 不在本文定义生产发布、远程主机接入或 Agent runtime 容量。
 
----
+## 2. 当前接入链路
 
-## 2. 解决方案总览
+| 阶段 | 责任 | 主要产物 |
+|------|------|----------|
+| 仓库扫描 | `cds-project-scan` 技能 | 技术栈、应用候选、基础设施提示、缺失项 |
+| 草稿导入 | pending-import 路由与前端 onboarding | 可预览、可修改的项目草稿 |
+| 服务端解析 | compose parser | 标准化服务、端口、工作目录和依赖关系 |
+| 权威收敛 | config authority | 项目 Compose 配置及其来源信息 |
+| 部署执行 | CDS 项目与分支服务 | 构建、启动、探活和预览地址 |
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                   用户视角（两步完成）                     │
-│                                                          │
-│  Step 1: AI 技能分析项目                                  │
-│    /cds-scan → 扫描项目结构 → 输出 CDS Config JSON       │
-│                                                          │
-│  Step 2: 粘贴到 Dashboard                                │
-│    设置 → 一键导入 → 粘贴 JSON → 验证 → 应用             │
-└─────────────────────────────────────────────────────────┘
+接入流程是“发现事实、生成草稿、服务端校验、确认应用”，不是“AI 生成即生效”。
 
-┌─────────────────────────────────────────────────────────┐
-│                   技术视角                                │
-│                                                          │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐           │
-│  │ AI Skill │───→│ JSON Blob│───→│ CDS API  │           │
-│  │ 项目扫描  │    │ 配置快照  │    │ 导入验证  │           │
-│  └──────────┘    └──────────┘    └──────────┘           │
-│                                       │                  │
-│                       ┌───────────────┼───────────┐     │
-│                       ▼               ▼           ▼     │
-│                 buildProfiles    customEnv    infraServices│
-│                 routingRules                              │
-└─────────────────────────────────────────────────────────┘
-```
+## 3. 扫描事实源
 
----
+扫描器按可信度读取以下信息：
 
-## 3. CDS Config JSON 规范
-
-### 3.1 完整格式
-
-```jsonc
-{
-  "$schema": "cds-config-v1",
-  "project": {
-    "name": "prd_agent",                    // 项目名称
-    "description": ".NET 8 + React 18 全栈"  // 简要描述
-  },
-  "buildProfiles": [
-    {
-      "id": "api",
-      "name": "Backend API (.NET 8)",
-      "dockerImage": "mcr.microsoft.com/dotnet/sdk:8.0",
-      "workDir": "prd-api",
-      "installCommand": "dotnet restore",
-      "buildCommand": "dotnet build --no-restore",
-      "runCommand": "dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080",
-      "containerPort": 8080,
-      "icon": "api",
-      "cacheMounts": [
-        { "hostPath": "/data/cds/{project-slug}/cache/nuget", "containerPath": "/root/.nuget/packages" }
-      ]
-    },
-    {
-      "id": "admin",
-      "name": "Admin Panel (Vite)",
-      "dockerImage": "node:20-slim",
-      "workDir": "prd-admin",
-      "installCommand": "pnpm install",
-      "runCommand": "npx vite --host 0.0.0.0 --port 5173",
-      "containerPort": 5173,
-      "icon": "web",
-      "cacheMounts": [
-        { "hostPath": "/data/cds/{project-slug}/cache/pnpm", "containerPath": "/root/.local/share/pnpm/store" }
-      ]
-    }
-  ],
-  "envVars": {
-    "MongoDB__ConnectionString": "mongodb://172.17.0.1:27017",
-    "Redis__ConnectionString": "172.17.0.1:6379",
-    "Jwt__Secret": "your-jwt-secret-here",
-    "Jwt__Issuer": "prd-agent"
-  },
-  "infraServices": [
-    {
-      "presetId": "mongodb"
-    },
-    {
-      "presetId": "redis"
-    }
-  ],
-  "routingRules": []
-}
-```
-
-### 3.2 字段验证规则
-
-| 字段 | 必填 | 验证 |
-|------|------|------|
-| `$schema` | 是 | 必须为 `"cds-config-v1"` |
-| `buildProfiles[].id` | 是 | 非空，唯一 |
-| `buildProfiles[].name` | 是 | 非空，显示名称 |
-| `buildProfiles[].dockerImage` | 是 | 非空 |
-| `buildProfiles[].runCommand` | 是 | 非空 |
-| `buildProfiles[].containerPort` | 是 | 1-65535 |
-| `envVars` | 否 | Record<string,string> |
-| `infraServices[].presetId` | 条件 | 如果使用预设则必填 |
-
-### 3.3 导入行为
-
-| 已存在的配置 | 导入行为 |
-|-------------|---------|
-| 同 ID 的 buildProfile | **替换**（以新配置为准） |
-| 同 key 的 envVar | **覆盖**（新值替换旧值） |
-| 同 ID 的 infraService | **跳过**（保留运行中的） |
-| 同 ID 的 routingRule | **替换** |
-
----
-
-## 4. AI 技能设计：cds-project-scan
-
-### 4.1 工作原理
-
-```
-触发 → 扫描项目根目录 → 识别技术栈 → 检测配置文件 → 生成 Config JSON
-```
-
-### 4.2 扫描信号源
-
-| 信号 | 推断 |
+| 信号 | 用途 |
 |------|------|
-| `*.csproj` / `*.sln` | .NET 项目 → dotnet/sdk 镜像 |
-| `package.json` + `vite.config.*` | Vite 前端 → node 镜像 |
-| `package.json` + `next.config.*` | Next.js → node 镜像 |
-| `go.mod` | Go 项目 → golang 镜像 |
-| `Cargo.toml` | Rust 项目 → rust 镜像 |
-| `docker-compose*.yml` | 提取 services → 映射为 infraServices |
-| `Dockerfile` | 提取 FROM、EXPOSE、CMD |
-| `.env` / `.env.example` | 提取环境变量模板 |
-| `pnpm-lock.yaml` / `yarn.lock` / `package-lock.json` | 确定包管理器 |
+| `docker-compose*.yml` | 识别已声明的应用、基础设施、网络和卷 |
+| `Dockerfile` | 识别构建环境、入口命令和暴露端口 |
+| 项目清单文件 | 识别 .NET、Node.js、Go、Rust 等技术栈 |
+| lockfile | 确定前端包管理器，不跨包管理器猜测 |
+| `.env.example` 等模板 | 识别变量名和必填项，不读取密钥值 |
+| 工作区与 monorepo 配置 | 确定服务工作目录和依赖边界 |
 
-### 4.3 排错与兼容
+扫描结果必须区分三类对象：业务应用、基础设施、仅供开发或控制面的组件。无法可靠分类时标为待确认，不静默加入部署清单。
 
-技能在生成配置时自动处理：
+## 4. 关键设计决策
 
-- **多包管理器**：检测 lockfile 确定正确的包管理器
-- **Monorepo**：扫描子目录识别多个可部署单元
-- **端口冲突**：不分配具体 hostPort（由 CDS 自动分配）
-- **Docker Compose 迁移**：解析 services/volumes/networks 映射
-- **缺失信息**：用占位符标注 `"TODO: ..."` 并提示用户确认
+### 4.1 Compose 是运行配置事实源
 
-**误判修复（2026-06-29）**：项目创建自动检测曾把 CDS 控制面自身、sidecar 进程和测试目录误识别为「待部署应用服务」，导致创建预览里混入不该存在的服务卡片。修复后：compose 里声明的基础设施服务改为「检测提示 + 由 compose 导入」而非当作应用服务硬塞进创建流程；没有 `command` 的 compose 应用服务也会正常出现在创建预览中（此前会被静默跳过）；带 `workDir` 的 compose 命令会在其声明的子目录内做存在性验证，避免跨目录误判。配套地，仓库 Git hooks 安装脚本新增 `post-checkout` 钩子，`checkout`/`worktree add` 后自动补齐 `.claude/skills → .agents/skills` 的本地软链，避免新建 worktree 里技能目录悬空。
+项目最终如何构建和运行，以 CDS 保存的 Compose 配置为准。技能输出、前端表单和导入文本都是该配置的输入方式，不形成并行权威。
 
----
+### 4.2 基础设施只提示，不伪装成应用
 
-## 5. Dashboard 一键导入 UI
+MongoDB、Redis 等 Compose 基础设施由 Compose 导入和管理。扫描器可以提示其存在及依赖，但不能把它们硬塞进应用服务卡片。
 
-### 5.1 入口
+### 4.3 无命令服务不能静默消失
 
-设置菜单新增「一键导入」按钮，位于最顶部（最显眼位置）。
+Compose 中未显式声明 `command` 的应用仍应进入预览，由镜像默认入口或 Dockerfile 决定启动方式。无法确定时给出可操作的校验提示。
 
-### 5.2 交互流程
+### 4.4 工作目录必须就地校验
 
-```
-[粘贴 JSON] → [实时验证] → [预览差异] → [确认应用]
-                  │              │
-                  ▼              ▼
-             格式错误提示     显示将要:
-             缺失字段提示     · 新增 N 个构建配置
-                              · 覆盖 N 个环境变量
-                              · 创建 N 个基础设施服务
-                              · 跳过 N 个已存在项
-```
+带工作目录的命令只在该目录内验证项目文件和依赖，避免用仓库其他目录的文件造成误判。
 
-### 5.3 配置导出
+### 4.5 导入先形成草稿
 
-支持导出当前配置为 JSON，用于：
-- 备份
-- 分享给团队成员
-- 迁移到新的 CDS 实例
+pending import 保存原始来源、解析结果和校验问题。用户确认前不替换正在运行的项目配置；应用失败时保留原配置和错误信息。
 
----
+## 5. 校验与冲突处理
 
-## 6. 未来趋势
+| 校验项 | 处理方式 |
+|--------|----------|
+| 服务标识重复 | 阻止应用并指出冲突来源 |
+| 工作目录不存在 | 阻止对应服务进入可执行状态 |
+| 端口无效或重复 | 要求修正，主机端口仍由 CDS 分配 |
+| 入口命令缺失 | 允许镜像默认入口；否则标记待确认 |
+| 环境变量缺值 | 只展示变量名与来源，不生成假密钥 |
+| 基础设施依赖不明确 | 作为警告保留，由用户确认依赖关系 |
 
-### 6.1 趋势一：多项目支持
+覆盖已有项目配置时必须展示差异。运行中的基础设施和持久化卷不得因重复导入被无条件重建。
 
-**现状**：CDS 绑定单个 Git 仓库。
+## 6. 安全与可维护性
 
-**未来**：左上角汉堡菜单（☰）切换项目。
+- 扫描默认只读，不执行仓库脚本或安装依赖。
+- 密钥只通过 CDS 的环境变量管理能力录入，不写入导入草稿和日志。
+- 每个解析结论保留来源，便于判断来自 Compose、Dockerfile 还是启发式检测。
+- 新增技术栈规则优先维护在技能参考文件中，不把识别逻辑散落到文档示例。
+- worktree 中的技能目录由仓库钩子补齐软链，避免新工作区扫描能力缺失。
 
-```
-┌──────────────────────┐
-│ ☰ 项目选择            │
-├──────────────────────┤
-│ ★ prd_agent (当前)    │
-│   ecommerce-platform  │
-│   internal-tools      │
-│ ─────────────────── │
-│ + 添加项目            │
-└──────────────────────┘
-```
+## 7. 当前实现入口
 
-**数据隔离**：每个项目独立的 `state.json`、worktree 目录、端口段。
+| 能力 | 事实入口 |
+|------|----------|
+| 项目扫描技能 | `.claude/skills/cds-project-scan/SKILL.md` |
+| 技术检测规则 | `.claude/skills/cds-project-scan/reference/tech-detection.md` |
+| 待导入草稿 | `cds/src/routes/pending-import.ts` |
+| 项目 Compose API | `cds/src/routes/project-compose.ts` |
+| Compose 解析 | `cds/src/services/compose-parser.ts` |
+| 配置权威 | `cds/src/services/config-authority.ts` |
+| 前端接入编排 | `cds/web/src/lib/agent-onboarding.ts` |
+| 文本导入解析 | `cds/web/src/lib/curl-import.ts` |
 
-**配置结构变化**：
-```jsonc
-{
-  "projects": {
-    "prd_agent": {
-      "repoRoot": "/home/user/prd_agent",
-      "worktreeBase": "/home/user/.cds-worktrees/prd_agent",
-      "portStart": 10000,
-      "state": { /* current CdsState */ }
-    },
-    "ecommerce": {
-      "repoRoot": "/home/user/ecommerce",
-      "worktreeBase": "/home/user/.cds-worktrees/ecommerce",
-      "portStart": 11000,
-      "state": { /* ... */ }
-    }
-  },
-  "activeProject": "prd_agent"
-}
-```
+## 8. 验收标准
 
-### 6.2 趋势二：集成发布代理
-
-**现状**：分支测试通过 → 手动部署到生产。
-
-**未来**：CDS 内置发布管道，测试满意后一键发布到目标环境。
-
-```
-CDS (测试验证)
-    │
-    ▼
-发布代理 (Release Agent)
-    │
-    ├── 构建生产镜像
-    ├── 推送到 Registry
-    ├── 通知目标节点拉取
-    │
-    ▼
-目标环境
-    ├── 生产服务器 A
-    ├── 生产服务器 B
-    └── 预发布环境
-```
-
-**架构设想**：
-- 发布代理是一个轻量守护进程，部署在目标服务器上
-- 通过 WebSocket 与 CDS 主节点通信
-- 注册为 CDS 的「发布子节点」
-- CDS 发出发布指令 → 代理拉取镜像 → 滚动更新 → 回报状态
-
-**代理能力清单**：
-| 能力 | 说明 |
-|------|------|
-| 镜像拉取 | 从 Registry 拉取指定版本 |
-| 滚动更新 | 旧容器 → 新容器无缝切换 |
-| 健康检查 | 确认新版本启动正常 |
-| 自动回滚 | 健康检查失败自动回到上一版本 |
-| 日志收集 | 上报启动日志到 CDS Dashboard |
-| 环境隔离 | 支持 staging / production 环境标签 |
-
----
-
-## 7. 实施优先级
-
-| 阶段 | 内容 | 优先级 |
-|------|------|--------|
-| **P0 (本次)** | 一键导入/导出 API + Dashboard UI | 立即实施 |
-| **P0 (本次)** | cds-project-scan 技能 | 立即实施 |
-| **P1 (下阶段)** | 多项目支持 (☰ 菜单 + 项目隔离) | 下一迭代 |
-| **P2 (远期)** | 发布代理 (Release Agent) | 架构预留 |
-
----
+- 预览中的应用、基础设施和忽略项分类清楚。
+- Compose 已声明但没有 `command` 的应用不会被静默丢弃。
+- 控制面、sidecar 和测试目录不会自动成为业务服务。
+- 工作目录错误能在应用前暴露。
+- 应用后的项目 Compose 能解释每个服务的来源。
+- 整个接入过程不展示或落盘真实密钥。
 
 ## 关联文档
 
-- **环境配置指南**：`doc/guide.cds.env.md`
-- **部署方案**：`doc/plan.cds.deployment.md`
-- **CDS 架构设计**：`doc/design.cds.md`
-- **实施路线图**：`doc/plan.cds.roadmap.md`
+- `doc/design.cds.md`
+- `doc/design.cds.visual-deploy.md`
+- `doc/guide.cds.env.md`
+- `doc/plan.cds.status.md`

@@ -1,4 +1,6 @@
-# CDS 后端部署冻结 · 分支 api 跑旧代码 · debt
+# CDS 后端部署冻结 · 分支 api 跑旧代码 · debt · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-06-19 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -7,7 +9,6 @@
 | 关联 | `cds/src/services/worktree.ts`、`cds/cds-compose.yml`(api 服务 `dotnet build && dotnet run --no-build`)、分支 `claude/visual-agent-redesign-9vt3lm`、提交 `6a459698` |
 | 提出 | 图生视频成片下载修复 + 额度提醒推了 5 次都"不生效"，逐层排查后定位为 CDS 部署冻结，非代码问题 |
 
----
 
 ## 债务主题：构建成功 ≠ 运行的是新代码
 

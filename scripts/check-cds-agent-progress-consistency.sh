@@ -9,7 +9,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 REFRESH_OUTPUT="${CDS_AGENT_R0_STATUS_REFRESH:-/tmp/cds-agent-r0-status-refresh-current.md}"
 PROGRESS_OUTPUT="${CDS_AGENT_R0_PROGRESS_OUTPUT:-/tmp/cds-agent-current-progress-current.md}"
-STATUS_DOC="$ROOT_DIR/doc/status.cds-agent-current-progress.md"
+STATUS_DOC="$ROOT_DIR/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 RUNTIME_CAPACITY_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json}"
 
 # When this check runs inside audit-cds-agent-goal.sh, CDS_AGENT_GOAL_AUDIT_REPORT
@@ -131,7 +131,7 @@ if [[ "$progress_provider_complete" == "true" ]]; then
   require_text "$STATUS_DOC" 'provider_smokes_passed' 'status doc provider complete'
   require_text "$STATUS_DOC" 'Phase 4 P4-1/P4-2/P4-3/P4-4/P4-5' 'status doc phase4 complete'
 else
-  require_text "$STATUS_DOC" 'doc/plan.cds.agent.runtime-correction-limited.md' 'status doc correction plan'
+  require_text "$STATUS_DOC" 'doc/design.cds.agent.managed-runtime-fact-source.md' 'status doc managed runtime design'
   require_text "$STATUS_DOC" 'doc/design.cds.agent.managed-runtime-fact-source.md' 'status doc R0 design'
 fi
 

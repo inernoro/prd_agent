@@ -1,6 +1,6 @@
 # LLM Gateway 外部平台化与控制台体验收口 · 计划
 
-> **版本**：v1.33 | **日期**：2026-07-18 | **状态**：补强开发中
+> **版本**：v1.33 | **日期**：2026-07-18 | **状态**：开发中
 
 ## 1. 目标
 
@@ -48,7 +48,7 @@ PR-5 证据（2026-07-12）：治理验收脚本已改用 `/gw/auth/login` 与 `
 
 | 范围 | 状态 | 证据 |
 |---|---|---|
-| 控制台产品化与根目录收拢 | 已完成 | PR #1090 至 #1093 已独立完成双主题、请求记录中文化、自动 Gateway 地址与安全直测、租户首页、学习中心、模型池信息分层，以及根目录 `llmgw/` 原子收拢；详细证据继续由 `doc/plan.platform.llm-gateway.console-productization.md` 维护 |
+| 控制台产品化与根目录收拢 | 已完成 | PR #1090 至 #1093 已独立完成双主题、请求记录中文化、自动 Gateway 地址与安全直测、租户首页、学习中心、模型池信息分层，以及根目录 `llmgw/` 原子收拢；详细证据已并入本文件 §1.2 与 §9.1 |
 | OpenRouter App 归因 | 已完成 | PR #1108 将 OpenRouter 出站标题统一为 `G-${appCallerCode}`，内部 `AppCallerCode` 原值、日志与路由语义保持不变；定向假上游测试捕获 `HTTP-Referer=https://prd-agent.miduo.org` 和 `X-OpenRouter-Title=G-product-agent.marketing-consult::chat`，非 OpenRouter 上游不注入 |
 | 生产静态站恢复与防回归 | 已完成 | PR #1113 增加静态目录权限规范化、`index.html` 与实际入口资源完整性校验；生产恢复运行 `rel_624b31cda1c2046c` 成功，恢复前备份及 SHA256 校验保留于 `/root/backups/prdagent-static-recovery-rel_72243372921f35bb/`，恢复批次校验账本位于 `/root/backups/prdagent-static-recovery-rel_624b31cda1c2046c/SHA256SUMS` |
 | 维护发布账本门禁 | 已完成 | PR #1115 修复维护发布继承基线配置时的重复门禁；CDS 运行 `dr_510b99aa22f211e8b5537e75` 与 main 部署 `dr_5a4dc114d09b3fcc86677661` 成功 |
@@ -573,7 +573,7 @@ OpenRouter 的正确表达是一个 `Provider` 加一个或多个 `Provider Endp
 doc/plan.platform.llm-gateway-external-platform.md
 
 先阅读：
-1. doc/plan.platform.llm-gateway-protocol-router.md
+1. doc/design.platform.llm-gateway.md
 2. doc/plan.llm-gateway.full-cutover.md
 3. doc/debt.llm-gateway.md
 4. llmgw/console-api/Program.cs

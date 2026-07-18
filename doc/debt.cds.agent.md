@@ -1,14 +1,14 @@
 # CDS Agent 工作台 · 债务台账
 
-> **版本**：v0.1 | **日期**：2026-05-30 | **状态**：open / 待规划
+> **版本**：v0.1 | **日期**：2026-07-17 | **状态**：开发中
 
 ## 总览
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 4 |
+| open | 2 |
 | in-progress | 0 |
-| paid | 0 |
+| paid | 2 |
 
 模块范围：`/cds-agent` 工作台、`InfraAgentSessionService`、`GatewayReviewRuntimeAdapter`、`CdsAgentAdapter`，以及 `doc/` 下 `*.cds-agent*` 文档群。
 
@@ -32,11 +32,10 @@
 - **跨作用域硬 Stop**：`GatewayReviewRuntimeAdapter` 注册为 Scoped（避免捕获 Scoped 的 `ILlmGateway`），跨请求作用域的硬 Stop 不在本轮；运行内取消由 linked CTS 处理。Lite 任务为单次短调用，可接受。
 - **偿还条件**：如需 Lite 支持工具/审批/可中断，需要把运行句柄提升到可共享的运行注册表（非本轮范围）。
 
-### D3 · CDS Agent 文档群熵减（open）
+### D3 · CDS Agent 文档群熵减（paid，2026-07-17）
 
-- **现状**：`doc/` 下 `*.cds-agent*` 文档约 20+ 篇（含同一周 2026-05-19 的 ~10 篇 `report.cds-agent-*` 验收报告 + `plan.cds.agent.workbench.md` 113KB + `plan.cds.agent.official-sdk-migration.md` 62KB + `design.cds.agent.commercial-architecture-and-roadmap.md` 100KB）。这是 `blocked-state-circuit-breaker.md` 所述「进度剧场」的产物，导致「找不到真相」。
-- **偿还计划**：收敛为 4 篇 canonical —— `spec.cds-agent`（这是什么/能做什么）、`design.cds-agent`（架构 + 官方/自研边界）、`guide.cds.agent.workbench`（用户/排障 runbook，已存在）、`debt.cds.agent`（本文件）。同一周的 `report.cds-agent-*-2026-05-19.*` 与重复 plan 归档或删除，同步 `index.yml` 与 `guide.list.directory.md`。
-- **未在本轮执行删除**：保留历史，避免一次性大规模删除丢信息；本台账先登记，后续走 `/entropy` / `/doc-sync` 分批偿还。
+- **原问题**：同一主题同时存在超长工作台计划、SDK 迁移计划和多份阶段验收报告，当前状态被历史进度淹没。
+- **偿还**：删除重复的历史工作台计划，把未完成 N1-N6 归口到 `plan.cds.agent.official-sdk-migration.md`；阶段报告只保留仍被脚本或事实源引用的例外，其余回收；索引同步到 canonical 文档。
 
 ### D4 · 无 runtime profile 时的 Lite 直跑（paid，2026-07-09）
 

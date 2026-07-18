@@ -1,12 +1,12 @@
 # CDS 绝对可视化一键部署 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-02 | **状态**：核心已落地并经独立子智能体视觉验收（Verdict 通过，无 P0/P1）
+> **版本**：v1.0 | **日期**：2026-06-02 | **状态**：已落地
+
 > **关联实现**：`cds/web/src/pages/ProjectListPage.tsx`（一键部署弹窗）、`cds/src/services/infra-catalog.ts`（基建注册表 SSOT）、`cds/src/routes/projects.ts`（detect-runtime / validate-runtime / infra 实例化 / customEnv）、`cds/web/src/components/deployment/RuntimeValidateButton.tsx`、`cds/web/src/components/BranchDetailDrawer.tsx`（应用已上线横幅）
 > **关联设计**：`design.cds.railway-onboarding-flow.md`（一键部署向导基线）、`design.cds.onboarding.md`、`design.cds.ai-compose.md`（AI 备选路径）、`spec.cds.compose-contract.md`（compose 契约 SSOT）
-> **关联文档**：`plan.cds.visual-deploy.md`（计划看板）、`report.cds.visual-deploy.md`（完整报告）、`debt.cds.visual-deploy.md`（已知边界与待补）、`guide.cds.one-click-deploy.md`（使用教程）
+> **关联文档**：`debt.cds.visual-deploy.md`（已知边界与待补）、`guide.cds.one-click-deploy.md`（使用教程）
 > **一句话**：把"纯前端点点点部署任意前后端 + 数据库 + 消息队列"从"填一堆猜测的默认、第一次大概率点红、部署完不知道去哪看"升级成"贴仓库→检测填好真实配置(带把握度)→一次性容器试运行验证→不行就改→部署→应用已上线一键打开"的可信闭环。
 
----
 
 ## 1. 管理摘要
 

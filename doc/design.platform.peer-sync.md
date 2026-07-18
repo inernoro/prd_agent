@@ -1,10 +1,10 @@
-# 系统级跨节点互传（Peer Sync）
+# 系统级跨节点互传（Peer Sync） · 设计
 
-> 状态：draft（v1 落地中）
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：草案
+
 > 负责模块：prd-api（PeerNode + PeerSync）、prd-admin（系统互联设置 + 发送到对端）
 > 关联：`design.platform.server-authority.md`、`rule.platform.app-identity.md`、知识库现有 `DocumentStoreSyncController`
 
----
 
 ## 1. 管理摘要（30 秒看懂）
 

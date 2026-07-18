@@ -1,318 +1,125 @@
-# CDS 数据迁移 · 设计
+# CDS 数据迁移设计 · 设计
 
-> **版本**：v1.0 | **日期**：2026-04-06 | **状态**：已落地
->
-> CDS 设置面板中的数据迁移功能。当前支持 MongoDB，架构可扩展至其他数据库类型。
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
-- **解决什么问题**：开发者需要在不同 MongoDB 实例间迁移数据（如生产→测试、主库→灰度），当前只能手动执行 `mongodump/mongorestore` 命令，操作繁琐且缺乏进度反馈
-- **方案概述**：在 CDS Dashboard 设置菜单中新增"数据迁移"功能，提供左右双面板配置源/目标数据库，支持全库或指定集合迁移，SSE 实时进度推送，SSH 隧道穿透
-- **业务价值**：一键迁移数据，零命令行操作，进度实时可见，支持集合级精确控制
-- **影响范围**：仅 CDS 模块内部（`cds/src/` + `cds/web/`），不影响主项目代码
-- **预计风险**：低 — 使用成熟的 `mongodump/mongorestore` 工具，迁移过程可重复执行
+- **解决什么问题**：环境之间复制数据库时，手工 dump、传输、restore 和连接配置容易出错，也缺少可追踪进度。
+- **当前能力**：CDS 支持 MongoDB 迁移任务、连接检查、库和集合发现、工具检查、SSE 执行进度与日志；项目迁移另有配置复制和数据计划入口。
+- **关键边界**：数据库迁移不等于项目完整迁移，配置、密钥、持久卷、对象存储和外部依赖必须分别验证。
+- **安全原则**：默认先检测和预演，凭据不进入普通日志，目标覆盖行为必须明确展示。
 
----
+## 1. 两类迁移
 
-## 二、产品定位
+| 类型 | 目标 | 当前入口 |
+|------|------|----------|
+| 数据库迁移 | 在 MongoDB 源与目标之间搬运全库或指定集合 | data migrations API 与 Dashboard |
+| 项目迁移 | 向另一个 CDS 节点复制项目配置，并生成数据迁移计划 | project migration API |
 
-### 目标用户
+项目配置复制不会自动证明数据库已经迁移，数据库迁移也不会复制 Compose、环境变量、域名、对象存储或项目权限。
 
-开发者、运维人员 — 需要在 CDS 管理的多个环境间同步数据库数据。
+## 2. MongoDB 迁移流程
 
-### 核心场景
+1. 用户选择或填写源与目标连接。
+2. CDS 测试连接并读取可见数据库和集合。
+3. 用户选择全库或集合范围，保存迁移任务。
+4. 执行前检查 `mongodump`、`mongorestore` 和必要连接能力。
+5. 服务端导出、恢复并持续写入任务状态、进度和受控日志。
+6. 临时文件和隧道完成清理，任务进入完成或失败终态。
+7. 用户按集合数量、抽样数据和业务页面验证结果。
 
-| 场景 | 操作路径 |
-|------|---------|
-| 生产数据同步到测试环境 | 设置 → 数据迁移 → 新建 → 选源库 → 选目标 → 执行 |
-| 迁移指定集合 | 同上，选库后勾选需要的集合 |
-| 重复执行上次迁移 | 任务列表 → 点击"执行" |
-| 基于历史任务创建新任务 | 任务列表 → 点击"克隆" → 修改参数 → 执行 |
+连接发现失败时可以允许手工输入，但手工值仍需服务端校验，不能直接进入 shell。
 
----
+## 3. 任务模型
 
-## 三、用户交互流程
+迁移任务通过 `StateService` 管理，底层可能是 JSON、Mongo 或兼容存储模式。文档不再把 `state.json` 写成唯一持久化实现。
 
-### 新建迁移的交互设计原则
-
-**"能选就不填"** — 所有可自动获取的信息都用下拉框或自动填充，最小化用户手动输入。
-
-```
-打开新建迁移面板
-├── 源数据库
-│   ├── 选择连接类型: "本机 MongoDB" / "远程 MongoDB"
-│   ├── 自动连接并加载数据库列表 (下拉框)
-│   ├── 选择数据库 → 自动加载集合列表 (复选框)
-│   └── 可选: 勾选特定集合 (不选=全部迁移)
-│
-├── 自动行为
-│   ├── 目标数据库名 ← 自动同步为源库同名
-│   └── 任务名称 ← 自动生成 "本机/prdagent → 远程"
-│
-├── 目标数据库
-│   ├── 选择连接类型 → 自动加载数据库列表
-│   └── 数据库名已自动填充，可修改
-│
-└── 点击 "创建并执行"
-```
-
-### 连接失败降级
-
-当自动加载数据库列表失败时（如远程不可达），下拉框自动切换为文本输入框，允许手动填写数据库名。
-
----
-
-## 四、核心决策
-
-| 决策 | 选项 | 结论 | 理由 |
-|------|------|------|------|
-| 迁移工具 | 自研 vs mongodump/mongorestore | mongodump/mongorestore | 成熟稳定，支持全部 MongoDB 版本，无需重新实现复杂的 BSON 序列化 |
-| 进度推送 | 轮询 vs SSE | SSE | CDS 已有 SSE 基础设施，实时性好，无需客户端轮询 |
-| 集合迁移策略 | 一次 dump 全库再过滤 vs 逐集合 dump | 逐集合 dump | 精确控制进度百分比，单集合失败不影响其他集合 |
-| 状态持久化 | 数据库 vs state.json | state.json | CDS 所有状态统一存储在 state.json，保持一致性 |
-| 工具安装 | 要求预装 vs 自动安装 | 自动安装 | 减少用户配置成本，支持多平台（Debian/Alpine/RHEL + 二进制兜底） |
-
----
-
-## 五、整体架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  CDS Dashboard (浏览器)                                      │
-│                                                              │
-│  设置 → 数据迁移                                              │
-│  ┌─────────────────┐     ┌─────────────────┐                │
-│  │  📤 源数据库     │ ──→ │  📥 目标数据库    │                │
-│  │  下拉选库        │     │  自动同步库名     │                │
-│  │  勾选集合        │     │  下拉选库         │                │
-│  └────────┬────────┘     └────────┬────────┘                │
-│           │                       │                          │
-│           ▼                       ▼                          │
-│  ┌────────────────────────────────────────────┐              │
-│  │  SSE 进度流 (event: progress / done / error) │              │
-│  │  [████████████░░░░░░] 67% 正在导入 groups    │              │
-│  └────────────────────────────────────────────┘              │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP API
-┌──────────────────────────┼──────────────────────────────────┐
-│  CDS Server (Node.js)    │                                   │
-│                          ▼                                   │
-│  routes/branches.ts                                          │
-│  ├── POST /data-migrations              创建任务              │
-│  ├── POST /data-migrations/:id/execute  执行迁移 (SSE)       │
-│  ├── POST /data-migrations/list-databases   数据库列表       │
-│  ├── POST /data-migrations/list-collections 集合列表         │
-│  ├── POST /data-migrations/test-connection  连接测试         │
-│  ├── POST /data-migrations/check-tools      工具检查         │
-│  ├── POST /data-migrations/install-tools    工具安装 (SSE)   │
-│  ├── GET  /data-migrations              任务列表              │
-│  ├── GET  /data-migrations/:id/log      迁移日志              │
-│  └── DELETE /data-migrations/:id        删除任务              │
-│                                                              │
-│  ┌──────────────────────────────────────┐                    │
-│  │  shell.exec()                        │                    │
-│  │  ├── mongodump  (导出 → /tmp/...)    │                    │
-│  │  ├── mongorestore (导入 → 目标库)    │                    │
-│  │  ├── mongosh (list-databases/colls)  │                    │
-│  │  └── ssh -f -N -L (SSH 隧道)         │                    │
-│  └──────────────────────────────────────┘                    │
-│                                                              │
-│  state.json → dataMigrations[]                               │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 六、数据设计
-
-### DataMigration 实体
-
-存储在 `state.json` 的 `dataMigrations` 数组中。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | string | 唯一 ID，格式 `mig-{timestamp36}` |
-| `name` | string | 任务名称（自动生成或用户输入） |
-| `dbType` | `'mongodb'` | 数据库类型（预留扩展） |
-| `source` | MongoConnectionConfig | 源连接配置 |
-| `target` | MongoConnectionConfig | 目标连接配置 |
-| `collections` | string[] \| undefined | 指定集合（undefined=全库迁移） |
-| `status` | enum | `pending` / `running` / `completed` / `failed` |
-| `progress` | number | 0-100 进度百分比 |
-| `progressMessage` | string | 当前步骤描述 |
-| `errorMessage` | string | 失败原因 |
-| `createdAt` | ISO string | 创建时间 |
-| `startedAt` | ISO string | 开始执行时间 |
-| `finishedAt` | ISO string | 完成时间 |
-| `log` | string | 迁移过程日志 |
-
-### MongoConnectionConfig
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `type` | `'local'` \| `'remote'` | local=CDS 基础设施 MongoDB |
-| `host` | string | 主机地址 |
-| `port` | number | 端口 |
-| `database` | string | 数据库名（空=全部） |
-| `username` | string | 认证用户名 |
-| `password` | string | 认证密码 |
-| `authDatabase` | string | 认证库（默认 admin） |
-| `sshTunnel` | SshTunnelConfig | SSH 隧道配置 |
-
-### SshTunnelConfig
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `enabled` | boolean | 是否启用 |
-| `host` | string | SSH 跳板机地址 |
-| `port` | number | SSH 端口（默认 22） |
-| `username` | string | SSH 用户名 |
-| `privateKeyPath` | string | 私钥路径 |
-
----
-
-## 七、接口设计
-
-### 迁移执行流程（SSE）
-
-```
-POST /api/data-migrations/:id/execute
-
-客户端 ←── SSE 事件流:
-  event: progress  data: {"progress": 5,  "message": "正在检查迁移工具..."}
-  event: progress  data: {"progress": 20, "message": "正在导出 users (1/3)..."}
-  event: progress  data: {"progress": 32, "message": "正在导入 users (1/3)..."}
-  event: progress  data: {"progress": 43, "message": "正在导出 groups (2/3)..."}
-  ...
-  event: progress  data: {"progress": 95, "message": "正在清理临时文件..."}
-  event: progress  data: {"progress": 100, "message": "迁移完成！"}
-  event: done      data: {"message": "迁移完成"}
-```
-
-失败时：
-```
-  event: error     data: {"message": "mongodump 失败: connection refused"}
-```
-
-### 进度计算
-
-| 模式 | 进度分配 |
-|------|---------|
-| 全库迁移 | 0-5% 工具检查 → 20-50% 导出 → 55-85% 导入 → 95% 清理 → 100% |
-| N个集合 | 0-5% 工具检查 → 每个集合占 `70/2N` %（导出+导入各一半）→ 95% 清理 → 100% |
-
-### 数据库/集合列表
-
-```
-POST /api/data-migrations/list-databases
-Body: { connection: MongoConnectionConfig }
-Response: { databases: [{ name: "prdagent", sizeOnDisk: 118431744 }, ...] }
-
-POST /api/data-migrations/list-collections
-Body: { connection: MongoConnectionConfig }  // 必须包含 database
-Response: { collections: [{ name: "users", count: 64 }, ...] }
-```
-
----
-
-## 八、迁移工具自动安装
-
-CDS 服务器上可能没有 `mongodump/mongorestore`，支持自动检测和安装。
-
-### 安装策略（按优先级）
-
-| 平台 | 方式 | 命令 |
-|------|------|------|
-| Debian/Ubuntu | apt-get | `apt-get install mongodb-database-tools` |
-| RHEL/CentOS | yum/dnf | `yum install mongodb-database-tools` |
-| 兜底方案 1 | deb 解压 | 从 fastdl.mongodb.org 下载 deb，`dpkg -x` 提取二进制 |
-| 兜底方案 2 | tarball | 从 fastdl.mongodb.org 下载 tgz，解压到 `/usr/local/bin/` |
-
-安装过程通过 SSE 推送进度。
-
----
-
-## 九、SSH 隧道
-
-当源或目标 MongoDB 在内网/防火墙后时，通过 SSH 隧道穿透。
-
-```
-CDS Server  ──SSH──>  跳板机  ──────>  MongoDB
-   :27100 (本地端口)          :27017 (远程端口)
-
-ssh -f -N -L 27100:mongo-host:27017 user@jump-host -p 22
-```
-
-- 源隧道端口范围：`27100-27199`（随机分配）
-- 目标隧道端口范围：`27200-27299`（随机分配）
-- 迁移完成后自动 `pkill` 清理隧道进程
-
----
-
-## 十、前端 UI 结构
-
-### 设置菜单入口
-
-CDS Dashboard 右上角设置菜单 → "数据迁移" 选项。
-
-### 任务列表视图
-
-每个任务卡片展示：
-
-```
-┌─────────────────────────────────────────────────┐
-│ ● 已完成    本机/prdagent → 远程               7分钟前 │
-│                                                  │
-│ [本机 MongoDB/prdagent] → [172.17.0.1:10195/copy]│
-│                                                  │
-│ 📦 3 个集合  ⏱ 0.4秒                            │
-│                                                  │
-│ [▶ 执行] [⧉ 克隆] [📋 日志] [删除]              │
-└─────────────────────────────────────────────────┘
-```
-
-### 新建迁移视图
-
-左右双面板布局：
-
-```
-┌──────────────────┐     ┌──────────────────┐
-│ 📤 源数据库       │     │ 📥 目标数据库     │
-│                  │     │                  │
-│ [本机 MongoDB ▼] │  →  │ [远程 MongoDB ▼] │
-│ [prdagent    ▼] │     │ [prdagent    ▼]  │ ← 自动同步
-│                  │     │                  │
-│ ☑ users    64   │     │ 127.0.0.1:27017  │
-│ ☐ groups   12   │     │ admin / ••••     │
-│ ☑ sessions 89   │     │                  │
-│ ☐ messages 1.2k │     │ □ SSH 隧道       │
-│ □ SSH 隧道       │     │                  │
-│ ✓ 已连接 · 4 库  │     │ ✓ 已连接 · 3 库   │
-└──────────────────┘     └──────────────────┘
-
-[▶ 创建并执行]  [💾 仅保存]  [取消]
-```
-
----
-
-## 十一、扩展性
-
-### 新增数据库类型
-
-架构预留了 `dbType` 字段。新增数据库类型需要：
-
-1. 在 `types.ts` 中扩展 `dbType` 联合类型（如 `'mongodb' | 'redis' | 'postgres'`）
-2. 在 `routes/branches.ts` 的 execute 路由中增加对应的 dump/restore 逻辑分支
-3. 在前端 `buildConnectionForm` 中增加对应的配置字段
-
-当前实现中，连接配置 `MongoConnectionConfig` 是 MongoDB 专用的。未来可抽象为 `ConnectionConfig` 联合类型。
-
----
-
-## 十二、关联文档
-
-| 文档 | 关系 |
+| 信息 | 作用 |
 |------|------|
-| `doc/design.cds.md` | CDS 主架构文档（本功能是其子模块） |
-| `.claude/skills/cds-deploy-pipeline` | CDS 部署流水线技能（用于测试验证） |
-| `changelogs/2026-03-31_data-migration.md` | 变更记录碎片 |
+| 标识与名称 | 查找、克隆和审计任务 |
+| 数据库类型 | 当前为 MongoDB，未来扩展必须有独立适配器 |
+| 源与目标 | 主机、端口、数据库、认证和可选隧道配置 |
+| 集合范围 | 空表示全库，否则只迁移选中集合 |
+| 状态与进度 | pending、running、completed、failed 及阶段消息 |
+| 时间与错误 | 创建、开始、结束和失败原因 |
+| 日志 | 受长度和脱敏限制的执行证据 |
+
+密码、私钥内容和临时连接串不能作为普通任务字段返回前端。任务复制时也不能复制失效或不可导出的密钥材料。
+
+## 4. 执行策略
+
+MongoDB 迁移使用官方 database tools，而不是自行序列化 BSON。全库与指定集合可以使用不同参数，但每个外部命令都必须通过参数数组和白名单构造，禁止拼接用户输入为 shell 文本。
+
+执行阶段至少包括工具检查、连接确认、导出、恢复、校验和清理。进度百分比只是阶段估算，完成状态必须以外部进程退出、恢复结果和最终校验共同判断。
+
+单集合失败是否继续由任务策略明确决定。无论选择停止还是继续，最终结果都应列出成功、失败和未执行集合。
+
+## 5. SSE 与服务器权威
+
+迁移是长任务，前端通过 SSE 接收阶段、进度、日志摘要、完成和错误事件。浏览器断开不能让服务端留下无人管理的 dump、restore 或 SSH 进程。
+
+任务状态由服务端持久化。前端重新连接后先读取任务快照，再决定继续观察、重试或查看日志；不能依靠内存进度条判断迁移是否完成。
+
+## 6. SSH 隧道
+
+远程数据库需要跳板机时，CDS 可以建立临时本地转发。隧道必须：
+
+- 使用服务端受控端口分配，避免源和目标冲突。
+- 校验主机、端口、用户名和私钥路径的允许范围。
+- 不把私钥内容或完整连接串写入日志。
+- 与迁移任务绑定，在成功、失败、取消和进程重启恢复时清理。
+- 明确区分目标数据库连接失败与隧道建立失败。
+
+## 7. 工具安装边界
+
+工具检查是只读操作；自动安装会修改 CDS 宿主机，必须显式确认并显示操作系统、安装来源和目标路径。生产环境可以选择只报告缺失，由运维通过标准镜像或包管理流程安装。
+
+下载二进制时必须固定可信来源并进行版本或完整性验证。文档不复制可能过时的安装命令。
+
+## 8. 项目迁移协作
+
+项目迁移入口负责远端 CDS 节点配对、连接验证、配置预览、配置复制和数据计划。数据库迁移执行前应读取数据计划，确认：
+
+- 源项目使用哪些数据库和持久化服务。
+- 目标节点是否已创建对应基础设施。
+- 数据库名称、用户、网络和容量是否兼容。
+- 哪些资源需要另走对象存储或卷迁移。
+- 迁移期间源项目是否允许继续写入。
+
+需要停写或增量同步时必须单独设计，当前一次性 dump/restore 不能保证不停机零数据差。
+
+## 9. 安全与回滚
+
+- 默认不删除源数据库和 dump 之外的业务数据。
+- 目标覆盖、drop 或清库必须单独确认。
+- 先迁移到新库名并验证，再决定是否切换连接。
+- 失败后保留可审计错误，临时文件按策略清理。
+- 切换前保存原连接配置和回滚步骤。
+- 迁移完成不自动关闭源环境，源清理是独立决策。
+
+## 10. 当前事实入口
+
+| 能力 | 事实入口 |
+|------|----------|
+| MongoDB 迁移路由与执行 | `cds/src/routes/branches.ts` |
+| 迁移任务持久化 | `cds/src/services/state.ts` |
+| 迁移类型 | `cds/src/types.ts` |
+| 项目迁移 | `cds/src/routes/project-migration.ts` |
+| 迁移债务 | `doc/debt.cds.project-migration.md` |
+| Mongo 迁移规则 | `doc/rule.cds.mongo-migration.md` |
+
+## 11. 验收标准
+
+- 源与目标连接均经过服务端测试，错误能区分认证、网络和隧道问题。
+- 全库和集合迁移都有持续进度及最终成功、失败清单。
+- 任务日志和 API 响应不泄露密码、私钥或完整敏感连接串。
+- 浏览器断线后任务仍有明确终态，临时进程能够清理。
+- 迁移结果经过集合和业务抽样验证，不能只以命令退出码宣告成功。
+- 项目配置、数据库、对象存储和持久卷分别给出迁移结论。
+
+## 关联文档
+
+- `doc/design.cds.md`
+- `doc/debt.cds.project-migration.md`
+- `doc/rule.cds.mongo-migration.md`
+- `doc/guide.cds.mongo-migration.md`

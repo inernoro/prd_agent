@@ -2,7 +2,7 @@
 
 > **版本**：v2.5 | **日期**：2026-07-16 | **状态**：开发中
 > **关联设计**：`design.llm-gateway-unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
-> **整改计划**：`plan.platform.llm-gateway-production-hardening.md`
+> **整改计划**：`plan.llm-gateway.full-cutover.md`
 
 ## 总览
 
