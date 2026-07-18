@@ -43,6 +43,8 @@ var internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length
     : "tenant_map_internal";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
+const string TenantAggregateAppCallerCode = "$tenant";
+const string TenantAggregateRequestType = "$aggregate";
 
 // 安全门（修复「仓库已知 dev 密钥可伪造 token 读 /gw/*」）：
 //   /gw/* 暴露在外，bearer 鉴权只校验签名/issuer/有效期。若生产回落到仓库已知的 dev 密钥，
@@ -205,6 +207,8 @@ var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
 var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
+var tenantRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_tenant_rate_windows");
+var budgetMonths = gatewayDatabase.GetCollection<BsonDocument>("llmgw_budget_months");
 var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_reconciliations");
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
@@ -260,6 +264,15 @@ await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
         new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
+});
+await tenantRateWindows.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("WindowStart"),
+        new CreateIndexOptions { Name = "uniq_llmgw_tenant_rate_window", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_tenant_rate_windows", ExpireAfter = TimeSpan.Zero }),
 });
 await costReconciliations.Indexes.CreateManyAsync(new[]
 {
@@ -876,6 +889,112 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
         }),
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+app.MapGet("/gw/tenant-governance", async (HttpContext http) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
+    if (tenant is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("TENANT_NOT_FOUND", "当前租户不存在"), jsonOptions, 404);
+
+    var now = DateTime.UtcNow;
+    var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    var minuteStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+    var budget = await budgetMonths.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("AppCallerCode", TenantAggregateAppCallerCode),
+            Builders<BsonDocument>.Filter.Eq("RequestType", TenantAggregateRequestType),
+            Builders<BsonDocument>.Filter.Eq("MonthStart", monthStart)))
+        .FirstOrDefaultAsync();
+    var rateWindow = await tenantRateWindows.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("WindowStart", minuteStart)))
+        .FirstOrDefaultAsync();
+    var reservedUsd = budget?.AsNullableDecimal("ReservedUsd") ?? 0;
+    var spentUsd = budget?.AsNullableDecimal("SpentUsd") ?? 0;
+    var usedUsd = reservedUsd + spentUsd;
+    return Json(ApiEnvelope<TenantGovernanceData>.Ok(new TenantGovernanceData
+    {
+        TenantId = tenant.Id,
+        MonthlyBudgetUsd = tenant.MonthlyBudgetUsd,
+        BudgetReservationUsd = tenant.BudgetReservationUsd,
+        RateLimitPerMinute = tenant.RateLimitPerMinute,
+        MonthStart = monthStart,
+        ReservedUsd = reservedUsd,
+        SpentUsd = spentUsd,
+        RemainingBudgetUsd = tenant.MonthlyBudgetUsd is > 0 ? Math.Max(0, tenant.MonthlyBudgetUsd.Value - usedUsd) : null,
+        CurrentMinuteCount = rateWindow?.AsNullableLong("Count") ?? 0,
+        CurrentMinuteStart = minuteStart,
+    }), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
+app.MapPut("/gw/tenant-governance", async (HttpContext http, [FromBody] UpdateTenantGovernanceRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0 || body.RateLimitPerMinute is < 0)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "预算与速率不能小于 0"), jsonOptions, 400);
+    if (body.RateLimitPerMinute is > 1_000_000)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "租户每分钟总速率不能超过 1000000"), jsonOptions, 400);
+
+    var monthlyBudget = NormalizePositiveBudget(body.MonthlyBudgetUsd ?? 0);
+    var reservation = NormalizePositiveBudget(body.BudgetReservationUsd ?? 0);
+    var budgetError = ValidateBudgetConfiguration(monthlyBudget, reservation);
+    if (budgetError is not null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", budgetError), jsonOptions, 400);
+
+    var access = TenantAccess.GetRequired(http);
+    var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
+    if (tenant is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("TENANT_NOT_FOUND", "当前租户不存在"), jsonOptions, 404);
+
+    var updates = new List<UpdateDefinition<LlmGwTenant>>();
+    if (monthlyBudget is > 0)
+    {
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.MonthlyBudgetUsd, monthlyBudget));
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.BudgetReservationUsd, reservation));
+    }
+    else
+    {
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.MonthlyBudgetUsd));
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.BudgetReservationUsd));
+    }
+    if (body.RateLimitPerMinute is > 0)
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.RateLimitPerMinute, body.RateLimitPerMinute));
+    else
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.RateLimitPerMinute));
+    updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
+    await tenants.UpdateOneAsync(
+        x => x.Id == access.TenantId,
+        Builders<LlmGwTenant>.Update.Combine(updates),
+        cancellationToken: CancellationToken.None);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "tenant.governance.update",
+        "llmgw_tenant",
+        tenant.Id,
+        tenant.Name,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "monthlyBudgetUsd", ToBsonAuditValue(monthlyBudget) },
+            { "budgetReservationUsd", ToBsonAuditValue(reservation) },
+            { "rateLimitPerMinute", ToBsonAuditValue(body.RateLimitPerMinute is > 0 ? body.RateLimitPerMinute : null) },
+        });
+
+    var fresh = await tenants.Find(x => x.Id == access.TenantId).FirstAsync();
+    return Json(ApiEnvelope<TenantGovernanceData>.Ok(new TenantGovernanceData
+    {
+        TenantId = fresh.Id,
+        MonthlyBudgetUsd = fresh.MonthlyBudgetUsd,
+        BudgetReservationUsd = fresh.BudgetReservationUsd,
+        RateLimitPerMinute = fresh.RateLimitPerMinute,
+        MonthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc),
+        CurrentMinuteStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, DateTime.UtcNow.Day, DateTime.UtcNow.Hour, DateTime.UtcNow.Minute, 0, DateTimeKind.Utc),
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 app.MapPost("/gw/teams", async (HttpContext http, [FromBody] CreateTeamRequest body) =>
 {

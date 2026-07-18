@@ -76,6 +76,8 @@ import type {
   CostReconciliationSummary,
   CostReconciliationImportRequest,
   CostReconciliationItem,
+  TenantGovernanceData,
+  UpdateTenantGovernanceRequest,
   LegacyKeyCutoverData,
   OrganizationData,
   CreatedTenant,
@@ -370,6 +372,12 @@ export function getCostReconciliations(params?: { from?: string; to?: string }):
 }
 export function importCostReconciliation(req: CostReconciliationImportRequest): Promise<ApiResponse<CostReconciliationItem>> {
   return apiRequest<CostReconciliationItem>('/cost-reconciliations/import', { method: 'POST', body: req });
+}
+export function getTenantGovernance(): Promise<ApiResponse<TenantGovernanceData>> {
+  return apiRequest<TenantGovernanceData>('/tenant-governance');
+}
+export function updateTenantGovernance(req: UpdateTenantGovernanceRequest): Promise<ApiResponse<TenantGovernanceData>> {
+  return apiRequest<TenantGovernanceData>('/tenant-governance', { method: 'PUT', body: req });
 }
 export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>> {
   return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');

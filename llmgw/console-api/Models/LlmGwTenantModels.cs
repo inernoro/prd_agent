@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.LlmGw.Models;
@@ -30,6 +31,11 @@ public sealed class LlmGwTenant
     public string NormalizedSlug { get; set; } = string.Empty;
     public string Status { get; set; } = "active";
     public bool IsInternal { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal? MonthlyBudgetUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal? BudgetReservationUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

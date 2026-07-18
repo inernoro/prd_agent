@@ -995,6 +995,25 @@ export type CostReconciliationSummary = {
   items: CostReconciliationItem[];
 };
 
+export type TenantGovernanceData = {
+  tenantId: string;
+  monthlyBudgetUsd?: number | null;
+  budgetReservationUsd?: number | null;
+  rateLimitPerMinute?: number | null;
+  monthStart: string;
+  reservedUsd: number;
+  spentUsd: number;
+  remainingBudgetUsd?: number | null;
+  currentMinuteCount: number;
+  currentMinuteStart: string;
+};
+
+export type UpdateTenantGovernanceRequest = {
+  monthlyBudgetUsd: number | null;
+  budgetReservationUsd: number | null;
+  rateLimitPerMinute: number | null;
+};
+
 export type CostReconciliationImportRequest = {
   provider: string;
   externalRecordId: string;
