@@ -64,6 +64,14 @@ describe('release site publishing UI contract', () => {
     expect(text).not.toContain('ReleaseRun');
   });
 
+  it('keeps manual generated release defaults scoped to the selected project draft', () => {
+    expect(releaseCenterSource).toContain('releaseModeDefinitions(discovery, draft)');
+    expect(releaseCenterSource).toContain('composeProject: draft.composeProject');
+    expect(releaseCenterSource).toContain('publicDirectory: draft.publicDirectory');
+    expect(releaseCenterSource).not.toContain("composeProject: 'cds-production'");
+    expect(releaseCenterSource).not.toContain("publicDirectory: '/opt/site-web'");
+  });
+
   it('keeps branch release confirmation in user-facing site language', () => {
     expect(branchListSource).toContain('从已验收预览分支发布到站点。');
     expect(branchListSource).toContain('发布站点');

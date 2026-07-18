@@ -889,7 +889,7 @@ function SiteWizardDialog({
                   </div>
                 ) : null}
                 <div className="grid gap-2">
-                  {releaseModeDefinitions(discovery).map((item) => (
+                  {releaseModeDefinitions(discovery, draft).map((item) => (
                     <button
                       key={item.mode}
                       type="button"
@@ -1246,7 +1246,10 @@ function InfoBlock({ label, children }: { label: string; children: ReactNode }):
   );
 }
 
-function releaseModeDefinitions(discovery: ReleaseStrategyDiscovery | null): ReleaseStrategyCandidate[] {
+function releaseModeDefinitions(
+  discovery: ReleaseStrategyDiscovery | null,
+  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'>,
+): ReleaseStrategyCandidate[] {
   const detected = new Map((discovery?.candidates || []).map((candidate) => [candidate.mode, candidate]));
   const fallbacks: ReleaseStrategyCandidate[] = [
     {
@@ -1262,7 +1265,7 @@ function releaseModeDefinitions(discovery: ReleaseStrategyDiscovery | null): Rel
       label: 'CDS 动态 Compose 发布',
       description: '项目没有发布脚本也能发布；CDS 为指定 commit 建隔离 worktree，并动态生成 Compose 执行脚本。',
       confidence: 'manual',
-      strategy: { mode: 'generated-compose', composeFile: 'compose.yml', composeProject: 'cds-production' },
+      strategy: { mode: 'generated-compose', composeFile: 'compose.yml', composeProject: draft.composeProject },
       requirements: ['远端安装 Git、Docker、Docker Compose'],
     },
     {
@@ -1274,7 +1277,7 @@ function releaseModeDefinitions(discovery: ReleaseStrategyDiscovery | null): Rel
         mode: 'generated-static',
         buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
         artifactDirectory: 'dist',
-        publicDirectory: '/opt/site-web',
+        publicDirectory: draft.publicDirectory,
       },
       requirements: ['远端安装 Git、Bash、Python 3 与项目构建依赖'],
     },

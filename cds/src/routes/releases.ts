@@ -300,7 +300,11 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         healthcheckUrl: String(mergedBody.healthcheckUrl).trim(),
       },
     };
-    res.json({ target: deps.stateService.upsertReleaseTarget(updated) });
+    try {
+      res.json({ target: deps.stateService.upsertReleaseTarget(updated) });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
   });
 
   router.delete('/releases/targets/:id', (req, res) => {

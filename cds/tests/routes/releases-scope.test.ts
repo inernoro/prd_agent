@@ -243,6 +243,23 @@ describe('release control plane project-scope isolation', () => {
     expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
   });
 
+  it('returns 409 when patching a second active canonical target into the same environment', async () => {
+    stateService.upsertReleaseTarget({
+      ...releaseTarget('target-a-primary', 'proj-a'),
+      isCanonical: true,
+      environment: 'production',
+    });
+
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      isCanonical: true,
+      environment: 'production',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('已有主发布目标');
+    expect(stateService.getReleaseTarget('target-a')?.isCanonical).not.toBe(true);
+  });
+
   it('archives a wrong-project target with evidence and removes it from active lists', async () => {
     const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
       reason: '该站点不属于 proj-a，保留事故证据后归档',
