@@ -267,20 +267,27 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, typeof mergedBody.projectId === 'string' ? mergedBody.projectId : undefined)) return;
+    const projectId = String(mergedBody.projectId).trim();
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: `project not found: ${projectId}` });
+      return;
+    }
     if (rejectPrivateKeyRefMismatch(
       req,
       res,
       deps.stateService,
-      String(mergedBody.projectId).trim(),
+      projectId,
       String(mergedBody.privateKeyRef).trim(),
     )) return;
     const updated: ReleaseTarget = {
       ...existing,
-      projectId: String(mergedBody.projectId).trim(),
+      projectId,
       name: String(mergedBody.name).trim(),
       isEnabled: mergedBody.isEnabled !== false,
       environment: normalizeEnvironment(mergedBody.environment),
       isCanonical: mergedBody.isCanonical !== false,
+      projectIdentity: releaseProjectIdentity(project),
       strategy,
       ssh: {
         host: String(mergedBody.host).trim(),

@@ -21,7 +21,12 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
-import { initialReleaseCenterProject, rememberReleaseCenterProject } from '@/lib/releaseCenter';
+import {
+  buildReleaseHealthcheckUrl,
+  initialReleaseCenterProject,
+  normalizeProductionOrigin,
+  rememberReleaseCenterProject,
+} from '@/lib/releaseCenter';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ReleaseTarget {
@@ -1445,22 +1450,11 @@ function buildTargetBody(draft: SiteDraft, projectId: string): Record<string, un
 }
 
 function buildHealthcheckUrl(draft: SiteDraft): string {
-  if (draft.healthcheckUrl.trim()) return draft.healthcheckUrl.trim();
-  const publicUrl = draft.publicUrl.trim();
-  if (!publicUrl) return '';
-  const base = publicUrl.includes('://') ? publicUrl.replace(/\/+$/, '') : `https://${publicUrl.replace(/\/+$/, '')}`;
-  const path = draft.healthPath.trim() || DEFAULT_HEALTH_PATH;
-  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  return buildReleaseHealthcheckUrl(draft.publicUrl, draft.healthPath, draft.healthcheckUrl);
 }
 
 function publicUrlFromHealth(value: string): string {
-  if (!value) return '';
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return value;
-  }
+  return normalizeProductionOrigin(value);
 }
 
 function splitHealthUrl(value: string): { publicUrl: string; healthPath: string } {

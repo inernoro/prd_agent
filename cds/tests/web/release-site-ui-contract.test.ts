@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  buildReleaseHealthcheckUrl,
+  normalizeProductionOrigin,
+} from '../../web/src/lib/releaseCenter.js';
 
 const releaseCenterSource = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/ReleaseCenterPage.tsx'),
@@ -85,6 +89,20 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('rememberReleaseCenterProject(');
     expect(branchListSource).toContain('releaseCenterHref(branch.projectId)');
     expect(branchListSource).not.toContain('/release-center?project=${encodeURIComponent(branch.projectId)}');
+  });
+
+  it('normalizes pasted production URLs before appending the health path', () => {
+    expect(normalizeProductionOrigin('https://www.a.example.test/admin?tab=1'))
+      .toBe('https://www.a.example.test');
+    expect(normalizeProductionOrigin('www.a.example.test/admin'))
+      .toBe('https://www.a.example.test');
+    expect(buildReleaseHealthcheckUrl('https://www.a.example.test/admin', '/api/health'))
+      .toBe('https://www.a.example.test/api/health');
+    expect(buildReleaseHealthcheckUrl(
+      'https://www.a.example.test/admin',
+      '/api/health',
+      'https://health.example.test/ready',
+    )).toBe('https://health.example.test/ready');
   });
 
   it('shows release run progress as business steps, not raw logs only', () => {

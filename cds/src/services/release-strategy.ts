@@ -189,7 +189,11 @@ export function validateReleaseStrategy(strategy: ReleaseStrategy): string | nul
   return null;
 }
 
-export function buildReleaseExecution(target: ReleaseTarget, run: ReleaseRun): {
+export function buildReleaseExecution(
+  target: ReleaseTarget,
+  run: ReleaseRun,
+  options?: { preservePrevious?: boolean },
+): {
   mode: ReleaseExecutionMode;
   command: string;
   scriptSha256: string;
@@ -208,8 +212,8 @@ export function buildReleaseExecution(target: ReleaseTarget, run: ReleaseRun): {
     };
   }
   const script = strategy.mode === 'generated-compose'
-    ? generatedComposeScript(strategy)
-    : generatedStaticScript(strategy);
+    ? generatedComposeScript(strategy, options?.preservePrevious === true)
+    : generatedStaticScript(strategy, options?.preservePrevious === true);
   return {
     mode: strategy.mode,
     command: `printf %s ${shellQuote(Buffer.from(script, 'utf8').toString('base64'))} | base64 -d | bash`,
@@ -232,7 +236,7 @@ export function buildStrategyPreflightCommand(target: ReleaseTarget): string {
   return `${base} && command -v python3 >/dev/null && mkdir -p ${shellQuote(strategy.publicDirectory!)}`;
 }
 
-function generatedComposeScript(strategy: ReleaseStrategy): string {
+function generatedComposeScript(strategy: ReleaseStrategy, preservePrevious: boolean): string {
   return `#!/usr/bin/env bash
 set -Eeuo pipefail
 : "\${CDS_COMMIT_SHA:?CDS_COMMIT_SHA is required}"
@@ -248,7 +252,7 @@ git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
 test -f "$worktree/${strategy.composeFile}"
 docker compose -p ${shellQuote(strategy.composeProject!)} -f "$worktree/${strategy.composeFile}" up -d --build --remove-orphans
-if [ -L "$release_root/current" ]; then ln -sfn "$(readlink "$release_root/current")" "$release_root/previous"; fi
+${preservePrevious ? '# auto-restore preserves the last known-good previous pointer' : 'if [ -L "$release_root/current" ]; then ln -sfn "$(readlink "$release_root/current")" "$release_root/previous"; fi'}
 rm -f "$release_root/current.next"
 ln -s "$worktree" "$release_root/current.next"
 python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$release_root/current.next" "$release_root/current"
@@ -256,7 +260,7 @@ printf 'release_id=%s\ncommit=%s\nmode=generated-compose\n' "$CDS_RELEASE_ID" "$
 `;
 }
 
-function generatedStaticScript(strategy: ReleaseStrategy): string {
+function generatedStaticScript(strategy: ReleaseStrategy, preservePrevious: boolean): string {
   return `#!/usr/bin/env bash
 set -Eeuo pipefail
 : "\${CDS_COMMIT_SHA:?CDS_COMMIT_SHA is required}"
@@ -302,7 +306,7 @@ for ref in refs:
 PY
 rm -rf "$version"
 mv "$version.tmp" "$version"
-if [ -L "$publish_root/current" ]; then ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"; fi
+${preservePrevious ? '# auto-restore preserves the last known-good previous pointer' : 'if [ -L "$publish_root/current" ]; then ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"; fi'}
 rm -f "$publish_root/current.next"
 ln -s "$version" "$publish_root/current.next"
 python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$publish_root/current.next" "$publish_root/current"
@@ -341,7 +345,7 @@ function detectArtifactDirectory(root: string, packageJson: Record<string, unkno
 function isSafeRelativePath(value: string): boolean {
   if (!value || path.posix.isAbsolute(value) || value.includes('\\')) return false;
   const normalized = path.posix.normalize(value);
-  return normalized !== '..' && !normalized.startsWith('../');
+  return normalized !== '.' && normalized !== '..' && !normalized.startsWith('../');
 }
 
 function isSafePublicDirectory(value: string): boolean {

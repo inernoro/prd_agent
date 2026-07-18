@@ -230,6 +230,19 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
   });
 
+  it('stamps server-owned project identity when patching a legacy target', async () => {
+    expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toBeUndefined();
+
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      name: 'A production updated',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.target.name).toBe('A production updated');
+    expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+    expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+  });
+
   it('archives a wrong-project target with evidence and removes it from active lists', async () => {
     const archive = await request(server, 'POST', '/api/releases/targets/target-a/archive', { 'X-Test-Key': KEY_A }, {
       reason: '该站点不属于 proj-a，保留事故证据后归档',

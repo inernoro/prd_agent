@@ -540,7 +540,7 @@ export class ReleaseService {
       executionSnapshot: previous.executionSnapshot,
     };
     const executionTarget = { ...target, strategy };
-    const execution = buildReleaseExecution(executionTarget, restoreRun);
+    const execution = buildReleaseExecution(executionTarget, restoreRun, { preservePrevious: true });
     this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);

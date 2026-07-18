@@ -63,6 +63,14 @@ describe('release strategy discovery and generation', () => {
     expect(script).toContain('git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"');
     expect(script).toContain("docker compose -p 'proj-a-prod' -f \"$worktree/compose.yml\" up -d --build --remove-orphans");
     expect(script).toContain('os.replace(sys.argv[1], sys.argv[2])');
+
+    const restoreScript = decodeGeneratedCommand(buildReleaseExecution(target({
+      mode: 'generated-compose',
+      composeFile: 'compose.yml',
+      composeProject: 'proj-a-prod',
+    }), run(), { preservePrevious: true }).command);
+    expect(restoreScript).toContain('auto-restore preserves the last known-good previous pointer');
+    expect(restoreScript).not.toContain('ln -sfn "$(readlink "$release_root/current")" "$release_root/previous"');
   });
 
   it('generates a static release with offline entry validation and atomic current/previous pointers', () => {
@@ -94,6 +102,18 @@ describe('release strategy discovery and generation', () => {
       artifactDirectory: 'dist',
       publicDirectory: '/srv/proj-a-web',
     })).toBe('generated-static strategy requires buildCommand');
+    expect(validateReleaseStrategy({
+      mode: 'generated-static',
+      buildCommand: 'pnpm build',
+      artifactDirectory: '.',
+      publicDirectory: '/srv/proj-a-web',
+    })).toBe('artifactDirectory must be a safe relative path');
+    expect(validateReleaseStrategy({
+      mode: 'generated-static',
+      buildCommand: 'pnpm build',
+      artifactDirectory: 'dist/..',
+      publicDirectory: '/srv/proj-a-web',
+    })).toBe('artifactDirectory must be a safe relative path');
     expect(validateReleaseStrategy({
       mode: 'generated-static',
       buildCommand: 'pnpm build',
@@ -136,6 +156,18 @@ describe('release strategy discovery and generation', () => {
 
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-two');
     expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-one');
+
+    writeStaticFixture(repo, 'version-bad');
+    execFileSync('git', ['-C', repo, 'add', '.']);
+    execFileSync('git', ['-C', repo, 'commit', '-m', 'bad']);
+    const badSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    executeStaticRelease(repo, published, badSha, 'rel-bad');
+    expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-bad');
+    expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-two');
+
+    executeStaticRelease(repo, published, secondSha, 'rel-second-auto-restore', true);
+    expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-two');
+    expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-two');
   });
 });
 
@@ -144,13 +176,19 @@ function writeStaticFixture(repo: string, version: string): void {
   fs.writeFileSync(path.join(repo, 'site', 'assets', 'app.js'), `window.releaseVersion = '${version}';\n`);
 }
 
-function executeStaticRelease(repo: string, published: string, commitSha: string, releaseId: string): void {
+function executeStaticRelease(
+  repo: string,
+  published: string,
+  commitSha: string,
+  releaseId: string,
+  preservePrevious = false,
+): void {
   const execution = buildReleaseExecution(target({
     mode: 'generated-static',
     buildCommand: 'mkdir -p dist/assets && cp site/index.html dist/index.html && cp site/assets/app.js dist/assets/app.js',
     artifactDirectory: 'dist',
     publicDirectory: published,
-  }), { ...run(), releaseId, commitSha });
+  }), { ...run(), releaseId, commitSha }, { preservePrevious });
   execFileSync('bash', ['-lc', `umask 077; ${execution.command}`], {
     cwd: repo,
     env: { ...process.env, CDS_COMMIT_SHA: commitSha, CDS_RELEASE_ID: releaseId, CDS_TARGET_ID: 'target-a' },
