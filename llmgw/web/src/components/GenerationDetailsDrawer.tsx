@@ -15,15 +15,15 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
       style={{
         flexShrink: 0,
         borderRadius: 'var(--radius-sm)',
-        padding: '11px 12px',
+        padding: '8px 9px',
         minWidth: 0,
         border: '1px solid var(--border-subtle)',
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{title}</div>
-      <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
+      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{title}</div>
+      <div className="tabular" style={{ marginTop: 3, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
+      {note ? <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -37,14 +37,14 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
         alignItems: 'flex-start',
         justifyContent: 'space-between',
         gap: 12,
-        padding: '6px 0',
+        padding: '5px 0',
         borderBottom: '1px solid var(--border-subtle)',
       }}
     >
-      <span style={{ fontSize: 14, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
+      <span style={{ fontSize: 12, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
       <span
         style={{
-          fontSize: 14,
+          fontSize: 12,
           textAlign: 'right',
           wordBreak: 'break-all',
           color: 'var(--text-secondary)',
@@ -76,7 +76,7 @@ function CodeBlock({ body, empty = '暂无数据' }: { body?: string | null; emp
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: 1.55,
         color: body ? 'var(--text-secondary)' : 'var(--text-muted)',
         background: 'var(--bg-base)',
@@ -173,7 +173,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
       }];
   return (
     <section>
-      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>上游响应</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {attempts.map((attempt) => {
           const warning = attempt.status === 'skipped' || attempt.status === 'failed';
@@ -359,24 +359,24 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '15px 18px',
+          padding: '12px 14px',
             borderBottom: '1px solid var(--border-subtle)',
           }}
         >
           <div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>生成详情</div>
-            {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 14 }}>{detail.model || DASH}</span>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 14 }}>{detail.platformName || detail.provider || DASH}</span>
-              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
-            </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>生成详情</div>
+            {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
+              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 12 }}>{detail.model || DASH}</span>
+              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 12 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 11 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
+            </div> : <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
           <button aria-label="关闭详情" onClick={onClose} style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 'var(--radius-sm)', opacity: 0.7, color: 'var(--text-secondary)' }}>
             <X size={18} />
           </button>
         </div>
 
-        <div style={{ flex: 1, padding: '16px 18px 24px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        <div style={{ flex: 1, padding: '12px 14px 18px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {loading ? (
             <SectionLoader text="正在加载详情…" />
           ) : loadError || !detail ? (
@@ -386,7 +386,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               <button type="button" onClick={onClose}>返回请求记录</button>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                 {(() => {
                   const lc = deriveLifecycle(detail);
@@ -398,9 +398,9 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                         alignItems: 'center',
                         gap: 4,
                         borderRadius: 999,
-                        padding: '0 9px',
-                        height: 26,
-                        fontSize: 13,
+                        padding: '0 8px',
+                        height: 22,
+                        fontSize: 11,
                         fontWeight: 600,
                         color: lc.color,
                         background: lc.bg,
@@ -420,8 +420,8 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                       alignItems: 'center',
                       borderRadius: 999,
                       padding: '0 8px',
-                      height: 26,
-                      fontSize: 13,
+                      height: 22,
+                      fontSize: 11,
                       fontWeight: 600,
                       color: c.color,
                       background: c.bg,
@@ -453,7 +453,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
 
               {viewTab === 'overview' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
-                  <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                  <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7 }}>
                     <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
                     <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
                     <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
@@ -474,7 +474,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     />
                   </div>
                   <section>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>本次生成</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>本次生成</div>
                     <Row k="实际模型" v={detail.model} mono copy />
                     <Row k="期望模型" v={detail.expectedModel} mono />
                     <Row k="Provider" v={detail.platformName || detail.provider} />
@@ -496,7 +496,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               {viewTab === 'content' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <section>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>请求身份</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>请求身份</div>
                     <Row k="应用" v={generationAppName(detail)} />
                     <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
                     <Row k="Request ID" v={detail.requestId} mono copy />
@@ -538,7 +538,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <RouterTracePanel detail={detail} />
                   <section>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>治理策略</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>治理策略</div>
                     <Row k="模型策略" v={detail.modelPolicy} />
                     <Row k="请求模型池" v={detail.modelPoolId} mono />
                     <Row k="解析原因" v={detail.resolutionReason} />
@@ -553,7 +553,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               {viewTab === 'audit' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <section>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>费用与对账</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>费用与对账</div>
                     <Row k="价格币种" v={detail.priceCurrency} />
                     <Row k="输入价格 / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
                     <Row k="输出价格 / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
@@ -568,7 +568,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     <Row k="价格快照 hash" v={detail.priceSnapshotHash} mono copy />
                   </section>
                   <section>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5, color: 'var(--text-primary)' }}>身份与时间</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>身份与时间</div>
                     <Row k="appCallerCode" v={detail.appCallerCode} mono />
                     <Row k="业务标题" v={detail.appCallerTitle || detail.appCallerCodeDisplayName} />
                     <Row k="团队" v={detail.teamId} mono />

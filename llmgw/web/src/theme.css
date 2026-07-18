@@ -2625,16 +2625,16 @@ a:focus-visible {
 
 .lg-generation-view-tabs button,
 .lg-generation-body-tabs button {
-  min-height: 44px;
+  min-height: 34px;
   flex: 0 0 auto;
   margin-bottom: -1px;
-  padding: 0 12px;
+  padding: 0 10px;
   cursor: pointer;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   transition: color 160ms ease, border-color 160ms ease;
 }
@@ -2660,7 +2660,7 @@ a:focus-visible {
 .lg-generation-tab-panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
 }
 
 .lg-generation-load-error {
@@ -2768,15 +2768,16 @@ a:focus-visible {
 
 .lg-log-filters > summary {
   width: fit-content;
-  min-height: 36px;
+  min-height: 30px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 0 9px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--bg-surface);
+  background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   list-style: none;
   cursor: pointer;
@@ -2790,8 +2791,8 @@ a:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
-  margin-top: 8px;
-  padding: 10px;
+  margin-top: 6px;
+  padding: 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   background: var(--bg-surface);
@@ -2801,6 +2802,123 @@ a:focus-visible {
 .lg-log-filters input {
   width: 100% !important;
   min-width: 0 !important;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.lg-logs-heading {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.lg-logs-heading h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.lg-logs-heading p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.lg-logs-heading > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.lg-log-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lg-log-toolbar > select,
+.lg-log-search {
+  height: 30px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.lg-log-toolbar > select {
+  max-width: 150px;
+  min-width: 106px;
+  padding: 0 24px 0 8px;
+}
+
+.lg-log-search {
+  min-width: 250px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.lg-log-search > svg {
+  flex-shrink: 0;
+  margin-left: 9px;
+}
+
+.lg-log-search input {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  padding: 0 7px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.lg-log-search button,
+.lg-log-clear {
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lg-log-clear {
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.lg-log-search:focus-within,
+.lg-log-toolbar > select:focus-visible,
+.lg-log-filters select:focus-visible,
+.lg-log-filters input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
+
+.lg-log-table {
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .lg-safe-test-panel {
@@ -3774,6 +3892,38 @@ a:focus-visible {
 }
 
 @media (max-width: 680px) {
+  .lg-logs-heading {
+    align-items: flex-start;
+  }
+
+  .lg-log-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .lg-log-search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .lg-log-toolbar > select {
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 44%;
+  }
+
+  .lg-log-toolbar > button {
+    min-height: 30px;
+  }
+
+  .lg-log-filters > summary {
+    min-height: 36px;
+  }
+
+  .lg-generation-view-tabs button,
+  .lg-generation-body-tabs button {
+    min-height: 44px;
+  }
+
   .lg-tenant-switcher {
     margin-left: auto;
     max-width: 150px;

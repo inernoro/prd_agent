@@ -1,5 +1,5 @@
 // 独立 API 客户端：JWT 存 sessionStorage（no-localStorage 规则：认证态禁止进 localStorage）。
-// base 走 import.meta.env.VITE_LLMGW_API_BASE，默认 /gw（dev 由 vite proxy 反代）。
+// base 优先走 import.meta.env.VITE_LLMGW_API_BASE；未配置时按运行路径选择 /gw 或 /llmgw/gw。
 //
 // 后端端点约定（后端另做，stub 即可）：
 //   POST  {BASE}/auth/login        body { username, password } → { success, data: { token, ... } }
@@ -89,6 +89,7 @@ import type {
   PromptPolicyVersion,
   AvailableTenant,
 } from './types';
+import { getDefaultApiBase } from './runtimeBase';
 
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
@@ -96,7 +97,7 @@ const TENANT_KEY = 'llmgw.tenant';
 // 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
 const MCP_KEY = 'llmgw.mustChangePwd';
 
-export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || '/gw').replace(/\/$/, '');
+export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBase()).replace(/\/$/, '');
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);

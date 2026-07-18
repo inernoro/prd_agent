@@ -82,13 +82,12 @@ export function statusBadgeStyle(
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
 }
 
-// ── 4 个子 tab ──
-export type LogsSubTab = 'generations' | 'upstream' | 'sessions' | 'jobs';
+// ── 仅注册后端有真实数据来源的视图 ──
+export type LogsSubTab = 'generations' | 'upstream' | 'sessions';
 export const LOGS_SUBTABS: { key: LogsSubTab; label: string }[] = [
   { key: 'generations', label: '请求' },
   { key: 'upstream', label: '上游调用' },
   { key: 'sessions', label: '会话' },
-  { key: 'jobs', label: '后台任务' },
 ];
 
 // ── 列定义（注册表）──
@@ -101,16 +100,16 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '1.1fr' },
-  { key: 'generation', label: '请求 ID', width: '1.65fr' },
-  { key: 'model', label: '模型', width: '1.8fr' },
-  { key: 'provider', label: 'Provider', width: '1.1fr' },
-  { key: 'app', label: '应用', width: '1.35fr' },
-  { key: 'tokens', label: 'Token', width: '0.9fr', align: 'right' },
-  { key: 'cost', label: '费用', width: '0.7fr', align: 'right', tip: '来自平台模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
-  { key: 'latency', label: '耗时', width: '0.85fr', align: 'right' },
-  { key: 'status', label: '状态', width: '0.75fr', align: 'center' },
-  { key: 'finish', label: '结束原因', width: '0.85fr', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
+  { key: 'date', label: '时间', width: '88px' },
+  { key: 'generation', label: '请求 ID', width: '112px' },
+  { key: 'model', label: '模型', width: 'minmax(180px, 1fr)' },
+  { key: 'provider', label: 'Provider', width: '100px' },
+  { key: 'app', label: '应用', width: '116px' },
+  { key: 'tokens', label: 'Token', width: '52px', align: 'right' },
+  { key: 'cost', label: '费用', width: '60px', align: 'right', tip: '来自平台模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
+  { key: 'latency', label: '耗时', width: '54px', align: 'right' },
+  { key: 'status', label: '状态', width: '44px', align: 'center' },
+  { key: 'finish', label: '结束原因', width: '58px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
