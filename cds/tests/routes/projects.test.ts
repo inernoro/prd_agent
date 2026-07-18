@@ -582,6 +582,27 @@ describe('Projects router (P4 Part 2)', () => {
       // Create was NOT called because inspect already returned 0
       expect(shell.commands.filter((c) => c.startsWith('docker network create'))).toHaveLength(0);
     });
+
+    it('accepts an explicit CDS global variable inheritance opt-in on create', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'global-env-opt-in',
+        inheritGlobalEnv: true,
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.project.inheritGlobalEnv).toBe(true);
+      expect(stateService.getProject(res.body.project.id)?.inheritGlobalEnv).toBe(true);
+    });
+
+    it('rejects a non-boolean CDS global variable inheritance opt-in on create', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'invalid-global-env-opt-in',
+        inheritGlobalEnv: 'yes',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('inheritGlobalEnv');
+    });
   });
 
   describe('PUT /api/projects/:id (P4 Part 13)', () => {
@@ -726,6 +747,22 @@ describe('Projects router (P4 Part 2)', () => {
       });
       expect(res.status).toBe(200);
       expect(res.body.project.autoSmokeEnabled).toBe(false);
+    });
+
+    it('round-trips the CDS global variable inheritance opt-in', async () => {
+      const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
+      expect(enabled.status).toBe(200);
+      expect(enabled.body.project.inheritGlobalEnv).toBe(true);
+
+      const disabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: false });
+      expect(disabled.status).toBe(200);
+      expect(disabled.body.project.inheritGlobalEnv).toBe(false);
+    });
+
+    it('rejects a non-boolean CDS global variable inheritance opt-in on update', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: 'false' });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('inheritGlobalEnv');
     });
   });
 

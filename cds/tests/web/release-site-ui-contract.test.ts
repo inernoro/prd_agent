@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  buildReleaseHealthcheckUrl,
+  normalizeProductionOrigin,
+} from '../../web/src/lib/releaseCenter.js';
 
 const releaseCenterSource = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/ReleaseCenterPage.tsx'),
@@ -34,8 +38,12 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('添加站点发布');
     expect(releaseCenterSource).toContain('选择服务器');
     expect(releaseCenterSource).toContain('生产域名');
-    expect(releaseCenterSource).toContain('本机端口');
-    expect(releaseCenterSource).toContain('本机生产发布');
+    expect(releaseCenterSource).toContain('远端项目仓库');
+    expect(releaseCenterSource).toContain('CDS 动态 Compose 发布');
+    expect(releaseCenterSource).toContain('CDS 动态静态站发布');
+    expect(releaseCenterSource).toContain('项目现有脚本');
+    expect(releaseCenterSource).toContain('项目身份');
+    expect(releaseCenterSource).toContain('已归档发布目标');
     expect(releaseCenterSource).toContain('健康检查');
     expect(releaseCenterSource).toContain('发布记录');
     expect(releaseCenterSource).toContain('响应时间');
@@ -56,6 +64,20 @@ describe('release site publishing UI contract', () => {
     expect(text).not.toContain('ReleaseRun');
   });
 
+  it('keeps manual generated release defaults scoped to the selected project draft', () => {
+    expect(releaseCenterSource).toContain('releaseModeDefinitions(discovery, draft)');
+    expect(releaseCenterSource).toContain('composeProject: draft.composeProject');
+    expect(releaseCenterSource).toContain('publicDirectory: draft.publicDirectory');
+    expect(releaseCenterSource).not.toContain("composeProject: 'cds-production'");
+    expect(releaseCenterSource).not.toContain("publicDirectory: '/opt/site-web'");
+  });
+
+  it('clears a hidden script rollback command when the selected strategy is generated', () => {
+    expect(releaseCenterSource).toContain(
+      "rollbackCommand: draft.strategyMode === 'existing-script' ? draft.rollbackCommand.trim() : ''",
+    );
+  });
+
   it('keeps branch release confirmation in user-facing site language', () => {
     expect(branchListSource).toContain('从已验收预览分支发布到站点。');
     expect(branchListSource).toContain('发布站点');
@@ -63,7 +85,9 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('发布目标');
     expect(branchListSource).toContain('服务器');
     expect(branchListSource).toContain('目录');
-    expect(branchListSource).toContain('执行脚本');
+    expect(branchListSource).toContain('执行计划');
+    expect(branchListSource).toContain('动态执行');
+    expect(branchListSource).toContain('原子切换');
     expect(branchListSource).toContain('发布脚本可执行');
     expect(branchListSource).toContain('上线地址');
     expect(branchListSource).toContain('开始发布');
@@ -79,6 +103,20 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('rememberReleaseCenterProject(');
     expect(branchListSource).toContain('releaseCenterHref(branch.projectId)');
     expect(branchListSource).not.toContain('/release-center?project=${encodeURIComponent(branch.projectId)}');
+  });
+
+  it('normalizes pasted production URLs before appending the health path', () => {
+    expect(normalizeProductionOrigin('https://www.a.example.test/admin?tab=1'))
+      .toBe('https://www.a.example.test');
+    expect(normalizeProductionOrigin('www.a.example.test/admin'))
+      .toBe('https://www.a.example.test');
+    expect(buildReleaseHealthcheckUrl('https://www.a.example.test/admin', '/api/health'))
+      .toBe('https://www.a.example.test/api/health');
+    expect(buildReleaseHealthcheckUrl(
+      'https://www.a.example.test/admin',
+      '/api/health',
+      'https://health.example.test/ready',
+    )).toBe('https://health.example.test/ready');
   });
 
   it('shows release run progress as business steps, not raw logs only', () => {

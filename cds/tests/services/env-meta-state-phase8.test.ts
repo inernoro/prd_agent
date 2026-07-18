@@ -96,20 +96,18 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getMissingRequiredEnvKeys('nonexistent')).toEqual([]);
   });
 
-  // Bugbot regression(PR #521)— 之前 getMissingRequiredEnvKeys 只读
-  // project.customEnv,漏 _global scope。修复后用 getCustomEnv(projectId) 走
-  // merged env(_global ⊕ project),与 deploy 时容器实际 env 一致 — 否则在
-  // _global 设了 SMTP_PASSWORD 也会被误判 missing → 假 412 deploy block。
-  it('getMissingRequiredEnvKeys: _global scope 设的 required 也算填了(Bugbot regression)', () => {
+  it('getMissingRequiredEnvKeys: _global 仅在项目显式继承时算已填写', () => {
     svc.setEnvMeta('projA', {
       SMTP_PASSWORD: { kind: 'required' },
       OAUTH_SECRET: { kind: 'required' },
     });
     // 只在 _global 设 SMTP_PASSWORD,project 不设
     svc.setCustomEnvVar('SMTP_PASSWORD', 'global-value', '_global');
-    // _global 不该被认为 missing,但 OAUTH_SECRET 仍 missing
+    // 默认隔离，控制面全局值不能静默满足项目的必填项。
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['SMTP_PASSWORD', 'OAUTH_SECRET']);
+    svc.updateProject('projA', { inheritGlobalEnv: true });
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['OAUTH_SECRET']);
-    // 项目级覆盖优先(getCustomEnv 合并语义)
+    // 显式继承后仍由项目级值优先。
     svc.setCustomEnvVar('OAUTH_SECRET', 'proj-value', 'projA');
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
   });

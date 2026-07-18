@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  Archive,
   CheckCircle2,
   Circle,
   ExternalLink,
@@ -20,7 +21,12 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
-import { initialReleaseCenterProject, rememberReleaseCenterProject } from '@/lib/releaseCenter';
+import {
+  buildReleaseHealthcheckUrl,
+  initialReleaseCenterProject,
+  normalizeProductionOrigin,
+  rememberReleaseCenterProject,
+} from '@/lib/releaseCenter';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ReleaseTarget {
@@ -29,6 +35,14 @@ interface ReleaseTarget {
   name: string;
   type: string;
   isEnabled: boolean;
+  lifecycle?: 'active' | 'archived';
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+  environment?: 'production' | 'staging' | 'other';
+  isCanonical?: boolean;
+  projectIdentity?: { projectId: string; projectSlug: string; repository?: string };
+  strategy?: ReleaseStrategy;
   ssh?: {
     host: string;
     port: number;
@@ -39,6 +53,37 @@ interface ReleaseTarget {
     rollbackCommand?: string;
     healthcheckUrl: string;
   };
+}
+
+type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+
+interface ReleaseStrategy {
+  mode: ReleaseExecutionMode;
+  command?: string;
+  composeFile?: string;
+  composeProject?: string;
+  buildCommand?: string;
+  artifactDirectory?: string;
+  publicDirectory?: string;
+  detectedFrom?: string[];
+}
+
+interface ReleaseStrategyCandidate {
+  mode: ReleaseExecutionMode;
+  label: string;
+  description: string;
+  confidence: 'high' | 'medium' | 'manual';
+  strategy: ReleaseStrategy;
+  requirements: string[];
+}
+
+interface ReleaseStrategyDiscovery {
+  projectIdentity: { projectId: string; projectSlug: string; repository?: string };
+  branchId: string;
+  branchName: string;
+  recommendedMode: ReleaseExecutionMode | null;
+  candidates: ReleaseStrategyCandidate[];
+  warnings: string[];
 }
 
 interface ProjectLite {
@@ -115,6 +160,7 @@ interface CenterResponse {
 
 interface TargetsResponse {
   targets: ReleaseTarget[];
+  archivedTargets: ReleaseTarget[];
   remoteHosts: RemoteHostOption[];
 }
 
@@ -140,15 +186,21 @@ interface SiteDraft {
   privateKeyRef: string;
   host: string;
   port: string;
-  webPort: string;
   user: string;
   sitePath: string;
   publicUrl: string;
   healthPath: string;
   rollbackCommand: string;
-  advancedOpen: boolean;
   deployCommand: string;
   healthcheckUrl: string;
+  strategyMode: ReleaseExecutionMode;
+  composeFile: string;
+  composeProject: string;
+  buildCommand: string;
+  artifactDirectory: string;
+  publicDirectory: string;
+  detectedFrom: string[];
+  isCanonical: boolean;
 }
 
 interface SiteView {
@@ -176,11 +228,19 @@ interface SiteView {
   successfulRuns: ReleaseRun[];
   rollbackDefaultReleaseId: string;
   isEnabled: boolean;
+  releaseMethod: string;
+  projectLabel: string;
+  isCanonical: boolean;
 }
 
 interface RollbackState {
   site: SiteView;
   sourceRun: ReleaseRun;
+}
+
+interface ArchiveState {
+  site: SiteView;
+  reason: string;
 }
 
 const DEFAULT_SITE_PATH = '/opt/{project}-prod';
@@ -195,15 +255,21 @@ function emptyDraft(projectId: string): SiteDraft {
     privateKeyRef: '',
     host: '',
     port: '22',
-    webPort: '13000',
     user: '',
     sitePath: '',
     publicUrl: '',
     healthPath: DEFAULT_HEALTH_PATH,
     rollbackCommand: '',
-    advancedOpen: false,
     deployCommand: DEFAULT_DEPLOY_COMMAND,
     healthcheckUrl: '',
+    strategyMode: 'existing-script',
+    composeFile: 'compose.yml',
+    composeProject: `${projectId.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()}-prod`,
+    buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
+    artifactDirectory: 'dist',
+    publicDirectory: `/opt/${projectId}-web`,
+    detectedFrom: [],
+    isCanonical: true,
   };
 }
 
@@ -224,6 +290,11 @@ export function ReleaseCenterPage(): JSX.Element {
   const [logRun, setLogRun] = useState<ReleaseRun | null>(null);
   const [rollbackState, setRollbackState] = useState<RollbackState | null>(null);
   const [retryingRunId, setRetryingRunId] = useState('');
+  const [discovery, setDiscovery] = useState<ReleaseStrategyDiscovery | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
+  const [archiveState, setArchiveState] = useState<ArchiveState | null>(null);
+  const [archiving, setArchiving] = useState(false);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
@@ -234,6 +305,7 @@ export function ReleaseCenterPage(): JSX.Element {
         apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`),
       ]);
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
+      setArchivedTargets(targets.archivedTargets || []);
     } catch (err) {
       if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -285,10 +357,27 @@ export function ReleaseCenterPage(): JSX.Element {
   }, [state, runs]);
 
   const openCreateWizard = (): void => {
-    setDraft(emptyDraft(projectId));
+    const initial = {
+      ...emptyDraft(projectId),
+      sitePath: `/opt/${projectId}`,
+      isCanonical: !sites.some((site) => site.isCanonical),
+    };
+    setDraft(initial);
     setWizardStep('server');
     setWizardOpen(true);
     setToast('');
+    setDiscovery(null);
+    setDiscovering(true);
+    apiRequest<ReleaseStrategyDiscovery>(`/api/releases/projects/${encodeURIComponent(projectId)}/discover`, {
+      method: 'POST',
+      body: {},
+    }).then((result) => {
+      setDiscovery(result);
+      const recommended = result.candidates.find((candidate) => candidate.mode === result.recommendedMode);
+      if (recommended) setDraft((current) => applyDiscoveredStrategy(current, recommended.strategy));
+    }).catch((err) => {
+      setToast(err instanceof ApiError ? err.message : String(err));
+    }).finally(() => setDiscovering(false));
   };
 
   const openConfigureWizard = (target: ReleaseTarget): void => {
@@ -296,6 +385,7 @@ export function ReleaseCenterPage(): JSX.Element {
     setWizardStep('site');
     setWizardOpen(true);
     setToast('');
+    setDiscovery(null);
   };
 
   const selectHost = (hostId: string): void => {
@@ -318,8 +408,8 @@ export function ReleaseCenterPage(): JSX.Element {
         await apiRequest(`/api/releases/targets/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body });
         setToast('站点发布目标已更新');
       } else {
-        const body = buildLocalProdTargetBody(draft, projectId);
-        await apiRequest('/api/releases/targets/local-prod', { method: 'POST', body });
+        const body = buildTargetBody(draft, projectId);
+        await apiRequest('/api/releases/targets', { method: 'POST', body });
         setToast('站点发布目标已添加');
       }
       setWizardOpen(false);
@@ -372,6 +462,25 @@ export function ReleaseCenterPage(): JSX.Element {
     }
   };
 
+  const archiveSite = async (): Promise<void> => {
+    if (!archiveState || archiveState.reason.trim().length < 8) return;
+    setArchiving(true);
+    setToast('');
+    try {
+      await apiRequest(`/api/releases/targets/${encodeURIComponent(archiveState.site.id)}/archive`, {
+        method: 'POST',
+        body: { reason: archiveState.reason.trim() },
+      });
+      setArchiveState(null);
+      setToast('发布目标已归档，历史发布记录仍然保留');
+      await load();
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setArchiving(false);
+    }
+  };
+
   const openRollbackForRun = (run: ReleaseRun): void => {
     const site = sites.find((item) => item.id === run.targetId);
     if (!site) {
@@ -402,13 +511,13 @@ export function ReleaseCenterPage(): JSX.Element {
       )}
     >
       <Workspace wide>
-        <div className="space-y-5">
+        <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <section className="cds-surface-raised cds-hairline p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <h1 className="text-lg font-semibold">站点发布</h1>
                 <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  把已验收的预览分支发布到本机生产站点。默认只需要选择服务器、填写域名和本机端口。
+                  一个项目只展示自己的发布目标。CDS 可复用现有脚本，也能为没有发布脚本的 Compose 或静态项目动态生成可审计的发布计划。
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -472,11 +581,13 @@ export function ReleaseCenterPage(): JSX.Element {
                       onLogs={() => site.latestRun && setLogRun(site.latestRun)}
                       onRollback={() => openRollback(site)}
                       onConfigure={() => openConfigureWizard(site.target)}
+                      onArchive={() => setArchiveState({ site, reason: '' })}
                     />
                   ))}
                 </section>
               )}
               <ReleaseRecords runs={runs} onOpen={setLogRun} />
+              <ArchivedTargets targets={archivedTargets} />
             </>
           ) : null}
         </div>
@@ -486,6 +597,8 @@ export function ReleaseCenterPage(): JSX.Element {
         draft={draft}
         step={wizardStep}
         hosts={hosts}
+        discovery={discovery}
+        discovering={discovering}
         saving={savingSite}
         onClose={() => setWizardOpen(false)}
         onStep={setWizardStep}
@@ -505,6 +618,13 @@ export function ReleaseCenterPage(): JSX.Element {
         onClose={() => setLogRun(null)}
         onRetry={(run) => void retryRelease(run)}
         onRollback={openRollbackForRun}
+      />
+      <ArchiveTargetDialog
+        state={archiveState}
+        saving={archiving}
+        onChange={(reason) => setArchiveState((current) => current ? { ...current, reason } : current)}
+        onClose={() => setArchiveState(null)}
+        onConfirm={() => void archiveSite()}
       />
     </AppShell>
   );
@@ -540,11 +660,13 @@ function SiteCard({
   onLogs,
   onRollback,
   onConfigure,
+  onArchive,
 }: {
   site: SiteView;
   onLogs: () => void;
   onRollback: () => void;
   onConfigure: () => void;
+  onArchive: () => void;
 }): JSX.Element {
   return (
     <article className="cds-surface-raised cds-hairline flex min-h-[360px] flex-col p-4">
@@ -552,6 +674,7 @@ function SiteCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="truncate text-base font-semibold">{site.name}</h2>
+            {site.isCanonical ? <span className="rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary">生产主目标</span> : null}
             {!site.isEnabled ? <span className="rounded-md border border-amber-500/30 px-2 py-0.5 text-xs text-amber-500">已停用</span> : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -565,6 +688,8 @@ function SiteCard({
       </header>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <InfoBlock label="所属项目">{site.projectLabel}</InfoBlock>
+        <InfoBlock label="发布方式">{site.releaseMethod}</InfoBlock>
         <InfoBlock label="上线地址">
           {site.publicUrl ? (
             <a href={site.publicUrl} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 text-primary hover:underline">
@@ -590,7 +715,7 @@ function SiteCard({
       <div className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 p-3">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Terminal className="h-3.5 w-3.5" />
-          发布脚本
+          {site.releaseMethod}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {site.deployScripts.map((script, index) => (
@@ -626,6 +751,10 @@ function SiteCard({
             <Settings />
             配置
           </Button>
+          <Button variant="outline" size="sm" onClick={onArchive}>
+            <Archive />
+            归档
+          </Button>
         </div>
       </div>
     </article>
@@ -637,6 +766,8 @@ function SiteWizardDialog({
   draft,
   step,
   hosts,
+  discovery,
+  discovering,
   saving,
   onClose,
   onStep,
@@ -648,6 +779,8 @@ function SiteWizardDialog({
   draft: SiteDraft;
   step: WizardStep;
   hosts: RemoteHostOption[];
+  discovery: ReleaseStrategyDiscovery | null;
+  discovering: boolean;
   saving: boolean;
   onClose: () => void;
   onStep: (step: WizardStep) => void;
@@ -656,9 +789,13 @@ function SiteWizardDialog({
   onSave: () => void;
 }): JSX.Element {
   const selectedHost = hosts.find((host) => host.id === draft.privateKeyRef);
-  const canSave = draft.id
-    ? Boolean(draft.name.trim() && draft.privateKeyRef && draft.sitePath.trim() && buildHealthcheckUrl(draft))
-    : Boolean(draft.privateKeyRef && normalizeDomainInput(draft.publicUrl) && Number(draft.webPort || 0) > 0);
+  const canSave = Boolean(
+    draft.name.trim()
+    && draft.privateKeyRef
+    && draft.sitePath.trim()
+    && buildHealthcheckUrl(draft)
+    && isDraftStrategyComplete(draft),
+  );
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="max-w-none" style={{ width: 'min(896px, calc(100vw - 32px))' }}>
@@ -716,61 +853,75 @@ function SiteWizardDialog({
             ) : null}
 
             {step === 'site' ? (
-              <WizardPanel title={draft.id ? '填写站点目录' : '填写生产域名'} description={draft.id ? '已有目标继续保留站点目录编辑。' : 'CDS 会按项目自动推断生产目录，日常只需要填最终访问域名。'}>
-                {draft.id ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="生产站点" />
-                    <Field label="站点目录" value={draft.sitePath} onChange={(value) => onDraft((c) => ({ ...c, sitePath: value }))} placeholder="/opt/prd_agent" />
-                  </div>
-                ) : (
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="不填则使用域名" />
-                    <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
-                    <Field label="本机端口" value={draft.webPort} onChange={(value) => onDraft((c) => ({ ...c, webPort: value.replace(/[^0-9]/g, '') }))} placeholder="13000" />
-                  </div>
-                )}
+              <WizardPanel title="确认项目与远端目录" description="远端目录必须是当前项目的 Git 仓库。项目身份由 CDS 服务端写入目标，后续不一致会阻断发布。">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Field label="站点名称" value={draft.name} onChange={(value) => onDraft((c) => ({ ...c, name: value }))} placeholder="生产站点" />
+                  <Field label="远端项目仓库" value={draft.sitePath} onChange={(value) => onDraft((c) => ({ ...c, sitePath: value }))} placeholder="/opt/project" />
+                  <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
+                </div>
                 <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
                   <div className="text-muted-foreground">服务器</div>
                   <div className="mt-1 font-mono">{selectedHost ? `${selectedHost.sshUser}@${selectedHost.host}:${selectedHost.sshPort}` : '尚未选择服务器'}</div>
                 </div>
+                <label className="flex items-start gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={draft.isCanonical}
+                    onChange={(event) => onDraft((current) => ({ ...current, isCanonical: event.target.checked }))}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-medium">设为生产主目标</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">同一项目和环境只能有一个启用的生产主目标；其他站点请取消勾选。</span>
+                  </span>
+                </label>
               </WizardPanel>
             ) : null}
 
             {step === 'scripts' ? (
-              <WizardPanel title={draft.id ? '检测发布脚本' : '确认发布方式'} description={draft.id ? '已有目标会按保存的发布命令执行。' : 'CDS 使用内置本机生产脚本，自动同步代码、启动 compose 并做健康检查。'}>
-                {draft.id ? (
-                  <>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {SCRIPT_LABELS.map((script) => (
-                        <div key={script} className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
-                          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-300">
-                            <CheckCircle2 className="h-4 w-4" />
-                            将检测 {script}
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">发布前检查会连接服务器；发布过程会单独显示该脚本步骤。</p>
-                        </div>
-                      ))}
-                    </div>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={draft.advancedOpen}
-                        onChange={(event) => onDraft((c) => ({ ...c, advancedOpen: event.target.checked }))}
-                      />
-                      高级配置：自定义发布命令
-                    </label>
-                  </>
-                ) : (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
-                    <div className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-300">
-                      <CheckCircle2 className="h-4 w-4" />
-                      使用本机生产发布
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">保存后会生成通用发布目标，不需要在页面里维护 shell 命令。</p>
+              <WizardPanel title="确认发布方式" description="CDS 先扫描项目事实，再推荐发布方式；自动生成脚本会在每次发布时固化哈希，不写回项目仓库。">
+                {discovering ? <LoadingBlock label="正在扫描项目发布能力" /> : null}
+                {discovery ? (
+                  <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs text-muted-foreground">
+                    项目身份：{discovery.projectIdentity.projectSlug}
+                    {discovery.projectIdentity.repository ? ` · ${discovery.projectIdentity.repository}` : ''}
+                    <br />检测分支：{discovery.branchName}（{discovery.branchId}）
                   </div>
-                )}
-                {draft.id && draft.advancedOpen ? (
-                  <Field label="发布脚本" value={draft.deployCommand} onChange={(value) => onDraft((c) => ({ ...c, deployCommand: value }))} />
+                ) : null}
+                <div className="grid gap-2">
+                  {releaseModeDefinitions(discovery, draft).map((item) => (
+                    <button
+                      key={item.mode}
+                      type="button"
+                      onClick={() => onDraft((current) => applyDiscoveredStrategy(current, item.strategy))}
+                      className={`rounded-md border p-3 text-left ${draft.strategyMode === item.mode ? 'border-primary/45 bg-primary/10' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                        <span>{item.label}</span>
+                        <span className="text-xs text-muted-foreground">{item.confidence === 'high' ? '已检测' : item.confidence === 'medium' ? '建议复核' : '手动配置'}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{item.description}</p>
+                    </button>
+                  ))}
+                </div>
+                {draft.strategyMode === 'existing-script' ? (
+                  <Field label="项目发布命令" value={draft.deployCommand} onChange={(value) => onDraft((c) => ({ ...c, deployCommand: value }))} placeholder="./deploy.sh" />
+                ) : null}
+                {draft.strategyMode === 'generated-compose' ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="Compose 文件" value={draft.composeFile} onChange={(value) => onDraft((c) => ({ ...c, composeFile: value }))} placeholder="compose.yml" />
+                    <Field label="Compose 项目名" value={draft.composeProject} onChange={(value) => onDraft((c) => ({ ...c, composeProject: value }))} placeholder="project-prod" />
+                  </div>
+                ) : null}
+                {draft.strategyMode === 'generated-static' ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="构建命令" value={draft.buildCommand} onChange={(value) => onDraft((c) => ({ ...c, buildCommand: value }))} />
+                    <Field label="产物目录" value={draft.artifactDirectory} onChange={(value) => onDraft((c) => ({ ...c, artifactDirectory: value }))} placeholder="dist" />
+                    <div className="md:col-span-2">
+                      <Field label="静态发布根目录" value={draft.publicDirectory} onChange={(value) => onDraft((c) => ({ ...c, publicDirectory: value }))} placeholder="/opt/project-web" />
+                    </div>
+                    <p className="md:col-span-2 text-xs text-muted-foreground">Web Server 根目录必须指向该目录下的 current。CDS 会保留 previous，并在入口探测失败时自动恢复。</p>
+                  </div>
                 ) : null}
               </WizardPanel>
             ) : null}
@@ -789,15 +940,21 @@ function SiteWizardDialog({
                   <div className="text-muted-foreground">健康检查</div>
                   <div className="mt-1 font-mono">{buildHealthcheckUrl(draft) || '填写上线地址后自动生成'}</div>
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(draft.rollbackCommand)}
-                    onChange={(event) => onDraft((c) => ({ ...c, rollbackCommand: event.target.checked ? './rollback.sh' : '' }))}
-                  />
-                  这个站点支持一键回滚
-                </label>
-                {draft.rollbackCommand ? (
+                {draft.strategyMode === 'existing-script' ? (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(draft.rollbackCommand)}
+                      onChange={(event) => onDraft((c) => ({ ...c, rollbackCommand: event.target.checked ? './rollback.sh' : '' }))}
+                    />
+                    项目提供独立回滚脚本
+                  </label>
+                ) : (
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                    动态发布会保留上一成功版本；最终入口探测失败时自动恢复，也可从发布记录手动回滚。
+                  </div>
+                )}
+                {draft.strategyMode === 'existing-script' && draft.rollbackCommand ? (
                   <Field label="回滚脚本" value={draft.rollbackCommand} onChange={(value) => onDraft((c) => ({ ...c, rollbackCommand: value }))} />
                 ) : null}
               </WizardPanel>
@@ -854,6 +1011,79 @@ function ReleaseRecords({ runs, onOpen }: { runs: ReleaseRun[]; onOpen: (run: Re
         </div>
       )}
     </section>
+  );
+}
+
+function ArchivedTargets({ targets }: { targets: ReleaseTarget[] }): JSX.Element | null {
+  if (targets.length === 0) return null;
+  return (
+    <details className="cds-surface-raised cds-hairline overflow-hidden">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">已归档发布目标（{targets.length}）</summary>
+      <div className="divide-y divide-[hsl(var(--hairline))] border-t border-[hsl(var(--hairline))]">
+        {targets.map((target) => (
+          <div key={target.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[minmax(0,1fr)_180px_180px]">
+            <div className="min-w-0">
+              <div className="font-medium">{target.name}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{target.archiveReason || '未记录归档原因'}</div>
+            </div>
+            <div className="font-mono text-xs text-muted-foreground">{target.projectIdentity?.projectSlug || target.projectId}</div>
+            <div className="text-xs text-muted-foreground">{formatDate(target.archivedAt)} · {target.archivedBy || '-'}</div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ArchiveTargetDialog({
+  state,
+  saving,
+  onChange,
+  onClose,
+  onConfirm,
+}: {
+  state: ArchiveState | null;
+  saving: boolean;
+  onChange: (reason: string) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}): JSX.Element {
+  const valid = Boolean(state && state.reason.trim().length >= 8);
+  return (
+    <Dialog open={Boolean(state)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(620px, calc(100vw - 32px))' }}>
+        <DialogHeader>
+          <DialogTitle>归档发布目标</DialogTitle>
+        </DialogHeader>
+        {state ? (
+          <div className="space-y-4">
+            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
+              <div className="font-medium">{state.site.name}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{state.site.projectLabel} · {state.site.serverLabel}</div>
+              <div className="mt-2 text-xs text-muted-foreground">归档会立即停用该目标并取消生产主目标标记，但会保留配置快照和全部发布记录。</div>
+            </div>
+            <label className="grid gap-1 text-sm">
+              <span className="text-muted-foreground">归档原因</span>
+              <textarea
+                value={state.reason}
+                onChange={(event) => onChange(event.target.value)}
+                rows={3}
+                placeholder="例如：该目标属于其他项目，错误挂载到当前项目"
+                className="resize-none rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 outline-none focus:border-primary/60"
+              />
+              <span className="text-xs text-muted-foreground">至少 8 个字符，原因会进入审计记录。</span>
+            </label>
+            <div className="flex justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-4">
+              <Button variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+              <Button onClick={onConfirm} disabled={!valid || saving}>
+                {saving ? <Loader2 className="animate-spin" /> : <Archive />}
+                确认归档
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1016,6 +1246,92 @@ function InfoBlock({ label, children }: { label: string; children: ReactNode }):
   );
 }
 
+function releaseModeDefinitions(
+  discovery: ReleaseStrategyDiscovery | null,
+  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'>,
+): ReleaseStrategyCandidate[] {
+  const detected = new Map((discovery?.candidates || []).map((candidate) => [candidate.mode, candidate]));
+  const fallbacks: ReleaseStrategyCandidate[] = [
+    {
+      mode: 'existing-script',
+      label: '项目现有脚本',
+      description: '执行仓库已经维护的发布命令，CDS 负责预检、日志、入口探测和版本记录。',
+      confidence: 'manual',
+      strategy: { mode: 'existing-script', command: './deploy.sh' },
+      requirements: ['项目已有可执行发布脚本'],
+    },
+    {
+      mode: 'generated-compose',
+      label: 'CDS 动态 Compose 发布',
+      description: '项目没有发布脚本也能发布；CDS 为指定 commit 建隔离 worktree，并动态生成 Compose 执行脚本。',
+      confidence: 'manual',
+      strategy: { mode: 'generated-compose', composeFile: 'compose.yml', composeProject: draft.composeProject },
+      requirements: ['远端安装 Git、Docker、Docker Compose'],
+    },
+    {
+      mode: 'generated-static',
+      label: 'CDS 动态静态站发布',
+      description: '动态构建、离线验证 HTML 与入口资源、归一权限、原子切换 current 并保留 previous。',
+      confidence: 'manual',
+      strategy: {
+        mode: 'generated-static',
+        buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
+        artifactDirectory: 'dist',
+        publicDirectory: draft.publicDirectory,
+      },
+      requirements: ['远端安装 Git、Bash、Python 3 与项目构建依赖'],
+    },
+  ];
+  return fallbacks.map((fallback) => detected.get(fallback.mode) || fallback);
+}
+
+function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrategy): SiteDraft {
+  return {
+    ...draft,
+    strategyMode: strategy.mode,
+    deployCommand: strategy.command || draft.deployCommand,
+    composeFile: strategy.composeFile || draft.composeFile,
+    composeProject: strategy.composeProject || draft.composeProject,
+    buildCommand: strategy.buildCommand || draft.buildCommand,
+    artifactDirectory: strategy.artifactDirectory || draft.artifactDirectory,
+    publicDirectory: strategy.publicDirectory || draft.publicDirectory,
+    detectedFrom: strategy.detectedFrom || [],
+  };
+}
+
+function strategyFromDraft(draft: SiteDraft): ReleaseStrategy {
+  if (draft.strategyMode === 'existing-script') {
+    return { mode: 'existing-script', command: draft.deployCommand.trim(), detectedFrom: draft.detectedFrom };
+  }
+  if (draft.strategyMode === 'generated-compose') {
+    return {
+      mode: 'generated-compose',
+      composeFile: draft.composeFile.trim(),
+      composeProject: draft.composeProject.trim(),
+      detectedFrom: draft.detectedFrom,
+    };
+  }
+  return {
+    mode: 'generated-static',
+    buildCommand: draft.buildCommand.trim(),
+    artifactDirectory: draft.artifactDirectory.trim(),
+    publicDirectory: draft.publicDirectory.trim(),
+    detectedFrom: draft.detectedFrom,
+  };
+}
+
+function isDraftStrategyComplete(draft: SiteDraft): boolean {
+  if (draft.strategyMode === 'existing-script') return Boolean(draft.deployCommand.trim());
+  if (draft.strategyMode === 'generated-compose') return Boolean(draft.composeFile.trim() && draft.composeProject.trim());
+  return Boolean(draft.buildCommand.trim() && draft.artifactDirectory.trim() && draft.publicDirectory.startsWith('/'));
+}
+
+function releaseModeLabel(mode: ReleaseExecutionMode): string {
+  if (mode === 'generated-compose') return 'CDS 动态 Compose 发布';
+  if (mode === 'generated-static') return 'CDS 动态静态站发布';
+  return '项目现有脚本';
+}
+
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }): JSX.Element {
   return (
     <label className="grid gap-1 text-sm">
@@ -1061,7 +1377,11 @@ function toSiteView(row: CenterRow): SiteView {
     sitePath: ssh?.appPath || '-',
     publicUrl: publicUrlFromHealth(healthUrl),
     healthUrl,
-    deployScripts: scriptsFromCommand(ssh?.deployCommand || ''),
+    deployScripts: target.strategy?.mode === 'generated-compose'
+      ? [`动态脚本 · ${target.strategy.composeFile || 'compose.yml'}`]
+      : target.strategy?.mode === 'generated-static'
+        ? [`动态脚本 · ${target.strategy.buildCommand || '静态构建'}`, `原子切换 · ${target.strategy.publicDirectory || '-'}/current`]
+        : scriptsFromCommand(target.strategy?.command || ssh?.deployCommand || ''),
     currentVersion: row.currentVersion,
     currentCommit: row.currentCommit,
     lastReleasedAt: row.lastReleasedAt,
@@ -1077,12 +1397,18 @@ function toSiteView(row: CenterRow): SiteView {
     successfulRuns,
     rollbackDefaultReleaseId: row.rollbackDefaultReleaseId || successfulRuns[0]?.releaseId || '',
     isEnabled: target.isEnabled,
+    releaseMethod: releaseModeLabel(target.strategy?.mode || 'existing-script'),
+    projectLabel: target.projectIdentity?.repository
+      ? `${target.projectIdentity.projectSlug} · ${target.projectIdentity.repository}`
+      : target.projectIdentity?.projectSlug || target.projectId,
+    isCanonical: target.isCanonical === true,
   };
 }
 
 function draftFromTarget(target: ReleaseTarget): SiteDraft {
   const ssh = target.ssh;
   const health = splitHealthUrl(ssh?.healthcheckUrl || '');
+  const strategy = target.strategy || { mode: 'existing-script' as const, command: ssh?.deployCommand || DEFAULT_DEPLOY_COMMAND };
   return {
     id: target.id,
     projectId: target.projectId,
@@ -1090,15 +1416,21 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     privateKeyRef: ssh?.privateKeyRef || '',
     host: ssh?.host || '',
     port: String(ssh?.port || 22),
-    webPort: '13000',
     user: ssh?.user || '',
     sitePath: ssh?.appPath || DEFAULT_SITE_PATH,
     publicUrl: health.publicUrl,
     healthPath: health.healthPath,
     rollbackCommand: ssh?.rollbackCommand || '',
-    advancedOpen: ssh?.deployCommand !== DEFAULT_DEPLOY_COMMAND,
     deployCommand: ssh?.deployCommand || DEFAULT_DEPLOY_COMMAND,
     healthcheckUrl: ssh?.healthcheckUrl || '',
+    strategyMode: strategy.mode,
+    composeFile: strategy.composeFile || 'compose.yml',
+    composeProject: strategy.composeProject || `${target.projectId}-prod`,
+    buildCommand: strategy.buildCommand || 'pnpm install --frozen-lockfile && pnpm build',
+    artifactDirectory: strategy.artifactDirectory || 'dist',
+    publicDirectory: strategy.publicDirectory || `/opt/${target.projectId}-web`,
+    detectedFrom: strategy.detectedFrom || [],
+    isCanonical: target.isCanonical === true,
   };
 }
 
@@ -1111,51 +1443,21 @@ function buildTargetBody(draft: SiteDraft, projectId: string): Record<string, un
     user: draft.user.trim(),
     privateKeyRef: draft.privateKeyRef.trim(),
     appPath: draft.sitePath.trim(),
-    deployCommand: draft.advancedOpen ? draft.deployCommand.trim() : DEFAULT_DEPLOY_COMMAND,
-    rollbackCommand: draft.rollbackCommand.trim(),
+    deployCommand: draft.strategyMode === 'existing-script' ? draft.deployCommand.trim() : '',
+    rollbackCommand: draft.strategyMode === 'existing-script' ? draft.rollbackCommand.trim() : '',
     healthcheckUrl: buildHealthcheckUrl(draft),
-  };
-}
-
-function buildLocalProdTargetBody(draft: SiteDraft, projectId: string): Record<string, unknown> {
-  return {
-    projectId,
-    name: draft.name.trim(),
-    privateKeyRef: draft.privateKeyRef.trim(),
-    domain: normalizeDomainInput(draft.publicUrl),
-    webPort: Number(draft.webPort || 13000),
-    healthPath: draft.healthPath.trim() || DEFAULT_HEALTH_PATH,
+    environment: 'production',
+    isCanonical: draft.isCanonical,
+    strategy: strategyFromDraft(draft),
   };
 }
 
 function buildHealthcheckUrl(draft: SiteDraft): string {
-  if (draft.healthcheckUrl.trim()) return draft.healthcheckUrl.trim();
-  const publicUrl = draft.publicUrl.trim();
-  if (!publicUrl) return '';
-  const base = publicUrl.includes('://') ? publicUrl.replace(/\/+$/, '') : `https://${publicUrl.replace(/\/+$/, '')}`;
-  const path = draft.healthPath.trim() || DEFAULT_HEALTH_PATH;
-  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-function normalizeDomainInput(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  try {
-    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
-    return parsed.hostname.toLowerCase();
-  } catch {
-    return trimmed.replace(/^https?:\/\//, '').split('/')[0].toLowerCase();
-  }
+  return buildReleaseHealthcheckUrl(draft.publicUrl, draft.healthPath, draft.healthcheckUrl);
 }
 
 function publicUrlFromHealth(value: string): string {
-  if (!value) return '';
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return value;
-  }
+  return normalizeProductionOrigin(value);
 }
 
 function splitHealthUrl(value: string): { publicUrl: string; healthPath: string } {

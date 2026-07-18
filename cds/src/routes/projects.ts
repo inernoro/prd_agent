@@ -2337,6 +2337,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
+      inheritGlobalEnv: boolean;
       infraPresets: string[];
       infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
       infraExtra: Array<{ presetId: string; dbName?: string; initSql?: string }>;
@@ -2409,6 +2410,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.gitDefaultBranch.trim()
       : undefined;
     const autoDetectOnClone = body.autoDetectOnClone === true;
+    if (body.inheritGlobalEnv !== undefined && typeof body.inheritGlobalEnv !== 'boolean') {
+      res.status(400).json({
+        error: 'validation',
+        field: 'inheritGlobalEnv',
+        message: 'CDS 全局变量继承开关必须是布尔值',
+      });
+      return;
+    }
     const requestedRuntime = typeof body.onboardingRuntime === 'string' && ONBOARDING_RUNTIMES.has(body.onboardingRuntime)
       ? body.onboardingRuntime
       : 'auto';
@@ -2564,6 +2573,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       legacyFlag: false,
       createdAt: now,
       updatedAt: now,
+      ...(body.inheritGlobalEnv === true ? { inheritGlobalEnv: true } : {}),
       ...(willClone ? { autoDetectOnClone } : {}),
       ...(willClone || isSandbox
         ? {
@@ -2856,6 +2866,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       autoPublishAfterMinutes: number;
       autoStopAfterMinutes: number;
       deployReadinessFloorSeconds: number;
+      inheritGlobalEnv: boolean;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -2938,7 +2949,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    if (body.inheritGlobalEnv !== undefined) {
+      if (typeof body.inheritGlobalEnv !== 'boolean') {
+        res.status(400).json({
+          error: 'validation',
+          field: 'inheritGlobalEnv',
+          message: 'CDS 全局变量继承开关必须是布尔值',
+        });
+        return;
+      }
+      patch.inheritGlobalEnv = body.inheritGlobalEnv;
+    }
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {

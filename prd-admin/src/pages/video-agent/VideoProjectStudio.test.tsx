@@ -133,5 +133,13 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('视频已生成');
     expect(html).not.toContain('<video');
     expect(html).not.toContain('https://media.example/video.mp4');
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(5);
+  });
+
+  it('renders a built-in visual cover for completed legacy projects without assets', () => {
+    const html = renderStudio([], [createProject({ status: 'Completed' })]);
+
+    expect(html).toContain('作品已完成');
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(5);
   });
 });

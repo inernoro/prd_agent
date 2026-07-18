@@ -27,7 +27,8 @@ public sealed record GatewayKeyAuthorization(
     bool LegacySharedKey = false,
     string? ClientCode = null,
     string? Environment = null,
-    string? KeyPrefixSnapshot = null);
+    string? KeyPrefixSnapshot = null,
+    string? ResolvedAppCallerCode = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -39,7 +40,8 @@ public interface IGatewayScopedKeyAuthorizer
         string ingressProtocol,
         string requiredScope,
         IPAddress? remoteIp,
-        CancellationToken ct);
+        CancellationToken ct,
+        bool allowSingleAppCallerInference = false);
 }
 
 public static class GatewayLegacyProbeScopes
@@ -113,7 +115,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string ingressProtocol,
         string requiredScope,
         IPAddress? remoteIp,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowSingleAppCallerInference = false)
     {
         if (string.IsNullOrWhiteSpace(providedKey))
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
@@ -130,6 +133,9 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             : await keys.Find(x => x.TenantId == locator.TenantId && x.Id == locator.ServiceKeyId && x.KeyHash == hash).FirstOrDefaultAsync(ct);
         if (record == null || string.IsNullOrWhiteSpace(record.TenantId))
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        var effectiveAppCallerCode = allowSingleAppCallerInference
+            ? ResolveSingleAppCallerCode(record) ?? appCallerCode
+            : appCallerCode;
         if (!record.Enabled || record.ExpiresAt is not null && record.ExpiresAt <= DateTime.UtcNow)
         {
             return new(
@@ -146,7 +152,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 KeyPrefixSnapshot: record.KeyPrefix);
         }
 
-        var lifecycleDenied = await CheckLifecycleAsync(record, appCallerCode, ct);
+        var lifecycleDenied = await CheckLifecycleAsync(record, effectiveAppCallerCode, ct);
         if (lifecycleDenied is not null)
             return lifecycleDenied;
 
@@ -175,7 +181,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         }
         if (!readOnlyProbe
             && (!Matches(record.SourceSystem, sourceSystem)
-                || !MatchesAny(record.AppCallerCodes, appCallerCode))
+                || !MatchesAny(record.AppCallerCodes, effectiveAppCallerCode))
             || !MatchesAny(record.IngressProtocols, ingressProtocol)
             || !MatchesAny(record.Scopes, serviceKeyScope))
         {
@@ -194,7 +200,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                     { "Changes", new MongoDB.Bson.BsonDocument
                         {
                             { "sourceSystem", sourceSystem },
-                            { "appCallerCode", appCallerCode },
+                            { "appCallerCode", effectiveAppCallerCode },
                             { "ingressProtocol", ingressProtocol },
                             { "requiredScope", serviceKeyScope },
                         }
@@ -311,7 +317,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         // 退场判断只接受真实 invoke/stream/raw 业务调用。route、readiness、请求查询、
         // 取消与任何 preflight 都只能证明控制面可用，不能证明业务流量已经切换。
         if (GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(serviceKeyScope))
-            await RecordSuccessorObservationAsync(record, appCallerCode, ingressProtocol, ct);
+            await RecordSuccessorObservationAsync(record, effectiveAppCallerCode, ingressProtocol, ct);
         return new(
             true,
             true,
@@ -323,7 +329,23 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             record.TeamId,
             ClientCode: ResolveClientCode(record),
             Environment: ResolveEnvironment(record),
-            KeyPrefixSnapshot: record.KeyPrefix);
+            KeyPrefixSnapshot: record.KeyPrefix,
+            ResolvedAppCallerCode: effectiveAppCallerCode);
+    }
+
+    private static string? ResolveSingleAppCallerCode(GatewayServiceKeyRecord record)
+    {
+        var normalizedCallers = record.AppCallerCodes
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .ToList();
+        if (normalizedCallers.Any(x => x == "*"))
+            return null;
+
+        var callers = normalizedCallers
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return callers.Count == 1 ? callers[0] : null;
     }
 
     private async Task<GatewayKeyAuthorization> AuthorizeLegacyKeyAsync(

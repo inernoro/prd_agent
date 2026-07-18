@@ -1,9 +1,17 @@
 import crypto from 'node:crypto';
 import type { StateService } from './state.js';
-import type { BranchEntry, ReleaseArtifact, ReleasePlan, ReleaseRun, ReleaseTarget, RemoteHost } from '../types.js';
+import type { BranchEntry, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleaseRun, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
+import {
+  buildReleaseExecution,
+  buildStrategyPreflightCommand,
+  effectiveReleaseStrategy,
+  normalizeRepositoryIdentity,
+  releaseProjectIdentity,
+  validateReleaseStrategy,
+} from './release-strategy.js';
 
 type Ssh2Client = {
   connect(opts: Ssh2ConnectOptions): void;
@@ -63,23 +71,54 @@ export class ReleaseService {
 
   ensureDefaultPlans(projectId: string): ReleasePlan[] {
     const existing = this.stateService.getReleasePlans(projectId);
-    const sshPlanId = `${projectId}:ssh-script`;
-    if (!existing.some((plan) => plan.id === sshPlanId)) {
-      this.stateService.upsertReleasePlan({
-        id: sshPlanId,
-        projectId,
-        name: 'SSH 脚本发布',
+    const definitions: Array<Pick<ReleasePlan, 'id' | 'name' | 'template' | 'rollbackStrategy' | 'steps'>> = [
+      {
+        id: `${projectId}:ssh-script`,
+        name: '项目现有脚本发布',
         template: 'ssh-script',
-        targetType: 'ssh',
-        failureStrategy: 'stop',
         rollbackStrategy: 'command',
-        createdAt: new Date().toISOString(),
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
-          { id: 'deploy', title: '执行发布命令', kind: 'ssh' },
-          { id: 'healthcheck', title: '健康检查', kind: 'healthcheck' },
-          { id: 'record', title: '记录版本', kind: 'record' },
+          { id: 'deploy', title: '执行项目发布命令', kind: 'ssh' },
+          { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
+          { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
         ],
+      },
+      {
+        id: `${projectId}:generated-compose`,
+        name: 'CDS 动态 Compose 发布',
+        template: 'generated-compose',
+        rollbackStrategy: 'previous-release',
+        steps: [
+          { id: 'connect', title: '连接目标', kind: 'ssh' },
+          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
+          { id: 'deploy', title: '生成并执行 Compose 发布脚本', kind: 'ssh' },
+          { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
+          { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
+        ],
+      },
+      {
+        id: `${projectId}:generated-static`,
+        name: 'CDS 动态静态站发布',
+        template: 'generated-static',
+        rollbackStrategy: 'previous-release',
+        steps: [
+          { id: 'connect', title: '连接目标', kind: 'ssh' },
+          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
+          { id: 'deploy', title: '构建并离线验证静态产物', kind: 'ssh' },
+          { id: 'healthcheck', title: '验证页面与入口资源', kind: 'healthcheck' },
+          { id: 'record', title: '记录 current、previous 与脚本哈希', kind: 'record' },
+        ],
+      },
+    ];
+    for (const definition of definitions) {
+      if (existing.some((plan) => plan.id === definition.id)) continue;
+      this.stateService.upsertReleasePlan({
+        ...definition,
+        projectId,
+        targetType: 'ssh',
+        failureStrategy: 'stop',
+        createdAt: new Date().toISOString(),
       });
     }
     return this.stateService.getReleasePlans(projectId);
@@ -92,7 +131,9 @@ export class ReleaseService {
     const target = this.stateService.getReleaseTarget(input.targetId);
     const projectMismatch = Boolean(branch && target && branch.projectId !== target.projectId);
     const projectId = branch?.projectId || target?.projectId || 'default';
-    const plan = this.ensureDefaultPlans(projectId).find((item) => item.template === 'ssh-script');
+    const strategy = target ? effectiveReleaseStrategy(target) : { mode: 'existing-script' as const, command: '' };
+    const planTemplate = strategy.mode === 'existing-script' ? 'ssh-script' : strategy.mode;
+    const plan = this.ensureDefaultPlans(projectId).find((item) => item.template === planTemplate);
 
     if (!branch) {
       push({ id: 'branch', label: '分支存在', status: 'fail', message: `分支不存在: ${input.branchId}`, blocking: true });
@@ -130,34 +171,62 @@ export class ReleaseService {
         message: `分支属于 ${branch?.projectId || 'default'}，发布目标属于 ${target.projectId || 'default'}，禁止跨项目发布`,
         blocking: true,
       });
+    } else if (target.lifecycle === 'archived') {
+      push({ id: 'target', label: '发布目标', status: 'fail', message: `${target.name} 已归档，只保留审计记录`, blocking: true });
     } else {
       push({ id: 'target', label: '发布目标', status: 'pass', message: `${target.name} (${target.ssh.user}@${target.ssh.host}:${target.ssh.port})`, blocking: false });
     }
 
-    const canProbeTarget = Boolean(target?.ssh && target.isEnabled && target.type === 'ssh' && !projectMismatch);
+    const project = target ? this.stateService.getProject(target.projectId) : undefined;
+    if (target && project) {
+      const expectedIdentity = releaseProjectIdentity(project);
+      const storedIdentity = target.projectIdentity;
+      if (!storedIdentity) {
+        push({ id: 'project-identity', label: '项目身份锁定', status: 'warn', message: '历史目标没有项目身份快照，建议重新保存目标以补齐', blocking: false });
+      } else if (storedIdentity.projectId !== expectedIdentity.projectId
+        || storedIdentity.projectSlug !== expectedIdentity.projectSlug
+        || normalizeRepositoryIdentity(storedIdentity.repository) !== normalizeRepositoryIdentity(expectedIdentity.repository)) {
+        push({ id: 'project-identity', label: '项目身份锁定', status: 'fail', message: '目标保存的项目身份与当前项目不一致，禁止发布', blocking: true });
+      } else {
+        push({ id: 'project-identity', label: '项目身份锁定', status: 'pass', message: `${storedIdentity.projectSlug}${storedIdentity.repository ? ` · ${storedIdentity.repository}` : ''}`, blocking: false });
+      }
+    }
 
-    const deployCommand = !projectMismatch ? target?.ssh?.deployCommand?.trim() || '' : '';
+    const canProbeTarget = Boolean(target?.ssh && target.isEnabled && target.lifecycle !== 'archived' && target.type === 'ssh' && !projectMismatch);
+
+    const deployCommand = !projectMismatch && strategy.mode === 'existing-script'
+      ? strategy.command?.trim() || target?.ssh?.deployCommand?.trim() || ''
+      : '';
     const deployScripts = extractReleaseScriptPaths(deployCommand);
     const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
-    const isFirstLocalProdRelease = Boolean(
+    const isFirstManagedRelease = Boolean(
       target?.ssh
-      && isLocalProdReleaseCommand(deployCommand)
+      && (isLocalProdReleaseCommand(deployCommand) || strategy.mode !== 'existing-script')
       && !previousRelease,
     );
 
-    if (deployCommand) {
-      push({ id: 'deploy-command', label: '发布脚本已配置', status: 'pass', message: deployCommand, blocking: false });
+    const strategyError = validateReleaseStrategy(strategy);
+    if (strategyError && !projectMismatch) {
+      push({ id: 'deploy-command', label: '发布策略完整', status: 'fail', message: strategyError, blocking: true });
     } else if (!projectMismatch) {
-      push({ id: 'deploy-command', label: '发布脚本已配置', status: 'fail', message: '站点发布目标缺少发布脚本', blocking: true });
+      const strategyMessage = strategy.mode === 'existing-script'
+        ? deployCommand
+        : strategy.mode === 'generated-compose'
+          ? `CDS 将动态生成脚本并执行 ${strategy.composeFile}`
+          : `CDS 将动态生成静态发布脚本: ${strategy.buildCommand} → ${strategy.artifactDirectory}`;
+      push({ id: 'deploy-command', label: '发布策略完整', status: 'pass', message: strategyMessage, blocking: false });
     }
 
     if (!projectMismatch && target?.ssh?.healthcheckUrl?.trim()) {
-      if (isFirstLocalProdRelease) {
+      if (isFirstManagedRelease) {
+        const firstReleaseMessage = isLocalProdReleaseCommand(deployCommand)
+          ? '首次本机生产发布前跳过上线地址探测，发布后仍会执行健康检查'
+          : '首次动态发布前允许上线地址尚未就绪，发布后仍会强制验证最终入口';
         push({
           id: 'healthcheck',
           label: '上线地址可访问',
           status: 'warn',
-          message: '首次本机生产发布前跳过上线地址探测，发布后仍会执行健康检查',
+          message: firstReleaseMessage,
           blocking: false,
         });
       } else if (canProbeTarget) {
@@ -187,7 +256,67 @@ export class ReleaseService {
         }
 
         if (checks.some((check) => check.id === 'ssh' && check.status === 'pass')) {
-          if (deployScripts.length > 0) {
+          if (isLocalProdReleaseCommand(deployCommand)) {
+            push({
+              id: 'remote-repository',
+              label: '远端项目身份一致',
+              status: 'pass',
+              message: 'CDS 内置本机发布按分支产物与项目 ID 锁定，不依赖远端 Git 目录',
+              blocking: false,
+            });
+          } else {
+            const expectedRepository = normalizeRepositoryIdentity(project
+              ? releaseProjectIdentity(project).repository
+              : undefined);
+            if (!expectedRepository) {
+              push({
+                id: 'remote-repository',
+                label: '远端项目身份一致',
+                status: 'fail',
+                message: '项目没有绑定 Git 仓库，无法证明远端发布目录属于当前项目',
+                blocking: true,
+              });
+            } else {
+              try {
+                const output = await this.sshExec(target, buildRemoteRepositoryCheckCommand(target));
+                const remoteRepository = parseRemoteRepositoryIdentity(output);
+                if (remoteRepository !== expectedRepository) {
+                  push({
+                    id: 'remote-repository',
+                    label: '远端项目身份一致',
+                    status: 'fail',
+                    message: `远端仓库 ${remoteRepository || '无法识别'} 与项目仓库 ${expectedRepository} 不一致，禁止发布`,
+                    blocking: true,
+                  });
+                } else {
+                  push({
+                    id: 'remote-repository',
+                    label: '远端项目身份一致',
+                    status: 'pass',
+                    message: expectedRepository,
+                    blocking: false,
+                  });
+                }
+              } catch (err) {
+                push({
+                  id: 'remote-repository',
+                  label: '远端项目身份一致',
+                  status: 'fail',
+                  message: `远端目录不是可验证的项目 Git 根目录: ${(err as Error).message}`,
+                  blocking: true,
+                });
+              }
+            }
+          }
+          const strategyCheck = buildStrategyPreflightCommand(target);
+          if (strategyCheck) {
+            try {
+              await this.sshExec(target, strategyCheck);
+              push({ id: 'scripts', label: '动态发布依赖可用', status: 'pass', message: strategy.mode, blocking: false });
+            } catch (err) {
+              push({ id: 'scripts', label: '动态发布依赖可用', status: 'fail', message: (err as Error).message, blocking: true });
+            }
+          } else if (deployScripts.length > 0) {
             try {
               await this.sshExec(target, buildScriptCheckCommand(target, deployScripts));
               push({ id: 'scripts', label: '发布脚本可执行', status: 'pass', message: deployScripts.join('、'), blocking: false });
@@ -255,6 +384,13 @@ export class ReleaseService {
       logs: [],
       seq: 0,
     };
+    const execution = buildReleaseExecution(preflight.target, run);
+    run.executionSnapshot = {
+      mode: execution.mode,
+      scriptSha256: execution.scriptSha256,
+      summary: execution.summary,
+      strategy: effectiveReleaseStrategy(preflight.target),
+    };
     this.stateService.addReleaseRun(run);
     this.emitLog(releaseId, 'info', 'release queued', 'queued');
     void this.runRelease(releaseId).catch((err) => {
@@ -268,6 +404,8 @@ export class ReleaseService {
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
     if (!target?.ssh) throw new Error('回滚需要站点发布目标');
+    if (target.lifecycle === 'archived') throw new Error(`${target.name} 已归档，禁止回滚`);
+    if (!target.isEnabled) throw new Error(`${target.name} 已禁用，禁止回滚`);
     const previous = targetReleaseId
       ? this.stateService.getReleaseRun(targetReleaseId)
       : current.previousReleaseId
@@ -295,8 +433,18 @@ export class ReleaseService {
       logs: [],
       seq: 0,
     };
+    const rollbackStrategy = previous.executionSnapshot?.strategy || effectiveReleaseStrategy(target);
+    const rollbackExecution = buildReleaseExecution({ ...target, strategy: rollbackStrategy }, run);
+    run.executionSnapshot = {
+      mode: rollbackExecution.mode,
+      scriptSha256: rollbackExecution.scriptSha256,
+      summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
+      strategy: rollbackStrategy,
+    };
     this.stateService.addReleaseRun(run);
-    const strategy = target.ssh.rollbackCommand?.trim() ? 'rollbackCommand' : '重新发布历史版本';
+    const strategy = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand)
+      ? 'rollbackCommand'
+      : '重新发布历史版本';
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.runRollback(rollbackId, target, previous).catch((err) => {
       this.failRun(rollbackId, err, 'rollback_failed');
@@ -313,10 +461,21 @@ export class ReleaseService {
     this.emitLog(releaseId, 'info', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`, 'connect');
     await this.sshExec(target, 'echo cds-release-connect-ok', releaseId, 'connect');
     this.emitLog(releaseId, 'info', `进入站点目录 ${target.ssh.appPath || '.'}`, 'prepare');
-    await this.runDeployCommand(releaseId, target, run, target.ssh.deployCommand);
+    const executionTarget = run.executionSnapshot?.strategy ? { ...target, strategy: run.executionSnapshot.strategy } : target;
+    const execution = buildReleaseExecution(executionTarget, run);
+    if (run.executionSnapshot && execution.scriptSha256 !== run.executionSnapshot.scriptSha256) {
+      throw new Error('发布执行脚本与预检快照不一致，已拒绝执行');
+    }
+    this.emitLog(releaseId, 'info', `${execution.summary} · sha256=${execution.scriptSha256}`, 'plan');
+    await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
     this.patchStatus(releaseId, 'healthchecking');
     this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
-    await probeHealthcheck(target.ssh.healthcheckUrl);
+    try {
+      await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
+    } catch (err) {
+      await this.restorePreviousAfterFailedProbe(releaseId, target, run, err);
+      throw err;
+    }
     this.emitLog(releaseId, 'info', '标记成功', 'record');
     const done = this.stateService.patchReleaseRun(releaseId, {
       status: 'success',
@@ -331,17 +490,20 @@ export class ReleaseService {
     const rollbackRun = this.stateService.getReleaseRun(releaseId);
     if (!rollbackRun) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const rollbackCommand = ssh.rollbackCommand?.trim();
-    if (rollbackCommand) {
+    const rollbackMode = rollbackRun.executionSnapshot?.mode || effectiveReleaseStrategy(target).mode;
+    if (shouldUseCustomRollbackCommand(rollbackMode, rollbackCommand)) {
       this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
       await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
     } else {
-      const deployCommand = ssh.deployCommand?.trim();
-      if (!deployCommand) throw new Error('未配置发布命令，无法重新发布历史版本');
+      const executionTarget = rollbackRun.executionSnapshot?.strategy
+        ? { ...target, strategy: rollbackRun.executionSnapshot.strategy }
+        : target;
+      const execution = buildReleaseExecution(executionTarget, rollbackRun);
       this.emitLog(releaseId, 'info', `重新发布历史成功版本 ${previous.releaseId}`, 'rollback');
-      await this.runDeployCommand(releaseId, target, rollbackRun, deployCommand);
+      await this.runDeployCommand(releaseId, executionTarget, rollbackRun, execution.command);
     }
     this.emitLog(releaseId, 'info', `健康检查 ${ssh.healthcheckUrl}`, 'healthcheck');
-    await probeHealthcheck(ssh.healthcheckUrl);
+    await probeReleaseSurface(ssh.healthcheckUrl, rollbackMode);
     const done = this.stateService.patchReleaseRun(releaseId, {
       status: 'rollback_success',
       finishedAt: new Date().toISOString(),
@@ -358,6 +520,40 @@ export class ReleaseService {
       finishedAt: new Date().toISOString(),
     });
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
+  }
+
+  private async restorePreviousAfterFailedProbe(
+    releaseId: string,
+    target: ReleaseTarget,
+    failedRun: ReleaseRun,
+    probeError: unknown,
+  ): Promise<void> {
+    if (failedRun.executionSnapshot?.mode === 'existing-script' || !failedRun.previousReleaseId) return;
+    const previous = this.stateService.getReleaseRun(failedRun.previousReleaseId);
+    if (!previous) return;
+    const strategy = previous.executionSnapshot?.strategy || failedRun.executionSnapshot?.strategy;
+    if (!strategy) return;
+    const restoreRun: ReleaseRun = {
+      ...previous,
+      releaseId: `${releaseId}-auto-restore`,
+      previousReleaseId: failedRun.releaseId,
+      rollbackOf: failedRun.releaseId,
+      logs: [],
+      seq: 0,
+      startedAt: new Date().toISOString(),
+      executionSnapshot: previous.executionSnapshot,
+    };
+    const executionTarget = { ...target, strategy };
+    const execution = buildReleaseExecution(executionTarget, restoreRun, { preservePrevious: true });
+    this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
+    try {
+      await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
+      await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
+      this.emitLog(releaseId, 'warn', `已恢复上一成功版本 ${previous.releaseId}`, 'auto-restore');
+    } catch (restoreError) {
+      this.emitLog(releaseId, 'error', `自动恢复失败: ${(restoreError as Error).message}`, 'auto-restore');
+      throw new Error(`最终入口探测失败，且自动恢复失败: ${(restoreError as Error).message}`);
+    }
   }
 
   private patchStatus(releaseId: string, status: ReleaseRun['status']): void {
@@ -484,6 +680,13 @@ export function isLocalProdReleaseCommand(rawCommand: string): boolean {
     .some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh');
 }
 
+export function shouldUseCustomRollbackCommand(
+  mode: ReleaseExecutionMode,
+  rollbackCommand: string | undefined,
+): rollbackCommand is string {
+  return mode === 'existing-script' && Boolean(rollbackCommand?.trim());
+}
+
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {
   if (!target.ssh) throw new Error('target is not SSH');
   const uniqueScripts = Array.from(new Set(scripts));
@@ -495,6 +698,17 @@ export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]
     return `for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
   }
   return `cd ${shellQuote(target.ssh.appPath || '.')} && for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
+}
+
+export function buildRemoteRepositoryCheckCommand(target: ReleaseTarget): string {
+  if (!target.ssh) throw new Error('target is not SSH');
+  const appPath = shellQuote(target.ssh.appPath || '.');
+  return `cd ${appPath} && test "$(git rev-parse --show-toplevel)" = "$(pwd -P)" && printf 'CDS_REPO_ORIGIN=%s\\n' "$(git remote get-url origin)"`;
+}
+
+export function parseRemoteRepositoryIdentity(output: string): string {
+  const line = output.split(/\r?\n/).find((item) => item.startsWith('CDS_REPO_ORIGIN='));
+  return normalizeRepositoryIdentity(line?.slice('CDS_REPO_ORIGIN='.length));
 }
 
 export function releaseScriptPhase(script: string): string {
@@ -530,6 +744,82 @@ export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawC
 async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {
   const result = await probeHealthcheckStatus(url, timeoutMs);
   if (result.status !== 'healthy') throw new Error(result.message || 'healthcheck failed');
+}
+
+export async function probeReleaseSurface(
+  healthcheckUrl: string,
+  mode: ReleaseExecutionMode,
+  timeoutMs = 8_000,
+): Promise<void> {
+  await probeHealthcheck(healthcheckUrl, timeoutMs);
+  if (mode === 'generated-static') {
+    await probeStaticSiteSurface(healthcheckUrl, timeoutMs);
+  }
+}
+
+export async function probeStaticSiteSurface(healthcheckUrl: string, timeoutMs = 8_000): Promise<void> {
+  let surfaceUrl: URL;
+  try {
+    surfaceUrl = new URL('/', healthcheckUrl);
+  } catch {
+    throw new Error('healthcheckUrl must be a valid URL');
+  }
+  if (!['http:', 'https:'].includes(surfaceUrl.protocol)) {
+    throw new Error('healthcheckUrl must be http or https');
+  }
+
+  const htmlResponse = await fetchSurfaceResource(surfaceUrl, timeoutMs, 'static surface root');
+  const htmlType = htmlResponse.contentType;
+  if (!htmlType.includes('text/html') && !htmlType.includes('application/xhtml+xml')) {
+    throw new Error(`static surface root has non-HTML content-type: ${htmlType || 'missing'}`);
+  }
+  const html = Buffer.from(htmlResponse.body).toString('utf8');
+  const refs = Array.from(html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css)(?:[?#][^"']*)?)["']/gi))
+    .map((match) => match[1]);
+  if (refs.length === 0) throw new Error('static surface root has no JS/CSS entry reference');
+
+  const sameOriginEntries = refs
+    .map((ref) => new URL(ref, surfaceUrl))
+    .filter((entry) => entry.origin === surfaceUrl.origin);
+  if (sameOriginEntries.length === 0) {
+    throw new Error('static surface root has no same-origin JS/CSS entry reference');
+  }
+
+  for (const entry of sameOriginEntries) {
+    const response = await fetchSurfaceResource(entry, timeoutMs, `static entry ${entry.pathname}`);
+    const contentType = response.contentType;
+    const isCss = entry.pathname.toLowerCase().endsWith('.css');
+    const mimeOk = isCss
+      ? contentType.includes('text/css')
+      : contentType.includes('javascript');
+    if (!mimeOk) {
+      throw new Error(`static entry ${entry.pathname} has invalid content-type: ${contentType || 'missing'}`);
+    }
+    if (response.body.byteLength === 0) throw new Error(`static entry ${entry.pathname} is empty`);
+  }
+}
+
+async function fetchSurfaceResource(
+  url: URL,
+  timeoutMs: number,
+  label: string,
+): Promise<{ contentType: string; body: ArrayBuffer }> {
+  const ctrl = new AbortController();
+  const timer = global.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: 'GET', signal: ctrl.signal });
+    if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+    const body = await response.arrayBuffer();
+    return {
+      contentType: response.headers.get('content-type')?.toLowerCase() || '',
+      body,
+    };
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw new Error(`${label} timeout after ${timeoutMs}ms`);
+    throw err;
+  } finally {
+    global.clearTimeout(timer);
+  }
 }
 
 export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Promise<ReleaseHealthProbe> {

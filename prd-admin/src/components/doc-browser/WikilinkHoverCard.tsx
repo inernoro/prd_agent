@@ -11,28 +11,52 @@
 import { useEffect, useState } from 'react';
 import { lookupWikilinkTitle } from '@/lib/wikilinkCache';
 
-interface HoverState {
+export interface WikilinkHoverState {
   title: string;
   x: number;
   y: number;
   exists: boolean;
 }
 
+export type WikilinkHoverAction =
+  | { type: 'show'; hover: WikilinkHoverState }
+  | { type: 'dismiss' };
+
+export function reduceWikilinkHover(
+  _current: WikilinkHoverState | null,
+  action: WikilinkHoverAction,
+): WikilinkHoverState | null {
+  return action.type === 'show' ? action.hover : null;
+}
+
 export function WikilinkHoverCard() {
-  const [hover, setHover] = useState<HoverState | null>(null);
+  const [hover, setHover] = useState<WikilinkHoverState | null>(null);
 
   useEffect(() => {
     const onHover = (e: Event) => {
-      const ce = e as CustomEvent<HoverState>;
+      const ce = e as CustomEvent<WikilinkHoverState>;
       if (!ce.detail?.title) return;
-      setHover(ce.detail);
+      setHover((current) => reduceWikilinkHover(current, { type: 'show', hover: ce.detail }));
     };
-    const onUnhover = () => setHover(null);
+    const onDismiss = () => setHover((current) => reduceWikilinkHover(current, { type: 'dismiss' }));
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') onDismiss();
+    };
     document.addEventListener('wikilink:hover', onHover);
-    document.addEventListener('wikilink:unhover', onUnhover);
+    document.addEventListener('wikilink:unhover', onDismiss);
+    // 点击双链会立刻卸载原文档，原链接来不及触发 mouseleave；必须在跳转事件上主动清理。
+    document.addEventListener('wikilink:click', onDismiss);
+    // 滚动、切换标签或窗口失焦后坐标已经失效，也不能让旧卡片继续遮挡新内容。
+    document.addEventListener('scroll', onDismiss, true);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', onDismiss);
     return () => {
       document.removeEventListener('wikilink:hover', onHover);
-      document.removeEventListener('wikilink:unhover', onUnhover);
+      document.removeEventListener('wikilink:unhover', onDismiss);
+      document.removeEventListener('wikilink:click', onDismiss);
+      document.removeEventListener('scroll', onDismiss, true);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onDismiss);
     };
   }, []);
 

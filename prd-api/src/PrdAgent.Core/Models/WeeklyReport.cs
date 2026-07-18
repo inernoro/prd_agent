@@ -174,6 +174,9 @@ public class WeeklyReportItem
 
     /// <summary>IssueList 专用：附加图片 URL 列表</summary>
     public List<string>? ImageUrls { get; set; }
+
+    /// <summary>Table 专用：单元格值（一个 item = 一行，按章节 TableColumns 列序对齐；Content 同步保存 " | " 拼接镜像供旧链路降级展示）</summary>
+    public List<string>? Cells { get; set; }
 }
 
 /// <summary>

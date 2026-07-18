@@ -716,10 +716,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
     // 发布控制面（preview → release，2026-06-10）
     'GET /releases/targets': '列出发布目标',
+    'POST /releases/projects/:projectId/discover': '检测项目可用发布策略',
     'POST /releases/targets': '创建发布目标',
     'POST /releases/targets/local-prod': '创建本机生产发布目标',
     'PATCH /releases/targets/:id': '更新发布目标',
     'DELETE /releases/targets/:id': '删除发布目标',
+    'POST /releases/targets/:id/archive': '归档发布目标并保留审计证据',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
     'POST /releases/branches/:branchId/runs': '启动分支发布',
     'GET /releases/runs': '列出发布记录',

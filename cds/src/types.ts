@@ -1123,6 +1123,36 @@ export interface ReleaseArtifact {
   artifactPath?: string;
 }
 
+export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+
+/**
+ * 生产发布的可执行合同。existing-script 复用项目自带脚本；另外两种模式由
+ * CDS 根据不可变版本信息生成脚本，项目仓库无需预置发布脚本。
+ */
+export interface ReleaseStrategy {
+  mode: ReleaseExecutionMode;
+  /** existing-script 模式下的项目脚本或命令。 */
+  command?: string;
+  /** generated-compose 模式下相对远端 Git 仓库根目录的 compose 文件。 */
+  composeFile?: string;
+  /** generated-compose 模式的稳定 compose project name。 */
+  composeProject?: string;
+  /** generated-static 模式的确定性构建命令。 */
+  buildCommand?: string;
+  /** generated-static 模式下相对发布 worktree 的构建产物目录。 */
+  artifactDirectory?: string;
+  /** generated-static 模式下保存 releases/current/previous 的远端目录。 */
+  publicDirectory?: string;
+  /** 创建策略时的自动检测证据，便于后续审计配置为何如此。 */
+  detectedFrom?: string[];
+}
+
+export interface ReleaseProjectIdentity {
+  projectId: string;
+  projectSlug: string;
+  repository?: string;
+}
+
 export interface ReleaseTarget {
   id: string;
   projectId: string;
@@ -1132,6 +1162,18 @@ export interface ReleaseTarget {
   updatedAt?: string;
   createdBy?: string;
   isEnabled: boolean;
+  /** 归档保留事故与配置证据，但不会再出现在可发布目标列表。 */
+  lifecycle?: 'active' | 'archived';
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+  environment?: 'production' | 'staging' | 'other';
+  /** 同一项目同一环境最多一个启用的 canonical 目标。 */
+  isCanonical?: boolean;
+  /** 服务端从 Project 快照生成，禁止由调用方自由指定。 */
+  projectIdentity?: ReleaseProjectIdentity;
+  /** 缺省代表历史 existing-script 目标，保持向后兼容。 */
+  strategy?: ReleaseStrategy;
   ssh?: {
     host: string;
     port: number;
@@ -1156,7 +1198,7 @@ export interface ReleasePlan {
   id: string;
   projectId: string;
   name: string;
-  template: 'ssh-script' | 'docker-compose-remote' | 'image-push' | 'webhook';
+  template: 'ssh-script' | 'generated-compose' | 'generated-static' | 'docker-compose-remote' | 'image-push' | 'webhook';
   targetType: ReleaseTarget['type'];
   steps: ReleasePlanStep[];
   failureStrategy: 'stop' | 'rollback';
@@ -1199,6 +1241,13 @@ export interface ReleaseRun {
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
   errorMessage?: string;
+  /** 本次运行实际执行策略的不可变快照，避免目标后改配置污染历史证据。 */
+  executionSnapshot?: {
+    mode: ReleaseExecutionMode;
+    scriptSha256: string;
+    summary: string;
+    strategy: ReleaseStrategy;
+  };
 }
 
 /** Persisted state */
@@ -2463,6 +2512,11 @@ export interface Project {
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
+  /**
+   * 显式允许把 `_global` 环境变量注入本项目。缺省 false；全局变量默认只属于
+   * CDS 控制面，避免一个项目的数据库、队列或第三方凭据扩散到其他项目。
+   */
+  inheritGlobalEnv?: boolean;
   /**
    * Optional display-only alias. Populated via Settings → 基础信息 →「显示别名」.
    * All UI call sites (project cards, breadcrumb, Settings title,

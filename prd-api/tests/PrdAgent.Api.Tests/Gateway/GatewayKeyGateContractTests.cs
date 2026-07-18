@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -244,6 +245,89 @@ public class GatewayKeyGateContractTests
             var deniedAudits = await data.Database.GetCollection<BsonDocument>("llmgw_operation_audits")
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("Action", "app_caller.team_ownership_denied"));
             deniedAudits.ShouldBe(1);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentAppCallerRateLimit_IsTenantScopedAndOnlyAdmittedRequestsReachFakeUpstream()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_appcaller_rate_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            await callers.Indexes.CreateOneAsync(new CreateIndexModel<GatewayAppCallerRecord>(
+                Builders<GatewayAppCallerRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType),
+                new CreateIndexOptions
+                {
+                    Unique = true,
+                    Collation = GatewayAppCallerIdentity.Collation,
+                }));
+            await callers.InsertManyAsync(
+            [
+                AppCaller("tenant-a", limit: 4),
+                AppCaller("tenant-b", limit: 4),
+            ]);
+
+            var gateway = new TenantCountingGateway();
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: new TenantScopedTestAuthorizer(),
+                gatewayData: data);
+            await app.StartAsync();
+            var http = app.GetTestClient();
+
+            static GatewayAppCallerRecord AppCaller(string tenantId, int limit) => new()
+            {
+                TenantId = tenantId,
+                AppCallerCode = "concurrency.client::chat",
+                RequestType = "chat",
+                Status = "active",
+                RateLimitPerMinute = limit,
+            };
+
+            static HttpRequestMessage Request(string key, int index) => new(HttpMethod.Post, "/gw/v1/send")
+            {
+                Headers =
+                {
+                    { "X-Gateway-Key", key },
+                    { "X-Request-Id", $"concurrency-{key}-{index}" },
+                },
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "concurrency.client::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                    Context = new { SourceSystem = "external" },
+                }),
+            };
+
+            var responses = await Task.WhenAll(
+                Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
+                    .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
+
+            responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(8);
+            responses.Count(x => x.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(32);
+            gateway.CountFor("tenant-a").ShouldBe(4);
+            gateway.CountFor("tenant-b").ShouldBe(4);
+
+            var windows = await data.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows")
+                .Find(_ => true)
+                .ToListAsync();
+            windows.Count.ShouldBe(2);
+            windows.Single(x => x["TenantId"] == "tenant-a")["Count"].ToInt64().ShouldBe(20);
+            windows.Single(x => x["TenantId"] == "tenant-b")["Count"].ToInt64().ShouldBe(20);
         }
         finally
         {
@@ -804,6 +888,61 @@ public class GatewayKeyGateContractTests
 
             response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
             authorizer.AppCallerCode.ShouldBe(expectedAppCaller);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task HeaderlessCompatibleClient_UsesSingleAppCallerResolvedFromScopedKey()
+    {
+        var gateway = new EchoingGateway();
+        var authorizer = new CapturingScopedKeyAuthorizer(
+            _ => true,
+            resolvedAppCallerCode: "cherry-studio.desktop::chat");
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    messages = new[] { new { role = "user", content = "hello" } },
+                    stream = false,
+                }),
+            };
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-Source", "external");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.AllowSingleAppCallerInference.ShouldBeTrue();
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.AppCallerCode.ShouldBe("cherry-studio.desktop::chat");
+
+            using var streamRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    messages = new[] { new { role = "user", content = "hello" } },
+                    stream = true,
+                }),
+            };
+            streamRequest.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            streamRequest.Headers.Add("X-Gateway-Source", "external");
+
+            using var streamResponse = await app.GetTestClient().SendAsync(streamRequest);
+
+            streamResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.AppCallerCode.ShouldBe("cherry-studio.desktop::chat");
         }
         finally
         {
@@ -2723,13 +2862,19 @@ public class GatewayKeyGateContractTests
     private sealed class CapturingScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
     {
         private readonly Func<string, bool> _scopeAllowed;
+        private readonly string? _resolvedAppCallerCode;
 
-        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed) => _scopeAllowed = scopeAllowed;
+        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed, string? resolvedAppCallerCode = null)
+        {
+            _scopeAllowed = scopeAllowed;
+            _resolvedAppCallerCode = resolvedAppCallerCode;
+        }
 
         public int CallCount { get; private set; }
         public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
+        public bool AllowSingleAppCallerInference { get; private set; }
 
         public Task<GatewayKeyAuthorization> AuthorizeAsync(
             string providedKey,
@@ -2739,12 +2884,14 @@ public class GatewayKeyGateContractTests
             string ingressProtocol,
             string requiredScope,
             System.Net.IPAddress? remoteIp,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
         {
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
+            AllowSingleAppCallerInference = allowSingleAppCallerInference;
             var allowed = _scopeAllowed(requiredScope);
             return Task.FromResult(new GatewayKeyAuthorization(
                 allowed,
@@ -2757,7 +2904,8 @@ public class GatewayKeyGateContractTests
                 "team-test",
                 ClientCode: "content-agent",
                 Environment: "test",
-                KeyPrefixSnapshot: "gwk_test"));
+                KeyPrefixSnapshot: "gwk_test",
+                ResolvedAppCallerCode: _resolvedAppCallerCode));
         }
     }
 
@@ -2771,7 +2919,8 @@ public class GatewayKeyGateContractTests
             string ingressProtocol,
             string requiredScope,
             System.Net.IPAddress? remoteIp,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
         {
             var teamId = providedKey switch
             {
@@ -2789,6 +2938,65 @@ public class GatewayKeyGateContractTests
                 "tenant-a",
                 teamId));
         }
+    }
+
+    private sealed class TenantScopedTestAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(
+            string providedKey,
+            string legacySharedKey,
+            string sourceSystem,
+            string appCallerCode,
+            string ingressProtocol,
+            string requiredScope,
+            System.Net.IPAddress? remoteIp,
+            CancellationToken ct,
+            bool allowSingleAppCallerInference = false)
+        {
+            var tenantId = providedKey switch
+            {
+                "tenant-a-key" => "tenant-a",
+                "tenant-b-key" => "tenant-b",
+                _ => null,
+            };
+            return Task.FromResult(new GatewayKeyAuthorization(
+                tenantId is not null,
+                true,
+                tenantId is null ? 401 : 200,
+                tenantId is null ? "GATEWAY_KEY_INVALID" : string.Empty,
+                tenantId is null ? "invalid" : "allowed",
+                providedKey,
+                tenantId));
+        }
+    }
+
+    private sealed class TenantCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    {
+        private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.Ordinal);
+
+        public int CountFor(string tenantId) => _counts.GetValueOrDefault(tenantId);
+
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        {
+            var tenantId = request.Context?.TenantId ?? "missing";
+            _counts.AddOrUpdate(tenantId, 1, static (_, count) => count + 1);
+            return Task.FromResult(GatewayResponse.Ok("ok", new GatewayModelResolution
+            {
+                Success = true,
+                ActualModel = "fake-model",
+            }));
+        }
+
+        public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 
     private sealed class ConcurrentCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
