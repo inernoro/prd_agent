@@ -247,18 +247,18 @@ db.admin_idempotency.createIndex({ "createdAt": -1 })
 
 // collection: desktop_asset_skins
 db.desktop_asset_skins.createIndex(
-  { "Name": 1 },
+  { "name": 1 },
   { name: "idx_desktop_asset_skins_name" }
 )
 
 db.desktop_asset_skins.createIndex(
-  { "Enabled": 1 },
+  { "enabled": 1 },
   { name: "idx_desktop_asset_skins_enabled" }
 )
 
 // collection: desktop_asset_keys
 db.desktop_asset_keys.createIndex(
-  { "Key": 1 },
+  { "key": 1 },
   { name: "idx_desktop_asset_keys_key" }
 )
 
