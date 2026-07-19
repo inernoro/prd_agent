@@ -111,6 +111,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
+import { buildVisualAgentModelOptions, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -1157,53 +1158,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 将模型池转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
-  type ModelWithSource = Model & {
-    resolutionType?: 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
-    isDedicated?: boolean;
-    isDefault?: boolean;
-    isLegacy?: boolean;
-    /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
-    actualModelId?: string;
-    /** 副标题（一句话定位）。后端模型池下发后优先采用，否则走前端兜底文案表 */
-    subtitle?: string;
-    /** 详细描述（适用场景）。后端下发后优先采用 */
-    description?: string;
-    /** 是否为推荐模型。后端下发后优先采用 */
-    recommended?: boolean;
-  };
+  type ModelWithSource = VisualAgentModelOption;
   // 直接使用统一的模型池列表
   const filteredPools = useMemo(() => {
     return imageGenPools;
   }, [imageGenPools]);
 
   const poolModels = useMemo<ModelWithSource[]>(() => {
-    if (filteredPools.length === 0) return [];
-    return filteredPools
-      .filter((g) => g.models && g.models.length > 0)
-      .map((g) => {
-        const first = g.models[0]!;
-        return {
-          id: `pool_${g.id}`,
-          name: g.name,
-          // 发送给后台的模型池 code（用于匹配模型池）
-          modelName: g.code,
-          // 用于查询适配器信息的实际模型 ID
-          actualModelId: first.modelId,
-          platformId: first.platformId,
-          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
-          isMain: false,
-          isImageGen: true,
-          enablePromptCache: false,
-          priority: g.priority ?? 50,
-          // 来源标记
-          resolutionType: g.resolutionType,
-          isDedicated: g.isDedicated,
-          isDefault: g.isDefault,
-          isLegacy: g.isLegacy,
-          // 后端模型池描述（若有）会作为副标题/描述兜底来源之一
-          description: g.description,
-        } as ModelWithSource;
-      });
+    return buildVisualAgentModelOptions(filteredPools);
   }, [filteredPools]);
 
   // 模型列表：使用模型池（后端已包含 3 级回退：专属池 > 默认池 > 传统配置）

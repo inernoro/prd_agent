@@ -33,7 +33,6 @@ public class ImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
-    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly IImageGenerationClient _imageClient;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
@@ -57,7 +56,6 @@ public class ImageGenController : ControllerBase
     public ImageGenController(
         MongoDbContext db,
         IModelDomainService modelDomain,
-        IModelPoolQueryService modelPoolQuery,
         IImageGenerationClient imageClient,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
@@ -70,7 +68,6 @@ public class ImageGenController : ControllerBase
     {
         _db = db;
         _modelDomain = modelDomain;
-        _modelPoolQuery = modelPoolQuery;
         _imageClient = imageClient;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
@@ -107,7 +104,8 @@ public class ImageGenController : ControllerBase
 
         foreach (var code in codes)
         {
-            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
+            var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
+                .Select(pool => MapAvailablePool(pool, modelType));
             foreach (var pool in pools)
             {
                 if (seen.Add(pool.Id))
@@ -126,7 +124,9 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/text2img")]
     public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
     {
-        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Text2Img, "generation", ct);
+        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Text2Img, "generation", ct))
+            .Select(pool => MapAvailablePool(pool, "generation"))
+            .ToList();
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -136,7 +136,9 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/img2img")]
     public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
     {
-        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Img2Img, "generation", ct);
+        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Img2Img, "generation", ct))
+            .Select(pool => MapAvailablePool(pool, "generation"))
+            .ToList();
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -146,8 +148,34 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/vision")]
     public async Task<IActionResult> GetVisionGenModels(CancellationToken ct)
     {
-        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.VisionGen, "generation", ct);
+        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.VisionGen, "generation", ct))
+            .Select(pool => MapAvailablePool(pool, "generation"))
+            .ToList();
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
+
+    private static ModelPoolForAppResult MapAvailablePool(AvailableModelPool pool, string modelType)
+    {
+        return new ModelPoolForAppResult
+        {
+            Id = pool.Id,
+            Name = pool.Name,
+            Code = pool.Code,
+            Priority = pool.Priority,
+            ModelType = modelType,
+            IsDefaultForType = pool.IsDefault,
+            Models = pool.Models.Select(model => new ModelPoolModelItem
+            {
+                ModelId = model.ModelId,
+                PlatformId = model.PlatformId,
+                Priority = model.Priority,
+                HealthStatus = model.HealthStatus
+            }).ToList(),
+            ResolutionType = pool.ResolutionType,
+            IsDedicated = pool.IsDedicated,
+            IsDefault = pool.IsDefault,
+            IsLegacy = false
+        };
     }
 
     /// <summary>
