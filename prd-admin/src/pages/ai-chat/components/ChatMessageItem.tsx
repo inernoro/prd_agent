@@ -528,7 +528,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           <button
             type="button"
             className="text-[9px] font-medium"
-            style={{ color: copied ? 'rgba(74,222,128,0.85)' : 'rgba(255,255,255,0.45)' }}
+            style={{ color: copied ? 'rgba(74,222,128,0.85)' : 'var(--text-muted)' }}
             title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
             onClick={() => copyUserMessage(msgBody)}
           >
