@@ -1,6 +1,7 @@
 import { memo, useMemo, useCallback, useState } from 'react';
 import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
+import { inlineMarksToTokens } from '@/lib/chipTokenText';
 
 // ── Types (mirrored from parent to avoid circular deps) ──────────────
 
@@ -222,6 +223,33 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   // ── Local expand state (doesn't affect siblings) ───────────────────
 
   const [expanded, setExpanded] = useState(false);
+
+  // ── 复制用户消息（Lovart token 文本）──────────────────────────────
+  // 复制产物 = 用户可见正文 + chip 序列化为 [@image:#N:canvasKey:src] token
+  //（chipTokenText SSOT，与 composer 复制/粘贴同一格式）：粘回输入框即还原
+  // chip，发给他人也能读到图片 URL。@imgN 未命中当前画布时保持原样。
+  const [copied, setCopied] = useState(false);
+  const copyUserMessage = useCallback(
+    (body: string) => {
+      const chipMeta = new Map<number, { canvasKey: string; src: string }>();
+      for (const c of canvas) {
+        if (typeof c.refId === 'number' && c.refId > 0 && c.src) {
+          chipMeta.set(c.refId, { canvasKey: c.key, src: c.src });
+        }
+      }
+      const text = inlineMarksToTokens(body, chipMeta);
+      void navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        })
+        .catch(() => {
+          /* 剪贴板不可用（非安全上下文等）时静默——按钮态不变提示未成功 */
+        });
+    },
+    [canvas],
+  );
 
   // ── Retry handler ──────────────────────────────────────────────────
 
@@ -493,9 +521,20 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         </div>
       ) : null}
       <span
-        className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
+        className={`inline-flex items-center gap-1.5 text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
       >
+        {isUser ? (
+          <button
+            type="button"
+            className="text-[9px] font-medium"
+            style={{ color: copied ? 'rgba(74,222,128,0.85)' : 'rgba(255,255,255,0.45)' }}
+            title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
+            onClick={() => copyUserMessage(msgBody)}
+          >
+            {copied ? '已复制' : '复制'}
+          </button>
+        ) : null}
         {timestamp}
       </span>
     </div>

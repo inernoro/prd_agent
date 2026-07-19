@@ -3865,15 +3865,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .filter((sha) => sha.length === 64);
 
     let firstPrompt = '';
-    let displayPrompt = ''; // 用户原始提示词（不含生图意图前缀），用于 UI 展示和存储
+    // 用户原始提示词（display 层，含 @imgN 标记），用于 UI 展示、GEN_DONE/GEN_ERROR
+    // 元数据与「重试」。历史 bug（2026-07-19 用户截图，重试后内容反复变异）：这里
+    // 曾优先存模型层 reqText（含【引用图片】文字块）甚至英文澄清稿——重试把它当
+    // 新输入回炉，buildRequestText 再叠一层引用块，每重试一次气泡就变异一次。
+    // 铁律：display 层与模型层物理分离，进 UI/重试链的只能是 display 文本；
+    // reqText 兜底也必须先过 parseVisualMessageDisplay 清洗。
+    const displayPrompt =
+      stripModelMention(display) ||
+      parseVisualMessageDisplay(stripModelMention(reqText)).text;
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         return;
       }
-      // 提示词澄清：将用户自由输入改写为明确的英文生图提示词，降低失败率
+      // 提示词澄清：将用户自由输入改写为明确的英文生图提示词，降低失败率。
+      // 澄清稿只进模型层（firstPrompt），不改写 displayPrompt——否则重试后
+      // 用户气泡从中文变英文（内容变异的另一形态）。
       try {
         const clarifyRes = await clarifyImageGenPrompt({
           prompt: firstPrompt,
@@ -3885,8 +3895,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       } catch {
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
-      // 保存用于展示的提示词（不含前缀）
-      displayPrompt = firstPrompt;
       // 智能模式也需要追加生图意图前缀，与直连模式保持一致
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     } else {
@@ -3894,11 +3902,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         return;
       }
-      // 保存用于展示的提示词（不含前缀）
-      displayPrompt = firstPrompt;
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     }
 

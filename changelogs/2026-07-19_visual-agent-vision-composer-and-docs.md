@@ -11,3 +11,7 @@
 | feat | prd-admin | 视觉创作输入框 chip 支持 Lovart 式复制粘贴：复制/剪切序列化为 [@image:#N:key:src] 混合文本，粘贴命中当前画布集合时还原就绪 chip，未命中保持纯文本 |
 | fix | prd-admin | 引用行剥离收窄到【引用图片】块内：用户手写 "- @imgN: 指令" 普通列表行整行保留（Codex P2） |
 | fix | prd-api | UserMessageContent 兜底清洗同步收窄：引用行只在【引用图片】块内剥离，集成方 prompt 里的用户手写 "- @imgN: 指令" 行整行保留（Codex P2） |
+| fix | prd-admin | 视觉创作重试内容变异根修：GEN_DONE/GEN_ERROR 的 prompt 一律存用户 display 原文（不再存模型层 reqText/英文澄清稿），重试不再叠引用块、气泡不再变异 |
+| feat | prd-admin | 视觉创作用户消息新增「复制」：图片引用序列化为 [@image:#N:key:src] token 文本（与输入框复制粘贴同 SSOT），粘回输入框即还原 chip |
+| fix | prd-api | stub-vision 补出图闭环：vision 模式非流式响应带 message.images[]（优先以请求内联图为底+提示词水印），dev/灰度多图生图不再必然「无图片数据」失败 |
+| docs | doc | 视觉创作优化清单新增「根因分析」章：双层文本未分离/重试以渲染文本为源/stub 缺 vision 闭环 三大结构性根因与治法 |
