@@ -3782,6 +3782,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ActiveOwnerMembershipIds", recovery);
         Assert.Contains("OwnerFenceGeneration", recovery);
         Assert.Contains("StartHeartbeatAsync", recovery);
+        Assert.Contains("catch (Exception) when (_stop.IsCancellationRequested)", recovery);
         Assert.Contains("GatewayRecoveryOperations.RepairExpiredAsync", console);
         Assert.True(
             console.Split("GatewayRecoveryOperations.StartHeartbeatAsync", StringSplitOptions.None).Length - 1 >= 3,
