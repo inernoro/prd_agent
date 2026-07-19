@@ -1207,8 +1207,12 @@ public class ImageMasterController : ControllerBase
                 if (string.IsNullOrWhiteSpace(key)) key = ReadCanvasStr(o, "key");
                 if (string.IsNullOrWhiteSpace(key)) continue;
 
+                // 对账查询同样按部署作用域过滤（Codex P2 R5）：同一 workspace 在两个分支预览
+                // 各建过 run 时，不过滤会把兄弟部署的结果/失败写回本分支画布。
+                var reconcileScope = PrdAgent.Core.Models.DeploymentScope.Current;
                 var run = await _db.ImageGenRuns
-                    .Find(x => x.OwnerAdminId == adminId && x.WorkspaceId == wid && x.TargetCanvasKey == key)
+                    .Find(x => x.OwnerAdminId == adminId && x.WorkspaceId == wid && x.TargetCanvasKey == key
+                        && x.DeploymentSlug == reconcileScope)
                     .SortByDescending(x => x.CreatedAt)
                     .FirstOrDefaultAsync(ct);
                 if (run == null) { report.Add(new { key, action = "no-run" }); continue; }
