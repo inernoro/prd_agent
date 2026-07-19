@@ -8,6 +8,543 @@
 
 ## [未发布]
 
+### 2026-07-20
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复自更新完成后旧缓存覆盖终态导致页面长期显示更新中的问题，并增加失联熔断 |
+| test | cds | 增加自更新终态竞态、刷新去重和前端失联阈值回归测试 |
+| fix | llmgw | 为租户、成员和 owner provisioning 增加 recovery lease 心跳，防止长耗时正常请求被硬退出修复器误回滚 |
+| fix | llmgw | 收敛 heartbeat 停止期间的瞬时续租失败，避免成功的 provisioning 在响应清理阶段误报 500 |
+| test | prd-api | 增加 live provisioning 续租与到期后可修复的竞态回归测试 |
+
+### 2026-07-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 项目设置新增默认开启的机器人提交版本过滤，阻止依赖机器人 push 创建版本和触发部署 |
+| fix | cds | 修复游离 HEAD 被误作自更新目标分支，并过滤远端符号引用 |
+| fix | cds | 修复 launchd 前台托管实例被状态命令误报停止的问题 |
+| fix | cds | 将 GitHub Device Flow 凭据按 CDS 用户隔离，并让私有仓库克隆与后台 Git 操作使用项目所属用户的授权 |
+| fix | prd-api | 生图 run 队列按部署作用域隔离：ImageGenRun 增 DeploymentSlug（分支预览取 CDS_PROJECT_ID 标记 + 实际注入的 BULLMQ_PREFIX/VITE_GIT_BRANCH 分支 slug，生产=null），worker 只认领本部署入队的 run，根治共享 Mongo 下旧构建部署抢单执行导致「分支修复反复复现」 |
+| fix | prd-api | 生图幂等键按部署作用域隔离（ScopeIdempotencyKey 加 scope 前缀，生产原样）+ WeeklyPoster run 复用查询同作用域过滤，防前端确定性键跨分支预览撞唯一索引/复用异部署 run（Codex P1/P2） |
+| test | prd-api | MongoIdConventionTests 网关豁免放宽为 PrdAgent.LlmGw 前缀：修复 main 合入的 GatewayRecoveryOperation（LlmGw.Provisioning 命名空间）被误拦导致 CI 红（守卫本意豁免整个网关新库的纯 GUID 字符串主键） |
+| fix | prd-api | 视觉画布对账（reconcile）查 run 补部署作用域过滤，防兄弟预览的结果/失败写回本分支画布（Codex P2）；其余 ImageGenRuns 查询点已全量审计（显式 runId 与纯统计聚合无需作用域） |
+| polish | llmgw | 将请求日志收敛为 OpenRouter 式高密度列表，简化搜索与筛选并同步权威教程 |
+| fix | llmgw | 修复正式站挂载在 /llmgw 时 Console API 仍请求根路径 /gw 导致页面 502 |
+| feat | prd-admin | 在左下角用户菜单为 MAP 管理员增加模型网关一键登录入口，普通角色默认不可见 |
+| security | prd-api | 签发 60 秒单次消费的模型网关授权码，仅保存哈希并限制为管理后台真人管理员会话 |
+| feat | llmgw | 原子消费 MAP 授权码、映射内部管理员身份并提供返回 MAP 的无缝入口 |
+| docs | llmgw | 更新模型网关登录教程与页面漂移映射，区分 MAP 管理员一键登录和独立租户账号登录 |
+| test | llmgw | 对齐发布冒烟来源、紧凑日志筛选及迁移计划收敛后的主线合同守卫 |
+| fix | llmgw | 修复正式发布冒烟请求头与请求体来源不一致导致 scoped service key 被拒绝 |
+| fix | prd-admin | 视觉创作消息引用图片改为视觉chip显示,展示层剥离【引用图片】文字块/生图前缀/文件名,历史污染消息同样干净展示 |
+| fix | prd-admin | 视觉创作发送消息不再回退存储模型层请求文本,display为空时以@imgN标记+清洗正文兜底 |
+| fix | prd-api | 生图run缺少UserMessageContent时不再落库原始模型prompt,改为清洗兜底(剥前缀+引用块,引用以@imgN标记补回) |
+| test | prd-admin | 新增visualMessageDisplay展示层清洗与chip标签清洗单测(17例) |
+| fix | prd-api | 多图生图修复:通用Vision分支响应解析兼容message.images[]数组与多模态content数组,消除「Vision API 响应格式不支持」误报 |
+| test | prd-api | 新增VisionResponseImageExtractionTests覆盖images[]/字符串content/多模态content数组/纯文本/空choices等全部响应形态 |
+| fix | prd-admin | 视觉创作编辑器右上角本页教程入口在桌面端左移至对话面板左侧，不再遮挡面板头部控件 |
+| docs | doc | 新增视觉创作画布与对话输入原理设计文档（迁移考古 SSOT）与优化清单计划（14 项 backlog） |
+| fix | prd-admin | 视觉创作历史消息展示层：元数据 token 之后的生图英文前缀现在也会被剥离（Codex P2） |
+| fix | prd-admin | 视觉创作用户气泡开头残留 ")" ——模型池名自带括号时 (@model:...) 剥离在首个右括号截断；三处解析正则改为容忍一层嵌套括号（展示清洗/标题清洗/模型徽标） |
+| feat | prd-admin | 视觉创作输入框 chip 支持 Lovart 式复制粘贴：复制/剪切序列化为 [@image:#N:key:src] 混合文本，粘贴命中当前画布集合时还原就绪 chip，未命中保持纯文本 |
+| fix | prd-admin | 引用行剥离收窄到【引用图片】块内：用户手写 "- @imgN: 指令" 普通列表行整行保留（Codex P2） |
+| fix | prd-api | UserMessageContent 兜底清洗同步收窄：引用行只在【引用图片】块内剥离，集成方 prompt 里的用户手写 "- @imgN: 指令" 行整行保留（Codex P2） |
+| fix | prd-admin | 视觉创作重试内容变异根修：GEN_DONE/GEN_ERROR 的 prompt 一律存用户 display 原文（不再存模型层 reqText/英文澄清稿），重试不再叠引用块、气泡不再变异 |
+| feat | prd-admin | 视觉创作用户消息新增「复制」：图片引用序列化为 [@image:#N:key:src] token 文本（与输入框复制粘贴同 SSOT），粘回输入框即还原 chip |
+| fix | prd-api | stub-vision 补出图闭环：vision 模式非流式响应带 message.images[]（优先以请求内联图为底+提示词水印），dev/灰度多图生图不再必然「无图片数据」失败 |
+| docs | doc | 视觉创作优化清单新增「根因分析」章：双层文本未分离/重试以渲染文本为源/stub 缺 vision 闭环 三大结构性根因与治法 |
+| fix | prd-admin | 用户消息复制改走 copyToClipboard SSOT 工具（非安全上下文 execCommand 兜底，失败不假成功） |
+| polish | prd-admin | 用户消息「复制」升级为明显按钮态（图标 + 边框 chip，token 双皮肤），治「认不出是按钮」 |
+
+### 2026-07-18
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +1/-0（补 cds-release 技能表行），D6 5 条（kb-audio 双波次归档进 debt.knowledge-base.md，3 条 llmgw 维护发布修复经核实已被既有台账覆盖） |
+| fix | llmgw | 修复 appCaller 首分钟并发请求可能创建多个限流窗口并绕过阈值的问题 |
+| test | llmgw | 增加假上游端到端并发、跨租户限流隔离与租户审计一致性测试 |
+| fix | llmgw | 分离全局发布门与发布后业务冒烟的密钥，避免 legacy key 外用禁令阻断正式发布 |
+| test | llmgw | 补充双密钥发布合同与就绪度守卫回归校验 |
+| fix | llmgw | 修复 shadow 回滚脚本中误放进 Python heredoc 的网关原地重载函数 |
+| fix | llmgw | 流式上游返回 finish_reason 后立即结束读取，并为正式冒烟补齐 scoped key 身份头 |
+| fix | llmgw | 对齐正式主站外层代理与 Gateway 请求超时，避免兼容 send 入口被 60 秒提前截断 |
+| feat | llmgw | 新增跨团队、接入密钥与 appCaller 的租户总月预算原子预占和总 RPM 硬限制 |
+| feat | llmgw | 预算与用量页新增租户硬限制配置、实时预占与分钟用量，并同步分层治理教程 |
+| test | llmgw | 新增租户预算与速率并发、跨 appCaller、跨租户隔离及双层响应头测试 |
+| fix | llmgw | 新增租户与成员 provisioning 硬退出恢复操作，按精确对象 ID 回滚半成品并周期接管过期修复 |
+| fix | llmgw | 将 provisioning 修复异常隔离到单次 tick，Mongo 瞬时故障后下一轮仍会继续接管 |
+| security | llmgw | 将最后 owner 保护改为租户权威集合与原子 fencing generation，移除可过期的进程锁 |
+| test | llmgw | 新增 provisioning 硬退出、修复器接管、并发 owner 移除和 owner 变更收口测试 |
+| security | llmgw | 外部租户 Exchange 安全开放 WSS，运行时固定已验证公网地址并校验证书主机名，拒绝明文 WS、私网、代理和跳转 |
+| fix | llmgw | 强制外部 Exchange transport 与转换类型匹配，阻止 WSS 配给非流式转换器或流式 ASR 误配 HTTP |
+| docs | llmgw | 同步 Exchange WSS 教程，并新增每日页面到章节漂移巡检、告警报告和更新提醒草稿 |
+
+### 2026-07-17
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复 AI 大事预热请求旧地址 301 后持续回退陈旧缓存 |
+| feat | cds | 新增项目现有脚本、动态 Compose 与动态静态站三种正式发布策略，固化执行脚本哈希并支持失败自动恢复 |
+| fix | cds | 阻断全局 AI Key 写入发布目标、跨项目目标与远端仓库身份不一致发布，并停止全局环境变量自动复制到所有项目 |
+| fix | cds | 动态静态站在严格 umask 下归一发布父目录权限，并以公网 HTML 与实际入口资源作为成功及自动恢复门禁 |
+| fix | cds | 补齐静态产物子目录、旧目标项目身份、CDS 全局变量显式继承、生产 URL 规范化、项目级动态发布默认值、主目标冲突响应、策略切换旧回滚命令清理、归档凭据续用、归档及禁用目标回滚阻断与自动恢复回滚点保护 |
+| polish | cds | 重构发布中心的信息层级，区分活跃与归档目标并展示项目身份、发布方式和唯一生产主目标 |
+| feat | cds | 新增 CDS 正式发布配置技能与二十五章权威教程受控发布工具链 |
+| fix | cds | 修复权威教程沿用仓库相对 Markdown 链接导致离开知识库的问题，发布时转换为受管章节双链 |
+| fix | prd-admin | 修复双链点击切换文档后悬停预览持续遮挡正文，并为知识库章节补齐可刷新恢复的 store + entry 深链 |
+| fix | cds | 修复目标分支已被应用工作树占用时 CDS 自更新和强制同步无法切换的问题 |
+| fix | prd-api | 修正缺陷验收 invalid 归档映射并强制 conditional 回调提供双轴说明 |
+| fix | prd-api | 拆分缺陷功能验收结论与闭环证据完整性，避免证据缺口误报未修复 |
+| polish | prd-admin | 收敛知识库分享页视图与排序工具条的视觉层级 |
+| fix | prd-admin | 分享页返回入口改为以登录身份打开当前知识库 |
+| security | prd-admin | 私有分享接收者仅在服务端权限校验通过后进入当前知识库 |
+| fix | prd-admin | 知识库分享阅读页支持书籍顺序、最新创建和最近更新切换，书籍顺序消费条目 SortOrder |
+| polish | llmgw | 模型网关权威教程将跨章节文字改为可点击双链，并增加持续校验 |
+| fix | cds | 修复非默认项目导入 Compose 后应用依赖未随 profile 作用域重写导致网关前端抢跑的问题 |
+| feat | llmgw | 新增 Cherry Studio 与 OpenClaw 三步接入预设，并允许单 appCaller scoped key 安全补全兼容客户端身份和流式调用权限 |
+| polish | llmgw | 将接入密钥重构为基础生成与高级权限两层，并收敛密钥列表信息密度 |
+| test | prd-api | 增加无自定义请求头客户端、歧义身份与通配权限的 Gateway 鉴权回归 |
+| docs | llmgw | 同步权威教程的三步 Quickstart、Cherry Studio、OpenClaw 与客户端审计流程 |
+| fix | llmgw | 所有发布与回滚均保留 gateway 容器 IP，并同步活跃宿主配置后通过 nginx 原地 reload 刷新静态版本与上游解析，避免两级代理出现 502 |
+| fix | deploy | 静态站改为离线校验后原子切换 current/previous，强制不可变产物 SHA256，并在发布失败时自动恢复上一版 |
+| ops | deploy | 发布后与每六小时定时任务统一验证公网 HTML、实际 JS/CSS、精确提交和 LLM Gateway 双健康，保存不可覆盖 JSON 证据 |
+| test | llmgw | 增加独立网关表面模式，验证 Gateway 页面资源、Console 与 Serving 精确提交，以及四协议无密钥统一拒绝；定时巡检同时覆盖生产独立入口 |
+| fix | deploy | 恢复 `./exec_dep.sh release` 等价 latest 的兼容语义并补充可操作帮助信息 |
+| test | prd-api | 增加 LLMGW 发布保留 gateway 容器与首次启动分支的合同测试 |
+| test | deploy | 增加静态布局激活回滚、公网表面探针、发布证据不可覆盖和静态产物权限行为测试 |
+| fix | llmgw | inproc 紧急回滚和保守 shadow 恢复只重启 API，随后原地校验并 reload gateway，禁止回滚路径再次制造代理 502 |
+| feat | llmgw | 为 Provider、模型、appCaller 和 Exchange 增加关联配置就地预览 |
+| docs | llmgw | 模型网关权威教程补充关联预览操作与五张桌面移动证据图 |
+| test | llmgw | 增加关联预览密钥边界合同并完成 110 场景视觉验收 |
+| ops | llmgw | 增加 llmgw-web 的 CDS 源码部署模式与四协议 Vite 代理，解除 GitHub 镜像单点依赖 |
+| fix | cds | 保留 Compose 与源码部署模式的显式 prebuilt false，确保预构建服务切回源码时恢复 worktree 挂载 |
+| fix | llmgw-web | 登录页增加匿名健康状态、租户数据边界和完整功能引导，消除未登录页面空白错觉 |
+| docs | llmgw | 固化正式二级目录、CDS 独立子域、品牌域名 DNS 证书流程和真实测试数据口径 |
+| fix | llmgw | Quickstart 区分安全连通与真实模型请求，并在同页预览模型池、Provider 和实际模型 |
+| fix | llmgw-serving | 修复外部 scoped key 路由预览被错误强制识别为 MAP 来源的问题 |
+| fix | llmgw-web | 兼容 Gateway 路由预览的 PascalCase wire contract，避免真实路由被误报为不可识别 |
+| polish | llmgw-web | appCaller 改为摘要列表与渐进配置，请求详情按核心指标、上游响应和高级审计分层，并统一控制台字体密度 |
+| polish | llmgw-web | appCaller 在手机端改为完整摘要卡片并保留路由治理配置，避免横向表格遮断信息 |
+| polish | llmgw-web | 生成详情按概览、请求与响应、路由和审计四类重组，补齐加载失败反馈并让核心指标优先可见 |
+| fix | llmgw-web | 上游响应改为三列纵向信息卡，修复长 Provider、模型和模型池文本在详情抽屉中粘连重叠 |
+| fix | llmgw-web | 请求记录的 requestId 深链在唯一命中后自动打开生成详情，避免移动端还要点击拥挤表格 |
+| test | llmgw | 更新生成详情数据域保护断言，覆盖四类页签与加载失败兜底 |
+| docs | llmgw | 更正 CDS Quickstart 真实请求证据并沉淀 OpenRouter 微观体验基线 |
+| docs | llmgw | 更新模型网关权威教程的 Generation details 四页签、requestId 自动打开和会话边界说明，并增加四张实测图 |
+| security | llmgw | Quickstart 真实模式与复制片段绑定当前 Gateway 地址的路由预检，地址变化后自动退回安全模式 |
+| fix | llmgw | GW Native cURL 的请求头和正文复用同一个动态 requestId，避免日志串号与重复审计标识 |
+| fix | llmgw | appCaller 模型池深链筛选加入可见筛选条件及服务端批量治理过滤，防止越池更新 |
+| fix | llmgw-serving | resolve 路由预览支持 header-only 来源校验且不再写入 appCaller 活跃度 |
+| security | llmgw-serving | resolve 在不写活跃度的前提下保留 appCaller 团队所有权校验，拒绝同租户跨团队路由探测 |
+| security | llmgw-web | Quickstart 重新检查路由时立即清除旧预检结果，并在检查期间关闭真实请求与真实调用片段 |
+| fix | llmgw | 将 shadow 比对读取纳入内部只读发布预检 scope，修复 full-http 维护发布被租户鉴权错误拦截 |
+| fix | llmgw | 修复严格 umask 下原子静态发布目录不可被 Nginx worker 读取导致生产根页 500 的问题 |
+| test | llmgw | 增加静态发布目录与文件权限归一化回归测试 |
+| ci | llmgw | 增加生产发布脚本与真实 Nginx worker 的独立 CI 检查 |
+| docs | llmgw | 记录严格 umask 生产故障、精确备份恢复与 PR #1176 防回归证据 |
+| feat | prd-api | 周报模板新增"表格"章节类型：模板定义默认列，周报保存支持行 cells 与列增删合并进快照，AI 生成/Markdown 导入/规则兜底全链路支持表格行解析 |
+| feat | prd-admin | 周报模板管理章节类型下拉新增"表格"（内嵌列编辑器），周报编辑器表格章节支持增删行、增删列、列改名，详情页/详情面板只读表格渲染 |
+| fix | prd-api | 手动创建周报的模板快照深拷贝补齐 SectionType/DataSources/IssueCategories/IssueStatuses 字段（原漏拷导致手动创建的问题章节丢失分类/状态预设） |
+| test | prd-api | ReportImportMarkdownTests 补表格章节导入 prompt schema 与 markdown 表格行兜底解析用例 |
+| feat | prd-admin | 周报表格章节支持拖拽表头右缘调整列宽（随本份周报保存）与单元格多行文本（自动增高输入、只读侧按换行渲染） |
+| feat | prd-api | 表格章节新增 TableColumnWidths 列宽字段（模板/周报快照/保存合并全链路，60-800px 收口，0 为自动） |
+| fix | prd-admin | 同步中心弹窗窄宽下不再折行错乱：弹窗加宽 520→560px；筛选行的说明文字与筛选块拆成上下两行、筛选块单行横向滚动；同步记录卡的「新增/更新/已一致」统计行与「对端·时间·耗时·操作人」信息行由折行改单行横向滚动（隐藏滚动条）；立即同步按钮标签不换行。新增全局 .sync-row-scroll 工具类（surface.css），批量同步弹窗共用 RunCard 一并受益 |
+| fix | prd-api | 修复知识库跨节点同步「显示同步成功但对端收不到文档」的静默丢数据：ExportAsync 对无 DocumentId 正文的文本条目（空文档 / ParsedPrd 缺失 / 仅有附件提取文本且附件无下载 URL）导出 content=null，接收方按 fe.Content==null 误判为二进制、无 peerAttachment 即静默 skipped（记「已一致」），文档在对端永久建不出来而发送方显示同步成功（实测对端只剩文件夹、0 B）。修复：export 与 GetEntryContent 渲染兜底同口径——文本条目（非文件夹、非可传输文件）一律以非 null 正文导出（优先正文 → 退附件提取文本 → 兜底空串），保证在对端按文本建出；纯二进制文件条目仍走 peerAttachment 不变。已同步过的库需再手动「立即同步」一次补齐对端缺失文档 |
+| fix | prd-admin | 修复已完成视频作品灰色封面与旧 OCR Markdown 标题外露 |
+
+### 2026-07-16
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | build-gate 支持排队取消（signal/isCancelled）与持有者身份，被 supersede 的部署 15 秒内出队，不再僵尸占位撑大全局等待数 |
+| fix | cds | 极速版（prebuilt）部署不再占用全局构建槽；镜像拉取失败回退源码编译时经 onSourceCompileFallback 钩子回补槽位 |
+| fix | cds | waitForReadiness 支持容器活性早退：连续两次 inspect 到 exited/dead/消失即刻失败放槽，崩溃容器不再空占构建槽等满 1200s 就绪下限 |
+| fix | cds | reconcileInterrupted 周期化（每 5 分钟），心跳停跳的幽灵 building run 最迟 20 分钟收敛为失败，不再依赖重启 |
+| fix | cds | 部署层内 fan-out 改用 deploy-layer-runner（allSettled + 共享 abort）：兄弟服务闭包不再脱管续跑，根治同分支重复租约叠加 |
+| feat | cds | manual 整分支 deploy 撞车不再 409，合并为最新待部署请求（与 webhook 同通道，last-writer-wins），派发时透传原始 trigger，掐断 agent 重试风暴 |
+| fix | cds | 单服务重部署路由（POST /branches/:id/deploy/:profileId）补齐 build-gate 过闸，源码编译不再绕过全局并发控制 |
+| feat | cds | 全局构建并发上限运行时可调：GET/PUT /api/cluster/build-gate（CdsState.maxConcurrentBuilds 持久化，env 仍为最终 override），上调即 pumpWaiters 唤醒排队者；/api/cluster/status 的 buildGate 透出 holders/waiters 身份明细 |
+| test | cds | build-gate 取消/身份/pump、deploy-layer-runner、coordinator manual 合并、reconcileInterrupted 周期语义、waitForReadiness 活性早退共 5 个套件新增或扩展 |
+| feat | cds | 构建队列健康判定常态化：evaluateBuildGateHealth 纯函数（积压/持槽超时/幽灵 run/账目不变量四类退化）+ GET /api/cluster/build-gate/health（健康 200 / 退化 503，供任务调度定时回归探测）+ 进程内 build-gate-watchdog 每 60s 采样、退化写系统事件告警、恢复留痕 |
+| test | cds | build-gate-health 回归门禁套件（8 例：四类退化 + 阈值边界 + 多退化并存 + 坏时间戳容错），随 CI cds-build job 门禁 PR |
+| fix | cds | 回应 Codex P1：构建并发上限下调后 release 不再无条件转移槽位，active 高于新上限时先缩减，紧急节流即时生效 |
+| fix | cds | 回应 Codex P2：manual 部署被合并（merged）时 BranchListPage/BranchDetailPage 如实显示「已合并为待部署请求」，不再误报「部署完成」 |
+| fix | cds | 分支预览「热重启」等待页卡 86% 修复：热重启改用独立 restart 历史耗时样本桶（auto-wake/手动 restart 成功时记录），进度条按 elapsed/median 真实推进，无样本时按重启时长曲线持续移动；唤醒的启动信号等待收紧到 120s + 就绪探测启用容器活性早退，等待上限从最坏 40 分钟降到分钟级 |
+| fix | cds | 回应 Codex P2：上限下调后的自然收敛（active>max 且账目一致）不再被健康探针误报 503，账目不变量改为 active 与持有者明细数一致性 |
+| fix | cds | 回应 Codex P2：部署静默阶段（构建输出/启动信号/就绪探测最长 1200s）打 30s 节流 run 心跳，周期收割器不再误杀活着的慢启动部署 |
+| fix | cds | 回应 Codex P2 x3：manual 合并仅限部署类在途操作（stop/reset/delete 在途维持 409，防停止后被自动重启）；带 versionId 的版本重部署不合并（防重放丢版本配置）；极速版 pre-run docker rm 后移到拉取/回退闸之后（排队期旧预览不再白宕机） |
+| fix | cds | 回应 Codex P2：merged 部署请求不再打开旧版本预览（BranchListPage 合并分支改为关闭预览占位窗口，消除「已部署完成」假象） |
+| rule | cds | 新增 .claude/rules/concurrency-gate-discipline.md：并发闸/队列组件五件套设计纪律（等待可取消/持有者身份/只锁真实资源/周期收敛/健康不变量+常态回归），固化本次队列堵死事故教训 |
+| docs | cds | 新增 doc/debt.cds.build-gate.md 债务台账（pending 队列更名/排队心跳拆分/holders 运维 UI/健康阈值可配等延期项），同步 index.yml 与 guide.list.directory.md |
+| fix | cds | 回应 Codex P2：带一次性选项（?force=1 / ?ignoreRequired=1 / targetExecutorId）的 manual deploy 不参与合并去重（pending 重放丢选项会导致强制部署被暂停闸门拦下、env 豁免失效、执行器指定丢失），撞车维持 409 |
+| fix | cds | 回应 Codex P2：构建闸健康探针 GET /api/cluster/build-gate/health 补登 github-auth 模式 PUBLIC_PATHS 白名单（此前仅在 basic-auth 白名单，CDS_AUTH_MODE=github 部署下探针 401 不可用） |
+| fix | cds | 回应 Codex P2：manual 整分支 deploy 撞上保留的 force-rebuild 续约时合并为 pending 而非拒绝——已合并 pending 的内部重放撞续约不再被 409 静默丢弃，续约操作完成后照常派发；force-rebuild 自己的续约仍优先接续不被合并 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 5 条（document-store-auto-send 补 design.platform.peer-sync.md §12.4 trigger 模式与防回流；其余 4 条为 fix/已覆盖 rule，无需新增章节） |
+| feat | prd-admin | 知识库「接入 AI」弹窗一屏重设计：整屏收敛为一个问题（只读 / 可读可写）+ 一颗按钮（生成 Key 并同步复制智能体指令），名称自动生成、有效期默认 1 年，无关权限收进「更多权限」折叠，右栏常驻「接下来三步」预演并在创建成功后原位打勾；「我的 Key / 使用指南」降权为头部文字链 |
+| refactor | prd-admin | 智能体接入指令模板抽为共享 SSOT（lib/agentAccessPrompts.ts），海鲜市场与知识库两个入口共用；只读 Key 的指令不再下发写入端点，避免 AI 照做后 403 |
+| fix | prd-admin | 智能体指令改指真实可用的开放接口：读走 /api/open/document-store/*，写走受控发布协议 /api/open/document-store/publisher/*（sk-ak Key 在旧 JWT 业务路由上必 401，实测取证）；权限卡文案去掉开放接口做不到的「创建知识库」承诺 |
+| feat | prd-admin | 知识库卡片支持右键菜单（与三点「更多」同源，另含打开/置顶） |
+| feat | prd-admin | 今天有更新的知识库卡片右上角显示 NEW 徽标 |
+| polish | prd-admin | 知识库卡片右上角降噪：状态（已分享/同步）改为安静小图标常显，置顶/更多动作 hover 才显现（触屏常显） |
+| feat | prd-admin | 打开知识库默认选中第一篇文档（无主文档时按当前排序兜底，桌面端），右侧不再空白 |
+| feat | prd-admin | 知识库书籍顺序下支持拖拽文档自定义排序（插入位置指示线，写入 SortOrder 服务端持久化） |
+| polish | prd-admin | 知识库列表/库内排序、标签、置顶、更多等按钮补齐 hover 反馈；卡片 hover 改为克制的描边提亮（双主题） |
+| fix | prd-api | 文档条目纯排序写入不再 bump UpdatedAt/团队动态，拖拽排序不会误点亮 NEW 或打乱「最近更新」 |
+| style | prd-admin | 知识库卡片改素色实底面板（去玻璃 blur/棱光/噪点，双主题 token），hover 零位移只提亮描边 |
+| feat | prd-admin | 置顶/取消置顶带 FLIP 位移动画 + 落点琥珀描边渐隐 + 平滑跟随滚动，库多时一眼看到卡片挪去了哪 |
+| feat | prd-admin | 有置顶时列表分「已置顶 / 其他」两个小节，置顶卡片滑入分区落点明确 |
+| polish | prd-admin | 知识库搜索框支持 ESC 一键清空 |
+| feat | prd-admin | 知识库文件夹（章节）支持拖拽同级换位（书籍顺序下，插入指示线 + SortOrder 持久化），文件夹行补 hover 反馈 |
+| polish | prd-admin | 知识库目录行重排（拖拽/置顶/切排序）带 FLIP 位移动画，行滑到新位置而非瞬移 |
+| feat | prd-admin | 团队空间卡片标注归属团队（首个团队名 +N，tooltip 列全量），「全部」聚合视图不再分不清来源 |
+| feat | prd-admin | 系统级界面材质：新增「素色 / 液态玻璃」材质开关（设置 → 皮肤设置），一处切换全站 surface/卡片/工具条统一跟随，默认素色 |
+| style | prd-admin | 素色材质全局清除 backdrop-filter、压平棱光内高光与超大投影；GlassCard 素色走实底渲染但动画不降级 |
+| fix | prd-admin | 修复 5 处素色下会失焦的低透明表面（分享页密码门 / 短链提示卡 / 竞技场工具条 / 首页顶栏 / 工作流聊天抽屉），背景提升为自身可读的实底 |
+| feat | prd-api | 主题配置持久化新增 Material 字段（素色/液态玻璃跨设备保持） |
+| docs | doc | 新增 debt.frontend.material-system 台账（低风险装饰面复核 / 长尾玻璃迁 token） |
+| style | prd-admin | 素色材质现代化重做：表面纯平全不透明、去白色镜面高光与渐变（亚克力感来源）、静息态发丝级投影、hover 全站零位移描边提亮 |
+| style | prd-admin | 素色瘦身第二波：极光背景静音为纯底色（去白雾）、工具条 46 变 42px、按钮去内嵌白环/彩色泛光（map-btn 钩子集中调配） |
+| feat | prd-admin | 皮肤设置极简为两个决定：外观（深色/浅色）+ 界面材质（素色/液态玻璃）；色深/透明度/光晕/侧边栏玻璃/性能模式归一化为系统预设不再暴露 |
+| feat | prd-admin | 外观（深/浅）从移动端专属升级为全局偏好：桌面同样生效，首页移动端切换与设置页共用同一 SSOT |
+| style | prd-admin | 素色画布带回静态品牌色氛围（左上靛蓝/右下青色，与强调色同族联动），治「首页偏黑白」 |
+| fix | prd-admin | 首页 hero 浅色外观适配：极光提亮层/白雾底光浅色不渲染，问候语/副标题/eyebrow/搜索框/快捷胶囊改走双主题 token |
+| fix | prd-admin | 修复材质开关在性能模式/Windows 自动降级/系统「减少动态效果」下完全失灵：材质 100% 跟随用户选择，性能路径只压动画不劫持表面 |
+| fix | prd-admin | 头像菜单「液态玻璃」开关接到界面材质 SSOT（旧实现切 performanceMode 已断线导致切换无效），与设置页材质开关联动 |
+| style | prd-admin | 液态玻璃去斜面棱：50% 白顶部内描边/侧缘线/底部暗线（塑料感来源）改为发丝级柔光，blur 升一档补材质厚度（GlassCard/nav-bar/raised 同步） |
+| fix | prd-admin | 回应 Codex 五条 P2：素色弹窗实底兜底 / 进库首篇按真实树序中序 DFS / 选玻璃清隐藏 performance 存量值 / reduced-motion 不再清 blur（玻璃不碎）/ 侧栏不再读已下线的 sidebarGlass 存量值 |
+| docs | llmgw | 新增模型网关权威教程 33 章连续源文件与整书目录 |
+| feat | llmgw | 新增教程离线校验、受控发布、二次 noop、人工漂移冲突和安全回滚工具 |
+| test | llmgw | 新增隔离知识库双发布、foreign 内容保护与中途失败回滚测试 |
+| fix | prd-api | 修复受控发布器因新 runId 破坏相同内容二次 noop 的问题 |
+| docs | llmgw | 为模型网关权威教程补充租户、密钥、协议、费用、模型池、主题和移动端的 19 张实测标注图 |
+| fix | prd-admin | 修复公开知识库深链冷启动时被默认文档覆盖的问题 |
+| feat | llmgw | 在组织页补充租户行为、业务预算、密钥速率与租户汇总的管理地图 |
+| fix | llmgw | Quickstart 签发的外部接入密钥默认限制 60 次每分钟，教程补齐 appCaller 预算与速率保存步骤 |
+| feat | cds | 验收截图改为独立内容寻址资产上传，解除多图报告受 10MB 文本正文限制，单张原图支持 20MB |
+| fix | prd-api | 为最小权限知识库发布 Key 提供受控图片上传端点并校验真实图片格式 |
+| docs | llmgw | 将模型网关权威教程扩展为 104 张不同截图、212 个操作证据位置的逐图教学 |
+| fix | prd-admin | 修复公开知识库教程双链无法切换章节，并同步可刷新、可复制的章节深链 |
+| fix | prd-api | 转录前统一将音频和视频规范化为 16kHz 单声道 WAV，修复 WebM 等音频格式被 ASR 返回空结果 |
+
+### 2026-07-15
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复删除带 TCP 外部访问代理的分支后，残留 enabled 策略仍把代理名算作 active、导致孤儿收割器跳过仍公网暴露的 resource-external-access 容器（getActiveExternalAccessProxyContainerNames 增加归属分支存活校验，Codex P1） |
+| fix | cds | cds-self compose 构建命令加 node_modules 自愈守卫：装依赖前探 .bin/tsc、.bin/vite 软链是否可执行，缺失即 rm -rf 该 node_modules 逼一次干净全装，根治 bind-mount worktree 下增量安装被并发/打断留半链导致 tsc 构建 exit 1 崩溃 |
+| feat | cds | 新增预览实例模式（CDS_PREVIEW_INSTANCE=1）：CDS 可托管 CDS 自身分支预览，宿主操作命令统一拦截为友好提示，self-update/部署接口返回明确的预览实例说明，验收 CDS 改动不再需要 self-update 生产实例 |
+| feat | cds | 预览实例首启 seed 演示项目与三态示例分支（running/error/idle），空库也有内容可验收；新增公开端点 GET /api/instance-mode 与 Shell 顶部预览实例提示条 |
+| feat | cds | 新增 cds-self 独立项目 compose 合同（cds/cds-compose.selfhost.yml），同仓库第二项目承载子 CDS 构建，主项目分支零额外构建开销 |
+| docs | doc | 新增 design.cds.self-hosting 设计文档（预览实例边界、多构建取舍、实验田域名等后续路线），同步 index.yml 与 guide.list.directory.md |
+| docs | doc | 新增 guide.cds.host-migration 宿主迁移 Runbook（必迁三样、调度器/并发闸核对、缓存预热、极速版首拉限流、选机 CPU 优先） |
+| fix | cds | 项目删除连带容器物理清理：先 docker rm -f 分支/项目 infra 容器、后删网络（修正旧实现先删网络必然失败的顺序错误），系统级 infra（cds-state-mongo）免删，响应体如实声明 containerTeardown |
+| feat | cds | 新增孤儿容器收割器：每小时把 state 中无 owner 的 cds-managed 容器停掉（只停不删），带 label 过滤/空库守卫/docker 查询失败放弃/系统容器免死/CDS_ORPHAN_CONTAINER_REAPER 逃生阀，处置写 server-event 留痕 |
+| docs | doc | 新增 design.cds.lifecycle-atomicity 架构文档：五类原子性问题分类（级联残缺/顺序错误/检测无动作/吞错无兜底/两阶段写窗口）+ 24h 日志 68 孤儿容器实证 + 对账收敛架构原则与后续波次 |
+| security | cds | 预览实例启动自清洗父实例密钥类 env（effective-env 实测 LLMGW_ADMIN_PASSWORD 被全局注入子实例），web 端子实例关闭 /_cds 直通与兜底重试防止串到父实例，selfhost compose 加 memory/cpus 资源上限 |
+| fix | cds | 预览实例守卫补全（Codex 评审 8 条）：分支容器动作路由器级统一 403、非流式/流式日志、infra 数据面与备份恢复、runDockerExec 咽喉守卫、SSE 错误提示优先展示中文 message；孤儿收割器按 branchId/profileId 配对 + 30 分钟宽限期防误杀 |
+| chore | doc | 每日熵减计划：D1-D4 双向扫描零真实欠款（结构性一致性达标），D6 处理 5 条未覆盖 changelog（2 条 CDS 已由既有 guide 文档覆盖、2 条前端移动端/导航债务台账已同步无需改动、1 条知识库录音转笔记新功能补齐 `doc/debt.knowledge-base.md` 已落地清单） |
+| feat | llmgw | 新增租户级供应商费用对账、价格证据哈希与上游请求编号 |
+| security | llmgw | 固化密钥用途边界及 MAP legacy shared key 的逐后继密钥退场验证 |
+| fix | llmgw | 使用版本化索引名兼容存量数据库的工作负载用途索引升级 |
+| fix | llmgw | 修复独立控制台同源四协议请求被静态 nginx 返回 405，并禁止外部租户伪装 MAP 内部 key 用途 |
+| docs | doc | 补充网关费用与 legacy key 持久化数据字典及 PR-10 执行证据 |
+| fix | llmgw | 修复 legacy MAP 请求体身份解析、缺失供应商金额误记零和无密钥窗口覆盖误判 |
+| fix | llmgw | 补齐本地开发 llmgw-serve 数据面，避免四协议同源入口返回 502 |
+| security | llmgw | 禁止 service key 使用通配来源，阻断外部租户借通配符伪装 MAP 流量 |
+| fix | prd-api | 将供应商 request id 安全透传到普通、流式和 raw 请求日志，恢复逐请求费用对账 |
+| security | llmgw | legacy 生产退场只接受 production MAP 后继 key，并拒绝非生产流量累计观测次数 |
+| security | llmgw | 后继密钥必须完整覆盖 legacy 调用方与四协议，且仅相关流量累计退场观测证据 |
+| fix | llmgw | 保留 legacy 退场期只读 preflight，继续执行截止与撤销门，且禁止预检累计切流证据 |
+| security | llmgw | legacy 后继 key 必须使用 production MAP runtime 身份并覆盖全部运行时 scope |
+| fix | llmgw | 逐请求费用幂等重试会补写请求日志投影，修复中断后的对账不一致 |
+| security | llmgw | 普通数据面只接受 MAP runtime 或外部平台用途密钥，发布 Gate 仅允许只读预检 |
+| fix | llmgw | 费用导入增加租户供应商团队原子租约，串行化 request/window 防止并发双计费 |
+| security | llmgw | legacy 后继观测只累计 invoke、stream 与 raw 业务调用，排除全部控制面只读请求 |
+| feat | llmgw | 用量页补齐费用四状态、账单导入回执和逐条对账追溯 |
+| feat | llmgw | 新增租户程序池类型注册表、原子默认指针与有则增加无则不变的默认池补齐 |
+| security | llmgw | 托管默认池改为兼容模型原子追加并禁止覆盖、删除、重排和伪造价格 |
+| fix | prd-api | 专用 appCaller 的 pinned 模型限制在绑定池内并按池候选解析 |
+| test | prd-api | 增加默认指针、append-only 与租户作用域静态守卫 |
+| docs | doc | 登记 LLM Gateway 程序池类型集合及租户唯一索引约束 |
+| feat | llmgw | 新增租户隔离的 Exchange 自助创建、映射编辑、版本冲突保护与审计定位 |
+| security | llmgw | Exchange 创建与修改先写租户审计意图再写配置，避免出现有配置无审计 |
+| security | llmgw | 强制 Exchange 通讯密钥只写加密，拒绝 URL 密钥和内网目标；外部 HTTP 使用安全出站连接，外部 WebSocket 首版拒绝执行 |
+| test | prd-api | 新增 Exchange 归一化、租户数据域、密钥与审计边界守卫 |
+| fix | llmgw | 修复新建 Exchange 初始状态误判为保存中，以及修改表单后仍残留旧校验错误的问题 |
+| fix | llmgw | 补齐团队与成员页面的成员创建、角色与团队范围调整、停用和强制重新登录入口 |
+| security | llmgw | 移除首次改密页的历史弱口令文案并统一前后端 12 位最小口令要求 |
+| fix | llmgw | 成员更新携带页面所见版本，拒绝旧页面静默覆盖其他管理员的新设置 |
+| security | llmgw | 使用租户命名空间账号阻止跨租户抢占，禁止无确认挂载既有账号、自我降权和自我强退，并在成员写入前记录 TenantId 审计意图 |
+| security | llmgw | 幂等重放仅接受已完成且成功的创建审计，pending 或失败审计不能误报业务成功 |
+| fix | llmgw | 拒绝无团队 Developer，显示并允许移除已停用团队，修正停用 Owner 清理与 Billing 死入口 |
+| test | prd-api | 增加组织成员策略单测与自助管理前端契约守卫 |
+| security | llmgw | 提示词策略请求日志和操作审计只保留策略 id、版本与 hash 元数据 |
+| polish | llmgw | 明确提示词模板、生效与合并字符口径，补充 appCaller 和审计的人话说明 |
+| polish | llmgw | 中文化费用对账字段并解释单请求、时间窗、未知费用和跨币种可信度规则 |
+| test | prd-api | 增加提示词日志字段边界、chat/vision 应用和费用可信度回归守卫 |
+| fix | llmgw | 修复 Quickstart 生成后切换协议仍使用旧协议 bundle 的错位，一把非通配 scoped key 精确覆盖四种网页协议 |
+| polish | llmgw | 接入配置生成后锁定团队、appCaller 与环境，明确修改身份不会自动撤销已签发密钥 |
+| test | llmgw | 补充四协议同钥、无密钥 401、零费用 dry-run 与 requestId 日志回查证据 |
+| fix | llmgw/web | 按租户角色统一导航、深链和写操作可见性，避免无权角色进入必然返回 403 的断头流程 |
+| test | prd-api | 增加控制台 RBAC 可见性与服务端权限矩阵一致性守卫 |
+| feat | llmgw | 新增租户内 Provider 与模型自助创建流程，密钥加密落库并按模型用途幂等追加默认池 |
+| security | llmgw | Provider 和模型查询、唯一索引、审计与写入均包含 TenantId，拒绝跨租户 Provider 绑定 |
+| polish | llmgw | 重构 Provider 与模型空态引导，隐藏高级批量维护并明确未知费用与币种边界 |
+| test | llmgw | 新增配置校验、协议继承、服务端租户来源、费用未知与能力映射测试 |
+| polish | llmgw | 登录页说明账号来源、接入密钥边界与完整管理用途，并让生产同域和 CDS 子域都能返回 MAP |
+| feat | prd-admin | MAP 首页模型兼容区新增模型网关控制台入口，生产同域与 CDS 命名子域均可到达控制台 |
+| feat | prd-api | 新增模型网关权威教程最小权限知识库受控发布接口与并发保护 |
+| docs | doc | 固化模型网关权威教程实时看板和 G2 有限子批次 |
+| feat | llmgw | Quickstart 支持 chat 与 vision 自助创建、四协议零费用测试及 PromptPolicy 直达 |
+| test | prd-api | 补齐 chat/vision 八格协议、安全上游和租户费用边界回归 |
+| feat | llmgw | 增加 environment、clientCode 与 ServiceKeyId 工作负载归因，Activity 支持按调用身份筛选 |
+| security | llmgw | 建立可连续执行的密钥轮换阶段与并发状态约束及拒绝请求归因，历史通配来源 key 可在轮换时一次性升级工作负载身份；签发中的 key 先保持禁用和隐藏，交付前进入可调用但不可管理的 delivering 状态，响应完成后重试收口为 issued，审计失败时补偿回滚且列表可自愈超时状态；客户端切换与轮换中止竞争同一 CAS 状态，历史缺失阶段按前驱链恢复，失败日志按服务端 requestId 和生命周期标记避免重复且不保存密钥明文或哈希 |
+| polish | llmgw | 移动端接入密钥改为工作负载身份卡片，轮换阶段和操作无需横向滚动即可完成，连续轮换仍可在页面结束旧钥 |
+| test | llmgw | 增加撤销密钥、拒绝日志和轮换错误顺序的对抗测试 |
+| polish | prd-api | 强化 MD 转 PPT 页级生成审美闸门，拒绝泛化标题和纯 bullet 低级版式，并升级失败兜底页为结构化设计块 |
+| fix | prd-api | 修复 MD 转 PPT 大纲页数漂移，后端识别显式页数并裁剪模型多输出页面 |
+| polish | prd-api | 控制台/操作面板类 PPT 自动避开海报书法模板，强制使用 SaaS dashboard 结构约束 |
+| fix | prd-api | 增加控制台视觉失配闸门，模型生成书法/海报风时自动改用结构化 dashboard 兜底页 |
+| fix | prd-api | 控制台/操作面板类 PPT 页级生成改为确定性 dashboard 渲染，避免模型把面板需求画成终端海报 |
+| fix | prd-admin | MD 转 PPT 前端优先识别用户显式页数，避免长提示词被估算成更多页 |
+| fix | prd-admin | 修复 MD 转 PPT 控制台移动端和浮层硬编码深色背景，避免浅色主题下出现暗块并通过双皮肤棘轮 |
+| test | prd-api | 增加 MD 转 PPT HTML 质量闸门和兜底页结构回归测试 |
+| test | prd-admin | 增加 MD 转 PPT 显式页数解析回归测试 |
+| test | prd-api | 同步知识库一键创作发布 AppCallerCode 的注册表 golden 快照，修复合并态后端 CI |
+| refactor | prd-admin | 知识库「同步」与「发送到」合并为统一同步面板：方向（发送/拉回/双向）+ 自动开关一次设定长期生效，发送降级为面板内的一种方向，同一动作不再有三个入口 |
+| polish | prd-admin | 知识库顶栏同步按钮文案即状态（已同步·对端 / 需要处理 / 同步中）；列表页批量入口更名「批量同步」；原发送弹窗「原时间/覆盖/重传」三个开关收敛为固定默认值 |
+| refactor | prd-admin | 知识库同步面板重设计为一屏拓扑图：主视觉改为「本库⇄对端」关系图，箭头即同步方向、连线颜色与流动即状态，替代原文字表单；方向段控 + 立即同步 + 自动开关一屏完成，记录与高级对齐收进折叠 |
+| feat | prd-api | 知识库跨节点同步新增「取消进行中同步」能力：PeerSyncRun 加 CancelRequested 位 + cancelled 终态，新增 POST /api/peer-sync/runs/{id}/cancel 端点（归属校验），SyncItemAsync 在 push前/push后/本地写入前/逐篇 检查点轮询取消位主动中断落 cancelled |
+| refactor | prd-admin | 批量同步弹窗重写为「发起 / 历史」两视图，与单库面板同一套拓扑语言（已选N库⇄对端）；历史视图可查看全部同步台账并停止进行中的同步；砍掉旧监控面板术语与没开始就全是0的统计 |
+| feat | prd-admin | 单库同步面板的进行中同步也可一键停止（进度条与记录卡的停止按钮）；新增 cancelled 状态展示（中性灰，区别于失败红） |
+| fix | prd-api | 修复取消/失败的首次同步被误判为已建立关系：开启后台自动同步的门禁额外要求 status=synced（真正成功过一次），取消(cancelled)/失败(error)均不满足（Codex PR#1144 P2） |
+| fix | prd-admin | 单库同步面板多对端时按 RemoteNodeId 预选已保存对端（避免已建立关系的库重开面板因 nodeId 空而主按钮禁用）；「已建立」判定收口为真正成功同步过，取消的首次同步不再显示为已同步（Codex PR#1144 P2） |
+| fix | prd-api | 取消检查点 B 仅在还有 pull 阶段时才生效：避免 push-only 传输在对端已成功后被误记 cancelled 并跳过成功收尾（Codex PR#1144 P2） |
+| fix | prd-api | 自动同步开启门禁改用「有过成功 outgoing run」判定，而非最后一次 status：修复之前成功建立、最近一次同步被取消/失败的库无法重开自动同步或改周期（Codex PR#1144 P2） |
+| fix | prd-admin | 单库同步面板改了方向段控但未成功同步时禁用自动开关（directionDirty），避免「header 说自动 pull、后台仍 push」的方向不一致（Codex PR#1144 P2） |
+| fix | prd-api | 自动同步资格绑定当前保存对端：只认发往 store.PeerSyncNodeId 的成功 run，避免切对端 A→B 失败后 A 的旧成功误放行 B 关系（Codex PR#1144 P2） |
+| fix | prd-api | 取消能力健壮性三处（Codex PR#1144 P2 第四轮）：① push 真正发送 bundle 到对端前补一个取消检查点（导出大 bundle 耗时期间点停也能拦下）；② PeerSyncRunCancelledException 下沉 Core 层，DocumentStoreSyncResource 逐条 catch 前先放行取消异常，否则写入阶段点停会被吞成 per-record failure、run 落 error 而非 cancelled；③ 自动同步 worker 每轮兜底校验 saved peer 有成功 run，避免切对端 A→B 失败后 worker 用未建立的 B 关系发流量 |
+| fix | prd-api | 取消能力两处边界（Codex PR#1144 P2 第五轮）：① 强制对齐（align-remote/local）的镜像删除循环也接入取消——每次 DeleteOneAsync 前报进度触发取消检查、catch 放行取消异常，点停立即中断破坏性删除；② 自动同步资格（worker 守护 + SetAutoSync gate）除绑对端外再绑 normalized direction（对齐 run.Direction=align-* 用等价集合归一），避免 push 建立后同 peer 的 pull 失败仍放行未建立的 pull 方向 |
+| fix | prd-admin | 单库同步面板多对端时选了未同步过的新对端（≠已保存 peerNodeId）也禁用自动开关（peerDirty，与 directionDirty 对称），避免「对 saved peer A 开了自动、面板却显示 peer B」的对端不一致（Codex PR#1144 P2） |
+| fix | prd-api | 批量同步途中点停止时停整批：PeerItemSyncResult 加 Cancelled 标志，取消落 cancelled 后 Controller 批量 loop break，不再继续同步后续未开始的库（Codex PR#1144 P2） |
+| fix | prd-admin | 「已建立关系」（everSynced）收口为「当前选中对端+方向组合成功过」，不再认「该库任意成功 run」：切对端/换方向未成功时不再误显示为已建立、不再误开自动开关（与后端 gate 同口径，Codex PR#1144 P2） |
+| fix | prd-admin | 强制对齐成功后同步本地 direction（对齐归一方向），避免首次对齐后 everSynced 恒 false、面板一直说未建立/禁自动直到重开；批量弹窗改选时清掉上一轮 results，避免取消选中的行仍按旧结果显示（Codex PR#1144 P2） |
+| fix | prd-api | 取消时保留 apply 已提交的部分增删改计数：PeerSyncRunCancelledException 带回本次 apply 已处理数，SyncItemAsync 累加落 cancelled run，避免 pull/align 写入一半被停时历史显示删除0/计数陈旧与实际不符（Codex PR#1144 P2） |
+| fix | prd-api | 取消状态回传给 transfer 调用方：批量 results 每项带 cancelled 标志（Codex PR#1144 P2） |
+| fix | prd-admin | 用户主动取消不再被渲染成失败：单库 getTransferFailureMessage 跳过 cancelled 项（不报 error），批量列表 cancelled 显示中性「已取消」而非红色失败（Codex PR#1144 P2） |
+| fix | prd-api | push-only 传输在对端已收尾后点停也停整批：PeerItemSyncResult 加 CancelRequested 标志，成功收尾前非抛出式再查一次取消位，条目仍如实记成功、但 Controller 批量 loop 据此 break 停掉后续未开始的库（Codex PR#1144 P2） |
+| fix | prd-api | 取消 pull/align 时校正知识库摘要：逐篇写入/镜像删除已提交部分条目增删，但 rethrow 跳过收尾的 DocumentCount/UpdatedAt 重算会留下陈旧文档数——两处取消 catch 先按实际条目数校正库摘要再抛（不套用未完成 bundle 的库级元数据）（Codex PR#1144 P2） |
+| fix | prd-api | 文件夹应用阶段点停也保全审计与摘要：文件夹 parent-first 多趟扫描的 progress 回调会触发取消检查点，此前该阶段取消会以零计数逃逸、跳过库摘要重算——补齐与文件记录/镜像删除同款 try-catch，取消时先校正 DocumentCount 再带部分计数抛出（Codex PR#1144 P2） |
+| fix | prd-api | 大文件下载期间点停也能及时中断：二进制附件条目本记录唯一取消检查点在下载之前，此前下载期间点「停止」会漏检、文件仍被写入且 run 正常收尾——两处 DownloadAndStoreAttachmentAsync 之后、写库之前各补一次取消轮询，由 per-file cancelled catch 兜住（Codex PR#1144 P2） |
+| fix | prd-api | AcceptableRunDirections 兼容 align-* 原值入参：store.PeerSyncDirection 被 IsRunnableDirection/IsUserConfirmedAutoDirection 视为合法值也含 align-remote/local/both，此前该函数对 align-* 返回空集，使「用强制对齐建立关系」的库被 established gate 误判未建立、禁掉自动同步——补 align-* 归一到等价集合 + 守卫测试（Codex PR#1144 P2） |
+| fix | prd-api | 批量同步被停止时补齐「未开始」条目结果行：此前 cancel break 直接跳出、剩余条目不进 results，批量响应看似全成功、前端未开始的行停在「已选中」态用户看不出哪些没同步——改为 break 前为剩余条目补 cancelled 结果行（不置 anyFail，它们是被停在门外非失败）（Codex PR#1144 P2） |
+| fix | prd-api | 自动同步 worker established 守护改用 saved 原方向判定：NormalizeAutoDirection 把 align-remote/align-local 折成 both，worker 拿 both 查会漏掉用 align-remote 建立的关系（run.Direction=align-remote）、每轮空跳，而 SetAutoSync 按 saved 值放行——两处口径统一走 store.PeerSyncDirection（Codex PR#1144 P2） |
+| fix | prd-api,prd-admin | 「已建立关系」不再从被截断到 80 条的 runs 列表推断：ListRuns 单库场景返回服务端全量历史 established 标志（与 SetAutoSync gate 同口径），前端 everSynced 在选中组合==已保存关系时据此兜底，修复长命库当年成功 run 滚出窗口后自动开关被误禁（Codex PR#1144 P2） |
+| polish | prd-admin | 视频创作入口采用 Flow 式深色优先项目画布并跟随系统皮肤 |
+| feat | prd-admin | 新增故事分镜与单镜直出双模式及渐进式生成设置 |
+| fix | prd-admin | 修复作品导航激活态、残缺标题和失效媒体预加载问题 |
+| fix | prd-api | 修复时间线音频首尾裁剪后仍越过目标时长的问题 |
+| fix | ci | 正式全量发布默认更新前端静态产物，旧静态站复用改为显式选择 |
+| fix | prd-admin | 不支持同步音频的视频模型提交时自动关闭音频生成参数 |
+| fix | prd-api | 分镜生成结束后按剩余活动镜头恢复项目编辑状态 |
+| fix | prd-admin | 修复网页托管「快速分享」链接错误显示「仅我可见」：两个选项（无密码/有密码）现均产出永久+对大家可见链接，区别仅在密码 |
+| fix | prd-admin | 网页托管卡片预览 iframe 加载失败/超时时自愈：新上传站点在 CDN 传播期间不再永久卡在地球占位符，加超时兜底+onError+最多 3 次重挂重试 |
+
+### 2026-07-14
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| polish | prd-admin | 为首页与百宝箱全部 23 个智能体增加职责化背景，收紧宽屏卡片密度、统一电脑端与手机端呈现，弱化非标题信息层级并修复悬浮态边缘漏光 |
+| polish | prd-admin | 将首页教程中心、快捷入口、智能体辅助信息与登录页统一收敛为石墨灰、暖银和冷白调性 |
+| fix | deploy | 修复 Web 镜像依赖安装与构建目录不一致导致容器构建找不到 TypeScript 的问题 |
+| refactor | prd-admin | 移动端 App Store 设计系统底座双皮肤修复:appStore.tsx(AppStoreHero/Pill/ShelfCard/轮播小点)与 MobileBottomSheet 从直接 import AS_COLOR 改走 useAppStoreColors,浅色主题不再白底浮暗卡(治全站"更多"弹层 OverflowMenu 浅色破皮) |
+| docs | prd-admin | 新增 doc/plan.frontend.apple-design-migration.md:Apple 设计双轨迁移活状态看板(手机端重构 + PC 端底座统一) |
+| feat | prd-admin | appStore 组件集新增 4 个原语:AppStoreGrid(智能体宫格)/AppStoreChips(分类横滑)/AppStoreResumeCard(继续上次)/AppStoreTipCard(每日小技巧),配套 token gridIconSize/gridGap/chipHeight |
+| fix | prd-admin | MobileAssetsPage 接入 useAppStoreColors 双皮肤,消除整页硬编码 rgba(255,255,255,x)(白底浮暗卡),类型徽章改走 iOS 系统色;themeHardcodeBaseline 相应下调锁定清偿 |
+| feat | prd-admin | MobileHomePage 从自研工作台/夜光皮肤整体重构为 App Store Today 加厚版(今日大标题 + 继续上次 + 今日精选轮播 + 常用应用宫格 + 近7日数据 + 每日小技巧 + 我的动态 + 推荐智能体货架 + 沉淀与档案),全接入 useAppStoreColors 双皮肤 + AS_* token,硬编码清零 |
+| fix | prd-admin | MobileHomePage 今日精选大卡从 3:4 竖版海报改 16:11 横版(智能体卡无铺满图时 3:4 中间大片空、观感奇怪);AppStoreFeaturedCarousel/AppStoreFeatured 新增可选 aspect 参数(默认 3:4 不影响其他调用) |
+| fix | prd-admin | 浅色主题内容卡从 surface(浅灰叠浅灰、糊在背景里)改用新增 AS_COLOR.card token(浅=纯白 #fff / 暗=悬浮灰 #1C1C1E),恢复 iOS grouped 清爽白卡;AppStoreResumeCard/TipCard/ShelfCard、首页近7日/动态/档案卡、MobileAssetsPage 卡片统一改 C.card |
+| fix | prd-admin | AppStoreAppIcon 圆角从固定 12px 改按尺寸等比(iOS superellipse ≈22.4%),避免大尺寸图标显方 |
+| feat | prd-admin | AppStoreAppIcon 实装 iOS squircle 连续圆角(SVG mask 超椭圆 n=4.5 + filter:drop-shadow 令阴影跟随形状),取代 CSS 圆弧圆角,更接近苹果 app icon;border-radius 保留作 mask 不支持兜底 |
+| fix | prd-admin | MobileTabBar 底座2:激活态从白/黑字+金色下划线改 iOS systemBlue(icon/label/指示条统一走 AS_COLOR.blue),贴近 iOS tab bar;明暗双皮肤对象结构保留不动 |
+| fix | prd-admin | MobileProfilePage 接入 App Store 设计系统:纯黑/白卡双皮肤(C.card)、菜单与平台能力配色改 iOS 系统色、角色徽章/退出按钮硬编码色改 AS_COLOR、SF 字体;硬编码清零 |
+| fix | prd-admin | MobileNotificationsPage 接入 App Store 设计系统:notificationTone 四档改 iOS 语义色轻底、已处理卡改 C.card、var 令牌改 C.*、SF 字体;硬编码清零 |
+| feat | prd-admin | 首页布局从 App Store Today 商店范式改为「摘要」仪表盘(iOS 健康摘要风,用户拍板):去掉页内大标题/日期(AppShell 已有顶栏)、去掉智能体海报大卡与轮播、智能体降级为底部紧凑货架;排序改为 继续上次→常用应用→近7日→动态→档案;近7日改 iOS 彩色大数(无按日序列不编造迷你图);新增 AS_TYPE.groupTitle(20px) 紧凑区块标题档 |
+| fix | prd-admin | 首页 demo 差距复盘修复:宫格/档案/继续上次图标从平色(from==to)改回 iOS 双色渐变(接 AGENT_ACCENT SSOT,补 document-store 词条);AppStoreAppIcon 字形比例 0.55→0.48、描边 2→1.9(不再拥挤);近7日 0 值降灰不上鲜艳色;继续上次次要行右侧只留时间(长标题不再被挤没);AppStoreGrid 补 badge 角标,更新中心未读数恢复 |
+| feat | prd-api | /api/mobile/stats 新增按日序列 daily(会话/消息/生图/Token 逐日桶,tzOffsetMinutes 按用户本地时区切日界),供首页七日迷你趋势柱 |
+| feat | prd-api | /api/home/recent-work 新增诚实进度 progress/progressLabel:仅带状态机的实体给进度(当前为缺陷 draft→closed 十态映射),其余类型 null 不画进度条 |
+| feat | prd-admin | 首页近7日卡改健康摘要式 2x2(大数 + 真实七日迷你柱 MiniBars,全 0 显示哑柱不造假);继续上次接 progress 进度条与状态标签;契约 MobileStats.daily/RecentWorkItemDto.progress 同步,getMobileStats 自动携带时区 |
+| fix | prd-admin | 首页七日迷你柱重设计:改 Apple 健身/屏幕时间图表范式(每日全高浅轨道 + 底部填充,轨道走 pillBg token 双主题适配,sqrt 缩放让偏态小值可见);修复真实数据下全 0/尖刺分布渲染成"一排丑点"的问题(用真实数据形态本地复现丑态并对比验证后落码) |
+| fix | prd-admin | 修复继续上次卡 button 嵌套 button 非法 DOM(Codex P2):导出 span 版 AppStorePillLabel,headline 药丸改非交互(整卡本身可点) |
+| docs | prd-admin | 新增 doc/debt.frontend.apple-design-migration.md 债务台账(手机轨剩余/PC 底座轨/刻意取舍),同步 index.yml 与 guide.list |
+| merge | prd-admin | 预合并 main(35 commits)进 apple-design 分支,零冲突,tsc+守卫测试绿 |
+| fix | prd-admin | 主题切换按钮移出 recentWork 门(Codex P2):继续上次为空的新用户不再失去全站唯一明暗开关,空态下单独右对齐渲染 |
+| feat | prd-api | /api/mobile/stats 新增 aiCalls(LLM 请求次数,复用 token 日志查询)与 defects(缺陷提报数)及对应按日桶;sessions/messages 字段保留兼容 |
+| feat | prd-admin | 近7日指标口径切换(用户拍板):会话/消息为桌面 PRD 解读时代死指标(恒 0),首页与米多早报统一换为 AI 调用/生图/缺陷/Token |
+| fix | cds | 分支卡片固定行高(min-h 158→244,按满卡骨架实测)消除卡与卡之间的空洞:短卡撑满、页脚落底,同行齐平 |
+| polish | cds | 端口 chip 单行封顶(折叠阈值 8→3),超出收进「+N」悬浮浮层展开(只展开本卡、不推挤整行) |
+| polish | cds | 浅色模式分支卡片提高对比:inset ring 更实边缘 + 轻投影把白卡从近白页面上抬起来(深色不变) |
+| fix | cds | 修复端口「+N」浮层键盘/触摸不可达(Codex P2):点击=幂等打开不 toggle、onBlur 判 relatedTarget 容器内不关闭、拦截 keydown 冒泡防卡片导航抢占,Tab 可逐个聚焦端口 |
+| fix | cds | 修复端口「+N」浮层鼠标不可达(Codex P2 悬停桥):浮层改 top-full + 透明 pt 覆盖 6px 间隙,鼠标从 +N 移到端口不再跨空隙触发 mouseleave 关闭 |
+| fix | cds | 修复浅色卡片对比规则吞掉状态样式(Codex P2):Tailwind 无 @layer 全扁平,改用 :not() 排除 AI 活跃/选中/忙碌卡,状态阴影/光环照常可见;不再改 border-color,角色卡边框不受影响 |
+| feat | cds | Agent 接入改为跨宿主的项目级安装与页面批准授权 |
+| security | cds | 默认不再复制长期密钥或修改电脑环境变量和终端配置 |
+| feat | cds | 首次建项目使用一次性权限并在创建后自动切换为项目专属授权 |
+| fix | cds | 等待页面批准时遇到短暂网络超时会自动继续轮询 |
+| fix | cds | 共享控制面繁忙时为接入申请保留更充足的安全提交时间 |
+| fix | cds | 私有仓库重新克隆时优先使用项目的 GitHub App 单仓库授权 |
+| fix | cds | 标准 Compose 缺少启动命令时从项目清单自动补全可运行配置 |
+| docs | cds | 更新新版接入、托管交付与验收说明 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0（pnpm 加粗误报已排除），D6 处理 5 条（均为已核实的 cds 安全/可靠性修复，经比对不涉及现有设计文档内容过期，无需追加章节） |
+| feat | llmgw | 新增同页创建 appCaller、团队密钥、四协议 dry-run、requestId 回查和 Agent Skill 的一页式 Quickstart |
+| security | llmgw | 四协议 dry-run 复用服务端租户与 scoped key 身份，在上游调用前结束并写入 tenant/team/key/client/environment 审计日志 |
+| test | prd-api | 新增四协议真实入口零上游合同与 Agent-first Quickstart 数据边界守卫 |
+| fix | llmgw | 在请求日志列表与详情中展示服务端验证的团队归因 |
+| fix | llmgw | 修复 full-http 维护发布重复要求配置权威与模型池迁移门的问题 |
+| fix | llmgw | 修复已审计维护发布在最终账本校验中重复要求配置权威与运行门的问题 |
+| test | llmgw | 增加维护发布配置权威继承的严格边界回归测试 |
+| fix | scripts | 修复 LLM Gateway 协议路由审计在 changelog 碎片汇总后误判报告证据缺失 |
+| test | prd-api | 增加已汇总 CHANGELOG 场景的协议路由审计回归测试 |
+| security | llmgw | 收紧团队日志、组织成员、appCaller 与 service key 的跨团队访问边界 |
+| security | llmgw | Tenant、Team、Membership 停用与用户改密后立即失效关联 key 或旧会话 |
+| security | llmgw | 通配 service key 增加显式风险确认，并禁止团队密钥使用通配 appCaller |
+| fix | llmgw | 为租户和成员创建增加自然键幂等重放与失败补偿，减少重复提交和可捕获异常留下的半成品数据 |
+| fix | llmgw | 并发首次发现 appCaller 时只允许权威团队请求进入上游 |
+| test | llmgw | 新增双租户双团队固定矩阵、用户安全版本、scoped key 生命周期、补偿故障注入与并发归属测试 |
+| ci | llmgw | 为服务端 CI 提供带健康检查的 MongoDB，使租户隔离行为测试不再因缺少依赖失败 |
+| test | prd-api | Mongo ID 约束允许独立网关新集合使用严格字符串序列化，同时继续禁止 ObjectId 生成器 |
+| fix | prd-api | 修复 MD 转 PPT openai-compatible 运行配置误走 CDS Agent 会话导致正式环境整本降级的问题 |
+| fix | prd-api | 将生产默认 claude-sdk/anthropic 运行配置纳入 LLM Gateway 直出路径，CDS Agent 仅保留兼容模式 |
+| polish | prd-api | 强化 MD 转 PPT 逐页生成的风格一致性、用户创意转译和 HTML 片段可运行校验 |
+| polish | prd-admin | 优化 MD 转 PPT 控制台运行路径、HTML 校验和创意约束的首屏状态展示 |
+| fix | prd-admin | 修复 MD 转 PPT 移动端底部导航遮挡输入区和发送按钮的问题 |
+| polish | prd-admin | 将 MD 转 PPT 移动端改为单列精致创作工作台，避免桌面双栏压缩到手机 |
+| feat | prd-api | 新增知识库条目一键生成海报、教程、文案 HTML 并发布到网页托管的接口 |
+| feat | prd-admin | 知识详情页新增一键创作并自动发布到网页托管的操作入口 |
+| polish | prd-api | MD 转 PPT 并行逐页生成新增 page_start 诊断事件，首批页面返回前也能看到任务进展 |
+| polish | prd-admin | MD 转 PPT 移动端和聊天气泡展示正在生成的页码、完成页数和当前阶段 |
+| polish | prd-api | MD 转 PPT 生成提示词接入 GitHub html-ppt 官方技能契约，强化模板化布局、主题 token、data-title 与隐藏 notes 规则 |
+| fix | prd-api | 修复知识库创意发布兜底 HTML 模板的 C# raw string 花括号编译错误 |
+| fix | prd-api | 修复 MD 转 PPT 锚定模式误拒绝官方 html-ppt 的 section slide 根节点导致整本降级的问题 |
+| polish | prd-admin | 优化 MD 转 PPT 生成失败后的重新开始入口，并将预览工具栏风格色点折叠成换风格面板 |
+| fix | prd-api | 平台密钥完整性告警只由权威部署写共享库，CDS 分支预览容器改为只读自检+本地日志，根治「平台 API key 解密失败」告警反复复活 |
+| fix | prd-api | 密文自动重加密同样限定权威部署，防止异钥分支预览重加密共享库存量密文打哑生产 |
+| feat | prd-api | 密钥完整性告警文案带来源标签（host@sha·branch），可溯源是哪个容器/构建触发 |
+| fix | platform | 修复后端与 Gateway 维护发布复用无效静态目录并继承过严权限导致主站 500 的问题 |
+| test | platform | 新增静态入口资源、缺失文件与 umask 077 权限归一化回归测试 |
+| fix | prd-admin | 移除视频创作模式菜单中的禁用图形字符，沿用 SVG 图标 |
+| polish | prd-admin | 将视频创作台改为 Flow-first 渐进式体验，先文学稿拆镜、再逐镜版本迭代、最后按需进入多轨剪辑 |
+| polish | prd-admin | 将视频创作首屏升级为电影画面、镜头草图与创作输入并列的可视化工作台 |
+| fix | prd-admin | 修复最近作品数量不一致、失败任务冒充作品、封面破图和英文状态问题 |
+| feat | prd-api | 新增视频项目聚合、项目 API 及项目与生成任务状态同步 |
+| fix | prd-admin | 移除旧拆镜弹窗及其中不符合规范的图标字符 |
+| feat | prd-admin | 接入正式视频模型池能力并提供可编辑字幕、配音、音乐、裁剪和转场控制 |
+| feat | prd-api | 新增独立视频导出任务、项目参考素材透传及首尾帧控制 |
+| fix | prd-api | 修复音频开关未传入生成任务及分镜合成丢弃音轨的问题 |
+| test | prd-api | 新增 ffmpeg 音视频字幕真实合成测试及 Seedance 多参考图协议测试 |
+| fix | ci | 为后端真实视频合成测试安装 ffmpeg 和 ffprobe 运行依赖 |
+| fix | scripts | 修复协议路由发布审计未读取汇编后 Changelog 导致的假失败 |
+| fix | ci | 修复正式发布干净检出无法读取生产环境配置和静态产物的问题 |
+| fix | ops | 让生产 Compose 显式使用正式环境文件并支持配对发布新静态产物 |
+| fix | ops | 修复非维护发布在成功部署后被空维护基线台账参数误判失败的问题 |
+
+### 2026-07-13
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复移动端预览页 CDS 分支浮标默认遮挡底部导航的问题 |
+| fix | cds | 修复热重启等待页无法自动切回真实页面的问题 |
+| feat | prd-admin | 知识库详情新增发送入口，并支持内容变更触发或定时发送配置 |
+| fix | prd-admin | 修复 React StrictMode 下同步中心永久停留在加载状态的问题 |
+| fix | prd-api | 自动发送增加稳定内容签名去重、连续变更合并和对端回流抑制 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0，D6 5 条（#753/#802 补文档缺口，#701/#755/#803 无自然文档归属跳过） |
+| feat | prd-admin | 知识库上传成功自动跳转到刚上传的文档（多文件跳第一个） |
+| feat | prd-admin | 知识库外层列表页新增同款「+」FAB：新建知识库/写文章/录音转笔记/上传与导入，与库内出一样的结果，动作先弹「归属到哪个知识库」选库 |
+| feat | prd-admin | 转录完成摘要改为 markdown 渲染（限高内滚）+「编辑笔记」直达编辑态；查看/换整理方式/归档操作区上移，不再被长摘要顶出屏幕 |
+| feat | prd-admin | 转录流式输出支持贴底自动滚动（业界 stick-to-bottom 模式）：贴底才自动滚、上滑即打断、浮出「回到底部」恢复跟随 |
+| fix | prd-admin | 知识库外层旧「新建」移动悬浮按钮下线：与统一「+」菜单撞位且内容不一致，内外「+」现点开显示一致 |
+| fix | prd-admin | 上传白名单补齐音频/视频/图片/Office 扩展名，修复「上传录音文件上传不了」；超 20MB 前端预检即时报错 |
+| feat | prd-admin | 上传改 XHR 带实时进度：页面浮动进度卡（文件名+百分比+第 n/共 m）、转录抽屉上传阶段进度条，大文件不再无反馈 |
+| fix | prd-admin | 移动端 markdown 编辑改单栏（原双栏 live 被挤成两条窄柱无法编辑） |
+| feat | prd-admin | 音频播放器声纹化：跨域拿不到真实波形时渲染语音条式声纹（确定性伪随机+进度着色+点按跳播），去掉顶部大图标与文件名块 |
+| feat | prd-admin | 转录笔记/字幕/再加工产物顶部新增「来源文件」chip，一键跳回源音频/源文档 |
+| fix | prd-api | restyle 权限改为按笔记可写判定（协作者可整理别人发起的转录）；latest-run 端点支持 status/requireOutput 过滤，修复一次整理失败后面板永远打不开 |
+| fix | prd-admin | 双皮肤棘轮回绿：本轮新增的 10 处 rgba 白透明硬编码全部换 token（--bg-elevated/--bg-input/--bg-tertiary） |
+| feat | prd-admin | 转录完成结果区双页签「整理结果 / 转录原文」（原文来自 run.transcriptText，老任务给指引）；restyle 失败提示可见（不再静默）；抽屉底部留白修复 |
+| fix | prd-api | 修复 PrdAgent.Api.Tests 因处理器新构造参数导致的编译失败 |
+| fix | prd-admin | 外层「+」选库弹窗按当前 tab 作用域列库：团队 tab 列可写团队库（原只列个人库，团队 tab 新增流程放不进团队库）|
+| fix | prd-api | 转录复用在途 run 时纳入整理方式匹配：风格不同则新建，修复"后台跑默认转录时点会议纪要复用了默认 run 导致出错风格" |
+| fix | llmgw | 修复已审计 full-http 维护发布跳过运行时 Gate 后被台账误判失败的问题 |
+| test | prd-api | 补充维护发布台账严格放行与普通发布拒绝跳过 Gate 的回归测试 |
+| fix | llmgw | 修复已审计 full-http 维护发布仍重复执行首次切流 runtime gate 的问题，继续保留 serving 探针和显式 canary |
+| fix | llmgw | 修复 GW Native 协议验收请求缺少来源上下文导致 403，并增加头部与请求体一致性自测 |
+| fix | prd-api | OpenRouter App 归因名称统一增加 G- 前缀 |
+| feat | prd-admin | 重构视频创作详情为素材、播放器、镜头控制器和多轨时间线四区制作台 |
+| feat | prd-api | 新增镜头版本历史、批量渲染与可重试的完整 MP4 合成导出链路 |
+| fix | prd-admin | 视频创作接入鉴权 SSE 进度并清理存量 Emoji 与硬编码 OpenRouter 文案 |
+| test | prd-api | 增加 ffmpeg 导出画幅归一和时间线顺序回归测试 |
+
+### 2026-07-12
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 知识库「录音转笔记」支持浏览器现场录音（计时 + 电平波形 + 暂停/继续），录完自动进转录摘要链路；无权限或已有文件时保留上传音频兜底 |
+| fix | prd-admin | 知识库右下角新增菜单由弧形调色盘改为竖排列表，修复移动端动作项互相遮挡；上传文件/解析短视频/网页托管导入归入「上传与导入」分组，点分组展开、再点收起 |
+| docs | prd-api | 知识库本页教程第 7 步文案同步新版新增菜单交互 |
+| fix | prd-api | 修复静音录音转录时模型对话式回复（"请播放音频我会逐字转写"）被存成笔记：转写提示词加 NO_SPEECH 哨兵 + 拒答模式守卫，友好报"未检测到有效语音" |
+| feat | prd-api | 录音转笔记支持整理方式：智能摘要/会议纪要/访谈整理/待办清单/自定义（SSOT 注册表 + transcribe-styles 端点），完成后可换方式重新整理（restyle 免重跑 ASR，原地更新摘要节走版本快照） |
+| feat | prd-admin | 转录完成面板新增「换个整理方式」：预设 chips + 补充背景（如参会人）+ 自定义要求，流式重生成摘要 |
+| feat | prd-admin | 录音数据保险箱：分片实时落 IndexedDB，断网/崩溃/忘关不丢数据，进页提示恢复并转录；上传失败可一键重试；静音录音完成前拦截确认 |
+| test | prd-api | 新增 TranscribeNoteTextTests：静音判定/摘要节替换/全文反解/风格提示词组装 |
+| feat | prd-admin | 音频页新增歌词滚轮跟读播放器：播放时当前句居中高亮滚动、点句跳播；无时间戳退化为静态全文；修复录音 webm 被当视频渲染 |
+| feat | prd-admin | 音频结果区统一（录音/上传同页）：未转录给整理方式快捷按钮，已转录给转录笔记/字幕跳转 chips + 换个整理方式（免重跑转录） |
+| feat | prd-admin | 转录完成面板支持归档到文件夹（复用移动接口，默认跟随源音频） |
+| fix | prd-admin | VOC 行为洞察移动端控制条收纳：视图切换/站点地图/AI 分析合并为一条横滚条，热力图卡头单行化、图例手机端隐藏 |
+| fix | prd-admin | 更新中心移动端控制条堆叠治理（5 条压到 2 条内），去卡中卡 chrome |
+| fix | prd-admin | 海鲜市场移动端工具条溢出与标签换行治理：密度切换手机隐藏、分类/标签横滚 |
+| fix | prd-admin | 周报主视图移动端筛选/视图切换合并为单条横滚条 |
+| fix | prd-admin | 百宝箱移动端搜索/段控/权属 chips 三条竖堆合并为一条横滚条 |
+| fix | prd-admin | 我的分享移动端三层 padding、chips 换行、卡中卡框线治理 |
+| fix | prd-admin | 页面教程不再反复自动弹出：每条教程每台设备只自动开讲一次（localStorage 持久化），更新教程抽屉自动展开同理 |
+| rule | prd-admin | mobile-first-density 规则新增控制条收纳决策表；onboarding-tips 规则同步教程自动开讲新机制；债务台账补 2026-07-12 全站移动端混乱度审计结果 |
+| fix | prd-admin | VOC 动态流手机端定高网格致三块统计互相重叠、筛选三行堆叠：改自然滚动 + 单条横滚筛选 |
+| fix | prd-admin | 周报「团队」tab 手机端被 280px 周导航侧栏挤成竖条：改上下堆叠，周树默认收起可展开 |
+| fix | prd-admin | 二级 tab 定宽双栏专项：技能内容浏览器/周报详情右栏/团队管理三处 280px 级侧栏手机端改上下堆叠 |
+| fix | prd-admin | VOC 动态流模块筛选 chips 在横滚条内被压缩致文字竖排：补 shrink-0 + whitespace-nowrap |
+| fix | prd-admin | 教程只自动弹一次后，没走完的教程不再永久压制该页更新教程/提醒（Codex P2） |
+| fix | prd-admin | 修复全站返回上一页异常：手机右滑/鼠标返回不再落到奇怪的导航页，新增 useSmartBack 统一智能返回 |
+| fix | prd-admin | 移动端底部 TabBar 同级 tab 互切改为 replace，不再把导航页逐条压进浏览器历史 |
+| fix | prd-admin | 模型管理/设置/开放平台/海鲜市场等页 tab 与筛选切换改为 replace，返回直接离开本页 |
+| fix | prd-admin | 演讲创建/评审提交成功后跳详情改为 replace，返回不再回到空表单 |
+| fix | prd-admin | 视觉/文学/工作流/评审/PM/知识库/渠道等十余处左上角返回按钮统一走智能返回（有历史弹栈，深链直达走兜底） |
+| fix | prd-admin | LLM 日志/模型应用组页站内跳转由整页刷新改为 SPA navigate，不再重置路由历史 |
+| fix | prd-admin | 新增 useHistoryBackedView：全屏级视图切换写入浏览器历史，右滑/浏览器返回先关详情回列表而非跳出页面 |
+| fix | prd-admin | 百宝箱/知识库/周报/涌现/技能/缺陷/工作流执行 七处「列表进详情」接入历史同步，详情态可刷新可分享 |
+| fix | prd-admin | 缺陷与知识库深链参数不再消费后抹掉，统一规范化为详情态 SSOT |
+| rule | platform | 固化生产发布表面健康、原子切换、命令兼容与证据追溯规则 |
+| test | prd-api | 增加生产发布安全规则与 Agent 触发入口防回归守卫 |
+| rule | skill | 串联热修、灰度、冒烟、预览、真人验收与交接技能的发布安全职责边界 |
+
+### 2026-07-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 修复智识殿堂文件树对含 YAML frontmatter 的文档显示为「---」而非标题 (#701) |
+| fix | cds | 修复 env 扫描漏识别 ${VAR:?} / ${VAR:=} / ${VAR:+} POSIX 语法导致必填变量被遗漏 (#753) |
+| fix | cds | 修复 cdscli branch deploy 触发流被截断时误报 FAIL timeout_5s (#755) |
+| security | prd-api | 修复网页复制进团队时绕过受限分组写权限校验 (#802) |
+| security | cds | 修复发布目标列表泄露所有项目的 SSH 主机 (#803) |
+| security | cds | 修复发布目标创建接受客户端 id 可跨项目覆盖他人目标 (#804) |
+| fix | cds | 修复更新已启用资源公网访问策略时重新分配端口导致连接中断 (#805) |
+| security | cds | 修复同一发布目标并发部署未串行化 (#806) |
+| security | cds | 修复 SQL 初始化按 id 字母序选错库、忽略部署依赖 (#807) |
+| fix | cds | 修复验收归档证据连线检查误拒「同上第N条」复用单元 (#809) |
+| docs | cds | 新增 GitHub App 接入与部署 runbook (#854) |
+| fix | cds | 修复 .cds.env 中未加单引号的多行 PEM 私钥导致 source 报错 (#856) |
+
+
 ### 2026-07-13
 
 | 类型 | 模块 | 描述 |
