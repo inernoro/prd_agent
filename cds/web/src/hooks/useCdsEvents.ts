@@ -70,6 +70,8 @@ export interface CdsEventEnvelope<T = unknown> {
 /** 与后端 SelfStatusSnapshot 对齐(松散类型,允许字段渐进式扩展) */
 export interface SelfStatusSnapshot {
   currentBranch: string;
+  detachedHead?: boolean;
+  recommendedBranch?: string;
   headSha: string;
   headIso?: string;
   webBuildSha?: string;

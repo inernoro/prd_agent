@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
 import {
   checkoutSelfUpdateTarget,
+  recommendSelfUpdateTargetBranch,
+  resolveRemoteDefaultBranch,
   resolveSelfUpdateTargetBranch,
   SELF_UPDATE_RUNTIME_BRANCH_PREFIX,
 } from '../../src/services/self-update-checkout.js';
@@ -77,5 +79,26 @@ describe('resolveSelfUpdateTargetBranch', () => {
 
   it('keeps ordinary branches unchanged', () => {
     expect(resolveSelfUpdateTargetBranch('main')).toBe('main');
+  });
+
+  it('does not treat detached HEAD as a branch', () => {
+    expect(resolveSelfUpdateTargetBranch('HEAD')).toBe('');
+    expect(resolveSelfUpdateTargetBranch('  HEAD\n')).toBe('');
+  });
+});
+
+describe('self-update branch recommendation', () => {
+  it('resolves the remote default branch from common symbolic-ref shapes', () => {
+    expect(resolveRemoteDefaultBranch('refs/remotes/origin/main')).toBe('main');
+    expect(resolveRemoteDefaultBranch('origin/release')).toBe('release');
+    expect(resolveRemoteDefaultBranch('origin')).toBe('');
+  });
+
+  it('prefers the remote default when HEAD is detached', () => {
+    expect(recommendSelfUpdateTargetBranch('HEAD', ['release', 'main'], 'origin/release')).toBe('release');
+  });
+
+  it('falls back to main instead of exposing HEAD', () => {
+    expect(recommendSelfUpdateTargetBranch('HEAD', ['feature/test', 'main'])).toBe('main');
   });
 });

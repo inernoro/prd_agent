@@ -4275,6 +4275,7 @@ describe('Branch Routes', () => {
           `origin/main${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}feat: latest main commit`,
           `origin/feat-x${SEP}2026-05-03T10:00:00+00:00${SEP}bbb2222${SEP}wip: feat-x progress`,
           `origin/HEAD -> origin/main${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}should be filtered`,
+          `origin${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}symbolic ref${SEP}refs/remotes/origin/main`,
           `origin/old-branch${SEP}2026-04-01T00:00:00+00:00${SEP}ccc3333${SEP}old: legacy`,
         ].join('\n'),
         stderr: '',
@@ -4307,6 +4308,8 @@ describe('Branch Routes', () => {
         ok?: boolean;
         degraded?: boolean;
         current: string;
+        detached: boolean;
+        recommended: string;
         commitHash: string;
         currentCommitterDate: string;
         branches: string[];
@@ -4327,6 +4330,9 @@ describe('Branch Routes', () => {
       const names = body.branchDetails.map((b) => b.name);
       expect(names).not.toContain('HEAD -> main');
       expect(names).not.toContain('HEAD');
+      expect(names).not.toContain('origin');
+      expect(body.detached).toBe(false);
+      expect(body.recommended).toBe('main');
 
       // 分支按 committerDate 倒序(git for-each-ref --sort=-committerdate 已排,前端不再排)
       // 第一行 main,第二行 feat-x,第三行被 HEAD 过滤,第四行 old-branch
@@ -4349,6 +4355,40 @@ describe('Branch Routes', () => {
 
       // 旧字段 branches: string[] 也按时间倒排
       expect(body.branches).toEqual(['main', 'feat-x', 'old-branch']);
+    });
+
+    it('游离 HEAD 不作为目标分支并推荐 origin/HEAD 指向的分支', async () => {
+      mock.clearPatterns();
+      const SEP = '\x1f';
+      mock.addResponsePattern(/^git for-each-ref/, () => ({
+        stdout: [
+          `origin/main${SEP}2026-07-19T00:00:00+00:00${SEP}abc1234${SEP}latest main${SEP}`,
+          `origin${SEP}2026-07-19T00:00:00+00:00${SEP}abc1234${SEP}symbolic ref${SEP}refs/remotes/origin/main`,
+        ].join('\n'),
+        stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({
+        stdout: 'HEAD', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git symbolic-ref --quiet --short refs\/remotes\/origin\/HEAD/, () => ({
+        stdout: 'origin/main', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git rev-parse --short HEAD/, () => ({ stdout: 'abc1234', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git log -1 --format=%cI HEAD/, () => ({
+        stdout: '2026-07-19T00:00:00+00:00', stderr: '', exitCode: 0,
+      }));
+
+      await triggerCacheRefresh();
+
+      const res = await request(server, 'GET', '/api/self-branches');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        current: '',
+        detached: true,
+        recommended: 'main',
+        branches: ['main'],
+      });
     });
 
     it('subject 含空格和特殊字符仍能正确解析(0x1F 分隔不被空格破坏)', async () => {

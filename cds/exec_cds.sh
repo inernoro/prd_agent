@@ -1552,9 +1552,27 @@ read_port() {
 }
 
 cds_is_running() {
-  [ -f "$PID_FILE" ] || return 1
-  local pid; pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  local pid=""
+  if [ -f "$PID_FILE" ]; then
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  # launchd/systemd 常用 `exec_cds.sh fg` 托管 CDS。前台模式 exec node 后
+  # 不会写 pid 文件，服务明明监听着却被 status 误报 stopped；restart 还会
+  # 再起一个后台进程，与守护进程自动拉起竞争。PID 文件失效时以 master
+  # 端口监听者兜底，并回填 pid 文件，让后续 stop/restart 走同一个进程。
+  local mp existing
+  mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
+  existing="$(cds_find_pid_on_port "$mp" || true)"
+  if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
+    mkdir -p "$STATE_DIR"
+    echo "$existing" > "$PID_FILE"
+    return 0
+  fi
+  return 1
 }
 
 cds_find_pid_on_port() {

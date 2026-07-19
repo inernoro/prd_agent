@@ -7,6 +7,8 @@ export interface GitAuthEnvInput {
   config?: CdsConfig;
   stateService: StateService;
   githubApp?: GitHubAppClient | null;
+  /** Explicit current CDS user for pre-project operations. */
+  deviceAuthUserId?: string;
 }
 
 export interface GitAuthEnvResult {
@@ -40,7 +42,7 @@ function projectForRepoRoot(input: GitAuthEnvInput) {
 /**
  * Build a git env that lets non-interactive fetch/ls-remote access private
  * GitHub repos. Prefer the project-linked GitHub App installation token, and
- * fall back to the one-slot Device Flow token used by the clone UI.
+ * fall back to the Device Flow token owned by this project/current user.
  */
 export async function resolveGitAuthEnv(input: GitAuthEnvInput): Promise<GitAuthEnvResult> {
   const project = projectForRepoRoot(input);
@@ -53,7 +55,8 @@ export async function resolveGitAuthEnv(input: GitAuthEnvInput): Promise<GitAuth
     };
   }
 
-  const deviceToken = input.stateService.getGithubDeviceAuth()?.token;
+  const credentialUserId = input.deviceAuthUserId || project?.githubCredentialUserId;
+  const deviceToken = input.stateService.getGithubDeviceAuth(credentialUserId)?.token;
   if (deviceToken) {
     return {
       env: gitExtraHeaderEnv(deviceToken),

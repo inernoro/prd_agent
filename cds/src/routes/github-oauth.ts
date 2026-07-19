@@ -37,7 +37,7 @@
  *     most recently updated).
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import type { StateService } from '../services/state.js';
 import type { GitHubOAuthClient } from '../services/github-oauth-client.js';
 import { GitHubOAuthError } from '../services/github-oauth-client.js';
@@ -46,6 +46,15 @@ export interface GitHubOAuthRouterDeps {
   stateService: StateService;
   /** Set when CDS_GITHUB_CLIENT_ID is configured. Null disables the feature. */
   githubClient: GitHubOAuthClient | null;
+}
+
+interface GitHubAuthedRequest extends Request {
+  cdsUser?: { id?: string };
+}
+
+function requestUserId(req: GitHubAuthedRequest): string | undefined {
+  const value = req.cdsUser?.id;
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
@@ -78,7 +87,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     }
   });
 
-  router.post('/github/oauth/device-poll', async (req, res) => {
+  router.post('/github/oauth/device-poll', async (req: GitHubAuthedRequest, res) => {
     const client = requireClient(res);
     if (!client) return;
     const { deviceCode } = (req.body || {}) as { deviceCode?: string };
@@ -111,7 +120,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
           // on github.com/settings/applications.
           scopes: ['repo', 'read:user'],
         };
-        await stateService.setGithubDeviceAuth(snapshot);
+        await stateService.setGithubDeviceAuth(snapshot, requestUserId(req));
         res.json({
           status: 'ready',
           login: snapshot.login,
@@ -137,7 +146,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
           connectedAt: new Date().toISOString(),
           scopes: ['repo', 'read:user'],
         };
-        await stateService.setGithubDeviceAuth(snapshot);
+        await stateService.setGithubDeviceAuth(snapshot, requestUserId(req));
         res.json({
           status: 'ready',
           login: '(unknown)',
@@ -169,9 +178,9 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     }
   });
 
-  router.get('/github/oauth/status', (_req, res) => {
+  router.get('/github/oauth/status', (req: GitHubAuthedRequest, res) => {
     const configured = !!githubClient;
-    const auth = stateService.getGithubDeviceAuth();
+    const auth = stateService.getGithubDeviceAuth(requestUserId(req));
     if (!auth) {
       res.json({ connected: false, configured });
       return;
@@ -187,9 +196,9 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     });
   });
 
-  router.delete('/github/oauth', async (_req, res) => {
+  router.delete('/github/oauth', async (req: GitHubAuthedRequest, res) => {
     try {
-      await stateService.setGithubDeviceAuth(null);
+      await stateService.setGithubDeviceAuth(null, requestUserId(req));
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({
@@ -199,10 +208,11 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     }
   });
 
-  router.get('/github/repos', async (req, res) => {
+  router.get('/github/repos', async (req: GitHubAuthedRequest, res) => {
     const client = requireClient(res);
     if (!client) return;
-    const auth = stateService.getGithubDeviceAuth();
+    const userId = requestUserId(req);
+    const auth = stateService.getGithubDeviceAuth(userId);
     if (!auth) {
       res.status(401).json({
         error: 'not_connected',
@@ -227,7 +237,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
         if (msg.includes('401') || msg.includes('403')) {
           // Best-effort clear — if the state save fails we still
           // want to tell the user the token is dead.
-          try { await stateService.setGithubDeviceAuth(null); } catch { /* ignore */ }
+          try { await stateService.setGithubDeviceAuth(null, userId); } catch { /* ignore */ }
           res.status(401).json({
             error: 'token_revoked',
             message: 'GitHub token 已失效，已清除本地记录，请重新连接。',

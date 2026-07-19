@@ -326,7 +326,7 @@ function GitHubDeviceFlowPanel({ onToast }: { onToast: (message: string) => void
   return (
     <Section
       title="GitHub Device Flow"
-      description="系统级 GitHub 登录，用于列出账号仓库和克隆私有仓库。不会替代 GitHub App webhook。"
+      description="当前 CDS 用户的 GitHub 登录，用于列出自己的仓库和克隆私有仓库；不同用户的授权彼此隔离。不会替代 GitHub App webhook。"
     >
       {state.status === 'loading' ? <LoadingBlock label="加载 Device Flow 状态" /> : null}
       {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
