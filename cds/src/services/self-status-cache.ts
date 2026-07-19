@@ -43,6 +43,8 @@ export type RefreshTrigger =
 export interface SelfStatusSnapshot {
   /** 自检全景(原 computeSelfStatusPayload 输出,字段兼容) */
   currentBranch: string;
+  detachedHead: boolean;
+  recommendedBranch: string;
   headSha: string;
   headIso?: string;
   webBuildSha?: string;
@@ -126,6 +128,8 @@ interface SelfUpdateStateCommit {
 
 const EMPTY_SNAPSHOT: SelfStatusSnapshot = {
   currentBranch: '',
+  detachedHead: false,
+  recommendedBranch: 'main',
   headSha: '',
   headIso: '',
   webBuildSha: '',

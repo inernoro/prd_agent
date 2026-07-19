@@ -37,6 +37,7 @@ import {
 
 interface SelfStatusLite {
   currentBranch?: string;
+  recommendedBranch?: string;
   headSha?: string;
   remoteAheadCount?: number;
   remoteAheadSubjects?: Array<{ sha: string; subject: string; date: string }>;
@@ -316,7 +317,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch: lastSuccessRef.current?.currentBranch || 'main' }),
+        body: JSON.stringify({
+          branch: lastSuccessRef.current?.currentBranch
+            || lastSuccessRef.current?.recommendedBranch
+            || 'main',
+        }),
         signal: ctrl.signal,
       });
       window.clearTimeout(abortTimer);

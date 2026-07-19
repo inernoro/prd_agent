@@ -75,6 +75,11 @@ const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
 // Valid preset IDs derive from the infra-catalog SSOT (services/infra-catalog.ts).
 const INFRA_PRESETS = new Set(infraCatalogIds());
 
+function requestUserId(req: unknown): string | undefined {
+  const value = (req as { cdsUser?: { id?: unknown } }).cdsUser?.id;
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
 export interface ProjectsRouterDeps {
   stateService: StateService;
   /** Shell for docker network create/inspect/rm. Injectable for tests. */
@@ -1900,7 +1905,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 私有仓库:复用正式 clone 路径的 Device Flow token 注入(_injectGithubTokenIfPossible),
     // 否则从 GitHub 选择器选了私有库的用户在创建项目前根本跑不了试运行。maskTok 用于把日志里
     // 可能出现的 token 脱敏(git 自身一般会脱敏,这里是纵深防御)。
-    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const deviceToken = stateService.getGithubDeviceAuth(requestUserId(req))?.token;
     const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
     const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
     const token = randomBytes(5).toString('hex');
@@ -2193,7 +2198,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (gitRef && !isSafeGitRef(gitRef)) { res.status(400).json({ error: `分支名不合法: ${gitRef}` }); return; }
     const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
     // 私有仓库:同试运行,复用正式 clone 的 Device Flow token 注入(_injectGithubTokenIfPossible)。
-    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const deviceToken = stateService.getGithubDeviceAuth(requestUserId(req))?.token;
     const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
     const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
     const token = randomBytes(5).toString('hex');
@@ -2371,6 +2376,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // (injected at clone time via _injectGithubTokenIfPossible).
     const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
     const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
+    const githubCredentialUserId = requestUserId(req);
+    const hasCurrentUserGithubCredential = Boolean(
+      githubCredentialUserId && stateService.getGithubDeviceAuth(githubCredentialUserId),
+    );
     const repoSlugFromGitUrl = repoNameFromGitRef(gitRepoUrl);
 
     // Track whether the slug was explicitly supplied by the caller.
@@ -2561,6 +2570,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description,
       kind: isSandbox ? 'manual' : 'git',
       gitRepoUrl: gitRepoUrl || undefined,
+      ...(gitRepoUrl && hasCurrentUserGithubCredential
+        ? { githubCredentialUserId }
+        : {}),
       gitDefaultBranch: gitDefaultBranch || undefined,
       ...(githubRepoFullName && !githubRepoAlreadyLinked
         ? {
@@ -3347,11 +3359,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // userinfo before logging so pasted credentials don't leak into
     // the SSE log or state.json.
     const displayUrl = _redactUrlUserInfo(gitUrl);
+    const cloneCredentialUserId = project.githubCredentialUserId || requestUserId(req);
+    if (
+      !project.githubCredentialUserId
+      && cloneCredentialUserId
+      && stateService.getGithubDeviceAuth(cloneCredentialUserId)
+    ) {
+      stateService.updateProject(project.id, { githubCredentialUserId: cloneCredentialUserId });
+      project.githubCredentialUserId = cloneCredentialUserId;
+    }
     const gitAuth = await resolveGitAuthEnv({
       repoRoot: repoPath,
       config,
       stateService,
       githubApp: deps.githubApp,
+      deviceAuthUserId: cloneCredentialUserId,
     });
 
     // UF-01 preflight: when the URL points at github.com but we have

@@ -129,6 +129,7 @@
 - [团队动态与用户体验之声（VOC） · 设计](./design.team-activity.voc.md) `design.team-activity.voc`
 - [Remotion 视频质量差距分析 · 设计](./design.video-agent.remotion-gap.md) `design.video-agent.remotion-gap`
 - [视频场景代码生成 · 设计](./design.video-agent.scene-codegen.md) `design.video-agent.scene-codegen`
+- [视觉创作画布与对话输入原理 · 设计](./design.visual-agent.canvas-composer.md) `design.visual-agent.canvas-composer`
 - [内联图片聊天分析 · 设计](./design.visual-agent.inline-image-chat.md) `design.visual-agent.inline-image-chat`
 - [Visual Agent (视觉创作) · 设计](./design.visual-agent.md) `design.visual-agent`
 - [Visual Agent 多图组合生成设计 · 设计](./design.visual-agent.multi-image-compose.md) `design.visual-agent.multi-image-compose`
@@ -256,6 +257,7 @@
 - [Report Agent 采集优先升级 · 计划](./plan.report-agent.v3.md) `plan.report-agent.v3`
 - [海鲜市场开放接口产品化 · 计划](./plan.skill.marketplace-open-api-next.md) `plan.skill.marketplace-open-api-next`
 - [视觉创作配图标记人工控制 · 计划](./plan.visual-agent.manual-image-marking.md) `plan.visual-agent.manual-image-marking`
+- [视觉创作优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
 ### 六、技术债务台账
 

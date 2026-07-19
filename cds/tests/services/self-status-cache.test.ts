@@ -13,6 +13,8 @@ import { cdsEventsBus, type CdsEventEnvelope } from '../../src/services/cds-even
 
 const baseSnapshot = {
   currentBranch: 'main',
+  detachedHead: false,
+  recommendedBranch: 'main',
   headSha: 'abc1234',
   webBuildSha: '',
   runningPid: 12345,

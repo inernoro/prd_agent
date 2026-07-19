@@ -216,6 +216,60 @@ public sealed class GatewayConsoleTenantAccessTests
     }
 
     [Fact]
+    public async Task HardExitRepairer_DoesNotClaimProvisioningWhileLiveRequestRenewsLease()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
+        var operations = scope.Database.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
+        await tenants.InsertOneAsync(new LlmGwTenant
+        {
+            Id = "tenant-live",
+            Name = "Live",
+            OwnerAuthorityInitialized = true,
+            ActiveOwnerMembershipIds = ["owner-live"],
+            OwnerFenceGeneration = 1,
+        });
+        await operations.InsertOneAsync(new GatewayRecoveryOperation
+        {
+            Id = "op-live",
+            Kind = GatewayRecoveryKinds.TenantCreate,
+            TenantId = "tenant-live",
+            MembershipId = "owner-live",
+            LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+
+        await using (await GatewayRecoveryOperations.StartHeartbeatAsync(
+                         operations,
+                         "op-live",
+                         TimeSpan.FromMilliseconds(20)))
+        {
+            await operations.UpdateOneAsync(
+                x => x.Id == "op-live",
+                Builders<GatewayRecoveryOperation>.Update.Set(x => x.LeaseExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+            GatewayRecoveryOperation? active = null;
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                active = await operations.Find(x => x.Id == "op-live").SingleAsync();
+                if (active.LeaseExpiresAt > DateTime.UtcNow.AddMinutes(1)) break;
+                await Task.Delay(20);
+            }
+            (await GatewayRecoveryOperations.RepairExpiredAsync(scope.Database)).ShouldBe(0);
+            active.ShouldNotBeNull();
+            active.Status.ShouldBe("pending");
+            active.LeaseExpiresAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(1));
+            (await tenants.CountDocumentsAsync(x => x.Id == "tenant-live")).ShouldBe(1);
+        }
+
+        await operations.UpdateOneAsync(
+            x => x.Id == "op-live",
+            Builders<GatewayRecoveryOperation>.Update.Set(x => x.LeaseExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+        (await GatewayRecoveryOperations.RepairExpiredAsync(scope.Database)).ShouldBe(1);
+        (await tenants.CountDocumentsAsync(x => x.Id == "tenant-live")).ShouldBe(0);
+    }
+
+    [Fact]
     public async Task OwnerAuthority_ConcurrentRemovalsAtomicallyPreserveOneOwner()
     {
         var database = await TryCreateDatabaseAsync();

@@ -65,10 +65,13 @@ export default function VisualAgentFullscreenPage() {
       </button>
       )}
 
-      {/* 编辑器(全屏画布,无页头行)的本页教程入口:放右上角,与左上角返回按钮对称,属该页固定 chrome。
-          列表页(VisualAgentWorkspaceListPage)自己已在 HeroSection 内嵌入口,故此处仅编辑器渲染避免重复。 */}
+      {/* 编辑器(全屏画布,无页头行)的本页教程入口:与左上角返回按钮对称,属该页固定 chrome。
+          列表页(VisualAgentWorkspaceListPage)自己已在 HeroSection 内嵌入口,故此处仅编辑器渲染避免重复。
+          桌面端右侧有 420px 浮动对话面板(right-3 top-3 z-30),pill 若贴 right-5 会压住面板
+          右上角控件(用户反馈的右上角遮挡)——桌面端左移到面板左侧留 13px 间隙,移动端面板
+          全屏覆盖时本就盖住 chrome,维持 right-5。 */}
       {isEditor && !hideFloatingChrome && (
-        <div className="fixed top-5 right-5 z-50">
+        <div className="fixed top-5 right-5 md:right-[436px] z-50">
           <TipsEntryButton compact />
         </div>
       )}

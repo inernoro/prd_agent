@@ -1633,109 +1633,39 @@ public class OpenAIImageClient : IImageGenerationClient
                 return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
             }
 
-            // 解析响应
-            var visionResp = JsonSerializer.Deserialize<Core.Models.MultiImage.VisionResponse>(respBody, new JsonSerializerOptions
+            // 解析响应（VisionChatCompletionImageExtractor：兼容三种形态并按优先级提取
+            //   1. message.images[]（OpenRouter / LiteLLM 风格，gemini 系经 OpenAI 兼容网关常见）
+            //   2. content 纯字符串（data URL / http URL / Markdown 图片 / 内嵌 JSON，旧行为回归）
+            //   3. content 多模态数组（[{type:image_url,...},{type:text,...}]，旧实现反序列化为 string 得 null 的根因）
+            // 仅拓宽解析，不做任何模型/路由二次 resolve（compute-then-send）。）
+            if (!VisionChatCompletionImageExtractor.TryExtractImages(
+                    respBody, out var extractedImages, out var visionTextFallback, out var extractDiagnostics))
             {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (visionResp?.Choices == null || visionResp.Choices.Count == 0)
-            {
+                var textPreview = string.IsNullOrWhiteSpace(visionTextFallback)
+                    ? null
+                    : (visionTextFallback.Length > 100 ? visionTextFallback[..100] + "..." : visionTextFallback);
+                _logger.LogWarning("[Vision API] 响应未解析出图片: {Diagnostics}; Text: {Text}",
+                    extractDiagnostics,
+                    string.IsNullOrWhiteSpace(visionTextFallback)
+                        ? "(无)"
+                        : (visionTextFallback.Length > 200 ? visionTextFallback[..200] + "..." : visionTextFallback));
                 // Gateway 已处理日志
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无 choices）");
+                var errMsg = $"Vision API 响应格式不支持（未找到图片数据）: {extractDiagnostics}" +
+                             (textPreview == null ? string.Empty : $"; 文本内容: {textPreview}");
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
             }
 
-            var responseContent = visionResp.Choices[0].Message?.Content;
-            if (string.IsNullOrWhiteSpace(responseContent))
-            {
-                // Gateway 已处理日志
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "Vision API 响应无效（无内容）");
-            }
-
-            // 解析响应中的图片（可能是 base64、URL 或 Markdown 格式）
             var images = new List<ImageGenImage>();
-            if (responseContent.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            for (var imgIdx = 0; imgIdx < extractedImages.Count; imgIdx++)
             {
-                // Base64 格式
-                images.Add(new ImageGenImage
+                var extracted = extractedImages[imgIdx];
+                if (extracted.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                 {
-                    Index = 0,
-                    Base64 = responseContent
-                });
-            }
-            else if (responseContent.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            {
-                // URL 格式
-                images.Add(new ImageGenImage
-                {
-                    Index = 0,
-                    Url = responseContent.Trim()
-                });
-            }
-            else if (TryExtractMarkdownImageUrl(responseContent, out var mdUrl))
-            {
-                // Markdown 图片格式: ![alt](url) 或 ![alt](data:image/...;base64,...)
-                _logger.LogInformation("[Vision API] 解析到 Markdown 图片格式，提取内容: {Url}",
-                    mdUrl.Length > 100 ? mdUrl[..100] + "..." : mdUrl);
-
-                // 检查是否为 data URL (base64)
-                if (mdUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
-                {
-                    images.Add(new ImageGenImage
-                    {
-                        Index = 0,
-                        Base64 = mdUrl
-                    });
+                    images.Add(new ImageGenImage { Index = imgIdx, Base64 = extracted });
                 }
                 else
                 {
-                    images.Add(new ImageGenImage
-                    {
-                        Index = 0,
-                        Url = mdUrl
-                    });
-                }
-            }
-            else
-            {
-                // 尝试从 JSON 响应中提取图片
-                try
-                {
-                    var jsonNode = JsonNode.Parse(responseContent);
-                    if (jsonNode?["url"] != null)
-                    {
-                        images.Add(new ImageGenImage
-                        {
-                            Index = 0,
-                            Url = jsonNode["url"]?.GetValue<string>()
-                        });
-                    }
-                    else if (jsonNode?["b64_json"] != null)
-                    {
-                        images.Add(new ImageGenImage
-                        {
-                            Index = 0,
-                            Base64 = $"data:image/png;base64,{jsonNode["b64_json"]?.GetValue<string>()}"
-                        });
-                    }
-                    else
-                    {
-                        // 响应可能是文本描述而非图片
-                        var errMsg = $"Vision API 响应不包含图片数据: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
-                        _logger.LogWarning("[Vision API] 响应不包含图片数据，可能是文本响应: {Content}",
-                            responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
-                        // Gateway 已处理日志
-                        return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
-                    }
-                }
-                catch
-                {
-                    // 非 JSON 格式，可能是纯文本响应
-                    var errMsg = $"Vision API 响应格式不支持: {(responseContent.Length > 100 ? responseContent[..100] + "..." : responseContent)}";
-                    _logger.LogWarning("[Vision API] 无法解析响应为图片: {Content}",
-                        responseContent.Length > 200 ? responseContent[..200] + "..." : responseContent);
-                    // Gateway 已处理日志
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
+                    images.Add(new ImageGenImage { Index = imgIdx, Url = extracted.Trim() });
                 }
             }
 
@@ -1863,26 +1793,7 @@ public class OpenAIImageClient : IImageGenerationClient
         return content;
     }
 
-    /// <summary>
-    /// 尝试从 Markdown 图片格式中提取 URL 或 Data URL
-    /// 支持格式: ![alt](url) 或 ![](url) 或 ![alt](data:image/...;base64,...)
-    /// </summary>
-    private static bool TryExtractMarkdownImageUrl(string content, out string url)
-    {
-        url = string.Empty;
-        if (string.IsNullOrWhiteSpace(content)) return false;
-
-        // 匹配 Markdown 图片格式: ![任意文本](URL 或 DataURL)
-        // 支持 http/https URL 和 data:image/... base64 格式
-        var match = Regex.Match(content, @"!\[.*?\]\(((?:https?://[^\s\)]+)|(?:data:image/[^\s\)]+))\)");
-        if (match.Success && match.Groups.Count > 1)
-        {
-            url = match.Groups[1].Value.Trim();
-            return !string.IsNullOrEmpty(url);
-        }
-
-        return false;
-    }
+    // TryExtractMarkdownImageUrl 已迁移到 VisionChatCompletionImageExtractor（Vision 响应解析统一入口）
 
     // ResolveApiConfigForModelAsync 已移除 - 现在通过 Gateway 统一解析模型
 

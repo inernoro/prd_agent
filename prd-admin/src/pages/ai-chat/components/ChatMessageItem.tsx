@@ -1,6 +1,10 @@
 import { memo, useMemo, useCallback, useState } from 'react';
+import { Copy as CopyIcon, Check } from 'lucide-react';
 import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
+import { inlineMarksToTokens } from '@/lib/chipTokenText';
+import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { copyToClipboard } from '@/lib/clipboard';
 
 // ── Types (mirrored from parent to avoid circular deps) ──────────────
 
@@ -51,7 +55,9 @@ function parseGenDone(content: string): GenDoneMeta | null {
 }
 
 function extractModelToken(text: string): { model: string | null; cleanText: string } {
-  const re = /\(@model:([^)]+)\)\s*/i;
+  // 池名可能自带一层括号（"默认图像生成池 (stub-image)"）——[^)]+ 会在第一个 )
+  // 截断，徽标丢右括号且正文残留 ")"。容忍一层嵌套。
+  const re = /\(@model:((?:[^()]|\([^()]*\))+)\)\s*/i;
   const match = re.exec(text);
   if (!match) return { model: null, cleanText: text };
   return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };
@@ -220,6 +226,39 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   // ── Local expand state (doesn't affect siblings) ───────────────────
 
   const [expanded, setExpanded] = useState(false);
+
+  // ── 复制用户消息（Lovart token 文本）──────────────────────────────
+  // 复制产物 = 用户可见正文 + chip 序列化为 [@image:#N:canvasKey:src] token
+  //（chipTokenText SSOT，与 composer 复制/粘贴同一格式）：粘回输入框即还原
+  // chip，发给他人也能读到图片 URL。@imgN 未命中当前画布时保持原样。
+  const [copied, setCopied] = useState(false);
+  const copyUserMessage = useCallback(
+    (body: string) => {
+      const chipMeta = new Map<number, { canvasKey: string; src: string }>();
+      for (const c of canvas) {
+        if (typeof c.refId === 'number' && c.refId > 0 && c.src) {
+          chipMeta.set(c.refId, { canvasKey: c.key, src: c.src });
+        }
+      }
+      // 复制的是「气泡里看到的」而非落库原文（Codex P2）：历史污染消息的
+      // content 仍含生图英文前缀/【引用图片】块——先过展示层清洗，与
+      // MessageContentRenderer 同口径；块内独有的 refId 以 @imgN 形式补在
+      // 文首（与渲染层顶部 chip 行一致），再统一 token 化。
+      const parsed = parseVisualMessageDisplay(body);
+      const blockMarks = parsed.blockRefIds.map((id) => `@img${id}`).join(' ');
+      const cleanedBody = [blockMarks, parsed.text].filter(Boolean).join(' ').trim();
+      const text = inlineMarksToTokens(cleanedBody, chipMeta);
+      // 走仓库 SSOT 复制工具（Codex P2）：非安全上下文/内嵌 WebView 下
+      // navigator.clipboard 为 undefined，直接调用会同步抛错走不到 catch；
+      // copyToClipboard 内部已做现代 API + execCommand 兜底并返回真实结果。
+      void copyToClipboard(text).then((ok) => {
+        if (!ok) return; // 复制失败保持按钮态不变，不假成功
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      });
+    },
+    [canvas],
+  );
 
   // ── Retry handler ──────────────────────────────────────────────────
 
@@ -491,9 +530,31 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         </div>
       ) : null}
       <span
-        className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
+        className={`inline-flex items-center gap-1.5 text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
       >
+        {isUser ? (
+          // 明显的按钮态（用户反馈 9px 纯文本「复制」认不出是按钮）：图标 +
+          // 边框 chip，走双皮肤 token；点击后短暂变绿反馈「已复制」。
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded-full font-medium"
+            style={{
+              padding: '2px 8px',
+              fontSize: 10,
+              lineHeight: '14px',
+              border: '1px solid var(--border-secondary)',
+              background: 'var(--bg-card)',
+              color: copied ? 'rgba(74,222,128,0.9)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+            title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
+            onClick={() => copyUserMessage(msgBody)}
+          >
+            {copied ? <Check size={11} /> : <CopyIcon size={11} />}
+            {copied ? '已复制' : '复制'}
+          </button>
+        ) : null}
         {timestamp}
       </span>
     </div>

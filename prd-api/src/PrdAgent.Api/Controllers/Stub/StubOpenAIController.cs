@@ -138,6 +138,23 @@ public class StubOpenAIController : ControllerBase
 
         if (!stream)
         {
+            // vision 模式补 message.images[]（OpenRouter/LiteLLM 形态，
+            // VisionChatCompletionImageExtractor 的优先级 1）。历史坑（2026-07-19）：
+            // stub-vision 只回文本，多图生图（vision chat 出图）在 stub 环境必然
+            // "生成完成但无图片数据"——用户反复看到失败还以为解析没修好。真实
+            // vision 生图模型（gemini-image / gpt-image 网关）会回图，stub 必须
+            // 对齐这条契约，dev/灰度才有完整 E2E 闭环。识别（只读 text）不受影响。
+            object message = mode == "vision"
+                ? new
+                {
+                    role = "assistant",
+                    content = reply,
+                    images = new object[]
+                    {
+                        new { type = "image_url", image_url = new { url = BuildVisionStubImageUrl(request, content) } }
+                    }
+                }
+                : new { role = "assistant", content = reply };
             var payload = new
             {
                 id = "stubcmpl_" + Guid.NewGuid().ToString("N"),
@@ -149,7 +166,7 @@ public class StubOpenAIController : ControllerBase
                     new
                     {
                         index = 0,
-                        message = new { role = "assistant", content = reply },
+                        message,
                         finish_reason = "stop"
                     }
                 }
@@ -433,6 +450,62 @@ public class StubOpenAIController : ControllerBase
     {
         var host = Request.ResolveServerUrl(_config);
         return $"{host}/api/v1/stub/assets/{id}.png";
+    }
+
+    /// <summary>
+    /// vision 生图 stub：优先取请求里第一张 data: 内联图为底（多图生图时能看出
+    /// "参考图确实进来了"），叠加提示词水印；无内联图/解码失败退纯色图。
+    /// </summary>
+    private string BuildVisionStubImageUrl(StubChatRequest? request, string promptText)
+    {
+        var watermark = BuildCenterWatermarkText($"STUB VISION\n{promptText}", null, null);
+        byte[] bytes;
+        var input = TryExtractFirstInlineImage(request);
+        if (input != null)
+        {
+            bytes = TryRenderWatermarkedFromInput(input, 1024, 1024, watermark);
+        }
+        else
+        {
+            bytes = RenderSolidPng(1024, 1024, RandomColor(), watermark);
+        }
+        return BuildAssetUrl(PutImage(bytes));
+    }
+
+    /// <summary>从消息 content 数组里取第一张 data:image 内联图并解码（http URL 项跳过，stub 不出网）。</summary>
+    private static byte[]? TryExtractFirstInlineImage(StubChatRequest? request)
+    {
+        if (request?.Messages == null) return null;
+        foreach (var msg in request.Messages)
+        {
+            if (msg.Content.ValueKind != JsonValueKind.Array) continue;
+            foreach (var part in msg.Content.EnumerateArray())
+            {
+                if (part.ValueKind != JsonValueKind.Object) continue;
+                if (!part.TryGetProperty("image_url", out var iu)) continue;
+                string? url = null;
+                if (iu.ValueKind == JsonValueKind.String) url = iu.GetString();
+                else if (iu.ValueKind == JsonValueKind.Object &&
+                         iu.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String)
+                {
+                    url = u.GetString();
+                }
+                if (string.IsNullOrWhiteSpace(url)) continue;
+                var trimmed = url.Trim();
+                if (!trimmed.StartsWith("data:image", StringComparison.OrdinalIgnoreCase)) continue;
+                var comma = trimmed.IndexOf(',');
+                if (comma <= 0 || comma >= trimmed.Length - 1) continue;
+                try
+                {
+                    return Convert.FromBase64String(trimmed[(comma + 1)..]);
+                }
+                catch
+                {
+                    // 单个坏项跳过，继续找下一张
+                }
+            }
+        }
+        return null;
     }
 
     private static string PutImage(byte[] bytes)
