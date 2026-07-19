@@ -1207,8 +1207,12 @@ public class ImageMasterController : ControllerBase
                 if (string.IsNullOrWhiteSpace(key)) key = ReadCanvasStr(o, "key");
                 if (string.IsNullOrWhiteSpace(key)) continue;
 
+                // 对账查询同样按部署作用域过滤（Codex P2 R5）：同一 workspace 在两个分支预览
+                // 各建过 run 时，不过滤会把兄弟部署的结果/失败写回本分支画布。
+                var reconcileScope = PrdAgent.Core.Models.DeploymentScope.Current;
                 var run = await _db.ImageGenRuns
-                    .Find(x => x.OwnerAdminId == adminId && x.WorkspaceId == wid && x.TargetCanvasKey == key)
+                    .Find(x => x.OwnerAdminId == adminId && x.WorkspaceId == wid && x.TargetCanvasKey == key
+                        && x.DeploymentSlug == reconcileScope)
                     .SortByDescending(x => x.CreatedAt)
                     .FirstOrDefaultAsync(ct);
                 if (run == null) { report.Add(new { key, action = "no-run" }); continue; }
@@ -1526,6 +1530,9 @@ public class ImageMasterController : ControllerBase
 
             var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
             if (idemKey.Length > 200) idemKey = idemKey[..200];
+            // 幂等键按部署作用域隔离：前端确定性键（imRun_{workspaceId}_{key}）在共享 Mongo 下
+            // 会跨分支预览撞车（Codex P1），预览侧加 "{scope}::" 前缀；生产原样（兼容存量）。
+            idemKey = DeploymentScope.ScopeIdempotencyKey(idemKey);
             if (!string.IsNullOrWhiteSpace(idemKey))
             {
                 var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
@@ -1628,6 +1635,7 @@ public class ImageMasterController : ControllerBase
             {
                 OwnerAdminId = adminId,
                 Status = ImageGenRunStatus.Queued,
+                DeploymentSlug = DeploymentScope.Current,
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,

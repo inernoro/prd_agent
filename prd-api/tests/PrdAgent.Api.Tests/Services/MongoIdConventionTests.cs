@@ -29,7 +29,10 @@ public class MongoIdConventionTests
             // LLM Gateway 是独立新库，组织实体从创建之初就只写 GUID 字符串，
             // 不存在需要兼容的历史 ObjectId。允许其保持严格的字符串序列化，
             // 但仍由下方生成器检查禁止 MongoDB 驱动回退到 ObjectId。
-            var isGatewayStringOnlyId = map.ClassType.Namespace == "PrdAgent.LlmGw.Models"
+            // 豁免按 PrdAgent.LlmGw 前缀（非仅 .Models）：网关实体分布在
+            // Models / Provisioning 等子命名空间（如 GatewayRecoveryOperation），
+            // 同属新库纯 GUID 主键，理由一致。
+            var isGatewayStringOnlyId = map.ClassType.Namespace?.StartsWith("PrdAgent.LlmGw", StringComparison.Ordinal) == true
                 && idMap.GetSerializer() is StringSerializer { Representation: BsonType.String };
 
             if (idMap.GetSerializer() is not StringOrObjectIdSerializer && !isGatewayStringOnlyId)

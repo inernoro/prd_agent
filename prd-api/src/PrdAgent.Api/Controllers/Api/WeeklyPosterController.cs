@@ -844,9 +844,13 @@ public sealed class WeeklyPosterController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "没有需要生成的页面"));
         }
 
+        // 复用查询同样按部署作用域过滤（Codex P2）：否则会把兄弟部署的 queued/running run
+        // 当作 Reused 返回——本部署 worker 不认领异作用域 run，请求会挂在错的/卡死的任务上。
+        var deploymentSlug = DeploymentScope.Current;
         var running = await _db.ImageGenRuns
             .Find(x => x.WeeklyPosterId == id
                 && x.OwnerAdminId == this.GetRequiredUserId()
+                && x.DeploymentSlug == deploymentSlug
                 && (x.Status == ImageGenRunStatus.Queued || x.Status == ImageGenRunStatus.Running))
             .SortByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
@@ -866,6 +870,7 @@ public sealed class WeeklyPosterController : ControllerBase
         {
             OwnerAdminId = userId,
             Status = ImageGenRunStatus.Queued,
+            DeploymentSlug = DeploymentScope.Current,
             Size = "1024x1024",
             ResponseFormat = "url",
             MaxConcurrency = Math.Clamp(req?.MaxConcurrency ?? 3, 1, 5),
