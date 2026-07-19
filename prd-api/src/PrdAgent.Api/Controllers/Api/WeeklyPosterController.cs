@@ -866,6 +866,7 @@ public sealed class WeeklyPosterController : ControllerBase
         {
             OwnerAdminId = userId,
             Status = ImageGenRunStatus.Queued,
+            DeploymentSlug = DeploymentScope.Current,
             Size = "1024x1024",
             ResponseFormat = "url",
             MaxConcurrency = Math.Clamp(req?.MaxConcurrency ?? 3, 1, 5),

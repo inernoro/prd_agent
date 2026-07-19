@@ -19,6 +19,14 @@ public class ImageGenRun
     public ImageGenRunStatus Status { get; set; } = ImageGenRunStatus.Queued;
 
     /// <summary>
+    /// 入队时所在部署的作用域（分支预览 = CDS_BRANCH_SLUG，生产 = null）。
+    /// worker 只认领同作用域的 run，防止共享 Mongo 下旧构建的兄弟部署抢单
+    /// 用旧代码执行（见 DeploymentScope 注释与 cross-project-isolation 规则）。
+    /// 不设默认值：由入队点显式盖戳，避免存量文档反序列化被误染。
+    /// </summary>
+    public string? DeploymentSlug { get; set; }
+
+    /// <summary>
     /// 可选：内部配置模型 ID（LLMModel.Id）。
     /// </summary>
     public string? ConfigModelId { get; set; }

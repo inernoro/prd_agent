@@ -1628,6 +1628,7 @@ public class ImageMasterController : ControllerBase
             {
                 OwnerAdminId = adminId,
                 Status = ImageGenRunStatus.Queued,
+                DeploymentSlug = DeploymentScope.Current,
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,
