@@ -94,6 +94,7 @@ export interface WebhookDispatchResult {
     | 'ignored-non-push-branch'
     | 'ignored-auto-deploy-off'
     | 'ignored-project-paused'
+    | 'ignored-bot-push'
     | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
@@ -198,7 +199,17 @@ export interface GitHubPushEvent {
   }>;
   size?: number;
   distinct_size?: number;
-  sender?: { login: string; avatar_url?: string };
+  sender?: { login?: string; avatar_url?: string; type?: string };
+}
+
+/**
+ * GitHub 的 bot 账号通常同时带 type=Bot 与 `[bot]` login；两种信号都接收，
+ * 兼容 webhook fixture、旧 GitHub Enterprise 和字段不完整的代理转发。
+ */
+export function isGitHubBotSender(sender: GitHubPushEvent['sender']): boolean {
+  if (!sender) return false;
+  if (sender.type?.toLowerCase() === 'bot') return true;
+  return typeof sender.login === 'string' && /\[bot\]$/i.test(sender.login.trim());
 }
 
 export interface GitHubInstallationEvent {
@@ -1168,6 +1179,17 @@ export class GitHubWebhookDispatcher {
       return {
         action: 'ignored-auto-deploy-off',
         message: `Project '${project.name}' has push handling off. Ignoring push.`,
+      };
+    }
+
+    // 项目级机器人版本过滤默认开启（undefined 也视为开启）。必须在创建 worktree、
+    // 写入分支版本元数据和派发构建之前短路，避免 dependabot[bot]、
+    // github-actions[bot] 等自动账号持续消耗构建与运行资源。
+    if (project.githubBotPushFilterEnabled !== false && isGitHubBotSender(event.sender)) {
+      const senderLogin = event.sender?.login || 'unknown';
+      return {
+        action: 'ignored-bot-push',
+        message: `Project '${project.name}' 已过滤机器人账号 '${senderLogin}' 的 push，不创建 CDS 版本。`,
       };
     }
 

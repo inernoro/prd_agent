@@ -231,6 +231,41 @@ describe('GitHub webhook route', () => {
     expect(deployCalls).toEqual([{ branchId: 'sample-feature-x', commitSha: 'deadbeef01234567890abcdef1234567890abcde' }]);
   });
 
+  it('filters a signed dependabot push before branch creation and deploy dispatch', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({
+      id: 'pBot',
+      slug: 'sample',
+      name: 'Sample',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+    server = startServer();
+    const payload = {
+      ref: 'refs/heads/dependabot/npm_and_yarn/react-19',
+      after: 'deadbeef01234567890abcdef1234567890abcde',
+      repository: { id: 1, full_name: 'octocat/repo' },
+      installation: { id: 42 },
+      sender: { login: 'dependabot[bot]', type: 'Bot' },
+    };
+    const body = JSON.stringify(payload);
+
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.action).toBe('ignored-bot-push');
+    expect(res.body.deployDispatched).toBe(false);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deployCalls).toHaveLength(0);
+    expect(stateService.findBranchByProjectAndName('pBot', payload.ref.replace('refs/heads/', ''))).toBeUndefined();
+  });
+
   it('surfaces deploy dispatch failures and marks the branch failed', async () => {
     stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({

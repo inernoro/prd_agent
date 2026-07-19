@@ -2741,6 +2741,15 @@ export interface Project {
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
   /**
+   * 项目级 GitHub 机器人 push 过滤开关。undefined / true = 过滤（默认），
+   * false = 允许机器人账号的 push 像普通用户一样创建 CDS 版本并触发部署。
+   *
+   * 机器人身份以 webhook sender.type === 'Bot' 或 login 以 `[bot]` 结尾
+   * 判定，例如 dependabot[bot]、github-actions[bot]。只看事件触发者，不看
+   * commit author，避免误伤人工合并的依赖更新提交。
+   */
+  githubBotPushFilterEnabled?: boolean;
+  /**
    * Phase 4 (冒烟自动化): when true, every successful `POST /branches/
    * :id/deploy` call that owns this project auto-triggers
    * scripts/smoke-all.sh against the branch's preview URL right after

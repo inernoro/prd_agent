@@ -204,6 +204,85 @@ describe('GitHubWebhookDispatcher', () => {
       expect(worktree.createdWorktrees).toHaveLength(0);
     });
 
+    it('filters dependabot push by default before creating a branch or deploy request', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/dependabot/npm_and_yarn/react-19',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        sender: { login: 'dependabot[bot]', type: 'Bot' },
+      });
+
+      expect(result.action).toBe('ignored-bot-push');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      expect(stateService.findBranchByProjectAndName('p1', 'dependabot/npm_and_yarn/react-19')).toBeUndefined();
+    });
+
+    it('filters Bot sender type even when the login has no bot suffix', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/automated-update',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        sender: { login: 'dependency-service', type: 'Bot' },
+      });
+
+      expect(result.action).toBe('ignored-bot-push');
+      expect(worktree.createdWorktrees).toHaveLength(0);
+    });
+
+    it('allows bot pushes when the project filter is explicitly disabled', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+        githubBotPushFilterEnabled: false,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/dependabot/npm_and_yarn/react-19',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        sender: { login: 'dependabot[bot]', type: 'Bot' },
+      });
+
+      expect(result.action).toBe('branch-created');
+      expect(result.deployRequest).toEqual({
+        branchId: 'proj-dependabot-npm-and-yarn-react-19',
+        commitSha: 'abc123def456789012345678901234567890aaaa',
+      });
+      expect(worktree.createdWorktrees).toHaveLength(1);
+    });
+
     it('creates a new branch + records deploy request on push', async () => {
       stateService.addProject({
         id: 'p1',

@@ -1709,6 +1709,7 @@ export class StateService {
         | 'githubInstallationId'
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
+        | 'githubBotPushFilterEnabled'
         | 'autoSmokeEnabled'
         | 'resourceChipDisplay'
         | 'composeYaml'

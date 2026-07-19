@@ -2867,6 +2867,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       autoStopAfterMinutes: number;
       deployReadinessFloorSeconds: number;
       inheritGlobalEnv: boolean;
+      githubBotPushFilterEnabled: boolean;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -2949,7 +2950,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
     if (body.inheritGlobalEnv !== undefined) {
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
@@ -2972,6 +2973,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         if (incoming[k] !== undefined) merged[k] = incoming[k] === true;
       }
       patch.githubEventPolicy = merged;
+    }
+    if (body.githubBotPushFilterEnabled !== undefined) {
+      if (typeof body.githubBotPushFilterEnabled !== 'boolean') {
+        res.status(400).json({
+          error: 'validation',
+          field: 'githubBotPushFilterEnabled',
+          message: '机器人提交过滤开关必须是布尔值',
+        });
+        return;
+      }
+      patch.githubBotPushFilterEnabled = body.githubBotPushFilterEnabled;
     }
     if (body.autoSmokeEnabled !== undefined) {
       // Booleans come in as true / false / 'true' / 'false' depending on

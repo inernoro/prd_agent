@@ -764,6 +764,28 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.status).toBe(400);
       expect(res.body.field).toBe('inheritGlobalEnv');
     });
+
+    it('persists the project GitHub bot push filter toggle', async () => {
+      const disabled = await request(server, 'PUT', '/api/projects/default', {
+        githubBotPushFilterEnabled: false,
+      });
+      expect(disabled.status).toBe(200);
+      expect(disabled.body.project.githubBotPushFilterEnabled).toBe(false);
+
+      const enabled = await request(server, 'PUT', '/api/projects/default', {
+        githubBotPushFilterEnabled: true,
+      });
+      expect(enabled.status).toBe(200);
+      expect(enabled.body.project.githubBotPushFilterEnabled).toBe(true);
+    });
+
+    it('rejects a non-boolean project GitHub bot push filter toggle', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        githubBotPushFilterEnabled: 'false',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('githubBotPushFilterEnabled');
+    });
   });
 
   describe('DELETE /api/projects/:id', () => {
