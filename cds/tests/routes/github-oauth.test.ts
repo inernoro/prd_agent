@@ -38,6 +38,7 @@ async function request(
   method: string,
   urlPath: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -51,6 +52,7 @@ async function request(
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+          ...(headers || {}),
         },
       },
       (res) => {
@@ -87,6 +89,13 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
   function startServer(githubClient: GitHubOAuthClient | null) {
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const userId = req.headers['x-test-user-id'];
+      if (typeof userId === 'string' && userId) {
+        (req as unknown as { cdsUser?: { id: string } }).cdsUser = { id: userId };
+      }
+      next();
+    });
     app.use('/api', createGithubOAuthRouter({ stateService, githubClient }));
     return app.listen(0);
   }
@@ -342,6 +351,37 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
   });
 
   describe('status + disconnect', () => {
+    it('isolates GitHub connections by CDS user', async () => {
+      const client = buildClient([]);
+      server = startServer(client);
+      await stateService.setGithubDeviceAuth({
+        token: 'gho_alice',
+        login: 'alice',
+        name: 'Alice',
+        avatarUrl: null,
+        connectedAt: '2026-01-01T00:00:00Z',
+        scopes: ['repo'],
+      }, 'user-alice');
+      await stateService.setGithubDeviceAuth({
+        token: 'gho_bob',
+        login: 'bob',
+        name: 'Bob',
+        avatarUrl: null,
+        connectedAt: '2026-01-02T00:00:00Z',
+        scopes: ['repo'],
+      }, 'user-bob');
+
+      const alice = await request(server, 'GET', '/api/github/oauth/status', undefined, { 'x-test-user-id': 'user-alice' });
+      const bob = await request(server, 'GET', '/api/github/oauth/status', undefined, { 'x-test-user-id': 'user-bob' });
+      const stranger = await request(server, 'GET', '/api/github/oauth/status', undefined, { 'x-test-user-id': 'user-stranger' });
+
+      expect(alice.body.login).toBe('alice');
+      expect(bob.body.login).toBe('bob');
+      expect(stranger.body.connected).toBe(false);
+      expect(stateService.getGithubDeviceAuth('user-alice')?.token).toBe('gho_alice');
+      expect(stateService.getGithubDeviceAuth('user-bob')?.token).toBe('gho_bob');
+    });
+
     it('reflects a connected state after the token is stored', async () => {
       const client = buildClient([]);
       server = startServer(client);

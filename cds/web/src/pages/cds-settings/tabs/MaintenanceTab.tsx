@@ -28,6 +28,8 @@ interface BranchMeta {
 
 interface SelfBranchesResponse {
   current: string;
+  detached: boolean;
+  recommended: string;
   commitHash: string;
   currentCommitterDate?: string;
   branches: string[];
@@ -129,6 +131,8 @@ interface ActiveSelfUpdate {
 
 interface SelfStatusResponse {
   currentBranch: string;
+  detachedHead: boolean;
+  recommendedBranch: string;
   headSha: string;
   headIso: string;
   fetchOk: boolean;
@@ -422,6 +426,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerWrapRef = useRef<HTMLDivElement>(null);
+  // 初始值由后端权威状态自动选择；只有用户亲自输入/点选后，刷新分支时才保留。
+  // 避免首屏空缓存先填 main，随后真实 runtime 分支到达却被误当成用户选择。
+  const branchSelectionTouchedRef = useRef(false);
   // 选中某个分支后会 inputRef.focus() 把光标放回输入框，但 input 的 onFocus
   // 默认会重新 setPickerOpen(true)，导致下拉"点了不关"。用这个一次性标记在
   // 选中后的那一次 focus 时跳过重开。
@@ -585,7 +592,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         message?: string | null;
       }>('/api/self-branches');
       setBranchState({ status: 'ok', data });
-      setSelectedBranch((current) => current || data.current || data.branches?.[0] || '');
+      setSelectedBranch((current) => {
+        if (branchSelectionTouchedRef.current && current && current !== 'HEAD') return current;
+        return data.current || data.recommended || data.branches?.[0] || '';
+      });
     } catch (err) {
       // /api/self-branches 现在永远 200,这里只在网络层失败(断网/CORS)才命中。
       // 2026-05-28 用户反馈"主面板里不能出现红色提示":
@@ -609,10 +619,17 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 'cds:active-self-update' 不再需要(原本就是 GlobalUpdateBadge 转发的,
   // 现在两边读同一个 store)。
   const cdsEvents = useCdsEvents();
+  const authoritativeBranch = (
+    cdsEvents.snapshot?.currentBranch
+    || cdsEvents.snapshot?.recommendedBranch
+    || cdsEvents.lastKnownGood?.currentBranch
+    || cdsEvents.lastKnownGood?.recommendedBranch
+    || ''
+  );
 
   useEffect(() => {
     void loadBranches();
-  }, [loadBranches]);
+  }, [authoritativeBranch, loadBranches]);
 
   // snapshot → selfStatus 同步;degraded 时保留旧值显示
   useEffect(() => {
@@ -621,6 +638,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     // 把 useCdsEvents 的 SelfStatusSnapshot 映射回 MaintenanceTab 的 SelfStatusResponse 形状
     const mapped: SelfStatusResponse = {
       currentBranch: snap.currentBranch ?? '',
+      detachedHead: snap.detachedHead ?? false,
+      recommendedBranch: snap.recommendedBranch ?? 'main',
       headSha: snap.headSha ?? '',
       headIso: snap.headIso ?? '',
       fetchOk: snap.fetchOk ?? true,
@@ -809,10 +828,14 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     <div className="flex flex-wrap items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm font-medium">更新控制</span>
-                      <CodePill>{branchState.data.current || '-'}</CodePill>
+                      <CodePill>
+                        {branchState.data.detached
+                          ? `游离提交 ${branchState.data.commitHash || '-'}`
+                          : branchState.data.current || '-'}
+                      </CodePill>
                     </div>
                     <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                      选择目标分支后更新；默认使用当前分支。若目标 SHA 有 CI 预构建产物，应走极速版路径，跳过本机编译；否则按影响范围自动选择零停机、热路径或源码构建。
+                      选择目标分支后更新；默认使用后端推荐的稳定分支。若目标 SHA 有 CI 预构建产物，应走极速版路径，跳过本机编译；否则按影响范围自动选择零停机、热路径或源码构建。
                     </div>
                   </div>
                   <Button type="button" variant="outline" onClick={() => void loadBranches()}>
@@ -820,6 +843,17 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     刷新分支
                   </Button>
                 </div>
+
+                {branchState.data.detached ? (
+                  <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      当前 CDS 运行在游离提交上，不存在名为 HEAD 的目标分支。系统已推荐{' '}
+                      <CodePill>origin/{branchState.data.recommended || 'main'}</CodePill>
+                      ，更新时会使用隔离运行分支，不占用其他 Git worktree 的本地分支。
+                    </span>
+                  </div>
+                ) : null}
 
                 {/* 2026-05-04 重构:单 input combobox 取代「搜索框 + 经典 select」双控件。
                     用户输入 = selectedBranch(无歧义),回车/点击候选 = 确认选中。
@@ -840,6 +874,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                         type="text"
                         value={selectedBranch}
                         onChange={(event) => {
+                          branchSelectionTouchedRef.current = true;
                           setSelectedBranch(event.target.value);
                           setPickerOpen(true);
                           setHighlightedIndex(0);
@@ -863,6 +898,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                             event.preventDefault();
                             const pick = visibleBranches[highlightedIndex];
                             if (pick) {
+                              branchSelectionTouchedRef.current = true;
                               setSelectedBranch(pick.name);
                               setPickerOpen(false);
                             }
@@ -886,6 +922,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                         >
                           {visibleBranches.map((branch, idx) => {
                             const isCurrent = branch.name === branchState.data.current;
+                            const isRecommended = branch.name === branchState.data.recommended;
                             const isHighlighted = idx === highlightedIndex;
                             return (
                               <button
@@ -895,6 +932,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                 aria-selected={isHighlighted}
                                 onMouseEnter={() => setHighlightedIndex(idx)}
                                 onClick={() => {
+                                  branchSelectionTouchedRef.current = true;
                                   setSelectedBranch(branch.name);
                                   suppressFocusOpenRef.current = true;
                                   setPickerOpen(false);
@@ -912,6 +950,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                   {isCurrent ? (
                                     <span className="shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
                                       当前
+                                    </span>
+                                  ) : null}
+                                  {!isCurrent && isRecommended ? (
+                                    <span className="shrink-0 rounded border border-sky-500/50 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+                                      推荐
                                     </span>
                                   ) : null}
                                   {branch.cdsTouched ? (
@@ -1330,8 +1373,9 @@ function SelfUpdateStatusPanel({
     headSha.startsWith(lastHistorySha) ||
     lastHistorySha.startsWith(headSha);
   const showHistoryGap = !!data.lastSelfUpdate && !data.activeSelfUpdate && !historyMatchesHead;
+  const trackingBranch = data.currentBranch || data.recommendedBranch || 'main';
   const aheadColor =
-    remoteAheadCount === 0
+    !data.detachedHead && remoteAheadCount === 0
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
       : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
 
@@ -1347,11 +1391,15 @@ function SelfUpdateStatusPanel({
         ) : null}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
           <GitBranch className="h-3.5 w-3.5" />
-          {data.fetchOk
-            ? remoteAheadCount === 0
-              ? `已与 origin/${data.currentBranch} 同步`
-              : `GitHub 领先 ${remoteAheadCount} 个 commit`
-            : 'fetch 失败 / 远端不可达'}
+          {data.detachedHead
+            ? remoteAheadCount > 0
+              ? `游离提交 · origin/${trackingBranch} 领先 ${remoteAheadCount} 个 commit`
+              : `游离提交 · 更新目标 origin/${trackingBranch}`
+            : data.fetchOk
+              ? remoteAheadCount === 0
+                ? `已与 origin/${trackingBranch} 同步`
+                : `GitHub 领先 ${remoteAheadCount} 个 commit`
+              : 'fetch 失败 / 远端不可达'}
         </span>
         {localAheadCount > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">

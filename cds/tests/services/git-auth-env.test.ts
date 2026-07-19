@@ -104,4 +104,56 @@ describe('resolveGitAuthEnv', () => {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
+
+  it('uses only the Device Flow credential assigned to the project owner', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-git-auth-user-'));
+    try {
+      const repoPath = path.join(tmp, 'repo');
+      const state = new StateService(path.join(tmp, 'state.json'));
+      state.load();
+      const now = new Date().toISOString();
+      await state.setGithubDeviceAuth({
+        token: 'gho_owner',
+        login: 'owner',
+        name: 'Owner',
+        avatarUrl: null,
+        connectedAt: now,
+        scopes: ['repo'],
+      }, 'user-owner');
+      await state.setGithubDeviceAuth({
+        token: 'gho_other',
+        login: 'other',
+        name: 'Other',
+        avatarUrl: null,
+        connectedAt: now,
+        scopes: ['repo'],
+      }, 'user-other');
+      state.addProject({
+        id: 'p1',
+        slug: 'private-app',
+        name: 'private-app',
+        kind: 'git',
+        repoPath,
+        githubCredentialUserId: 'user-owner',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const auth = await resolveGitAuthEnv({
+        repoRoot: repoPath,
+        config: makeConfig(repoPath),
+        stateService: state,
+      });
+
+      expect(auth.source).toBe('device-flow');
+      const header = String(auth.env?.GIT_CONFIG_VALUE_0 || '');
+      expect(header).toContain('AUTHORIZATION: basic ');
+      const encoded = header.replace('AUTHORIZATION: basic ', '');
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      expect(decoded).toContain('gho_owner');
+      expect(decoded).not.toContain('gho_other');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
 });

@@ -1476,16 +1476,13 @@ export interface CdsState {
    */
   globalAgentKeys?: GlobalAgentKey[];
   /**
-   * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
-   * by the "从 GitHub 选择仓库" button in the New Project modal and
-   * the Settings → GitHub Integration tab. Orthogonal to the CDS
-   * session auth (auth-service.ts) — this is bring-your-own-token
-   * for repo fetching, not a CDS login mechanism.
-   *
-   * Single-slot because CDS is single-tenant-per-install; per-user
-   * tokens are a future phase once the user model stabilises.
+   * Legacy single-slot GitHub Device Flow token. Kept for installations
+   * without CDS user sessions and for backwards-compatible state loading.
+   * Authenticated multi-user installations use githubDeviceAuthByUser.
    */
   githubDeviceAuth?: GitHubDeviceAuth;
+  /** GitHub Device Flow credentials isolated by CDS user id. */
+  githubDeviceAuthByUser?: Record<string, GitHubDeviceAuth>;
   /**
    * Agent-authored configuration imports awaiting human approval.
    *
@@ -2619,6 +2616,11 @@ export interface Project {
   serviceEnv?: Record<string, string>;
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
+  /**
+   * CDS user whose Device Flow credential may be used for this repository.
+   * GitHub App installation tokens still take precedence when configured.
+   */
+  githubCredentialUserId?: string;
   /**
    * Default branch name reported by the Git remote, for example "main" or
    * "master". This is intentionally separate from Project.defaultBranch,

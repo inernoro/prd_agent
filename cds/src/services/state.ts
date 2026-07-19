@@ -1701,6 +1701,7 @@ export class StateService {
         | 'managedProfiles'
         | 'managedPlanUpdatedAt'
         | 'gitRepoUrl'
+        | 'githubCredentialUserId'
         | 'gitDefaultBranch'
         | 'repoPath'
         | 'cloneStatus'
@@ -2470,14 +2471,16 @@ export class StateService {
   }
 
   /**
-   * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
+   * GitHub Device Flow token accessors.
    *
-   * The token lives in state.githubDeviceAuth as a single-slot
-   * snapshot (one GitHub connection per CDS install). Orthogonal
-   * to auth-service which runs the CDS session flow.
+   * Authenticated CDS users get an isolated slot keyed by their stable user id.
+   * Calls without a user id retain the legacy single-install slot for disabled
+   * auth mode and backwards compatibility.
    */
-  getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
-    const stored = this.state.githubDeviceAuth;
+  getGithubDeviceAuth(userId?: string): import('../types.js').GitHubDeviceAuth | undefined {
+    const stored = userId
+      ? this.state.githubDeviceAuthByUser?.[userId]
+      : this.state.githubDeviceAuth;
     if (!stored) return undefined;
     // FU-05: if the token field was sealed (AES-256-GCM) on the way
     // in, unseal it here so consumers always see plaintext. Legacy
@@ -2492,7 +2495,7 @@ export class StateService {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(
-          '[state] failed to unseal github device token (CDS_SECRET_KEY rotated?):',
+          `[state] failed to unseal github device token${userId ? ` for user ${userId}` : ''} (CDS_SECRET_KEY rotated?):`,
           (err as Error).message,
         );
         return undefined;
@@ -2513,7 +2516,7 @@ export class StateService {
    * device-poll) can surface a real error to the UI instead of a
    * fake "ready" status.
    */
-  async setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): Promise<void> {
+  async setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null, userId?: string): Promise<void> {
     if (auth) {
       // FU-05: seal the token field with AES-256-GCM before writing
       // to state.json. When CDS_SECRET_KEY is unset, sealToken() is
@@ -2522,9 +2525,26 @@ export class StateService {
       // unsealed so a leaked state.json still lets operators see
       // WHICH github account was connected, just not the token.
       const sealed = sealToken(auth.token);
-      this.state.githubDeviceAuth = { ...auth, token: sealed as unknown as string };
+      const stored = { ...auth, token: sealed as unknown as string };
+      if (userId) {
+        this.state.githubDeviceAuthByUser = {
+          ...(this.state.githubDeviceAuthByUser || {}),
+          [userId]: stored,
+        };
+      } else {
+        this.state.githubDeviceAuth = stored;
+      }
     } else {
-      delete this.state.githubDeviceAuth;
+      if (userId) {
+        if (this.state.githubDeviceAuthByUser) {
+          delete this.state.githubDeviceAuthByUser[userId];
+          if (Object.keys(this.state.githubDeviceAuthByUser).length === 0) {
+            delete this.state.githubDeviceAuthByUser;
+          }
+        }
+      } else {
+        delete this.state.githubDeviceAuth;
+      }
     }
     this.save();
     // If the backing store exposes a flush() method (Mongo write-behind),
