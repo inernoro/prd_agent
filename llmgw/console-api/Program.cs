@@ -1014,6 +1014,7 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         team.Id,
         membership.Id);
     await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
+    await using var recoveryHeartbeat = await GatewayRecoveryOperations.StartHeartbeatAsync(recoveryOperations, recoveryOperation.Id);
     try
     {
         await tenants.InsertOneAsync(tenant);
@@ -1390,6 +1391,7 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         memberUser.Id,
         membershipId: membership.Id);
     await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
+    await using var recoveryHeartbeat = await GatewayRecoveryOperations.StartHeartbeatAsync(recoveryOperations, recoveryOperation.Id);
     try
     {
         await users.InsertOneAsync(memberUser);
@@ -1514,6 +1516,7 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
             { "version", membership.Version },
         });
     GatewayRecoveryOperation? recoveryOperation = null;
+    IAsyncDisposable? recoveryHeartbeat = null;
     if (ownerBoundaryMutation)
     {
         recoveryOperation = GatewayRecoveryOperations.New(
@@ -1526,7 +1529,9 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
         recoveryOperation.TargetStatus = membership.Status;
         recoveryOperation.TargetTeamIds = membership.TeamIds.ToList();
         await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
+        recoveryHeartbeat = await GatewayRecoveryOperations.StartHeartbeatAsync(recoveryOperations, recoveryOperation.Id);
     }
+    await using var recoveryHeartbeatScope = recoveryHeartbeat;
 
     OwnerRemovalDecision? ownerRemoval = null;
     if (removesOwner)
