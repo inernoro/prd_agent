@@ -346,7 +346,7 @@ def main():
             "AppCallerCode": accode, "ModelType": mtype, "Stream": False,
             "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
             "RequestBody": {"messages": [{"role": "user", "content": SMOKE_PROMPT}], "max_tokens": SMOKE_MAX_TOKENS},
-            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": "release-probe", "IngressProtocol": "gw-native"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw = _req("POST", "/invoke", body)
         d = _envelope_data(raw) or {}
@@ -365,7 +365,7 @@ def main():
             "Stream": False,
             "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
             "RequestBody": {"messages": [{"role": "user", "content": SMOKE_PROMPT}], "max_tokens": SMOKE_MAX_TOKENS},
-            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": "release-probe", "IngressProtocol": "gw-native"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw = _req("POST", "/send", send_body)
         d = _envelope_data(raw) or {}
@@ -387,7 +387,7 @@ def main():
                 "max_tokens": SMOKE_MAX_TOKENS,
                 "stream": True,
             },
-            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": "release-probe", "IngressProtocol": "gw-native"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw, events = _sse_req("/stream", stream_body)
         stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
@@ -418,7 +418,7 @@ def main():
             "SystemPrompt": "Reply briefly.",
             "Messages": [{"Role": "user", "Content": SMOKE_PROMPT}],
             "EnablePromptCache": True,
-            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": "release-probe", "IngressProtocol": "gw-native"},
+            "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw, events = _sse_req("/client-stream", client_stream_body)
         client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
@@ -480,7 +480,7 @@ def main():
 
     # 8) canary：指向不存在的入口，必须失败（证明探测有效）
     body = {"AppCallerCode": "nonexistent.canary::chat", "ModelType": "chat",
-            "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": "release-probe", "IngressProtocol": "gw-native"}}
+            "RequestBody": {"messages": [{"role": "user", "content": "x"}]}, "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"}}
     code, raw = _req("POST", "/invoke", body)
     d = _envelope_data(raw) or {}
     canary_caught = not (code == 200 and d.get("Success") is True)
