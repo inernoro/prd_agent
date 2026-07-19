@@ -138,6 +138,8 @@ public class LiteraryAgentImageGenController : ControllerBase
         var adminId = GetAdminId();
         var idemKey = (Request.Headers["Idempotency-Key"].FirstOrDefault() ?? string.Empty).Trim();
         if (idemKey.Length > 200) idemKey = idemKey[..200];
+        // 幂等键按部署作用域隔离（Codex P1，见 DeploymentScope.ScopeIdempotencyKey 注释）
+        idemKey = DeploymentScope.ScopeIdempotencyKey(idemKey);
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {

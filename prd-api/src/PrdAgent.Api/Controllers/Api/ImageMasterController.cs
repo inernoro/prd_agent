@@ -1526,6 +1526,9 @@ public class ImageMasterController : ControllerBase
 
             var idemKey = (Request.Headers["Idempotency-Key"].ToString() ?? string.Empty).Trim();
             if (idemKey.Length > 200) idemKey = idemKey[..200];
+            // 幂等键按部署作用域隔离：前端确定性键（imRun_{workspaceId}_{key}）在共享 Mongo 下
+            // 会跨分支预览撞车（Codex P1），预览侧加 "{scope}::" 前缀；生产原样（兼容存量）。
+            idemKey = DeploymentScope.ScopeIdempotencyKey(idemKey);
             if (!string.IsNullOrWhiteSpace(idemKey))
             {
                 var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);

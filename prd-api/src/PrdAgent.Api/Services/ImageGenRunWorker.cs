@@ -154,9 +154,10 @@ public class ImageGenRunWorker : BackgroundService
     private async Task<ImageGenRun?> ClaimNextRunAsync(CancellationToken ct)
     {
         // 部署作用域隔离（cross-project-isolation：共享 Mongo run 队列的抢单穿透）：
-        // 只认领本部署入队的 run。分支预览认自己的 CDS_BRANCH_SLUG；生产作用域为
-        // null——Mongo 的 Eq null 同时匹配「字段为 null」与「字段缺失」，天然兼容
-        // 本字段上线前的存量 run（仍由生产 worker 消化，行为不变）。
+        // 只认领本部署入队的 run。分支预览认自己的分支级 slug（取值链见
+        // DeploymentScope.Current，CDS_PROJECT_ID 标记 + BULLMQ_PREFIX/VITE_GIT_BRANCH）；
+        // 生产作用域为 null——Mongo 的 Eq null 同时匹配「字段为 null」与「字段缺失」，
+        // 天然兼容本字段上线前的存量 run（仍由生产 worker 消化，行为不变）。
         var filter = Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.Queued)
                      & Builders<ImageGenRun>.Filter.Ne(x => x.CancelRequested, true)
                      & Builders<ImageGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
