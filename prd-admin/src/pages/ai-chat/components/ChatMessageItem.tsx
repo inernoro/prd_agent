@@ -51,7 +51,9 @@ function parseGenDone(content: string): GenDoneMeta | null {
 }
 
 function extractModelToken(text: string): { model: string | null; cleanText: string } {
-  const re = /\(@model:([^)]+)\)\s*/i;
+  // 池名可能自带一层括号（"默认图像生成池 (stub-image)"）——[^)]+ 会在第一个 )
+  // 截断，徽标丢右括号且正文残留 ")"。容忍一层嵌套。
+  const re = /\(@model:((?:[^()]|\([^()]*\))+)\)\s*/i;
   const match = re.exec(text);
   if (!match) return { model: null, cleanText: text };
   return { model: match[1].trim(), cleanText: text.replace(re, '').trim() };

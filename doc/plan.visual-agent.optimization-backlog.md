@@ -24,7 +24,7 @@
 
 | # | 优化 | 现状 | 建议 |
 |---|---|---|---|
-| 6 | chip 复制粘贴文本 token 化 | 输入框 chip 无文本序列化：复制丢引用、无法把「文字+图引用」存档/分享（现仅支持复制图片字节） | 对齐 Lovart / BrandAI：复制得 [@image:#N:id:url] 混合文本，粘贴还原 chip；外部 token 降级纯文本 |
+| 6 | chip 复制粘贴文本 token 化 | 已落地（2026-07-19，分支 claude/visual-creation-migration-5wrsz9）：`lib/chipTokenText.ts` 纯函数 + `RichComposer/index.tsx` 注册 COPY/CUT/PASTE 命令，7 例 vitest | 复制/剪切得 [@image:#N:canvasKey:src] 混合文本；粘贴时 canvasKey 命中当前 imageOptions 才还原就绪 chip（refId/src 以当前集合为准），未命中保持纯文本防幻觉引用 |
 | 7 | 工具菜单 V/H 快捷键假提示 | 工具切换菜单显示 V/H 快捷键角标但代码未绑定按键（7402-7519） | 绑定 V=Select、H=Hand（画布聚焦且非输入控件时），或删掉角标不做假暗示 |
 | 8 | 上传上限与画布 60 项上限无前置提示 | 超 20 张截断、画布 merged.slice(-60) 静默丢最旧 | 触顶时 toast 明示（对齐「预期管理」规则） |
 | 9 | 单文件 9400 行维护性 | AdvancedVisualAgentTab.tsx 承载画布+输入+生命周期全部逻辑 | 按 design.visual-agent.canvas-composer.md 四层拆文件；行为不变，仅重排 |

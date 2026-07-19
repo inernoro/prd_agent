@@ -28,8 +28,10 @@ const GENERATE_PREFIX_RE = /^\s*Generate an image based on the following descrip
 const REF_BLOCK_HEADER_RE = /【[^】]*引用图片[^】]*】/g;
 /** "- @imgN: label" / "- imgN：label" 引用行（整行剥离，label 常是带扩展名的文件名） */
 const REF_LINE_RE = /^\s*-\s*@?img(\d+)\s*[:：].*$/gim;
-/** 裸 (@size:...) / (@model:...) 元数据 token */
-const META_TOKEN_RE = /\(\s*@(?:size|model)\s*:[^)]*\)/gi;
+/** 裸 (@size:...) / (@model:...) 元数据 token。
+ *  值本身可能带一层括号（如模型池名"默认图像生成池 (stub-image)"），
+ *  用 [^)]* 会在第一个 ) 截断、剥完残留一个 ")" 在气泡开头——需容忍一层嵌套。 */
+const META_TOKEN_RE = /\(\s*@(?:size|model)\s*:(?:[^()]|\([^()]*\))*\)/gi;
 /** 内联 @imgN 引用（(?!\d) 防止 @img1 命中 @img12 前缀） */
 const INLINE_REF_RE = /@img(\d+)(?!\d)/g;
 

@@ -25,8 +25,8 @@ export function cleanDisplayTitle(raw: string, maxLen = 60): string {
   s = s.replace(/\[IMAGE[^\]]*\]/gi, ' ');
   // @imgN 引用
   s = s.replace(/@img\d+/gi, ' ');
-  // (@size:..) (@model:..) token
-  s = s.replace(/\(\s*@(?:size|model)\s*:[^)]*\)/gi, ' ');
+  // (@size:..) (@model:..) token —— 值可能带一层括号（模型池名如"xx (stub-image)"）
+  s = s.replace(/\(\s*@(?:size|model)\s*:(?:[^()]|\([^()]*\))*\)/gi, ' ');
   // 【引用图片（按顺序）】... 引用说明块（含其后的 "- @imgN: xxx" 列表行）
   s = s.replace(/【[^】]*引用[^】]*】[\s\S]*$/g, ' ');
   s = s.replace(/【[^】]*】/g, ' ');
