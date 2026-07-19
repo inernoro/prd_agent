@@ -4,6 +4,10 @@ import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Spa
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';
 import { useCdsEvents, type SelfStatusSnapshot } from '@/hooks/useCdsEvents';
+import {
+  activeUpdateStaleSeconds,
+  isActiveUpdateStalled,
+} from './global-update-state';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -61,7 +65,8 @@ type BadgeState =
   | { kind: 'idle' }
   | { kind: 'updated'; fromSha: string; toSha: string }
   | { kind: 'updateAvailable'; count: number; firstSubject?: string }
-  | { kind: 'activeUpdating'; sinceMs: number; trigger?: string; step?: string; title?: string; staleSeconds?: number }
+  | { kind: 'activeUpdating'; sinceMs: number; lastTickMs?: number; trigger?: string; step?: string; title?: string }
+  | { kind: 'activeUpdateStalled'; sinceMs: number; lastTickMs: number; trigger?: string; step?: string; title?: string }
   | { kind: 'restarting'; sinceMs: number }
   | { kind: 'bundleStale'; backendSha: string; bundleSha: string };
 
@@ -169,16 +174,24 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     if (payload.activeSelfUpdate && !payload.activeSelfUpdate.interrupted) {
       const startedMs = Date.parse(payload.activeSelfUpdate.startedAt);
       const lastTickMs = payload.activeSelfUpdate.lastTickAt ? Date.parse(payload.activeSelfUpdate.lastTickAt) : Number.NaN;
-      const staleSeconds = Number.isFinite(lastTickMs)
-        ? Math.max(0, Math.floor((Date.now() - lastTickMs) / 1000))
-        : undefined;
-      setState({
-        kind: 'activeUpdating',
+      const commonState = {
         sinceMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
         trigger: payload.activeSelfUpdate.trigger,
         step: payload.activeSelfUpdate.step,
         title: payload.activeSelfUpdate.logTail?.[payload.activeSelfUpdate.logTail.length - 1]?.text,
-        staleSeconds: staleSeconds && staleSeconds >= 10 ? staleSeconds : undefined,
+      };
+      if (isActiveUpdateStalled(lastTickMs, Date.now())) {
+        setState({
+          kind: 'activeUpdateStalled',
+          ...commonState,
+          lastTickMs,
+        });
+        return;
+      }
+      setState({
+        kind: 'activeUpdating',
+        ...commonState,
+        lastTickMs: Number.isFinite(lastTickMs) ? lastTickMs : undefined,
       });
       return;
     }
@@ -243,13 +256,41 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     }
   }, [events.snapshot, events.effectiveConnection, applyPayload]);
 
+  const stalledRefreshKeyRef = useRef('');
+  useEffect(() => {
+    if (state.kind !== 'activeUpdateStalled') return;
+    const refreshKey = `${state.sinceMs}:${state.lastTickMs}`;
+    if (stalledRefreshKeyRef.current === refreshKey) return;
+    stalledRefreshKeyRef.current = refreshKey;
+    void triggerManualRefresh();
+  }, [state, triggerManualRefresh]);
+
   // restarting / activeUpdating 状态下 1s 定时刷新让计时秒数跳动。
   // elapsed 在 visualForState 里 render 时计算一次,组件本身不会因时间流逝
   // 自动 re-render — 这里 1s 一次轻量 setState 强制重渲染。
   const [, forceTick] = useState(0);
   useEffect(() => {
     if (state.kind !== 'restarting' && state.kind !== 'activeUpdating') return;
-    const t = window.setInterval(() => forceTick((n) => n + 1), 1000);
+    const t = window.setInterval(() => {
+      forceTick((n) => n + 1);
+      setState((current) => {
+        if (
+          current.kind !== 'activeUpdating'
+          || current.lastTickMs === undefined
+          || !isActiveUpdateStalled(current.lastTickMs, Date.now())
+        ) {
+          return current;
+        }
+        return {
+          kind: 'activeUpdateStalled',
+          sinceMs: current.sinceMs,
+          lastTickMs: current.lastTickMs,
+          trigger: current.trigger,
+          step: current.step,
+          title: current.title,
+        };
+      });
+    }, 1000);
     return () => window.clearInterval(t);
   }, [state.kind]);
 
@@ -558,7 +599,8 @@ function visualForState(
         : state.trigger === 'auto-poll' ? '自动更新'
         : '更新';
       const stepText = state.title || state.step || '等待后端返回进度';
-      const staleText = state.staleSeconds ? ` · ${state.staleSeconds}s 无新心跳` : '';
+      const staleSeconds = activeUpdateStaleSeconds(state.lastTickMs);
+      const staleText = staleSeconds && staleSeconds >= 10 ? ` · ${staleSeconds}s 无新心跳` : '';
       return {
         icon: <CdsLogoLoader size="sm" />,
         label: `${triggerLabel}进行中 ${elapsed}s · ${truncate(stepText, 42)}${staleText}`,
@@ -569,6 +611,19 @@ function visualForState(
         onClick: () => {
           opts.onNavigate('/cds-settings#maintenance');
         },
+      };
+    }
+    case 'activeUpdateStalled': {
+      const staleSeconds = activeUpdateStaleSeconds(state.lastTickMs) ?? 0;
+      const stepText = state.title || state.step || '未知阶段';
+      return {
+        icon: <AlertTriangle className="h-4 w-4" />,
+        label: `更新状态已失联 · ${staleSeconds}s 无业务心跳 · ${truncate(stepText, 32)}`,
+        title: 'CDS 已停止把该状态视为进行中，并正在强制核对服务端终态。点击可再次检查。',
+        bgClass: 'bg-red-50 dark:bg-red-950/30',
+        borderClass: 'border-red-500/40',
+        textClass: 'text-red-700 dark:text-red-300',
+        onClick: opts.onRetry,
       };
     }
     case 'restarting': {

@@ -20533,6 +20533,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
+    let terminalStateCommitted = false;
+    const commitSelfUpdateState = (terminal = false): void => {
+      const history = stateService.getSelfUpdateHistory(20);
+      selfStatusCache.commitSelfUpdateState(
+        {
+          activeSelfUpdate: stateService.getActiveSelfUpdate(),
+          lastSelfUpdate: history[0] ?? null,
+          selfUpdateHistory: history,
+        },
+        { terminal },
+      );
+      if (terminal) terminalStateCommitted = true;
+    };
 
     branch = typeof branch === 'string' ? branch.trim() : '';
     if (!branch) {
@@ -20551,7 +20564,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
-      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+      commitSelfUpdateState();
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -20572,7 +20585,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       trigger: 'manual',
       actor,
     });
-    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+    commitSelfUpdateState();
     const send = (step: string, status: string, title: string) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
@@ -20581,7 +20594,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
-      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+      commitSelfUpdateState();
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -20593,8 +20606,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
-    const recordFailure = (errMsg: string): void => {
+    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
       stateService.recordSelfUpdate({
+        ...record,
+        timings: timingRecorder.snapshot(),
+      });
+      commitSelfUpdateState(true);
+    };
+    const recordFailure = (errMsg: string): void => {
+      recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
         fromSha,
@@ -20604,13 +20624,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
-        timings: timingRecorder.snapshot(),
-      });
-    };
-    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
-      stateService.recordSelfUpdate({
-        ...record,
-        timings: timingRecorder.snapshot(),
       });
     };
 
@@ -21244,6 +21257,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // marker 会卡住 — 所有 tab 看到"自更新进行中"幽灵。idempotent 清空,
       // 二次清不影响已 record 的历史。
       stateService.clearSelfUpdateActive();
+      if (!terminalStateCommitted) {
+        commitSelfUpdateState(true);
+      }
     }
   });
 
@@ -21345,11 +21361,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
+    let terminalStateCommitted = false;
+    const commitSelfUpdateState = (terminal = false): void => {
+      const history = stateService.getSelfUpdateHistory(20);
+      selfStatusCache.commitSelfUpdateState(
+        {
+          activeSelfUpdate: stateService.getActiveSelfUpdate(),
+          lastSelfUpdate: history[0] ?? null,
+          selfUpdateHistory: history,
+        },
+        { terminal },
+      );
+      if (terminal) terminalStateCommitted = true;
+    };
     const existingActive = stateService.getActiveSelfUpdate();
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
-      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+      commitSelfUpdateState();
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -21365,14 +21394,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       trigger: 'force-sync',
       actor,
     });
-    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+    commitSelfUpdateState();
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
-      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
+      commitSelfUpdateState();
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
@@ -21382,8 +21411,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated */ }
-    const recordFailure = (errMsg: string): void => {
+    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
       stateService.recordSelfUpdate({
+        ...record,
+        timings: timingRecorder.snapshot(),
+      });
+      commitSelfUpdateState(true);
+    };
+    const recordFailure = (errMsg: string): void => {
+      recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
         fromSha,
@@ -21393,13 +21429,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
-        timings: timingRecorder.snapshot(),
-      });
-    };
-    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
-      stateService.recordSelfUpdate({
-        ...record,
-        timings: timingRecorder.snapshot(),
       });
     };
 
@@ -22059,6 +22088,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     } finally {
       // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
       stateService.clearSelfUpdateActive();
+      if (!terminalStateCommitted) {
+        commitSelfUpdateState(true);
+      }
     }
   });
 

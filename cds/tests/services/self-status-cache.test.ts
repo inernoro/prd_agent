@@ -91,6 +91,112 @@ describe('selfStatusCache', () => {
     expect(computeCalls).toBe(2);
   });
 
+  it('终态提交拒绝迟到的 active 快照,并绕过去重补跑完整刷新', async () => {
+    const active = {
+      startedAt: '2026-07-20T00:00:00.000Z',
+      branch: 'main',
+      trigger: 'manual',
+      step: 'checkout',
+    };
+    const completed = {
+      ts: '2026-07-20T00:00:04.000Z',
+      branch: 'main',
+      trigger: 'manual',
+      status: 'success',
+      durationMs: 4_000,
+    };
+    let authoritativeActive: typeof active | null = active;
+    let authoritativeLast: typeof completed | null = null;
+    let computeCalls = 0;
+    let releaseFirstRefresh: (() => void) | null = null;
+    const firstRefreshGate = new Promise<void>((resolve) => {
+      releaseFirstRefresh = resolve;
+    });
+
+    selfStatusCache.init({
+      computeSnapshot: async () => {
+        computeCalls += 1;
+        const capturedActive = authoritativeActive;
+        if (computeCalls === 1) await firstRefreshGate;
+        return {
+          ...baseSnapshot,
+          activeSelfUpdate: capturedActive,
+          lastSelfUpdate: authoritativeLast,
+          selfUpdateHistory: authoritativeLast ? [authoritativeLast] : [],
+        };
+      },
+      scanRemoteBranches: async () => [],
+    });
+
+    const { unsub, events } = collectEvents();
+    try {
+      selfStatusCache.commitSelfUpdateState({
+        activeSelfUpdate: active,
+        lastSelfUpdate: null,
+        selfUpdateHistory: [],
+      });
+      selfStatusCache.enqueueRefresh('webhook');
+      await flushTicks(2);
+
+      authoritativeActive = null;
+      authoritativeLast = completed;
+      selfStatusCache.commitSelfUpdateState(
+        {
+          activeSelfUpdate: null,
+          lastSelfUpdate: completed,
+          selfUpdateHistory: [completed],
+        },
+        { terminal: true },
+      );
+      releaseFirstRefresh?.();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(computeCalls).toBe(2);
+      expect(selfStatusCache.getSnapshot().activeSelfUpdate).toBeNull();
+      expect(selfStatusCache.getSnapshot().lastSelfUpdate).toEqual(completed);
+
+      const statusEvents = events.filter((event) => event.type === 'self.status');
+      expect(statusEvents.length).toBeGreaterThan(0);
+      expect(statusEvents.at(-1)?.data).toMatchObject({
+        activeSelfUpdate: null,
+        lastSelfUpdate: completed,
+      });
+      const staleRefresh = events.find(
+        (event) => event.type === 'self.refresh.done'
+          && (event.data as { staleSelfUpdateSnapshot?: boolean }).staleSelfUpdateSnapshot === true,
+      );
+      expect(staleRefresh).toBeTruthy();
+    } finally {
+      unsub();
+    }
+  });
+
+  it('终态刷新不受 webhook 五秒去重窗口影响', async () => {
+    let calls = 0;
+    selfStatusCache.init({
+      computeSnapshot: async () => {
+        calls += 1;
+        return baseSnapshot;
+      },
+      scanRemoteBranches: async () => [],
+    });
+
+    selfStatusCache.enqueueRefresh('webhook');
+    await flushTicks();
+    selfStatusCache.commitSelfUpdateState(
+      {
+        activeSelfUpdate: null,
+        lastSelfUpdate: { ts: '2026-07-20T00:00:04.000Z', status: 'success' },
+        selfUpdateHistory: [],
+      },
+      { terminal: true },
+    );
+    await flushTicks();
+
+    expect(calls).toBe(2);
+    expect(selfStatusCache.getActiveJob()?.trigger).toBe('self-update-terminal');
+  });
+
   it('refresh 成功 → snapshot.lastRefreshAt 更新 + 发 self.refresh.done + self.status', async () => {
     selfStatusCache.init({
       computeSnapshot: async () => baseSnapshot,
