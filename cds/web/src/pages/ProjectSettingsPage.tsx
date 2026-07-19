@@ -81,6 +81,7 @@ interface ProjectSummary {
   githubInstallationId?: number;
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
+  githubBotPushFilterEnabled?: boolean;
   /** 发布首启就绪探测下限（秒，0 = 用系统默认 1200）。仅部署路径生效。 */
   deployReadinessFloorSeconds?: number;
   githubEventPolicy?: GithubEventPolicy;
@@ -1487,6 +1488,7 @@ function GithubProjectTab({
   const [unlinkOpen, setUnlinkOpen] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [autoDeploySaving, setAutoDeploySaving] = useState(false);
+  const [botPushFilterSaving, setBotPushFilterSaving] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
 
   const loadApp = useCallback(async () => {
@@ -1532,6 +1534,22 @@ function GithubProjectTab({
       onToast(messageFromError(err));
     } finally {
       setAutoDeploySaving(false);
+    }
+  }
+
+  async function toggleBotPushFilter(enabled: boolean): Promise<void> {
+    setBotPushFilterSaving(true);
+    try {
+      const result = await apiRequest<ProjectSaveResponse>(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: 'PUT',
+        body: { githubBotPushFilterEnabled: enabled },
+      });
+      onSaved(result.project);
+      onToast(enabled ? '机器人提交过滤已开启' : '机器人提交过滤已关闭');
+    } catch (err) {
+      onToast(messageFromError(err));
+    } finally {
+      setBotPushFilterSaving(false);
     }
   }
 
@@ -1638,6 +1656,24 @@ function GithubProjectTab({
 
       <Section title="GitHub 事件策略" description="这些开关只影响当前项目。未设置时，push 兼容旧自动部署字段，其它事件默认开启。">
         <div className="grid max-w-3xl gap-2">
+          <label className="flex items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
+            <input
+              className="mt-1 h-4 w-4"
+              type="checkbox"
+              checked={project.githubBotPushFilterEnabled !== false}
+              disabled={botPushFilterSaving}
+              onChange={(event) => void toggleBotPushFilter(event.target.checked)}
+            />
+            <span className="min-w-0 text-sm leading-6">
+              <span className="font-medium">过滤机器人提交的版本</span>
+              <span className="block text-muted-foreground">
+                dependabot[bot]、github-actions[bot] 等机器人账号的 push 不创建 CDS 版本，也不触发构建部署。默认开启。
+              </span>
+            </span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+              {project.githubBotPushFilterEnabled !== false ? '开启' : '关闭'}
+            </span>
+          </label>
           {githubEventDefs.map((def) => {
             const enabled = resolveGithubEvent(project, def.key);
             return (

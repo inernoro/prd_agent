@@ -430,6 +430,14 @@ export const PROJECT_SETTINGS_INDEX: SettingsIndexEntry[] = [
     keywords: ['github', '仓库绑定', '项目仓库', '事件策略', 'push', 'pr', '自动部署', '关联仓库'],
   },
   {
+    id: 'proj:github:bot-push-filter',
+    label: '过滤机器人提交的版本',
+    hint: '项目 GitHub · 阻止依赖机器人创建 CDS 版本和触发部署',
+    tab: 'github',
+    scope: 'project',
+    keywords: ['机器人', '机器人用户', '机器人提交', 'bot', 'dependabot', 'dependabot[bot]', 'github-actions[bot]', '依赖更新', '过滤版本', '浪费资源'],
+  },
+  {
     id: 'proj:comment-template',
     label: '项目 PR 评论模板',
     hint: '项目 · GitHub PR 预览评论模板',

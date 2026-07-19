@@ -32,7 +32,13 @@
 
 import { cdsEventsBus } from './cds-events-bus.js';
 
-export type RefreshTrigger = 'manual' | 'webhook' | 'startup' | 'schedule' | 'stream-subscribe';
+export type RefreshTrigger =
+  | 'manual'
+  | 'webhook'
+  | 'startup'
+  | 'schedule'
+  | 'stream-subscribe'
+  | 'self-update-terminal';
 
 export interface SelfStatusSnapshot {
   /** 自检全景(原 computeSelfStatusPayload 输出,字段兼容) */
@@ -114,6 +120,12 @@ interface CacheOptions {
   scanRemoteBranches: RemoteBranchScanner;
 }
 
+interface SelfUpdateStateCommit {
+  activeSelfUpdate: unknown;
+  lastSelfUpdate: unknown;
+  selfUpdateHistory: unknown[];
+}
+
 const EMPTY_SNAPSHOT: SelfStatusSnapshot = {
   currentBranch: '',
   detachedHead: false,
@@ -161,6 +173,13 @@ class SelfStatusCache {
    */
   private pendingRefreshTrigger: RefreshTrigger | null = null;
 
+  /**
+   * self-update 权威状态代次。每次 active/step/terminal 提交都递增。
+   * refresh job 启动时捕获代次；若完成时代次已经变化，说明计算结果基于旧状态，
+   * 必须丢弃，禁止用迟到的 checkout/running 快照覆盖更新后的终态。
+   */
+  private selfUpdateRevision = 0;
+
   /** 给 ?probe=remote 用的轻量节流:同 trigger 在 5s 内不重复跑 */
   private lastRefreshAtByTrigger = new Map<RefreshTrigger, number>();
 
@@ -184,6 +203,7 @@ class SelfStatusCache {
     this.options = null;
     this.activeJob = null;
     this.pendingRefreshTrigger = null;
+    this.selfUpdateRevision = 0;
     this.lastRefreshAtByTrigger.clear();
   }
 
@@ -208,6 +228,36 @@ class SelfStatusCache {
 
   getActiveJob(): RefreshJobState | null {
     return this.activeJob;
+  }
+
+  /**
+   * 直接提交 self-update 的权威状态，不再等待一次包含 git fetch 的全量 refresh。
+   *
+   * terminal=true 时额外安排一次不受去重影响的全量刷新，用于收敛 HEAD、bundle、
+   * ahead 等派生字段。直接发布保证进程即将重启时浏览器也先收到 active=null；
+   * revision 栅栏保证更早启动的 refresh 不能把旧 active 状态写回来。
+   */
+  commitSelfUpdateState(
+    commit: SelfUpdateStateCommit,
+    opts: { terminal?: boolean } = {},
+  ): void {
+    this.selfUpdateRevision += 1;
+    const next: SelfStatusSnapshot = {
+      ...this.snapshot,
+      activeSelfUpdate: commit.activeSelfUpdate,
+      lastSelfUpdate: commit.lastSelfUpdate,
+      selfUpdateHistory: commit.selfUpdateHistory,
+      cachedAt: new Date().toISOString(),
+    };
+    this.snapshot = next;
+    if (!next.degraded) {
+      this.lastKnownGood = { ...next };
+    }
+    cdsEventsBus.publish('self.status', next);
+
+    if (opts.terminal) {
+      this.enqueueRefresh('self-update-terminal', { dedupeWindowMs: 0 });
+    }
   }
 
   /**
@@ -291,10 +341,17 @@ class SelfStatusCache {
     }
     // 跑一次轻量 compute(skipFetch=true),不触发网络,只读 cached refs。
     // 不入 activeJob,纯就地刷新本地快照。
+    const startedSelfUpdateRevision = this.selfUpdateRevision;
     try {
       const partial = await this.options.computeSnapshot({ skipFetch: true });
+      if (startedSelfUpdateRevision !== this.selfUpdateRevision) {
+        return this.snapshot;
+      }
       this.applyPartial(partial, { trigger: 'startup', durationMs: 0, error: null, includeBranches: false });
     } catch (err) {
+      if (startedSelfUpdateRevision !== this.selfUpdateRevision) {
+        return this.snapshot;
+      }
       this.snapshot = {
         ...this.snapshot,
         degraded: {
@@ -322,6 +379,7 @@ class SelfStatusCache {
     }
 
     const startMs = Date.now();
+    const startedSelfUpdateRevision = this.selfUpdateRevision;
     try {
       // 1) 主快照(可能跑 git fetch)
       const partial = await this.options.computeSnapshot({ skipFetch: false });
@@ -336,15 +394,25 @@ class SelfStatusCache {
         console.warn('[self-status-cache] remote branch scan failed:', (err as Error).message);
       }
       const durationMs = Date.now() - startMs;
-      this.applyPartial(partial, { trigger: job.trigger, durationMs, error: null, includeBranches: true, remoteBranches });
+      const staleSelfUpdateSnapshot = startedSelfUpdateRevision !== this.selfUpdateRevision;
+      if (!staleSelfUpdateSnapshot) {
+        this.applyPartial(partial, { trigger: job.trigger, durationMs, error: null, includeBranches: true, remoteBranches });
+      }
 
       job.status = 'done';
       job.finishedAt = new Date().toISOString();
       job.durationMs = durationMs;
       this.activeJob = job;
-      cdsEventsBus.publish('self.refresh.done', { trigger: job.trigger, jobId: job.jobId, durationMs }, { jobId: job.jobId });
-      // 状态变化也广播一次
-      cdsEventsBus.publish('self.status', this.snapshot);
+      cdsEventsBus.publish(
+        'self.refresh.done',
+        { trigger: job.trigger, jobId: job.jobId, durationMs, staleSelfUpdateSnapshot },
+        { jobId: job.jobId },
+      );
+      // 状态变化也广播一次。旧代次结果被拒绝时不重复广播，终态提交本身已经发布，
+      // pending 的 self-update-terminal refresh 会在下面补跑并发布完整新快照。
+      if (!staleSelfUpdateSnapshot) {
+        cdsEventsBus.publish('self.status', this.snapshot);
+      }
     } catch (err) {
       const durationMs = Date.now() - startMs;
       const msg = (err as Error).message.slice(0, 500);
@@ -354,22 +422,28 @@ class SelfStatusCache {
       job.error = msg;
       this.activeJob = job;
 
-      // 失败时不覆盖 lastKnownGood,只把 degraded + lastError 写进 snapshot
-      this.snapshot = {
-        ...this.snapshot,
-        lastError: msg,
-        lastRefreshAt: new Date().toISOString(),
-        lastRefreshDurationMs: durationMs,
-        lastRefreshTrigger: job.trigger,
-        degraded: {
-          degraded: true,
-          reason: 'refresh_failed',
-          message: msg,
-        },
-        cachedAt: new Date().toISOString(),
-      };
+      const staleSelfUpdateSnapshot = startedSelfUpdateRevision !== this.selfUpdateRevision;
+      // 失败时不覆盖 lastKnownGood。若期间已有更新状态提交，连 degraded 也不能用
+      // 旧 job 覆盖终态快照；后续 terminal refresh 会重新计算完整状态。
+      if (!staleSelfUpdateSnapshot) {
+        this.snapshot = {
+          ...this.snapshot,
+          lastError: msg,
+          lastRefreshAt: new Date().toISOString(),
+          lastRefreshDurationMs: durationMs,
+          lastRefreshTrigger: job.trigger,
+          degraded: {
+            degraded: true,
+            reason: 'refresh_failed',
+            message: msg,
+          },
+          cachedAt: new Date().toISOString(),
+        };
+      }
       cdsEventsBus.publish('self.refresh.failed', { trigger: job.trigger, jobId: job.jobId, error: msg, durationMs }, { jobId: job.jobId });
-      cdsEventsBus.publish('self.status', this.snapshot);
+      if (!staleSelfUpdateSnapshot) {
+        cdsEventsBus.publish('self.status', this.snapshot);
+      }
     }
 
     // Codex review(PR #684, P2):本 job 跑的过程中若有 enqueueRefresh 被合并丢弃
