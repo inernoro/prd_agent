@@ -2,6 +2,7 @@ import { memo, useMemo, useCallback, useState } from 'react';
 import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
 import { inlineMarksToTokens } from '@/lib/chipTokenText';
+import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 
 // ── Types (mirrored from parent to avoid circular deps) ──────────────
 
@@ -237,7 +238,14 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           chipMeta.set(c.refId, { canvasKey: c.key, src: c.src });
         }
       }
-      const text = inlineMarksToTokens(body, chipMeta);
+      // 复制的是「气泡里看到的」而非落库原文（Codex P2）：历史污染消息的
+      // content 仍含生图英文前缀/【引用图片】块——先过展示层清洗，与
+      // MessageContentRenderer 同口径；块内独有的 refId 以 @imgN 形式补在
+      // 文首（与渲染层顶部 chip 行一致），再统一 token 化。
+      const parsed = parseVisualMessageDisplay(body);
+      const blockMarks = parsed.blockRefIds.map((id) => `@img${id}`).join(' ');
+      const cleanedBody = [blockMarks, parsed.text].filter(Boolean).join(' ').trim();
+      const text = inlineMarksToTokens(cleanedBody, chipMeta);
       void navigator.clipboard
         .writeText(text)
         .then(() => {
