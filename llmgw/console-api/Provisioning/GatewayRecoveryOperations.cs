@@ -157,6 +157,7 @@ public static class TenantOwnerAuthority
 public static class GatewayRecoveryOperations
 {
     private static readonly TimeSpan OperationLease = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
 
     public static GatewayRecoveryOperation New(
         string kind,
@@ -186,6 +187,20 @@ public static class GatewayRecoveryOperations
                 .Set(x => x.Detail, detail)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+
+    public static async Task<IAsyncDisposable> StartHeartbeatAsync(
+        IMongoCollection<GatewayRecoveryOperation> operations,
+        string operationId,
+        TimeSpan? heartbeatInterval = null)
+    {
+        var heartbeat = new GatewayRecoveryHeartbeat(
+            operations,
+            operationId,
+            heartbeatInterval ?? HeartbeatInterval,
+            OperationLease);
+        await heartbeat.StartAsync();
+        return heartbeat;
+    }
 
     public static async Task<int> RepairExpiredAsync(IMongoDatabase database)
     {
@@ -329,5 +344,81 @@ public static class GatewayRecoveryOperations
 
         await TenantOwnerAuthority.RestoreAsync(tenants, operation.TenantId, operation.MembershipId);
         return "owner-removal-conflict-restored";
+    }
+}
+
+internal sealed class GatewayRecoveryHeartbeat : IAsyncDisposable
+{
+    private readonly IMongoCollection<GatewayRecoveryOperation> _operations;
+    private readonly string _operationId;
+    private readonly TimeSpan _interval;
+    private readonly TimeSpan _lease;
+    private readonly CancellationTokenSource _stop = new();
+    private Task _runTask = Task.CompletedTask;
+
+    public GatewayRecoveryHeartbeat(
+        IMongoCollection<GatewayRecoveryOperation> operations,
+        string operationId,
+        TimeSpan interval,
+        TimeSpan lease)
+    {
+        if (interval <= TimeSpan.Zero || interval >= lease)
+            throw new ArgumentOutOfRangeException(nameof(interval), "心跳间隔必须大于零且小于 recovery lease");
+        _operations = operations;
+        _operationId = operationId;
+        _interval = interval;
+        _lease = lease;
+    }
+
+    public async Task StartAsync()
+    {
+        if (!await RenewAsync())
+            throw new InvalidOperationException("recovery operation 不存在或已被其他修复器接管");
+        _runTask = RunAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _stop.CancelAsync();
+        await _runTask;
+        _stop.Dispose();
+    }
+
+    private async Task RunAsync()
+    {
+        using var timer = new PeriodicTimer(_interval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+            {
+                try
+                {
+                    if (!await RenewAsync()) return;
+                }
+                catch (Exception) when (_stop.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch when (!_stop.IsCancellationRequested)
+                {
+                    // Mongo 短暂不可用时保留下一次续租机会；业务写入仍由调用链自行失败并补偿。
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task<bool> RenewAsync()
+    {
+        var now = DateTime.UtcNow;
+        var result = await _operations.UpdateOneAsync(
+            x => x.Id == _operationId && x.Status == "pending" && x.RepairToken == null,
+            Builders<GatewayRecoveryOperation>.Update
+                .Set(x => x.LeaseExpiresAt, now.Add(_lease))
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: CancellationToken.None);
+        return result.MatchedCount == 1;
     }
 }
