@@ -25,3 +25,22 @@ public enum ModelResolutionType
     /// </summary>
     Legacy = 3
 }
+
+public static class ModelResolutionTypeMapper
+{
+    public static ModelResolutionType? Parse(string? resolutionType)
+    {
+        if (string.IsNullOrWhiteSpace(resolutionType))
+            return null;
+
+        return resolutionType switch
+        {
+            "GatewayRegistryPool" => ModelResolutionType.DedicatedPool,
+            "DedicatedPool" => ModelResolutionType.DedicatedPool,
+            "DefaultPool" => ModelResolutionType.DefaultPool,
+            "DirectModel" => ModelResolutionType.DirectModel,
+            "Legacy" => ModelResolutionType.Legacy,
+            _ => null
+        };
+    }
+}
