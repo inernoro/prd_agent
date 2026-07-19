@@ -108,6 +108,14 @@ class TutorialPublisherTests(unittest.TestCase):
         chapter_ids = [node.source_id for node in self.source.nodes if node.source_id.startswith("chapter-")]
         self.assertEqual([f"chapter-{number:02d}" for number in range(33)], chapter_ids)
 
+    def test_practical_tutorials_live_in_a_dedicated_folder(self):
+        folder = next(node for node in self.source.nodes if node.source_id == "part-practical")
+        self.assertEqual("folder", folder.kind)
+        practical = [node for node in self.source.nodes if node.source_id.startswith("practical-image-")]
+        self.assertEqual(4, len(practical))
+        self.assertTrue(all(node.parent_source_id == folder.source_id for node in practical))
+        self.assertEqual([400, 401, 402, 403], [node.sort_order for node in practical])
+
     def test_visual_density_has_no_zero_image_chapter(self):
         chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]
         counts = [len(publisher.MARKDOWN_IMAGE_RE.findall(node.content)) for node in chapters]
