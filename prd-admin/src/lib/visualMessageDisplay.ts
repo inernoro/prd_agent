@@ -79,6 +79,14 @@ export function parseVisualMessageDisplay(raw: string): ParsedVisualMessageDispl
   // 3. 裸元数据 token
   s = s.replace(newRe(META_TOKEN_RE), ' ');
 
+  // 3.5 历史消息形如 "(@size:...) (@model:...) Generate an image..."：
+  // 前缀藏在元数据 token 之后，步骤 1 匹配不到，剥完 token 再清一轮
+  guard = 0;
+  while (GENERATE_PREFIX_RE.test(s) && guard < 5) {
+    s = s.replace(GENERATE_PREFIX_RE, '');
+    guard += 1;
+  }
+
   // 4. 折叠空白：行内多空格合一、3+ 连续换行降为 2、去首尾
   s = s
     .split('\n')

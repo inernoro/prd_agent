@@ -31,6 +31,15 @@ describe('parseVisualMessageDisplay — 展示层清洗', () => {
     expect(r.text).toBe('画一只猫');
   });
 
+  it('元数据 token 在前时生图前缀仍被剥离（历史消息格式）', () => {
+    const r = parseVisualMessageDisplay(
+      '(@size:1024x1024) (@model:gpt-image-1) Generate an image based on the following description:\n画一只猫'
+    );
+    expect(r.text).toBe('画一只猫');
+    expect(r.text).not.toMatch(/Generate an image/i);
+    expect(r.text).not.toContain('@size');
+  });
+
   it('剥离【引用图片（按顺序）】块并提取 blockRefIds', () => {
     const raw = '把左边的物体放到右边\n\n【引用图片（按顺序）】\n- @img1: 76a9705d94b06dbb1a651f3ff16ad7e1.png\n- @img2: db3d9483aa.png';
     const r = parseVisualMessageDisplay(raw);
