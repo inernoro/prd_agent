@@ -1737,16 +1737,38 @@ public class ImageMasterController : ControllerBase
             s = prefixRe.Replace(s, string.Empty, 1);
         }
 
-        // 2. 收集引用块中的 @imgN 序号（保序去重）
+        // 2+3. 收集并剥离【引用图片…】块：块头 + 紧随其后的连续 "- @imgN: 文件名" 行。
+        // 只剥真实生成块（Codex P2，与前端 parseVisualMessageDisplay 同口径）——
+        // 集成方 prompt 里用户手写的 "- @img1: 保持面部不变" 普通列表行不在块头
+        // 之后，整行保留（指令文字不丢，@imgN 由前端就地渲染 chip）。
         var refIds = new List<int>();
-        foreach (Match m in Regex.Matches(s, @"^\s*-\s*@?img(\d+)\s*[:：].*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
         {
-            if (int.TryParse(m.Groups[1].Value, out var id) && id > 0 && !refIds.Contains(id)) refIds.Add(id);
+            var headerRe = new Regex(@"【[^】]*引用图片[^】]*】");
+            var refLineRe = new Regex(@"^\s*-\s*@?img(\d+)\s*[:：].*$", RegexOptions.IgnoreCase);
+            var lines = s.Split('\n');
+            var kept = new List<string>(lines.Length);
+            var inBlock = false;
+            foreach (var line in lines)
+            {
+                if (headerRe.IsMatch(line))
+                {
+                    inBlock = true;
+                    // 块头可能与正文同行（历史拼接）：剥块头标记，保留同行其余文字
+                    var rest = headerRe.Replace(line, " ").Trim();
+                    if (rest.Length > 0) kept.Add(rest);
+                    continue;
+                }
+                var m = refLineRe.Match(line);
+                if (inBlock && m.Success)
+                {
+                    if (int.TryParse(m.Groups[1].Value, out var id) && id > 0 && !refIds.Contains(id)) refIds.Add(id);
+                    continue; // 块内引用行整行剥离（文件名绝不进展示）
+                }
+                inBlock = false; // 任何非引用行（含空行）终结当前块
+                kept.Add(line);
+            }
+            s = string.Join("\n", kept);
         }
-
-        // 3. 剥离【…引用图片…】块头与 "- @imgN: 文件名" 行
-        s = Regex.Replace(s, @"【[^】]*引用图片[^】]*】", " ");
-        s = Regex.Replace(s, @"^\s*-\s*@?img\d+\s*[:：].*$", " ", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
         // 4. 折叠空白
         s = Regex.Replace(s, @"[ \t]{2,}", " ");

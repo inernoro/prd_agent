@@ -10,3 +10,4 @@
 | fix | prd-admin | 视觉创作用户气泡开头残留 ")" ——模型池名自带括号时 (@model:...) 剥离在首个右括号截断；三处解析正则改为容忍一层嵌套括号（展示清洗/标题清洗/模型徽标） |
 | feat | prd-admin | 视觉创作输入框 chip 支持 Lovart 式复制粘贴：复制/剪切序列化为 [@image:#N:key:src] 混合文本，粘贴命中当前画布集合时还原就绪 chip，未命中保持纯文本 |
 | fix | prd-admin | 引用行剥离收窄到【引用图片】块内：用户手写 "- @imgN: 指令" 普通列表行整行保留（Codex P2） |
+| fix | prd-api | UserMessageContent 兜底清洗同步收窄：引用行只在【引用图片】块内剥离，集成方 prompt 里的用户手写 "- @imgN: 指令" 行整行保留（Codex P2） |
