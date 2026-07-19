@@ -3,6 +3,7 @@ import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
 import { inlineMarksToTokens } from '@/lib/chipTokenText';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { copyToClipboard } from '@/lib/clipboard';
 
 // ── Types (mirrored from parent to avoid circular deps) ──────────────
 
@@ -246,15 +247,14 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       const blockMarks = parsed.blockRefIds.map((id) => `@img${id}`).join(' ');
       const cleanedBody = [blockMarks, parsed.text].filter(Boolean).join(' ').trim();
       const text = inlineMarksToTokens(cleanedBody, chipMeta);
-      void navigator.clipboard
-        .writeText(text)
-        .then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        })
-        .catch(() => {
-          /* 剪贴板不可用（非安全上下文等）时静默——按钮态不变提示未成功 */
-        });
+      // 走仓库 SSOT 复制工具（Codex P2）：非安全上下文/内嵌 WebView 下
+      // navigator.clipboard 为 undefined，直接调用会同步抛错走不到 catch；
+      // copyToClipboard 内部已做现代 API + execCommand 兜底并返回真实结果。
+      void copyToClipboard(text).then((ok) => {
+        if (!ok) return; // 复制失败保持按钮态不变，不假成功
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      });
     },
     [canvas],
   );
