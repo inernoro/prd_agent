@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
@@ -57,7 +58,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelPool.IPoolFailoverNotifier? failoverNotifier = null,
         IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
         GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -70,7 +72,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
         _doubaoStreamAsr = doubaoStreamAsr
-            ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance);
+            ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance, safeWebSocketConnector);
 
         // 注册适配器
         RegisterAdapter(new OpenAIGatewayAdapter());
@@ -2013,13 +2015,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
-            if (IsExternalTenant(request.Context?.TenantId))
-            {
-                const string message = "外部租户暂不开放 WebSocket Exchange；请使用 HTTP/HTTPS 上游，避免未经固定连接的 DNS 重绑定风险。";
-                var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                await FinishRawLogAsync(logId, 403, message, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
-                return GatewayRawResponse.Fail("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", message, 403);
-            }
+            var externalTenant = IsExternalTenant(request.Context?.TenantId);
             if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
@@ -2069,7 +2065,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 accessKey,
                 audioBytes,
                 resolution.ExchangeTransformerConfig,
-                ct);
+                ct,
+                requirePublicPinnedWebSocket: externalTenant);
 
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;

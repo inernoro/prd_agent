@@ -142,6 +142,122 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ConcurrentTenantBudgetReservations_AggregateAcrossAppCallers()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        await scope.Context.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+            .InsertOneAsync(new GatewayTenantGovernanceRecord
+            {
+                Id = "tenant-a",
+                MonthlyBudgetUsd = 1m,
+                BudgetReservationUsd = 0.25m,
+            });
+        var callers = new[]
+        {
+            new GatewayAppCallerRecord { TenantId = "tenant-a", AppCallerCode = "client-a::chat", RequestType = "chat" },
+            new GatewayAppCallerRecord { TenantId = "tenant-a", AppCallerCode = "client-b::chat", RequestType = "chat" },
+        };
+        var coordinators = Enumerable.Range(0, 20)
+            .Select(_ => new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance))
+            .ToArray();
+
+        var admissions = await Task.WhenAll(coordinators.Select((coordinator, index) =>
+            coordinator.ReserveAsync(callers[index % callers.Length], $"tenant-budget-{index}", CancellationToken.None)));
+
+        admissions.Count(x => x.Allowed).ShouldBe(4);
+        admissions.Count(x => x.ErrorCode == "TENANT_MONTHLY_BUDGET_EXCEEDED").ShouldBe(16);
+        var month = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(x => x.TenantId == "tenant-a"
+                       && x.AppCallerCode == GatewayBudgetCoordinator.TenantAggregateAppCallerCode
+                       && x.RequestType == GatewayBudgetCoordinator.TenantAggregateRequestType)
+            .SingleAsync();
+        month.ReservedUsd.ShouldBe(1m);
+        admissions.Where(x => x.Allowed).All(x => x.Scope == "tenant").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TenantBudgetReservations_AreIndependentAcrossTenants()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        await scope.Context.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+            .InsertManyAsync(new[]
+            {
+                new GatewayTenantGovernanceRecord { Id = "tenant-a", MonthlyBudgetUsd = 1m, BudgetReservationUsd = 0.5m },
+                new GatewayTenantGovernanceRecord { Id = "tenant-b", MonthlyBudgetUsd = 1m, BudgetReservationUsd = 0.5m },
+            });
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+
+        var admissions = await Task.WhenAll(
+            Enumerable.Range(0, 6).Select(index => coordinator.ReserveAsync(
+                new GatewayAppCallerRecord { TenantId = "tenant-a", AppCallerCode = "shared::chat", RequestType = "chat" },
+                $"tenant-a-{index}",
+                CancellationToken.None))
+            .Concat(Enumerable.Range(0, 6).Select(index => coordinator.ReserveAsync(
+                new GatewayAppCallerRecord { TenantId = "tenant-b", AppCallerCode = "shared::chat", RequestType = "chat" },
+                $"tenant-b-{index}",
+                CancellationToken.None))));
+
+        admissions.Count(x => x.Allowed).ShouldBe(4);
+        var months = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(x => x.AppCallerCode == GatewayBudgetCoordinator.TenantAggregateAppCallerCode)
+            .ToListAsync();
+        months.Count.ShouldBe(2);
+        months.Single(x => x.TenantId == "tenant-a").ReservedUsd.ShouldBe(1m);
+        months.Single(x => x.TenantId == "tenant-b").ReservedUsd.ShouldBe(1m);
+    }
+
+    [Fact]
+    public async Task AppCallerBudgetRejection_ReleasesTenantAggregateReservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        await scope.CreateGovernanceIndexesAsync();
+        await scope.Context.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+            .InsertOneAsync(new GatewayTenantGovernanceRecord
+            {
+                Id = "tenant-a",
+                MonthlyBudgetUsd = 2m,
+                BudgetReservationUsd = 0.5m,
+            });
+        var caller = new GatewayAppCallerRecord
+        {
+            TenantId = "tenant-a",
+            AppCallerCode = "limited-client::chat",
+            RequestType = "chat",
+            MonthlyBudgetUsd = 0.5m,
+            BudgetReservationUsd = 0.5m,
+        };
+        var coordinator = new GatewayBudgetCoordinator(scope.Context, NullLogger<GatewayBudgetCoordinator>.Instance);
+
+        var first = await coordinator.ReserveAsync(caller, "layered-first", CancellationToken.None);
+        var second = await coordinator.ReserveAsync(caller, "layered-second", CancellationToken.None);
+
+        first.Allowed.ShouldBeTrue();
+        first.Lease.ShouldNotBeNull();
+        first.Lease!.ReservationIds.Count.ShouldBe(2);
+        second.Allowed.ShouldBeFalse();
+        second.ErrorCode.ShouldBe("APP_CALLER_MONTHLY_BUDGET_EXCEEDED");
+        var tenantMonth = await scope.Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months")
+            .Find(x => x.TenantId == "tenant-a" && x.AppCallerCode == GatewayBudgetCoordinator.TenantAggregateAppCallerCode)
+            .SingleAsync();
+        tenantMonth.ReservedUsd.ShouldBe(0.5m);
+        var compensated = await scope.Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations")
+            .Find(x => x.TenantId == "tenant-a"
+                       && x.AppCallerCode == GatewayBudgetCoordinator.TenantAggregateAppCallerCode
+                       && x.RequestId == "layered-second")
+            .SingleAsync();
+        compensated.Status.ShouldBe("released");
+        compensated.Detail.ShouldBe("app-caller-budget-rejected");
+    }
+
+    [Fact]
     public async Task ConcurrentFirstMonthReservations_AllSucceedWhenBudgetHasCapacity()
     {
         var testDatabase = await TryCreateDatabaseAsync();
@@ -1805,6 +1921,7 @@ public sealed class GatewayRuntimeGovernanceTests
             var months = Context.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
             await months.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetMonthRecord>(
                 Builders<GatewayBudgetMonthRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
                     .Ascending(x => x.AppCallerCode)
                     .Ascending(x => x.RequestType)
                     .Ascending(x => x.MonthStart),
@@ -1812,6 +1929,7 @@ public sealed class GatewayRuntimeGovernanceTests
             var reservations = Context.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
             await reservations.Indexes.CreateOneAsync(new CreateIndexModel<GatewayBudgetReservationRecord>(
                 Builders<GatewayBudgetReservationRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
                     .Ascending(x => x.AppCallerCode)
                     .Ascending(x => x.RequestType)
                     .Ascending(x => x.RequestId),

@@ -148,12 +148,12 @@ export function OrganizationPage() {
           <div style={sectionHeadingRowStyle}>
             <div>
               <h2 style={headingStyle}><Activity size={14} />租户行为与额度在哪里管理</h2>
-              <p style={hintStyle}>租户负责隔离数据和汇总用量；实际拦截请求的额度放在 appCaller 和接入密钥上，便于定位是哪项业务、哪把 key 超限。</p>
+              <p style={hintStyle}>租户总预算与总速率负责兜底，appCaller 和接入密钥负责把额度继续细分到业务与接入方。</p>
             </div>
           </div>
           <div role="note" style={boundaryNoteStyle}>
-            <strong>当前没有单独的“租户总额度”输入框。</strong>
-            <span>appCaller 月预算是费用硬边界，appCaller 与接入密钥的每分钟上限是速率硬边界。用量页提供当前租户的汇总证据，但不会把各项预算相加后伪装成租户总上限。</span>
+            <strong>租户与业务限制会同时执行。</strong>
+            <span>“预算与用量”可设置跨全部团队、key 和 appCaller 的总月预算与总 RPM；appCaller 月预算/RPM、接入密钥 RPM 继续作为更细的硬边界，任一层触顶都会拒绝请求。</span>
           </div>
           <div className="lg-quickstart-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8, marginTop: 10 }}>
             <GovernanceLink
@@ -172,13 +172,13 @@ export function OrganizationPage() {
             />
             <GovernanceLink
               icon={<Activity size={15} />}
-              title="租户汇总与费用可信度"
-              detail="按当前租户查看请求量、费用状态、unknown cost 和供应商对账证据。"
+              title="租户总限制与费用可信度"
+              detail="设置租户总月预算、单次原子预占和总 RPM，并查看费用证据与供应商对账。"
               to={canReadUsage ? '/usage' : undefined}
               action={canReadUsage ? '查看预算与用量' : '当前角色不可查看'}
             />
           </div>
-          <p style={{ ...hintStyle, marginTop: 9 }}>推荐顺序：先为每个 appCaller 设业务预算，再为每把 key 设速率上限，最后在用量页观察租户整体。要停止某个接入方时撤销它的 key，不要停用整个租户。</p>
+          <p style={{ ...hintStyle, marginTop: 9 }}>推荐顺序：先在用量页设置租户兜底总限制，再为 appCaller 和 key 设置更细边界。要停止某个接入方时撤销它的 key，不要停用整个租户。</p>
         </section>
 
         <section style={cardStyle}>

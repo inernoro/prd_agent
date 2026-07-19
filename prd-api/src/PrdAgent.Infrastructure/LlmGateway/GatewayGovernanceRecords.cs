@@ -82,6 +82,26 @@ public sealed class GatewayServiceKeyRateWindowRecord
 }
 
 [BsonIgnoreExtraElements]
+public sealed class GatewayTenantGovernanceRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? MonthlyBudgetUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? BudgetReservationUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayTenantRateWindowRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public DateTime WindowStart { get; set; }
+    public long Count { get; set; }
+    public DateTime ExpiresAt { get; set; }
+}
+
+[BsonIgnoreExtraElements]
 public sealed class GatewayServiceKeyDirectoryRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

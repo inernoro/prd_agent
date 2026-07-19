@@ -36,6 +36,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         var callers = _data.Database.GetCollection<GatewayAppCallerRecord>(AppCallerCollectionName);
         await ConsolidateDuplicateAppCallersAsync(callers, cancellationToken);
         await EnsureBudgetConfigurationIntegrityAsync(callers, cancellationToken);
+        await EnsureTenantBudgetConfigurationIntegrityAsync(cancellationToken);
 
         var indexes = new[]
         {
@@ -89,6 +90,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_login_audits",
             "llmgw_lifecycle_runs",
             "llmgw_app_caller_rate_windows",
+            "llmgw_tenant_rate_windows",
             "llmgw_budget_months",
             "llmgw_budget_reservations",
             "llmgw_request_executions",
@@ -234,6 +236,18 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
                 new CreateIndexOptions { Name = "ttl_llmgw_rate_windows", ExpireAfter = TimeSpan.Zero }),
         }, ct);
+        var tenantRateWindows = _data.Database.GetCollection<GatewayTenantRateWindowRecord>("llmgw_tenant_rate_windows");
+        await tenantRateWindows.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayTenantRateWindowRecord>(
+                Builders<GatewayTenantRateWindowRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.WindowStart),
+                new CreateIndexOptions { Name = "uniq_llmgw_tenant_rate_window", Unique = true }),
+            new CreateIndexModel<GatewayTenantRateWindowRecord>(
+                Builders<GatewayTenantRateWindowRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "ttl_llmgw_tenant_rate_windows", ExpireAfter = TimeSpan.Zero }),
+        }, cancellationToken: ct);
         await CreateBsonIndexesAsync("llmgw_model_pools", new[]
         {
             new CreateIndexModel<BsonDocument>(
@@ -536,6 +550,36 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             identities);
         throw new InvalidOperationException(
             $"APP_CALLER_BUDGET_MIGRATION_REQUIRED: {identities}");
+    }
+
+    private async Task EnsureTenantBudgetConfigurationIntegrityAsync(CancellationToken ct)
+    {
+        var tenants = _data.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants");
+        var fb = Builders<GatewayTenantGovernanceRecord>.Filter;
+        var monthlyWithoutReservation = fb.Gt(x => x.MonthlyBudgetUsd, 0)
+                                        & (fb.Eq(x => x.BudgetReservationUsd, null)
+                                           | fb.Lte(x => x.BudgetReservationUsd, 0));
+        var reservationWithoutMonthly = fb.Gt(x => x.BudgetReservationUsd, 0)
+                                        & (fb.Eq(x => x.MonthlyBudgetUsd, null)
+                                           | fb.Lte(x => x.MonthlyBudgetUsd, 0));
+        FilterDefinition<GatewayTenantGovernanceRecord> reservationExceedsMonthly =
+            new BsonDocumentFilterDefinition<GatewayTenantGovernanceRecord>(new BsonDocument(
+                "$expr",
+                new BsonDocument("$gt", new BsonArray { "$BudgetReservationUsd", "$MonthlyBudgetUsd" })));
+        var invalid = await tenants.Find(fb.Or(
+                monthlyWithoutReservation,
+                reservationWithoutMonthly,
+                reservationExceedsMonthly))
+            .Project(x => x.Id)
+            .Limit(20)
+            .ToListAsync(ct);
+        if (invalid.Count == 0) return;
+
+        var identities = string.Join(", ", invalid);
+        _logger.LogCritical(
+            "[LlmGatewayData] 检测到无效租户预算配置，拒绝启动 serving。Tenants={Tenants}",
+            identities);
+        throw new InvalidOperationException($"TENANT_BUDGET_MIGRATION_REQUIRED: {identities}");
     }
 
     private async Task ConsolidateDuplicateAppCallersAsync(

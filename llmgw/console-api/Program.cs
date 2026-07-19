@@ -43,6 +43,8 @@ var internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length
     : "tenant_map_internal";
 
 const string DevJwtSecret = "llmgw-dev-secret-change-me-please-0001";
+const string TenantAggregateAppCallerCode = "$tenant";
+const string TenantAggregateRequestType = "$aggregate";
 
 // 安全门（修复「仓库已知 dev 密钥可伪造 token 读 /gw/*」）：
 //   /gw/* 暴露在外，bearer 鉴权只校验签名/issuer/有效期。若生产回落到仓库已知的 dev 密钥，
@@ -187,6 +189,7 @@ var users = gatewayDatabase.GetCollection<LlmGwUser>("llmgw_console_users");
 var tenants = gatewayDatabase.GetCollection<LlmGwTenant>("llmgw_tenants");
 var teams = gatewayDatabase.GetCollection<LlmGwTeam>("llmgw_teams");
 var memberships = gatewayDatabase.GetCollection<LlmGwMembership>("llmgw_memberships");
+var recoveryOperations = gatewayDatabase.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
 var lifecycleRuns = gatewayDatabase.GetCollection<BsonDocument>("llmgw_lifecycle_runs");
 // 网关配置面：GW 自有集合优先，MAP 集合作为未迁移时期的兼容来源。
@@ -205,6 +208,8 @@ var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
 var serviceKeyRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_rate_windows");
+var tenantRateWindows = gatewayDatabase.GetCollection<BsonDocument>("llmgw_tenant_rate_windows");
+var budgetMonths = gatewayDatabase.GetCollection<BsonDocument>("llmgw_budget_months");
 var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_reconciliations");
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
@@ -218,6 +223,17 @@ await EnsureInternalTenantAsync(
     AdminUser,
     internalTenantId,
     CancellationToken.None);
+await recoveryOperations.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<GatewayRecoveryOperation>(
+        Builders<GatewayRecoveryOperation>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.LeaseExpiresAt),
+        new CreateIndexOptions { Name = "idx_llmgw_recovery_status_lease" }),
+    new CreateIndexModel<GatewayRecoveryOperation>(
+        Builders<GatewayRecoveryOperation>.IndexKeys.Ascending(x => x.TenantId).Descending(x => x.CreatedAt),
+        new CreateIndexOptions { Name = "idx_llmgw_recovery_tenant_created" }),
+});
+await GatewayRecoveryOperations.RepairExpiredAsync(gatewayDatabase);
+await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
 await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
     Builders<LlmGwUser>.IndexKeys.Ascending(x => x.Username),
     new CreateIndexOptions { Name = "uniq_llmgw_console_user_username", Unique = true }));
@@ -260,6 +276,15 @@ await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
     new CreateIndexModel<BsonDocument>(
         Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
         new CreateIndexOptions { Name = "ttl_llmgw_service_key_rate_windows", ExpireAfter = TimeSpan.Zero }),
+});
+await tenantRateWindows.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("WindowStart"),
+        new CreateIndexOptions { Name = "uniq_llmgw_tenant_rate_window", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_tenant_rate_windows", ExpireAfter = TimeSpan.Zero }),
 });
 await costReconciliations.Indexes.CreateManyAsync(new[]
 {
@@ -536,7 +561,9 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
         : await tenants.Find(x => activeTenantIds.Contains(x.Id) && x.Status == "active").ToListAsync();
     var activeTenantById = activeTenants.ToDictionary(x => x.Id, StringComparer.Ordinal);
     var membership = activeMemberships
-        .Where(x => activeTenantById.ContainsKey(x.TenantId) && LlmGwTenantRoles.All.Contains(x.Role))
+        .Where(x => activeTenantById.TryGetValue(x.TenantId, out var candidateTenant)
+                    && LlmGwTenantRoles.All.Contains(x.Role)
+                    && TenantOwnerAuthority.IsEffectiveOwner(candidateTenant, x))
         .OrderByDescending(x => x.TenantId == user.DefaultTenantId)
         .ThenBy(x => x.CreatedAt)
         .FirstOrDefault();
@@ -698,7 +725,9 @@ app.MapGet("/gw/auth/tenants", async (HttpContext http) =>
     var membershipByTenant = tenantMemberships
         .GroupBy(x => x.TenantId, StringComparer.Ordinal)
         .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
-    return Json(ApiEnvelope<object>.Ok(availableTenants.Select(tenant => new
+    return Json(ApiEnvelope<object>.Ok(availableTenants
+        .Where(tenant => TenantOwnerAuthority.IsEffectiveOwner(tenant, membershipByTenant[tenant.Id]))
+        .Select(tenant => new
     {
         tenant.Id,
         tenant.Name,
@@ -719,7 +748,8 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
     var user = await users.Find(x => x.Id == userId && x.IsActive).FirstOrDefaultAsync();
     var membership = user is null ? null : await memberships.Find(x => x.TenantId == requestedTenantId && x.UserId == user.Id && x.Status == "active").FirstOrDefaultAsync();
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == requestedTenantId && x.Status == "active").FirstOrDefaultAsync();
-    if (user is null || membership is null || tenant is null || !LlmGwTenantRoles.All.Contains(membership.Role))
+    if (user is null || membership is null || tenant is null || !LlmGwTenantRoles.All.Contains(membership.Role)
+        || !TenantOwnerAuthority.IsEffectiveOwner(tenant, membership))
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "无权切换到该租户"), jsonOptions, 403);
 
     await users.UpdateOneAsync(x => x.Id == user.Id, Builders<LlmGwUser>.Update.Set(x => x.DefaultTenantId, tenant.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
@@ -753,6 +783,13 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         {
             await EnsureGatewayModelPoolTypesAsync(
                 gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
+            await recoveryOperations.UpdateManyAsync(
+                x => x.Kind == GatewayRecoveryKinds.TenantCreate && x.TenantId == replay.Value.Tenant.Id && x.Status == "pending",
+                Builders<GatewayRecoveryOperation>.Update
+                    .Set(x => x.Status, "completed")
+                    .Set(x => x.Detail, "idempotent-replay-completed")
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
             return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
         }
         return Json(ApiEnvelope<object>.Fail("TENANT_CONFLICT", "租户 slug 已存在"), jsonOptions, 409);
@@ -785,6 +822,16 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
         CreatedAt = now,
         UpdatedAt = now,
     };
+    tenant.OwnerAuthorityInitialized = true;
+    tenant.ActiveOwnerMembershipIds = new List<string> { membership.Id };
+    tenant.OwnerFenceGeneration = 1;
+    var recoveryOperation = GatewayRecoveryOperations.New(
+        GatewayRecoveryKinds.TenantCreate,
+        tenant.Id,
+        access.UserId,
+        team.Id,
+        membership.Id);
+    await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
     try
     {
         await tenants.InsertOneAsync(tenant);
@@ -796,6 +843,7 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
     catch (Exception ex)
     {
         await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "tenant-create-write-failed");
         if (ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey })
         {
             for (var attempt = 0; attempt < 10; attempt++)
@@ -808,6 +856,13 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
                     {
                         await EnsureGatewayModelPoolTypesAsync(
                             gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, replay.Value.Tenant.Id, internalTenantId, appendModels: false);
+                        await recoveryOperations.UpdateManyAsync(
+                            x => x.Kind == GatewayRecoveryKinds.TenantCreate && x.TenantId == replay.Value.Tenant.Id && x.Status == "pending",
+                            Builders<GatewayRecoveryOperation>.Update
+                                .Set(x => x.Status, "completed")
+                                .Set(x => x.Detail, "concurrent-replay-completed")
+                                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                            cancellationToken: CancellationToken.None);
                         return Json(ApiEnvelope<object>.Ok(new { replay.Value.Tenant.Id, replay.Value.Tenant.Name, replay.Value.Tenant.Slug, replay.Value.DefaultTeamId, idempotentReplay = true }), jsonOptions);
                     }
                 }
@@ -829,10 +884,12 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
             Builders<BsonDocument>.Filter.Eq("TenantId", tenant.Id),
             Builders<BsonDocument>.Filter.Eq("ManagedByRegistry", true)));
         await ProvisioningCompensation.RollbackTenantCreationAsync(users, tenants, teams, memberships, access.UserId, tenant.Id, team.Id, membership.Id);
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "tenant-default-pool-failed");
         throw;
     }
     await WriteOperationAuditAsync(operationAudits, http, "tenant.create", "llmgw_tenant", tenant.Id, tenant.Name, true, null,
         new BsonDocument { { "slug", tenant.Slug } });
+    await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "completed");
     return Json(ApiEnvelope<object>.Ok(new { tenant.Id, tenant.Name, tenant.Slug, defaultTeamId = team.Id }), jsonOptions, 201);
 }).RequireAuthorization("TenantOwner");
 
@@ -876,6 +933,112 @@ app.MapGet("/gw/organization", async (HttpContext http) =>
         }),
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+app.MapGet("/gw/tenant-governance", async (HttpContext http) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
+    if (tenant is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("TENANT_NOT_FOUND", "当前租户不存在"), jsonOptions, 404);
+
+    var now = DateTime.UtcNow;
+    var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    var minuteStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+    var budget = await budgetMonths.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("AppCallerCode", TenantAggregateAppCallerCode),
+            Builders<BsonDocument>.Filter.Eq("RequestType", TenantAggregateRequestType),
+            Builders<BsonDocument>.Filter.Eq("MonthStart", monthStart)))
+        .FirstOrDefaultAsync();
+    var rateWindow = await tenantRateWindows.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("WindowStart", minuteStart)))
+        .FirstOrDefaultAsync();
+    var reservedUsd = budget?.AsNullableDecimal("ReservedUsd") ?? 0;
+    var spentUsd = budget?.AsNullableDecimal("SpentUsd") ?? 0;
+    var usedUsd = reservedUsd + spentUsd;
+    return Json(ApiEnvelope<TenantGovernanceData>.Ok(new TenantGovernanceData
+    {
+        TenantId = tenant.Id,
+        MonthlyBudgetUsd = tenant.MonthlyBudgetUsd,
+        BudgetReservationUsd = tenant.BudgetReservationUsd,
+        RateLimitPerMinute = tenant.RateLimitPerMinute,
+        MonthStart = monthStart,
+        ReservedUsd = reservedUsd,
+        SpentUsd = spentUsd,
+        RemainingBudgetUsd = tenant.MonthlyBudgetUsd is > 0 ? Math.Max(0, tenant.MonthlyBudgetUsd.Value - usedUsd) : null,
+        CurrentMinuteCount = rateWindow?.AsNullableLong("Count") ?? 0,
+        CurrentMinuteStart = minuteStart,
+    }), jsonOptions);
+}).RequireAuthorization("UsageRead");
+
+app.MapPut("/gw/tenant-governance", async (HttpContext http, [FromBody] UpdateTenantGovernanceRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if (body.MonthlyBudgetUsd is < 0 || body.BudgetReservationUsd is < 0 || body.RateLimitPerMinute is < 0)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "预算与速率不能小于 0"), jsonOptions, 400);
+    if (body.RateLimitPerMinute is > 1_000_000)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", "租户每分钟总速率不能超过 1000000"), jsonOptions, 400);
+
+    var monthlyBudget = NormalizePositiveBudget(body.MonthlyBudgetUsd ?? 0);
+    var reservation = NormalizePositiveBudget(body.BudgetReservationUsd ?? 0);
+    var budgetError = ValidateBudgetConfiguration(monthlyBudget, reservation);
+    if (budgetError is not null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("INVALID_INPUT", budgetError), jsonOptions, 400);
+
+    var access = TenantAccess.GetRequired(http);
+    var tenant = await tenants.Find(x => x.Id == access.TenantId).FirstOrDefaultAsync();
+    if (tenant is null)
+        return Json(ApiEnvelope<TenantGovernanceData>.Fail("TENANT_NOT_FOUND", "当前租户不存在"), jsonOptions, 404);
+
+    var updates = new List<UpdateDefinition<LlmGwTenant>>();
+    if (monthlyBudget is > 0)
+    {
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.MonthlyBudgetUsd, monthlyBudget));
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.BudgetReservationUsd, reservation));
+    }
+    else
+    {
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.MonthlyBudgetUsd));
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.BudgetReservationUsd));
+    }
+    if (body.RateLimitPerMinute is > 0)
+        updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.RateLimitPerMinute, body.RateLimitPerMinute));
+    else
+        updates.Add(Builders<LlmGwTenant>.Update.Unset(x => x.RateLimitPerMinute));
+    updates.Add(Builders<LlmGwTenant>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow));
+    await tenants.UpdateOneAsync(
+        x => x.Id == access.TenantId,
+        Builders<LlmGwTenant>.Update.Combine(updates),
+        cancellationToken: CancellationToken.None);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        "tenant.governance.update",
+        "llmgw_tenant",
+        tenant.Id,
+        tenant.Name,
+        true,
+        null,
+        new BsonDocument
+        {
+            { "monthlyBudgetUsd", ToBsonAuditValue(monthlyBudget) },
+            { "budgetReservationUsd", ToBsonAuditValue(reservation) },
+            { "rateLimitPerMinute", ToBsonAuditValue(body.RateLimitPerMinute is > 0 ? body.RateLimitPerMinute : null) },
+        });
+
+    var fresh = await tenants.Find(x => x.Id == access.TenantId).FirstAsync();
+    return Json(ApiEnvelope<TenantGovernanceData>.Ok(new TenantGovernanceData
+    {
+        TenantId = fresh.Id,
+        MonthlyBudgetUsd = fresh.MonthlyBudgetUsd,
+        BudgetReservationUsd = fresh.BudgetReservationUsd,
+        RateLimitPerMinute = fresh.RateLimitPerMinute,
+        MonthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc),
+        CurrentMinuteStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, DateTime.UtcNow.Day, DateTime.UtcNow.Hour, DateTime.UtcNow.Minute, 0, DateTimeKind.Utc),
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 app.MapPost("/gw/teams", async (HttpContext http, [FromBody] CreateTeamRequest body) =>
 {
@@ -1032,15 +1195,6 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         TenantIds = new List<string> { access.TenantId },
         DefaultTenantId = access.TenantId,
     };
-    try
-    {
-        await users.InsertOneAsync(memberUser);
-    }
-    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-    {
-        return Json(ApiEnvelope<object>.Fail("USERNAME_UNAVAILABLE", "该账号已被占用，请换一个账号短名"), jsonOptions, 409);
-    }
-
     var membership = new LlmGwMembership
     {
         TenantId = access.TenantId,
@@ -1048,6 +1202,21 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         Role = role,
         TeamIds = teamIds,
     };
+    var recoveryOperation = GatewayRecoveryOperations.New(
+        GatewayRecoveryKinds.MemberCreate,
+        access.TenantId,
+        memberUser.Id,
+        membershipId: membership.Id);
+    await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
+    try
+    {
+        await users.InsertOneAsync(memberUser);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "username-conflict");
+        return Json(ApiEnvelope<object>.Fail("USERNAME_UNAVAILABLE", "该账号已被占用，请换一个账号短名"), jsonOptions, 409);
+    }
     string requiredAuditId;
     try
     {
@@ -1068,6 +1237,7 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
     catch
     {
         await users.DeleteOneAsync(x => x.Id == memberUser.Id && x.Username == memberUser.Username);
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "membership-audit-begin-failed");
         throw;
     }
 
@@ -1076,9 +1246,13 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
         await memberships.InsertOneAsync(membership);
         await users.UpdateOneAsync(x => x.Id == memberUser.Id,
             Builders<LlmGwUser>.Update.AddToSet(x => x.TenantIds, access.TenantId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (membership.Role == LlmGwTenantRoles.Owner)
+            await TenantOwnerAuthority.AddAsync(tenants, access.TenantId, membership.Id);
     }
     catch
     {
+        if (membership.Role == LlmGwTenantRoles.Owner)
+            await TenantOwnerAuthority.DiscardProvisionedOwnerAsync(tenants, access.TenantId, membership.Id);
         await ProvisioningCompensation.RollbackMemberCreationAsync(
             users,
             memberships,
@@ -1088,9 +1262,11 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
             createdUser: true,
             hadTenantDirectoryEntry: false);
         await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "membership-write-failed");
         throw;
     }
     await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
+    await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "completed");
     return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.UserId, memberUser.Username, membership.Role, membership.TeamIds }), jsonOptions, 201);
 }).RequireAuthorization("OrganizationWrite");
 
@@ -1124,67 +1300,92 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
     if (!MembershipPolicy.HasUsableDeveloperScope(role ?? membership.Role, nextTeamIds, activeNextTeamIds))
         return Json(ApiEnvelope<object>.Fail("DEVELOPER_TEAM_REQUIRED", "Developer 至少需要一个有效团队"), jsonOptions, 400);
     var removesOwner = MembershipPolicy.RemovesActiveOwner(membership.Role, membership.Status, role, status);
-    var ownerMutationToken = removesOwner
-        ? await TryAcquireTenantOwnerMutationLockAsync(tenants, access.TenantId)
-        : null;
-    if (removesOwner && ownerMutationToken is null)
-        return Json(ApiEnvelope<object>.Fail("ORGANIZATION_UPDATE_BUSY", "另一个 owner 变更正在执行，请重试"), jsonOptions, 409);
+    var addsOwner = !(membership.Role == LlmGwTenantRoles.Owner && membership.Status == "active")
+                    && (role ?? membership.Role) == LlmGwTenantRoles.Owner
+                    && (status ?? membership.Status) == "active";
+    var ownerBoundaryMutation = removesOwner || addsOwner;
+    var previousRole = membership.Role;
+    var previousStatus = membership.Status;
+    var previousTeamIds = membership.TeamIds.ToList();
+    if (requestedTeamIds is not null) membership.TeamIds = requestedTeamIds;
+    if (role is not null) membership.Role = role;
+    if (status is not null) membership.Status = status;
+    var previousVersion = body.ExpectedVersion;
+    membership.Version++;
+    membership.UpdatedAt = DateTime.UtcNow;
+    var requiredAuditId = await BeginRequiredOperationAuditAsync(
+        operationAudits,
+        http,
+        "membership.update",
+        "llmgw_membership",
+        membership.Id,
+        membership.UserId,
+        new BsonDocument
+        {
+            { "beforeRole", previousRole },
+            { "role", membership.Role },
+            { "beforeStatus", previousStatus },
+            { "status", membership.Status },
+            { "beforeTeamIds", new BsonArray(previousTeamIds) },
+            { "teamIds", new BsonArray(membership.TeamIds) },
+            { "beforeVersion", previousVersion },
+            { "version", membership.Version },
+        });
+    GatewayRecoveryOperation? recoveryOperation = null;
+    if (ownerBoundaryMutation)
+    {
+        recoveryOperation = GatewayRecoveryOperations.New(
+            GatewayRecoveryKinds.OwnerMutation,
+            access.TenantId,
+            membership.UserId,
+            membershipId: membership.Id);
+        recoveryOperation.ExpectedMembershipVersion = previousVersion;
+        recoveryOperation.TargetRole = membership.Role;
+        recoveryOperation.TargetStatus = membership.Status;
+        recoveryOperation.TargetTeamIds = membership.TeamIds.ToList();
+        await recoveryOperations.InsertOneAsync(recoveryOperation, cancellationToken: CancellationToken.None);
+    }
+
+    OwnerRemovalDecision? ownerRemoval = null;
+    if (removesOwner)
+    {
+        ownerRemoval = await TenantOwnerAuthority.TryRemoveAsync(tenants, access.TenantId, membership.Id);
+        if (ownerRemoval.Result == OwnerRemovalResult.LastOwner)
+        {
+            await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "last_owner");
+            if (recoveryOperation is not null)
+                await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "last-owner");
+            return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
+        }
+    }
+    ReplaceOneResult replaced;
     try
     {
-        if (removesOwner && await memberships.CountDocumentsAsync(x => x.TenantId == access.TenantId && x.Role == LlmGwTenantRoles.Owner && x.Status == "active") <= 1)
-            return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
-        var previousRole = membership.Role;
-        var previousStatus = membership.Status;
-        var previousTeamIds = membership.TeamIds.ToList();
-        if (requestedTeamIds is not null) membership.TeamIds = requestedTeamIds;
-        if (role is not null) membership.Role = role;
-        if (status is not null) membership.Status = status;
-        var previousVersion = body.ExpectedVersion;
-        membership.Version++;
-        membership.UpdatedAt = DateTime.UtcNow;
-        var requiredAuditId = await BeginRequiredOperationAuditAsync(
-            operationAudits,
-            http,
-            "membership.update",
-            "llmgw_membership",
-            membership.Id,
-            membership.UserId,
-            new BsonDocument
-            {
-                { "beforeRole", previousRole },
-                { "role", membership.Role },
-                { "beforeStatus", previousStatus },
-                { "status", membership.Status },
-                { "beforeTeamIds", new BsonArray(previousTeamIds) },
-                { "teamIds", new BsonArray(membership.TeamIds) },
-                { "beforeVersion", previousVersion },
-                { "version", membership.Version },
-            });
-        ReplaceOneResult replaced;
-        try
-        {
-            replaced = await memberships.ReplaceOneAsync(
-                x => x.Id == id && x.TenantId == access.TenantId && x.Version == previousVersion,
-                membership);
-        }
-        catch
-        {
-            await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
-            throw;
-        }
-        if (replaced.ModifiedCount != 1)
-        {
-            await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "version_conflict");
-            return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
-        }
-        await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
-        return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version }), jsonOptions);
+        replaced = await memberships.ReplaceOneAsync(
+            x => x.Id == id && x.TenantId == access.TenantId && x.Version == previousVersion,
+            membership);
     }
-    finally
+    catch
     {
-        if (ownerMutationToken is not null)
-            await ReleaseTenantOwnerMutationLockAsync(tenants, access.TenantId, ownerMutationToken);
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+        if (recoveryOperation is not null && ownerRemoval?.Result != OwnerRemovalResult.Removed)
+            await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "membership-write-failed");
+        throw;
     }
+    if (replaced.ModifiedCount != 1)
+    {
+        await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "version_conflict");
+        if (recoveryOperation is not null && ownerRemoval?.Result != OwnerRemovalResult.Removed)
+            await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "rolled-back", "version-conflict");
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
+    }
+    long? ownerFenceGeneration = ownerRemoval?.Generation;
+    if (addsOwner)
+        ownerFenceGeneration = await TenantOwnerAuthority.AddAsync(tenants, access.TenantId, membership.Id);
+    await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
+    if (recoveryOperation is not null)
+        await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "completed", $"owner-fence-generation:{ownerFenceGeneration}");
+    return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version, ownerFenceGeneration }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, string id) =>
@@ -6092,7 +6293,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -6184,7 +6385,7 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -7635,6 +7836,7 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+_ = RunGatewayRecoveryLoopAsync(gatewayDatabase, app.Logger, app.Lifetime.ApplicationStopping);
 app.Run();
 
 static async Task<(LlmGwTenant Tenant, string DefaultTeamId)?> FindTenantCreationReplayAsync(
@@ -7665,38 +7867,6 @@ static bool MembershipMatches(
     => membership.Status == "active"
        && string.Equals(membership.Role, role, StringComparison.OrdinalIgnoreCase)
        && membership.TeamIds.ToHashSet(StringComparer.Ordinal).SetEquals(teamIds);
-
-static async Task<string?> TryAcquireTenantOwnerMutationLockAsync(
-    IMongoCollection<LlmGwTenant> tenants,
-    string tenantId)
-{
-    var now = DateTime.UtcNow;
-    var token = Guid.NewGuid().ToString("N");
-    var fb = Builders<LlmGwTenant>.Filter;
-    var filter = fb.And(
-        fb.Eq(x => x.Id, tenantId),
-        fb.Or(
-            fb.Exists("OwnerMutationLock", false),
-            fb.Eq("OwnerMutationLock", BsonNull.Value),
-            fb.Lte("OwnerMutationLock.ExpiresAt", now)));
-    var update = Builders<LlmGwTenant>.Update
-        .Set("OwnerMutationLock.Token", token)
-        .Set("OwnerMutationLock.ExpiresAt", now.AddSeconds(30));
-    var result = await tenants.UpdateOneAsync(filter, update);
-    return result.ModifiedCount == 1 ? token : null;
-}
-
-static async Task ReleaseTenantOwnerMutationLockAsync(
-    IMongoCollection<LlmGwTenant> tenants,
-    string tenantId,
-    string token)
-{
-    var filter = Builders<LlmGwTenant>.Filter.And(
-        Builders<LlmGwTenant>.Filter.Eq(x => x.Id, tenantId),
-        Builders<LlmGwTenant>.Filter.Eq("OwnerMutationLock.Token", token));
-    await tenants.UpdateOneAsync(filter, Builders<LlmGwTenant>.Update.Unset("OwnerMutationLock"));
-}
-
 
 // ─────────────────────────────── 辅助函数 ───────────────────────────────
 
@@ -8013,13 +8183,19 @@ static async Task WriteLoginAuditAsync(
     }
 }
 
-static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, CancellationToken ct)
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)
 {
+    var transportError = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
+    if (transportError is not null)
+        return transportError;
+
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
-        || uri.Scheme is not ("http" or "https"))
+        || uri.Scheme is not ("http" or "https" or "wss"))
     {
-        return "外部租户 Exchange 只允许 HTTP 或 HTTPS 上游；WebSocket 上游暂不开放";
+        return "外部租户 Exchange 只允许 HTTP、HTTPS 或 WSS 上游；WebSocket 必须使用 WSS 加密连接";
     }
+    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+        return "外部租户 Exchange URL 不允许携带 userinfo";
 
     var host = uri.Host.Trim().TrimEnd('.');
     if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
@@ -10126,4 +10302,35 @@ static string? NormalizeCommitFilter(string? value)
     if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
         trimmed = trimmed[4..];
     return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}
+
+static async Task RunGatewayRecoveryLoopAsync(
+    IMongoDatabase database,
+    ILogger logger,
+    CancellationToken stoppingToken)
+{
+    using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+    try
+    {
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            try
+            {
+                var repaired = await GatewayRecoveryOperations.RepairExpiredAsync(database);
+                if (repaired > 0)
+                    logger.LogWarning("LLMGW recovery repaired {Count} expired operations", repaired);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "LLMGW recovery tick failed; the next tick will retry");
+            }
+        }
+    }
+    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+    {
+    }
 }

@@ -137,6 +137,8 @@ builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebSocketConnector,
+    PrdAgent.Infrastructure.Services.SafeOutboundWebSocketConnector>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();

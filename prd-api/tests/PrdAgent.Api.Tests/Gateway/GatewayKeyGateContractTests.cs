@@ -335,6 +335,101 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Fact]
+    public async Task ConcurrentTenantRateLimit_AggregatesAppCallersAndEmitsBothLimitLayers()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_tenant_rate_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        try
+        {
+            var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+            await callers.Indexes.CreateOneAsync(new CreateIndexModel<GatewayAppCallerRecord>(
+                Builders<GatewayAppCallerRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.AppCallerCode)
+                    .Ascending(x => x.RequestType),
+                new CreateIndexOptions { Unique = true, Collation = GatewayAppCallerIdentity.Collation }));
+            await callers.InsertManyAsync(new[]
+            {
+                AppCaller("tenant-a", "client-a::chat"),
+                AppCaller("tenant-a", "client-b::chat"),
+                AppCaller("tenant-b", "client-a::chat"),
+                AppCaller("tenant-b", "client-b::chat"),
+            });
+            await data.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+                .InsertManyAsync(new[]
+                {
+                    new GatewayTenantGovernanceRecord { Id = "tenant-a", RateLimitPerMinute = 4 },
+                    new GatewayTenantGovernanceRecord { Id = "tenant-b", RateLimitPerMinute = 4 },
+                });
+            var tenantWindows = data.Database.GetCollection<GatewayTenantRateWindowRecord>("llmgw_tenant_rate_windows");
+            await tenantWindows.Indexes.CreateOneAsync(new CreateIndexModel<GatewayTenantRateWindowRecord>(
+                Builders<GatewayTenantRateWindowRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.WindowStart),
+                new CreateIndexOptions { Unique = true }));
+
+            var gateway = new TenantCountingGateway();
+            await using var app = BuildHostWithGateway(
+                gateway,
+                keyAuthorizer: new TenantScopedTestAuthorizer(),
+                gatewayData: data);
+            await app.StartAsync();
+            var http = app.GetTestClient();
+
+            static GatewayAppCallerRecord AppCaller(string tenantId, string code) => new()
+            {
+                TenantId = tenantId,
+                AppCallerCode = code,
+                RequestType = "chat",
+                Status = "active",
+                RateLimitPerMinute = 10,
+            };
+
+            static HttpRequestMessage Request(string key, int index) => new(HttpMethod.Post, "/gw/v1/send")
+            {
+                Headers =
+                {
+                    { "X-Gateway-Key", key },
+                    { "X-Request-Id", $"tenant-rate-{key}-{index}" },
+                },
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = index % 2 == 0 ? "client-a::chat" : "client-b::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                    Context = new { SourceSystem = "external" },
+                }),
+            };
+
+            var responses = await Task.WhenAll(
+                Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
+                    .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
+
+            responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(8);
+            responses.Count(x => x.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(32);
+            gateway.CountFor("tenant-a").ShouldBe(4);
+            gateway.CountFor("tenant-b").ShouldBe(4);
+            responses.ShouldAllBe(response => response.Headers.Contains("X-LLMGW-Tenant-RateLimit-Limit"));
+            responses.ShouldAllBe(response => response.Headers.Contains("X-LLMGW-AppCaller-RateLimit-Limit"));
+            responses.Where(x => x.StatusCode == HttpStatusCode.TooManyRequests)
+                .ShouldAllBe(response => response.Headers.Contains("Retry-After") && response.Headers.Contains("X-RateLimit-Remaining"));
+
+            var windows = await tenantWindows.Find(_ => true).ToListAsync();
+            windows.Count.ShouldBe(2);
+            windows.Single(x => x.TenantId == "tenant-a").Count.ShouldBe(20);
+            windows.Single(x => x.TenantId == "tenant-b").Count.ShouldBe(20);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
     /// <summary>
     /// 起一个 in-process TestServer host 住 serving 端点，上游用永不被触达的 stub
     /// （401 短路发生在中间件层，永远到不了 gateway，故 stub 内部若被调用即抛，反证 401 真短路）。

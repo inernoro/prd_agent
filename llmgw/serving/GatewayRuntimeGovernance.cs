@@ -691,24 +691,30 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             }, cancellationToken: ct);
 }
 
-public sealed record GatewayBudgetLease(string TenantId, string ReservationId, decimal ReservedUsd);
+public sealed record GatewayBudgetLease(string TenantId, IReadOnlyList<string> ReservationIds)
+{
+    public string ReservationId => ReservationIds[0];
+}
 
 public sealed record GatewayBudgetAdmission(
     bool Allowed,
     string ErrorCode,
     decimal BudgetUsd,
     decimal ReservedAndSpentUsd,
-    GatewayBudgetLease? Lease)
+    GatewayBudgetLease? Lease,
+    string Scope)
 {
-    public static GatewayBudgetAdmission Allow(decimal budget = 0, decimal used = 0, GatewayBudgetLease? lease = null)
-        => new(true, string.Empty, budget, used, lease);
+    public static GatewayBudgetAdmission Allow(decimal budget = 0, decimal used = 0, GatewayBudgetLease? lease = null, string scope = "app-caller")
+        => new(true, string.Empty, budget, used, lease, scope);
 
-    public static GatewayBudgetAdmission Reject(string code, decimal budget, decimal used)
-        => new(false, code, budget, used, null);
+    public static GatewayBudgetAdmission Reject(string code, decimal budget, decimal used, string scope = "app-caller")
+        => new(false, code, budget, used, null, scope);
 }
 
 public sealed class GatewayBudgetCoordinator
 {
+    public const string TenantAggregateAppCallerCode = "$tenant";
+    public const string TenantAggregateRequestType = "$aggregate";
     public const string HttpContextLeaseKey = "llmgw.budget.lease";
     public const string HttpContextOutcomeUnknownKey = "llmgw.budget.outcome-unknown";
     private readonly LlmGatewayDataContext _data;
@@ -724,26 +730,98 @@ public sealed class GatewayBudgetCoordinator
         GatewayAppCallerRecord caller,
         string requestId,
         CancellationToken ct)
+        => await ReserveAsync(caller.TenantId, caller, requestId, ct);
+
+    public async Task<GatewayBudgetAdmission> ReserveAsync(
+        string tenantId,
+        GatewayAppCallerRecord? caller,
+        string requestId,
+        CancellationToken ct)
     {
-        if (caller.MonthlyBudgetUsd is null or <= 0)
+        var tenant = await _data.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+            .Find(x => x.Id == tenantId)
+            .FirstOrDefaultAsync(ct);
+        var tenantBudget = tenant?.MonthlyBudgetUsd;
+        var callerBudget = caller?.MonthlyBudgetUsd;
+        if ((tenantBudget is null or <= 0) && (callerBudget is null or <= 0))
             return GatewayBudgetAdmission.Allow();
 
-        if (caller.BudgetReservationUsd is null or <= 0)
-            return GatewayBudgetAdmission.Reject("APP_CALLER_BUDGET_RESERVATION_UNCONFIGURED", caller.MonthlyBudgetUsd.Value, 0);
+        GatewayBudgetAdmission? tenantAdmission = null;
+        if (tenantBudget is > 0)
+        {
+            tenantAdmission = await ReserveScopeAsync(
+                tenantId,
+                TenantAggregateAppCallerCode,
+                TenantAggregateRequestType,
+                requestId,
+                tenantBudget.Value,
+                tenant?.BudgetReservationUsd,
+                "TENANT",
+                "tenant",
+                ct);
+            if (!tenantAdmission.Allowed)
+                return tenantAdmission;
+        }
 
-        var budget = caller.MonthlyBudgetUsd.Value;
-        var amount = caller.BudgetReservationUsd.Value;
+        GatewayBudgetAdmission? callerAdmission = null;
+        if (callerBudget is > 0 && caller is not null)
+        {
+            callerAdmission = await ReserveScopeAsync(
+                tenantId,
+                caller.AppCallerCode,
+                caller.RequestType,
+                requestId,
+                callerBudget.Value,
+                caller.BudgetReservationUsd,
+                "APP_CALLER",
+                "app-caller",
+                ct);
+            if (!callerAdmission.Allowed)
+            {
+                if (tenantAdmission?.Lease is { } tenantLease)
+                    await ReleaseLeaseAsync(tenantLease, "app-caller-budget-rejected");
+                return callerAdmission;
+            }
+        }
+
+        var leases = new[] { tenantAdmission?.Lease, callerAdmission?.Lease }
+            .Where(x => x is not null)
+            .SelectMany(x => x!.ReservationIds)
+            .ToArray();
+        var primary = callerAdmission ?? tenantAdmission;
+        return GatewayBudgetAdmission.Allow(
+            primary?.BudgetUsd ?? 0,
+            primary?.ReservedAndSpentUsd ?? 0,
+            leases.Length == 0 ? null : new GatewayBudgetLease(tenantId, leases),
+            primary?.Scope ?? "app-caller");
+    }
+
+    private async Task<GatewayBudgetAdmission> ReserveScopeAsync(
+        string tenantId,
+        string appCallerCode,
+        string requestType,
+        string requestId,
+        decimal budget,
+        decimal? reservationAmount,
+        string errorPrefix,
+        string scope,
+        CancellationToken ct)
+    {
+        if (reservationAmount is null or <= 0)
+            return GatewayBudgetAdmission.Reject($"{errorPrefix}_BUDGET_RESERVATION_UNCONFIGURED", budget, 0, scope);
+
+        var amount = reservationAmount.Value;
         if (amount > budget)
-            return GatewayBudgetAdmission.Reject("APP_CALLER_BUDGET_RESERVATION_EXCEEDS_MONTHLY", budget, 0);
+            return GatewayBudgetAdmission.Reject($"{errorPrefix}_BUDGET_RESERVATION_EXCEEDS_MONTHLY", budget, 0, scope);
 
         var now = DateTime.UtcNow;
         var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var reservations = _data.Database.GetCollection<GatewayBudgetReservationRecord>("llmgw_budget_reservations");
         var reservation = new GatewayBudgetReservationRecord
         {
-            TenantId = caller.TenantId,
-            AppCallerCode = caller.AppCallerCode,
-            RequestType = caller.RequestType,
+            TenantId = tenantId,
+            AppCallerCode = appCallerCode,
+            RequestType = requestType,
             RequestId = requestId,
             MonthStart = monthStart,
             ReservedUsd = amount,
@@ -754,27 +832,28 @@ public sealed class GatewayBudgetCoordinator
         };
         try
         {
-            await reservations.InsertOneAsync(reservation, cancellationToken: ct);
+            await reservations.InsertOneAsync(reservation, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             var existing = await reservations.Find(x =>
-                    x.TenantId == caller.TenantId
-                    && x.AppCallerCode == caller.AppCallerCode
-                    && x.RequestType == caller.RequestType
+                    x.TenantId == tenantId
+                    && x.AppCallerCode == appCallerCode
+                    && x.RequestType == requestType
                     && x.RequestId == requestId)
                 .FirstOrDefaultAsync(ct);
             return GatewayBudgetAdmission.Reject(
                 existing?.Status == "settled" ? "GATEWAY_REQUEST_ALREADY_SETTLED" : "GATEWAY_REQUEST_IN_PROGRESS",
                 budget,
-                existing?.ReservedUsd ?? 0);
+                existing?.ReservedUsd ?? 0,
+                scope);
         }
 
         var months = _data.Database.GetCollection<GatewayBudgetMonthRecord>("llmgw_budget_months");
         var identity = Builders<GatewayBudgetMonthRecord>.Filter.And(
-            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.TenantId, caller.TenantId),
-            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.AppCallerCode, caller.AppCallerCode),
-            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.RequestType, caller.RequestType),
+            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.TenantId, tenantId),
+            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode),
+            Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.RequestType, requestType),
             Builders<GatewayBudgetMonthRecord>.Filter.Eq(x => x.MonthStart, monthStart));
         FilterDefinition<GatewayBudgetMonthRecord> withinBudget = new MongoDB.Driver.BsonDocumentFilterDefinition<GatewayBudgetMonthRecord>(
             new MongoDB.Bson.BsonDocument("$expr", new MongoDB.Bson.BsonDocument("$lte", new MongoDB.Bson.BsonArray
@@ -795,7 +874,7 @@ public sealed class GatewayBudgetCoordinator
                     IsUpsert = false,
                     ReturnDocument = ReturnDocument.After,
                 },
-                ct);
+                CancellationToken.None);
 
         GatewayBudgetMonthRecord? updated;
         try
@@ -804,16 +883,16 @@ public sealed class GatewayBudgetCoordinator
                 identity,
                 Builders<GatewayBudgetMonthRecord>.Update
                     .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
-                    .SetOnInsert(x => x.TenantId, caller.TenantId)
-                    .SetOnInsert(x => x.AppCallerCode, caller.AppCallerCode)
-                    .SetOnInsert(x => x.RequestType, caller.RequestType)
+                    .SetOnInsert(x => x.TenantId, tenantId)
+                    .SetOnInsert(x => x.AppCallerCode, appCallerCode)
+                    .SetOnInsert(x => x.RequestType, requestType)
                     .SetOnInsert(x => x.MonthStart, monthStart)
                     .SetOnInsert(x => x.SpentUsd, 0)
                     .SetOnInsert(x => x.ReservedUsd, 0)
                     .Set(x => x.BudgetUsd, budget)
                     .Set(x => x.UpdatedAt, now),
                 new UpdateOptions { IsUpsert = true },
-                ct);
+                CancellationToken.None);
             updated = await TryReserveMonthAsync();
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -826,23 +905,27 @@ public sealed class GatewayBudgetCoordinator
         if (updated == null)
         {
             await reservations.UpdateOneAsync(
-                x => x.TenantId == caller.TenantId && x.Id == reservation.Id && x.Status == "pending",
+                x => x.TenantId == tenantId && x.Id == reservation.Id && x.Status == "pending",
                 Builders<GatewayBudgetReservationRecord>.Update
                     .Set(x => x.Status, "rejected")
                     .Set(x => x.Detail, "monthly-budget-exceeded")
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
             var current = await months.Find(identity).FirstOrDefaultAsync(ct);
-            return GatewayBudgetAdmission.Reject("APP_CALLER_MONTHLY_BUDGET_EXCEEDED", budget, (current?.ReservedUsd ?? 0) + (current?.SpentUsd ?? 0));
+            return GatewayBudgetAdmission.Reject($"{errorPrefix}_MONTHLY_BUDGET_EXCEEDED", budget, (current?.ReservedUsd ?? 0) + (current?.SpentUsd ?? 0), scope);
         }
 
         await reservations.UpdateOneAsync(
-            x => x.TenantId == caller.TenantId && x.Id == reservation.Id && x.Status == "pending",
+            x => x.TenantId == tenantId && x.Id == reservation.Id && x.Status == "pending",
             Builders<GatewayBudgetReservationRecord>.Update
                 .Set(x => x.Status, "reserved")
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
-        return GatewayBudgetAdmission.Allow(budget, updated.ReservedUsd + updated.SpentUsd, new GatewayBudgetLease(caller.TenantId, reservation.Id, amount));
+            cancellationToken: CancellationToken.None);
+        return GatewayBudgetAdmission.Allow(
+            budget,
+            updated.ReservedUsd + updated.SpentUsd,
+            new GatewayBudgetLease(tenantId, new[] { reservation.Id }),
+            scope);
     }
 
     public async Task FinalizeAsync(
@@ -855,22 +938,31 @@ public sealed class GatewayBudgetCoordinator
         {
             if (outcomeUnknown || pipelineThrew || responseStatusCode >= 500)
             {
-                await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "unknown", "upstream-outcome-unknown", adjustMonth: false, settle: false, CancellationToken.None);
+                foreach (var reservationId in lease.ReservationIds)
+                    await SetReservationStatusAsync(lease.TenantId, reservationId, "unknown", "upstream-outcome-unknown", adjustMonth: false, settle: false, CancellationToken.None);
                 return;
             }
 
             if (responseStatusCode >= 400)
             {
-                await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "released", "request-rejected-before-success", adjustMonth: true, settle: false, CancellationToken.None);
+                foreach (var reservationId in lease.ReservationIds)
+                    await SetReservationStatusAsync(lease.TenantId, reservationId, "released", "request-rejected-before-success", adjustMonth: true, settle: false, CancellationToken.None);
                 return;
             }
 
-            await SetReservationStatusAsync(lease.TenantId, lease.ReservationId, "settled", "conservative-reservation-settlement", adjustMonth: true, settle: true, CancellationToken.None);
+            foreach (var reservationId in lease.ReservationIds)
+                await SetReservationStatusAsync(lease.TenantId, reservationId, "settled", "conservative-reservation-settlement", adjustMonth: true, settle: true, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[GatewayBudget] finalize failed reservation={ReservationId}; reservation remains fail-closed", lease.ReservationId);
+            _logger.LogError(ex, "[GatewayBudget] finalize failed reservations={ReservationIds}; reservation remains fail-closed", string.Join(',', lease.ReservationIds));
         }
+    }
+
+    private async Task ReleaseLeaseAsync(GatewayBudgetLease lease, string detail)
+    {
+        foreach (var reservationId in lease.ReservationIds)
+            await SetReservationStatusAsync(lease.TenantId, reservationId, "released", detail, adjustMonth: true, settle: false, CancellationToken.None);
     }
 
     public async Task ReleaseExpiredAsync(CancellationToken ct)

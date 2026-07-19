@@ -1231,6 +1231,27 @@ public sealed class CreateTenantRequest
     public string? Slug { get; set; }
 }
 
+public sealed class TenantGovernanceData
+{
+    public string TenantId { get; set; } = string.Empty;
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public DateTime MonthStart { get; set; }
+    public decimal ReservedUsd { get; set; }
+    public decimal SpentUsd { get; set; }
+    public decimal? RemainingBudgetUsd { get; set; }
+    public long CurrentMinuteCount { get; set; }
+    public DateTime CurrentMinuteStart { get; set; }
+}
+
+public sealed class UpdateTenantGovernanceRequest
+{
+    public decimal? MonthlyBudgetUsd { get; set; }
+    public decimal? BudgetReservationUsd { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+}
+
 public sealed class CreateTeamRequest
 {
     public string? Name { get; set; }
