@@ -13,13 +13,15 @@ namespace PrdAgent.Core.Models;
 ///
 /// 判定口径（与 DeploymentAuthority 同源）：CDS 给每个分支预览容器注入
 /// CDS_PROJECT_ID（cds/src/routes/branches.ts）；生产走独立发布链路没有该标记，
-/// 作用域为 null。分支级 slug 取**实际被平台注入**的变量
-/// （cds/src/services/env-provenance.ts）——注意 CDS_BRANCH_SLUG 只用于镜像模板
-/// 替换、并不注入容器 env（Codex P1，PR #1193），不能单独依赖：
+/// 作用域为 null。分支预览作用域 = "{CDS_PROJECT_ID}::{分支级 slug}"——项目 ID
+/// 必须参与复合，否则共库的两个项目部同名分支会撞 slug。分支级 slug 取
+/// **实际被平台注入**的变量（cds/src/services/env-provenance.ts）——注意
+/// CDS_BRANCH_SLUG 只用于镜像模板替换、并不注入容器 env（Codex P1，PR #1193），
+/// 不能单独依赖：
 ///   1. CDS_BRANCH_SLUG   —— 当前不注入，仅为未来 CDS 补注入时的首选位；
 ///   2. BULLMQ_PREFIX     —— 平台按分支兜底注入的 branch-db-slug（步骤 4.5）；
 ///   3. VITE_GIT_BRANCH   —— 平台强制注入的原始分支名（版本元数据）；
-///   4. CDS_PROJECT_ID    —— 全部取不到时退化为项目级隔离（仍与生产区隔）。
+///   分支变量全部取不到时退化为纯 CDS_PROJECT_ID 项目级隔离（仍与生产区隔）。
 ///
 /// run 入队时盖上本部署作用域，worker 只认领同作用域的 run（生产认 null，
 /// 天然兼容没有该字段的存量文档——Mongo 的 Eq null 匹配字段缺失）。
@@ -27,7 +29,10 @@ namespace PrdAgent.Core.Models;
 public static class DeploymentScope
 {
     /// <summary>
-    /// 当前部署作用域：CDS 分支预览 = 分支级 slug（见类注释的取值链），生产/本地 = null。
+    /// 当前部署作用域：CDS 分支预览 = "{projectId}::{分支级 slug}"（见类注释的取值链），
+    /// 生产/本地 = null。项目 ID 必须参与复合（Codex P1，Round 2）：BULLMQ_PREFIX /
+    /// VITE_GIT_BRANCH 都是纯分支值，两个共享同一 Mongo 库的 CDS 项目若部署同名分支
+    /// （如都叫 main），纯分支 slug 会撞车、互相认领/复用对方的 run。
     /// </summary>
     public static string? Current
     {
@@ -37,10 +42,11 @@ public static class DeploymentScope
             var projectId = Read("CDS_PROJECT_ID");
             if (projectId is null) return null;
 
-            return Read("CDS_BRANCH_SLUG")
-                   ?? Read("BULLMQ_PREFIX")
-                   ?? Read("VITE_GIT_BRANCH")
-                   ?? projectId;
+            var branch = Read("CDS_BRANCH_SLUG")
+                         ?? Read("BULLMQ_PREFIX")
+                         ?? Read("VITE_GIT_BRANCH");
+
+            return branch is null ? projectId : $"{projectId}::{branch}";
         }
     }
 
