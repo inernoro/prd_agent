@@ -1,8 +1,9 @@
-# CDS Agent Phase 1 验收报告
+# CDS Agent Phase 1 验收报告（grandfather 保留） · 报告
 
-日期：2026-05-19  
-分支：`codex/cds-agent-workbench-ui`  
-基线提交：`c15e4da11`  
+> **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
+
+分支：`codex/cds-agent-workbench-ui`
+基线提交：`c15e4da11`
 范围：Phase 1 商业级最小可用闭环，本地验收通过；未执行远端发布。
 
 ## 验收结论

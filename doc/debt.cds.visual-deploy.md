@@ -1,10 +1,10 @@
-# CDS 绝对可视化一键部署 · 工程债务与待补台账
+# CDS 绝对可视化一键部署 · 工程债务与待补台账 · 债务台账
 
-> **类型**：debt（工程债务台账） · **日期**：2026-06-02 · **状态**：核心已落地，本台账记录已知边界与 backlog
-> **关联**：`design.cds.visual-deploy.md`、`report.cds.visual-deploy.md`、`plan.cds.visual-deploy.md`、`guide.cds.one-click-deploy.md`
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：开发中
+
+> **关联**：`design.cds.visual-deploy.md`、`guide.cds.one-click-deploy.md`
 > **一句话**：onboarding→部署核心已商业级可用（经验收通过）；以下是诚实记录的已知边界与低边际 backlog，按价值排序，供后续按需取用——不在表里的都已落地。
 
----
 
 ## 一、已知边界（设计取舍，当前不做）
 
@@ -41,4 +41,4 @@
 
 ## 四、独立 fixture demo 阻塞（承接 plan §六）
 
-用真实示例 fixture 在 cds.miduo.org 建一个全新独立 demo 项目跑通，受"onboard 仅在仓库根探测 compose + 示例在子目录 + 沙盒 GitHub 写权限限定本仓库"约束未完成。两条解法（用户新建空 repo 放 fixture，或接受 prd_agent 孤儿分支）见 `plan.cds.visual-deploy.md` §六。**注**：CDS 平台当前在跑 6 个隔离项目（含本分支前后端 running），"可视化平台部署并运行 N 个前后端"能力本身已证实可用——此项是"演示一个全新真实项目"的取证，非能力缺失。
+用真实示例 fixture 在 CDS 建一个全新独立 demo 项目跑通，仍受“onboard 只在仓库根探测 compose、示例位于子目录、当前仓库权限不足以创建独立 fixture 仓库”约束。可行路径是准备独立示例仓库，或在确认不会污染生产项目后使用专用 fixture 分支。CDS 已有多项目运行证据，因此此项属于独立演示取证，不是平台能力缺失。

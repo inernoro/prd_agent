@@ -1,10 +1,6 @@
----
-title: "CDS loading pages 债务台账"
-type: debt
-module: cds
-status: partial
-updated: 2026-06-23
----
+# CDS Loading Pages · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-06-23 | **状态**：开发中
 
 ## 已知债务
 

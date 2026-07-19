@@ -1,6 +1,6 @@
-# 文档命名规则（doc/）
+# 文档命名规则（doc/） · 规则
 
-> **版本**：v3.2 | **日期**：2026-07-15 | **状态**：已落地
+> **版本**：v3.2 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 文件命名格式
 
@@ -16,9 +16,9 @@ doc/{type}.{topic}.md
 |------|------|-----------|------|
 | `spec.` | 产品规格 | 产品规格、Agent 产品文档、用户故事 | `spec.srs.md`, `spec.report-agent.v2.md` |
 | `design.` | 技术设计 | 技术设计、技术分析 | `design.platform.server-authority.md`, `design.video-agent.remotion-gap.md` |
-| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.report-agent.impl.md` |
-| `rule.` | 规范约定 | 规范约定、审计报告 | `rule.platform.app-identity.md`, `rule.frontend.audit-prd-desktop-codebase.md` |
-| `guide.` | 操作指南 | 指南、教程、备忘录 | `guide.platform.quickstart.md`, `guide.visual-agent.multi-image-compose-test.md` |
+| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.llm-gateway.full-cutover.md` |
+| `rule.` | 规范约定 | 长期规则、约束与门禁 | `rule.platform.app-identity.md`, `rule.frontend.streaming-text.md` |
+| `guide.` | 操作指南 | 指南、教程、运行手册 | `guide.platform.quickstart.md`, `guide.platform.e2e-tests.md` |
 | `report.` | 周报 | 周报 | `report.2026-W09.md` |
 | `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | `debt.video-agent.md`, `debt.cds.md` |
 
@@ -197,7 +197,7 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 ```markdown
 # {模块名} · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-04-26 | **状态**：维护中
+> **版本**：v1.0 | **日期**：2026-07-16 | **状态**：已落地
 
 ## 总览
 

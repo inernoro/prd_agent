@@ -1,273 +1,126 @@
-# 跨存储迁移与资源分离 · 设计
+# 平台存储切换与资产登记设计 · 设计
 
-## 管理摘要
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
-本系统的文件存储（图片、文档、音频、视频、字体等）支持多 Provider 切换（腾讯云 COS / Cloudflare R2），通过 `ASSETS_PROVIDER` 环境变量选择。本文档描述：
+## 一、管理摘要
 
-1. **资产登记簿（Asset Registry）** — 每次存储操作自动登记，为未来迁移铺轨道
-2. **资源归属分类（Scope）** — 区分系统资源 vs 用户资源 vs AI 生成 vs 日志
-3. **跨存储迁移方案** — 基于 registry 的一键式数据迁移路径
-4. **系统/用户资源分离路线图** — 渐进式架构演进
+- **解决什么问题**：文件分散在不同业务集合和对象存储中，切换 Provider 时容易遗漏资产、系统图标和历史 URL。
+- **当前能力**：统一存储接口支持本地、腾讯云 COS 和 Cloudflare R2；登记装饰器记录写入与删除事实；系统资产通过声明清单检查和同步。
+- **尚未具备**：面向全部用户资产的一键跨 Provider 迁移和全库 URL 自动改写。
+- **设计原则**：先登记、再盘点、后迁移；迁移必须可验证、可续传、可回滚，不能把设计步骤写成已实现功能。
 
-## 当前架构
+## 1. 目标与边界
 
-```
-ASSETS_PROVIDER=tencentCos / cloudflareR2
-       ↓
-IAssetStorage (接口)
-       ↓
-┌──────────────────────┐
-│ RegistryAssetStorage │ ← 装饰器：自动登记到 asset_registry
-│  ├─ TencentCosStorage│
-│  └─ CloudflareR2Storage│
-└──────────────────────┘
-```
+### 1.1 目标
 
-### 核心集合
+- 所有新资产通过 `IAssetStorage` 进入统一存储边界。
+- 保存资产操作事实，支持按 Provider、业务域和归属范围盘点。
+- 切换 Provider 时优先保证新写入和系统资产可用。
+- 为后续用户资产迁移提供可靠清单和校验依据。
 
-- `asset_registry` — 每次写入/删除自动登记（append-only）
-- 80 个调用点全部通过 `IAssetStorage` 接口，无直接 SDK 调用
+### 1.2 非目标
 
-### Provider 环境变量
+- 不保证登记簿覆盖接入前的全部历史资产。
+- 不把修改 `ASSETS_PROVIDER` 等同于历史数据已经迁移。
+- 不在当前实现中自动扫描和改写所有 MongoDB URL 字段。
+- 不允许通过文档中的示例命令绕过鉴权或删除保护。
 
-| Provider | 必填变量 | 公开 URL |
-|----------|---------|---------|
-| tencentCos | `TENCENT_COS_BUCKET`, `REGION`, `SECRET_ID`, `SECRET_KEY` | `TENCENT_COS_PUBLIC_BASE_URL` (如 `https://i.miduo.org`) |
-| cloudflareR2 | `R2_ACCOUNT_ID`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `R2_BUCKET` | `R2_PUBLIC_BASE_URL` (如 `https://cfi.miduo.org`) |
+## 2. Provider 选择
 
-切换只需修改 `ASSETS_PROVIDER` + 对应密钥，重启即可。
+应用启动时由存储配置选择 Provider：
 
-## 资产登记簿（Asset Registry）
+| Provider | 选择值 | 用途 |
+|----------|--------|------|
+| 本地存储 | `local` | 本地开发或明确配置的本地环境 |
+| 腾讯云 COS | `tencentCos` | 已配置 COS 凭据和公开访问域名的环境 |
+| Cloudflare R2 | `cloudflareR2` | 已配置 R2 凭据和公开访问域名的环境 |
 
-### 数据结构
+`ASSETS_PROVIDER` 可显式指定 Provider；未指定时由启动配置按可用凭据选择。具体选择逻辑以 `Program.cs` 为准，文档不复制密钥变量和值。
 
-```javascript
-// asset_registry 集合
-{
-  _id: "a1b2c3...",
-  operation: "write",                  // write / delete
-  provider: "cloudflareR2",            // 存储 Provider
-  key: "data/visual-agent/img/xxx.png",// 对象 key
-  sha256: "abc123...",                 // content hash
-  url: "https://cfi.miduo.org/data/visual-agent/img/xxx.png",
-  domain: "visual-agent",             // 业务领域
-  type: "img",                        // 资源类型
-  mime: "image/png",
-  sizeBytes: 1024,
-  scope: "user",                      // 归属范围
-  createdAt: ISODate("2026-04-12...")
-}
-```
+Provider 切换只影响切换后的读写实现。历史记录中保存的完整 URL 仍指向原 Provider，除非另行执行并验证迁移。
 
-### Scope 分类规则
+## 3. 统一存储与登记链路
 
-| Scope | 含义 | 自动推断规则 | 显式标记 |
-|-------|------|-------------|---------|
-| `system` | 系统级资源（默认头像、桌面皮肤） | key 含 `icon/desktop/` 或 `icon/backups/head/` | — |
-| `user` | 用户上传内容（图片/文档/附件/字体） | 默认值（兜底） | — |
-| `generated` | AI 生成内容（生图/生视频/TTS） | — | `RegistryAssetStorage.ScopeAs("generated")` |
-| `log` | 日志/审计（LLM 日志、错误日志） | domain=="logs" 或 type=="log" | — |
+| 层 | 职责 |
+|----|------|
+| `IAssetStorage` | 统一保存、读取、删除和 URL 构造边界 |
+| 具体 Provider | 实现本地、COS 或 R2 的对象操作 |
+| `RegistryAssetStorage` | 包装真实 Provider，并记录资产操作事实 |
+| `asset_registry` | 保存 Provider、对象 key、哈希、业务域、类型和归属等信息 |
 
-### 已标记 scope="generated" 的代码位置
+登记簿是迁移清单和审计依据，不是业务实体的替代品。业务集合仍负责资产与用户、消息、任务或文档之间的关系。
 
-| 文件 | 方式 | 覆盖范围 |
-|------|------|---------|
-| `OpenAIImageClient.GenerateUnifiedAsync` | `ScopeAs("generated")` | 所有生图输出（11 个 SaveAsync） |
-| `ImageGenRunWorker` | `OverrideNextScope("generated")` | AI 生成图片入库 |
-| `VideoGenRunWorker` | `OverrideNextScope("generated")` × 4 | TTS 音频、分镜视频、HTML 播放器、完整视频 |
+## 4. 资产归属
 
-## 跨存储迁移方案
+| Scope | 含义 | 处理原则 |
+|-------|------|----------|
+| `system` | 系统图标、默认头像、内置皮肤等 | 仅由明确清单或精确路径识别 |
+| `user` | 用户上传的图片、文档、附件和字体 | 默认归属，避免误判为系统资产 |
+| `generated` | AI 生成的图片、音频和视频 | 由生成链路显式标记 |
+| `log` | 日志、审计和诊断产物 | 按日志域或显式标记识别 |
 
-### 前提条件
+归属用于盘点、保留策略和迁移分批，不直接授予访问权限。用户资产仍必须经过业务鉴权。
 
-1. `asset_registry` 集合已积累足够数据
-2. 源和目标 Provider 的环境变量同时可用
+## 5. 系统资产同步
 
-### 迁移步骤（未来实施时参考）
+部分系统图标和动画曾由人工上传，没有经过统一保存接口，因此不会自然出现在登记簿中。`SystemAssetManifest` 维护这类资产的声明清单，`StorageSyncController` 提供清单查询、缺失检查和受控同步入口。
 
-```
-Step 1: DRY RUN — 统计待迁移对象
-  db.asset_registry.aggregate([
-    { $match: { operation: "write", provider: "tencentCos" } },
-    { $group: { _id: "$scope", count: { $sum: 1 }, totalBytes: { $sum: "$sizeBytes" } } }
-  ])
+系统资产同步遵循以下顺序：
 
-Step 2: 创建迁移脚本（伪代码）
-  var source = new TencentCosStorage(...);   // 配置源 Provider
-  var target = new CloudflareR2Storage(...); // 配置目标 Provider
+1. 在目标 Provider 配置完成后读取声明清单。
+2. 以只读或 dry-run 方式检查目标端缺失项。
+3. 从明确的可信源复制缺失资产。
+4. 逐项验证目标对象可读。
+5. 确认系统页面无缺图后，才把新 Provider 作为默认写入端。
 
-  var cursor = db.asset_registry.find({ operation: "write", provider: "tencentCos" });
-  foreach (var record in cursor)
-  {
-      // 下载
-      var bytes = await source.TryDownloadBytesAsync(record.Key, ct);
-      if (bytes == null) { log("SKIP: not found"); continue; }
+新增内置图标、封面、视频或皮肤时，必须同步维护 `SystemAssetManifest`。清单数量以代码为准，文档不固化容易漂移的统计值。
 
-      // 上传（key 路径完全一致）
-      await target.UploadToKeyAsync(record.Key, bytes, record.Mime, ct);
+## 6. 用户资产迁移设计
 
-      // 验证
-      var newUrl = target.BuildUrlForKey(record.Key);
-      var ok = await HttpHead(newUrl);  // HTTP 200?
+用户资产迁移是独立实施任务，当前仅定义安全契约：
 
-      // 更新 registry
-      await db.asset_registry.updateOne(
-        { _id: record.Id },
-        { $set: { provider: "cloudflareR2", url: newUrl } }
-      );
-  }
+| 阶段 | 必须产物 |
+|------|----------|
+| 盘点 | 按对象 key 去重的源资产清单、未登记历史资产清单 |
+| 预演 | 对象数量、总大小、按 scope 和业务域分组的 dry-run 报告 |
+| 复制 | 可续传的逐对象结果，限制并发，不覆盖来源事实 |
+| 校验 | 大小或哈希校验、目标端可读性检查、失败清单 |
+| 引用迁移 | 明确到集合与字段的 URL 更新计划和回滚记录 |
+| 切换 | 新写入端切换、历史页面抽样和持续错误监控 |
 
-Step 3: 全库 URL 域名替换
-  // 因为 key 路径两边完全一致，迁移后只是域名变了
-  var collections = ["image_assets", "attachments", "messages", ...];
-  foreach (var col in collections)
-  {
-      // 对每个包含 URL 的 string 字段做域名替换
-      // https://i.miduo.org → https://cfi.miduo.org
-  }
+只有复制与引用校验均通过，才能宣布某一批资产迁移完成。登记簿记录缺失、正文内嵌 URL 和第三方外链都必须单独识别，不能假设只替换域名即可完成迁移。
 
-Step 4: 切换 ASSETS_PROVIDER 并重启
+## 7. 安全约束
 
-Step 5: 验证 — 随机采样旧数据页面，确认图片/文件可访问
-```
+- 迁移默认 dry-run，执行模式必须显式开启。
+- 默认不删除源对象；源清理是迁移验收后的独立操作。
+- 每个对象保存源 Provider、目标 Provider、校验结果和失败原因。
+- URL 更新保存前后值，支持按批次回滚。
+- 用户资产误分风险以保护用户为先，无法判断时归为 `user`。
+- 迁移工具不得把访问密钥、签名 URL 或用户内容写入普通日志。
 
-### 需要扫描 URL 的集合（MECE）
+## 8. 当前实现入口
 
-| 集合 | URL 字段 | scope |
-|------|---------|-------|
-| `image_assets` | `CosUrl` | generated/user |
-| `attachments` | `Url` | user |
-| `messages` | `Body` 内嵌 URL | mixed |
-| `watermark_configs` | `IconRef`, `PreviewBackgroundImageRef` | user |
-| `watermark_font_assets` | `Url` | user |
-| `hosted_sites` | `SiteUrl` | user |
-| `desktop_assets` | `Url` | system |
-| `desktop_asset_skins` | 皮肤资源 URL | system |
-| `image_gen_run_items` | `OutputUrl`, `InputUrl` | generated |
-| `defect_reports` | 附件 URL | user |
-| `literary_prompts` | `ImageUrl` | user |
-| `reference_image_configs` | `ImageUrl` | user |
-| `video_gen_runs` | 场景 URL | generated |
-| `document_entries` | `FileUrl` | user |
-| `llmrequestlogs` | `ArtifactSha256` | log |
+| 能力 | 事实入口 |
+|------|----------|
+| 存储接口 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/IAssetStorage.cs` |
+| 登记装饰器 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/RegistryAssetStorage.cs` |
+| 登记模型 | `prd-api/src/PrdAgent.Core/Models/AssetRegistryEntry.cs` |
+| 系统资产清单 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/SystemAssetManifest.cs` |
+| 系统资产同步 API | `prd-api/src/PrdAgent.Api/Controllers/Api/StorageSyncController.cs` |
+| Provider 装配 | `prd-api/src/PrdAgent.Api/Program.cs` |
+| MongoDB 集合入口 | `prd-api/src/PrdAgent.Infrastructure/Data/MongoDbContext.cs` |
 
-### 安全机制
+## 9. 验收标准
 
-- **DRY RUN 模式**：先统计不执行
-- **断点续传**：记录已迁移的 `_id` 到 `migration_progress` 集合
-- **回滚日志**：每次 URL 替换记录 before/after
-- **并发限制**：同时最多 5 个下载+上传
-- **SHA256 校验**：下载后比对 hash 确保完整性
-
-## 系统/用户资源分离路线图
-
-### 当前状态（Phase 0 — 已完成）
-
-- `asset_registry` 自动登记 + scope 标签
-- 不改存储路径，不改 URL 格式
-- 可随时通过 `db.asset_registry.aggregate` 按 scope 统计
-
-### Phase 1 — 系统资源克隆（按需实施）
-
-场景：新建系统实例，需要拷贝系统资源但不拷贝用户数据。
-
-```javascript
-// 导出系统资源清单
-db.asset_registry.find({ scope: "system", operation: "write" })
-
-// 批量拷贝到目标 bucket
-foreach (var asset in systemAssets)
-{
-    download from source → upload to target
-}
-```
-
-### Phase 2 — 物理路径分离（远期，按需实施）
-
-```
-当前: data/{domain}/{type}/{sha}.{ext}
-未来: data/sys/{domain}/{type}/{sha}.{ext}   ← 系统
-      data/usr/{domain}/{type}/{sha}.{ext}   ← 用户
-      data/gen/{domain}/{type}/{sha}.{ext}   ← AI 生成
-      data/log/{domain}/{type}/{sha}.{ext}   ← 日志
-```
-
-改造成本：
-- 修改 `AppDomainPaths` + `BuildObjectKey` 逻辑
-- 全量 URL 迁移（基于 registry 批量执行）
-- 前端零改动（全地址 URL 存储在 DB）
-
-### 用户数据保护原则
-
-> **宁可误分为 user，也不把 user 误分为 system。**
-
-- scope 默认值是 `user`（最保守的分类）
-- system scope 只通过 key 路径精确匹配（`icon/desktop/`, `icon/backups/head/`）
-- 删除操作受安全策略保护（`_it/` 测试目录 + 白名单机制）
-- 迁移前必须 DRY RUN 验证
-
-## 系统资产同步（System Asset Sync）
-
-### 问题
-
-系统图标（Agent 封面、默认头像、桌面启动动画等）是手动上传到对象存储的，不经过 `SaveAsync`，因此：
-- MongoDB 中没有任何记录
-- `asset_registry` 也不会自动登记
-- 切换 Provider 后这些文件在新 bucket 中不存在 → UI 图标全部 404
-
-### 解法
-
-`SystemAssetManifest` 维护一份声明式清单（24 个文件），`StorageSyncController` 提供一键同步 API。
-
-### 清单内容（24 个文件）
-
-| 类别 | 数量 | 路径示例 |
-|------|------|---------|
-| 默认头像 | 4 | `icon/backups/head/nohead.png`, `bot_pm.gif` |
-| Agent 封面图 | 9 | `icon/backups/agent/visual-agent.png` |
-| Agent 视频 | 9 | `icon/backups/agent/visual-agent.mp4` |
-| 桌面启动动画 | 2 | `icon/desktop/load.gif` |
-
-### 同步命令
-
-```bash
-# 1. 先预览（DRY RUN）
-curl -X POST https://preview.miduo.org/api/storage/sync-system-assets \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"sourceBaseUrl":"https://i.miduo.org","dryRun":true}'
-
-# 2. 执行同步
-curl -X POST https://preview.miduo.org/api/storage/sync-system-assets \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"sourceBaseUrl":"https://i.miduo.org","dryRun":false}'
-
-# 3. 验证
-curl https://preview.miduo.org/api/storage/system-assets \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### 切换 Provider 完整步骤（更新版）
-
-```
-1. 配置新 Provider 环境变量（R2_* 等）
-2. 设置 ASSETS_PROVIDER=cloudflareR2
-3. 重启服务
-4. POST /api/storage/sync-system-assets（从旧域名拉取系统资产到新 Provider）
-5. 验证 GET /api/storage/system-assets（确认 24 个文件都 present）
-6. 新上传的文件自动走新 Provider
-7. 旧用户数据仍通过旧域名访问（全地址 URL 存在 DB 中）
-```
-
-### 新增系统资产时的维护规则
-
-在 `SystemAssetManifest.cs` 中追加路径。只要加了新的系统图标（Agent 封面、桌面皮肤等），必须同步更新清单。
+- 新写入和删除操作能在登记簿中追溯。
+- 三种 Provider 的选择结果与启动配置一致。
+- 切换 Provider 后，系统资产缺失可被发现并受控补齐。
+- 历史用户资产未迁移时，系统明确显示其仍由旧 URL 提供。
+- 任何迁移工具在 dry-run、续传、校验和回滚方面满足本设计约束。
 
 ## 关联文档
 
-- `IAssetStorage.cs` — 存储接口定义
-- `RegistryAssetStorage.cs` — 装饰器实现
-- `AssetRegistryEntry.cs` — 登记簿 Model
-- `CloudflareR2Storage.cs` — R2 实现
-- `TencentCosStorage.cs` — 腾讯 COS 实现
+- `doc/design.platform.image-ref-and-persistence.md`
+- `doc/design.platform.workspace.md`
+- `doc/debt.platform.md`

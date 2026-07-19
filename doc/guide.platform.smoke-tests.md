@@ -1,8 +1,9 @@
 # 冒烟测试 · 指南
 
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 > Phase 2 交付物 —— 部署后快速验证关键链路是否跑通。
 
----
 
 ## 作用
 
@@ -67,12 +68,12 @@ bash scripts/smoke-all.sh
 ==========================================
 
 >>> [1/4] 验证 prd-api 可达 (带 3 次指数退避重试)
-✅ HTTP 可达
+是 HTTP 可达
 ...
 ##########################################
 # 冒烟测试汇总 (总耗时 37 秒)
 ##########################################
-✅ 通过: 6 项
+是 通过: 6 项
     · Health & Auth
     · CDS Agent Runtime
     · CDS Agent Runtime Profile Templates
@@ -81,8 +82,8 @@ bash scripts/smoke-all.sh
     · PRD Agent
     · Defect Agent
     · Report Agent
-❌ 失败: 0 项
-⏭  跳过: 0 项
+否 失败: 0 项
+  跳过: 0 项
 ```
 
 ### 2. 只跑一两个子冒烟
@@ -491,7 +492,7 @@ bash scripts/smoke-all.sh (host=branch 预览域名)
 
 - 每个子脚本都用 `set -euo pipefail`，任何 curl 失败/断言失败都会立刻退出
 - `smoke-all.sh` 默认 **不 fail-fast**，让一次跑完能看到所有问题
-- 失败的步骤会打到 stderr（`❌ xxx`），成功打到 stdout（`✅ xxx`），便于 CI 日志过滤
+- 失败的步骤会打到 stderr（`否 xxx`），成功打到 stdout（`是 xxx`），便于 CI 日志过滤
 
 ### 扩展新 Agent
 
@@ -526,10 +527,10 @@ smoke_done
 
 ## 限制与不做
 
-- ❌ **不测 LLM 响应质量** —— 只测 Controller 接 LLM Gateway 的链路是否畅通
-- ❌ **不测 UI 渲染** —— Phase 3 (Playwright + Bridge) 负责
-- ❌ **不替代单元测试** —— `dotnet test` / `pnpm test` 仍然是代码级正确性的门禁
-- ❌ **不在 CI 自动跑** —— 需要真实部署环境，走手动或 `/cds-deploy` hook
+- 否 **不测 LLM 响应质量** —— 只测 Controller 接 LLM Gateway 的链路是否畅通
+- 否 **不测 UI 渲染** —— Phase 3 (Playwright + Bridge) 负责
+- 否 **不替代单元测试** —— `dotnet test` / `pnpm test` 仍然是代码级正确性的门禁
+- 否 **不在 CI 自动跑** —— 需要真实部署环境，走手动或 `/cds-deploy` hook
 
 ---
 

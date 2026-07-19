@@ -1,4 +1,6 @@
-# debt.llm-gateway-protocol-fidelity
+# LLM Gateway 协议保真 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-06-26 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -7,7 +9,6 @@
 | 关联 | `doc/design.llm-gateway-unification.md` 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
 | 提出 | 用户「协议不能归一，要保真」+ 取证后分波落地（F1 识图 / F3a 采样 / G1-G6 函数调用穿协议） |
 
----
 
 ## 债务主题
 

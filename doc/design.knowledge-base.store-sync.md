@@ -1,11 +1,11 @@
 # 知识库跨环境同步 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-04 | **状态**：已落地（本地库↔库经预览域名端到端验收通过 commit 30ea7b2；跨环境 remote 路径已部署，待双环境真实验收）
+> **版本**：v1.0 | **日期**：2026-06-04 | **状态**：已落地
+
 > **关联实现**：`prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-api/.../Models/DocumentStoreSyncLink.cs`、`prd-admin/.../pages/document-store/SyncManagerPanel.tsx`、`prd-admin/.../services/real/documentStoreSync.ts`
 > **关联设计**：`design.knowledge-base.store.md`（知识库主设计）、`design.acceptance.kb.md` §5.C（前身：export/import + kb_sync.py CLI，本设计将其泛化为通用 UI 能力）、`debt.knowledge-base.store-sync.md`（已知边界与还款台账）
 > **一句话**：把"知识库内容只能困在单个环境里"升级为"任一知识库都能和另一处的库（跨环境，或本环境另一个库）建立永久配对、一键双向同步、改了显示待同步、同步完显示对勾"。
 
----
 
 ## 1. 管理摘要
 
@@ -57,7 +57,7 @@
 | 能力 | 说明 |
 |------|------|
 | 令牌链接配对 | 一方生成永久令牌链接，另一方粘贴即连。单边持令牌即可双向驱动。 |
-| 本地库↔库配对 | 同环境两个库直接配对，走 DB 直读写，无网络、无令牌。 |
+| 本地库库配对 | 同环境两个库直接配对，走 DB 直读写，无网络、无令牌。 |
 | 方向可设 | push（本地→对端）/ pull（对端→本地）/ both（双向）。 |
 | 幂等 upsert | 血缘 ID 匹配既有条目更新而非重建；内容未变跳过。 |
 | 改动检测 | 两侧签名快照对比，判定哪侧改了 → 待同步 / 已同步。 |
@@ -135,7 +135,7 @@ flowchart TD
 
 ### 6.1 配对记录 `document_store_sync_links`（DocumentStoreSyncLink）
 
-一条记录 = 一个"本库 ↔ 对端库"的持续同步关系，由发起方（持令牌/建配对者）拥有。
+一条记录 = 一个"本库  对端库"的持续同步关系，由发起方（持令牌/建配对者）拥有。
 
 | 字段 | 含义 |
 |------|------|

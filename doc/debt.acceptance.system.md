@@ -1,4 +1,6 @@
-# debt.acceptance.system
+# 功能验收体系 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-05-27 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -7,7 +9,6 @@
 | 关联 | `.claude/skills/create-visual-test-to-kb/`、`doc/design.acceptance.system.md`、文档空间 `document_stores` |
 | 提出 | 用户提议：用知识库当枢纽，把「标准创建 / 验收执行 / 结果归档」三方打通，标准与执行各由独立 Agent 承担 |
 
----
 
 ## 债务主题
 
@@ -16,11 +17,11 @@
 ## 目标架构（三角色 + 知识库枢纽）
 
 ```
-标准创建 Agent ──写──▶ 知识库:standard 条目(structured + 可读, 有 id/version)
+标准创建 Agent ──写── 知识库:standard 条目(structured + 可读, 有 id/version)
                               │
 验收执行 Agent ──读 standard_id──┘
       │  按标准取证(harness 模拟人类)→ 生成报告
-      └──写──▶ 知识库:report 条目(meta 记录 standard_id@version)
+      └──写── 知识库:report 条目(meta 记录 standard_id@version)
                               │
                         反查:某标准下所有结果 / 某功能历次验收
 ```
@@ -32,7 +33,7 @@
 
 ## 我的评估（值不值得 + 难在哪）
 
-**价值**：标准从"硬编码在技能脚本里"升级为"知识库里可版本化、可治理的资产"；执行读活标准；结果可全栈追溯（标准 ↔ 结果）。多团队/多项目可各自定制标准而共用执行引擎。
+**价值**：标准从"硬编码在技能脚本里"升级为"知识库里可版本化、可治理的资产"；执行读活标准；结果可全栈追溯（标准  结果）。多团队/多项目可各自定制标准而共用执行引擎。
 
 **前置难点（必须先解决，否则就是花架子）**：
 1. **标准必须机器可读**。现在准入门槛/档位/硬约束是 `archive_report.py` 里的硬编码 + `standard-v2.md` 的散文。要让 Agent "读标准来校验"，必须把它抽成**结构化 schema**（如 `standard.schema.json`：`tier_min_shots / junk_targets / required_sections / hard_constraints / verdict_rules`），执行 Agent 读 schema 而非读散文。

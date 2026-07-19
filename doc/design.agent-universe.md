@@ -1,11 +1,11 @@
 # 智能体宇宙 · 设计
 
-> **版本**：v2.0 | **日期**：2026-06-02 | **状态**：已落地并预览域名实测通过（no-fake 路由 + 真实生图 + 真实参数选择器；4 个智能体已登记，扩展指南见 §5.2）
+> **版本**：v2.0 | **日期**：2026-06-02 | **状态**：已落地
+
 > **关联实现**：`prd-api/.../Models/AgentUniverse/AgentCapability.cs`、`AgentCapabilityRegistry.cs`、`prd-api/.../Controllers/Api/AgentUniverseController.cs`、`prd-admin/.../services/real/agentUniverse.ts`、`prd-admin/.../pages/document-store/ReprocessChatDrawer.tsx`
 > **关联设计**：`.claude/rules/app-identity.md`（应用身份）、`.claude/rules/llm-gateway.md`（网关）、`debt.agent-universe.md`（债务台账）
 > **一句话**：把"每个智能体各搞各的调用方式、再加工还把视觉创作降级成假聊天"升级为"一套能力契约 + 一套调用信封，让所有智能体像漫威宇宙那样按统一标准互通"。
 
----
 
 ## 1. 管理摘要
 
@@ -230,5 +230,5 @@ SSE 事件：
 |------|------|------|
 | 后端无本地 SDK 验证 | 开发环境无 dotnet | 走 CDS 自动部署编译验证（`cds-first-verification.md`）|
 | 生图依赖模型池 | 视觉创作需 ImageGen 模型池可用 | 池不可用时适配器返回 error，前端展示失败 |
-| 契约与适配器漂移 | generation 智能体若无对应适配器 | 控制器降级 chat + 告警日志；后续补注册表↔适配器一致性测试（见 debt）|
+| 契约与适配器漂移 | generation 智能体若无对应适配器 | 控制器降级 chat + 告警日志；后续补注册表适配器一致性测试（见 debt）|
 | 多入口尚未接入 | 当前仅再加工抽屉接入信封 | @艾特 / 工作流节点为后续波次（见 debt）|

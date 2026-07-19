@@ -1,13 +1,11 @@
 # CDS 多项目 · 设计
 
-> **版本**：v0.1 | **日期**：2026-04-12 | **状态**：草案，待审
->
+> **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
+
 > 主设计稿。配套文档：
->
 > - `doc/spec.cds.project-model.md` — 数据字典
 > - `doc/plan.cds.multi-project-phases.md` — 7 期交付计划
 > - `doc/rule.cds.mongo-migration.md` — 迁移与回滚规范
->
 > **基线**：`doc/design.cds.md` v3.2（现有单项目架构）
 
 ## 一、管理摘要
@@ -317,13 +315,13 @@ P3c: Stop dual-write
 
 | 期 | 交付 | 用户可见变化 | 内部变化 | 实施状态 |
 |---|---|---|---|---|
-| **P0** | 4 份设计文档 | 无 | 无，只画图纸 | ✅ 已完成 |
-| **P1** | 项目列表外壳 | 首页变成项目列表（里面只有 1 个"默认项目"卡） + 左上角 workspace/project 下拉（单项）+ "+ New Project" 按钮点击提示"即将上线" | 零 — 所有 API 仍走老 state.json，中间件用 `projectId = "default"` 兼容旧路径 | ✅ 已完成 |
-| **P2** | GitHub OAuth + Org 白名单 + 首登自举 | 必须登录才能访问 | 新增 `users`/`sessions` 集合（MongoDB 先进场） + 认证中间件 | ⚠️ 部分（auth-service.ts + memory store；mongo store 等 P5） |
-| **P3** | MongoDB 数据层迁移（state.json → mongo） | 无感 | 后台三阶段切换：dual-write → read-from-mongo → cleanup | ✅ 已完成（**简化方案**：MongoStateBackingStore 作为 IStateBackingStore 接口的第二实现，运行时通过 `/api/storage-mode/switch-to-mongo` 一次性 seed-from-json + 切换；放弃了原计划的 dual-write 三阶段。无感+可回滚） |
-| **P4** | 多项目真落地 + **多仓库 git clone (G1, 提前到 P4)** | "+ New Project" 真的能建第二个项目 + Smart input 粘 git URL 自动 clone + Auto-detect 栈 + 自动建 build profile + 端到端 zero-friction 创建 | 每项目独立 docker network + mongo 查询全部带 projectId filter + `Project.repoPath` 字段 + 无状态 `WorktreeService` + `POST /api/projects/:id/clone` SSE + `POST /api/detect-stack` + 8 种栈检测器 | ✅ 已完成 |
-| **P5** | Team workspace + GitHub Org 绑定 + 成员邀请 | 可以创建团队 workspace，成员按 Org 同步 | `workspaces` + `workspace_members` + RBAC 中间件 | ❌ 未开始 |
-| **P6** | 手动项目 + dirty 标记 + webhook + 自动部署策略 | "部署"真正派上用场 | webhook endpoint + branch dirty tracking + redeploy 策略 | ❌ 未开始 |
+| **P0** | 4 份设计文档 | 无 | 无，只画图纸 | 是 已完成 |
+| **P1** | 项目列表外壳 | 首页变成项目列表（里面只有 1 个"默认项目"卡） + 左上角 workspace/project 下拉（单项）+ "+ New Project" 按钮点击提示"即将上线" | 零 — 所有 API 仍走老 state.json，中间件用 `projectId = "default"` 兼容旧路径 | 是 已完成 |
+| **P2** | GitHub OAuth + Org 白名单 + 首登自举 | 必须登录才能访问 | 新增 `users`/`sessions` 集合（MongoDB 先进场） + 认证中间件 | 警告 部分（auth-service.ts + memory store；mongo store 等 P5） |
+| **P3** | MongoDB 数据层迁移（state.json → mongo） | 无感 | 后台三阶段切换：dual-write → read-from-mongo → cleanup | 是 已完成（**简化方案**：MongoStateBackingStore 作为 IStateBackingStore 接口的第二实现，运行时通过 `/api/storage-mode/switch-to-mongo` 一次性 seed-from-json + 切换；放弃了原计划的 dual-write 三阶段。无感+可回滚） |
+| **P4** | 多项目真落地 + **多仓库 git clone (G1, 提前到 P4)** | "+ New Project" 真的能建第二个项目 + Smart input 粘 git URL 自动 clone + Auto-detect 栈 + 自动建 build profile + 端到端 zero-friction 创建 | 每项目独立 docker network + mongo 查询全部带 projectId filter + `Project.repoPath` 字段 + 无状态 `WorktreeService` + `POST /api/projects/:id/clone` SSE + `POST /api/detect-stack` + 8 种栈检测器 | 是 已完成 |
+| **P5** | Team workspace + GitHub Org 绑定 + 成员邀请 | 可以创建团队 workspace，成员按 Org 同步 | `workspaces` + `workspace_members` + RBAC 中间件 | 否 未开始 |
+| **P6** | 手动项目 + dirty 标记 + webhook + 自动部署策略 | "部署"真正派上用场 | webhook endpoint + branch dirty tracking + redeploy 策略 | 否 未开始 |
 
 ### Phase E (2026-04-14) 提前实现：GitHub Device Flow 仓库选择器
 

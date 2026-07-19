@@ -867,6 +867,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     tokenUsage = chunk.TokenUsage;
                 }
+
+                // 部分 OpenAI 兼容上游会发送带 finish_reason 的终止帧，但既不发送
+                // data: [DONE]，也不主动关闭连接。终止语义已经完整时必须立即收口，
+                // 否则调用方会一直等到 HttpClient 超时，并丢失已经收到的正文。
+                if (!string.IsNullOrEmpty(finishReason))
+                {
+                    break;
+                }
             }
 
             // 6.2 流被迫中断时，把真实错误落进日志并推 Fail chunk 出去。

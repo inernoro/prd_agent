@@ -1,9 +1,9 @@
-# spec.submission-gallery — 作品投稿与画廊展示 · 规格
+# 作品投稿与画廊展示 · 规格
 
-> **状态**: 已实现（部分修正中） | **日期**: 2026-03-23
+> **版本**：v1.0 | **日期**：2026-03-23 | **状态**：开发中
+
 > **涉及模块**: prd-api (SubmissionsController), prd-admin (showcase/, literary-agent/)
 
----
 
 ## 1. 概述
 

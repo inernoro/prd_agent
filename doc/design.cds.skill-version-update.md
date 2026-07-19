@@ -1,4 +1,6 @@
-# CDS 技能版本与更新架构
+# CDS 技能版本与更新架构 · 设计
+
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 目标
 
@@ -6,21 +8,14 @@
 
 ## 当前架构
 
-```mermaid
-flowchart TD
-  A["维护者修改 .claude/skills/cds"] --> B["cdscli.py VERSION"]
-  A --> C["cds/SKILL.md frontmatter version"]
-  B --> D["readBundledCdsCliVersion(repoRoot)"]
-  C --> E["cdscli-version.test.ts 守卫对齐"]
-  D --> F["GET /api/cli-version"]
-  D --> G["所有 /api/* 响应头 X-Cds-Cli-Latest"]
-  H["旧版 cdscli 请求任意 CDS API"] --> G
-  G --> I["cdscli _maybe_warn_version_drift"]
-  I --> J["提示运行 cdscli update"]
-  J --> K["GET /api/export-skill"]
-  K --> L["下载全套 CDS 技能 tar.gz"]
-  L --> M["原地覆盖 .claude/skills/cds"]
-```
+| 阶段 | 事实与行为 |
+|------|------------|
+| 维护 | `cdscli.py` 的 `VERSION` 是版本权威，`SKILL.md` front matter 与其同步 |
+| 服务端读取 | `readBundledCdsCliVersion` 读取仓库内置版本 |
+| 漂移发现 | `/api/cli-version` 和 API 响应头暴露服务端最新版本 |
+| 客户端提示 | 旧版 cdscli 比较版本并提示执行 `cdscli update` |
+| 更新 | `/api/export-skill` 返回完整技能包，客户端原地替换项目内 CDS 技能 |
+| 守卫 | `cdscli-version.test.ts` 检查 CLI、技能头和服务端读取逻辑不漂移 |
 
 ## 版本来源
 
@@ -31,13 +26,7 @@ flowchart TD
 
 ## 更新路径
 
-优先路径：
-
-```bash
-cdscli version
-cdscli update
-cdscli version
-```
+优先路径是先执行 `cdscli version` 确认当前版本，再运行 `cdscli update`，最后重新检查版本。
 
 兜底路径：
 

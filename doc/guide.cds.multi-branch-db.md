@@ -1,10 +1,10 @@
-# CDS 多分支数据库隔离指南(Phase 5)
+# CDS 多分支数据库隔离指南(Phase 5) · 指南
 
-> **类型**:guide(操作指南) | **版本**:1.0 | **最后更新**:2026-05-01
+> **版本**：v1.0 | **日期**：2026-05-01 | **状态**：已落地
+
 > **覆盖范围**:`BuildProfile.dbScope` 字段;同一 mysql/postgres 实例下用 database name 隔离多分支
 > **目标读者**:用户(开多分支验收时) + AI Agent(写 cdscli 模板表时)
 
----
 
 ## 0. 30 秒读懂
 
@@ -129,7 +129,7 @@ per-branch 模式下:
 无数据库                            → 不适用(本 phase 不影响)
 有 DB 但纯 SELECT(报表 / 看板)      → shared
 有 INSERT/UPDATE 但无 schema 改动    → shared
-有 ORM migration 且并发开发          → ★ per-branch
+有 ORM migration 且并发开发          →  per-branch
 学习项目 / hello-world               → shared
 生产 staging                        → 取决于团队,通常 shared(数据共享)
 ```
@@ -153,9 +153,9 @@ per-branch 模式下:
 ## 7. 给接力 AI 的话
 
 Phase 5 MVP 完成的核心是 *机制存在 + 默认安全*:
-- ✅ shared 默认 → 现有项目零行为变化
-- ✅ per-branch 切换可用 → 多分支用户拿到独立 DB
-- ⏳ UI 切换、自动建库、GC、冲突警告 → Phase 5.5+
+- 是 shared 默认 → 现有项目零行为变化
+- 是 per-branch 切换可用 → 多分支用户拿到独立 DB
+- 进行中 UI 切换、自动建库、GC、冲突警告 → Phase 5.5+
 
 Phase 6 实战时,挑一个 Prisma + MySQL 项目,把 backend 的 dbScope 设成 per-branch,验证多分支同时部署 → 各自跑 prisma migrate deploy 不冲突。
 

@@ -147,17 +147,17 @@ prd-agent
 
 ## 9. 外部参考
 
-- ISTQB Glossary: Impact Analysis  
+- ISTQB Glossary: Impact Analysis
   https://glossary.istqb.org/en_US/term/impact-analysis
-- ISTQB Glossary: Traceability  
+- ISTQB Glossary: Traceability
   https://glossary.istqb.org/en_US/term/traceability
-- ISO/IEC/IEEE 29119-1:2022 Software testing, general concepts  
+- ISO/IEC/IEEE 29119-1:2022 Software testing, general concepts
   https://www.iso.org/standard/81291.html
-- ISO/IEC/IEEE 29119 series overview  
+- ISO/IEC/IEEE 29119 series overview
   https://committee.iso.org/sites/jtc1sc7/home/projects/flagship-standards/isoiecieee-29119-series.html
-- Google Testing Blog: Just Say No to More End-to-End Tests  
+- Google Testing Blog: Just Say No to More End-to-End Tests
   https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html
-- Martin Fowler: The Practical Test Pyramid  
+- Martin Fowler: The Practical Test Pyramid
   https://martinfowler.com/articles/practical-test-pyramid.html
-- NIST Automated Combinatorial Testing for Software  
+- NIST Automated Combinatorial Testing for Software
   https://csrc.nist.gov/projects/automated-combinatorial-testing-for-software

@@ -1,6 +1,8 @@
-# debt.visual-agent.storyboard — 视觉分镜台工程债务台账
+# Visual Agent 视觉分镜台 · 债务台账
 
-> 状态：active | 模块：prd-admin `/visual-storyboard` + prd-api ImageGenController storyboard-script
+> **版本**：v1.0 | **日期**：2026-06-14 | **状态**：开发中
+
+> 模块：prd-admin `/visual-storyboard` + prd-api ImageGenController storyboard-script
 > 首版：2026-06-14（storyboard-first MVP，复用视觉创作生图引擎渲染关键帧）
 
 ## 背景

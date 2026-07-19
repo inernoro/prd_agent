@@ -1,391 +1,155 @@
-# PR Review V2 —— 以 OAuth 为根的最小可审查工作台 · 设计
+# PR Review V2 设计（OAuth 最小可审查工作台） · 设计
 
-> 状态：起草中 · 替代 `design.pr-review-prism.md`（若存在） · 关联 `rule.platform.app-identity.md`、`rule.snapshot-fallback.md`、`rule.no-localstorage.md`
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+> **appKey**：`pr-review`
 
-## 1. 管理摘要（30 秒看懂）
+## 一、管理摘要
 
-**目的**：让任何一个拥有 GitHub 账号的审查者，能够在一个界面里粘贴任意团队（只要他本人有权访问）的 PR 链接，拉取 PR 真实数据，做私人笔记，管理一份自己的"在看 PR 清单"。
+- **解决什么问题**：审查跨组织 PR 时，全局 GitHub Token 无法表达每个用户的真实仓库权限，也会把授权、项目配置和审查数据错误绑定。
+- **当前方案**：每个用户通过 GitHub Device Flow 建立自己的连接，添加有权访问的 PR，保存快照、私人笔记、历史和 AI 分析结果。
+- **核心边界**：GitHub 决定仓库访问权限；本系统只保存用户自己的审查工作台，不替代组织权限、分支保护和 CI 门禁。
+- **文档定位**：本文维护现行能力和安全约束，不再保留旧 Prism 下线脚本、预计代码量和逐字段实现副本。
 
-**核心洞察**：当前实现把"审查 PR"做成了"给公司配一个全局 GitHub Token 再做审查系统"，导致权限、onboarding、workspace 三层复杂度都压到了前端。V2 把 **Token 从"应用全局配置"迁到"每个用户自己的 GitHub OAuth 连接"**，这一改动会顺带消灭 80% 的偶发复杂度。
+## 1. 产品目标
 
-**OAuth 模式选择**：采用 **GitHub Device Flow (RFC 8628)** 而非 Web Flow。
-原因是本项目部署在 CDS 动态域名（`<branch>.miduo.org`），每条分支一个域名，
-而 Web Flow 的 Callback URL 必须预先注册且不支持通配符——CDS 上根本不可用。
-Device Flow 完全不需要 Callback URL，本地/CDS/生产共用一套代码，
-是 `gh auth login` 同款机制。
+- 使用同一个入口管理来自不同组织和仓库的 PR。
+- 授权能力跟随当前用户，不依赖平台全局 Token。
+- 保留最近快照，在 GitHub 暂时不可用时仍可查看上次结果。
+- 支持私人笔记、快照历史、原始变更内容和 AI 审查辅助。
+- 所有列表、详情和分析都以当前用户的数据范围为边界。
 
-**一句话 MVP**：`连接 GitHub → 粘贴 PR URL → 看数据 + 写笔记`。
+## 2. 为什么使用 Device Flow
 
-**不做什么**：不做 PR 模板解析、不做顶层设计源校验、不做批量评分、不做决策卡发布、不做全局 Token 管理面板、不做多 workspace 切换。这些要么与目标正交（别人家的 PR 你管不到模板），要么是错误前提催生的仪式。
+CDS 的分支预览域名动态变化，Web OAuth callback 难以预注册且不能安全依赖通配符。Device Flow 不要求页面 callback，本地、预览和生产环境可以复用同一授权流程。
 
-**删除规模**：~10,000 行代码删除（含 `PrReviewPrismController.cs` 1211 行、`PrReviewPrismPage.tsx` 1781 行、`.github/pr-architect/*` 整个目录、5 个 Python 脚本、5 个 workflow），新增约 1,500 行。净减 85%。
+授权链路分为开始、用户确认、轮询和完成四步。服务端保存 flow 状态并限制轮询频率；授权完成后才持久化用户连接。前端必须展示用户码、目标地址、有效期和当前阶段，不能让用户面对空白等待。
 
----
+## 3. 核心用户流程
 
-## 2. 产品定位
+### 3.1 连接 GitHub
 
-### 2.1 目标用户与场景
+1. 用户发起 Device Flow。
+2. 后端向 GitHub 申请设备授权并返回展示信息。
+3. 用户在 GitHub 页面确认授权，前端按服务端建议间隔轮询。
+4. 后端验证结果并保存当前用户的 GitHub 连接。
+5. 拒绝、超时、限速和配置缺失均返回可识别状态。
 
-| 用户 | 场景 | 期望路径 |
-|---|---|---|
-| 架构师 | 同时在跟 10 个开源仓的 PR，想把它们集中在一个面板 | 粘贴每个 PR URL，卡片列表统一刷新 |
-| 独立开发者 | 想记录自己正在 review 的 PR 的进展和想法 | 一页界面、笔记随手写、关掉浏览器不丢数据 |
-| Tech Lead | 跨多个团队 review | 授权自己的 GitHub 账号（已经是各仓的 collaborator），不用任何额外 token 管理 |
+### 3.2 添加与刷新 PR
 
-### 2.2 不覆盖的场景（明确划界）
+1. 用户提交标准 GitHub PR URL。
+2. 后端解析 owner、repository 和 number，并执行主机与路径白名单校验。
+3. 使用当前用户连接读取 GitHub 数据。
+4. 保存审查项和最新快照；重复记录返回明确冲突。
+5. 后续刷新产生新的可追溯快照或保存刷新错误，不覆盖旧的可用事实。
 
-- ❌ 强制所有 PR 必须填某种元数据模板
-- ❌ 做 CI 阻断/门禁（那是 GitHub branch protection + 外部 CI 的职责）
-- ❌ 管理组织级仓库和 reviewer 分配（那是 GitHub 自身的功能）
-- ❌ AI 自动生成 review 意见（若需要，作为 V3 选项，不进 MVP）
+### 3.3 审查与分析
 
----
+用户可以浏览列表和详情、维护私人笔记、查看原始文件内容及历史切片。AI 摘要和对齐分析以已经授权取得的 PR 快照为输入，通过 SSE 输出阶段、模型信息和增量文本，最终结果回写审查项。
 
-## 3. 用户场景（Happy Path 三步）
+## 4. 领域模型
 
-```
-Step 1：首次连接（Device Flow，RFC 8628）
-  用户点击 "连接 GitHub"
-    ↓  前端 POST /api/pr-review/auth/device/start
-    ↓  后端向 GitHub 请求 device_code，返回 { userCode, verificationUriComplete, flowToken, intervalSeconds }
-    ↓  前端自动 open(verificationUriComplete) 新 tab 到 github.com/login/device?user_code=XXXX
-    ↓  同时页面显示 userCode + 倒计时 + 轮询进度条
-    ↓  用户在 GitHub 页面确认 user_code → 点 Authorize
-    ↓  后端每 intervalSeconds 秒 POST /api/pr-review/auth/device/poll { flowToken }
-    ↓      pending → 继续等
-    ↓      slow_down → 调大间隔
-    ↓      done → 后端换 token 存库，前端刷新 authStatus
-    ↓  页面切到已连接卡片
-
-Step 2：添加 PR
-  用户粘贴 https://github.com/OrgA/repoX/pull/42
-    ↓  后端提取 (owner, repo, number)，正则白名单校验
-    ↓  用该用户 token 调 GitHub REST GET /repos/OrgA/repoX/pulls/42
-    ↓  把结果写入 pr_review_items（仅存最新快照）
-    ↓  返回前端列表更新
-
-Step 3：日常使用
-  用户看到列表，点击任一卡片 → 展开详情 → 写笔记（失焦即存）
-  需要最新数据时点刷新，GitHub 再查一次，更新快照
-```
-
-**错误恢复路径**：
-- Token 失效（GitHub 返回 401）→ 前端提示"连接已过期"→ 一键重连 Device Flow
-- Device Flow 授权超时（15 分钟未点授权）→ 前端显示"授权已超时"并允许重新发起
-- 用户在 GitHub 页面拒绝 → `access_denied` → 前端显示"你拒绝了授权"
-- 权限不够（GitHub 404 屏蔽私有仓）→ 两步探测后返回"仓库不可见"而非"PR 不存在"
-- 网络故障 → 保留旧快照 + `lastRefreshError` 写入 UI 提示条
-
----
-
-## 4. 核心能力
-
-| 能力 | 实现要点 |
-|---|---|
-| **连接 GitHub 账号** | OAuth Device Flow (RFC 8628)，无需 Callback URL，加密存 token，支持断开连接 |
-| **提交 PR** | 解析 URL → 白名单正则 → 立即同步拉一次 → 入库 |
-| **列表** | 按 `userId` 过滤，按 `UpdatedAt desc`，分页 |
-| **详情** | 展开卡片显示 GitHub 返回的字段（title/state/author/labels/additions/deletions/changedFiles/reviewDecision/createdAt/mergedAt/htmlUrl） |
-| **刷新单条** | 重新调 GitHub，更新 snapshot + lastRefreshedAt |
-| **笔记** | Markdown 文本字段，失焦 PATCH，用户私有 |
-| **删除** | 硬删（用户自己的记录） |
-
-**V1 不做**：批量刷新、筛选、搜索、分享、协作笔记、PR 比较、diff 预览。
-
----
-
-## 5. 技术架构
-
-### 5.1 后端分层
-
-```
-Controllers/Api/
-  PrReviewController.cs                  ~550 行（取代 1211 行的 PrReviewPrismController）
-
-Services/PrReview/
-  GitHubOAuthService.cs                  Device Flow: Start + Poll + 用户信息拉取
-                                          + HMAC 签名 flow_token（无状态，多实例安全）
-  GitHubPrClient.cs                      按 user token 查 PR，含 404 两步探测
-  PrUrlParser.cs                         owner/repo/number 提取，含 SSRF 白名单
-  PrReviewErrors.cs                      错误类型定义，映射到 HTTP + ErrorCode
-
-Models/
-  GitHubUserConnection.cs                每用户一条 OAuth 连接
-  PrReviewItem.cs                        每条 PR 记录
-  PrReviewSnapshot.cs                    嵌入 PrReviewItem 的 GitHub 字段集
-
-Infrastructure/Database/
-  MongoDbContext.cs                      新增 GitHubUserConnections, PrReviewItems 集合
-```
-
-### 5.2 应用身份
-
-- `appKey = "pr-review"`（Controller 硬编码）
-- 权限点：`pr-review.use`（取代 `pr-review-prism.use`）
-- V2 与 V1 **并存过渡期极短**：V2 落地后立即拆除 V1 代码（一次性迁移）
-
-### 5.3 数据模型
-
-```csharp
-// github_user_connections
-public class GitHubUserConnection
-{
-    public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public string UserId { get; set; } = string.Empty;     // PRD Agent 用户
-    public string GitHubLogin { get; set; } = string.Empty;
-    public string GitHubUserId { get; set; } = string.Empty;
-    public string? AvatarUrl { get; set; }
-    public string AccessTokenEncrypted { get; set; } = string.Empty;
-    public string Scopes { get; set; } = string.Empty;      // 如 "repo,read:user"
-    public DateTime ConnectedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? LastUsedAt { get; set; }
-}
-
-// pr_review_items
-public class PrReviewItem
-{
-    public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public string UserId { get; set; } = string.Empty;
-    public string Owner { get; set; } = string.Empty;
-    public string Repo { get; set; } = string.Empty;
-    public int Number { get; set; }
-    public string HtmlUrl { get; set; } = string.Empty;
-    public string? Note { get; set; }
-    public PrReviewSnapshot? Snapshot { get; set; }
-    public DateTime? LastRefreshedAt { get; set; }
-    public string? LastRefreshError { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-}
-
-public class PrReviewSnapshot
-{
-    public string Title { get; set; } = string.Empty;
-    public string State { get; set; } = "open";   // open/closed/merged
-    public string AuthorLogin { get; set; } = string.Empty;
-    public string? AuthorAvatarUrl { get; set; }
-    public List<string> Labels { get; set; } = new();
-    public int Additions { get; set; }
-    public int Deletions { get; set; }
-    public int ChangedFiles { get; set; }
-    public string? ReviewDecision { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? MergedAt { get; set; }
-    public DateTime? ClosedAt { get; set; }
-    public string HeadSha { get; set; } = string.Empty;
-}
-```
-
-> **索引策略**：`github_user_connections` 走 `(UserId)` 唯一索引；`pr_review_items` 走 `(UserId, UpdatedAt desc)` 和 `(UserId, Owner, Repo, Number)` 唯一索引防重复。按 `rule.no-auto-index.md`，索引创建由 DBA 手动执行，代码只保留定义作参考。
-
----
-
-## 6. 接口设计
-
-| Method | Path | 语义 |
-|---|---|---|
-| `GET`  | `/api/pr-review/auth/status`          | 返回 `{connected, login, avatarUrl, scopes, oauthConfigured}` |
-| `POST` | `/api/pr-review/auth/device/start`    | 发起 Device Flow，返回 `{userCode, verificationUri, verificationUriComplete, intervalSeconds, expiresInSeconds, flowToken}` |
-| `POST` | `/api/pr-review/auth/device/poll`     | body: `{flowToken}` → 轮询 GitHub，返回 `{status: 'pending' \| 'slow_down' \| 'expired' \| 'denied' \| 'done'}` |
-| `DELETE` | `/api/pr-review/auth/connection`    | 断开连接（删除 row） |
-| `POST` | `/api/pr-review/items`                | body: `{pullRequestUrl, note?}`，提交并同步拉一次 |
-| `GET`  | `/api/pr-review/items?page=1&pageSize=20` | 分页列表 |
-| `GET`  | `/api/pr-review/items/{id}`           | 单条详情 |
-| `POST` | `/api/pr-review/items/{id}/refresh`   | 重新拉取 |
-| `PATCH`| `/api/pr-review/items/{id}/note`      | body: `{note}` |
-| `DELETE`| `/api/pr-review/items/{id}`          | 硬删 |
-
-### 6.1 OAuth 配置项
-
-```
-环境变量:
-  GitHubOAuth__ClientId     = <GitHub OAuth App 的 Client ID>
-  GitHubOAuth__ClientSecret = <可选；Device Flow 对公有 OAuth App 可不填>
-  GitHubOAuth__Scopes       = "repo,read:user"（默认值）
-```
-
-> **GitHub OAuth App 注册**：
-> 1. 到 GitHub Settings → Developer settings → OAuth Apps 创建新应用
-> 2. **勾选 "Enable Device Flow"** ✅（关键——否则 device_code 端点会 403）
-> 3. **Callback URL 随便填一个**（例如 `https://example.com`）——Device Flow 不使用它，但 GitHub 表单必填
-> 4. 复制 Client ID 注入到 `GitHubOAuth__ClientId`
-> 5. 完成——本地/CDS/生产共用同一个 OAuth App，无需为动态域名做任何额外配置
-
-### 6.2 Flow Token 防伪造
-
-Device Flow 的 Start 阶段返回的 `flowToken` 是 HMAC 签名的 (device_code, userId, expiry) 三元组，
-格式：`base64url(deviceCode|userId|expiryUnix|hmacHex)`，HMAC 用 `Jwt:Secret`（启动 fail-fast）。
-Poll 时后端会：
-1. 验证 HMAC 签名（`FixedTimeEquals` 防时序攻击）
-2. 校验 `userId` 与当前登录用户一致
-3. 校验 `expiryUnix` 未超时
-4. 解出 `device_code` 向 GitHub 轮询
-
-这种"签名令牌"模式完全无状态、无 session、多实例天然安全，`device_code` 从不出后端。
-
-### 6.3 错误分类（消灭 404 歧义）
-
-```
-用户 Token 失效          → 401 GITHUB_TOKEN_EXPIRED
-用户已断开 GitHub         → 412 GITHUB_NOT_CONNECTED
-Device Flow 令牌无效/过期 → 403 DEVICE_FLOW_TOKEN_INVALID
-Device Flow 超时(>15min)  → 408 DEVICE_FLOW_EXPIRED
-用户拒绝授权              → 403 DEVICE_FLOW_ACCESS_DENIED
-GitHub OAuth 未配置       → 503 GITHUB_OAUTH_NOT_CONFIGURED
-URL 格式错                → 400 PR_URL_INVALID
-owner/repo 不符合白名单   → 400 PR_URL_INVALID
-两步探测：repo 404        → 404 GITHUB_REPO_NOT_VISIBLE（"仓库不存在或你无权访问"）
-两步探测：repo 200 PR 404 → 404 PR_NUMBER_INVALID（"仓库可见但 PR 编号不存在"）
-GitHub 403               → 403 GITHUB_FORBIDDEN
-GitHub 429               → 429 GITHUB_RATE_LIMITED（返回 Reset header）
-GitHub 5xx               → 502 GITHUB_UPSTREAM_ERROR
-代码异常                 → 500 INTERNAL_ERROR
-```
-
-### 6.4 SSRF 防护
-
-```csharp
-private static readonly Regex OwnerRegex =
-    new(@"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?$");
-private static readonly Regex RepoRegex =
-    new(@"^[A-Za-z0-9._-]{1,100}$");
-```
-
-- HttpClient BaseAddress 固定为 `https://api.github.com/`
-- 永不接受完整 URL 作为调用参数，只用 owner/repo/number 拼 path
-- OAuth 回调 state 必须一次性匹配
-
----
-
-## 7. 前端架构
-
-### 7.1 组件拆分（取代 1781 行巨石）
-
-```
-src/pages/pr-review/
-  PrReviewPage.tsx              ~120 行  主路由
-  GitHubConnectCard.tsx         ~70 行   OAuth 连接状态
-  AddPrForm.tsx                 ~70 行   URL 输入 + 提交
-  PrItemList.tsx                ~90 行   列表 + 分页
-  PrItemCard.tsx                ~140 行  详情卡 + 笔记编辑 + 刷新/删除
-  usePrReviewStore.ts           ~80 行   Zustand, SSOT, 不用 localStorage
-
-src/services/real/
-  prReview.ts                   ~90 行   typed API client
-```
-
-### 7.2 状态管理
-
-- **SSOT**：`store.items` 是唯一列表，`store.connection` 是唯一连接态
-- **无 localStorage**：所有状态来自服务端 GET，浏览器关闭就结束
-- **乐观 UI**：刷新/笔记保存走乐观更新，失败回滚
-
-### 7.3 Device Flow 交互
-
-```
-[连接 GitHub] 按钮
-    ↓
-POST /api/pr-review/auth/device/start
-    ← { userCode: "WDJB-MJHT", verificationUriComplete, flowToken, intervalSeconds: 5 }
-    ↓
-window.open(verificationUriComplete)  // 新 tab 打开 GitHub 授权页
-    ↓
-同时前端页面显示进度卡片：
-    ┌─────────────────────────────────────┐
-    │ 等待你在 GitHub 上授权...  (spinner) │
-    │                                      │
-    │ 授权码  [ W D J B - M J H T ]  [复制]│
-    │                                      │
-    │   [ 打开 GitHub 授权页 ]              │
-    │                                      │
-    │ 剩余 14:23                每 5 秒检测│
-    │ ▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
-    └─────────────────────────────────────┘
-    ↓
-每 intervalSeconds 秒 POST /auth/device/poll { flowToken }
-  ← pending  → 继续等
-  ← slow_down → 间隔 +5 秒
-  ← done     → 前端刷新 authStatus，切到已连接
-  ← expired / denied → 显示错误，允许重新发起
-```
-
-**零复制粘贴、零 token 手动输入**——用户看到授权码，点按钮打开 GitHub，在 GitHub 页面确认授权码后点 Authorize，浏览器回到本页面时连接已自动建立。
-
----
-
-## 8. 关联文档
-
-- `rule.platform.app-identity.md` — appKey 硬编码规范
-- `rule.snapshot-fallback.md` — V2 存"最新快照 + 错误信息"，不做反规范化快照，规则 N/A
-- `rule.no-localstorage.md` — 前端强制 sessionStorage；V2 干脆不做持久化
-- `rule.server-authority.md` — OAuth token 刷新、GitHub 调用走 `CancellationToken.None`
-- `rule.no-auto-index.md` — 新索引由 DBA 手动执行
-
----
-
-## 9. 迁移与下线
-
-### 9.1 老功能下线清单
-
-| 待删 | 代替方案 |
-|---|---|
-| `PrReviewPrismController.cs` (1211 行) | `PrReviewController.cs`（新）|
-| `GitHubPrReviewPrismService.cs` (501 行) | `GitHubPrClient.cs` + `PrUrlParser.cs`（新）|
-| `PrReviewPrismSnapshotBuilder.cs` | 删除，MVP 不做反规范化快照 |
-| `PrReviewPrismSubmission.cs` | `PrReviewItem.cs` + `GitHubUserConnection.cs`（新）|
-| `AppSettings.PrReviewPrismGitHubTokenEncrypted` | 删除字段，Per-user OAuth 替代 |
-| `AdminPermissionCatalog.PrReviewPrismUse` | `PrReviewUse` (pr-review.use) |
-| `prd-admin/src/pages/pr-review-prism/*` (1781 行) | `prd-admin/src/pages/pr-review/*`（新）|
-| `.github/pr-architect/*` 整个目录 | 独立仓（若需要） |
-| 5 个 workflow + 5 个 Python 脚本 | 同上 |
-| `scripts/bootstrap-pr-prism.sh` + `scripts/init-pr-prism-basis.sh` | 无需初始化 |
-| `doc/guide.pr-prism-*.md` | 本文档 |
-
-### 9.2 MongoDB 集合迁移
-
-- `pr_review_prism_submissions` → **归档并删除**（V2 不读；若有生产数据，先由 DBA `renameCollection` 到 `_archived_pr_review_prism_submissions`）
-- 新增 `github_user_connections`、`pr_review_items`
-
-### 9.3 分阶段实施
-
-| PR | 范围 | 可独立合并 |
-|---|---|---|
-| **PR-1（本次）** | 新增 Models + `PrUrlParser` + 单测 + 设计文档 + changelog | ✅ |
-| **PR-2** | `GitHubOAuthService` + `GitHubPrClient` + Controller auth 端点 | ✅ |
-| **PR-3** | Controller item 端点 + 集成测试 | ✅ |
-| **PR-4** | 前端 6 个组件 + store + 服务层 | ✅ |
-| **PR-5** | 删除旧 PrReviewPrism* 代码 + 归档集合 + 删除 PR Architect 目录 | ✅ |
-
-每个 PR 落地后可独立跑冒烟测试，V1 和 V2 只在 PR-5 之前短暂共存。
-
----
-
-## 10. 风险与缓解
-
-| 风险 | 概率 | 影响 | 缓解 |
-|---|---|---|---|
-| OAuth Callback URL 与部署域名不匹配 | 中 | 无法连接 | 设计阶段即确定域名，OAuth App 注册时同步更新 |
-| GitHub API 5000/hr 配额不够 | 低 | 批量场景抖动 | 单用户自有配额，V1 不做批量刷新 |
-| 老数据迁移遗漏 | 低 | 丢笔记 | PR-5 前明确 DBA 验证归档 |
-| GitHub token 泄漏（DB 被拿） | 低 | 严重 | `ApiKeyCrypto.Encrypt` + `Jwt:Secret` 强制非默认（启动 fail-fast） |
-| OAuth state 被重放 | 低 | 账号混串 | 一次性 + TTL 60 秒 + 绑定 session |
-
----
-
-## 11. 验收标准（MVP）
-
-- [ ] 新用户首次打开页面：显示"连接 GitHub"按钮
-- [ ] 点击 → 跳转 GitHub → 授权 → 回到页面，显示已连接状态与 GitHub login
-- [ ] 粘贴公开仓 PR URL：卡片正确显示 title / author / state / additions / deletions
-- [ ] 粘贴私有仓 PR（有权访问）：同上
-- [ ] 粘贴私有仓 PR（无权访问）：返回 "仓库不可见" 而非 "PR 不存在"
-- [ ] 粘贴错误编号：返回 "仓库可见但 PR 编号不存在"
-- [ ] 粘贴非 GitHub URL：前端即时校验错误
-- [ ] 笔记失焦后刷新页面：笔记仍在
-- [ ] 断开连接后再进入：回到初始状态
-- [ ] 前端无 localStorage 使用（grep 验证）
-- [ ] 前端主页面 ≤ 200 行（行数校验）
-- [ ] 后端 Controller ≤ 400 行
-- [ ] 单元测试：URL 解析 10 条边界、错误分类 6 条、OAuth state 校验 3 条
+| 模型 | 责任 |
+|------|------|
+| GitHub 用户连接 | 用户身份、授权状态和加密后的访问凭据 |
+| PR 审查项 | owner、repo、number、用户笔记和当前分析结果 |
+| PR 快照 | 标题、状态、作者、统计、文件和审查相关事实 |
+| 快照历史 | 支持按字段或时间查看变更，不把旧值塞回当前快照 |
+| 摘要报告 | AI 对 PR 内容和变化的结构化总结 |
+| 对齐报告 | AI 对目标、风险、实现和证据一致性的分析 |
+
+所有审查项以用户 ID 隔离。同一用户不能重复添加同一 PR；不同用户可以基于各自权限保存同一个公共 PR。
+
+## 5. 能力边界
+
+| 能力域 | 当前能力 |
+|--------|----------|
+| 授权 | 状态查询、Device Flow 开始与轮询、断开连接 |
+| 清单 | 添加、分页列表、刷新、删除、私人笔记 |
+| 详情 | 当前快照、原始内容、文件和历史切片 |
+| AI 摘要 | 读取可用快照，SSE 生成并保存摘要 |
+| 对齐分析 | 读取可用快照，SSE 生成并保存对齐报告 |
+
+端点参数和 DTO 以 `PrReviewController` 与前端 service contract 为准，本文不复制完整接口清单。
+
+## 6. 快照与降级
+
+- GitHub 请求成功后才更新当前快照，并保留必要历史。
+- GitHub 暂时失败时保留旧快照和失败原因，页面明确标注数据时间。
+- 分析前确保存在可用快照；需要刷新但刷新失败时，不把空数据送给模型。
+- GitHub 对无权限私有仓可能返回 404，产品文案不能断言 PR 一定不存在。
+- 删除工作台记录不改变 GitHub 上的 PR，也不执行仓库写操作。
+
+## 7. 安全设计
+
+### 7.1 凭据
+
+- GitHub token 只保存在服务端，并按平台密钥策略加密。
+- API 不向前端返回 token、device code 或内部签名材料。
+- flow token 必须防篡改、绑定当前用户并有短有效期。
+- 断开连接后不再允许刷新或新增 PR，已保存快照按产品保留策略处理。
+
+### 7.2 URL 与外部请求
+
+- 只接受明确的 GitHub HTTPS 主机和 PR 路径格式。
+- 不跟随用户提供的任意主机、端口或协议，防止 SSRF。
+- owner、repository 和 number 经过长度、字符集和范围校验。
+- 所有 GitHub 调用使用当前用户连接，不回退到全局高权限 Token。
+
+### 7.3 数据隔离
+
+列表、详情、刷新、笔记、删除、原始内容和 AI 分析都必须同时按记录 ID 与用户 ID 查询。仅依赖前端隐藏按钮不构成授权。
+
+## 8. AI 调用约束
+
+- 摘要和对齐分析使用独立服务与登记的 appCallerCode。
+- 输入只来自当前用户有权读取的快照，不接受客户端伪造的 diff。
+- 调用经过 LLM Gateway，记录模型、平台、耗时和失败阶段。
+- SSE 中持续推送阶段和文本；连接中断不能把半成品标为完成。
+- AI 结论是审查辅助，不自动批准、合并或关闭 GitHub PR。
+
+## 9. 前端结构
+
+`PrReviewPage` 组织授权卡片、添加表单和审查项列表；单项卡片承载笔记、刷新和详情入口；摘要、对齐、原始内容和历史使用独立面板或弹窗。
+
+前端状态由 `usePrReviewStore` 管理，但服务端快照和授权状态是权威。页面刷新后必须重新读取服务端状态，不把浏览器本地缓存当作审查数据源。
+
+## 10. 错误语义
+
+| 场景 | 用户可见结论 |
+|------|--------------|
+| Device Flow 未启用 | 平台 GitHub OAuth 配置不完整 |
+| 授权等待中 | 保持轮询并展示剩余时间 |
+| 授权被拒或超时 | 结束本轮并允许重新发起 |
+| GitHub 401 | 用户连接已失效，需要重新授权 |
+| GitHub 403 | 权限或限流阻止访问 |
+| GitHub 404 | 当前连接不可见或目标不存在 |
+| 重复添加 | 直接使用并刷新已有记录 |
+| AI 失败 | 保留快照与旧报告，允许重试分析 |
+
+## 11. 当前事实入口
+
+| 能力 | 事实入口 |
+|------|----------|
+| API、鉴权和快照操作 | `prd-api/src/PrdAgent.Api/Controllers/Api/PrReviewController.cs` |
+| PR 领域模型 | `prd-api/src/PrdAgent.Core/Models/PrReviewItem.cs` |
+| 错误语义 | `prd-api/src/PrdAgent.Api/Services/PrReview/PrReviewErrors.cs` |
+| 摘要服务 | `prd-api/src/PrdAgent.Api/Services/PrReview/PrSummaryService.cs` |
+| 对齐服务 | `prd-api/src/PrdAgent.Api/Services/PrReview/PrAlignmentService.cs` |
+| 前端页面 | `prd-admin/src/pages/pr-review/` |
+| 前端状态 | `prd-admin/src/pages/pr-review/usePrReviewStore.ts` |
+
+## 12. 验收标准
+
+- 两个用户的连接、PR 清单、笔记和分析结果完全隔离。
+- 动态预览域名无需 OAuth callback 即可完成授权。
+- 无权限、失效、限流、拒绝和超时均有不同错误状态。
+- GitHub 暂时失败时仍能查看带时间标记的旧快照。
+- 摘要与对齐分析全程可见，失败不会覆盖已完成报告。
+- 任意用户输入都不能让服务端请求非 GitHub 目标。
+
+## 关联文档
+
+- `doc/rule.platform.app-identity.md`
+- `doc/rule.platform.server-authority.md`
+- `doc/design.platform.github-infrastructure.md`

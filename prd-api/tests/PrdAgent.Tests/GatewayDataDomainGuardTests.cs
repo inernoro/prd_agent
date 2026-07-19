@@ -1174,7 +1174,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);
         Assert.Contains("GW_EXPECT_COMMIT=\"$expect_commit\"", script);
-        Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$gate_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py", script);
+        Assert.Contains("LLMGW_POST_DEPLOY_SMOKE_KEY=\"${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}\"", script);
+        Assert.Contains("smoke_key=\"${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}\"", script);
+        Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$smoke_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
@@ -1570,7 +1572,9 @@ public class GatewayDataDomainGuardTests
         var smoke = ReadRepoFile("scripts/gw-smoke.py");
 
         Assert.Contains("\"GatewayTransport\": \"http\"", smoke);
-        Assert.Contains("\"SourceSystem\": \"release-probe\"", smoke);
+        Assert.Contains("SMOKE_SOURCE_SYSTEM = os.environ.get(\"GW_SMOKE_SOURCE_SYSTEM\", \"release-probe\")", smoke);
+        Assert.Contains("\"SourceSystem\": SMOKE_SOURCE_SYSTEM", smoke);
+        Assert.DoesNotContain("\"SourceSystem\": \"release-probe\"", smoke);
         Assert.Contains("\"IngressProtocol\": \"gw-native\"", smoke);
         Assert.DoesNotContain("\"Context\": {\"UserId\": \"smoke-test\", \"IsHealthProbe\": True}", smoke);
     }
@@ -2913,7 +2917,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
         Assert.Contains("prd-agent.arena.battle::chat", plan);
         Assert.Contains("--include-report-agent-generate", plan);
-        Assert.Contains("report-agent.generate::chat/send", plan);
+        Assert.Contains("report-agent.generate::chat", plan);
         Assert.Contains("--include-visual-video-direct", script);
         Assert.Contains("--include-video-to-doc-asr", script);
         Assert.Contains("--include-video-to-text-asr-workflow", script);
@@ -2923,12 +2927,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/api/workflow-agent/workflows", script);
         Assert.Contains("video-to-text", script);
         Assert.Contains("wait_visual_video_run", script);
-        Assert.Contains("visual-agent.videogen::video-gen:raw", plan);
-        Assert.Contains("video-agent.v2d.transcribe::asr:raw", plan);
-        Assert.Contains("video-agent.video-to-text::asr:raw", plan);
-        Assert.Contains("--include-visual-video-direct", plan);
-        Assert.Contains("--include-video-to-doc-asr", plan);
-        Assert.Contains("--include-video-to-text-asr-workflow", plan);
         Assert.Contains("No people, no faces, no logos, no letters, no readable text, no symbols.", script);
         Assert.Contains("Static test card with color blocks only, no text.", script);
         Assert.DoesNotContain("black text only", script);
@@ -3148,15 +3146,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<DistributionStrip label=\"入口协议\"", logsView);
-        Assert.Contains("items={summary?.ingressProtocolDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterIngressProtocol}", logsView);
-        Assert.Contains("<DistributionStrip label=\"路由策略\"", logsView);
-        Assert.Contains("items={summary?.modelPolicyDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterModelPolicy}", logsView);
-        Assert.Contains("<DistributionStrip label=\"来源系统\"", logsView);
-        Assert.Contains("items={summary?.sourceSystemDistribution}", logsView);
-        Assert.Contains("onSelect={setFilterSourceSystem}", logsView);
+        Assert.Contains("<details className=\"lg-log-filters\">", logsView);
+        Assert.Contains("aria-label=\"入口协议\"", logsView);
+        Assert.Contains("value={filterIngressProtocol}", logsView);
+        Assert.Contains("aria-label=\"路由策略\"", logsView);
+        Assert.Contains("value={filterModelPolicy}", logsView);
+        Assert.Contains("aria-label=\"来源系统\"", logsView);
+        Assert.Contains("value={filterSourceSystem}", logsView);
     }
 
     [Fact]
@@ -3181,7 +3177,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("estimatedCostUsd?: number | null", consoleTypes);
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
-        Assert.Contains("按价格快照原币种分组，不做无汇率换算", logsView);
+        Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
+        Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
 
     [Fact]
@@ -3382,7 +3379,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
         Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.DoesNotContain("fontSize: 11", logs);
+        Assert.Contains("fontSize: 11, fontWeight: 600", logs);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);

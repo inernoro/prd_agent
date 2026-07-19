@@ -1,16 +1,13 @@
 # CDS state.json → MongoDB 迁移与回滚 · 规则
 
-> **版本**：v0.1 | **日期**：2026-04-12 | **类型**：rule | **状态**：草案
->
+> **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
+
 > 本文档是 CDS v4 数据迁移的**操作规范**。涉及 P3 阶段（详见 `doc/plan.cds.multi-project-phases.md` P3 节）的所有代码必须遵守本规则，违反规则直接拒绝合并。
->
 > **文档导航**：
->
 > - 主设计稿：`doc/design.cds.multi-project.md`
 > - 数据字典：`doc/spec.cds.project-model.md`
 > - 交付计划：`doc/plan.cds.multi-project-phases.md`
 
----
 
 ## 1. 背景
 

@@ -1,10 +1,9 @@
-# guide.skill.catalog — 技能百科全书 · 指南
+# 技能百科全书 · 指南
+
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 > 完整的 Claude Code 技能索引。每个技能说明"输入什么、输出什么、什么时候用"。
->
-> 维护者：在新增/删除/合并技能后，同步更新本文件和 `CLAUDE.md` 质量保障技能链。
 
----
 
 ## 技能总览（核心 32 个）
 
@@ -12,38 +11,38 @@
 
 | # | 分类 | 技能名 | 触发词 | 一句话说明 |
 |---|------|--------|--------|-----------|
-| 1 | 🔄 主流程 | skill-validation | `/validate` | 需求质量评估：8 种气味检测 + 雷同排查 + 七维度评分 |
-| 2 | 🔄 主流程 | plan-first | `/plan-first` | 先出方案后动手：输出方案 → 用户确认 → 执行 |
-| 3 | 🔄 主流程 | risk-matrix | `/risk` | MECE 六维度风险矩阵（正确性/兼容/性能/安全/运维/体验） |
-| 4 | 🔄 主流程 | flow-trace | `/trace` | 端到端数据流路径图（大白话版 + 技术细节版） |
-| 5 | 🔄 主流程 | human-verify | `/verify` | 四角度模拟人工审查（魔鬼辩护/反向验证/边界/场景） |
-| 6 | 🔄 主流程 | scope-check | `/scope-check` | 分支边界审计：文件分类 + 越界检测 |
-| 7 | 🔄 主流程 | cds-deploy-pipeline | `/cds-deploy` | CDS 灰度部署 + 就绪等待 + 冒烟测试全链路 |
-| 8 | 🔄 主流程 | smoke-test | `/smoke` | 扫描 Controller 生成链式 curl 冒烟脚本 |
-| 9 | 🔄 主流程 | preview-url | `/preview` | 分支名 → 预览地址（`分支名.miduo.org`） |
-| 10 | 🔄 主流程 | task-handoff-checklist | `/handoff` | 8 维度交接清单（导航/文档/规则/测试/风险等） |
-| 11 | 🔄 主流程 | weekly-update-summary | `/weekly` | git 历史 → 分类周报（中文） |
-| 12 | 🔧 辅助 | conflict-resolution | `/resolve` | 合并 main 到当前分支，AI 解决冲突 |
-| 13 | 🔧 辅助 | doc-writer | `/doc` | `doc/` 目录命名 + 表头格式守护，6 种标准模板 |
-| 14 | 🔧 辅助 | doc-sync | `/doc-sync` | 扫描 `doc/` 自动对齐 index.yml 和目录文档 |
-| 15 | 🔧 辅助 | code-hygiene | `/hygiene` | 10 维度技术债检测（死代码/垫片/残留/冗余等） |
-| 16 | 🔧 辅助 | deep-trace | `/deep-trace` | 跨层接缝验证（C#→JSON→Rust→React 字段/类型/序列化） |
-| 17 | 🔧 辅助 | llm-visibility | `/visibility` | LLM 调用点合规扫描（禁止空白等待原则） |
-| 18 | 🔧 辅助 | create-skill-file | `/create-skill` | 生成 SKILL.md 文件 + 质量评分 |
-| 19 | 🔧 辅助 | cds-project-scan | `/cds-scan` | 检测技术栈 → 生成 CDS docker-compose YAML |
-| 20 | 🔧 辅助 | theme-transition | `/theme-transition` | 添加 View Transition API 圆形水波纹主题切换动效 |
-| 21 | 🔧 辅助 | agent-guide | `/help` | Agent 开发新手引导（阶段跟踪 + 技能推荐） |
-| 22 | 🔨 专项修复 | fix-surface-styles | `/fix-surface` | 扫描修复 CSS 偏差，统一到 Surface System |
-| 23 | 🔨 专项修复 | add-agent-permission | `加权限` | 新增权限：自动同步后端枚举 + 前端类型 + 角色分配 |
-| 24 | 🔨 专项修复 | add-image-gen-model | `添加生图模型` | 注册新图片生成模型到后端 Config + 前端 Adapter |
-| 25 | 🔨 专项修复 | update-model-size | `更新模型尺寸` | 对比官方 API 文档更新模型尺寸配置 |
-| 26 | 🔨 专项修复 | release-version | `/release` | 自动检测版本 + 分析变更 + 执行 patch/minor/major 发版 |
-| 27 | 🔨 专项修复 | ai-defect-resolve | `修复缺陷` | 通过缺陷链接自动化：列清单→评论→修复→验收 |
-| 28 | 🔨 专项修复 | remotion-scene-codegen | `优化场景` | Remotion API 上下文 + 视频场景代码生成 |
-| 29 | 📝 文档写作 | ui-ux-pro-max | — | 67 风格 + 96 配色 + 57 字体搭配设计系统 |
-| 30 | 🧩 元技能 | find-skills | `找技能` | 搜索并推荐可安装的第三方技能 |
-| 31 | 🧩 元技能 | api-debug | — | 查询真实 API 数据辅助调试 |
-| 32 | 🧩 元技能 | dev-setup | `装环境` | 自动检测并安装 SDK + 执行 API 测试 |
+| 1 | 更新 主流程 | skill-validation | `/validate` | 需求质量评估：8 种气味检测 + 雷同排查 + 七维度评分 |
+| 2 | 更新 主流程 | plan-first | `/plan-first` | 先出方案后动手：输出方案 → 用户确认 → 执行 |
+| 3 | 更新 主流程 | risk-matrix | `/risk` | MECE 六维度风险矩阵（正确性/兼容/性能/安全/运维/体验） |
+| 4 | 更新 主流程 | flow-trace | `/trace` | 端到端数据流路径图（大白话版 + 技术细节版） |
+| 5 | 更新 主流程 | human-verify | `/verify` | 四角度模拟人工审查（魔鬼辩护/反向验证/边界/场景） |
+| 6 | 更新 主流程 | scope-check | `/scope-check` | 分支边界审计：文件分类 + 越界检测 |
+| 7 | 更新 主流程 | cds-deploy-pipeline | `/cds-deploy` | CDS 灰度部署 + 就绪等待 + 冒烟测试全链路 |
+| 8 | 更新 主流程 | smoke-test | `/smoke` | 扫描 Controller 生成链式 curl 冒烟脚本 |
+| 9 | 更新 主流程 | preview-url | `/preview` | 分支名 → 预览地址（`分支名.miduo.org`） |
+| 10 | 更新 主流程 | task-handoff-checklist | `/handoff` | 8 维度交接清单（导航/文档/规则/测试/风险等） |
+| 11 | 更新 主流程 | weekly-update-summary | `/weekly` | git 历史 → 分类周报（中文） |
+| 12 | 运维 辅助 | conflict-resolution | `/resolve` | 合并 main 到当前分支，AI 解决冲突 |
+| 13 | 运维 辅助 | doc-writer | `/doc` | `doc/` 目录命名 + 表头格式守护，6 种标准模板 |
+| 14 | 运维 辅助 | doc-sync | `/doc-sync` | 扫描 `doc/` 自动对齐 index.yml 和目录文档 |
+| 15 | 运维 辅助 | code-hygiene | `/hygiene` | 10 维度技术债检测（死代码/垫片/残留/冗余等） |
+| 16 | 运维 辅助 | deep-trace | `/deep-trace` | 跨层接缝验证（C#→JSON→Rust→React 字段/类型/序列化） |
+| 17 | 运维 辅助 | llm-visibility | `/visibility` | LLM 调用点合规扫描（禁止空白等待原则） |
+| 18 | 运维 辅助 | create-skill-file | `/create-skill` | 生成 SKILL.md 文件 + 质量评分 |
+| 19 | 运维 辅助 | cds-project-scan | `/cds-scan` | 检测技术栈 → 生成 CDS docker-compose YAML |
+| 20 | 运维 辅助 | theme-transition | `/theme-transition` | 添加 View Transition API 圆形水波纹主题切换动效 |
+| 21 | 运维 辅助 | agent-guide | `/help` | Agent 开发新手引导（阶段跟踪 + 技能推荐） |
+| 22 |  专项修复 | fix-surface-styles | `/fix-surface` | 扫描修复 CSS 偏差，统一到 Surface System |
+| 23 |  专项修复 | add-agent-permission | `加权限` | 新增权限：自动同步后端枚举 + 前端类型 + 角色分配 |
+| 24 |  专项修复 | add-image-gen-model | `添加生图模型` | 注册新图片生成模型到后端 Config + 前端 Adapter |
+| 25 |  专项修复 | update-model-size | `更新模型尺寸` | 对比官方 API 文档更新模型尺寸配置 |
+| 26 |  专项修复 | release-version | `/release` | 自动检测版本 + 分析变更 + 执行 patch/minor/major 发版 |
+| 27 |  专项修复 | ai-defect-resolve | `修复缺陷` | 通过缺陷链接自动化：列清单→评论→修复→验收 |
+| 28 |  专项修复 | remotion-scene-codegen | `优化场景` | Remotion API 上下文 + 视频场景代码生成 |
+| 29 | 文档 文档写作 | ui-ux-pro-max | — | 67 风格 + 96 配色 + 57 字体搭配设计系统 |
+| 30 |  元技能 | find-skills | `找技能` | 搜索并推荐可安装的第三方技能 |
+| 31 |  元技能 | api-debug | — | 查询真实 API 数据辅助调试 |
+| 32 |  元技能 | dev-setup | `装环境` | 自动检测并安装 SDK + 执行 API 测试 |
 
 ---
 

@@ -1,545 +1,132 @@
 # Agent 开发交付流程 · 规则
 
-> **版本**：v1.0 | **创建日期**：2025-01-23 | **适用范围**：所有新增 Agent 应用
-
-## 概述
-
-本文档定义了在 PRD Agent 系统中创建新 Agent 应用的标准化交付流程。遵循此流程可确保架构一致性、权限安全性和可维护性。
-
----
-
-## 一、交付流程总览
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Agent 开发交付流程                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Phase 1: 规划设计                                               │
-│  ├─ 1.1 需求分析与产品方案                                        │
-│  ├─ 1.2 appKey 注册与命名                                        │
-│  ├─ 1.3 状态机 / 工作流设计                                       │
-│  ├─ 1.4 数据模型设计                                             │
-│  └─ 1.5 界面元素选定 (字符画/线框)                                 │
-│                                                                 │
-│  Phase 2: 后端实现                                               │
-│  ├─ 2.1 Model 层 (PrdAgent.Core)                                │
-│  ├─ 2.2 权限注册 (AdminPermissionCatalog)                        │
-│  ├─ 2.3 菜单注册 (AdminMenuCatalog)                              │
-│  ├─ 2.4 Controller 层 (硬编码 appKey)                            │
-│  ├─ 2.5 Service 层 (业务逻辑)                                    │
-│  ├─ 2.6 Worker 层 (异步任务)                                     │
-│  ├─ 2.7 AppCaller 注册 (LLM 调用标识)                            │
-│  └─ 2.8 MongoDB 集合配置                                         │
-│                                                                 │
-│  Phase 3: 前端实现                                               │
-│  ├─ 3.1 API 路由定义 (services/api.ts)                           │
-│  ├─ 3.2 Contract 类型定义                                        │
-│  ├─ 3.3 Service 实现层                                           │
-│  ├─ 3.4 Store 状态管理 (Zustand)                                 │
-│  ├─ 3.5 Page 组件开发                                            │
-│  ├─ 3.6 路由注册 (App.tsx)                                       │
-│  └─ 3.7 权限守卫 (RequirePermission)                             │
-│                                                                 │
-│  Phase 4: 集成测试                                               │
-│  ├─ 4.1 后端单元测试 / 集成测试                                    │
-│  ├─ 4.2 前端组件测试                                             │
-│  ├─ 4.3 E2E 流程验证                                            │
-│  └─ 4.4 权限矩阵验证                                             │
-│                                                                 │
-│  Phase 5: 文档同步                                               │
-│  ├─ 5.1 更新 CLAUDE.md (Codebase Skill)                         │
-│  ├─ 5.2 更新 SRS (spec.srs.md)                                   │
-│  ├─ 5.3 更新数据字典 (rule.platform.data-dictionary.md)                   │
-│  ├─ 5.4 更新命名规范 (rule.platform.app-identity.md)                      │
-│  └─ 5.5 创建功能设计文档 (design.{agent-name}.md)                │
-│                                                                 │
-│  Phase 6: Debugger Skill                                        │
-│  ├─ 6.1 日志埋点规范                                             │
-│  ├─ 6.2 错误追踪路径                                             │
-│  └─ 6.3 调试检查清单                                             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 二、Phase 1: 规划设计
-
-### 1.1 需求分析与产品方案
-
-**交付物**：功能设计文档 (`doc/N.{agent-name}.md`)
-
-需包含：
-- 核心用例描述
-- 用户角色定义
-- 工作流程图 (ASCII/Mermaid)
-- 关键交互场景
-- 非功能性需求（性能、安全、并发）
-
-### 1.2 appKey 注册与命名
-
-**规范**：
-- 格式：`kebab-case`
-- 模式：`{功能描述}-agent`（Agent 类应用）
-- 唯一性：在 `AdminMenuCatalog.All` 中检查无冲突
-
-**注册位置**：
-```
-CLAUDE.md → 已定义的应用标识表
-AdminPermissionCatalog.cs → 权限常量
-AdminMenuCatalog.cs → 菜单定义
-AppCallerRegistry.cs → LLM 调用标识
-```
-
-### 1.3 状态机 / 工作流设计
-
-参照 Literary Agent 的阶段模式设计状态流转：
-
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Phase A  │───▶│  Phase B  │───▶│  Phase C  │
-│ (初始态)   │    │ (处理态)   │    │ (完成态)   │
-└──────────┘    └──────────┘    └──────────┘
-       │                │                │
-       ▼                ▼                ▼
-   验证规则A         验证规则B         验证规则C
-```
-
-**设计要求**：
-- 每个阶段有明确的准入/退出条件
-- 不可跳跃到未达成前置条件的阶段
-- 状态变更触发版本递增（如适用）
-- 考虑异常/回退路径
-
-### 1.4 数据模型设计
-
-**Model 层规范**：
-- 位于 `PrdAgent.Core/Models/`
-- 使用 BSON 属性注解
-- 包含 `CreatedAt` / `UpdatedAt` 时间戳
-- 主键使用 `string Id`（MongoDB ObjectId）
-
-### 1.5 界面元素选定
-
-**设计系统参考**：
-- 使用 GlassCard 容器组件（液态玻璃主题）
-- Lucide 图标集
-- Radix UI 基础组件
-- 响应式布局（AppShell 内 or 全屏独立）
-
-**界面规划产出**：
-```
-┌────────────────────────────────────────────────┐
-│ [Agent Name]                          [Actions]│
-├──────────┬─────────────────────────────────────┤
-│          │                                     │
-│  列表/    │        主内容区                      │
-│  导航     │        (编辑器/详情/对话)             │
-│          │                                     │
-│          │                                     │
-└──────────┴─────────────────────────────────────┘
-```
-
----
-
-## 三、Phase 2: 后端实现
-
-### 2.1 Model 层
-
-**文件位置**：`prd-api/src/PrdAgent.Core/Models/`
-
-```csharp
-// 命名：{AgentName}{Entity}.cs
-// 示例：DefectReport.cs
-public class DefectReport
-{
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = null!;
-
-    public string OwnerUserId { get; set; } = null!;
-    public string Title { get; set; } = null!;
-    // ... 业务字段
-
-    public DateTime CreatedAt { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-```
-
-### 2.1.1 数据关联标识（AppOwnership 特性）
-
-**文件**：`PrdAgent.Core/Attributes/AppOwnershipAttribute.cs`
-
-**规范说明**：
-每个 MongoDB 实体类**必须**添加 `[AppOwnership]` 特性，用于标识该实体所属的应用。这是数据迁移 Agent 进行数据管理和清理的依据。
-
-**可用的应用标识（AppNames 枚举）**：
-
-| 常量 | 值 | 显示名称 | 说明 |
-|------|-----|---------|------|
-| `AppNames.PrdAgent` | `prd-agent` | PRD Agent | PRD 解读与问答功能 |
-| `AppNames.VisualAgent` | `visual-agent` | 视觉创作 Agent | 高级视觉创作工作区 |
-| `AppNames.LiteraryAgent` | `literary-agent` | 文学创作 Agent | 文章配图智能生成 |
-| `AppNames.ModelLab` | `model-lab` | 模型实验室 | 模型测试与调试 |
-| `AppNames.OpenPlatform` | `open-platform` | 开放平台 | 开放 API 调用方管理 |
-| `AppNames.Desktop` | `desktop` | 桌面客户端 | Tauri 桌面端功能 |
-| `AppNames.System` | `system` | 系统核心 | 用户/角色等核心数据 |
-| `AppNames.Watermark` | `watermark` | 水印服务 | 水印配置与字体资产 |
-| `AppNames.Llm` | `llm` | LLM 服务 | 平台/模型/调度配置 |
-
-**使用示例**：
-
-```csharp
-using PrdAgent.Core.Attributes;
-
-// 单应用归属
-[AppOwnership(AppNames.PrdAgent, AppDisplayNames.PrdAgent)]
-public class ParsedPrd
-{
-    // ...
-}
-
-// 多应用共享（实体被多个应用使用）
-[AppOwnership(AppNames.PrdAgent, AppDisplayNames.PrdAgent, IsPrimary = true)]
-[AppOwnership(AppNames.VisualAgent, AppDisplayNames.VisualAgent)]
-public class Session
-{
-    // ...
-}
-
-// 核心系统实体
-[AppOwnership(AppNames.System, AppDisplayNames.System)]
-public class User
-{
-    // ...
-}
-```
-
-**特性参数说明**：
-- `appName`：应用标识（使用 `AppNames` 常量）
-- `displayName`：显示名称（使用 `AppDisplayNames` 常量）
-- `IsPrimary`（可选）：当实体被多个应用共享时，标记主要归属应用
-
-**注册新应用标识**：
-如需新增应用，在 `AppOwnershipAttribute.cs` 文件的 `AppNames` 和 `AppDisplayNames` 类中添加对应常量：
-
-```csharp
-public static class AppNames
-{
-    // 已有定义...
-    public const string YourAgent = "your-agent";  // 新增
-}
-
-public static class AppDisplayNames
-{
-    // 已有定义...
-    public const string YourAgent = "Your Agent 名称";  // 新增
-}
-```
-
-### 2.2 权限注册
-
-**文件**：`PrdAgent.Core/Security/AdminPermissionCatalog.cs`
-
-```csharp
-/// <summary>
-/// {Agent 名称} 权限：{描述}
-/// </summary>
-public const string YourAgentUse = "your-agent.use";
-
-// 在 All 列表中注册
-new(YourAgentUse, "{Agent 中文名}", "{功能描述}"),
-```
-
-### 2.3 菜单注册
-
-**文件**：`PrdAgent.Core/Security/AdminMenuCatalog.cs`
-
-```csharp
-// Agent 菜单排序在 60-89 区间
-new("your-agent", "/your-agent", "{Agent 中文名}", "{描述}", "{LucideIcon}", {SortOrder}),
-```
-
-### 2.4 Controller 层
-
-**文件位置**：`prd-api/src/PrdAgent.Api/Controllers/Api/`
-
-**强制规则**：
-- ✅ 硬编码 `AppKey` 常量
-- ✅ 使用 `[AdminController]` 属性
-- ✅ Route 前缀为 `api/{agent-key}/`
-- ❌ 不从前端接收 appKey
-
-```csharp
-[ApiController]
-[Route("api/your-agent")]
-[Authorize]
-[AdminController("your-agent", AdminPermissionCatalog.YourAgentUse)]
-public class YourAgentController : ControllerBase
-{
-    private const string AppKey = "your-agent";
-
-    // 注入服务...
-}
-```
-
-### 2.5 Service 层
-
-**文件位置**：
-- 接口：`PrdAgent.Core/Interfaces/I{AgentName}Service.cs`
-- 实现：`PrdAgent.Infrastructure/Services/{AgentName}Service.cs`
-
-### 2.6 Worker 层（如需异步处理）
-
-**文件位置**：`PrdAgent.Api/Services/{AgentName}Worker.cs`
-
-遵循 Run/Worker 模式：
-1. Controller 创建 Run → 入队
-2. Worker 出队 → 处理 → 存储事件
-3. 客户端 SSE 订阅 → afterSeq 断线重连
-
-### 2.7 AppCaller 注册
-
-**文件**：`PrdAgent.Core/Models/AppCallerRegistry.cs`
-
-```csharp
-public static class YourAgent
-{
-    public const string AppName = "Your Agent";
-
-    public static class Feature
-    {
-        [AppCallerMetadata("功能名", "描述", ModelTypes = new[] { ModelTypes.Chat })]
-        public const string Operation = "your-agent.feature::chat";
-    }
-}
-```
-
-### 2.8 MongoDB 集合配置
-
-**文件**：`PrdAgent.Infrastructure/Data/MongoDbContext.cs`
-
-```csharp
-public IMongoCollection<YourModel> YourAgentCollection =>
-    _database.GetCollection<YourModel>("your_agent_items");
-```
-
----
-
-## 四、Phase 3: 前端实现
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
-### 3.1 API 路由定义
-
-**文件**：`prd-admin/src/services/api.ts`
+本文定义新增或重构 Agent 的长期交付门槛。模块级实现细节服从仓库根目录及子目录 `AGENTS.md`；本文件不复制代码模板。
 
-```typescript
-yourAgent: {
-  items: {
-    list: () => '/api/your-agent/items',
-    byId: (id: string) => `/api/your-agent/items/${id}`,
-    create: () => '/api/your-agent/items',
-  },
-  runs: {
-    create: () => '/api/your-agent/runs',
-    stream: (runId: string) => `/api/your-agent/runs/${runId}/stream`,
-  },
-},
-```
-
-### 3.2 Contract 类型定义
-
-**文件**：`prd-admin/src/services/contracts/yourAgent.ts`
-
-### 3.3 Service 实现层
-
-**文件**：`prd-admin/src/services/real/yourAgent.ts`
-
-### 3.4 Store 状态管理
-
-**文件**：`prd-admin/src/stores/yourAgentStore.ts`（Zustand）
-
-### 3.5 Page 组件开发
-
-**目录**：`prd-admin/src/pages/your-agent/`
-
-```
-your-agent/
-├── index.ts
-├── YourAgentListPage.tsx       # 列表页
-├── YourAgentDetailPage.tsx     # 详情页
-└── components/                 # 页面内组件
-    ├── YourAgentForm.tsx
-    └── YourAgentCard.tsx
-```
-
-### 3.6 路由注册
-
-**文件**：`prd-admin/src/app/App.tsx`
-
-```tsx
-<Route path="your-agent" element={
-  <RequirePermission perm="your-agent.use">
-    <YourAgentListPage />
-  </RequirePermission>
-} />
-```
+## 1. 适用范围
 
-### 3.7 权限守卫
+以下变更必须遵守本规则：
 
-使用 `<RequirePermission>` 组件包裹，对应 `AdminPermissionCatalog` 中定义的权限点。
+- 新增 Agent、独立工作台或对外能力。
+- 修改 Agent 身份、权限、模型调用、运行状态或导航入口。
+- 将试验性 Agent 转为正式发布。
+- 对既有 Agent 做跨前后端的大范围重构。
 
----
-
-## 五、Phase 4: 集成测试
+小型文案和局部样式修改可按相应模块规则执行，不要求重新走完整产品设计。
 
-### 4.1 后端测试
+## 2. 交付阶段
 
-```
-Tests/
-├── YourAgent.Controller.Tests.cs   # API 端点测试
-├── YourAgent.Service.Tests.cs      # 业务逻辑测试
-└── YourAgent.Worker.Tests.cs       # 异步任务测试
-```
+| 阶段 | 必须回答的问题 | 主要产物 |
+|---|---|---|
+| 需求 | 为谁解决什么问题，哪些不做 | `spec.*` 或明确的验收场景 |
+| 设计 | 数据、状态、调用和失败如何流转 | `design.*` |
+| 计划 | 尚未完成工作如何拆分和退出 | `plan.*`，仅复杂任务需要 |
+| 实现 | 如何复用现有平台事实源 | 代码、迁移和必要测试 |
+| 验证 | 行为是否沿真实用户路径发生 | 集成测试、预览验收或 API 证据 |
+| 发布 | 用户从哪里进入，如何回滚 | 导航登记、变更记录和交接清单 |
 
-**测试覆盖要求**：
-- Controller：路由映射、权限验证、输入校验
-- Service：核心业务逻辑、边界条件
-- Worker：队列处理、错误恢复、SSE 事件序列
-
-### 4.2 前端测试
+阶段不是文档数量要求。简单 Agent 可以用一份规格和一份设计覆盖，但职责不能混写。
 
-```
-__tests__/
-├── YourAgentListPage.test.tsx     # 页面渲染测试
-├── yourAgentStore.test.ts         # Store 状态测试
-└── yourAgentService.test.ts       # API 调用 Mock 测试
-```
+## 3. 产品与范围
 
-### 4.3 E2E 验证
-
-- 完整工作流走通
-- SSE 断线重连
-- 权限拒绝场景
-- 并发场景
+开发前必须明确：
 
-### 4.5 UI 自动化与视觉回归（Playwright）
+- 目标用户、核心场景和成功标准。
+- 当前版本不处理的边界。
+- 是否已有 Agent 或平台能力可复用。
+- 数据归属、权限作用域和敏感信息。
+- 长任务的等待体验、失败恢复和取消语义。
 
-**目标**：减少人工回归，支持一次性自动跑通关键流程，并做视觉回归对比。
+禁止仅以“新增一个页面”描述 Agent。页面只是入口，必须给出端到端业务闭环。
 
-**基线位置**：
-- 测试目录：`prd-admin/e2e/`
-- 视觉基线：`prd-admin/e2e/**/-snapshots/`（由 Playwright 自动生成）
+## 4. 应用身份与权限
 
-**运行命令**：
-```
-pnpm -C prd-admin e2e
-pnpm -C prd-admin e2e:ui
-pnpm -C prd-admin e2e:headed
-```
-
-**必需环境变量（仅本地注入，禁止写入仓库）**：
-```
-PRD_ADMIN_BASE_URL=http://localhost:8000
-E2E_ADMIN_USER=your-admin-user
-E2E_ADMIN_PASS=your-admin-pass
-```
-
-**推荐用例**：
-- 缺陷管理流程：登录 → 进入缺陷列表 → 新建缺陷 → 提交审核 → 详情页截图对比
-- 周报流程：登录 → 初始化模板（如有权限） → 新建计划 → 提交 → 列表与团队页截图对比
-
-**稳定性建议**：
-- 测试中禁用动画/过渡，降低截图抖动
-- 视觉阈值使用轻度容差（`maxDiffPixelRatio` 约 0.1%）
-
-### 4.4 权限矩阵验证
-
-| 角色 | 访问菜单 | 创建 | 编辑 | 删除 | 管理 |
-|------|---------|------|------|------|------|
-| Admin | ✅ | ✅ | ✅ | ✅ | ✅ |
-| User | ✅ | ✅ | 自己的 | 自己的 | ❌ |
-| Guest | ❌ | ❌ | ❌ | ❌ | ❌ |
-
----
-
-## 六、Phase 5: 文档同步
-
-### 更新清单
-
-| 文档 | 更新内容 |
-|------|----------|
-| `CLAUDE.md` | Codebase Skill 段落：应用标识表、功能注册表、MongoDB 集合 |
-| `doc/spec.srs.md` | 功能模块描述 |
-| `doc/rule.platform.data-dictionary.md` | 新增集合定义 |
-| `doc/rule.platform.app-identity.md` | 新增应用清单 |
-| `doc/design.{agent-name}.md` | 新建功能设计文档 |
-
----
-
-## 七、Phase 6: Debugger Skill
-
-### 6.1 日志埋点
-
-```csharp
-// Controller 入口
-_logger.LogInformation("[{AppKey}] {Action} by {UserId}", AppKey, action, userId);
-
-// Worker 关键节点
-_logger.LogInformation("[{AppKey}:Worker] Run {RunId} started", AppKey, runId);
-_logger.LogWarning("[{AppKey}:Worker] Run {RunId} retrying: {Error}", AppKey, runId, error);
-_logger.LogError(ex, "[{AppKey}:Worker] Run {RunId} failed", AppKey, runId);
-```
-
-### 6.2 错误追踪路径
-
-```
-用户操作 → Controller 日志 → Service 日志 → Worker 日志 → LLM 请求日志
-                                                              ↓
-                                                     llm_request_logs 集合
-```
-
-### 6.3 调试检查清单
-
-- [ ] 权限被拒绝时日志有记录
-- [ ] Worker 异常不会导致队列阻塞
-- [ ] SSE 中断后 afterSeq 可正确恢复
-- [ ] LLM 调用超时有合理回退
-- [ ] MongoDB 查询有适当索引
-
----
-
-## 八、接入方式对照表
-
-| 接入方式 | 适用场景 | 示例 |
-|----------|---------|------|
-| AppShell 内页面 | 标准管理页面 | PRD Agent, Literary Agent |
-| 全屏独立页面 | 需要沉浸式体验 | Visual Agent |
-| Open Platform API | 外部系统调用 | CI/CD 集成 |
-| Desktop 客户端 | 桌面端功能 | 桌面对话 |
-
----
-
-## 九、检查清单 (Gate Review)
-
-### 开发前准入 (Phase 1 完成)
-- [ ] appKey 已确定且无冲突
-- [ ] 状态机设计已评审
-- [ ] 数据模型已确认
-- [ ] 界面线框已确认
-
-### 开发中检查 (Phase 2-3 进行中)
-- [ ] Controller 硬编码 AppKey
-- [ ] 权限点已注册
-- [ ] 菜单定义已添加
-- [ ] AppCaller 标识已注册
-- [ ] **实体类已添加 AppOwnership 特性**
-- [ ] 前端路由已配置
-- [ ] 权限守卫已添加
-
-### 交付前验收 (Phase 4-6 完成)
-- [ ] 核心流程测试通过
-- [ ] 权限矩阵验证通过
-- [ ] 文档已同步更新
-- [ ] Debugger Skill 检查通过
-- [ ] CLAUDE.md Codebase Skill 已更新
+- 每个 Agent 使用稳定且唯一的 `appKey`。
+- 模型调用使用已登记的 AppCaller，不硬编码未注册身份。
+- 权限在服务端校验，前端入口控制只用于体验。
+- 新权限同步覆盖内置角色、管理配置和负面测试。
+- 用户、团队、应用和环境隔离边界必须能从设计中确认。
+
+身份和权限的具体事实源见 `doc/rule.platform.app-identity.md` 及应用注册规格。
+
+## 5. 数据与服务端权威
+
+- 新 Model 先对照同类现有 Model，保持标识、序列化和审计约定一致。
+- 前端不维护独立业务事实源；状态由服务端持有并可恢复。
+- 长任务采用 Run/Worker 或仓库认可的等价模式。
+- 页面断连不直接取消服务端任务；取消必须是显式业务操作。
+- 数据快照和反规范化字段必须有可验证的兜底读取路径。
+- 新集合、新枚举和状态扩展要审计全部生产者与消费者。
+
+## 6. LLM 交互
+
+- 所有模型调用经过 `ILlmGateway` 及统一调度。
+- 对话优先流式输出，批量任务推送阶段和进度。
+- 用户等待超过两秒时，界面必须持续反馈。
+- 发送外部请求前完成模型、参数和权限解析，避免一次业务动作出现漂移配置。
+- 错误信息区分模型未绑定、限流、上游故障、取消和业务校验失败。
+- 日志保留调用关联信息，但不得记录密钥或完整敏感输入。
+
+## 7. 前端与导航
+
+- 默认在百宝箱登记新 Agent，并在正式验收前标记为在建状态。
+- 路由、导航、快捷入口和命令面板使用仓库导航事实源。
+- 陌生页面在短时间内说明“这是什么、能做什么、下一步做什么”。
+- 上传、拖拽和可选粘贴遵守零摩擦输入原则。
+- 页面布局、弹窗、滚动和主题样式遵守前端专项规则。
+- 新增入口时交付信息必须说明位置、用户路径和最终预览深链。
+
+## 8. API 与前端服务
+
+- 使用统一认证、响应包装和错误模型。
+- 新前端 Service 先读取现有 `apiRequest` 约定，避免重复序列化。
+- FormData、SSE 和普通 JSON 请求分别使用适合的传输方式。
+- 接口必须校验资源所有权，不能只依赖资源标识。
+- 非幂等操作要处理重复提交和重连。
+- 字段、枚举或事件变化必须做前后端及测试的涟漪审计。
+
+## 9. 验证门槛
+
+声称完成前至少满足：
+
+1. 对应模块编译、类型检查和静态检查通过。
+2. 相关单元或集成测试通过，且没有新增已知回归。
+3. 至少一条真实行为路径被验证：集成测试、CDS 灰度、浏览器预览或真实 HTTP。
+4. 权限失败、无数据、模型不可用和网络中断等关键负面场景有结果。
+5. 用户入口、运行过程、最终结果和刷新恢复形成闭环。
+
+只有编译通过不能证明 Agent 已完成。无法验证的部分必须列为未完成或债务，不得让用户先充当测试人员。
+
+## 10. 文档与变更记录
+
+- `doc/` 文档使用七类前缀、标准 H1 和元数据头。
+- 文档描述契约、决策和操作，不粘贴大段实现代码。
+- 仍未解决的边界进入对应 `debt.*`。
+- 代码变更使用单个 changelog fragment，不直接编辑根 `CHANGELOG.md`。
+- 文档索引必须与实际文件同步。
+- 已完成计划、一次性审计和被新设计替代的旧文档应在交付时回收。
+
+## 11. 完成交接
+
+涉及三个以上文件、API 或 UI 页面时，交付前运行任务交接清单，至少说明：
+
+- 用户可感知的结果和入口。
+- 改动文件与事实源。
+- 已运行的验证及其断言。
+- 已知风险、债务和回滚方式。
+- 是否提交、推送或创建 PR。
+
+没有用户明确授权时不得自动创建 PR。发现阻塞时应给出证据和缺失条件，不提交半成品。
+
+## 12. 最小检查表
+
+- [ ] 需求、范围和验收可测试。
+- [ ] 已复用现有身份、权限、模型、运行和导航能力。
+- [ ] 数据所有权与失败恢复明确。
+- [ ] LLM 等待过程持续可见。
+- [ ] 真实行为路径至少验证一条。
+- [ ] 文档、索引、变更记录和债务同步。
+- [ ] 入口、路径、预览和风险已交接。
+
+详细产品功能描述应放在对应 `spec.*`，例如 `doc/spec.report-agent.md`；本规则不维护具体 Agent 功能模块清单。

@@ -1,10 +1,10 @@
 # MAP 知识库传输协议（MAP-KBTP v1） · 规格
 
 > **版本**：v1.1 | **日期**：2026-06-22 | **状态**：已落地
+
 > 负责模块：prd-api（PeerSync + DocumentStoreSyncResource）、prd-admin（同步中心）
 > 关联：`design.platform.peer-sync.md`（节点配对设计）、`spec.cds.compose-contract.md`（同类对外契约写法）
 
----
 
 ## 1. 管理摘要（30 秒看懂）
 

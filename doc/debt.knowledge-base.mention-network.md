@@ -1,6 +1,6 @@
-# 知识库引用网络 已知债务台账
+# 知识库引用网络 · 债务台账
 
-> **版本**：v1.1 | **日期**：2026-06-11 | **状态**：开放（v2 已落 4 件套，剩余转 v3）
+> **版本**：v1.1 | **日期**：2026-06-11 | **状态**：开发中
 
 ## v2 进度更新（2026-06-11 晚，commit `28610fc`）
 
@@ -8,11 +8,11 @@
 
 | § | 事项 | 状态 |
 |---|---|---|
-| 1.1 | 编辑器 `[[` 自动补全 | ✅ `WikilinkAutocomplete.tsx` 已挂入 DocBrowser 编辑模式，调 `/api/mentions/stores/:id/suggest`，上下键 + Enter + Esc 全通 |
-| 1.2 | 编辑器 `@` 触发 | ✅ 同组件同时识别 `@`，中文 IME 友好 |
-| 1.3 | 悬停预览卡 | ✅ `WikilinkHoverCard.tsx` + `MarkdownViewer` 派发 `wikilink:hover` 事件，蓝链浮 280px 预览（标题 + 摘要 + 「双链目标」徽章 + 「点击跳转 · 鼠标移开关闭」） |
-| 1.4（部分） | 「文档不存在」虚链 UX 兜底 | ✅ MarkdownViewer 查 `wikilinkCache` 判断目标是否存在，不存在→橙色虚线下划线 + 悬停浮橙色提示卡 |
-| 1.4（完整） | AI 自动补链（保存时扫描"提到 X 但没标 [[]]"） | ❌ 转 v3，见 §1.4 |
+| 1.1 | 编辑器 `[[` 自动补全 | 是 `WikilinkAutocomplete.tsx` 已挂入 DocBrowser 编辑模式，调 `/api/mentions/stores/:id/suggest`，上下键 + Enter + Esc 全通 |
+| 1.2 | 编辑器 `@` 触发 | 是 同组件同时识别 `@`，中文 IME 友好 |
+| 1.3 | 悬停预览卡 | 是 `WikilinkHoverCard.tsx` + `MarkdownViewer` 派发 `wikilink:hover` 事件，蓝链浮 280px 预览（标题 + 摘要 + 「双链目标」徽章 + 「点击跳转 · 鼠标移开关闭」） |
+| 1.4（部分） | 「文档不存在」虚链 UX 兜底 | 是 MarkdownViewer 查 `wikilinkCache` 判断目标是否存在，不存在→橙色虚线下划线 + 悬停浮橙色提示卡 |
+| 1.4（完整） | AI 自动补链（保存时扫描"提到 X 但没标 [[]]"） | 否 转 v3，见 §1.4 |
 
 剩余条目按下述 §1 / §2 / §3 / §4 处理，编号保持不变以兼容历史引用。
 
@@ -22,16 +22,16 @@
 
 ## 一、MVP 已知边界（2026-06-11 上线时明确告知用户）
 
-### 1. 编辑器 `[[` 自动补全 — ✅ 已消除（v2，2026-06-11，commit `28610fc`）
+### 1. 编辑器 `[[` 自动补全 — 是 已消除（v2，2026-06-11，commit `28610fc`）
 落地组件：`prd-admin/src/components/doc-browser/WikilinkAutocomplete.tsx`。
 
-### 2. 编辑器 `@` 触发 — ✅ 已消除（v2，2026-06-11，commit `28610fc`）
+### 2. 编辑器 `@` 触发 — 是 已消除（v2，2026-06-11，commit `28610fc`）
 同组件同时识别 `@`，中文 IME 友好。
 
-### 3. wikilink 悬停预览卡 — ✅ 已消除（v2，2026-06-11，commit `28610fc`）
+### 3. wikilink 悬停预览卡 — 是 已消除（v2，2026-06-11，commit `28610fc`）
 落地：`MarkdownViewer` 派发 `wikilink:hover` / `wikilink:unhover`，`WikilinkHoverCard.tsx` 全局监听并查 `lib/wikilinkCache.ts` 渲染卡片。蓝链 = 存在卡，橙链 = 「文档不存在」卡。
 
-### 4. AI 自动补链（推荐气泡）— ⚠️ 仅完成 UX 兜底（虚链提示），AI 推荐部分仍未做
+### 4. AI 自动补链（推荐气泡）— 警告 仅完成 UX 兜底（虚链提示），AI 推荐部分仍未做
 v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫描"提到 X 但没标 `[[]]`"** 仍未做。完整实现：
 - 在 `AppCallerRegistry` 加 `document-store.suggest-wikilinks::chat`
 - 新增 `LinkSuggestService`（参考 `LlmGateway` 调用样例）

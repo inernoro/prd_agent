@@ -1,18 +1,14 @@
 # CDS 多项目数据字典 · 规格
 
-> **版本**：v0.1 | **日期**：2026-04-12 | **类型**：spec（数据字典）| **状态**：草案
->
+> **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
+
 > 本文档定义 CDS v4 引入的 10 个 MongoDB 集合的完整字段表、约束、索引与关系。
->
 > **受众**：后端工程师（写 Mongoose / Mongo 原生 schema 时直接参照），DBA（对照索引汇总建索引）。
->
 > **文档导航**：
->
 > - 主设计稿：`doc/design.cds.multi-project.md`
 > - 7 期交付计划：`doc/plan.cds.multi-project-phases.md`
 > - 迁移规范：`doc/rule.cds.mongo-migration.md`
 
----
 
 ## 1. 集合清单
 
@@ -49,19 +45,19 @@
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4（CDS 内部 ID，与 GitHub ID 解耦） |
-| `githubId` | number | ✅ | unique | GitHub 数字 ID（来自 `/user` 接口） |
-| `githubLogin` | string | ✅ | — | GitHub 用户名（可变，用 `githubId` 作为稳定 key） |
+| `_id` | string | 是 | 主键 | UUID v4（CDS 内部 ID，与 GitHub ID 解耦） |
+| `githubId` | number | 是 | unique | GitHub 数字 ID（来自 `/user` 接口） |
+| `githubLogin` | string | 是 | — | GitHub 用户名（可变，用 `githubId` 作为稳定 key） |
 | `email` | string | — | sparse | GitHub primary email，可能为空 |
 | `name` | string | — | — | 显示名 |
 | `avatarUrl` | string | — | — | 头像 URL |
-| `orgs` | string[] | ✅ | — | 最近一次登录时的 GitHub Org 列表快照 |
-| `orgsCheckedAt` | string | ✅ | — | orgs 快照时间戳 |
+| `orgs` | string[] | 是 | — | 最近一次登录时的 GitHub Org 列表快照 |
+| `orgsCheckedAt` | string | 是 | — | orgs 快照时间戳 |
 | `isSystemOwner` | boolean | — | — | 是否为首登用户（系统所有者） |
-| `status` | enum | ✅ | — | `active` \| `disabled`（被踢出 Allowed Orgs 时） |
+| `status` | enum | 是 | — | `active` \| `disabled`（被踢出 Allowed Orgs 时） |
 | `lastLoginAt` | string | — | — | 最近登录时间 |
-| `createdAt` | string | ✅ | — | 首次注册时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `createdAt` | string | 是 | — | 首次注册时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -80,12 +76,12 @@
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | 64-char URL-safe token（crypto.randomBytes(48).toString('base64url')） |
-| `userId` | string | ✅ | — | 指向 `users._id` |
-| `createdAt` | string | ✅ | — | 会话创建时间 |
-| `expiresAt` | Date | ✅ | TTL | MongoDB TTL 字段，到期自动删除 |
-| `lastSeenAt` | string | ✅ | — | 最近一次请求时间 |
-| `orgsCheckedAt` | string | ✅ | — | 用于"超过 1 小时刷新 orgs"的判定 |
+| `_id` | string | 是 | 主键 | 64-char URL-safe token（crypto.randomBytes(48).toString('base64url')） |
+| `userId` | string | 是 | — | 指向 `users._id` |
+| `createdAt` | string | 是 | — | 会话创建时间 |
+| `expiresAt` | Date | 是 | TTL | MongoDB TTL 字段，到期自动删除 |
+| `lastSeenAt` | string | 是 | — | 最近一次请求时间 |
+| `orgsCheckedAt` | string | 是 | — | 用于"超过 1 小时刷新 orgs"的判定 |
 | `userAgent` | string | — | — | User-Agent 快照 |
 | `ipAddress` | string | — | — | 登录时 IP（审计用） |
 
@@ -106,17 +102,17 @@
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `slug` | string | ✅ | unique | URL 友好的唯一标识（如 `alice-personal`、`inernoro`） |
-| `name` | string | ✅ | — | 显示名（如 `Alice 的个人空间`、`Inernoro 团队`） |
-| `kind` | enum | ✅ | — | `personal` \| `team` |
-| `ownerId` | string | ✅ | — | 指向 `users._id`，workspace 所有者 |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `slug` | string | 是 | unique | URL 友好的唯一标识（如 `alice-personal`、`inernoro`） |
+| `name` | string | 是 | — | 显示名（如 `Alice 的个人空间`、`Inernoro 团队`） |
+| `kind` | enum | 是 | — | `personal` \| `team` |
+| `ownerId` | string | 是 | — | 指向 `users._id`，workspace 所有者 |
 | `githubOrgLogin` | string | — | sparse | team 类型时对应的 GitHub Org login |
 | `githubOrgId` | number | — | sparse | GitHub Org 数字 ID |
 | `description` | string | — | — | 可选描述 |
-| `projectCount` | number | ✅ | — | 当前项目数（冗余字段，删项目时 -1） |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `projectCount` | number | 是 | — | 当前项目数（冗余字段，删项目时 -1） |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -141,12 +137,12 @@ User × Workspace 的成员关系表。
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `workspaceId` | string | ✅ | — | 指向 `workspaces._id` |
-| `userId` | string | ✅ | — | 指向 `users._id` |
-| `role` | enum | ✅ | — | `owner` \| `member` \| `viewer` |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `workspaceId` | string | 是 | — | 指向 `workspaces._id` |
+| `userId` | string | 是 | — | 指向 `users._id` |
+| `role` | enum | 是 | — | `owner` \| `member` \| `viewer` |
 | `invitedBy` | string | — | — | 邀请人 userId（首登自举时为 null） |
-| `joinedAt` | string | ✅ | — | 加入时间 |
+| `joinedAt` | string | 是 | — | 加入时间 |
 | `lastSyncedAt` | string | — | — | team 类型从 GitHub Org 同步成员的最近时间 |
 | `syncSource` | enum | — | — | `manual` \| `github-org`（如何加入的） |
 | `deletedAt` | string \| null | — | — | 软删除（退出 workspace） |
@@ -163,9 +159,9 @@ User × Workspace 的成员关系表。
 
 | 角色 | 读 | 写分支 | 写配置 | 删项目 | 管成员 |
 |---|---|---|---|---|---|
-| `owner` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `member` | ✓ | ✓ | ✓ | ✗ | ✗ |
-| `viewer` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `owner` | 是 | 是 | 是 | 是 | 是 |
+| `member` | 是 | 是 | 是 | 否 | 否 |
+| `viewer` | 是 | 否 | 否 | 否 | 否 |
 
 ---
 
@@ -175,23 +171,23 @@ User × Workspace 的成员关系表。
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `workspaceId` | string | ✅ | — | 指向 `workspaces._id` |
-| `slug` | string | ✅ | — | workspace 内唯一（如 `prd-agent`） |
-| `name` | string | ✅ | — | 显示名（如 `PRD Agent`） |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `workspaceId` | string | 是 | — | 指向 `workspaces._id` |
+| `slug` | string | 是 | — | workspace 内唯一（如 `prd-agent`） |
+| `name` | string | 是 | — | 显示名（如 `PRD Agent`） |
 | `description` | string | — | — | 可选描述 |
-| `kind` | enum | ✅ | — | `git` \| `manual`（P6 增加 manual） |
+| `kind` | enum | 是 | — | `git` \| `manual`（P6 增加 manual） |
 | `gitRepoUrl` | string | — | — | Git 仓库 URL（`git` kind 必填） |
 | `gitDefaultBranch` | string | — | — | 默认分支（如 `main`），从 `gitRepoUrl` clone 时使用 |
-| `dockerNetwork` | string | ✅ | — | 独立 Docker 网络名（`cds-proj-<id 前 8 位>`） |
+| `dockerNetwork` | string | 是 | — | 独立 Docker 网络名（`cds-proj-<id 前 8 位>`） |
 | `subdomainPrefix` | string | — | — | 项目级域名前缀（如 `prdagent`），可选 |
 | `webhookSecret` | string | — | — | GitHub webhook 密钥（P6 加入） |
 | `autoDeployStrategy` | enum | — | — | `manual` \| `on-push` \| `on-pr`（P6） |
-| `branchCount` | number | ✅ | — | 冗余：分支数（运行时维护） |
+| `branchCount` | number | 是 | — | 冗余：分支数（运行时维护） |
 | `legacyFlag` | boolean | — | — | 是否为 P1 外壳阶段创建的"默认项目" |
-| `createdBy` | string | ✅ | — | 创建者 userId |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `createdBy` | string | 是 | — | 创建者 userId |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -216,15 +212,15 @@ User × Workspace 的成员关系表。
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `projectId` | string | ✅ | — | 指向 `projects._id` |
-| `name` | string | ✅ | — | 环境名（`default` / `preview` / `staging` / `production`） |
-| `displayName` | string | ✅ | — | 显示名（如"预览环境"） |
-| `isDefault` | boolean | ✅ | — | 是否为项目默认环境（每项目有且仅一个 default） |
-| `isProtected` | boolean | ✅ | — | 是否受保护（阻止非 owner 操作） |
-| `branchCount` | number | ✅ | — | 冗余字段，归属该 env 的分支数 |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `projectId` | string | 是 | — | 指向 `projects._id` |
+| `name` | string | 是 | — | 环境名（`default` / `preview` / `staging` / `production`） |
+| `displayName` | string | 是 | — | 显示名（如"预览环境"） |
+| `isDefault` | boolean | 是 | — | 是否为项目默认环境（每项目有且仅一个 default） |
+| `isProtected` | boolean | 是 | — | 是否受保护（阻止非 owner 操作） |
+| `branchCount` | number | 是 | — | 冗余字段，归属该 env 的分支数 |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除（default env 禁止删除） |
 
 **索引**：
@@ -253,14 +249,14 @@ P4 创建新项目时自动生成两个 env：
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `projectId` | string | ✅ | — | 指向 `projects._id`（**新增**） |
-| `environmentId` | string | ✅ | — | 指向 `environments._id`（**新增**） |
-| `branchId` | string | ✅ | — | 短 ID，项目内唯一（原 v3.2 的 `id`） |
-| `name` | string | ✅ | — | Git 分支名 |
-| `slug` | string | ✅ | — | URL 友好名（用于子域名） |
-| `worktreePath` | string | ✅ | — | Git worktree 的绝对路径 |
-| `status` | enum | ✅ | — | `pending` \| `building` \| `running` \| `error` \| `stopped` |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `projectId` | string | 是 | — | 指向 `projects._id`（**新增**） |
+| `environmentId` | string | 是 | — | 指向 `environments._id`（**新增**） |
+| `branchId` | string | 是 | — | 短 ID，项目内唯一（原 v3.2 的 `id`） |
+| `name` | string | 是 | — | Git 分支名 |
+| `slug` | string | 是 | — | URL 友好名（用于子域名） |
+| `worktreePath` | string | 是 | — | Git worktree 的绝对路径 |
+| `status` | enum | 是 | — | `pending` \| `building` \| `running` \| `error` \| `stopped` |
 | `heatState` | enum | — | — | `hot` \| `warm` \| `cold`（温池调度） |
 | `profileOverrides` | object[] | — | — | 分支级配置覆盖（现有概念） |
 | `subdomainAliases` | string[] | — | — | 分支级子域名别名（现有概念） |
@@ -268,9 +264,9 @@ P4 创建新项目时自动生成两个 env：
 | `dirtyFlag` | boolean | — | — | 是否有未部署变更（P6 增加） |
 | `lastDeployAt` | string | — | — | 最近部署时间 |
 | `lastCommitSha` | string | — | — | 最近 commit SHA |
-| `createdBy` | string | ✅ | — | 创建者 userId |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `createdBy` | string | 是 | — | 创建者 userId |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -295,21 +291,21 @@ v3.2 的 `BranchEntry` 用 `id` 作为短 ID 主键，v4 改为 UUID `_id` + 独
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `projectId` | string | ✅ | — | 指向 `projects._id`（**新增**） |
-| `profileId` | string | ✅ | — | 短 ID（原 v3.2 `id`） |
-| `name` | string | ✅ | — | 显示名（如 `prd-api`） |
-| `kind` | enum | ✅ | — | `app` \| `static` \| `docker-compose` |
-| `repoPath` | string | ✅ | — | 相对 worktree 的子路径 |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `projectId` | string | 是 | — | 指向 `projects._id`（**新增**） |
+| `profileId` | string | 是 | — | 短 ID（原 v3.2 `id`） |
+| `name` | string | 是 | — | 显示名（如 `prd-api`） |
+| `kind` | enum | 是 | — | `app` \| `static` \| `docker-compose` |
+| `repoPath` | string | 是 | — | 相对 worktree 的子路径 |
 | `buildCommand` | string | — | — | 构建命令 |
 | `buildArgs` | string[] | — | — | 构建参数 |
 | `env` | object | — | — | 环境变量 key-value |
 | `ports` | number[] | — | — | 对外暴露端口 |
-| `deployMode` | enum | ✅ | — | `dev` \| `static` |
+| `deployMode` | enum | 是 | — | `dev` \| `static` |
 | `dockerImage` | string | — | — | 基础镜像 |
 | `dockerfile` | string | — | — | Dockerfile 相对路径 |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -327,20 +323,20 @@ v3.2 的 `BranchEntry` 用 `id` 作为短 ID 主键，v4 改为 UUID `_id` + 独
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `projectId` | string | ✅ | — | 指向 `projects._id`（**新增**） |
-| `serviceId` | string | ✅ | — | 短 ID |
-| `name` | string | ✅ | — | 显示名（如 `MongoDB`） |
-| `kind` | enum | ✅ | — | `mongodb` \| `redis` \| `postgres` \| `custom` |
-| `image` | string | ✅ | — | Docker 镜像 |
-| `tag` | string | ✅ | — | 镜像 tag |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `projectId` | string | 是 | — | 指向 `projects._id`（**新增**） |
+| `serviceId` | string | 是 | — | 短 ID |
+| `name` | string | 是 | — | 显示名（如 `MongoDB`） |
+| `kind` | enum | 是 | — | `mongodb` \| `redis` \| `postgres` \| `custom` |
+| `image` | string | 是 | — | Docker 镜像 |
+| `tag` | string | 是 | — | 镜像 tag |
 | `volumes` | string[] | — | — | Docker named volume 列表 |
 | `env` | object | — | — | 环境变量 |
 | `ports` | number[] | — | — | 端口映射 |
 | `containerId` | string | — | — | 当前运行容器 ID |
-| `status` | enum | ✅ | — | `stopped` \| `starting` \| `running` \| `error` |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `status` | enum | 是 | — | `stopped` \| `starting` \| `running` \| `error` |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：
@@ -358,17 +354,17 @@ Header / Domain / Pattern 路由（v3.2 已存在，v4 加 projectId）。
 
 | 字段 | 类型 | 必填 | 索引 | 说明 |
 |---|---|---|---|---|
-| `_id` | string | ✅ | 主键 | UUID v4 |
-| `projectId` | string | ✅ | — | 指向 `projects._id`（**新增**） |
-| `priority` | number | ✅ | — | 优先级，越小越先匹配 |
-| `matchKind` | enum | ✅ | — | `header` \| `domain` \| `pattern` |
-| `matchKey` | string | ✅ | — | 匹配 key（header 名 / domain / regex） |
+| `_id` | string | 是 | 主键 | UUID v4 |
+| `projectId` | string | 是 | — | 指向 `projects._id`（**新增**） |
+| `priority` | number | 是 | — | 优先级，越小越先匹配 |
+| `matchKind` | enum | 是 | — | `header` \| `domain` \| `pattern` |
+| `matchKey` | string | 是 | — | 匹配 key（header 名 / domain / regex） |
 | `matchValue` | string | — | — | 匹配 value |
 | `targetBranchId` | string | — | — | 路由到的分支 `_id` |
 | `targetProfileId` | string | — | — | 路由到的 profile `_id` |
-| `isActive` | boolean | ✅ | — | 是否启用 |
-| `createdAt` | string | ✅ | — | 创建时间 |
-| `updatedAt` | string | ✅ | — | 最近更新时间 |
+| `isActive` | boolean | 是 | — | 是否启用 |
+| `createdAt` | string | 是 | — | 创建时间 |
+| `updatedAt` | string | 是 | — | 最近更新时间 |
 | `deletedAt` | string \| null | — | — | 软删除标记 |
 
 **索引**：

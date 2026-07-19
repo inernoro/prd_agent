@@ -1,4 +1,6 @@
-# debt.knowledge-base
+# 知识库 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -6,7 +8,6 @@
 | 状态 | open |
 | 关联 | `prd-api/src/PrdAgent.Api/Controllers/Api/AiToolboxController.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs`、`prd-admin/src/pages/ai-toolbox/components/*.tsx` |
 
----
 
 ## 背景
 
@@ -23,11 +24,11 @@
 | ID | 说明 | 优先级 | 触发条件 | 状态 |
 |---|---|---|---|---|
 | K-1 | **两套"知识库"并存**：AI Toolbox 的 `ToolboxItem.KnowledgeBaseIds` 指向 `attachments` 集合（每条 `Attachment` 自带 `ExtractedText`，prompt 拼装时整篇拼接，见 `AiToolboxController.cs:1197-1212`），而独立的「文档空间」走 `document_stores` + `document_entries` 集合，有更完整的多类型、订阅源、版本、view event 等能力。两套数据流不通，AI Toolbox 选不到文档空间里已经管理好的文档。建议规划"统一知识库"模型：AI Toolbox 改为引用 `documentEntryId`（或一个虚拟 store 包一组 attachment），并写一次迁移把存量 attachment 落入 document_stores。 | **P2** | 用户开始把同一份文档既上传到智能体又导到文档空间，或要求"我已经在文档空间里有这堆 PDF，直接关联给智能体" | open |
-| K-2 | **无 RAG / Embedding / 语义检索**：`AiToolboxController.cs:1197-1212` 把所有绑定文档的 `ExtractedText` 全量拼到 system prompt 里。文档稍微多 / 稍微大就会把 prompt 撑爆 token。`design.knowledge-base.multi-doc.md:334` 把这件事标为 Phase 3（未来），但没有项目计划承接。借用法则（`no-rootless-tree.md`）建议借外部 Embedding 服务而不是自建，但需要：(a) LLM Gateway 增加 `embedding` ModelType 调度路径；(b) chunk 切分策略（按段落 / 按 token 数 / 按文档类型）；(c) 向量存储（MongoDB Atlas Vector Search vs 自建索引）；(d) 检索召回 + 重排 + 注入。 | **P1**（中型功能立项） | 出现"上传了 10+ 文档导致对话被截断 / 慢 / 上下文超限"的反馈 | open |
+| K-2 | **无 RAG / Embedding / 语义检索**：`AiToolboxController.cs:1197-1212` 把所有绑定文档的 `ExtractedText` 全量拼到 system prompt 里。文档稍微多 / 稍微大就会把 prompt 撑爆 token。`design.knowledge-base.multi-doc.md` 在“风险与边界”中把这件事列为后续方向，但没有项目计划承接。借用法则（`no-rootless-tree.md`）建议借外部 Embedding 服务而不是自建，但需要：(a) LLM Gateway 增加 `embedding` ModelType 调度路径；(b) chunk 切分策略（按段落 / 按 token 数 / 按文档类型）；(c) 向量存储（MongoDB Atlas Vector Search vs 自建索引）；(d) 检索召回 + 重排 + 注入。 | **P1**（中型功能立项） | 出现"上传了 10+ 文档导致对话被截断 / 慢 / 上下文超限"的反馈 | open |
 | K-3 | **AI Toolbox 占位符里曾误导用户**：替换前的 `QuickCreateWizard.tsx:1460-1472` 写"即将上线"，让用户以为功能即将就绪，但底层数据通路（DTO、Model、Controller 注入）早已 ready。这种"前端 UI 写 wip 标签 vs 后端早已 ready"的不一致没有自动巡检手段，未来类似情况可能继续出现。建议在 `navCoverage.test.ts` 类似的 CI 守卫里加一条："禁止 UI 出现「即将上线」/「敬请期待」字样的 disabled 按钮 —— 要么标 TODO 接通，要么去掉。" | P3 | 下次新 PR 又留下"即将上线"占位符 | open |
 | K-4 | **`uploadAttachment` 与 `documentstore/entries/upload` API 不互通**：AI Toolbox 走 `POST /api/ai-toolbox/upload-attachment`（返回 `attachmentId`），文档空间走 `POST /api/document-store/stores/{id}/entries/upload`（返回 `entryId`）。两个端点各有 mime 解析、文本抽取、缓存逻辑，未来文档解析能力升级（如新增 Excel 智能化抽取）需双改。建议合并到一个上传 service。 | P3 | 升级 PDF/Word 抽取库 / 新增 Excel 表格化抽取时双向同步 | open |
 | K-5 | **不存"原始 KB 选择来源"**：AI Toolbox 智能体的 `KnowledgeBaseIds` 只存 `attachmentId`，不区分"用户当时是直接上传文件" vs"从文档空间选了一个 entry"。一旦 K-1 落地后会丢失这层语义，难以反向追溯。建议增加 `KnowledgeBaseSources: List<{type: "attachment"\|"document-entry", id}>` 结构存原始引用。 | P3 | K-1 立项后 | blocked-on-K-1 |
-| K-6 | **缺少"按 documentType 过滤"的技能权重**：`design.knowledge-base.multi-doc.md:604` 标"未来（documentType 级别）"。当前技能只能 `contextScope=all/current/prd/none`，不能说"我这个技能只看 product 类型的文档"。整合 K-1 时一起做。 | P3 | K-1 立项后 | blocked-on-K-1 |
+| K-6 | **缺少"按 documentType 过滤"的技能权重**：`design.knowledge-base.multi-doc.md` 的“风险与边界”仍将类型过滤列为后续方向。当前技能只能 `contextScope=all/current/prd/none`，不能说"我这个技能只看 product 类型的文档"。整合 K-1 时一起做。 | P3 | K-1 立项后 | blocked-on-K-1 |
 | K-7 | **访问统计无应用层消费**：`document_store_view_events` 集合已经在记数据（含 `ViewDedupWindow` 去重），但没有"热度排序"、"用户协同推荐"、"最近访问的知识库快速接入智能体"之类的应用。 | P4 | 用户反馈"找不到我之前上传过的文档"时 | open |
 | K-8 | **二进制文档抽取能力有限**：Excel/CSV 当前按纯文本对待，无表格结构化提取；代码仓库（如 GitHub repo）无自动同步接口（SyncWorker 框架已有，但 GitHub 集成代码未确认完整）。 | P3 | 用户要求把 Excel 报表 / GitHub README 作为知识源时 | open |
 
@@ -70,7 +71,7 @@
 
 ---
 
-## 待办：手机端 Notion 化后续波次（2026-07-12 更新，浏览器录音 + 整理方式波次已落地）
+## 待办：手机端 Notion 化后续波次（2026-07-13 更新，转录结果页/上传进度/声纹播放器波次已落地）
 
 已落地（分支 `claude/kb-mobile-redesign-plan-de2clg`，2026-07-10）：上传录音 → ASR 转录 → AI 流式摘要 → 「摘要 + 转录全文」转录笔记的全链路（后端 transcribe kind + 前端 TranscribeFlowDrawer 四阶段清单卡，移动端底部弹层），音/视频条目正文顶部常驻「开始转录 / 查看转录笔记」入口卡，`/document-store` 登记移动端 full 兼容。端到端自测通过（真实语音样本，摘要与全文均正确落库）。
 
@@ -81,6 +82,14 @@
 4. **静音录音防误存**：转写提示词加 NO_SPEECH 哨兵 + 拒答模式守卫，避免模型对话式回复被存成笔记。
 5. 音频页新增歌词滚轮跟读播放器（无时间戳退化为静态全文）；音频结果区统一（录音/上传同页）。
 6. 右下角新增菜单由弧形调色盘改为竖排列表（分组「上传与导入」可展开/收起），修复移动端动作项互相遮挡。
+
+已落地（2026-07-13，见 `changelogs/2026-07-13_kb-audio-flow-polish.md` + `changelogs/2026-07-13_kb-audio-usability-fixes.md`）：
+1. 上传成功自动跳转到刚上传的文档（多文件跳第一个）；外层列表页新增同款「+」FAB（新建知识库/写文章/录音转笔记/上传与导入），动作先弹「归属到哪个知识库」选库，按当前 tab 作用域列库（团队 tab 可写团队库）；下线外层旧「新建」悬浮按钮（原与统一「+」菜单撞位）。
+2. 转录完成摘要改为 markdown 渲染（限高内滚）+「编辑笔记」直达编辑态；转录流式输出支持贴底自动滚动（stick-to-bottom：贴底才自动滚、上滑即打断、浮出「回到底部」）；转录完成结果区新增双页签「整理结果 / 转录原文」（原文来自 `run.transcriptText`，老任务给指引）。
+3. 上传改 XHR 带实时进度（浮动进度卡 文件名+百分比+第 n/共 m，转录抽屉上传阶段进度条）；上传白名单补齐音频/视频/图片/Office 扩展名，超 20MB 前端预检即时报错。
+4. 音频播放器声纹化（跨域拿不到真实波形时渲染语音条式声纹：确定性伪随机 + 进度着色 + 点按跳播），去掉顶部大图标与文件名块；转录笔记/字幕/再加工产物顶部新增「来源文件」chip 一键跳回源音频/源文档。
+5. restyle 权限改为按笔记可写判定（协作者可整理别人发起的转录）；转录复用在途 run 时纳入整理方式匹配（风格不同则新建，修复复用默认 run 出错风格）；`latest-run` 端点支持 status/requireOutput 过滤，修复一次整理失败后面板永远打不开。
+6. 移动端 markdown 编辑改单栏（原双栏 live 被挤成两条窄柱无法编辑）；双皮肤棘轮回绿（本轮新增 10 处 rgba 白透明硬编码全部换 token）。
 
 未做（原计划剩余波次，待排期）：
 1. 手机端文章页 Notion 化大标题头（返回/分享/更多三键 + 大标题块），当前沿用既有移动工具栏。

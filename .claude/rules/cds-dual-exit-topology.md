@@ -63,4 +63,4 @@
 - `cds-auto-deploy.md`：push 即部署 + 分支状态 SSE；本规则补「多容器部署时每个容器职责要透明」。
 - `living-status-board.md`：拓扑说明挂进看板。
 - `content-fills-canvas.md` / `full-height-layout.md`：观测前端（llmgw-web）等 UI 出口本身也要满足内容填满 / 撑满高度。
-- 本次实例：`doc/plan.llm-gateway.rollout.md`（波2.5 CDS 命名子域）、`doc/design.llm-gateway-physical-isolation.md`。
+- 本次实例：`doc/debt.llm-gateway-isolation.md`（波2.5 CDS 命名子域实施证据）、`doc/design.llm-gateway-physical-isolation.md`（当前部署拓扑）。

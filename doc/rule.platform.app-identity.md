@@ -1,118 +1,71 @@
-# 应用身份定义规则（appKey + Feature + appCallerCode）
+# 应用身份定义 · 规则
 
-> 合并自原 `rule.app-key-definition.md` + `rule.app-feature-definition.md`
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
-## 1. 层级关系
+应用身份由 `appKey`、Feature 和 `appCallerCode` 三层组成，分别回答“哪个应用”“哪个子能力”“哪一次模型调用”。三者不能互相替代。
 
-```
-App (appKey)
-  └─ Feature (应用子功能)
-      └─ appCallerCode (调用大模型 key)
-          └─ Model Group → Model
-```
+## 1. 层级
 
----
+| 层级 | 用途 | 示例 |
+|---|---|---|
+| `appKey` | 权限、导航、应用配置和数据作用域 | `visual-agent` |
+| Feature | 应用内部的稳定子能力 | `image` |
+| `appCallerCode` | 模型调度、计量和审计调用点 | `visual-agent.image::generation` |
+| Model Group | 运行时选择模型 | 由管理配置绑定 |
 
-## 2. appKey（应用身份）
+模型名称不属于应用身份，业务代码不得用具体模型名代替调用点。
 
-**定义**：区分应用身份的唯一标识，Controller 层必须硬编码。
+## 2. appKey
 
-**规则**：
-- 使用 `kebab-case` 格式
-- 禁止由前端传入
-- 禁止在业务层动态拼接
-- 每个应用拥有独立 Controller 层入口
+- 使用小写 kebab-case，发布后保持稳定。
+- 必须登记到应用注册事实源。
+- 控制器、权限、导航和配置使用同一值。
+- 重命名必须提供数据、权限和外部调用迁移。
+- 不得按页面、环境或版本临时拼接。
 
-**唯一性约束**：appKey 必须在以下三处一致且唯一：
-- 前端路由
-- `/mds` 接口
-- `/api/mds` 文档
+## 3. Feature
 
-**已定义 appKey**：
+- 表示用户可理解且相对稳定的子能力。
+- 同一能力在权限、调用点和配置中使用一致名称。
+- 仅为代码分层的内部方法不创建 Feature。
+- Feature 变化时审计所有权限和调用消费者。
 
-| appKey | 应用名称 | 说明 |
-|--------|---------|------|
-| `prd-agent` | PRD Agent | PRD 智能解读与问答 |
-| `visual-agent` | 视觉创作 Agent | 高级视觉创作工作区 |
-| `literary-agent` | 文学创作 Agent | 文章配图、文学创作 |
-| `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
-| `video-agent` | 视频 Agent | 文章转视频教程 |
-| `report-agent` | 周报管理 Agent | 周报创建、提交、审阅 |
-| `review-agent` | 产品评审员 | 产品方案（如 .md）多维度评审 |
-| `pr-review` | PR 审查工作台 | 基于每用户 GitHub OAuth 的 PR 审查（任意团队） |
+## 4. appCallerCode
 
-**代码示例**：
-```csharp
-[ApiController]
-[Route("api/visual-agent")]
-public class VisualAgentController : ControllerBase
-{
-    private const string AppKey = "visual-agent";
-}
-```
+格式为 `{app}.{feature}[.{subfeature}]::modelType`。
 
----
+要求：
 
-## 3. Feature（应用子功能）
+- 在 `AppCallerRegistry` 中集中声明和描述。
+- 末尾模型类型与实际请求类型一致。
+- 每个业务目的使用稳定调用点，不按请求动态生成。
+- 同一调用点经过 `ILlmGateway` 解析模型组。
+- 日志、计量和错误定位均记录该调用点。
 
-**定义**：应用内部可独立描述、独立配置模型的业务功能点。
+## 5. 服务端规则
 
-**判定标准**：
-- 隶属于某个 appKey
-- 有明确输入输出
-- 需要调用 LLM
-- 需要独立的模型需求配置
+- Controller 可以声明稳定 `appKey`，但权限仍由统一机制校验。
+- LLM 请求引用注册表常量，不复制字符串。
+- 新调用点同时覆盖初始化、模型绑定界面和测试。
+- 未绑定模型时返回可操作错误，不静默改用其他调用点。
+- 跨应用代理保留原调用身份和授权上下文。
 
----
+## 6. 前端规则
 
-## 4. appCallerCode（调用大模型 key）
+- 前端可携带业务所需的应用标识，但不能决定最终权限。
+- 导航、百宝箱和快捷入口从导航注册事实源读取。
+- 页面不展示内部调用点作为普通用户文案。
+- 管理页面可展示调用点、模型组和健康状态用于配置。
 
-### 4.1 格式
+## 7. 变更审计
 
-```
-{app}.{feature}[.{subfeature}...]::modelType
-```
+新增或修改身份时检查：
 
-- `::` 前为功能路径（`.` 分层），`::` 后为模型类型
-- `app` 使用 `kebab-case`
+- 应用注册与默认权限。
+- Controller、Service 和 Worker。
+- AppCaller 注册及模型组绑定。
+- 前端路由、导航和管理配置。
+- 日志、计量、开放接口和自动化测试。
+- 存量数据与兼容读取。
 
-### 4.2 模型类型（modelType）
-
-`chat` | `intent` | `vision` | `generation` | `code` | `embedding` | `rerank`
-
-### 4.3 示例
-
-```
-desktop.chat.sendmessage::chat
-desktop.chat.sendmessage::intent
-visual-agent.image::generation
-literary-agent.content::chat
-open-platform.proxy::chat
-admin.prompts.optimize::chat
-report-agent.generate::chat
-report-agent.aggregate::chat
-report-agent.polish::chat
-```
-
----
-
-## 5. 业务调用规则
-
-业务层必须通过 `ILlmGateway` 获取客户端（已替代原 `ISmartModelScheduler`）：
-
-```csharp
-var request = new GatewayRequest
-{
-    AppCallerCode = "visual-agent.image::generation",
-    ModelType = "generation",
-    // ...
-};
-var response = await _gateway.SendAsync(request, ct);
-```
-
-### 自动注册
-
-首次调用 `appCallerCode` 时，若未注册：
-- 自动创建 `LLMAppCaller`
-- 自动补默认 `ModelRequirement`
-- 初始化机制只更新元信息，不覆盖用户已配置的模型需求
+唯一事实源和当前应用清单见 `doc/spec.platform.app-registry.md` 与 `AppCallerRegistry`。

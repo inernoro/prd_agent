@@ -1,6 +1,8 @@
-# debt.visual-agent.acceptance-skill
+# Visual Agent 验收技能 · 债务台账
 
-> 类型: debt（工程债务台账） | 状态: active | 模块: create-visual-test-to-kb 验收技能
+> **版本**：v1.0 | **日期**：2026-05-27 | **状态**：开发中
+
+> 模块: create-visual-test-to-kb 验收技能
 > 创建: 2026-05-27
 
 `create-visual-test-to-kb` 技能 2026-05-27 做了一波增强（wave 1），本文件登记当时刻意不做、留作后续的部分，避免下一次 session 无人记得。

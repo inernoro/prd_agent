@@ -1,12 +1,13 @@
 # 数据字典（数据库 / 缓存 Key / 所有持久化清单） · 规则
 
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+
 本文件用于**集中说明本项目所有“持久化/可恢复状态”**（服务端数据库、缓存 Key、对象存储、客户端本地存储、桌面端落盘文件等），作为研发与运维的统一对照表。
 
 维护规则（强制）：
 - 新增/变更任何持久化点（集合/索引/TTL、缓存 key、COS key、localStorage/IndexedDB、落盘文件路径/格式）时，**必须同步更新本文件**。
 - 以代码为准：后端集合/索引/TTL 以 `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` 为权威来源；缓存 key 以 `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` 为权威来源；COS key 以 `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` 为权威来源。
 
----
 
 ## MongoDB（长期存储）
 

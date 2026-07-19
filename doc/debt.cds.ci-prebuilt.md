@@ -1,6 +1,6 @@
-# CDS 极速版（CI 预构建）· 债务台账
+# CDS 极速版（CI 预构建） · 债务台账
 
-> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：进行中
+> **版本**：v1.1 | **日期**：2026-07-10 | **状态**：开发中
 
 ## 总览
 
@@ -11,7 +11,7 @@ CDS 收 `workflow_run.completed` 后 `docker pull` + run（跳过本机编译）
 模块范围：`.github/workflows/branch-image.yml`、`cds-compose.yml`、`cds/src/services/{container,deploy-runtime,github-webhook-dispatcher,state,branch-events}.ts`、`cds/src/routes/{branches,github-webhook}.ts`、`cds/web/src/pages/BranchListPage.tsx`、`cds/src/services/compose-parser.ts`。
 
 SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。CI 推什么 tag、CDS 拉什么 tag，
-两边走同一公式（CI `docker/metadata-action` ↔ CDS `resolveImageTemplate` / `slugifyBranchForImage`）。
+两边走同一公式（CI `docker/metadata-action`  CDS `resolveImageTemplate` / `slugifyBranchForImage`）。
 
 ---
 

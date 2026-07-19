@@ -1,4 +1,6 @@
-# debt.frontend.apple-design-migration
+# 前端 Apple 设计迁移 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：开发中
 
 > Apple 设计系统迁移(PR #1133)交付时主动声明的工程债务台账。
 > 进度看板(SSOT)在 `doc/plan.frontend.apple-design-migration.md`;本台账只记「已知边界 / 后续可补 / 刻意取舍」,不重复进度。

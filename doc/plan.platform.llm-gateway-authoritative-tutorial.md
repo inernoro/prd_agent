@@ -1,12 +1,12 @@
 # LLM Gateway 模型网关权威教程 · 计划
 
-> **版本**：v1.4 | **日期**：2026-07-17 | **状态**：已完成并生产交付
+> **版本**：v1.4 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、目标与完成定义
 
 本计划把 LLM Gateway 已经存在的租户、密钥、模型、模型池、路由、提示词、请求记录、费用和治理能力，串成一本可连续操作的产品教程。教程最终发布到 MAP 全新知识库 **“模型网关权威教程”**；视觉验收证据按 MAP 验收规范归档到 CDS 验收中心。
 
-本计划不重做 full-http、模型迁移、模型池算法或发布 Gate。现有 `plan.platform.llm-gateway.console-productization` 已交付学习中心和术语解释，但它只覆盖“知道这些名词是什么”，没有覆盖“从全空状态一路做到可运营”的书籍级教程；本计划只补这个缺口。
+本计划不重做 full-http、模型迁移、模型池算法或发布 Gate。控制台已经具备学习中心和术语解释，但仍缺少“从全空状态一路做到可运营”的书籍级教程；本计划只补这个缺口。
 
 只有同时满足下列条件才算完成：
 
@@ -196,8 +196,7 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 
 ## 九、关联 SSOT
 
-- `plan.platform.llm-gateway-external-platform.md`：租户平台化、密钥、提示词、首页与验收的实现事实。
-- `plan.platform.llm-gateway.console-productization.md`：学习中心、双主题、模型池心智和根目录收拢。
+- `design.llm-gateway-physical-isolation.md`：租户平台化、密钥、提示词、控制台与物理隔离的当前架构事实。
 - `rule.acceptance.map-enterprise.md`、`rule.acceptance.ssot.md`：视觉验收和归档规则。
 - `guide.acceptance.report-evidence.md`：截图、说明和证据完整性合同。
 - `debt.llm-gateway.md`：不在本教程批次内重开的运行边界和技术债。

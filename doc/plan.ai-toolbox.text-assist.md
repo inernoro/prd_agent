@@ -1,170 +1,66 @@
-# AI 文本辅助（Text Assist）— 通用 Domain · 计划
+# AI 百宝箱文本辅助 · 计划
 
-## 定位
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
-一个**跨应用复用**的轻量 AI 文本辅助服务，任何页面都可以一键调用：
-- 网页托管：根据 HTML 内容自动生成标题、描述、标签
-- 视觉创作：AI 取名字（工作区标题）
-- 缺陷管理：AI 润色缺陷描述
-- 周报：AI 优化周报表述
-- ...未来任何需要 AI 填充/润色/取名 的场景
+## 目标
 
-## 核心设计
+为需要自动命名、摘要、润色和标签生成的页面提供轻量文本辅助能力。能力可以复用，但调用身份、权限、输入限制和产品入口必须归属各自应用，不能建立一个无边界的通用 Controller。
 
-### 后端：通用 TextAssist 端点
+首个候选场景是网页托管：用户上传 HTML 后，系统基于已读取内容建议标题、描述和标签，用户确认后再保存。
 
-**不是独立 Controller**，而是一个通用 Service + 在各 Controller 中按需暴露端点。
+## 当前事实
 
-原因：遵循「应用身份隔离原则」，AppCallerCode 由各应用自己定义，不能混成一个大杂烩。
+- AI 百宝箱的自定义 Agent CRUD、运行、发布、Fork 和使用量统计已经落地，不属于本计划。
+- 现有各 Agent 已有自己的 LLM Gateway 调用身份，不能为文本辅助绕过 appCaller 注册。
+- 仓库尚无统一 `TextAssistService` 事实源，网页托管也没有可确认的文本辅助闭环。
 
-```
-TextAssistService (通用服务)
-  ├── GenerateAsync(appCallerCode, systemPrompt, userContent, outputFormat) → string
-  └── StreamAsync(appCallerCode, systemPrompt, userContent, outputFormat) → IAsyncEnumerable
+## 范围
 
-各 Controller 调用时传入自己的 AppCallerCode：
-  WebPagesController     → "web-hosting.text-assist::intent"
-  VisualAgentController  → "visual-agent.workspace-title::intent" (已有)
-  DefectAgentController  → "defect-agent.polish::chat" (已有)
-```
+| 包含 | 不包含 |
+| --- | --- |
+| 应用内短文本建议 | 通用聊天或自治 Agent |
+| 结构化标题、描述、标签和润色结果 | 自动保存未经确认的 AI 输出 |
+| 各应用独立 appCaller 与权限 | 把多个应用混成一个调用身份 |
+| 输入长度、HTML 清洗和失败可见性 | 复制完整页面或敏感内容到日志 |
 
-### 请求/响应模型
+## 实施阶段
 
-```csharp
-// 请求
-public class TextAssistRequest
-{
-    /// <summary>AI 任务类型</summary>
-    public string Task { get; set; } = string.Empty;  // "auto-fill" | "polish" | "rename" | "summarize" | "tag"
+### P1：网页托管闭环
 
-    /// <summary>输入内容（文件内容、已有文本等）</summary>
-    public string Content { get; set; } = string.Empty;
+1. 在网页托管领域增加受控文本辅助入口。
+2. 服务端清洗 HTML，只提取生成元数据所需的可见文本和上下文。
+3. 通过 LLM Gateway 的网页托管 appCaller 请求结构化结果。
+4. 页面显示建议和来源状态，由用户确认后写入站点元数据。
+5. 模型失败、空响应或解析失败时保留原表单，不伪造成功。
 
-    /// <summary>额外上下文（可选，如文件名、已有标题等）</summary>
-    public Dictionary<string, string>? Context { get; set; }
-}
+### P2：抽取复用层
 
-// 响应（JSON 结构化输出）
-public class TextAssistResult
-{
-    public string? Title { get; set; }
-    public string? Description { get; set; }
-    public List<string>? Tags { get; set; }
-    public string? Text { get; set; }  // 通用文本输出（润色、取名等）
-}
-```
+只有第二个真实应用需要相同行为时，才抽取共享服务和前端调用封装。共享层只负责请求校验、结果解析和观测；prompt、appCaller、权限和产品交互仍由调用应用提供。
 
-### 前端：通用 Hook
+### P3：扩展应用
 
-```typescript
-// useTextAssist.ts — 任何页面都能用
-function useTextAssist() {
-  const [loading, setLoading] = useState(false);
+按实际需求接入视觉创作命名、缺陷润色和周报改写。每个接入必须有独立行为测试，不以“共用服务已通过”替代应用验收。
 
-  const assist = async (apiUrl: string, request: TextAssistRequest): Promise<TextAssistResult> => {
-    setLoading(true);
-    try {
-      const res = await apiRequest(apiUrl, { method: 'POST', body: request });
-      return res.data;
-    } finally {
-      setLoading(false);
-    }
-  };
+## 验收门
 
-  return { assist, loading };
-}
-```
+- 上传 HTML 后能生成可编辑的标题、描述和标签建议。
+- 请求使用网页托管专属 appCaller，并在 LLM Gateway 中可追踪。
+- HTML 脚本、样式、凭据和超长正文不会进入 prompt 或普通日志。
+- 失败状态可见，原内容不丢失、不被规则结果伪装成 AI 结果。
+- 第二个调用方出现前不新增过度通用的框架层。
 
-前端 UI 组件：一个 ✨ 按钮，放在表单旁边，点击触发 AI 填充。
+## 风险
 
-## 实现步骤
+| 风险 | 控制 |
+| --- | --- |
+| HTML 含敏感信息 | 服务端清洗、长度限制和日志脱敏 |
+| 结构化输出不稳定 | schema 校验，失败保留人工输入 |
+| appCaller 混用 | 各应用注册独立身份 |
+| 自动建议打断用户 | 默认建议可撤销，保存仍需确认 |
 
-### Step 1: 后端 TextAssistService（通用服务层）
+## 关联文档
 
-**文件**: `PrdAgent.Infrastructure/Services/TextAssist/TextAssistService.cs`
-
-- 注入 `ILlmGateway`
-- `GenerateAsync(appCallerCode, task, content, context)` → 非流式，收集完整响应
-- 内置 system prompt 模板：根据 task 类型自动选择 prompt
-- JSON 输出格式约束（让 LLM 返回结构化 JSON）
-- 温度用 intent 级别（0.3），快速响应
-
-**文件**: `PrdAgent.Core/Models/TextAssist.cs`
-
-- `TextAssistRequest` / `TextAssistResult` 模型
-
-### Step 2: 注册 AppCallerCode
-
-**文件**: `PrdAgent.Core/Models/AppCallerRegistry.cs`
-
-新增 `WebHosting` 分组：
-```csharp
-public static class WebHosting
-{
-    [AppCallerMetadata("网页托管-文本辅助", "根据网页内容自动生成标题、描述、标签", ...)]
-    public const string TextAssist = "web-hosting.text-assist::intent";
-}
-```
-
-### Step 3: WebPagesController 新增端点
-
-**文件**: `PrdAgent.Api/Controllers/Api/WebPagesController.cs`
-
-```csharp
-[HttpPost("text-assist")]
-public async Task<IActionResult> TextAssist([FromBody] TextAssistRequest request)
-{
-    var result = await _textAssistService.GenerateAsync(
-        AppCallerRegistry.WebHosting.TextAssist,
-        request.Task,
-        request.Content,
-        request.Context);
-    return Ok(ApiResponse.Success(result));
-}
-```
-
-前端上传文件后，读取文件内容（HTML text），调用此端点，AI 返回 { title, description, tags }。
-
-### Step 4: 前端 Hook + UI
-
-**文件**: `prd-admin/src/hooks/useTextAssist.ts`
-
-通用 hook，接受 API URL，返回 { assist, loading }。
-
-**文件**: `prd-admin/src/services/real/webPages.ts`
-
-新增 `textAssistSite(content, context)` 函数。
-
-**文件**: `prd-admin/src/pages/WebPagesPage.tsx` — UploadEditDialog
-
-- 用户选择文件后，自动（或点按钮）读取 HTML 文本内容
-- 调用 text-assist API
-- AI 返回后自动填充 title / description / tags
-- 加载中显示 shimmer 动画
-
-### Step 5: DI 注册
-
-**文件**: `PrdAgent.Api/Program.cs` 或 `ServiceCollectionExtensions`
-
-注册 `TextAssistService` 为 Scoped。
-
-## 文件变更清单
-
-| 文件 | 操作 | 说明 |
-|------|------|------|
-| `PrdAgent.Core/Models/TextAssist.cs` | 新建 | 请求/响应模型 |
-| `PrdAgent.Core/Models/AppCallerRegistry.cs` | 修改 | 新增 WebHosting 分组 |
-| `PrdAgent.Infrastructure/Services/TextAssist/TextAssistService.cs` | 新建 | 核心服务 |
-| `PrdAgent.Api/Controllers/Api/WebPagesController.cs` | 修改 | 新增 text-assist 端点 |
-| `PrdAgent.Api/Program.cs` 或 DI 配置 | 修改 | 注册服务 |
-| `prd-admin/src/hooks/useTextAssist.ts` | 新建 | 通用前端 hook |
-| `prd-admin/src/services/real/webPages.ts` | 修改 | 新增 API 函数 |
-| `prd-admin/src/services/api.ts` | 修改 | 新增路由 |
-| `prd-admin/src/pages/WebPagesPage.tsx` | 修改 | UploadEditDialog 加入 AI 填充按钮 |
-
-## 设计决策
-
-1. **非流式** — auto-fill 场景内容短（title + desc + tags），不需要流式，一次性返回 JSON 更简单
-2. **Intent 模型类型** — 使用轻量 intent 模型，响应快、成本低
-3. **通用 Service + 分散 Controller** — 服务层通用，但入口按应用隔离，符合架构原则
-4. **前端通用 hook** — 任何页面都能复用，只需传不同的 API URL
+- `doc/design.ai-toolbox.md`
+- `doc/design.web-hosting.md`
+- `doc/rule.platform.app-identity.md`
+- `doc/design.llm-gateway-physical-isolation.md`

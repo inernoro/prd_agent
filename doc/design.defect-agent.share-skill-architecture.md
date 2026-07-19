@@ -1,259 +1,120 @@
-# 缺陷分享与 Agent 技能修复架构
+# 缺陷分享与 Agent 技能修复架构 · 设计
 
-> **版本**：v1.0 | **日期**：2026-05-21 | **状态**：已实现基础闭环，分享中心接入待后续阶段
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+## 一、管理摘要
 
-## 管理摘要
+- **解决什么问题**：外部开发者或 Agent 修复缺陷时，口头转述会丢失原始描述、截图、评论、状态和验收标准。
+- **当前方案**：用有范围和有效期的分享链接暴露缺陷上下文，再通过受控 Agent 凭据提交评论、修复状态和修复报告。
+- **闭环**：外部协作者提交结果，内部人员接受或驳回报告，最终状态仍由缺陷服务端状态机裁决。
+- **边界**：分享 token 决定可见缺陷，API key 决定调用身份；任何一个都不能单独替代端点授权。
 
-- **核心问题不是“怎么把 bug 发给 AI”**：真正的问题是信息损耗。传统缺陷修复链路里，用户看到的问题被转写成描述，开发再二次理解，修复后再口头解释，验收时又重新还原上下文；每一次换手都在丢失信息。
-- **缺陷是什么**：缺陷不是一段抱怨文本，而是系统内沉淀的“低损耗问题载体”：谁遇到、在哪遇到、看到什么证据、期望什么结果、当前状态如何、谁有权处理、怎样算修好。
-- **为什么 Agent 需要知道缺陷**：Agent 要修复问题，不能只拿一句描述；它需要直接读取缺陷的原始上下文包，包括用户描述、截图、日志、历史评论、影响范围、授权边界和验收口径。否则 Agent 只是多一个转述者，会继续放大损耗。
-- **Agent 如何直接操作和解决**：系统通过受控开放接口把缺陷变成 Agent 可执行任务。Agent 读取原始证据，评论计划，提交分析报告，在代码仓库或运行环境中修复，再把修复说明和验收方式写回同一条缺陷。
-- **本架构的目的**：减少“报告人 → 产品/测试 → 开发 → Agent → 验收人”之间的翻译层级，让缺陷从产生、理解、修复到验收尽量沿着同一条信息链流动。提速只是结果，保真才是根本。
-- **当前实现边界**：本阶段先完成缺陷到 Agent 的任务启动契约和技能执行协议；分享中心接入、细粒度能力 token、自动派单调度属于后续治理层。
+## 1. 低损耗上下文包
 
----
+Agent 修复任务至少需要以下信息：
 
-## 1. 缺陷模型
+| 层 | 内容 | 用途 |
+|----|------|------|
+| 事实 | 标题、描述、复现、实际、预期、严重程度 | 理解问题 |
+| 证据 | 截图、附件、日志、历史消息 | 定位与验证 |
+| 协作 | 报告人、处理人、评论和当前状态 | 在正确流程中回填 |
+| 控制 | 分享范围、有效期、允许动作和调用身份 | 限制访问与修改 |
+| 验收 | 通过条件、验证说明和内部结论 | 判断是否真正修好 |
 
-缺陷在本系统里是 Agent 可以执行的最小问题单元，至少包含四层信息：
+分享响应应提供完成任务所需的最小信息，不返回内部权限、无关用户数据和未授权项目内容。
 
-| 层级 | 内容 | Agent 用途 |
-|---|---|---|
-| 事实层 | 标题、描述、复现步骤、实际结果、期望结果 | 判断问题是否可复现、是否能修 |
-| 证据层 | 截图、日志、接口请求、历史评论 | 定位根因，避免只凭自然语言猜测 |
-| 协作层 | 报告人、处理人、评论、未读、状态 | 在正确位置评论计划、进展、验收方式 |
-| 控制层 | 分享范围、授权 key、过期时间、允许动作 | 限制 Agent 只处理被授权的问题 |
+## 2. 核心对象
 
-这也是为什么缺陷必须从系统 API 暴露给 Agent：它不是“把 bug 文案复制给 AI”，而是把问题、证据、权限和验收标准打包成可执行任务。
+| 对象 | 责任 |
+|------|------|
+| DefectShare | 分享人、缺陷范围、token、有效期、撤销与访问模式 |
+| AgentApiKey 或 AiAccessKey | 调用身份、生命周期和用途标识 |
+| 外部评论 | Agent 的分析、计划、进度和验证说明 |
+| 修复状态 | 外部协作者对单条缺陷的处理进展 |
+| 修复报告 | 一批缺陷的修复摘要、证据、置信度和逐项结果 |
+| 验收结论 | 内部接受或驳回及其业务状态影响 |
 
----
+分享可以覆盖单条、多条或按受控项目范围生成的缺陷集合。服务端必须在每次读取时重新确认分享仍有效。
 
-## 2. 信息损耗视角
+## 3. 调用链路
 
-传统缺陷修复链路的信息损耗通常发生在这些位置：
+1. 内部用户选择有权分享的缺陷并创建限时链接。
+2. 系统生成不可预测 token，保存范围和失效时间。
+3. 外部人员或 Agent 通过 token 读取脱敏上下文。
+4. 需要写入时，调用方同时提供有效 Agent 身份凭据。
+5. Agent 追加分析评论、更新修复状态或提交修复报告。
+6. 内部人员查看证据，逐项接受或驳回。
+7. 缺陷状态机根据内部验收动作推进或退回。
 
-```mermaid
-flowchart LR
-  A["用户真实遭遇<br/>页面、操作、截图、日志"] -->|第一次损耗<br/>口语化描述| B["缺陷文本"]
-  B -->|第二次损耗<br/>测试/产品转述| C["开发理解"]
-  C -->|第三次损耗<br/>开发再解释给 Agent| D["Agent Prompt"]
-  D -->|第四次损耗<br/>修复结果口头回填| E["验收理解"]
-  E -->|上下文散落| F["下一轮追问/返工"]
-```
+外部 Agent 不应直接写数据库、绕过分享 API 或以 commit message 代替报告回填。
 
-这套架构要做的是把链路压短：
+## 4. Token 与身份的交集
 
-```mermaid
-flowchart LR
-  A["用户真实遭遇<br/>描述 + 截图 + 日志"] --> B["DefectReport<br/>结构化问题载体"]
-  B --> C["agentLaunch<br/>授权 + 范围 + 技能"]
-  C --> D["Agent 直接读取证据并修复"]
-  D --> E["评论/报告/fix-status<br/>写回同一条缺陷"]
-  E --> F["人类按验收口径确认"]
-```
+| 校验 | 问题 |
+|------|------|
+| 分享 token | 这次请求可以看到哪些缺陷，是否过期或撤销 |
+| 调用凭据 | 谁在执行写操作，凭据是否有效 |
+| 端点动作 | 当前身份与分享是否允许评论、更新或提交报告 |
+| 业务状态 | 当前缺陷状态是否接受该动作 |
 
-关键不是让 Agent 更快写代码，而是减少中间翻译：
+`defect-agent:fix` 等 scope 可以表达密钥用途，但只有端点真正执行 scope 校验时才是强制授权。文档和 UI 不得把自描述 scope 误写成已实施门控。
 
-| 传统做法 | 信息损耗 | 本架构的对应机制 |
-|---|---|---|
-| 人把截图/日志手工描述给 Agent | 证据被摘要，细节丢失 | Agent 从分享 API 直接读取截图、日志、历史评论 |
-| 每次重新写 prompt | 修复规则靠临时记忆 | 规则固化到 `ai-defect-resolve` 技能 |
-| 不同 Agent 用不同工作流 | 执行口径漂移 | 分享包声明技能名、最低版本和优先级 |
-| 修复完成后口头说明 | 验收信息散落 | 评论、报告、修复状态写回缺陷 |
-| 分享整个缺陷列表或给全局 key | 权限边界模糊 | `scope` 限定缺陷范围，key 由分享页一键签发 |
-| Agent 猜测主站或复用环境 key | 读错站点、读错权限、泄露边界 | auth 缺失时先问主站，或触发分享链接让用户一键获取 |
+公开读取端点也必须受 token 范围限制，并执行速率限制、过期和撤销检查。
 
-因此，`agentLaunch` 不是提示词优化，而是信息损耗控制点：它把“Agent 应该去哪里读事实、凭什么权限操作、按哪个技能执行、处理哪些缺陷”固定下来，避免每一轮对话重新解释。
+## 5. 评论、状态和报告
 
----
+- 评论用于追加分析、计划、进度和验证说明，不覆盖用户原始描述。
+- 外部修复状态是协作事实，不自动等同于内部业务状态。
+- 修复报告包含每条缺陷的结果、改动摘要、证据、风险和验证方式。
+- 报告提交后保持不可随意覆盖；修订应形成新版本或审计记录。
+- 接受报告可以推进对应缺陷，驳回必须保留原因并允许继续修复。
 
-## 3. 设计原则
+批量报告部分成功时按条目处理，不能因为一条失败把其他已验收结果伪装成未执行。
 
-1. **缺陷是任务契约**：缺陷分享的目标不是转发文本，而是创建一份 Agent 可执行、系统可审计的问题契约。
-2. **分享只传启动参数**：分享内容只保留 `domain`、`auth`、`scope` 三类关键参数。
-3. **证据由系统提供**：截图、日志、历史消息通过分享 API 拉取，避免人类手工拼接上下文。
-4. **规则进技能**：修复流程、评论时机、安全边界、验收要求都在 `ai-defect-resolve` 技能中维护。
-5. **项目内置优先**：当前仓库内置技能优先级最高，不允许托管技能或市场技能静默覆盖。
-6. **版本可校验**：分享包声明 `skill.minVersion`，Agent 执行前必须确认本地技能版本满足要求。
-7. **授权可收敛**：当前先使用分享页一键签发的临时 AgentApiKey；后续接入分享中心时，应保留相同 `agentLaunch` 契约。
-8. **禁止猜 key**：如果 `auth` 没有明确 key，Agent 必须询问主站或引导用户打开分享链接一键获取，不能尝试本机环境变量或历史凭据。
+## 6. 技能与任务提示
 
----
+系统可以生成供外部 Agent 使用的任务说明或技能包，但它只是调用指南，不能携带长期密钥。推荐内容包括：
 
-## 4. 总体架构
+- 分享地址和目标缺陷范围。
+- 允许使用的读取与写入端点。
+- 评论、修复状态和报告的最小字段。
+- 不得泄露 token、不得越权读取和不得自行关闭缺陷的约束。
+- 完成后需要回填的验证证据。
 
-```mermaid
-flowchart LR
-  Reporter["人类/系统提交缺陷"] --> Defect["DefectReport<br/>问题 + 证据 + 状态"]
-  Defect --> UI["缺陷分享 UI"]
-  UI --> Key["AgentApiKey 临时授权<br/>scope=defect-agent:fix"]
-  UI --> Share["DefectShareLink<br/>缺陷范围 + 过期时间"]
-  Share --> Launch["agentLaunch<br/>domain + auth + scope + skill"]
-  Launch --> Agent["外部 Agent / Claude Code"]
-  Agent --> Skill{"ai-defect-resolve<br/>版本和优先级校验"}
-  Skill -- repo-builtin 优先 --> Builtin["项目内置技能"]
-  Skill -- 本地缺失 --> Download["官方下载兜底技能包"]
-  Builtin --> Read["读取缺陷证据<br/>描述/截图/日志/评论"]
-  Download --> Read
-  Read --> Plan["评论修复计划"]
-  Plan --> Work["在代码/环境中修复"]
-  Work --> Report["提交分析报告"]
-  Work --> Fix["标记修复完成<br/>写入验收方式"]
-  Plan --> Defect
-  Report --> Defect
-  Fix --> Defect
-```
+项目内置的缺陷修复技能优先于市场同名技能。技能版本变化不能改变服务端授权语义。
 
----
+## 7. 安全与审计
 
-## 5. 核心数据契约
+- 分享 token 使用高熵随机值，存储和日志中按安全策略处理。
+- 创建者只能分享自己有权访问的缺陷。
+- token 有明确有效期，可提前撤销，访问后不自动延长。
+- 附件代理重新校验分享范围，不暴露对象存储长期私有地址。
+- 写操作记录分享、调用身份、缺陷、动作、时间和结果。
+- 响应不返回内部用户凭据、完整访问日志和无关缺陷。
+- 失败次数和访问频率受限，避免 token 枚举和批量抓取。
 
-`agentLaunch` 是新契约的唯一推荐入口。旧 `agentInstructions` 仅为历史兼容保留。
+## 8. 当前事实入口
 
-```json
-{
-  "version": "1.0",
-  "domain": "https://main-prd-agent.miduo.org",
-  "auth": {
-    "type": "api-key",
-    "header": "Authorization",
-    "scheme": "Bearer",
-    "env": "PRD_AGENT_API_KEY",
-    "fallbackHeader": "X-AI-Access-Key",
-    "obtainUrl": "/api/defect-agent/share/view/xxx",
-    "requiredScope": "defect-agent:fix"
-  },
-  "scope": {
-    "shareToken": "xxx",
-    "shareUrl": "/api/defect-agent/share/view/xxx",
-    "type": "single | selected | project",
-    "defectIds": ["optional"],
-    "projectId": "optional",
-    "expiresAt": "2026-05-22T00:00:00Z"
-  },
-  "skill": {
-    "name": "ai-defect-resolve",
-    "minVersion": "1.1.0",
-    "priority": ["repo-builtin", "user-installed", "official-download", "hosted-marketplace"],
-    "downloadUrl": "https://.../api/official-skills/ai-defect-resolve/download"
-  }
-}
-```
+| 能力 | 事实入口 |
+|------|----------|
+| 分享、外部操作和报告验收 | `prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` |
+| 缺陷总体状态机 | `doc/design.defect-agent.md` |
+| 自动化自治 | `doc/design.defect-agent.automation-autonomy.md` |
+| 分享相关前端 | `prd-admin/src/pages/defect-agent/` |
+| Agent API key | `prd-api/src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs` |
 
-### 字段说明
+## 9. 验收标准
 
-| 字段 | 含义 | 变更要求 |
-|---|---|---|
-| `domain` | MAP/PrdAgent 主域名 | 改 URL 解析规则时必须同步本文档 |
-| `auth` | Agent 调接口的认证方式，以及缺失 key 时的一键获取入口 | 改 Header、scope、key 类型时必须同步本文档 |
-| `scope` | 本次授权覆盖的缺陷范围 | 新增范围类型时必须同步本文档和技能 |
-| `skill` | 指定技能、最低版本、下载入口和优先级 | 改技能名、版本策略、下载端点时必须同步本文档 |
+- 过期、撤销或越界 token 无法读取缺陷。
+- 只持有 token 的匿名访问不能执行需要身份的写操作。
+- 外部状态和报告不能绕过内部验收直接关闭缺陷。
+- 单条与批量分享都只返回授权范围内的缺陷和附件。
+- 评论、报告、接受和驳回均有完整审计记录。
+- 技能或提示中不包含长期明文凭据。
 
----
+## 关联文档
 
-## 6. 调用流程
-
-```mermaid
-sequenceDiagram
-  participant U as 人类用户
-  participant UI as 缺陷分享前端
-  participant API as MAP API
-  participant A as Agent
-  participant S as ai-defect-resolve 技能
-
-  U->>UI: 选择缺陷范围
-  UI->>API: POST /api/agent-api-keys(scope=defect-agent:fix)
-  API-->>UI: sk-ak 临时 key
-  UI->>API: POST /api/defect-agent/shares
-  API-->>UI: shareUrl + agentLaunch
-  UI-->>U: 复制精简启动参数
-  U->>A: 粘贴启动参数
-  A->>S: 校验技能名和版本
-  alt 本地无技能
-    A->>API: GET /api/official-skills/ai-defect-resolve/download
-  end
-  S->>API: GET {domain}{scope.shareUrl}
-  API-->>S: 缺陷、截图、日志、历史消息、端点
-  S->>API: POST {scope.shareUrl}/comments
-  S->>API: POST {scope.shareUrl}/report
-  S->>API: POST {scope.shareUrl}/fix-status
-  API-->>UI: 缺陷状态、报告、评论可见
-```
-
----
-
-## 7. 权限与安全边界
-
-### 当前阶段
-
-- 分享范围由 `DefectShareLink` 控制。
-- 写操作由 `AgentApiKey` 控制，scope 固定为 `defect-agent:fix`。
-- 临时 key 明文只在创建时显示一次。
-- 分享链接有过期时间，可撤销。
-- Agent 只能操作分享范围内的缺陷；后端会校验 `defectId` 是否属于该分享。
-
-### 后续分享中心接入点
-
-分享中心接入时不应破坏 `agentLaunch`。只需要把 `auth` 从“临时 AgentApiKey”替换为“分享中心签发的短期能力 token”，并补充更细粒度能力：
-
-| 能力 | 说明 |
-|---|---|
-| `read` | 读取缺陷、截图、日志、历史消息 |
-| `comment` | 写入 AI 评论 |
-| `report` | 提交分析报告 |
-| `fix-status` | 标记修复完成 |
-
----
-
-## 8. 技能版本与优先级
-
-`ai-defect-resolve` 技能当前版本：`1.1.0`。
-
-优先级固定为：
-
-```text
-repo-builtin > user-installed > official-download > hosted-marketplace
-```
-
-含义：
-
-1. 当前仓库内置 `.claude/skills/ai-defect-resolve/SKILL.md` 时，必须使用它。
-2. 用户本地安装技能可作为无仓库内置时的第二选择。
-3. 官方下载包只用于“没有技能”的兜底安装。
-4. 托管/市场技能不得覆盖本项目内置技能，避免 API 契约和项目规则漂移。
-
----
-
-## 9. 文件与职责
-
-| 文件 | 职责 |
-|---|---|
-| `prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` | 创建分享、读取分享、返回 `agentLaunch`、处理评论/报告/fix-status |
-| `prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillsController.cs` | 官方技能 zip 下载入口 |
-| `prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillTemplates.cs` | 官方 `ai-defect-resolve` 兜底技能模板 |
-| `prd-admin/src/pages/defect-agent/components/ShareDefectDialog.tsx` | 单缺陷/项目/已选分享弹窗，复制精简启动参数 |
-| `prd-admin/src/pages/defect-agent/components/SharesListPanel.tsx` | 批量分享管理，创建临时 key 和受控分享 |
-| `prd-admin/src/services/contracts/defectAgent.ts` | `DefectAgentLaunch` 前端契约 |
-| `.claude/skills/ai-defect-resolve/SKILL.md` | 项目内置技能，维护修复流程和安全规则 |
-
----
-
-## 10. 文档同步规则
-
-当以下任一内容改变时，必须同步更新本文档：
-
-1. `agentLaunch` 字段新增、删除、改名或语义变化。
-2. 缺陷分享开放 API 路径变化。
-3. `defect-agent:fix` scope 或认证 Header 变化。
-4. `ai-defect-resolve` 技能名、版本、优先级或下载入口变化。
-5. 分享范围新增类型，例如 folder、team、query-result。
-6. 分享中心接入后授权能力模型变化。
-
-同步要求：
-
-- 更新本文档架构图和数据契约。
-- 更新 `doc/index.yml` 标题映射。
-- 更新对应 changelog 碎片。
-- 如果变更影响技能行为，同步 bump `.claude/skills/ai-defect-resolve/SKILL.md` 版本。
+- `doc/design.defect-agent.md`
+- `doc/design.defect-agent.automation-autonomy.md`
+- `doc/spec.defect-agent.automation-protocol.md`
+- `doc/rule.platform.agent-permissions.md`

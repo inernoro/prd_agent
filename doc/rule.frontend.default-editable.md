@@ -1,6 +1,6 @@
 # 默认可编辑原则 · 规则
 
-> 创建日期：2026-03-04
+> **版本**：v1.0 | **日期**：2026-03-04 | **状态**：已落地
 
 ## 核心原则
 
@@ -26,11 +26,11 @@
 ## 示例
 
 ```typescript
-// ✅ 正确：默认可编辑
+// 是 正确：默认可编辑
 <ModelTypePicker value={form.modelType} onChange={v => setForm({...form, modelType: v})} />
 <input value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
 
-// ❌ 错误：无业务理由的禁用
+// 否 错误：无业务理由的禁用
 <ModelTypePicker value={form.modelType} onChange={...} disabled={!!editing} />
 <input value={form.code} disabled={!!editing} style={{ opacity: 0.6 }} />
 ```
