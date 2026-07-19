@@ -13,6 +13,27 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayConsoleTenantAccessTests
 {
+    [Theory]
+    [InlineData("https://api.example.com/v1", "passthrough", null)]
+    [InlineData("http://api.example.com/v1", "gemini-native", null)]
+    [InlineData("wss://openspeech.example.com/asr", "doubao-asr-stream", null)]
+    [InlineData("https://openspeech.example.com/asr", "doubao-asr-stream", "必须使用公网 WSS")]
+    [InlineData("ws://openspeech.example.com/asr", "doubao-asr-stream", "必须使用公网 WSS")]
+    [InlineData("wss://api.example.com/v1", "passthrough", "WSS 仅支持豆包流式语音识别")]
+    [InlineData("ws://api.example.com/v1", "passthrough", "其他 Exchange 必须使用 HTTP 或 HTTPS")]
+    public void ExternalExchangeTransport_MustMatchTransformer(
+        string targetUrl,
+        string transformerType,
+        string? expectedError)
+    {
+        var error = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
+
+        if (expectedError is null)
+            error.ShouldBeNull();
+        else
+            error.ShouldNotBeNull().ShouldContain(expectedError);
+    }
+
     [Fact]
     public async Task TenantProvisioningCompensation_RemovesEveryCatchablePartialStage()
     {

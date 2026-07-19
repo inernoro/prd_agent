@@ -531,6 +531,24 @@ public static class GatewayConfigurationProvisioning
         return true;
     }
 
+    public static string? ValidateExternalExchangeTransport(string targetUrl, string transformerType)
+    {
+        if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri))
+            return "外部租户 Exchange 目标地址格式无效";
+
+        var isStreamingAsr = string.Equals(
+            transformerType,
+            "doubao-asr-stream",
+            StringComparison.OrdinalIgnoreCase);
+        if (isStreamingAsr)
+            return uri.Scheme == "wss"
+                ? null
+                : "豆包流式语音识别必须使用公网 WSS 地址";
+        return uri.Scheme is "http" or "https"
+            ? null
+            : "WSS 仅支持豆包流式语音识别；其他 Exchange 必须使用 HTTP 或 HTTPS";
+    }
+
     private static bool ContainsSensitiveQueryParameter(Uri uri)
     {
         if (string.IsNullOrEmpty(uri.Query)) return false;

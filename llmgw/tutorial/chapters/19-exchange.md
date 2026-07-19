@@ -13,7 +13,7 @@
 - 顶部租户为“教程咖啡店”，当前角色有路由配置权限。
 - 继续使用[[第 6 章：配置第一个 Provider|第 6 章]]公开教程桩。目标地址固定为 `https://map.ebcone.net/api/v1/stub/v1/chat/completions`；通讯标记固定为 `tutorial-stub-only`，它不是生产秘密。
 - 密钥只在输入框中填写，不写进 URL、截图、说明或审计搜索词。
-- 外部租户可使用 HTTP/HTTPS，豆包流式 ASR 等 WebSocket Exchange 必须使用 WSS；明文 WS、内网、保留地址、localhost 和 URL userinfo 都会被拒绝。
+- 外部租户的常规 Exchange 使用 HTTP/HTTPS；只有豆包流式 ASR 使用 WSS。transport 与转换类型不匹配、明文 WS、内网、保留地址、localhost 和 URL userinfo 都会被拒绝。
 
 ## 跟我做
 
@@ -71,7 +71,7 @@
 
 ![追加后实图：成员新增 stub-chat、候选归零，教程聊天模型保持不变](https://cds.miduo.org/api/reports/assets/c57a8dbd92478c80f20ef599e1cfbc11f3add5f7ce314c04e98440d993183acf.png)
 
-9. 需要接入豆包流式 ASR 时，新建独立 Exchange，把“上游接口类型”改为豆包流式语音识别，并填写供应商给出的公网 `wss://` 地址。外部租户的 WebSocket 必须使用 WSS；保存时会拒绝私网或保留地址，运行时会重新解析并固定公网 IP，TLS 仍按原始主机名校验证书，且不跟随跳转。不要把现有 HTTP 教程桩改成 WebSocket，也不要用未知付费上游做本章验证。
+9. 需要接入豆包流式 ASR 时，新建独立 Exchange，把“上游接口类型”改为豆包流式语音识别，并填写供应商给出的公网 `wss://` 地址。服务端会拒绝“流式 ASR + HTTP/HTTPS”和“其他转换类型 + WSS”两种错配；保存时也会拒绝私网或保留地址，运行时会重新解析并固定公网 IP，TLS 仍按原始主机名校验证书，且不跟随跳转。不要把现有 HTTP 教程桩改成 WebSocket，也不要用未知付费上游做本章验证。
 
 **图 093 的上游接口类型选择位于同一基础配置区，WSS 只改变安全边界，不改变密钥只写原则**
 
@@ -102,7 +102,7 @@
 ## 失败怎么办
 
 - 创建时提示必须填写通讯密钥：本教程桩填写固定标记 `tutorial-stub-only`，不要拿 Gateway 租户 key 代替。
-- 地址被拒绝：HTTP Exchange 检查是否为内网、保留地址、带用户凭据或密钥参数；WebSocket Exchange 还必须是公网 WSS。DNS 只要返回任一私网或保留地址就会整体拒绝。
+- 地址被拒绝：先检查 transport 是否匹配转换类型；常规 Exchange 只用 HTTP/HTTPS，豆包流式 ASR 只用公网 WSS。然后检查是否为内网、保留地址、带用户凭据或密钥参数；DNS 只要返回任一私网或保留地址就会整体拒绝。
 - WSS 保存成功但执行失败：确认供应商证书覆盖 URL 原始主机名，且所有解析地址都可从 Gateway 访问；运行时不会使用代理、不会跟随跳转，也不会在 DNS 变化后改连未经验证的地址。
 - 模型映射提示重复：合并大小写不同的重复项，每个 Exchange 内同一上游标识只保留一条。
 - 保存提示版本冲突：保留当前表单内容，关闭后重新打开最新版本，再人工合并修改。

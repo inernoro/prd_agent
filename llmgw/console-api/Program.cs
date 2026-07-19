@@ -6293,7 +6293,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -6385,7 +6385,7 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, http.RequestAborted);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -8183,8 +8183,12 @@ static async Task WriteLoginAuditAsync(
     }
 }
 
-static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, CancellationToken ct)
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)
 {
+    var transportError = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
+    if (transportError is not null)
+        return transportError;
+
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
         || uri.Scheme is not ("http" or "https" or "wss"))
     {
@@ -10310,16 +10314,23 @@ static async Task RunGatewayRecoveryLoopAsync(
     {
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            var repaired = await GatewayRecoveryOperations.RepairExpiredAsync(database);
-            if (repaired > 0)
-                logger.LogWarning("LLMGW recovery repaired {Count} expired operations", repaired);
+            try
+            {
+                var repaired = await GatewayRecoveryOperations.RepairExpiredAsync(database);
+                if (repaired > 0)
+                    logger.LogWarning("LLMGW recovery repaired {Count} expired operations", repaired);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "LLMGW recovery tick failed; the next tick will retry");
+            }
         }
     }
     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
     {
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "LLMGW recovery loop stopped unexpectedly");
     }
 }

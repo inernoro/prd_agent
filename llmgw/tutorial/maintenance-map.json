@@ -14,7 +14,7 @@
       "tutorialSourceIds":["chapter-19","chapter-30"],
       "anchors":[
         {"name":"创建入口","product":"新建 Exchange","tutorial":"新建 Exchange"},
-        {"name":"WSS 安全边界","product":"外部租户的 WebSocket 必须使用 WSS","tutorial":"外部租户的 WebSocket 必须使用 WSS"},
+        {"name":"WSS 安全边界","product":"只有豆包流式语音识别可使用公网 WSS","tutorial":"只有豆包流式 ASR 使用 WSS"},
         {"name":"运行时固定公网地址","product":"运行时会固定已验证公网 IP","tutorial":"运行时会重新解析并固定公网 IP"}
       ]
     },
