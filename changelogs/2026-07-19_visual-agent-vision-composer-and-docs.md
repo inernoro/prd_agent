@@ -16,3 +16,4 @@
 | fix | prd-api | stub-vision 补出图闭环：vision 模式非流式响应带 message.images[]（优先以请求内联图为底+提示词水印），dev/灰度多图生图不再必然「无图片数据」失败 |
 | docs | doc | 视觉创作优化清单新增「根因分析」章：双层文本未分离/重试以渲染文本为源/stub 缺 vision 闭环 三大结构性根因与治法 |
 | fix | prd-admin | 用户消息复制改走 copyToClipboard SSOT 工具（非安全上下文 execCommand 兜底，失败不假成功） |
+| polish | prd-admin | 用户消息「复制」升级为明显按钮态（图标 + 边框 chip，token 双皮肤），治「认不出是按钮」 |

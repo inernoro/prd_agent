@@ -1,4 +1,5 @@
 import { memo, useMemo, useCallback, useState } from 'react';
+import { Copy as CopyIcon, Check } from 'lucide-react';
 import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
 import { inlineMarksToTokens } from '@/lib/chipTokenText';
@@ -533,13 +534,24 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
       >
         {isUser ? (
+          // 明显的按钮态（用户反馈 9px 纯文本「复制」认不出是按钮）：图标 +
+          // 边框 chip，走双皮肤 token；点击后短暂变绿反馈「已复制」。
           <button
             type="button"
-            className="text-[9px] font-medium"
-            style={{ color: copied ? 'rgba(74,222,128,0.85)' : 'var(--text-muted)' }}
+            className="inline-flex items-center gap-1 rounded-full font-medium"
+            style={{
+              padding: '2px 8px',
+              fontSize: 10,
+              lineHeight: '14px',
+              border: '1px solid var(--border-secondary)',
+              background: 'var(--bg-card)',
+              color: copied ? 'rgba(74,222,128,0.9)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
             title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
             onClick={() => copyUserMessage(msgBody)}
           >
+            {copied ? <Check size={11} /> : <CopyIcon size={11} />}
             {copied ? '已复制' : '复制'}
           </button>
         ) : null}
