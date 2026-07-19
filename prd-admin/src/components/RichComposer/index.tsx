@@ -19,9 +19,17 @@ import {
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
+  COPY_COMMAND,
+  CUT_COMMAND,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
 } from 'lexical';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
+import {
+  hasChipToken,
+  inlineMarksToTokens,
+  parseChipTokenText,
+} from '@/lib/chipTokenText';
 import { ImageChipNode, $createImageChipNode, $isImageChipNode } from './ImageChipNode';
 import { ImageMentionPlugin, type ImageOption } from './ImageMentionPlugin';
 
@@ -267,6 +275,99 @@ function EditorInner({
     }),
     [editor]
   );
+
+  // Lovart 式 chip 文本 token（对齐 BrandAI ChatPanel）：
+  // - 复制/剪切：选区含 chip 时序列化为 "[@image:#N:canvasKey:src]" 纯文本，可跨输入框/外部应用携带；
+  // - 粘贴：token 的 canvasKey 命中当前 imageOptions 才还原为就绪 chip（refId/src 以当前集合为准，
+  //   防陈旧 token 造幻觉引用），未命中保持纯文本；图片文件粘贴仍走既有 onPasteImage 通道。
+  useEffect(() => {
+    const $serializeSelection = (): string | null => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return null;
+      const chipMeta = new Map<number, { canvasKey: string; src: string }>();
+      let hasChip = false;
+      for (const node of selection.getNodes()) {
+        if ($isImageChipNode(node)) {
+          hasChip = true;
+          chipMeta.set(node.getRefId(), {
+            canvasKey: node.getCanvasKey(),
+            src: node.getSrc(),
+          });
+        }
+      }
+      if (!hasChip) return null; // 纯文本选区走浏览器默认复制
+      // 选区纯文本里 chip 呈现为 @imgN（getTextContent），升级为完整 token
+      return inlineMarksToTokens(selection.getTextContent(), chipMeta);
+    };
+    const handleCopyLike = (payload: unknown, cut: boolean): boolean => {
+      const event = payload instanceof ClipboardEvent ? payload : null;
+      if (!event?.clipboardData) return false;
+      const text = $serializeSelection();
+      if (text == null) return false;
+      event.preventDefault();
+      event.clipboardData.setData('text/plain', text);
+      if (cut) {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.removeText();
+      }
+      return true;
+    };
+    const unCopy = editor.registerCommand(
+      COPY_COMMAND,
+      (payload) => handleCopyLike(payload, false),
+      COMMAND_PRIORITY_HIGH
+    );
+    const unCut = editor.registerCommand(
+      CUT_COMMAND,
+      (payload) => handleCopyLike(payload, true),
+      COMMAND_PRIORITY_HIGH
+    );
+    const unPaste = editor.registerCommand(
+      PASTE_COMMAND,
+      (payload) => {
+        const event = payload instanceof ClipboardEvent ? payload : null;
+        const dt = event?.clipboardData;
+        if (!event || !dt) return false;
+        // 图片文件优先交给既有 onPasteImage（ContentEditable onPaste）
+        const items = Array.from(dt.items ?? []);
+        if (items.some((it) => it.type.startsWith('image/'))) return false;
+        const text = dt.getData('text/plain');
+        if (!text || !hasChipToken(text)) return false;
+        event.preventDefault();
+        const optionByKey = new Map(imageOptions.map((o) => [o.key, o]));
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return true;
+        for (const seg of parseChipTokenText(text)) {
+          if (seg.type === 'text') {
+            if (seg.text) selection.insertText(seg.text);
+            continue;
+          }
+          const opt = optionByKey.get(seg.canvasKey);
+          if (!opt) {
+            // 不在当前画布可选集 → 原样保留 token 文本，不构造幻觉引用
+            selection.insertText(seg.raw);
+            continue;
+          }
+          selection.insertNodes([
+            $createImageChipNode({
+              canvasKey: opt.key,
+              refId: opt.refId,
+              src: opt.src,
+              label: opt.label,
+              ready: true, // 粘贴还原即就绪（实体色），同 BrandAI 语义
+            }),
+          ]);
+        }
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+    return () => {
+      unCopy();
+      unCut();
+      unPaste();
+    };
+  }, [editor, imageOptions]);
 
   // 处理 Enter 发送
   useEffect(() => {

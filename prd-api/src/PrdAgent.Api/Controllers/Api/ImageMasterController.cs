@@ -1679,10 +1679,12 @@ public class ImageMasterController : ControllerBase
             // 服务器权威性：后端自动保存 User 消息到 image_master_messages
             try
             {
-                // 优先使用前端传入的完整用户消息（含标签/引用），回退到纯 prompt
+                // 优先使用前端传入的完整用户消息（含标签/引用）。
+                // 缺失时禁止直接存模型层 prompt（含生图前缀 + 【引用图片】文字块 + 文件名），
+                // 走清洗兜底：只保留用户可读文本 + @imgN 引用标记（前端渲染为视觉 chip）。
                 var userMsgContent = !string.IsNullOrWhiteSpace(request?.UserMessageContent)
                     ? request!.UserMessageContent!.Trim()
-                    : prompt;
+                    : BuildFallbackUserMessageContent(prompt);
                 var userMsg = new ImageMasterMessage
                 {
                     Id = Guid.NewGuid().ToString("N"),
@@ -1715,6 +1717,74 @@ public class ImageMasterController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"创建生图任务失败（traceId={traceId}）"));
         }
+    }
+
+    /// <summary>
+    /// UserMessageContent 缺失时的兜底：从模型层 prompt 中剥离生图意图前缀与
+    /// 【引用图片（按顺序）】文字块（含 "- @imgN: 文件名" 行），避免把模型 prompt
+    /// 泄漏进 image_master_messages 的可见消息。引用块中的 @imgN 序号以内联标记补回，
+    /// 由前端渲染为视觉 chip；清洗后无内容则存空字符串。不影响真正发给模型的 prompt。
+    /// </summary>
+    private static string BuildFallbackUserMessageContent(string? prompt)
+    {
+        var s = prompt ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+
+        // 1. 剥离生图意图前缀（防御性循环：历史内容可能叠加多层）
+        var prefixRe = new Regex(@"^\s*Generate an image based on the following description:\s*", RegexOptions.IgnoreCase);
+        for (var i = 0; i < 5 && prefixRe.IsMatch(s); i++)
+        {
+            s = prefixRe.Replace(s, string.Empty, 1);
+        }
+
+        // 2+3. 收集并剥离【引用图片…】块：块头 + 紧随其后的连续 "- @imgN: 文件名" 行。
+        // 只剥真实生成块（Codex P2，与前端 parseVisualMessageDisplay 同口径）——
+        // 集成方 prompt 里用户手写的 "- @img1: 保持面部不变" 普通列表行不在块头
+        // 之后，整行保留（指令文字不丢，@imgN 由前端就地渲染 chip）。
+        var refIds = new List<int>();
+        {
+            var headerRe = new Regex(@"【[^】]*引用图片[^】]*】");
+            var refLineRe = new Regex(@"^\s*-\s*@?img(\d+)\s*[:：].*$", RegexOptions.IgnoreCase);
+            var lines = s.Split('\n');
+            var kept = new List<string>(lines.Length);
+            var inBlock = false;
+            foreach (var line in lines)
+            {
+                if (headerRe.IsMatch(line))
+                {
+                    inBlock = true;
+                    // 块头可能与正文同行（历史拼接）：剥块头标记，保留同行其余文字
+                    var rest = headerRe.Replace(line, " ").Trim();
+                    if (rest.Length > 0) kept.Add(rest);
+                    continue;
+                }
+                var m = refLineRe.Match(line);
+                if (inBlock && m.Success)
+                {
+                    if (int.TryParse(m.Groups[1].Value, out var id) && id > 0 && !refIds.Contains(id)) refIds.Add(id);
+                    continue; // 块内引用行整行剥离（文件名绝不进展示）
+                }
+                inBlock = false; // 任何非引用行（含空行）终结当前块
+                kept.Add(line);
+            }
+            s = string.Join("\n", kept);
+        }
+
+        // 4. 折叠空白
+        s = Regex.Replace(s, @"[ \t]{2,}", " ");
+        s = Regex.Replace(s, @"\n{3,}", "\n\n").Trim();
+
+        // 5. 正文中未内联出现的引用序号以 @imgN 标记补回（(?!\d) 防 @img1 命中 @img12）
+        var missing = refIds
+            .Where(id => !Regex.IsMatch(s, $@"@img{id}(?!\d)", RegexOptions.IgnoreCase))
+            .Select(id => $"@img{id}")
+            .ToList();
+        if (missing.Count > 0)
+        {
+            var markers = string.Join(" ", missing);
+            s = string.IsNullOrEmpty(s) ? markers : $"{markers} {s}";
+        }
+        return s;
     }
 
     private async Task UpsertWorkspaceCanvasPlaceholderAsync(
