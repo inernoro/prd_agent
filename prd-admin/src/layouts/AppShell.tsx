@@ -45,6 +45,7 @@ import {
   BarChart3,
   GraduationCap,
   Droplets,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -74,7 +75,7 @@ import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
-import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -85,6 +86,8 @@ import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
+import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
+import { toast } from '@/lib/toast';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -260,6 +263,7 @@ export default function AppShell() {
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
+  const [gatewayOpening, setGatewayOpening] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -594,6 +598,21 @@ export default function AppShell() {
     ],
     [adminNotifications, personalNotifications]
   );
+
+  const openLlmGateway = useCallback(async () => {
+    if (gatewayOpening || user?.role !== 'ADMIN') return;
+    setGatewayOpening(true);
+    const result = await createLlmGatewaySsoTicket();
+    if (result.success) {
+      const target = resolveLlmGatewaySsoHref(result.data.code);
+      if (target) {
+        window.location.assign(target);
+        return;
+      }
+    }
+    setGatewayOpening(false);
+    toast.error('模型网关暂时无法打开', result.success ? '登录凭据未通过安全校验' : result.error?.message);
+  }, [gatewayOpening, user?.role]);
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
     [activeNotifications, dismissedToastIds]
@@ -1136,6 +1155,19 @@ export default function AppShell() {
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
+            {user?.role === 'ADMIN' && (
+              <button
+                type="button"
+                disabled={gatewayOpening}
+                onClick={() => void openLlmGateway()}
+                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                <Server size={18} />
+                <span className="text-sm">模型网关</span>
+                {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={16} className="ml-auto" />}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
@@ -1532,6 +1564,22 @@ export default function AppShell() {
                     皮肤 / 导航 / 账户
                   </span>
                 </DropdownMenu.Item>
+
+                {user?.role === 'ADMIN' && (
+                  <DropdownMenu.Item
+                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover:bg-white/6 focus-visible:ring-2 focus-visible:ring-indigo-400/70 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                    style={{ color: 'var(--text-secondary)' }}
+                    disabled={gatewayOpening}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void openLlmGateway();
+                    }}
+                  >
+                    <Server size={16} className="shrink-0" />
+                    <span className="text-[13px]">模型网关</span>
+                    {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={15} className="ml-auto" />}
+                  </DropdownMenu.Item>
+                )}
 
                 {/* 液态玻璃一键开关：点击不关菜单（preventDefault），让用户当场看到整个界面玻璃开/关的变化 */}
                 <DropdownMenu.Item

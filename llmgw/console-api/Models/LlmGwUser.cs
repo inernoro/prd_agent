@@ -18,6 +18,12 @@ public class LlmGwUser
 
     public string DisplayName { get; set; } = string.Empty;
 
+    /// <summary>外部身份提供方；MAP 一键登录账号固定为 map，独立口令账号为空。</summary>
+    public string? IdentityProvider { get; set; }
+
+    /// <summary>外部身份不可变主体。MAP 账号按 map:{userId} 绑定，不以可变用户名关联。</summary>
+    public string? ExternalSubjectId { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

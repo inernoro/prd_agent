@@ -191,6 +191,7 @@ var teams = gatewayDatabase.GetCollection<LlmGwTeam>("llmgw_teams");
 var memberships = gatewayDatabase.GetCollection<LlmGwMembership>("llmgw_memberships");
 var recoveryOperations = gatewayDatabase.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
 var loginAudits = gatewayDatabase.GetCollection<LlmGwLoginAudit>("llmgw_login_audits");
+var mapSsoTickets = gatewayDatabase.GetCollection<BsonDocument>("llmgw_map_sso_tickets");
 var lifecycleRuns = gatewayDatabase.GetCollection<BsonDocument>("llmgw_lifecycle_runs");
 // 网关配置面：GW 自有集合优先，MAP 集合作为未迁移时期的兼容来源。
 var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
@@ -237,6 +238,25 @@ await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
 await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
     Builders<LlmGwUser>.IndexKeys.Ascending(x => x.Username),
     new CreateIndexOptions { Name = "uniq_llmgw_console_user_username", Unique = true }));
+await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
+    Builders<LlmGwUser>.IndexKeys.Ascending(x => x.IdentityProvider).Ascending(x => x.ExternalSubjectId),
+    new CreateIndexOptions<LlmGwUser>
+    {
+        Name = "uniq_llmgw_console_user_external_subject",
+        Unique = true,
+        PartialFilterExpression = Builders<LlmGwUser>.Filter.And(
+            Builders<LlmGwUser>.Filter.Type(x => x.IdentityProvider, BsonType.String),
+            Builders<LlmGwUser>.Filter.Type(x => x.ExternalSubjectId, BsonType.String)),
+    }));
+await mapSsoTickets.Indexes.CreateManyAsync(new[]
+{
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("CodeHash"),
+        new CreateIndexOptions { Name = "uniq_llmgw_map_sso_code_hash", Unique = true }),
+    new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+        new CreateIndexOptions { Name = "ttl_llmgw_map_sso_expires", ExpireAfter = TimeSpan.Zero }),
+});
 await serviceKeyDirectory.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
     Builders<BsonDocument>.IndexKeys.Ascending("KeyHash"),
     new CreateIndexOptions { Name = "uniq_llmgw_service_key_directory_hash", Unique = true }));
@@ -590,10 +610,170 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
         Username = user.Username,
         DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+        IdentityProvider = user.IdentityProvider,
         MustChangePassword = user.MustChangePassword,
         Tenant = ToTenantSession(tenant, membership),
     };
     return Json(ApiEnvelope<LoginResultDto>.Ok(data), jsonOptions);
+}).AllowAnonymous();
+
+// MAP 管理员一次性登录：授权码只存哈希、60 秒过期、先原子 claim 再签发短会话。
+// URL 使用 fragment 传码，因此静态服务器和 Referer 都不会收到明文 code。
+app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoRequestDto req) =>
+{
+    var code = (req.Code ?? string.Empty).Trim();
+    if (code.Length is < 32 or > 256)
+    {
+        await WriteLoginAuditAsync(loginAudits, http, internalTenantId, "map-sso", null, false, "MAP_SSO_INVALID_CODE");
+        return Json(ApiEnvelope<LoginResultDto>.Fail("MAP_SSO_INVALID", "一键登录凭据无效或已过期"), jsonOptions, 401);
+    }
+
+    var now = DateTime.UtcNow;
+    var ticket = await MapSsoTicketStore.TryClaimAsync(mapSsoTickets, code, now);
+    if (ticket is null)
+    {
+        await WriteLoginAuditAsync(loginAudits, http, internalTenantId, "map-sso", null, false, "MAP_SSO_REPLAY_OR_EXPIRED");
+        return Json(ApiEnvelope<LoginResultDto>.Fail("MAP_SSO_INVALID", "一键登录凭据无效、已过期或已使用"), jsonOptions, 401);
+    }
+
+    var mapUserId = ticket.GetStringOrEmpty("MapUserId").Trim();
+    var mapUsername = ticket.GetStringOrEmpty("MapUsername").Trim();
+    var mapDisplayName = ticket.GetStringOrEmpty("MapDisplayName").Trim();
+    if (mapUserId.Length == 0 || mapUsername.Length == 0)
+    {
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+            Builders<BsonDocument>.Update.Set("State", "failed").Set("FailureReason", "identity_missing"));
+        await WriteLoginAuditAsync(loginAudits, http, internalTenantId, "map-sso", null, false, "MAP_SSO_IDENTITY_MISSING");
+        return Json(ApiEnvelope<LoginResultDto>.Fail("MAP_SSO_INVALID", "一键登录身份不完整"), jsonOptions, 401);
+    }
+
+    try
+    {
+        var tenant = await tenants.Find(x => x.Id == internalTenantId && x.Status == "active").FirstOrDefaultAsync();
+        if (tenant is null)
+        {
+            await mapSsoTickets.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Update.Set("State", "failed").Set("FailureReason", "internal_tenant_missing"));
+            await WriteLoginAuditAsync(loginAudits, http, internalTenantId, mapUsername, null, false, "MAP_SSO_TENANT_MISSING");
+            return Json(ApiEnvelope<LoginResultDto>.Fail("MAP_SSO_UNAVAILABLE", "模型网关内部租户尚未就绪"), jsonOptions, 503);
+        }
+
+        var externalSubjectId = $"map:{mapUserId}";
+        var gwUser = await users.Find(x => x.IdentityProvider == "map" && x.ExternalSubjectId == externalSubjectId).FirstOrDefaultAsync();
+        if (gwUser is null)
+        {
+            var stableUserHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant();
+            var createdUser = new LlmGwUser
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Username = $"map-{stableUserHash[..16]}",
+                DisplayName = mapDisplayName.Length > 0 ? mapDisplayName : mapUsername,
+                IdentityProvider = "map",
+                ExternalSubjectId = externalSubjectId,
+                PasswordHash = PasswordHasher.Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(48))),
+                IsActive = true,
+                MustChangePassword = false,
+                PasswordChangedByUser = false,
+                SecurityVersion = 1,
+                TenantIds = new List<string> { tenant.Id },
+                DefaultTenantId = tenant.Id,
+                CreatedAt = now,
+                UpdatedAt = now,
+                LastLoginAt = now,
+            };
+            try
+            {
+                await users.InsertOneAsync(createdUser);
+                gwUser = createdUser;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                gwUser = await users.Find(x => x.IdentityProvider == "map" && x.ExternalSubjectId == externalSubjectId).FirstOrDefaultAsync();
+                if (gwUser is null) throw;
+            }
+        }
+
+        gwUser = await users.FindOneAndUpdateAsync(
+            Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
+            Builders<LlmGwUser>.Update
+                .Set(x => x.DisplayName, mapDisplayName.Length > 0 ? mapDisplayName : mapUsername)
+                .Set(x => x.IsActive, true)
+                .Set(x => x.MustChangePassword, false)
+                .Set(x => x.DefaultTenantId, tenant.Id)
+                .AddToSet(x => x.TenantIds, tenant.Id)
+                .Set(x => x.LastLoginAt, now)
+                .Set(x => x.UpdatedAt, now)
+                .Inc(x => x.SecurityVersion, 1),
+            new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+        if (gwUser is null) throw new InvalidOperationException("MAP_SSO_USER_UPDATE_CONFLICT");
+
+        var membershipFilter = Builders<LlmGwMembership>.Filter.And(
+            Builders<LlmGwMembership>.Filter.Eq(x => x.TenantId, tenant.Id),
+            Builders<LlmGwMembership>.Filter.Eq(x => x.UserId, gwUser.Id));
+        var membershipUpdate = Builders<LlmGwMembership>.Update
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.TenantId, tenant.Id)
+            .SetOnInsert(x => x.UserId, gwUser.Id)
+            .SetOnInsert(x => x.CreatedAt, now)
+            .Set(x => x.Role, LlmGwTenantRoles.Admin)
+            .Set(x => x.Status, "active")
+            .Set(x => x.UpdatedAt, now)
+            .Inc(x => x.Version, 1);
+        LlmGwMembership? membership;
+        try
+        {
+            membership = await memberships.FindOneAndUpdateAsync(
+                membershipFilter,
+                membershipUpdate,
+                new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership>
+                {
+                    IsUpsert = true,
+                    ReturnDocument = ReturnDocument.After,
+                });
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            membership = await memberships.FindOneAndUpdateAsync(
+                membershipFilter,
+                membershipUpdate,
+                new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+        }
+        if (membership is null) throw new InvalidOperationException("MAP_SSO_MEMBERSHIP_UPDATE_CONFLICT");
+
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Filter.Eq("State", "claimed")),
+            Builders<BsonDocument>.Update
+                .Set("State", "consumed")
+                .Set("GatewayUserId", gwUser.Id)
+                .Set("CompletedAt", DateTime.UtcNow));
+        await WriteLoginAuditAsync(loginAudits, http, tenant.Id, mapUsername, gwUser.Id, true, null);
+
+        // MAP 联邦会话缩短为 15 分钟；再次从 MAP 点击会原子吊销该用户旧 Gateway 会话。
+        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, TimeSpan.FromMinutes(15));
+        return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
+        {
+            Token = token,
+            Username = mapUsername,
+            DisplayName = gwUser.DisplayName,
+            ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            IdentityProvider = "map",
+            MustChangePassword = false,
+            Tenant = ToTenantSession(tenant, membership),
+        }), jsonOptions);
+    }
+    catch
+    {
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Filter.Eq("State", "claimed")),
+            Builders<BsonDocument>.Update.Set("State", "failed").Set("FailureReason", "provisioning_failed"));
+        throw;
+    }
 }).AllowAnonymous();
 
 // ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
@@ -690,6 +870,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         Username = changedUser.Username,
         DisplayName = string.IsNullOrEmpty(changedUser.DisplayName) ? changedUser.Username : changedUser.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+        IdentityProvider = changedUser.IdentityProvider,
         Tenant = ToTenantSession(tenant, membership),
     };
     return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(data), jsonOptions);
@@ -760,6 +941,7 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
         Username = user.Username,
         DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
         ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+        IdentityProvider = user.IdentityProvider,
         MustChangePassword = false,
         Tenant = ToTenantSession(tenant, membership),
     }), jsonOptions);

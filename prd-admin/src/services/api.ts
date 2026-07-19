@@ -35,6 +35,11 @@ export const api = {
     },
   },
 
+  // ============ LLM Gateway 一键登录 ============
+  llmGateway: {
+    ssoTicket: () => '/api/llm-gateway/sso/ticket',
+  },
+
   // ============ Users 用户管理 ============
   users: {
     list: () => '/api/users',

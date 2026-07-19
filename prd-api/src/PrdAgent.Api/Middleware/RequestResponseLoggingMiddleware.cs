@@ -67,6 +67,9 @@ public class RequestResponseLoggingMiddleware
         }
 
         var path = context.Request.Path.Value ?? "";
+        var responseContainsOneTimeCredential = path.Equals(
+            "/api/llm-gateway/sso/ticket",
+            StringComparison.OrdinalIgnoreCase);
         if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             await _next(context);
@@ -257,7 +260,7 @@ public class RequestResponseLoggingMiddleware
                         isEventStream: false,
                         apiSummary: apiSummary,
                         ctx: finalCtx,
-                        responseBodyText: responseBody);
+                        responseBodyText: responseContainsOneTimeCredential ? null : responseBody);
                 }
 
                 await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);

@@ -26,12 +26,18 @@ public sealed class LoginRequestDto
     public string? Password { get; set; }
 }
 
+public sealed class MapSsoRequestDto
+{
+    public string? Code { get; set; }
+}
+
 public sealed class LoginResultDto
 {
     public string Token { get; init; } = string.Empty;
     public string? Username { get; init; }
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
+    public string? IdentityProvider { get; init; }
 
     /// <summary>首登强制改密：为 true 时前端须跳「设置新口令」页，改密成功前不放行日志页。</summary>
     public bool MustChangePassword { get; init; }
@@ -66,6 +72,7 @@ public sealed class ChangePasswordResultDto
     public string? Username { get; init; }
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
+    public string? IdentityProvider { get; init; }
     public TenantSessionDto? Tenant { get; init; }
 }
 

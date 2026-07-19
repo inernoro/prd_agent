@@ -17,6 +17,7 @@ import type {
   ChangePasswordResult,
   LoginRequest,
   LoginResult,
+  MapSsoRequest,
   LogsListData,
   LogsListParams,
   LogsMeta,
@@ -98,6 +99,7 @@ const USER_KEY = 'llmgw.user';
 const TENANT_KEY = 'llmgw.tenant';
 // 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
 const MCP_KEY = 'llmgw.mustChangePwd';
+const mapSsoExchanges = new Map<string, Promise<ApiResponse<LoginResult>>>();
 
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBase()).replace(/\/$/, '');
 
@@ -105,7 +107,7 @@ export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username?: string; displayName?: string } | null {
+export function getStoredUser(): { username?: string; displayName?: string; identityProvider?: string } | null {
   const raw = sessionStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
@@ -129,7 +131,11 @@ export function setSession(result: LoginResult) {
   sessionStorage.setItem(TOKEN_KEY, result.token);
   sessionStorage.setItem(
     USER_KEY,
-    JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
+    JSON.stringify({
+      username: result.username ?? undefined,
+      displayName: result.displayName ?? undefined,
+      identityProvider: result.identityProvider ?? undefined,
+    }),
   );
   if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
   else sessionStorage.removeItem(TENANT_KEY);
@@ -142,7 +148,11 @@ export function applyChangePasswordResult(result: ChangePasswordResult) {
   sessionStorage.setItem(TOKEN_KEY, result.token);
   sessionStorage.setItem(
     USER_KEY,
-    JSON.stringify({ username: result.username ?? undefined, displayName: result.displayName ?? undefined }),
+    JSON.stringify({
+      username: result.username ?? undefined,
+      displayName: result.displayName ?? undefined,
+      identityProvider: result.identityProvider ?? undefined,
+    }),
   );
   if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
   sessionStorage.removeItem(MCP_KEY);
@@ -235,6 +245,15 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 // ── 鉴权 ──
 export function login(req: LoginRequest): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/login', { method: 'POST', body: req });
+}
+
+export function exchangeMapSso(req: MapSsoRequest): Promise<ApiResponse<LoginResult>> {
+  const existing = mapSsoExchanges.get(req.code);
+  if (existing) return existing;
+
+  const exchange = apiRequest<LoginResult>('/auth/map-sso', { method: 'POST', body: req });
+  mapSsoExchanges.set(req.code, exchange);
+  return exchange;
 }
 
 export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<ChangePasswordResult>> {
