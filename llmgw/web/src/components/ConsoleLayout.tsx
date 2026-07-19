@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Boxes, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock,
-  GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
+  ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
   ShieldCheck, Shuffle, Sun, Tags, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -10,6 +10,7 @@ import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { canAccessPage, canUseCapability, type ConsolePage } from '@/lib/access';
 import { useThemePreference } from '@/lib/theme';
+import { resolveMapHomeHref } from '@/lib/mapNavigation';
 
 type NavItem = { to: string; label: string; icon: ReactNode; page: ConsolePage; end?: boolean };
 type NavGroup = { label: string; items: NavItem[] };
@@ -122,6 +123,11 @@ export function ConsoleLayout() {
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
+              {user?.identityProvider === 'map' ? (
+                <button type="button" onClick={() => window.location.assign(resolveMapHomeHref())}>
+                  <Activity size={15} />返回 MAP<ExternalLink className="lg-user-menu-end-icon" size={14} />
+                </button>
+              ) : null}
               <button type="button" onClick={toggleTheme}>{theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}{theme === 'dark' ? '切换浅色' : '切换深色'}</button>
               <button type="button" onClick={logout}><LogOut size={15} />退出登录</button>
             </div>

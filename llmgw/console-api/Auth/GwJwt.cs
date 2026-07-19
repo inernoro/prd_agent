@@ -29,10 +29,14 @@ public sealed class GwJwt
     public (string Token, DateTime ExpiresAt) Issue(
         LlmGwUser user,
         LlmGwTenant? tenant = null,
-        LlmGwMembership? membership = null)
+        LlmGwMembership? membership = null,
+        TimeSpan? lifetime = null)
     {
         var now = DateTime.UtcNow;
-        var expires = now.Add(Lifetime);
+        var requestedLifetime = lifetime ?? Lifetime;
+        var effectiveLifetime = requestedLifetime > Lifetime ? Lifetime : requestedLifetime;
+        if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
+        var expires = now.Add(effectiveLifetime);
 
         var claims = new List<Claim>
         {
@@ -41,6 +45,11 @@ public sealed class GwJwt
             new(ClaimTypes.Name, user.Username),
             new(TenantAccess.UserSecurityVersionClaim, user.SecurityVersion.ToString()),
         };
+
+        if (!string.IsNullOrWhiteSpace(user.IdentityProvider))
+        {
+            claims.Add(new Claim("identity_provider", user.IdentityProvider));
+        }
 
         // 首登强制改密：带 mcp=1 的 token 只能调 /gw/auth/change-password，服务端策略门（LogsRead）拒绝
         // 其访问 /gw/logs*。改密成功后重新签发的 token 不再带此 claim，方可读日志。

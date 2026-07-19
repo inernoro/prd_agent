@@ -1,21 +1,15 @@
-import { ArrowRight, Zap } from 'lucide-react';
+import { ExternalLink, Zap } from 'lucide-react';
+import { useState } from 'react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
+import { MapSpinner } from '@/components/ui/VideoLoader';
+import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
+import { toast } from '@/lib/toast';
+import { createLlmGatewaySsoTicket } from '@/services';
+import { useAuthStore } from '@/stores/authStore';
 
-type GatewayLocation = Pick<Location, 'hostname' | 'protocol'>;
-
-export function resolveGatewayConsoleHref(location: GatewayLocation = window.location): string | null {
-  const previewSuffix = '.miduo.org';
-  if (!location.hostname.endsWith(previewSuffix)) return '/llmgw/';
-
-  if (location.hostname.endsWith(`-llmgw-web${previewSuffix}`)) return '/';
-
-  const previewSlug = location.hostname.slice(0, -previewSuffix.length);
-  const serviceLabel = `${previewSlug}-llmgw-web`;
-  if (serviceLabel.length > 63) return null;
-  return `${location.protocol}//${serviceLabel}${previewSuffix}/`;
-}
+export { resolveGatewayConsoleHref } from '@/lib/llmGatewaySso';
 
 /**
  * CompatibilityStack — 幕 7 · 模型兼容性矩阵
@@ -41,8 +35,24 @@ const PROVIDERS = [
 
 export function CompatibilityStack() {
   const { t, lang } = useLanguage();
+  const user = useAuthStore((state) => state.user);
+  const [gatewayOpening, setGatewayOpening] = useState(false);
   const titleParts = t.compat.title.split('\n');
-  const gatewayConsoleHref = resolveGatewayConsoleHref();
+
+  const openGateway = async () => {
+    if (gatewayOpening || user?.role !== 'ADMIN') return;
+    setGatewayOpening(true);
+    const result = await createLlmGatewaySsoTicket();
+    if (result.success) {
+      const target = resolveLlmGatewaySsoHref(result.data.code);
+      if (target) {
+        window.location.assign(target);
+        return;
+      }
+    }
+    setGatewayOpening(false);
+    toast.error('模型网关暂时无法打开', result.success ? '登录凭据未通过安全校验' : result.error?.message);
+  };
 
   const getProviderName = (p: (typeof PROVIDERS)[number]) =>
     'name' in p ? p.name : lang === 'en' ? p.en : p.zh;
@@ -91,15 +101,17 @@ export function CompatibilityStack() {
         <div className="mt-12 text-center text-[11px] text-white/35">
           {t.compat.footer}
         </div>
-        {gatewayConsoleHref ? (
+        {user?.role === 'ADMIN' ? (
           <div className="mt-6 flex justify-center">
-            <a
-              href={gatewayConsoleHref}
+            <button
+              type="button"
+              disabled={gatewayOpening}
+              onClick={() => void openGateway()}
               className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
             >
               {t.compat.action}
-              <ArrowRight className="h-3.5 w-3.5" />
-            </a>
+              {gatewayOpening ? <MapSpinner size={14} /> : <ExternalLink className="h-3.5 w-3.5" />}
+            </button>
           </div>
         ) : null}
       </div>

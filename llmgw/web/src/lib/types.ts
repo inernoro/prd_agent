@@ -14,6 +14,7 @@ export type ApiResponse<T> =
 
 // ── 登录 ──
 export type LoginRequest = { username: string; password: string };
+export type MapSsoRequest = { code: string };
 export type LoginResult = {
   token: string;
   username?: string | null;
@@ -21,6 +22,7 @@ export type LoginResult = {
   expiresAt?: string | null;
   /** 首登强制改密：true 时前端须跳「设置新口令」页，改密成功前不放行日志页。 */
   mustChangePassword?: boolean | null;
+  identityProvider?: string | null;
   tenant?: TenantSession | null;
 };
 
@@ -34,6 +36,7 @@ export type ChangePasswordResult = {
   username?: string | null;
   displayName?: string | null;
   expiresAt?: string | null;
+  identityProvider?: string | null;
   tenant?: TenantSession | null;
 };
 

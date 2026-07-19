@@ -216,6 +216,15 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Descending("CreatedAt").Ascending("Success"),
                 new CreateIndexOptions { Name = "idx_llmgw_login_audit_tenant_time_success" }),
         }, ct);
+        await CreateBsonIndexesAsync("llmgw_map_sso_tickets", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("CodeHash"),
+                new CreateIndexOptions { Name = "uniq_llmgw_map_sso_code_hash", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+                new CreateIndexOptions { Name = "ttl_llmgw_map_sso_expires", ExpireAfter = TimeSpan.Zero }),
+        }, ct);
         await CreateBsonIndexesAsync("llmgw_lifecycle_runs", new[]
         {
             new CreateIndexModel<BsonDocument>(

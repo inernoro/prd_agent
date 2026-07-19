@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 import { LoginPage } from '@/pages/LoginPage';
+import { MapSsoPage } from '@/pages/MapSsoPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
@@ -74,6 +75,7 @@ export function App() {
       <BrowserRouter basename={getRouterBasename()}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/map" element={<MapSsoPage />} />
           <Route
             path="/change-password"
             element={

@@ -13,6 +13,47 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayConsoleTenantAccessTests
 {
+    [Fact]
+    public async Task MapSsoTicket_ConcurrentConsumptionHasExactlyOneWinnerAndRejectsExpiredTicket()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var tickets = scope.Database.GetCollection<BsonDocument>("llmgw_map_sso_tickets");
+        var now = DateTime.UtcNow;
+        var code = new string('a', 43);
+        await tickets.InsertManyAsync([
+            new BsonDocument
+            {
+                { "_id", "valid" },
+                { "CodeHash", MapSsoTicketStore.HashCode(code) },
+                { "Purpose", MapSsoTicketStore.Purpose },
+                { "Audience", MapSsoTicketStore.Audience },
+                { "MapRole", "ADMIN" },
+                { "State", "issued" },
+                { "ExpiresAt", now.AddSeconds(60) },
+            },
+            new BsonDocument
+            {
+                { "_id", "expired" },
+                { "CodeHash", MapSsoTicketStore.HashCode(new string('b', 43)) },
+                { "Purpose", MapSsoTicketStore.Purpose },
+                { "Audience", MapSsoTicketStore.Audience },
+                { "MapRole", "ADMIN" },
+                { "State", "issued" },
+                { "ExpiresAt", now.AddSeconds(-1) },
+            },
+        ]);
+
+        var claims = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => MapSsoTicketStore.TryClaimAsync(tickets, code, now)));
+
+        claims.Count(x => x is not null).ShouldBe(1);
+        (await tickets.Find(Builders<BsonDocument>.Filter.Eq("_id", "valid")).SingleAsync())["State"].AsString.ShouldBe("claimed");
+        (await MapSsoTicketStore.TryClaimAsync(tickets, code, now)).ShouldBeNull();
+        (await MapSsoTicketStore.TryClaimAsync(tickets, new string('b', 43), now)).ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("https://api.example.com/v1", "passthrough", null)]
     [InlineData("http://api.example.com/v1", "gemini-native", null)]
@@ -429,6 +470,33 @@ public sealed class GatewayConsoleTenantAccessTests
         var parsed = new JwtSecurityTokenHandler().ReadJwtToken(token);
 
         parsed.Claims.Single(x => x.Type == TenantAccess.UserSecurityVersionClaim).Value.ShouldBe("7");
+    }
+
+    [Fact]
+    public void MapSsoJwt_ContainsIdentityProviderAndUsesRequestedShortLifetime()
+    {
+        var user = new LlmGwUser
+        {
+            Id = "map-user-a",
+            Username = "map-user-a",
+            IdentityProvider = "map",
+            SecurityVersion = 2,
+        };
+        var tenant = new LlmGwTenant { Id = "internal", Name = "Internal" };
+        var membership = new LlmGwMembership
+        {
+            Id = "membership-a",
+            TenantId = tenant.Id,
+            UserId = user.Id,
+            Role = LlmGwTenantRoles.Admin,
+        };
+        var jwt = new GwJwt(new string('x', 64), "llmgw-test");
+
+        var (token, expiresAt) = jwt.Issue(user, tenant, membership, TimeSpan.FromMinutes(15));
+        var parsed = new JwtSecurityTokenHandler().ReadJwtToken(token);
+
+        parsed.Claims.Single(x => x.Type == "identity_provider").Value.ShouldBe("map");
+        (expiresAt - DateTime.UtcNow).ShouldBeInRange(TimeSpan.FromMinutes(14), TimeSpan.FromMinutes(16));
     }
 
     private static DefaultHttpContext CreateHttpContext(string role, IReadOnlyList<string> teamIds)

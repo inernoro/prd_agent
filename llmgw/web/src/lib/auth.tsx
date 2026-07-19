@@ -9,6 +9,7 @@ import {
   getStoredTenant,
   isAuthed,
   login as apiLogin,
+  exchangeMapSso,
   mustChangePassword as readMustChangePassword,
   setSession,
 } from './api';
@@ -16,11 +17,12 @@ import type { ApiResponse, ChangePasswordResult, LoginResult, TenantSession } fr
 
 type AuthState = {
   authed: boolean;
-  user: { username?: string; displayName?: string } | null;
+  user: { username?: string; displayName?: string; identityProvider?: string } | null;
   tenant: TenantSession | null;
   /** 首登强制改密：为 true 时守卫强制跳 /change-password，改密成功前不放行日志页。 */
   mustChangePassword: boolean;
   login: (username: string, password: string) => Promise<ApiResponse<LoginResult>>;
+  loginWithMapCode: (code: string) => Promise<ApiResponse<LoginResult>>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<ApiResponse<ChangePasswordResult>>;
   logout: () => void;
 };
@@ -41,6 +43,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mustChangePassword: mustChange,
       async login(username: string, password: string) {
         const res = await apiLogin({ username, password });
+        if (res.success && res.data?.token) {
+          setSession(res.data);
+          setUser(getStoredUser());
+          setTenant(getStoredTenant());
+          setMustChange(readMustChangePassword());
+          setAuthed(true);
+        }
+        return res;
+      },
+      async loginWithMapCode(code: string) {
+        const res = await exchangeMapSso({ code });
         if (res.success && res.data?.token) {
           setSession(res.data);
           setUser(getStoredUser());
