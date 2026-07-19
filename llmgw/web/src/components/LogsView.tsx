@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { RefreshCw, ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
-import { getLogs, getLogsMeta, getLogsSessions } from '@/lib/api';
-import type { LlmLogListItem, SessionItem } from '@/lib/types';
+import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary } from '@/lib/api';
+import type { LlmLogListItem, LogsSummaryData, SessionItem } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
 import {
@@ -110,6 +110,7 @@ export function LogsView() {
   });
   const [metaError, setMetaError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const [rows, setRows] = useState<LlmLogListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -121,6 +122,7 @@ export function LogsView() {
   const [sessPage, setSessPage] = useState(1);
   const [sessLoading, setSessLoading] = useState(false);
 
+  const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExampleGuide, setShowExampleGuide] = useState(false);
 
@@ -199,6 +201,7 @@ export function LogsView() {
   // 请求序号守卫：切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）。
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
+  const summarySeq = useRef(0);
   const openedRequestIdRef = useRef('');
 
   const loadList = useCallback(
@@ -237,10 +240,26 @@ export function LogsView() {
     [baseParams],
   );
 
+  const loadSummary = useCallback(async () => {
+    const seq = ++summarySeq.current;
+    const res = await getLogsSummary(baseParams);
+    if (seq !== summarySeq.current) return;
+    if (res.success && res.data) {
+      setSummary(res.data);
+      setSummaryError(null);
+    } else {
+      setSummary(null);
+      setSummaryError(res.error?.message || '加载汇总失败');
+    }
+  }, [baseParams]);
+
   useEffect(() => {
     setPage(1);
     setSessPage(1);
   }, [baseParams]);
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
   useEffect(() => {
     if (subtab === 'generations' || subtab === 'upstream') loadList(page);
   }, [subtab, page, loadList]);
@@ -262,6 +281,7 @@ export function LogsView() {
   }, [filterRequestId, loading, rows]);
 
   const refresh = () => {
+    loadSummary();
     if (subtab === 'sessions') loadSessions(sessPage);
     else loadList(page);
   };
@@ -479,7 +499,7 @@ export function LogsView() {
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
               >
                 {c.label}
                 {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
@@ -547,6 +567,57 @@ export function LogsView() {
       </div>
     );
   };
+
+  function DistributionStrip({
+    label,
+    items,
+    selected,
+    onSelect,
+  }: {
+    label: string;
+    items?: { key: string; count: number }[];
+    selected: string;
+    onSelect: (value: string) => void;
+  }) {
+    const visible = (items ?? []).filter((item) => item.key && item.count > 0).slice(0, 6);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</span>
+        {visible.length === 0 ? (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{DASH}</span>
+        ) : (
+          visible.map((item) => {
+            const active = selected === item.key;
+            return (
+              <button
+                key={`${label}:${item.key}`}
+                type="button"
+                onClick={() => onSelect(active ? '' : item.key)}
+                title={`${label}: ${item.key} (${fmtCompact(item.count)} requests)`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  maxWidth: 220,
+                  height: 24,
+                  padding: '0 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: active ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                  background: active ? 'var(--accent-soft)' : 'var(--bg-input)',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                <span className="lg-truncate" style={{ minWidth: 0 }}>{item.key}</span>
+                <span className="tabular" style={{ color: 'var(--text-muted)' }}>{fmtCompact(item.count)}</span>
+              </button>
+            );
+          })
+        )}
+      </div>
+    );
+  }
 
   const emptyCell = (text: string, showActions = false) => (
     <div className="lg-log-empty">
@@ -714,7 +785,7 @@ export function LogsView() {
         </div>
       </details>
 
-      {metaError || listError ? (
+      {metaError || listError || summaryError ? (
         <div
           style={{
             flexShrink: 0,
@@ -726,9 +797,35 @@ export function LogsView() {
             background: 'var(--err-bg)',
           }}
         >
-          {metaError || listError}
+          {metaError || listError || summaryError}
         </div>
       ) : null}
+
+      <div className="lg-cost-trust-strip">
+        <div><strong>费用估算</strong><span>按价格快照原币种分组，不做无汇率换算</span></div>
+        <div className="lg-cost-trust-values">
+          {(summary?.estimatedCosts ?? []).map((item) => <span key={item.currency}><small>{item.currency} estimated</small><strong>{fmtCost(item.amount, item.currency)}</strong></span>)}
+          {(summary?.estimatedCosts ?? []).length === 0 ? <span><small>estimated</small><strong>{DASH}</strong></span> : null}
+          <span><small>unknown</small><strong>{summary?.total ? fmtCompact(summary.unknownCostRequests) : DASH}</strong></span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 8,
+          flexShrink: 0,
+          padding: '8px 10px',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          background: 'var(--bg-surface)',
+        }}
+      >
+        <DistributionStrip label="入口协议" items={summary?.ingressProtocolDistribution} selected={filterIngressProtocol} onSelect={setFilterIngressProtocol} />
+        <DistributionStrip label="路由策略" items={summary?.modelPolicyDistribution} selected={filterModelPolicy} onSelect={setFilterModelPolicy} />
+        <DistributionStrip label="来源系统" items={summary?.sourceSystemDistribution} selected={filterSourceSystem} onSelect={setFilterSourceSystem} />
+      </div>
 
       <Card style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (

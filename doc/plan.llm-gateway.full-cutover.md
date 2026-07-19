@@ -53,9 +53,12 @@
 - `open-api.proxy::generation`
 - `prd-agent-web.model-lab.run::chat`
 - `prd-agent.arena.battle::chat`
-- `report-agent.generate::chat`
+- `report-agent.generate::chat/send`
+- `visual-agent.videogen::video-gen:raw`
+- `video-agent.v2d.transcribe::asr:raw`
+- `video-agent.video-to-text::asr:raw`
 
-补样本必须经过 MAP 真实业务入口。`scripts/llmgw-map-shadow-seed.py` 的文本入口默认保持低成本；按缺口显式启用 `--include-desktop-chat-run`、`--include-open-platform`、`--include-open-api-chat`、`--include-open-api-image`、`--include-model-lab-run`、`--include-arena-run` 或 `--include-report-agent-generate`。图片、视频和 ASR 使用各自 include 参数，不能用文本样本冒充 raw gate。
+补样本必须经过 MAP 真实业务入口。`scripts/llmgw-map-shadow-seed.py` 的文本入口默认保持低成本；按缺口显式启用 `--include-desktop-chat-run`、`--include-open-platform`、`--include-open-api-chat`、`--include-open-api-image`、`--include-model-lab-run`、`--include-arena-run` 或 `--include-report-agent-generate`。视觉视频与两个视频 ASR 入口分别使用 `--include-visual-video-direct`、`--include-video-to-doc-asr` 和 `--include-video-to-text-asr-workflow`，不能用文本样本冒充 raw gate。
 
 ## 执行顺序
 
