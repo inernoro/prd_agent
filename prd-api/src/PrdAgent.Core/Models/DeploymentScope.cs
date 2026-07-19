@@ -19,8 +19,11 @@ namespace PrdAgent.Core.Models;
 /// CDS_BRANCH_SLUG 只用于镜像模板替换、并不注入容器 env（Codex P1，PR #1193），
 /// 不能单独依赖：
 ///   1. CDS_BRANCH_SLUG   —— 当前不注入，仅为未来 CDS 补注入时的首选位；
-///   2. BULLMQ_PREFIX     —— 平台按分支兜底注入的 branch-db-slug（步骤 4.5）；
-///   3. VITE_GIT_BRANCH   —— 平台强制注入的原始分支名（版本元数据）；
+///   2. VITE_GIT_BRANCH   —— 平台**强制覆盖**注入的原始分支名（版本元数据），
+///                           不可被项目配置改写，是可信分支身份；
+///   3. BULLMQ_PREFIX     —— 兜底。注意它可被项目 customEnv 显式钉死以跨分支
+///                           共享队列（受支持配置），此时不是分支身份——故只在
+///                           前两者都取不到时才用（Codex P2，Round 3）；
 ///   分支变量全部取不到时退化为纯 CDS_PROJECT_ID 项目级隔离（仍与生产区隔）。
 ///
 /// run 入队时盖上本部署作用域，worker 只认领同作用域的 run（生产认 null，
@@ -43,8 +46,8 @@ public static class DeploymentScope
             if (projectId is null) return null;
 
             var branch = Read("CDS_BRANCH_SLUG")
-                         ?? Read("BULLMQ_PREFIX")
-                         ?? Read("VITE_GIT_BRANCH");
+                         ?? Read("VITE_GIT_BRANCH")
+                         ?? Read("BULLMQ_PREFIX");
 
             return branch is null ? projectId : $"{projectId}::{branch}";
         }
