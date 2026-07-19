@@ -40,6 +40,23 @@ describe('parseVisualMessageDisplay — 展示层清洗', () => {
     expect(r.text).not.toContain('@size');
   });
 
+  it('用户手写 "- @imgN: 指令" 列表行（无块头）整行保留', () => {
+    const r = parseVisualMessageDisplay('- @img1: 保持面部不变\n- @img2: 换成夜景');
+    expect(r.text).toContain('保持面部不变');
+    expect(r.text).toContain('换成夜景');
+    expect(r.blockRefIds).toEqual([]);
+  });
+
+  it('块内引用行剥离、块后的用户列表行保留', () => {
+    const raw =
+      '把左边的物体放到右边\n【引用图片（按顺序）】\n- @img1: a.png\n\n- @img2: 这行是用户写的指令';
+    const r = parseVisualMessageDisplay(raw);
+    expect(r.text).toContain('把左边的物体放到右边');
+    expect(r.text).not.toContain('a.png');
+    expect(r.text).toContain('这行是用户写的指令');
+    expect(r.blockRefIds).toEqual([1]);
+  });
+
   it('剥离【引用图片（按顺序）】块并提取 blockRefIds', () => {
     const raw = '把左边的物体放到右边\n\n【引用图片（按顺序）】\n- @img1: 76a9705d94b06dbb1a651f3ff16ad7e1.png\n- @img2: db3d9483aa.png';
     const r = parseVisualMessageDisplay(raw);

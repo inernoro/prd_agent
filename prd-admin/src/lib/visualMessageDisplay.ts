@@ -26,8 +26,9 @@ export interface ParsedVisualMessageDisplay {
 const GENERATE_PREFIX_RE = /^\s*Generate an image based on the following description:\s*/i;
 /** 【引用图片（按顺序）】/【引用图片】等块头 */
 const REF_BLOCK_HEADER_RE = /【[^】]*引用图片[^】]*】/g;
-/** "- @imgN: label" / "- imgN：label" 引用行（整行剥离，label 常是带扩展名的文件名） */
-const REF_LINE_RE = /^\s*-\s*@?img(\d+)\s*[:：].*$/gim;
+/* "- @imgN: label" 引用行的剥离已收窄到【引用图片】块头之后的连续行内联判定
+ *（见 parseVisualMessageDisplay 步骤 2）——全局整行剥离会误杀用户手写的
+ * "- @img1: 保持面部不变" 普通列表行。 */
 /** 裸 (@size:...) / (@model:...) 元数据 token。
  *  值本身可能带一层括号（如模型池名"默认图像生成池 (stub-image)"），
  *  用 [^)]* 会在第一个 ) 截断、剥完残留一个 ")" 在气泡开头——需容忍一层嵌套。 */
@@ -61,22 +62,39 @@ export function parseVisualMessageDisplay(raw: string): ParsedVisualMessageDispl
     guard += 1;
   }
 
-  // 2. 收集引用块中的 refId（保序去重）
+  // 2. 收集并剥离【引用图片…】块：块头 + 紧随其后的连续 "- @imgN: 文件名" 行。
+  //    只剥真实生成块（Codex P2）——用户手写的 "- @img1: 保持面部不变" 这类
+  //    普通列表行不在块头之后，整行保留（指令文字不丢，@imgN 就地渲染 chip）。
   const blockIds: number[] = [];
   const seen = new Set<number>();
-  let m: RegExpExecArray | null;
-  const lineRe = newRe(REF_LINE_RE);
-  while ((m = lineRe.exec(s)) !== null) {
-    const id = parseInt(m[1], 10);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    blockIds.push(id);
+  {
+    const lines = s.split('\n');
+    const kept: string[] = [];
+    let inBlock = false;
+    for (const line of lines) {
+      const headerRe = newRe(REF_BLOCK_HEADER_RE);
+      if (headerRe.test(line)) {
+        inBlock = true;
+        // 块头可能与正文同行（历史拼接）：剥块头标记，保留同行其余文字
+        const rest = line.replace(newRe(REF_BLOCK_HEADER_RE), ' ').trim();
+        if (rest) kept.push(rest);
+        continue;
+      }
+      const refLine = /^\s*-\s*@?img(\d+)\s*[:：].*$/i.exec(line);
+      if (inBlock && refLine) {
+        const id = parseInt(refLine[1], 10);
+        if (Number.isFinite(id) && id > 0 && !seen.has(id)) {
+          seen.add(id);
+          blockIds.push(id);
+        }
+        continue; // 块内引用行整行剥离（文件名绝不进展示）
+      }
+      // 任何非引用行（含空行）终结当前块
+      inBlock = false;
+      kept.push(line);
+    }
+    s = kept.join('\n');
   }
-
-  // 剥离块头与引用行
-  s = s.replace(newRe(REF_BLOCK_HEADER_RE), ' ');
-  s = s.replace(newRe(REF_LINE_RE), ' ');
 
   // 3. 裸元数据 token
   s = s.replace(newRe(META_TOKEN_RE), ' ');
@@ -100,6 +118,7 @@ export function parseVisualMessageDisplay(raw: string): ParsedVisualMessageDispl
   // 5. 正文内已内联出现的 refId 不再进 blockRefIds（避免重复渲染）
   const inline = new Set<number>();
   const inlineRe = newRe(INLINE_REF_RE);
+  let m: RegExpExecArray | null;
   while ((m = inlineRe.exec(s)) !== null) {
     const id = parseInt(m[1], 10);
     if (Number.isFinite(id) && id > 0) inline.add(id);
