@@ -3781,7 +3781,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", console);
         Assert.Contains("ActiveOwnerMembershipIds", recovery);
         Assert.Contains("OwnerFenceGeneration", recovery);
+        Assert.Contains("StartHeartbeatAsync", recovery);
+        Assert.Contains("catch (Exception) when (_stop.IsCancellationRequested)", recovery);
         Assert.Contains("GatewayRecoveryOperations.RepairExpiredAsync", console);
+        Assert.True(
+            console.Split("GatewayRecoveryOperations.StartHeartbeatAsync", StringSplitOptions.None).Length - 1 >= 3,
+            "租户创建、成员创建和 owner 边界修改都必须在 live request 期间续租 recovery operation");
         Assert.DoesNotContain("OwnerMutationLock", console);
         Assert.Contains("MEMBERSHIP_VERSION_CONFLICT", console);
         Assert.Contains("idempotentReplay = true", console);
