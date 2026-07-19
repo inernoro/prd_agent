@@ -3660,17 +3660,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private static ModelResolutionType? ParseResolutionType(string? resolutionType)
     {
-        if (string.IsNullOrWhiteSpace(resolutionType))
-            return null;
-
-        return resolutionType switch
-        {
-            "DedicatedPool" => ModelResolutionType.DedicatedPool,
-            "DefaultPool" => ModelResolutionType.DefaultPool,
-            "DirectModel" => ModelResolutionType.DirectModel,
-            "Legacy" => ModelResolutionType.Legacy,
-            _ => null
-        };
+        return ModelResolutionTypeMapper.Parse(resolutionType);
     }
 
     private static List<LlmProviderAttempt> BuildProviderAttempts(ModelResolutionResult resolution, string transport)
