@@ -395,6 +395,10 @@ internal sealed class GatewayRecoveryHeartbeat : IAsyncDisposable
                 {
                     if (!await RenewAsync()) return;
                 }
+                catch (Exception) when (_stop.IsCancellationRequested)
+                {
+                    return;
+                }
                 catch when (!_stop.IsCancellationRequested)
                 {
                     // Mongo 短暂不可用时保留下一次续租机会；业务写入仍由调用链自行失败并补偿。
