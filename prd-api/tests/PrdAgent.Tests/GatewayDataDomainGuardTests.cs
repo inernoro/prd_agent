@@ -930,7 +930,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("上游接口类型", page);
         Assert.Contains("上游模型标识重复", page);
         Assert.Contains("当前填写的内容仍保留", page);
-        Assert.Contains("option.value !== 'doubao-asr-stream'", page);
+        Assert.Contains("只有豆包流式语音识别可使用公网 WSS", page);
+        Assert.Contains("其他类型必须使用 HTTP/HTTPS", page);
         Assert.Contains("transformerType === 'fal-image'", page);
         Assert.Contains("transformerType === 'doubao-asr'", page);
         Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
@@ -938,9 +939,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("body: req", api);
         Assert.Contains("IsExternalTenant(tenantId)", gateway);
         Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
-        Assert.Contains("EXTERNAL_WEBSOCKET_EXCHANGE_DISABLED", gateway);
+        Assert.Contains("requirePublicPinnedWebSocket: externalTenant", gateway);
         Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
         Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
+        Assert.Contains("ISafeOutboundWebSocketConnector", serving);
+        var safeWebSocket = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundWebSocketConnector.cs");
+        Assert.Contains("AllowAutoRedirect = false", safeWebSocket);
+        Assert.Contains("UseProxy = false", safeWebSocket);
+        Assert.Contains("ConnectCallback", safeWebSocket);
+        Assert.Contains("TargetHost = target.Uri.IdnHost", safeWebSocket);
+        Assert.Contains("SslPolicyErrors.None", safeWebSocket);
         var poolsPage = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
         Assert.Contains("getExchanges({ enabled: true })", poolsPage);
         Assert.Contains("toExchangeModelCandidates", poolsPage);
@@ -3147,6 +3155,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("<details className=\"lg-log-filters\">", logsView);
+        Assert.Contains("meta.ingressProtocols.map", logsView);
+        Assert.Contains("setFilterIngressProtocol", logsView);
+        Assert.Contains("meta.modelPolicies.map", logsView);
+        Assert.Contains("setFilterModelPolicy", logsView);
+        Assert.Contains("meta.sourceSystems.map", logsView);
+        Assert.Contains("setFilterSourceSystem", logsView);
+        Assert.DoesNotContain("<DistributionStrip", logsView);
         Assert.Contains("aria-label=\"入口协议\"", logsView);
         Assert.Contains("value={filterIngressProtocol}", logsView);
         Assert.Contains("aria-label=\"路由策略\"", logsView);
@@ -3177,6 +3192,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("estimatedCostUsd?: number | null", consoleTypes);
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
+        Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
+        Assert.Contains("缺价格保持未知，不显示为 0", logsView);
         Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
         Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
@@ -3744,6 +3761,7 @@ public class GatewayDataDomainGuardTests
         var user = ReadRepoFile("llmgw/console-api/Models/LlmGwUser.cs");
         var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var recovery = ReadRepoFile("llmgw/console-api/Provisioning/GatewayRecoveryOperations.cs");
         var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
 
@@ -3760,7 +3778,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TEAM_SCOPE_REQUIRED", console);
         Assert.Contains("APP_CALLER_TEAM_MISMATCH", console);
         Assert.Contains("membership.invalidate_sessions", console);
-        Assert.Contains("TryAcquireTenantOwnerMutationLockAsync", console);
+        Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", console);
+        Assert.Contains("ActiveOwnerMembershipIds", recovery);
+        Assert.Contains("OwnerFenceGeneration", recovery);
+        Assert.Contains("GatewayRecoveryOperations.RepairExpiredAsync", console);
+        Assert.DoesNotContain("OwnerMutationLock", console);
         Assert.Contains("MEMBERSHIP_VERSION_CONFLICT", console);
         Assert.Contains("idempotentReplay = true", console);
         Assert.Contains("invalidatedMemberships", console);

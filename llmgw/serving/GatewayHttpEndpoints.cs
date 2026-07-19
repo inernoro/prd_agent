@@ -2368,12 +2368,17 @@ public static class GatewayHttpEndpoints
                 ingress.AppCallerCode,
                 ingress.RequestType,
                 "team-ownership-denied");
-            return new AppCallerGovernanceDecision(
+            var denied = new AppCallerGovernanceDecision(
                 ownershipStatus,
+                TenantRateLimitDecision.Allow(authorization.TenantId),
                 AppCallerRateLimitDecision.Allow(ingress.AppCallerCode, ingress.RequestType),
                 AppCallerBudgetDecision.Allow(ingress.AppCallerCode, ingress.RequestType, 0, 0, hasCostEvidence: false));
+            ApplyGovernanceRateLimitHeaders(http, denied);
+            return denied;
         }
-        return await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
+        var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
+        ApplyGovernanceRateLimitHeaders(http, decision);
+        return decision;
     }
 
     private static async Task<AppCallerGovernanceDecision> CheckAppCallerGovernanceAsync(
@@ -2392,8 +2397,12 @@ public static class GatewayHttpEndpoints
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
 
         GatewayAppCallerRecord? caller = null;
+        GatewayTenantGovernanceRecord? tenantGovernance = null;
         try
         {
+            tenantGovernance = await gatewayData.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+                .Find(x => x.Id == tenantId)
+                .FirstOrDefaultAsync(ct);
             var callers = gatewayData.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
             var normalizedAppCallerCode = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
             var normalizedRequestType = GatewayAppCallerIdentity.NormalizePart(requestType);
@@ -2415,6 +2424,7 @@ public static class GatewayHttpEndpoints
                     var teamStatus = AppCallerStatusDecision.Reject(appCallerCode, requestType, "team-disabled");
                     return new AppCallerGovernanceDecision(
                         teamStatus,
+                        TenantRateLimitDecision.Allow(tenantId),
                         AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                         AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
                 }
@@ -2423,19 +2433,29 @@ public static class GatewayHttpEndpoints
             if (status.Rejected)
                 return new AppCallerGovernanceDecision(
                     status,
+                    TenantRateLimitDecision.Allow(tenantId),
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                     AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
 
-            var budget = await ReserveAppCallerMonthlyBudgetAsync(services, caller, appCallerCode, requestType, requestId, ct);
+            var budget = await ReserveMonthlyBudgetsAsync(services, tenantId, caller, appCallerCode, requestType, requestId, ct);
             if (budget.Rejected)
                 return new AppCallerGovernanceDecision(
                     status,
+                    TenantRateLimitDecision.Allow(tenantId),
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                    budget);
+
+            var tenantRateLimit = await CheckTenantRateLimitAsync(gatewayData, tenantId, tenantGovernance?.RateLimitPerMinute ?? 0);
+            if (tenantRateLimit.Rejected)
+                return new AppCallerGovernanceDecision(
+                    status,
+                    tenantRateLimit,
+                    AppCallerRateLimitDecision.Allow(appCallerCode, requestType, caller?.RateLimitPerMinute ?? 0),
                     budget);
 
             var limit = caller?.RateLimitPerMinute ?? 0;
             if (limit <= 0)
-                return new AppCallerGovernanceDecision(status, AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
+                return new AppCallerGovernanceDecision(status, tenantRateLimit, AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
 
             var now = DateTime.UtcNow;
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
@@ -2491,16 +2511,64 @@ public static class GatewayHttpEndpoints
             var rateLimit = count > limit
                 ? AppCallerRateLimitDecision.Reject(appCallerCode, requestType, limit, count, windowStart)
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
-            return new AppCallerGovernanceDecision(status, rateLimit, budget);
+            return new AppCallerGovernanceDecision(status, tenantRateLimit, rateLimit, budget);
         }
         catch
         {
-            // 未配置预算的调用方保留历史兼容；一旦配置预算，治理存储异常必须 fail-closed，
-            // 否则数据库故障会变成无限额度窗口。
-            return caller?.MonthlyBudgetUsd is > 0
-                ? AppCallerGovernanceDecision.RejectBudgetUnavailable(appCallerCode, requestType)
-                : AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
+            // 无法读取租户治理配置时不能判断是否存在硬限制，因此统一 fail-closed；
+            // 否则数据库故障会把已配置的租户总预算或总速率变成无限窗口。
+            return AppCallerGovernanceDecision.RejectTenantGovernanceUnavailable(tenantId, appCallerCode, requestType);
         }
+    }
+
+    private static async Task<TenantRateLimitDecision> CheckTenantRateLimitAsync(
+        LlmGatewayDataContext gatewayData,
+        string tenantId,
+        int limit)
+    {
+        if (limit <= 0) return TenantRateLimitDecision.Allow(tenantId);
+
+        var now = DateTime.UtcNow;
+        var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+        var windows = gatewayData.Database.GetCollection<GatewayTenantRateWindowRecord>("llmgw_tenant_rate_windows");
+        var filter = Builders<GatewayTenantRateWindowRecord>.Filter.And(
+            Builders<GatewayTenantRateWindowRecord>.Filter.Eq(x => x.TenantId, tenantId),
+            Builders<GatewayTenantRateWindowRecord>.Filter.Eq(x => x.WindowStart, windowStart));
+        var update = Builders<GatewayTenantRateWindowRecord>.Update
+            .SetOnInsert(x => x.Id, $"tenant-rate:{tenantId}:{windowStart.Ticks}")
+            .SetOnInsert(x => x.TenantId, tenantId)
+            .SetOnInsert(x => x.WindowStart, windowStart)
+            .Set(x => x.ExpiresAt, windowStart.AddMinutes(10))
+            .Inc(x => x.Count, 1);
+        GatewayTenantRateWindowRecord updated;
+        try
+        {
+            updated = await windows.FindOneAndUpdateAsync(
+                filter,
+                update,
+                new FindOneAndUpdateOptions<GatewayTenantRateWindowRecord>
+                {
+                    IsUpsert = true,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None);
+        }
+        catch (MongoException ex) when (IsDuplicateKeyError(ex))
+        {
+            updated = await windows.FindOneAndUpdateAsync(
+                filter,
+                update,
+                new FindOneAndUpdateOptions<GatewayTenantRateWindowRecord>
+                {
+                    IsUpsert = false,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None) ?? throw new InvalidOperationException("tenant rate window disappeared after duplicate upsert");
+        }
+
+        return updated.Count > limit
+            ? TenantRateLimitDecision.Reject(tenantId, limit, updated.Count, windowStart)
+            : TenantRateLimitDecision.Allow(tenantId, limit, updated.Count, windowStart);
     }
 
     private static AppCallerStatusDecision CheckAppCallerStatus(string appCallerCode, string requestType, string? status)
@@ -2511,29 +2579,30 @@ public static class GatewayHttpEndpoints
             : AppCallerStatusDecision.Reject(appCallerCode, requestType, normalized);
     }
 
-    private static async Task<AppCallerBudgetDecision> ReserveAppCallerMonthlyBudgetAsync(
+    private static async Task<AppCallerBudgetDecision> ReserveMonthlyBudgetsAsync(
         IServiceProvider services,
+        string tenantId,
         GatewayAppCallerRecord? caller,
         string appCallerCode,
         string requestType,
         string requestId,
         CancellationToken ct)
     {
-        if (caller?.MonthlyBudgetUsd is null or <= 0)
-            return AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false);
         var coordinator = services.GetService<GatewayBudgetCoordinator>();
         if (coordinator == null)
-            return AppCallerBudgetDecision.Reject(appCallerCode, requestType, caller.MonthlyBudgetUsd.Value, 0, DateTime.UtcNow, "APP_CALLER_BUDGET_GOVERNANCE_UNAVAILABLE");
+            return caller?.MonthlyBudgetUsd is > 0
+                ? AppCallerBudgetDecision.Reject(appCallerCode, requestType, caller.MonthlyBudgetUsd.Value, 0, DateTime.UtcNow, "APP_CALLER_BUDGET_GOVERNANCE_UNAVAILABLE")
+                : AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false);
 
-        var admission = await coordinator.ReserveAsync(caller, requestId, ct);
+        var admission = await coordinator.ReserveAsync(tenantId, caller, requestId, ct);
         if (!admission.Allowed)
-            return AppCallerBudgetDecision.Reject(appCallerCode, requestType, admission.BudgetUsd, admission.ReservedAndSpentUsd, DateTime.UtcNow, admission.ErrorCode);
+            return AppCallerBudgetDecision.Reject(appCallerCode, requestType, admission.BudgetUsd, admission.ReservedAndSpentUsd, DateTime.UtcNow, admission.ErrorCode, admission.Scope);
         if (admission.Lease is not null
             && services.GetService<Microsoft.AspNetCore.Http.IHttpContextAccessor>()?.HttpContext is { } http)
         {
             http.Items[GatewayBudgetCoordinator.HttpContextLeaseKey] = admission.Lease;
         }
-        return AppCallerBudgetDecision.Allow(appCallerCode, requestType, admission.BudgetUsd, admission.ReservedAndSpentUsd, hasCostEvidence: true);
+        return AppCallerBudgetDecision.Allow(appCallerCode, requestType, admission.BudgetUsd, admission.ReservedAndSpentUsd, hasCostEvidence: admission.Lease is not null, scope: admission.Scope);
     }
 
     private static long? ReadBsonLong(BsonDocument? doc, string field)
@@ -2561,6 +2630,16 @@ public static class GatewayHttpEndpoints
             StatusCodes.Status429TooManyRequests);
     }
 
+    private static async Task WriteTenantRateLimitErrorAsync(HttpContext http, TenantRateLimitDecision decision)
+    {
+        await WriteCompatErrorAsync(
+            http,
+            $"租户总请求数超过每分钟限流 {decision.LimitPerMinute}",
+            "rate_limit_error",
+            "TENANT_RATE_LIMITED",
+            StatusCodes.Status429TooManyRequests);
+    }
+
     private static async Task WriteStatusErrorAsync(HttpContext http, AppCallerStatusDecision decision)
     {
         await WriteCompatErrorAsync(
@@ -2583,6 +2662,11 @@ public static class GatewayHttpEndpoints
             await WriteBudgetErrorAsync(http, decision.Budget);
             return true;
         }
+        if (decision.TenantRateLimit.Rejected)
+        {
+            await WriteTenantRateLimitErrorAsync(http, decision.TenantRateLimit);
+            return true;
+        }
         if (decision.RateLimit.Rejected)
         {
             await WriteRateLimitErrorAsync(http, decision.RateLimit);
@@ -2598,6 +2682,7 @@ public static class GatewayHttpEndpoints
     {
         if (decision.Status.Rejected) return StatusResult(decision.Status, jsonOpts);
         if (decision.Budget.Rejected) return BudgetResult(decision.Budget, jsonOpts);
+        if (decision.TenantRateLimit.Rejected) return TenantRateLimitResult(http, decision.TenantRateLimit, jsonOpts);
         if (decision.RateLimit.Rejected) return RateLimitResult(http, decision.RateLimit, jsonOpts);
         return null;
     }
@@ -2606,6 +2691,7 @@ public static class GatewayHttpEndpoints
     {
         if (decision.Status.Rejected) return "APP_CALLER_DISABLED";
         if (decision.Budget.Rejected) return decision.Budget.ErrorCode;
+        if (decision.TenantRateLimit.Rejected) return "TENANT_RATE_LIMITED";
         if (decision.RateLimit.Rejected) return "APP_CALLER_RATE_LIMITED";
         return "APP_CALLER_GOVERNANCE_REJECTED";
     }
@@ -2644,14 +2730,35 @@ public static class GatewayHttpEndpoints
         }, jsonOpts, statusCode: StatusCodes.Status429TooManyRequests);
     }
 
+    private static IResult TenantRateLimitResult(
+        HttpContext http,
+        TenantRateLimitDecision decision,
+        JsonSerializerOptions jsonOpts)
+    {
+        ApplyRetryAfterHeader(http, decision.WindowStart);
+        return Results.Json(new
+        {
+            error = new
+            {
+                code = "TENANT_RATE_LIMITED",
+                message = $"租户总请求数超过每分钟限流 {decision.LimitPerMinute}",
+                tenantId = decision.TenantId,
+                limitPerMinute = decision.LimitPerMinute,
+                count = decision.Count,
+                windowStart = decision.WindowStart,
+            },
+        }, jsonOpts, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
     private static async Task WriteBudgetErrorAsync(HttpContext http, AppCallerBudgetDecision decision)
     {
+        var statusCode = BudgetErrorStatusCode(decision);
         await WriteCompatErrorAsync(
             http,
             BudgetErrorMessage(decision),
             "rate_limit_error",
             decision.ErrorCode,
-            StatusCodes.Status429TooManyRequests);
+            statusCode);
     }
 
     private static IResult BudgetResult(AppCallerBudgetDecision decision, JsonSerializerOptions jsonOpts)
@@ -2661,6 +2768,7 @@ public static class GatewayHttpEndpoints
             {
                 code = decision.ErrorCode,
                 message = BudgetErrorMessage(decision),
+                scope = decision.Scope,
                 appCallerCode = decision.AppCallerCode,
                 requestType = decision.RequestType,
                 monthlyBudgetUsd = decision.MonthlyBudgetUsd,
@@ -2668,13 +2776,23 @@ public static class GatewayHttpEndpoints
                 monthStart = decision.MonthStart,
                 hasCostEvidence = decision.HasCostEvidence,
             },
-        }, jsonOpts, statusCode: StatusCodes.Status429TooManyRequests);
+        }, jsonOpts, statusCode: BudgetErrorStatusCode(decision));
+
+    private static int BudgetErrorStatusCode(AppCallerBudgetDecision decision)
+        => decision.ErrorCode.EndsWith("_UNAVAILABLE", StringComparison.Ordinal)
+            ? StatusCodes.Status503ServiceUnavailable
+            : StatusCodes.Status429TooManyRequests;
 
     private static string BudgetErrorMessage(AppCallerBudgetDecision decision)
         => decision.ErrorCode switch
         {
             "APP_CALLER_BUDGET_RESERVATION_UNCONFIGURED" => $"appCaller {decision.AppCallerCode} 已配置月预算但未配置单次原子预占额",
             "APP_CALLER_BUDGET_GOVERNANCE_UNAVAILABLE" => $"appCaller {decision.AppCallerCode} 的预算治理存储不可用，已 fail-closed",
+            "TENANT_BUDGET_RESERVATION_UNCONFIGURED" => "租户已配置总月预算但未配置单次原子预占额",
+            "TENANT_BUDGET_RESERVATION_EXCEEDS_MONTHLY" => "租户单次预算预占不能超过总月预算",
+            "TENANT_BUDGET_GOVERNANCE_UNAVAILABLE" => "租户总预算治理存储不可用，已 fail-closed",
+            "TENANT_GOVERNANCE_UNAVAILABLE" => "租户总预算或总速率治理存储不可用，已 fail-closed",
+            "TENANT_MONTHLY_BUDGET_EXCEEDED" => $"租户已达到总月预算 ${decision.MonthlyBudgetUsd:F2}",
             "GATEWAY_REQUEST_IN_PROGRESS" => $"requestId 对应请求正在执行，禁止重复扣费",
             "GATEWAY_REQUEST_ALREADY_SETTLED" => $"requestId 对应请求已经结算，禁止重复扣费",
             _ => $"appCaller {decision.AppCallerCode} 已达到月预算 ${decision.MonthlyBudgetUsd:F2}",
@@ -2682,7 +2800,55 @@ public static class GatewayHttpEndpoints
 
     private static void ApplyRateLimitHeaders(HttpContext http, AppCallerRateLimitDecision decision)
     {
-        var retryAfter = Math.Max(1, (int)Math.Ceiling((decision.WindowStart.AddMinutes(1) - DateTime.UtcNow).TotalSeconds));
+        ApplyRetryAfterHeader(http, decision.WindowStart);
+    }
+
+    private static void ApplyGovernanceRateLimitHeaders(HttpContext http, AppCallerGovernanceDecision decision)
+    {
+        ApplyScopedRateLimitHeaders(
+            http,
+            "Tenant",
+            decision.TenantRateLimit.LimitPerMinute,
+            decision.TenantRateLimit.Count,
+            decision.TenantRateLimit.WindowStart);
+        ApplyScopedRateLimitHeaders(
+            http,
+            "AppCaller",
+            decision.RateLimit.LimitPerMinute,
+            decision.RateLimit.Count,
+            decision.RateLimit.WindowStart);
+        if (decision.TenantRateLimit.Rejected)
+        {
+            ApplyStandardRateLimitHeaders(http, decision.TenantRateLimit.LimitPerMinute, decision.TenantRateLimit.Count, decision.TenantRateLimit.WindowStart);
+            ApplyRetryAfterHeader(http, decision.TenantRateLimit.WindowStart);
+        }
+        else if (decision.RateLimit.Rejected)
+        {
+            ApplyStandardRateLimitHeaders(http, decision.RateLimit.LimitPerMinute, decision.RateLimit.Count, decision.RateLimit.WindowStart);
+            ApplyRetryAfterHeader(http, decision.RateLimit.WindowStart);
+        }
+    }
+
+    private static void ApplyScopedRateLimitHeaders(HttpContext http, string scope, int limit, long count, DateTime windowStart)
+    {
+        if (limit <= 0) return;
+        var reset = new DateTimeOffset(windowStart.AddMinutes(1)).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers[$"X-LLMGW-{scope}-RateLimit-Limit"] = limit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers[$"X-LLMGW-{scope}-RateLimit-Remaining"] = Math.Max(0, limit - count).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers[$"X-LLMGW-{scope}-RateLimit-Reset"] = reset;
+    }
+
+    private static void ApplyStandardRateLimitHeaders(HttpContext http, int limit, long count, DateTime windowStart)
+    {
+        var reset = new DateTimeOffset(windowStart.AddMinutes(1)).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers["X-RateLimit-Limit"] = limit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers["X-RateLimit-Remaining"] = Math.Max(0, limit - count).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        http.Response.Headers["X-RateLimit-Reset"] = reset;
+    }
+
+    private static void ApplyRetryAfterHeader(HttpContext http, DateTime windowStart)
+    {
+        var retryAfter = Math.Max(1, (int)Math.Ceiling((windowStart.AddMinutes(1) - DateTime.UtcNow).TotalSeconds));
         http.Response.Headers.RetryAfter = retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
@@ -5239,6 +5405,28 @@ public static class GatewayHttpEndpoints
             => new(true, appCallerCode, requestType, limitPerMinute, count, windowStart);
     }
 
+    private sealed record TenantRateLimitDecision(
+        bool Rejected,
+        string TenantId,
+        int LimitPerMinute,
+        long Count,
+        DateTime WindowStart)
+    {
+        public static TenantRateLimitDecision Allow(
+            string tenantId,
+            int limitPerMinute = 0,
+            long count = 0,
+            DateTime? windowStart = null)
+            => new(false, tenantId, limitPerMinute, count, windowStart ?? DateTime.UtcNow);
+
+        public static TenantRateLimitDecision Reject(
+            string tenantId,
+            int limitPerMinute,
+            long count,
+            DateTime windowStart)
+            => new(true, tenantId, limitPerMinute, count, windowStart);
+    }
+
     private sealed record AppCallerBudgetDecision(
         bool Rejected,
         string AppCallerCode,
@@ -5247,7 +5435,8 @@ public static class GatewayHttpEndpoints
         decimal MonthSpendUsd,
         bool HasCostEvidence,
         DateTime MonthStart,
-        string ErrorCode)
+        string ErrorCode,
+        string Scope)
     {
         public static AppCallerBudgetDecision Allow(
             string appCallerCode,
@@ -5255,8 +5444,9 @@ public static class GatewayHttpEndpoints
             decimal monthlyBudgetUsd,
             decimal monthSpendUsd,
             bool hasCostEvidence,
-            DateTime? monthStart = null)
-            => new(false, appCallerCode, requestType, monthlyBudgetUsd, monthSpendUsd, hasCostEvidence, monthStart ?? DateTime.UtcNow, string.Empty);
+            DateTime? monthStart = null,
+            string scope = "app-caller")
+            => new(false, appCallerCode, requestType, monthlyBudgetUsd, monthSpendUsd, hasCostEvidence, monthStart ?? DateTime.UtcNow, string.Empty, scope);
 
         public static AppCallerBudgetDecision Reject(
             string appCallerCode,
@@ -5264,32 +5454,37 @@ public static class GatewayHttpEndpoints
             decimal monthlyBudgetUsd,
             decimal monthSpendUsd,
             DateTime monthStart,
-            string errorCode = "APP_CALLER_MONTHLY_BUDGET_EXCEEDED")
-            => new(true, appCallerCode, requestType, monthlyBudgetUsd, monthSpendUsd, true, monthStart, errorCode);
+            string errorCode = "APP_CALLER_MONTHLY_BUDGET_EXCEEDED",
+            string scope = "app-caller")
+            => new(true, appCallerCode, requestType, monthlyBudgetUsd, monthSpendUsd, true, monthStart, errorCode, scope);
     }
 
     private sealed record AppCallerGovernanceDecision(
         AppCallerStatusDecision Status,
+        TenantRateLimitDecision TenantRateLimit,
         AppCallerRateLimitDecision RateLimit,
         AppCallerBudgetDecision Budget)
     {
         public static AppCallerGovernanceDecision Allow(string appCallerCode, string requestType)
             => new(
                 AppCallerStatusDecision.Allow(appCallerCode, requestType, "discovered"),
+                TenantRateLimitDecision.Allow(string.Empty),
                 AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                 AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
-
-        public static AppCallerGovernanceDecision RejectBudgetUnavailable(string appCallerCode, string requestType)
-            => new(
-                AppCallerStatusDecision.Allow(appCallerCode, requestType, "unknown"),
-                AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
-                AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "APP_CALLER_BUDGET_GOVERNANCE_UNAVAILABLE"));
 
         public static AppCallerGovernanceDecision RejectTenantUnavailable(string appCallerCode, string requestType)
             => new(
                 AppCallerStatusDecision.Allow(appCallerCode, requestType, "unknown"),
+                TenantRateLimitDecision.Allow(string.Empty),
                 AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                 AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "TENANT_CONTEXT_UNAVAILABLE"));
+
+        public static AppCallerGovernanceDecision RejectTenantGovernanceUnavailable(string tenantId, string appCallerCode, string requestType)
+            => new(
+                AppCallerStatusDecision.Allow(appCallerCode, requestType, "unknown"),
+                TenantRateLimitDecision.Allow(tenantId),
+                AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "TENANT_GOVERNANCE_UNAVAILABLE", "tenant"));
     }
 }
 

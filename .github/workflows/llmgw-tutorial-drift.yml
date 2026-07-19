@@ -1,0 +1,47 @@
+name: LLMGW Tutorial Drift
+
+on:
+  schedule:
+    - cron: '20 18 * * *'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Git history window passed to the drift scanner
+        required: false
+        default: 1 day ago
+
+permissions:
+  contents: read
+
+jobs:
+  tutorial-drift:
+    name: Check tutorial drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate authoritative tutorial
+        run: |
+          python3 llmgw/tutorial/publisher.py check
+          python3 -m unittest llmgw/tutorial/test_publisher.py llmgw/tutorial/test_maintenance.py
+
+      - name: Generate daily drift report
+        env:
+          INPUT_SINCE: ${{ github.event.inputs.since || '1 day ago' }}
+        run: |
+          python3 llmgw/tutorial/maintenance.py \
+            --since "$INPUT_SINCE" \
+            --json-out artifacts/llmgw-tutorial-drift/report.json \
+            --markdown-out artifacts/llmgw-tutorial-drift/report.md \
+            --fail-on-drift
+
+      - name: Upload drift evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-tutorial-drift-${{ github.run_id }}
+          path: artifacts/llmgw-tutorial-drift/
+          if-no-files-found: error

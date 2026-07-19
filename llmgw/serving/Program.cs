@@ -65,6 +65,8 @@ builder.Services.AddCors(options => options.AddPolicy(BrowserDryRunCors, policy 
 builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebSocketConnector,
+    PrdAgent.Infrastructure.Services.SafeOutboundWebSocketConnector>();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("SafeOutbound")
     .ConfigurePrimaryHttpMessageHandler(sp =>

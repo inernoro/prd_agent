@@ -24,6 +24,7 @@ public class GatewayDoubaoStreamAsrTests
             {
                 AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
                 ModelType = ModelTypes.Asr,
+                Context = new GatewayRequestContext { TenantId = "tenant-external" },
                 IsMultipart = true,
                 MultipartFields = new Dictionary<string, object>
                 {
@@ -63,6 +64,7 @@ public class GatewayDoubaoStreamAsrTests
         fakeAsr.AppKey.ShouldBe("app-123");
         fakeAsr.AccessKey.ShouldBe("access-456");
         fakeAsr.AudioBytes.ShouldBe([1, 2, 3, 4]);
+        fakeAsr.RequirePublicPinnedWebSocket.ShouldBeTrue();
 
         using var doc = JsonDocument.Parse(response.Content!);
         var root = doc.RootElement;
@@ -137,6 +139,7 @@ public class GatewayDoubaoStreamAsrTests
         public string? AppKey { get; private set; }
         public string? AccessKey { get; private set; }
         public byte[] AudioBytes { get; private set; } = [];
+        public bool RequirePublicPinnedWebSocket { get; private set; }
 
         public Task<StreamAsrResult> TranscribeAsync(
             string wsUrl,
@@ -144,12 +147,14 @@ public class GatewayDoubaoStreamAsrTests
             string accessKey,
             byte[] audioData,
             Dictionary<string, object>? config = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool requirePublicPinnedWebSocket = false)
         {
             WsUrl = wsUrl;
             AppKey = appKey;
             AccessKey = accessKey;
             AudioBytes = audioData;
+            RequirePublicPinnedWebSocket = requirePublicPinnedWebSocket;
 
             using var payload = JsonDocument.Parse("""
                 {
