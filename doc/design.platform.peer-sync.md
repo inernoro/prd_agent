@@ -1,10 +1,10 @@
-# 系统级跨节点互传（Peer Sync）
+# 系统级跨节点互传（Peer Sync） · 设计
 
-> 状态：draft（v1 落地中）
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：草案
+
 > 负责模块：prd-api（PeerNode + PeerSync）、prd-admin（系统互联设置 + 发送到对端）
 > 关联：`design.platform.server-authority.md`、`rule.platform.app-identity.md`、知识库现有 `DocumentStoreSyncController`
 
----
 
 ## 1. 管理摘要（30 秒看懂）
 
@@ -282,3 +282,19 @@ per-item 两阶段同步核心从 `PeerSyncController` 抽到 `IPeerSyncTransfer
 
 新增 DocumentStore 字段：`PeerSyncAutoEnabled` / `PeerSyncIntervalMinutes` / `PeerSyncAutoLastAt` /
 `PeerSyncLeaseOwner` / `PeerSyncLeaseExpiresAt`。守卫测试：`PeerSyncScheduleTests`。
+
+### 12.4 trigger 模式与防回流（2026-07-13 补充）
+
+在「按周期检查」（scheduled）之外补了「内容一变就发」（trigger，`PeerSyncSchedule.TriggerMode`，也是新库默认值），
+即知识库详情页「发送入口」实际驱动的模式。三层防抖 + 防回流：
+
+- **合并窗口**：`PeerSyncSchedule.TriggerDebounceMinutes`（2 分钟）—— 用户连续保存/编辑时，trigger 模式要等
+  到「最近一次真实变更」满一个完整合并窗口才发一次，不会逐次编辑就发一轮，避免发送风暴。
+- **稳定内容签名去重**：trigger 与 scheduled 两种模式都先算 `ComputeSignatureAsync` 与 `store.PeerSyncLastContentSignature`
+  比对，签名不变直接跳过、不访问对端（§8「同步算法要点」的 ComputeSignature 复用）。
+- **对端回流抑制**：`PeerSyncTransferService.SyncItemAsync` 任一方向（含被动接收 pull/apply）同步成功后都会
+  立即把本库 `PeerSyncLastContentSignature` 更新为当前签名——所以「刚接收到对端推送」不会被下一轮 trigger 扫描
+  误判为「本地内容变了」而反向发回去，杜绝 A→B 自动同步触发 B→A 自动同步的乒乓回流。
+
+`PeerSyncAutoMode` 字段（`trigger` / `scheduled`）落在 `DocumentStore` 上，两种模式共用 §12.2/§12.3 的
+worker 扫描与防风暴五层，仅到期判定逻辑不同（trigger 看合并窗口，scheduled 看用户周期）。

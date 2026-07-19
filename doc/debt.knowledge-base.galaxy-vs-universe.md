@@ -1,6 +1,6 @@
-# 知识库「知识星球(3D 星系)」与「宇宙图(obsidian 群星)」并存 已知债务台账
+# 知识库知识星球与宇宙图并存 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-06-26 | **状态**：开放（暂以「默认只展示星系」收口）
+> **版本**：v1.0 | **日期**：2026-06-26 | **状态**：开发中
 
 > **关联**：`prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`（星系）、
 > `prd-admin/src/pages/document-store/UniverseGraphPage.tsx`（宇宙图）、

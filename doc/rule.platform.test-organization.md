@@ -1,52 +1,28 @@
 # 测试组织 · 规则
 
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
+
 ## 原则
 
-**默认所有测试都是 CI 测试，只标记需要排除的。**
+默认测试都进入 CI。只有依赖真实外部服务、真实凭据或不可在 CI 隔离运行的测试标记为 `Integration`；普通数据库 fixture、内存服务和可控容器测试不因运行较慢就排除。
 
-## 运行命令
+## 分类
 
-```bash
-# CI（排除集成测试）
-dotnet test --filter "Category!=Integration"
+| 类型 | 标记 | CI 默认 | 要求 |
+| --- | --- | --- | --- |
+| 单元与可隔离集成 | 无 | 执行 | 不依赖外部账号和公网状态 |
+| 真实外部服务 | `Trait("Category", TestCategories.Integration)` | 排除 | 文档化依赖的环境变量、成本和清理 |
 
-# 本地全量
-dotnet test
+CI 使用 `dotnet test --filter "Category!=Integration"`；本地全量使用 `dotnet test`；只跑外部集成使用 `dotnet test --filter "Category=Integration"`。
 
-# 仅集成测试
-dotnet test --filter "Category=Integration"
-```
+## 新增外部集成测试
 
-## 标记方式
+必须同时满足：
 
-只有需要真实外部服务的测试才加标记：
+1. 测试类使用统一 `TestCategories.Integration` 常量，不写散落字符串。
+2. 缺凭据时明确跳过或给出配置错误，不以空引用失败。
+3. 创建的远端资源使用唯一前缀，并在成功与失败路径清理。
+4. 不输出 secret、token、完整连接串或用户数据。
+5. 说明是否产生费用、是否可并行和预计时长。
 
-```csharp
-[Trait("Category", TestCategories.Integration)]
-public class TencentCosStorageTests { ... }
-```
-
-普通测试不需要任何标记。
-
-## 当前集成测试
-
-| 测试类 | 依赖 | 环境变量 |
-|--------|------|---------|
-| TencentCosStorageTests | 腾讯云 COS | `TENCENT_COS_*` |
-
-## 添加新集成测试
-
-```csharp
-[Trait("Category", TestCategories.Integration)]
-public class MyExternalServiceTests
-{
-    [Fact]
-    public async Task Test()
-    {
-        var key = Environment.GetEnvironmentVariable("MY_API_KEY");
-        if (string.IsNullOrEmpty(key)) return; // 无环境变量时跳过
-
-        // 测试逻辑
-    }
-}
-```
+当前真实外部服务测试及变量以测试源码和 CI 配置为事实源，本文不维护易漂移类名清单。

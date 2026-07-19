@@ -2,8 +2,6 @@
 
 > **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
-Owner: MAP 验收规范 Owner。复核: 产品 Owner、技术 Owner、CDS Owner。关联技能: `acceptance-test-design` -> `acceptance-scenario-orchestrator` -> `create-visual-test-to-kb`。
-
 ## 1. 目标
 
 MAP 企业级自动化验收不是“跑脚本、截图片、发链接”。它是一套可审计的质量治理系统，用于回答五个问题:

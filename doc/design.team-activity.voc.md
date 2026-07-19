@@ -1,11 +1,12 @@
-# design.team-activity.voc — 团队动态·用户体验之声(VOC)
+# 团队动态与用户体验之声（VOC） · 设计
+
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
 - 状态：建设中
 - owner：团队动态
 - 关联代码：`prd-api/.../Controllers/Api/TeamActivityController.cs`、`prd-admin/src/pages/team-activity/`
 - 关联规则：`closed-loop-acceptance.md`、`artifact-is-experience.md`、`miduo-review-lens.md`
 
----
 
 ## 一、管理摘要（30 秒看懂）
 

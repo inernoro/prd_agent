@@ -1,4 +1,6 @@
-# debt.knowledge-base.library-doc-reader
+# 知识库文档阅读器 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-05-28 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
@@ -7,7 +9,6 @@
 | 关联 | `prd-admin/src/pages/library/LibraryDocReader.tsx`（720 行）、`prd-admin/src/pages/library/LibraryStoreDetailPage.tsx`（140 行）、`prd-admin/src/components/doc-browser/DocBrowser.tsx` |
 | 创建 | 2026-05-28 |
 
----
 
 ## 背景
 
@@ -56,7 +57,7 @@
 
 ## 反面参考
 
-✗ "顺手把殿堂也融合了" — 720 行视觉细节，半天改不完；改完会破坏品牌差异化，要回滚成本更高
-✗ "给 DocBrowser 加 theme prop 同时改三处" — 改造面太大，不该跟"周报融合"打包做
+否 "顺手把殿堂也融合了" — 720 行视觉细节，半天改不完；改完会破坏品牌差异化，要回滚成本更高
+否 "给 DocBrowser 加 theme prop 同时改三处" — 改造面太大，不该跟"周报融合"打包做
 
 正确路径见 `frontend-architecture.md` 复用原则 + `no-rootless-tree.md` 借用法则。

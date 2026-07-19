@@ -38,6 +38,11 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
         self.assertIn('r.add_header("X-Gateway-App-Caller", app_caller)', smoke_source)
         self.assertIn('path.startswith("/pools?")', smoke_source)
 
+    def test_smoke_body_uses_the_same_configured_source_as_headers(self) -> None:
+        smoke_source = (ROOT / "scripts" / "gw-smoke.py").read_text(encoding="utf-8")
+        self.assertEqual(smoke_source.count('"SourceSystem": SMOKE_SOURCE_SYSTEM'), 5)
+        self.assertNotIn('"SourceSystem": "release-probe"', smoke_source)
+
     def test_public_llmgw_proxy_does_not_cut_off_gateway_timeout(self) -> None:
         nginx_source = STANDALONE_NGINX.read_text(encoding="utf-8")
         public_proxy = nginx_source.split("proxy_pass http://llmgw-web:80;", maxsplit=1)[1]

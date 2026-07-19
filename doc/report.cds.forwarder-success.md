@@ -1,10 +1,10 @@
-# CDS Forwarder 替代蓝绿部署 — 收尾报告
+# CDS Forwarder 替代蓝绿部署收尾（grandfather 保留） · 报告
 
-> **状态**:成功收尾 | **日期**:2026-05-08 | **关联**:`doc/guide.cds.blue-green-handoff.md`(失败收尾)、`doc/design.cds.control-data-split.md`(整体设计)
->
+> **版本**：v1.0 | **日期**：2026-05-08 | **状态**：已落地
+
+> **关联**:`doc/guide.cds.blue-green-handoff.md`(失败收尾)、`doc/design.cds.control-data-split.md`(整体设计)
 > 接手昨日交接的蓝绿改造(27 个 hotfix 仍未跑通 verify-target),用户决策"放弃蓝绿,推 forwarder 替代"。本日工作 7 个 commit,业务面 0 抖动验收通过。
 
----
 
 ## 一、最终验收结果(铁证)
 
@@ -123,7 +123,7 @@ cds-forwarder.service (systemd, Restart=always)
 | nginx upstream 单 server | 现状 | cds_worker 只指 9090,forwarder 死了走 nginx 502 fallback page。可加 `server 127.0.0.1:5500 backup;` 让 master 5500 兜底 |
 | 网络拓扑 React 页 | 未做 | API 已有(`/api/cds-system/network-topology`),前端待迁移 |
 | 灰度权重路由 | 未做 | RouteRecord.weight 字段已支持,publisher 暂未消费 |
-| publisher ↔ master detectProfileFromRequest 一致性 | **必须保证** | master proxy.ts 改 detectProfileFromRequest 时,publisher pickDefaultProfile 必须同步;否则切流期间路由不一致 |
+| publisher  master detectProfileFromRequest 一致性 | **必须保证** | master proxy.ts 改 detectProfileFromRequest 时,publisher pickDefaultProfile 必须同步;否则切流期间路由不一致 |
 
 ---
 

@@ -1,0 +1,1276 @@
+// PRD Agent MongoDB application indexes.
+// Run with: mongosh <connection-uri>/<database> scripts/mongodb-indexes.js
+// This file is the executable DBA index catalog; applications must not run it at startup.
+
+// Some historical startup definitions used a uniq_* name without enabling the unique option.
+// Convert those same-name indexes in place so this catalog can converge existing databases.
+// prepareUnique blocks new duplicates while the catalog reports existing duplicate groups;
+// failures are collected so unrelated indexes are still applied before the script exits non-zero.
+const tightenedUniqueIndexMigrationFailures = []
+
+function sameIndexDefinition(index, keys, partialFilterExpression) {
+  return (
+    JSON.stringify(index.key) === JSON.stringify(keys) &&
+    JSON.stringify(index.partialFilterExpression || {}) === JSON.stringify(partialFilterExpression || {})
+  )
+}
+
+function findDuplicateGroups(collection, keys, partialFilterExpression) {
+  const duplicateId = {}
+  Object.keys(keys).forEach(field => {
+    duplicateId[field] = `$${field}`
+  })
+  const pipeline = []
+  if (partialFilterExpression) {
+    pipeline.push({ $match: partialFilterExpression })
+  }
+  pipeline.push(
+    { $group: { _id: duplicateId, count: { $sum: 1 } } },
+    { $match: { count: { $gt: 1 } } },
+    { $limit: 5 }
+  )
+  return collection.aggregate(pipeline).toArray()
+}
+
+function restorableIndexOptions(index) {
+  const options = { name: index.name }
+  const supportedOptions = [
+    "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
+  ]
+  supportedOptions.forEach(option => {
+    if (index[option] !== undefined) {
+      options[option] = index[option]
+    }
+  })
+  return options
+}
+
+function replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options) {
+  const duplicateGroups = findDuplicateGroups(collection, keys, options.partialFilterExpression)
+  if (duplicateGroups.length > 0) {
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: duplicate groups must be cleaned before replacing the legacy index: ${JSON.stringify(duplicateGroups)}`
+    )
+    return
+  }
+
+  const restoreOptions = restorableIndexOptions(existing)
+  try {
+    collection.dropIndex(existing.name)
+    collection.createIndex(keys, options)
+  } catch (error) {
+    let rollbackMessage = ""
+    try {
+      collection.createIndex(existing.key, restoreOptions)
+    } catch (rollbackError) {
+      rollbackMessage = `; rollback failed: ${rollbackError.message || rollbackError}`
+    }
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: ${error.message || error}${rollbackMessage}`
+    )
+  }
+}
+
+function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = []) {
+  const collection = db.getCollection(collectionName)
+  const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
+  const existing = collectionExists
+    ? collection.getIndexes().find(index => index.name === options.name)
+    : undefined
+
+  if (existing) {
+    if (!sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+      const isKnownLegacyDefinition = legacyDefinitions.some(definition =>
+        sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
+      )
+      if (isKnownLegacyDefinition) {
+        replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)
+      } else {
+        tightenedUniqueIndexMigrationFailures.push(
+          `${collectionName}.${options.name}: existing index definition differs from the catalog`
+        )
+      }
+      return
+    }
+
+    if (existing.unique === true) {
+      collection.createIndex(keys, options)
+      return
+    }
+
+    try {
+      db.runCommand({
+        collMod: collectionName,
+        index: { name: options.name, prepareUnique: true }
+      })
+
+      const duplicateGroups = findDuplicateGroups(collection, keys, options.partialFilterExpression)
+      if (duplicateGroups.length > 0) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `${collectionName}.${options.name}: duplicate groups must be cleaned: ${JSON.stringify(duplicateGroups)}`
+        )
+        return
+      }
+
+      db.runCommand({
+        collMod: collectionName,
+        index: { name: options.name, unique: true }
+      })
+    } catch (error) {
+      tightenedUniqueIndexMigrationFailures.push(
+        `${collectionName}.${options.name}: ${error.message || error}`
+      )
+      return
+    }
+  }
+
+  collection.createIndex(keys, options)
+}
+
+// collection: users
+db.users.createIndex({ "Username": 1 })
+db.users.createIndex(
+  { "MiduoSsoSubjectType": 1, "MiduoSsoSubjectHash": 1 },
+  { sparse: true }
+)
+
+// collection: system_roles
+db.system_roles.createIndex({ "Key": 1 })
+
+// collection: groups
+db.groups.createIndex({ "InviteCode": 1 })
+
+// collection: documents
+db.documents.createIndex({ "CreatedAt": -1 })
+
+// collection: prdcomments
+db.prdcomments.createIndex({ "DocumentId": 1, "HeadingId": 1, "CreatedAt": -1 })
+
+// collection: groupmembers
+db.groupmembers.createIndex({ "GroupId": 1, "UserId": 1 })
+
+// collection: sessions
+// GroupId 唯一（单群单会话），仅对 GroupId 为字符串类型的文档生效
+db.sessions.createIndex(
+  { "GroupId": 1 },
+  {
+    name: "uniq_sessions_group",
+    unique: true,
+    partialFilterExpression: { "GroupId": { $type: "string" } }
+  }
+)
+
+// 个人会话列表排序（ownerUserId + lastActiveAt desc）
+db.sessions.createIndex(
+  { "OwnerUserId": 1, "LastActiveAt": -1 },
+  {
+    name: "idx_sessions_owner_last_active",
+    partialFilterExpression: { "OwnerUserId": { $type: "string" } }
+  }
+)
+
+// collection: messages
+db.messages.createIndex({ "GroupId": 1 })
+
+db.messages.createIndex({ "SessionId": 1 })
+
+// replyToMessageId：用于级联删除/一问多答关联
+db.messages.createIndex(
+  { "ReplyToMessageId": 1 },
+  { name: "idx_messages_reply_to" }
+)
+
+// groupId + groupSeq：群消息顺序键（SSE 断线续传/严格有序）
+ensureTightenedUniqueIndex("messages",
+  { "GroupId": 1, "GroupSeq": 1 },
+  {
+    name: "uniq_messages_group_seq",
+    unique: true,
+    partialFilterExpression: { "GroupSeq": { $type: "long" } }
+  }
+)
+
+// 按 sessionId + 时间游标分页
+db.messages.createIndex(
+  { "SessionId": 1, "Timestamp": -1 },
+  { name: "idx_messages_session_ts" }
+)
+
+// collection: contentgaps
+db.contentgaps.createIndex({ "GroupId": 1 })
+
+// collection: invitecodes
+db.invitecodes.createIndex({ "Code": 1 })
+
+// collection: llmplatforms
+db.llmplatforms.createIndex({ "Name": 1 })
+
+// collection: llmmodels
+db.llmmodels.createIndex({ "ModelName": 1 })
+db.llmmodels.createIndex({ "PlatformId": 1 })
+db.llmmodels.createIndex({ "Priority": 1 })
+
+// collection: llmrequestlogs
+db.llmrequestlogs.createIndex({ "StartedAt": -1 })
+db.llmrequestlogs.createIndex({ "RequestId": 1 })
+db.llmrequestlogs.createIndex({ "GroupId": 1 })
+db.llmrequestlogs.createIndex({ "SessionId": 1 })
+db.llmrequestlogs.createIndex({ "Provider": 1, "Model": 1 })
+db.llmrequestlogs.createIndex({ "EndedAt": 1 })
+
+// collection: apirequestlogs
+db.apirequestlogs.createIndex({ "StartedAt": -1 })
+db.apirequestlogs.createIndex({ "RequestId": 1 })
+db.apirequestlogs.createIndex({ "UserId": 1 })
+db.apirequestlogs.createIndex({ "Path": 1 })
+db.apirequestlogs.createIndex({ "StatusCode": 1 })
+db.apirequestlogs.createIndex({ "ClientType": 1, "ClientId": 1 })
+db.apirequestlogs.createIndex({ "EndedAt": 1 })
+
+// collection: open_api_request_logs
+// 按 Key 拉调试日志（抽屉主查询）
+db.open_api_request_logs.createIndex({ "KeyId": 1, "CreatedAt": -1 })
+// 无过滤的全局时间序视图
+db.open_api_request_logs.createIndex({ "CreatedAt": -1 })
+// 按 requestId（响应里的 chatcmpl-<requestId>）定位单条
+db.open_api_request_logs.createIndex({ "RequestId": 1 })
+// 可选 TTL：日志含 IP/UA，按合规保留期自动过期（expireAfterSeconds 由 DBA 按策略定，示例 90 天）
+// db.open_api_request_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 7776000 })
+
+// collection: model_lab_experiments
+db.model_lab_experiments.createIndex({ "OwnerAdminId": 1, "UpdatedAt": -1 })
+db.model_lab_experiments.createIndex({ "CreatedAt": -1 })
+
+// collection: model_lab_runs
+db.model_lab_runs.createIndex({ "OwnerAdminId": 1, "StartedAt": -1 })
+db.model_lab_runs.createIndex({ "ExperimentId": 1 })
+
+// collection: model_lab_run_items
+db.model_lab_run_items.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
+db.model_lab_run_items.createIndex({ "ModelId": 1 })
+
+// collection: model_lab_model_sets
+db.model_lab_model_sets.createIndex({ "OwnerAdminId": 1, "Name": 1 })
+db.model_lab_model_sets.createIndex({ "OwnerAdminId": 1, "UpdatedAt": -1 })
+
+// collection: model_lab_groups
+db.model_lab_groups.createIndex({ "OwnerAdminId": 1, "Name": 1 })
+db.model_lab_groups.createIndex({ "OwnerAdminId": 1, "UpdatedAt": -1 })
+
+// collection: image_master_sessions
+db.image_master_sessions.createIndex({ "OwnerUserId": 1, "UpdatedAt": -1 })
+
+// collection: image_master_messages
+db.image_master_messages.createIndex({ "SessionId": 1, "CreatedAt": 1 })
+db.image_master_messages.createIndex({ "WorkspaceId": 1, "CreatedAt": 1 })
+
+// collection: image_assets
+db.image_assets.createIndex({ "OwnerUserId": 1, "CreatedAt": -1 })
+db.image_assets.createIndex({ "WorkspaceId": 1, "CreatedAt": -1 })
+
+// Workspace 内按 sha256 去重（仅对 WorkspaceId 为字符串的文档生效）
+ensureTightenedUniqueIndex("image_assets",
+  { "WorkspaceId": 1, "Sha256": 1 },
+  {
+    name: "uniq_image_assets_workspace_sha256",
+    unique: true,
+    partialFilterExpression: { "WorkspaceId": { $type: "string" } }
+  },
+  [{
+    keys: { "WorkspaceId": 1, "Sha256": 1 },
+    partialFilterExpression: { "workspaceId": { $type: "string" } }
+  }]
+)
+
+// collection: image_master_canvases
+db.image_master_canvases.createIndex(
+  { "OwnerUserId": 1, "SessionId": 1 },
+  { name: "idx_image_master_canvases_owner_session" }
+)
+
+db.image_master_canvases.createIndex({ "OwnerUserId": 1, "UpdatedAt": -1 })
+
+db.image_master_canvases.createIndex(
+  { "WorkspaceId": 1 },
+  { name: "idx_image_master_canvases_workspace" }
+)
+
+// collection: image_master_workspaces
+db.image_master_workspaces.createIndex({ "OwnerUserId": 1, "UpdatedAt": -1 })
+db.image_master_workspaces.createIndex({ "MemberUserIds": 1 })
+
+// collection: image_gen_size_caps
+// modelId 唯一（仅对存在 ModelId 字段的文档生效）
+ensureTightenedUniqueIndex("image_gen_size_caps",
+  { "ModelId": 1 },
+  {
+    name: "uniq_image_gen_size_caps_modelId",
+    unique: true,
+    partialFilterExpression: { "ModelId": { $exists: true } }
+  }
+)
+
+// platformId + modelName 唯一（仅对两个字段都存在的文档生效）
+ensureTightenedUniqueIndex("image_gen_size_caps",
+  { "PlatformId": 1, "ModelName": 1 },
+  {
+    name: "uniq_image_gen_size_caps_platformId_modelName",
+    unique: true,
+    partialFilterExpression: {
+      "PlatformId": { $exists: true },
+      "ModelName": { $exists: true }
+    }
+  }
+)
+
+// collection: image_gen_runs
+db.image_gen_runs.createIndex({ "OwnerAdminId": 1, "CreatedAt": -1 })
+db.image_gen_runs.createIndex({ "Status": 1, "CreatedAt": 1 })
+
+// 幂等键：同一 admin 下唯一（仅对 IdempotencyKey 为字符串的文档生效）
+ensureTightenedUniqueIndex("image_gen_runs",
+  { "OwnerAdminId": 1, "IdempotencyKey": 1 },
+  {
+    name: "uniq_image_gen_runs_owner_idem",
+    unique: true,
+    partialFilterExpression: { "IdempotencyKey": { $type: "string" } }
+  }
+)
+
+// collection: image_gen_run_items
+db.image_gen_run_items.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
+
+ensureTightenedUniqueIndex("image_gen_run_items",
+  { "RunId": 1, "ItemIndex": 1, "ImageIndex": 1 },
+  { name: "uniq_image_gen_run_items_run_pos", unique: true }
+)
+
+// collection: image_gen_run_events
+db.image_gen_run_events.createIndex({ "OwnerAdminId": 1, "RunId": 1 })
+
+ensureTightenedUniqueIndex("image_gen_run_events",
+  { "RunId": 1, "Seq": 1 },
+  { name: "uniq_image_gen_run_events_run_seq", unique: true }
+)
+
+// collection: upload_artifacts
+db.upload_artifacts.createIndex({ "RequestId": 1, "CreatedAt": -1 })
+db.upload_artifacts.createIndex({ "RequestId": 1, "Kind": 1, "CreatedAt": -1 })
+db.upload_artifacts.createIndex({ "Sha256": 1, "CreatedAt": -1 })
+
+// collection: admin_prompt_overrides
+// 同一管理员 + key 唯一
+ensureTightenedUniqueIndex("admin_prompt_overrides",
+  { "OwnerAdminId": 1, "Key": 1 },
+  { name: "uniq_admin_prompt_overrides_owner_key", unique: true }
+)
+
+// collection: admin_idempotency
+// 同一管理员 + scope + idemKey 唯一（仅对 idempotencyKey 为字符串的文档生效）
+ensureTightenedUniqueIndex("admin_idempotency",
+  { "ownerAdminId": 1, "scope": 1, "idempotencyKey": 1 },
+  {
+    name: "uniq_admin_idempotency_owner_scope_key_v2",
+    unique: true,
+    partialFilterExpression: { "idempotencyKey": { $type: "string" } }
+  }
+)
+
+db.admin_idempotency.createIndex({ "createdAt": -1 })
+
+// collection: desktop_asset_skins
+db.desktop_asset_skins.createIndex(
+  { "name": 1 },
+  { name: "idx_desktop_asset_skins_name" }
+)
+
+db.desktop_asset_skins.createIndex(
+  { "enabled": 1 },
+  { name: "idx_desktop_asset_skins_enabled" }
+)
+
+// collection: desktop_asset_keys
+db.desktop_asset_keys.createIndex(
+  { "key": 1 },
+  { name: "idx_desktop_asset_keys_key" }
+)
+
+// collection: desktop_assets
+// Key + Skin 唯一（仅对 Skin 为字符串的文档生效）
+ensureTightenedUniqueIndex("desktop_assets",
+  { "Key": 1, "Skin": 1 },
+  {
+    name: "uniq_desktop_assets_key_skin",
+    unique: true,
+    partialFilterExpression: { "Skin": { $type: "string" } }
+  }
+)
+
+// 按 Key 查询所有皮肤的资源
+db.desktop_assets.createIndex(
+  { "Key": 1 },
+  { name: "idx_desktop_assets_key" }
+)
+
+// collection: literary_prompts
+db.literary_prompts.createIndex({ "OwnerUserId": 1, "ScenarioType": 1, "Order": 1 })
+db.literary_prompts.createIndex({ "ScenarioType": 1, "Order": 1 })
+
+// collection: openplatformapps
+db.openplatformapps.createIndex({ "ApiKeyHash": 1 })
+db.openplatformapps.createIndex({ "BoundUserId": 1 })
+db.openplatformapps.createIndex({ "CreatedAt": -1 })
+
+// collection: openplatformrequestlogs
+db.openplatformrequestlogs.createIndex({ "AppId": 1, "StartedAt": -1 })
+db.openplatformrequestlogs.createIndex({ "AppId": 1, "StatusCode": 1 })
+db.openplatformrequestlogs.createIndex({ "StartedAt": -1 })
+db.openplatformrequestlogs.createIndex({ "EndedAt": 1 })
+
+// collection: model_groups
+db.model_groups.createIndex({ "ModelType": 1, "IsDefaultForType": -1 })
+db.model_groups.createIndex({ "CreatedAt": -1 })
+
+// collection: llm_app_callers
+// 按 appCode 唯一
+ensureTightenedUniqueIndex("llm_app_callers",
+  { "AppCode": 1 },
+  { name: "uniq_llm_app_callers_app_code", unique: true }
+)
+
+db.llm_app_callers.createIndex({ "LastCalledAt": -1 })
+
+// collection: watermark_font_assets
+// 同一用户 + fontKey 唯一
+db.watermark_font_assets.createIndex(
+  { "ownerUserId": 1, "fontKey": 1 },
+  { name: "uniq_watermark_font_owner_key", unique: true }
+)
+
+// collection: watermark_configs
+db.watermark_configs.createIndex(
+  { "userId": 1, "updatedAt": -1 },
+  { name: "idx_watermark_configs_user_updated" }
+)
+
+db.watermark_configs.createIndex(
+  { "userId": 1, "appKeys": 1 },
+  { name: "idx_watermark_configs_user_appkeys" }
+)
+
+// collection: defect_templates
+db.defect_templates.createIndex(
+  { "IsDefault": -1, "CreatedAt": -1 },
+  { name: "idx_defect_templates_default" }
+)
+
+// collection: defect_reports
+db.defect_reports.createIndex(
+  { "ReporterId": 1, "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_reports_reporter_status" }
+)
+
+db.defect_reports.createIndex(
+  { "AssigneeId": 1, "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_reports_assignee_status" }
+)
+
+db.defect_reports.createIndex(
+  { "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_reports_status" }
+)
+
+// defectNo 唯一（仅对 DefectNo 为字符串的文档生效）
+db.defect_reports.createIndex(
+  { "DefectNo": 1 },
+  {
+    name: "uniq_defect_reports_no",
+    unique: true,
+    partialFilterExpression: { "DefectNo": { $type: "string" } }
+  }
+)
+
+// 按 projectId + status 查询
+db.defect_reports.createIndex(
+  { "ProjectId": 1, "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_reports_project" }
+)
+
+// 按 teamId + status 查询
+db.defect_reports.createIndex(
+  { "TeamId": 1, "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_reports_team" }
+)
+
+// collection: defect_messages
+db.defect_messages.createIndex(
+  { "DefectId": 1, "Seq": 1 },
+  { name: "idx_defect_messages_defect_seq" }
+)
+
+// collection: defect_projects
+// 按 key 唯一
+db.defect_projects.createIndex(
+  { "Key": 1 },
+  { name: "uniq_defect_projects_key", unique: true }
+)
+
+db.defect_projects.createIndex(
+  { "OwnerUserId": 1 },
+  { name: "idx_defect_projects_owner" }
+)
+
+// collection: defect_webhook_configs
+db.defect_webhook_configs.createIndex(
+  { "TeamId": 1, "ProjectId": 1 },
+  { name: "idx_defect_webhooks_team_project" }
+)
+
+// collection: defect_share_links
+db.defect_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_defect_share_links_token", unique: true }
+)
+
+db.defect_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_defect_share_links_creator" }
+)
+
+// collection: marketplace_skill_share_links
+db.marketplace_skill_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_marketplace_skill_share_links_token", unique: true }
+)
+
+db.marketplace_skill_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_marketplace_skill_share_links_creator" }
+)
+
+db.marketplace_skill_share_links.createIndex(
+  { "SkillId": 1, "IsRevoked": 1, "ExpiresAt": 1 },
+  { name: "idx_marketplace_skill_share_links_skill_active" }
+)
+
+// collection: defect_fix_reports
+db.defect_fix_reports.createIndex(
+  { "ShareLinkId": 1, "CreatedAt": -1 },
+  { name: "idx_defect_fix_reports_share" }
+)
+
+db.defect_fix_reports.createIndex(
+  { "ShareToken": 1 },
+  { name: "idx_defect_fix_reports_token" }
+)
+
+// collection: defect_resolution_traces
+// 按 commit 反查关联缺陷
+db.defect_resolution_traces.createIndex(
+  { "CommitSha": 1, "CreatedAt": -1 },
+  { name: "idx_defect_resolution_traces_commit" }
+)
+
+// 按缺陷反查修复链路
+db.defect_resolution_traces.createIndex(
+  { "DefectId": 1, "CreatedAt": -1 },
+  { name: "idx_defect_resolution_traces_defect" }
+)
+
+// collection: defect_automation_runs
+// 定时任务恢复：优先查 running / failed / completed
+db.defect_automation_runs.createIndex(
+  { "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_automation_runs_status" }
+)
+
+// 排查当前卡在哪个缺陷
+db.defect_automation_runs.createIndex(
+  { "CurrentDefectId": 1, "UpdatedAt": -1 },
+  { name: "idx_defect_automation_runs_current_defect" }
+)
+
+// 按长期授权 Key 追踪运行历史
+db.defect_automation_runs.createIndex(
+  { "AgentApiKeyId": 1, "CreatedAt": -1 },
+  { name: "idx_defect_automation_runs_key" }
+)
+
+// collection: github_user_connections
+// 每个用户只保留一条 GitHub OAuth 连接
+db.github_user_connections.createIndex(
+  { "UserId": 1 },
+  { name: "uniq_github_user_connections_user", unique: true }
+)
+
+// collection: pr_review_items
+// 按用户和更新时间分页；同一用户的同仓库同 PR 唯一
+db.pr_review_items.createIndex(
+  { "UserId": 1, "UpdatedAt": -1 },
+  { name: "idx_pr_review_items_user_updated" }
+)
+
+db.pr_review_items.createIndex(
+  { "UserId": 1, "Owner": 1, "Repo": 1, "Number": 1 },
+  { name: "uniq_pr_review_items_user_repo_number", unique: true }
+)
+
+// collection: channel_whitelist
+db.channel_whitelist.createIndex(
+  { "ChannelType": 1, "IdentifierPattern": 1 },
+  { name: "idx_channel_whitelist_type_pattern" }
+)
+
+db.channel_whitelist.createIndex(
+  { "IsActive": 1, "Priority": 1 },
+  { name: "idx_channel_whitelist_active_priority" }
+)
+
+db.channel_whitelist.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_channel_whitelist_created" }
+)
+
+// collection: channel_identity_mappings
+// 按 channelType + channelIdentifier 唯一
+db.channel_identity_mappings.createIndex(
+  { "ChannelType": 1, "ChannelIdentifier": 1 },
+  { name: "uniq_channel_identity_type_identifier", unique: true }
+)
+
+db.channel_identity_mappings.createIndex(
+  { "UserId": 1 },
+  { name: "idx_channel_identity_user" }
+)
+
+// collection: channel_tasks
+db.channel_tasks.createIndex(
+  { "Status": 1, "CreatedAt": -1 },
+  { name: "idx_channel_tasks_status_created" }
+)
+
+db.channel_tasks.createIndex(
+  { "ChannelType": 1, "SenderIdentifier": 1, "CreatedAt": -1 },
+  { name: "idx_channel_tasks_type_sender_created" }
+)
+
+db.channel_tasks.createIndex(
+  { "MappedUserId": 1, "CreatedAt": -1 },
+  { name: "idx_channel_tasks_user_created" }
+)
+
+db.channel_tasks.createIndex(
+  { "CreatedAt": 1 },
+  { name: "idx_channel_tasks_created" }
+)
+
+// collection: channel_request_logs
+db.channel_request_logs.createIndex(
+  { "ChannelType": 1, "CreatedAt": -1 },
+  { name: "idx_channel_request_logs_type_created" }
+)
+
+db.channel_request_logs.createIndex(
+  { "MappedUserId": 1, "CreatedAt": -1 },
+  { name: "idx_channel_request_logs_user_created" }
+)
+
+db.channel_request_logs.createIndex(
+  { "TaskId": 1 },
+  { name: "idx_channel_request_logs_task" }
+)
+
+db.channel_request_logs.createIndex(
+  { "EndedAt": 1 },
+  { name: "idx_channel_request_logs_ended" }
+)
+
+// collection: user_shortcuts
+// 按 tokenHash 唯一
+db.user_shortcuts.createIndex(
+  { "TokenHash": 1 },
+  { name: "uniq_user_shortcuts_token_hash", unique: true }
+)
+
+db.user_shortcuts.createIndex(
+  { "UserId": 1 },
+  { name: "idx_user_shortcuts_user" }
+)
+
+// collection: user_collections
+db.user_collections.createIndex(
+  { "UserId": 1, "CreatedAt": -1 },
+  { name: "idx_user_collections_user_created" }
+)
+
+// collection: shortcut_templates
+db.shortcut_templates.createIndex(
+  { "IsDefault": 1, "IsActive": 1 },
+  { name: "idx_shortcut_templates_default_active" }
+)
+
+// collection: toolbox_runs
+db.toolbox_runs.createIndex(
+  { "UserId": 1, "CreatedAt": -1 },
+  { name: "idx_toolbox_runs_user_created" }
+)
+
+db.toolbox_runs.createIndex(
+  { "Status": 1, "CreatedAt": 1 },
+  { name: "idx_toolbox_runs_status_created" }
+)
+
+// collection: toolbox_items
+db.toolbox_items.createIndex(
+  { "CreatedByUserId": 1, "CreatedAt": -1 },
+  { name: "idx_toolbox_items_user_created" }
+)
+
+// 市场公开列表
+db.toolbox_items.createIndex(
+  { "IsPublic": 1, "ForkCount": -1 },
+  { name: "idx_toolbox_items_public_forkcount" }
+)
+
+// collection: toolbox_sessions
+db.toolbox_sessions.createIndex(
+  { "UserId": 1, "ItemId": 1, "LastActiveAt": -1 },
+  { name: "idx_toolbox_sessions_user_item_active" }
+)
+
+// collection: toolbox_messages
+db.toolbox_messages.createIndex(
+  { "SessionId": 1, "CreatedAt": 1 },
+  { name: "idx_toolbox_messages_session_created" }
+)
+
+// collection: webhook_delivery_logs
+db.webhook_delivery_logs.createIndex(
+  { "AppId": 1, "CreatedAt": -1 },
+  { name: "idx_webhook_delivery_logs_app_created" }
+)
+
+db.webhook_delivery_logs.createIndex(
+  { "CreatedAt": 1 },
+  { name: "idx_webhook_delivery_logs_created" }
+)
+
+// collection: automation_rules
+db.automation_rules.createIndex(
+  { "EventType": 1, "Enabled": 1 },
+  { name: "idx_automation_rules_event_enabled" }
+)
+
+// 按 HookId 查询（sparse，忽略无 HookId 的文档）
+db.automation_rules.createIndex(
+  { "HookId": 1 },
+  { name: "idx_automation_rules_hook_id", sparse: true }
+)
+
+// collection: workflows
+db.workflows.createIndex(
+  { "CreatedBy": 1, "UpdatedAt": -1 },
+  { name: "idx_workflows_creator_updated" }
+)
+
+db.workflows.createIndex(
+  { "IsPublic": 1, "ForkCount": -1 },
+  { name: "idx_workflows_public_forkcount" }
+)
+
+// collection: workflow_executions
+db.workflow_executions.createIndex(
+  { "WorkflowId": 1, "CreatedAt": -1 },
+  { name: "idx_workflow_executions_workflow_created" }
+)
+
+db.workflow_executions.createIndex(
+  { "Status": 1, "CreatedAt": 1 },
+  { name: "idx_workflow_executions_status_created" }
+)
+
+db.workflow_executions.createIndex(
+  { "TriggeredBy": 1, "CreatedAt": -1 },
+  { name: "idx_workflow_executions_trigger_created" }
+)
+
+// collection: workflow_schedules
+db.workflow_schedules.createIndex(
+  { "IsEnabled": 1, "NextRunAt": 1 },
+  { name: "idx_workflow_schedules_enabled_nextrun" }
+)
+
+db.workflow_schedules.createIndex(
+  { "WorkflowId": 1 },
+  { name: "idx_workflow_schedules_workflow" }
+)
+
+// collection: workflow_secrets
+// 按工作流ID + Key 唯一
+db.workflow_secrets.createIndex(
+  { "WorkflowId": 1, "Key": 1 },
+  { name: "uniq_workflow_secrets_workflow_key", unique: true }
+)
+
+// collection: share_links
+// 按 Token 唯一
+db.share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_share_links_token", unique: true }
+)
+
+db.share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_share_links_creator_created" }
+)
+
+db.share_links.createIndex(
+  { "ResourceType": 1, "ResourceId": 1 },
+  { name: "idx_share_links_resource" }
+)
+
+// collection: skills
+// SkillKey 唯一
+db.skills.createIndex(
+  { "SkillKey": 1 },
+  { name: "uniq_skills_skill_key", unique: true }
+)
+
+db.skills.createIndex(
+  { "Visibility": 1, "IsEnabled": 1, "Order": 1 },
+  { name: "idx_skills_visibility_enabled_order" }
+)
+
+db.skills.createIndex(
+  { "OwnerUserId": 1, "UpdatedAt": -1 },
+  { name: "idx_skills_owner_updated" }
+)
+
+// collection: model_exchanges
+// 按 ModelAlias 唯一
+db.model_exchanges.createIndex(
+  { "ModelAlias": 1 },
+  { name: "uniq_exchange_model_alias", unique: true }
+)
+
+// collection: tutorial_email_sequences
+// 按 sequenceKey 唯一
+db.tutorial_email_sequences.createIndex(
+  { "SequenceKey": 1 },
+  { name: "uniq_tutorial_email_sequences_key", unique: true }
+)
+
+// collection: tutorial_email_templates
+db.tutorial_email_templates.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_tutorial_email_templates_created" }
+)
+
+// collection: tutorial_email_assets
+db.tutorial_email_assets.createIndex(
+  { "UploadedAt": -1 },
+  { name: "idx_tutorial_email_assets_uploaded" }
+)
+
+db.tutorial_email_assets.createIndex(
+  { "Tags": 1 },
+  { name: "idx_tutorial_email_assets_tags" }
+)
+
+// collection: tutorial_email_enrollments
+db.tutorial_email_enrollments.createIndex(
+  { "Status": 1, "NextSendAt": 1 },
+  { name: "idx_tutorial_email_enrollments_status_next" }
+)
+
+// 按 userId + sequenceKey 唯一
+db.tutorial_email_enrollments.createIndex(
+  { "UserId": 1, "SequenceKey": 1 },
+  { name: "uniq_tutorial_email_enrollments_user_seq", unique: true }
+)
+
+// collection: teams
+// 按邀请码查询
+db.teams.createIndex(
+  { "InviteCode": 1 },
+  { name: "idx_teams_invite_code" }
+)
+
+// collection: team_members
+// (TeamId, UserId) 唯一；按 UserId 查询用户所在团队
+db.team_members.createIndex(
+  { "TeamId": 1, "UserId": 1 },
+  { name: "uniq_team_members_team_user", unique: true }
+)
+
+db.team_members.createIndex(
+  { "UserId": 1 },
+  { name: "idx_team_members_user" }
+)
+
+// collection: team_activity_logs
+db.team_activity_logs.createIndex(
+  { "TeamId": 1, "CreatedAt": -1 },
+  { name: "idx_team_activity_team_created" }
+)
+
+// 团队作用域过滤
+db.hosted_sites.createIndex(
+  { "SharedTeamIds": 1 },
+  { name: "idx_hosted_sites_shared_teams" }
+)
+
+db.document_stores.createIndex(
+  { "SharedTeamIds": 1 },
+  { name: "idx_document_stores_shared_teams" }
+)
+
+// collection: report_teams
+db.report_teams.createIndex(
+  { "LeaderUserId": 1 },
+  { name: "idx_report_teams_leader" }
+)
+
+// collection: report_team_members
+// (TeamId, UserId) 唯一
+db.report_team_members.createIndex(
+  { "TeamId": 1, "UserId": 1 },
+  { name: "uniq_report_team_members_team_user", unique: true }
+)
+
+db.report_team_members.createIndex(
+  { "UserId": 1 },
+  { name: "idx_report_team_members_user" }
+)
+
+// collection: report_templates
+db.report_templates.createIndex(
+  { "IsDefault": -1, "CreatedAt": -1 },
+  { name: "idx_report_templates_default" }
+)
+
+// collection: report_weekly_reports
+// (UserId, TeamId, WeekYear, WeekNumber) 唯一，防止重复周报
+db.report_weekly_reports.createIndex(
+  { "UserId": 1, "TeamId": 1, "WeekYear": 1, "WeekNumber": 1 },
+  { name: "uniq_weekly_reports_user_team_week", unique: true }
+)
+
+db.report_weekly_reports.createIndex(
+  { "TeamId": 1, "Status": 1, "PeriodEnd": -1 },
+  { name: "idx_weekly_reports_team_status" }
+)
+
+db.report_weekly_reports.createIndex(
+  { "UserId": 1, "PeriodEnd": -1 },
+  { name: "idx_weekly_reports_user_period" }
+)
+
+// collection: report_daily_logs
+// (UserId, Date) 唯一，一天一条
+db.report_daily_logs.createIndex(
+  { "UserId": 1, "Date": 1 },
+  { name: "idx_daily_logs_user_date", unique: true }
+)
+
+// collection: report_data_sources
+db.report_data_sources.createIndex(
+  { "TeamId": 1 },
+  { name: "idx_data_sources_team" }
+)
+
+// collection: report_commits
+// (DataSourceId, CommitHash) 唯一，幂等同步
+db.report_commits.createIndex(
+  { "DataSourceId": 1, "CommitHash": 1 },
+  { name: "idx_commits_source_hash", unique: true }
+)
+
+db.report_commits.createIndex(
+  { "MappedUserId": 1, "CommittedAt": -1 },
+  { name: "idx_commits_user_date" }
+)
+
+// collection: report_comments
+db.report_comments.createIndex(
+  { "ReportId": 1, "SectionIndex": 1 },
+  { name: "idx_report_comments_report_section" }
+)
+
+db.report_comments.createIndex(
+  { "ParentCommentId": 1 },
+  { name: "idx_report_comments_parent" }
+)
+
+// collection: report_likes (report_likes)
+// (ReportId, UserId) 唯一，防重复点赞
+db.report_likes.createIndex(
+  { "ReportId": 1, "UserId": 1 },
+  { name: "uniq_report_likes_report_user", unique: true }
+)
+
+db.report_likes.createIndex(
+  { "ReportId": 1, "CreatedAt": -1 },
+  { name: "idx_report_likes_report_created" }
+)
+
+// collection: report_view_events
+// 按周报和浏览时间查询浏览轨迹
+db.report_view_events.createIndex(
+  { "ReportId": 1, "ViewedAt": -1 },
+  { name: "idx_report_views_report_viewed" }
+)
+
+// 按周报、用户和浏览时间统计单用户浏览次数
+db.report_view_events.createIndex(
+  { "ReportId": 1, "UserId": 1, "ViewedAt": -1 },
+  { name: "idx_report_views_report_user_viewed" }
+)
+
+// collection: report_team_summaries
+// (TeamId, WeekYear, WeekNumber) 唯一
+db.report_team_summaries.createIndex(
+  { "TeamId": 1, "WeekYear": 1, "WeekNumber": 1 },
+  { name: "idx_team_summaries_team_week", unique: true }
+)
+
+// collection: report_personal_sources
+db.report_personal_sources.createIndex(
+  { "UserId": 1, "SourceType": 1 },
+  { name: "idx_personal_sources_user_type" }
+)
+
+// collection: arena_groups
+// 按 Key 唯一
+db.arena_groups.createIndex(
+  { "Key": 1 },
+  { name: "uniq_arena_groups_key", unique: true }
+)
+
+// collection: arena_slots
+db.arena_slots.createIndex(
+  { "Group": 1, "SortOrder": 1 },
+  { name: "idx_arena_slots_group_sort" }
+)
+
+// collection: arena_battles
+db.arena_battles.createIndex(
+  { "UserId": 1, "CreatedAt": -1 },
+  { name: "idx_arena_battles_user_created" }
+)
+
+// collection: hosted_sites
+db.hosted_sites.createIndex(
+  { "OwnerUserId": 1, "CreatedAt": -1 },
+  { name: "idx_hosted_sites_owner_created" }
+)
+
+// collection: short_video_material_runs
+db.short_video_material_runs.createIndex(
+  { "UserId": 1, "CreatedAt": -1 },
+  { name: "idx_short_video_material_runs_user_created" }
+)
+
+db.hosted_sites.createIndex(
+  { "Tags": 1 },
+  { name: "idx_hosted_sites_tags" }
+)
+
+db.hosted_sites.createIndex(
+  { "OwnerUserId": 1, "SourceType": 1 },
+  { name: "idx_hosted_sites_owner_source" }
+)
+
+db.hosted_sites.createIndex(
+  { "OwnerUserId": 1, "Folder": 1 },
+  { name: "idx_hosted_sites_owner_folder" }
+)
+
+// collection: document_store_share_links
+// 按 Token 唯一；按创建者或知识库倒序查询
+db.document_store_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_document_store_share_links_token", unique: true }
+)
+
+db.document_store_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_document_store_share_links_creator_created" }
+)
+
+db.document_store_share_links.createIndex(
+  { "StoreId": 1, "CreatedAt": -1 },
+  { name: "idx_document_store_share_links_store_created" }
+)
+
+// collection: web_page_share_links
+// 按 Token 唯一
+db.web_page_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_web_page_share_links_token", unique: true }
+)
+
+db.web_page_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_web_page_share_links_creator_created" }
+)
+
+// collection: hosted_site_comments
+// 评论面板按 站点 + 未删 + 时间倒序 加载（站内/分享公开读都走这条）；
+// 共享集合跨多站点后无此复合索引会全表扫 + 内存排序（PR #694）。
+db.hosted_site_comments.createIndex(
+  { "SiteId": 1, "IsDeleted": 1, "CreatedAt": -1 },
+  { name: "idx_hosted_site_comments_site_deleted_created" }
+)
+
+// collection: share_view_logs
+db.share_view_logs.createIndex(
+  { "ShareOwnerUserId": 1, "ViewedAt": -1 },
+  { name: "idx_share_view_logs_owner_viewed" }
+)
+
+db.share_view_logs.createIndex(
+  { "ShareToken": 1, "ViewedAt": -1 },
+  { name: "idx_share_view_logs_token_viewed" }
+)
+
+// collection: short_links
+// Seq 唯一（对外 URL 主键）
+db.short_links.createIndex(
+  { "Seq": 1 },
+  { name: "uniq_short_links_seq", unique: true }
+)
+
+// (TargetType, TargetId) 唯一 — 同一资源只发一个短链 + 并发兜底
+db.short_links.createIndex(
+  { "TargetType": 1, "TargetId": 1 },
+  { name: "uniq_short_links_target", unique: true }
+)
+
+// collection: desktop_update_caches
+// (Version, Target) 唯一
+db.desktop_update_caches.createIndex(
+  { "Version": 1, "Target": 1 },
+  { name: "uniq_desktop_update_caches_version_target", unique: true }
+)
+
+db.desktop_update_caches.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_desktop_update_caches_created" }
+)
+
+// collection: submissions
+db.submissions.createIndex(
+  { "IsPublic": 1, "ContentType": 1, "CreatedAt": -1 },
+  { name: "idx_submissions_public_type_created" }
+)
+
+db.submissions.createIndex(
+  { "OwnerUserId": 1 },
+  { name: "idx_submissions_owner" }
+)
+
+// 按 ImageAssetId 唯一（防重复投稿同一图片，仅对字符串类型生效）
+db.submissions.createIndex(
+  { "ImageAssetId": 1 },
+  {
+    name: "uniq_submissions_image_asset",
+    unique: true,
+    partialFilterExpression: { "ImageAssetId": { $type: "string" } }
+  }
+)
+
+// collection: submission_likes
+// (SubmissionId + UserId) 唯一
+db.submission_likes.createIndex(
+  { "SubmissionId": 1, "UserId": 1 },
+  { name: "uniq_submission_likes_sid_uid", unique: true }
+)
+
+// collection: skill_agent_sessions
+// (Id + UserId) 用于上层查询（Id 即 _id，自动索引；UserId 复合加速跨用户隔离校验）
+db.skill_agent_sessions.createIndex(
+  { "UserId": 1, "LastActiveAt": -1 },
+  { name: "ix_skill_agent_sessions_user_recent" }
+)
+
+// LastActiveAt 上 7 天 TTL，用户超过 7 天无活动的会话自动清理
+db.skill_agent_sessions.createIndex(
+  { "LastActiveAt": 1 },
+  {
+    name: "ttl_skill_agent_sessions_7d",
+    expireAfterSeconds: 604800
+  }
+)
+
+// collection: pa_user_profiles
+// UserId 唯一 — 每个用户最多一条 profile，重复插入应被 unique 索引拦截
+db.pa_user_profiles.createIndex(
+  { "UserId": 1 },
+  { name: "uniq_pa_user_profiles_user", unique: true }
+)
+
+// collection: document_store_conversations
+// (UserId, SourceEntryId) 唯一 — 同一用户同一文档最多一条对话，并发重复插入被 unique 索引拦截
+db.document_store_conversations.createIndex(
+  { "UserId": 1, "SourceEntryId": 1 },
+  { name: "uniq_doc_store_conversations_user_entry", unique: true }
+)
+
+// collection: changelog_snapshots
+// Key 唯一 — 单视图单条快照，并发 upsert 竞态被 unique 索引拦截
+db.changelog_snapshots.createIndex(
+  { "Key": 1 },
+  { name: "uniq_changelog_snapshots_key", unique: true }
+)
+
+// collection: peer_nodes
+// RemoteNodeId 唯一 — 同一对端在本节点只能一条配对，并发 upsert 被 unique 索引拦截
+db.peer_nodes.createIndex(
+  { "RemoteNodeId": 1 },
+  { name: "uniq_peer_nodes_remote_node_id", unique: true }
+)
+
+// collection: activity_logs
+// 时间线主查询 — 无筛选时按时间倒序翻页
+db.activity_logs.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_activity_logs_created_at" }
+)
+
+// 按人筛选 + 时间倒序
+db.activity_logs.createIndex(
+  { "ActorId": 1, "CreatedAt": -1 },
+  { name: "idx_activity_logs_actor_created" }
+)
+
+// 按模块筛选 + 时间倒序
+db.activity_logs.createIndex(
+  { "Module": 1, "CreatedAt": -1 },
+  { name: "idx_activity_logs_module_created" }
+)
+
+// collection: document_entry_versions
+// (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
+db.document_entry_versions.createIndex(
+  { "EntryId": 1, "VersionNumber": -1 },
+  { name: "uniq_doc_entry_versions_entry_version", unique: true }
+)
+
+// collection: home_recent_opens
+// 读：按用户取最近打开
+db.home_recent_opens.createIndex(
+  { "UserId": 1, "LastOpenedAt": -1 },
+  { name: "idx_home_recent_opens_user_time" }
+)
+// 写：每用户每实体一条（并发 upsert 去重兜底）
+db.home_recent_opens.createIndex(
+  { "UserId": 1, "AgentKey": 1, "EntityId": 1 },
+  { name: "uniq_home_recent_opens_user_entity", unique: true }
+)
+
+if (tightenedUniqueIndexMigrationFailures.length > 0) {
+  throw new Error(
+    `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
+  )
+}

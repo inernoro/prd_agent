@@ -1,8 +1,9 @@
-# CDS Self-Hosting（CDS 托管 CDS）· 技术设计
+# CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计
 
-> **类型**:design(怎么做) · **更新**:2026-07-15 · **状态**:MVP（预览实例）已实现,模拟执行器/DinD/实验田域名为后续路线
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+> **更新**:2026-07-15
+
 
 ## 一、管理摘要
 
@@ -95,7 +96,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 - `cds/cds-compose.selfhost.yml` — cds-self 项目 compose 合同(粘贴导入)
 - `cds/tests/services/preview-instance.test.ts` — 拦截边界 + seed 幂等单测
 - `.claude/rules/cross-project-isolation.md` — 通道 4(共享库)/通道 5(self-update 重启)是本设计要消灭的痛
-- `doc/plan.llm-gateway.rollout.md` — 看板范式;cds-self 若演进为多波工程需按 living-status-board 建看板
+- `doc/plan.cds.status.md` — CDS 活状态与路线入口
 
 ## 七、风险与已知边界
 

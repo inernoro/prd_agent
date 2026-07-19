@@ -1,441 +1,127 @@
-# 大模型池设计（三级调度/三级链路）
+# 大模型池设计（三级调度/三级链路） · 设计
 
-> **版本**：v1.0 | **日期**：2026-02-06 | **状态**：已实现
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
-- **解决什么问题**：LLM 调用缺乏统一调度，无法按应用隔离模型配置，故障降级需人工干预
-- **方案概述**：构建三级调度链路（专属池 → 默认池 → 传统配置），通过 ILlmGateway 统一入口 + ModelResolver 自动解析 + 健康状态驱动降级
-- **业务价值**：模型调用全链路可观测，按应用隔离配置互不干扰，故障自动降级保障服务连续性
-- **影响范围**：prd-api 全部 LLM 调用、prd-admin 模型池管理页面
-- **预计风险**：中 — 涉及所有 LLM 调用路径迁移，需逐步替换并验证
+- **解决什么问题**：模型调用需要按业务用途绑定模型、在端点故障时降级，并能解释最终选中了哪个平台、模型和池。
+- **当前方案**：appCallerCode 声明模型类型与专属池，Resolver 按专属池、默认池、兼容配置依次解析，再按健康和能力选择池内成员。
+- **健康闭环**：业务调用记录成功和失败，后台探活使已隔离端点有机会恢复，池耗尽与恢复形成通知和日志。
+- **事实源演进**：网关控制面逐步拥有模型池权威；MAP 侧集合仍承担兼容读取，不能形成无规则双写。
 
----
+## 1. 核心对象
 
-## 1. 目标与边界
-
-### 1.1 目标
-- 所有 LLM 请求统一走**三级调度/三级链路**：专属模型池 → 默认模型池 → 传统配置（Legacy）。
-- 模型选择可观测：每次请求写入 `LlmRequestContext`，落库到 `llmrequestlogs`，可追踪 `ModelResolutionType/ModelGroupId/ModelGroupName`。
-- 允许按应用调用者维度（`appCallerCode`）隔离模型池配置与策略。
-
-### 1.2 非目标
-- 不在本文档定义具体 Prompt 内容。
-- 不讨论单一模型的 API 细节（仅描述调度与池化机制）。
-
----
-
-## 2. 核心概念
-
-### 2.1 模型池（ModelGroup）
-- 代表"同类型模型集合"的配置单元，包含多个 `(platformId, modelId)`。
-- 支持优先级与健康状态，用于故障降级与恢复。
-- 可标记为"默认池"或"专属池"。
-
-关键字段（见 `PrdAgent.Core/Models/ModelGroup.cs`）：
-- `ModelType`：chat/intent/vision/generation 等
-- `IsDefaultForType`：是否默认池
-- `Models[]`：池内模型列表
-
-### 2.2 应用调用者（LLMAppCaller）
-- 以 `appCallerCode` 为业务唯一入口标识（如 `admin.prompts.optimize`）。
-- 通过 `ModelRequirements` 指定某模型类型（如 chat/intent）的模型池绑定。
-- 支持"自动注册"：首次调用自动创建默认需求并走默认池。
-
-关键字段（见 `PrdAgent.Core/Models/LLMAppCaller.cs`）：
-- `AppCode`
-- `ModelRequirements[]`（含 `ModelType`、`ModelGroupIds`）
-
-### 2.3 三级调度/三级链路
-1) **专属模型池（DedicatedPool）**：若 `appCallerCode + modelType` 绑定了模型池列表，则优先使用
-2) **默认模型池（DefaultPool）**：若未绑定专属池，则使用该模型类型的默认池
-3) **传统配置（Legacy）**：使用 IsMain/IsVision/IsImageGen/IsIntent 标记的模型
-
-模型解析类型（`ModelResolutionType`）：
-- `DedicatedPool`
-- `DefaultPool`
-- `Legacy`
-- `DirectModel`（仅 ModelLab 等测试场景）
-
----
-
-## 3. 设计原则
-
-1) **业务唯一入口**：任何业务调用必须通过 `ILlmGateway` 获取客户端。
-2) **可观测**：所有 LLM 调用必须写 `LlmRequestContext`，且字段完整。
-3) **隔离**：模型池以 `appCallerCode` 维度隔离，避免跨业务混用。
-4) **可降级**：池内模型健康状态驱动降级与恢复。
-
----
-
-## 4. 架构概述
-
-### 4.1 核心组件
-
-| 组件 | 职责 | 位置 |
-|------|------|------|
-| **ILlmGateway** | 统一守门员接口（Core 层） | `PrdAgent.Core/Interfaces/LlmGateway/ILlmGateway.cs` |
-| **LlmGateway** | Gateway 核心实现 | `PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
-| **IModelResolver** | 模型解析接口 | `PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
-| **GatewayLLMClient** | ILLMClient 实现（委托到 Gateway） | `PrdAgent.Infrastructure/LlmGateway/GatewayLLMClient.cs` |
-| **IGatewayAdapter** | 平台适配器接口 | `PrdAgent.Infrastructure/LlmGateway/Adapters/` |
-| **IModelPool** | 模型池策略引擎接口 | `PrdAgent.Infrastructure/ModelPool/IModelPool.cs` |
-| **ModelPoolFactory** | ModelGroup → IModelPool 桥接工厂 | `PrdAgent.Infrastructure/ModelPool/ModelPoolFactory.cs` |
-| **IPoolStrategy** | 调度策略接口 | `PrdAgent.Infrastructure/ModelPool/IPoolStrategy.cs` |
-| **IPoolHealthTracker** | 端点健康追踪器 | `PrdAgent.Infrastructure/ModelPool/IPoolHealthTracker.cs` |
-| **HttpPoolDispatcher** | HTTP 请求分发器 | `PrdAgent.Infrastructure/ModelPool/HttpPoolDispatcher.cs` |
-
-### 4.2 两种调用方式
-
-```csharp
-// 方式一：CreateClient（推荐，用于流式场景）
-var client = _gateway.CreateClient(appCallerCode, modelType);
-await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct))
-{
-    // 处理流式响应
-}
-
-// 方式二：SendAsync/StreamAsync（直接调用，需要手动构造 GatewayRequest）
-var request = new GatewayRequest
-{
-    AppCallerCode = "my-app::chat",
-    ModelType = "chat",
-    RequestBody = new JsonObject { ... }
-};
-var response = await _gateway.SendAsync(request, ct);
-```
-
----
-
-## 5. 调度流程
-
-### 5.1 核心调度器：ModelResolver
-
-关键逻辑：
-- `ResolveAsync`：按三级链路解析模型
-- `RecordSuccessAsync`：记录成功，恢复健康状态
-- `RecordFailureAsync`：记录失败，触发降权
-
-### 5.2 解析优先级
-
-```
-1. DedicatedPool: AppCaller.ModelRequirements.ModelGroupIds 绑定的专属池
-       ↓ (未绑定或所有模型不可用)
-2. DefaultPool: ModelGroup.IsDefaultForType = true 的默认池
-       ↓ (无默认池或所有模型不可用)
-3. Legacy: LLMModel.IsMain/IsVision/IsImageGen/IsIntent 标记的传统模型
-       ↓ (无可用模型)
-4. NotFound: 返回错误
-```
-
-### 5.3 健康状态管理
-
-模型健康状态（`ModelHealthStatus`）：
-- `Healthy`：健康，优先选择
-- `Degraded`：降权，仅在无健康模型时使用
-- `Unavailable`：不可用，跳过
-
-状态转换规则：
-- 连续失败 3 次 → 降权（Degraded）
-- 连续失败 5 次 → 不可用（Unavailable）
-- 成功 1 次 → 恢复健康（Healthy）
-
----
-
-## 6. 架构图
-
-### 6.1 组件关系
-
-```mermaid
-flowchart LR
-    A[Controller/Service] -->|appCallerCode + modelType| B[ILlmGateway]
-    B --> C[IModelResolver]
-    C --> D[LLMAppCaller]
-    C --> E[ModelGroup]
-    E --> F[ModelGroupItem]
-    B --> G[IGatewayAdapter]
-    G --> H[LLM Platform API]
-    B --> I[ILlmRequestLogWriter]
-    I --> J[llmrequestlogs]
-```
-
-### 6.2 调用序列
-
-```mermaid
-sequenceDiagram
-    participant C as Controller/Service
-    participant G as LlmGateway
-    participant R as ModelResolver
-    participant DB as MongoDB
-    participant A as GatewayAdapter
-    participant L as LLM API
-    participant LOG as llmrequestlogs
-
-    C->>G: CreateClient(appCallerCode, modelType)
-    G-->>C: GatewayLLMClient
-
-    C->>G: StreamGenerateAsync(systemPrompt, messages)
-    G->>R: ResolveAsync(appCallerCode, modelType)
-    R->>DB: 查询 AppCaller + ModelGroup
-    R-->>G: ModelResolutionResult
-
-    G->>A: BuildHttpRequest(endpoint, apiKey, body)
-    G->>L: HTTP 请求
-    L-->>G: 流式响应
-
-    G->>R: RecordSuccessAsync(resolution)
-    R->>DB: 更新健康状态
-    G->>LOG: 写入请求日志
-    G-->>C: 流式 Chunk
-```
-
-### 6.3 CreateClient 流程
-
-```mermaid
-flowchart TB
-    subgraph Core Layer
-        A[业务代码]
-        B[Core.ILlmGateway]
-    end
-
-    subgraph Infrastructure Layer
-        C[Infrastructure.ILlmGateway]
-        D[LlmGateway]
-        E[GatewayLLMClient]
-        F[IModelResolver]
-        G[IGatewayAdapter]
-    end
-
-    A --> B
-    B -.-> C
-    C --> D
-    D -->|CreateClient| E
-    E -->|StreamAsync| D
-    D --> F
-    D --> G
-```
-
----
-
-## 7. 日志与审计
-
-### 7.1 必需字段
-
-| 字段 | 说明 |
+| 对象 | 责任 |
 |------|------|
-| `RequestType` | 请求类型（chat/vision/generation/intent） |
-| `RequestPurpose` | AppCallerCode（用于过滤特定应用的日志） |
-| `ModelResolutionType` | 调度来源（DedicatedPool/DefaultPool/Legacy/DirectModel） |
-| `ModelGroupId` | 使用的模型池 ID |
-| `ModelGroupName` | 使用的模型池名称 |
-| `Model` | 实际使用的模型名称 |
+| LLMAppCaller | 用稳定 appCallerCode 表达业务调用用途和模型要求 |
+| ModelRequirement | 指定模型类型、候选池和能力约束 |
+| ModelGroup | 表达同类模型的池、优先级、默认属性和策略 |
+| ModelGroupItem | 绑定平台与模型，并保存健康、失败计数和能力快照 |
+| ModelResolver | 解析调用方、池、成员、平台配置和最终发送参数 |
+| LlmRequestContext | 保存用户、调用方、运行和审计上下文 |
 
-### 7.2 数据存储
+appCallerCode 是业务用途，不等于模型名。一个调用点不得通过临时字符串绕开注册表，也不能把前端选择直接当成最终解析结果。
 
-数据落库：`llmrequestlogs`
-查询入口：`/api/logs/llm`
+## 2. 三级解析
 
----
+解析顺序固定为：
 
-## 8. 例外与约束
+1. 当前 appCaller 对应模型类型的专属模型池。
+2. 同模型类型的默认模型池。
+3. 尚未迁移部署的 legacy 模型标记兼容路径。
 
-### 8.1 例外
-- **ModelLab**：允许直接选择模型用于测试，不走调度，但必须写日志且 `ModelResolutionType=DirectModel`。
+每一级只选择已启用、类型匹配且未被判定为不可用的候选。解析失败必须返回已检查的层级和原因，不能静默选用不同模型类型。
 
-### 8.2 禁止事项
-- 禁止在业务侧直接 new LLM Client
-- 禁止绕过 `ILlmGateway` 直接调用底层 HTTP 客户端
+legacy 是迁移兜底，不是长期并行调度系统。新调用和新配置必须进入模型池与调用方注册体系。
 
----
+## 3. 池内选择
 
-## 9. 代码索引
-
-### 9.1 核心接口与实现
-
-| 文件 | 用途 |
+| 条件 | 处理 |
 |------|------|
-| `Core/Interfaces/LlmGateway/ILlmGateway.cs` | Core 层 Gateway 接口 |
-| `Infrastructure/LlmGateway/ILlmGateway.cs` | Infrastructure 层 Gateway 接口 |
-| `Infrastructure/LlmGateway/LlmGateway.cs` | Gateway 核心实现 |
-| `Infrastructure/LlmGateway/GatewayLLMClient.cs` | ILLMClient 实现 |
-| `Infrastructure/LlmGateway/ModelResolver.cs` | 模型解析器 |
-| `Infrastructure/LlmGateway/GatewayRequest.cs` | 请求模型 |
-| `Infrastructure/LlmGateway/GatewayResponse.cs` | 响应模型 |
+| 指定期望模型且可用 | 在候选池中优先选择匹配项 |
+| Healthy 成员存在 | 按池策略和优先级选择 |
+| 仅 Degraded 成员存在 | 允许降级使用并记录健康状态 |
+| 成员 Unavailable | 普通业务流量跳过，等待探活恢复 |
+| 能力不满足 | 跳过并记录 capability mismatch |
+| 全池耗尽 | 尝试下一候选池，最终返回结构化不可用错误 |
 
-### 9.2 适配器
+模型能力至少包括视觉、函数调用、图片生成、thinking 和结构化输出等。池成员的能力快照优先；旧数据缺失时可以从平台模型配置补足，但要记录来源。
 
-| 文件 | 平台 |
-|------|------|
-| `Adapters/OpenAIGatewayAdapter.cs` | OpenAI 兼容平台 |
-| `Adapters/ClaudeGatewayAdapter.cs` | Anthropic Claude |
+## 4. 健康状态与故障转移
 
-### 9.3 管理接口
+池成员状态为 Healthy、Degraded 和 Unavailable。当前失败阈值由 Resolver 实现维护：连续失败达到降级阈值后降低优先级，达到隔离阈值后停止承接普通流量；任意受认可的成功可恢复健康并清零连续失败。
 
-| API | 用途 |
-|-----|------|
-| `/api/mds/model-groups` | 模型池管理（CRUD） |
-| `POST /api/mds/model-groups/{id}/test` | 模型池连通性测试 |
-| `GET /api/mds/model-groups/{id}/health` | 模型池健康状态查询 |
-| `GET /api/mds/model-groups/{id}/predict` | 调度预测（模拟下次请求路径） |
-| `/api/open-platform/app-callers` | 应用调用者管理 |
-| `/api/logs/llm` | LLM 请求日志查询 |
+业务成功和失败只更新实际使用的池与成员。超时、上游 5xx、协议错误和明确限流可以计入健康；用户输入错误、内容策略拒绝和主动取消不应错误惩罚模型。
 
----
+### 自动探活
 
-## 10. 单元测试
+Unavailable 成员没有正常业务流量，必须由 `ModelPoolHealthProbeService` 在冷却后发起低成本探活。探活遵循：
 
-### 10.1 测试文件索引
+- 限制并发和频率，避免放大上游故障或额度消耗。
+- 使用最小请求并标记 `IsHealthProbe`，与用户调用日志区分。
+- 成功后恢复成员，失败后更新最近探活信息并等待下一窗口。
+- 探活写入与业务健康写入必须指向同一权威池集合。
+- 全池不可用与恢复可以通知管理员，但要做去重和冷却。
 
-| 测试文件 | 覆盖范围 |
-|----------|----------|
-| `LlmGatewayTests.cs` | Gateway CreateClient、接口注册 |
-| `ModelResolverTests.cs` | 三级调度逻辑、健康状态管理 |
-| `ModelPoolSchedulingTests.cs` | 模型池选择、优先级、健康状态 |
-| `LlmSchedulingPolicyTests.cs` | 调度策略 |
-| `LlmSchedulingIntegrationTests.cs` | 端到端集成测试 |
-| `ModelPoolFactoryTests.cs` | ModelPoolFactory 桥接、策略选择 |
-| `PoolHealthTrackerTests.cs` | 健康追踪、状态转换 |
-| `FailFastStrategyTests.cs` | 快速失败策略单元测试 |
-| `SequentialStrategyTests.cs` | 顺序容灾策略单元测试 |
-| `RoundRobinStrategyTests.cs` | 轮询均衡策略单元测试 |
+## 5. compute-then-send
 
-### 10.2 运行测试
+模型解析与发送分为两个阶段。发送阶段接收已经解析的结果，不再重新解析模型；否则可能出现配额、日志或界面显示选中 A，真正请求却发送到 B。
 
-```bash
-# 运行所有 Gateway 相关测试
-dotnet test --filter "FullyQualifiedName~LlmGateway|FullyQualifiedName~ModelResolver|FullyQualifiedName~ModelPoolScheduling"
+跨进程网关模式下，明文密钥不随解析 DTO 穿越 HTTP 边界。网关侧拥有解析和发送时，MAP 只能取得脱敏的选择摘要用于展示与前置判断。
 
-# 运行集成测试（需要真实环境）
-dotnet test --filter "Category=Integration"
-```
+## 6. 策略与优先级
 
----
+池策略可以表达顺序、权重、成本或能力偏好，但所有策略都必须满足：
 
-## 11. 迁移说明
+- 不选择禁用或 Unavailable 成员。
+- 不跨越模型类型与调用方授权范围。
+- 选择结果可解释并写入日志。
+- 同一请求重试有上限，避免在多个坏端点间无限循环。
+- 期望模型只是偏好，是否允许降级由调用契约决定。
 
-### 11.1 从 SmartModelScheduler 迁移（已完成）
+策略实现和前端编辑器不得各自维护一套枚举映射；服务端策略类型是权威。
 
-**之前（已废弃）**：
-```csharp
-// 不要这样做
-private readonly ISmartModelScheduler _scheduler;
+## 7. 日志与可观测性
 
-var result = await _scheduler.GetClientWithGroupInfoAsync(appCallerCode, modelType);
-var client = result.Client;
-```
+每次调用至少记录：appCallerCode、modelType、解析层级、池 ID 与名称、平台、期望模型、实际模型、候选摘要、健康状态、耗时、首字节、错误分类和是否探活。
 
-**现在（推荐）**：
-```csharp
-// 正确做法
-private readonly ILlmGateway _gateway;
+日志不能包含明文平台密钥。流式请求的开始、首字节和终态必须属于同一次调用记录，Watchdog 不能把仍在运行的长推理误判为孤儿。
 
-var client = _gateway.CreateClient(appCallerCode, modelType);
-await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, ct))
-{
-    // 处理响应
-}
-```
+## 8. 权威与兼容
 
-### 11.2 DI 注册
+网关独立化后，`llmgw_model_pools` 和网关调用方注册逐步成为权威。MAP 的 `model_groups` 与 `llm_app_callers` 在迁移期可以兼容读取，但必须明确 lookup status 和来源。
 
-```csharp
-// Program.cs
-builder.Services.AddScoped<Infrastructure.LlmGateway.ILlmGateway, LlmGateway>();
-builder.Services.AddScoped<Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
-    (Core.Interfaces.LlmGateway.ILlmGateway)sp.GetRequiredService<Infrastructure.LlmGateway.ILlmGateway>());
-```
+以下行为禁止：
 
----
+- 无来源地在 MAP 与 GW 两个集合同时写健康状态。
+- 删除或失效池后仍保留悬挂调用方绑定。
+- 用平台默认模型绕过模型池失败。
+- 在前端硬编码模型类型、策略和健康状态的业务含义。
 
-## 12. 与三级调度/三级链路的关系
+## 9. 当前事实入口
 
-本设计即"三级调度/三级链路"的落地实现：
-- **专属池**：绑定到 `LLMAppCaller.ModelRequirements.ModelGroupIds`
-- **默认池**：`ModelGroup.IsDefaultForType = true`
-- **传统配置**：`LLMModel.IsMain/IsVision/IsImageGen/IsIntent` 标记
-- **直连**：仅用于 ModelLab 等测试场景
+| 能力 | 事实入口 |
+|------|----------|
+| 解析与健康写入 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
+| 解析契约 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/IModelResolver.cs` |
+| 网关调用 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
+| 自动探活 | `prd-api/src/PrdAgent.Infrastructure/ModelPool/ModelPoolHealthProbeService.cs` |
+| 模型池模型 | `prd-api/src/PrdAgent.Core/Models/ModelGroup.cs` |
+| 调用方模型 | `prd-api/src/PrdAgent.Core/Models/LLMAppCaller.cs` |
+| 注册同步 | `prd-api/src/PrdAgent.Api/Services/AppCallerRegistrySyncService.cs` |
 
----
+## 10. 验收标准
 
-## 13. ModelPool 策略引擎（独立组件）
+- 专属池、默认池和 legacy 解析顺序可通过日志证明。
+- Healthy、Degraded、Unavailable 成员的选择行为符合约束。
+- 全池不可用后，探活可以恢复端点且不依赖普通业务流量。
+- 模型能力不满足时不会发送请求后才发现错误。
+- 期望模型、实际模型、池和平台在日志与用户界面一致。
+- MAP 与 GW 并存期能解释每次读取和健康写入的权威来源。
 
-> **新增于 2026-02-06**：将调度策略从 Gateway 中抽离为独立组件，支持 6 种策略、健康追踪、连通性测试。
+## 关联文档
 
-### 13.1 设计目标
-
-- **独立性**：`Infrastructure/ModelPool/` 不依赖 Gateway，可独立使用和测试
-- **可扩展**：新增策略只需实现 `IPoolStrategy` 接口
-- **桥接复用**：`ModelPoolFactory` 将现有 `ModelGroup` + `LLMPlatform` 转换为 `IModelPool`
-
-### 13.2 目录结构
-
-```
-PrdAgent.Infrastructure/ModelPool/
-├── IModelPool.cs              # 模型池顶层接口
-├── IPoolStrategy.cs           # 策略接口
-├── IPoolHealthTracker.cs      # 健康追踪接口
-├── IPoolHttpDispatcher.cs     # HTTP 分发接口
-├── ModelPoolFactory.cs        # ModelGroup → IModelPool 工厂
-├── ModelPoolDispatcher.cs     # 核心调度引擎
-├── HttpPoolDispatcher.cs      # HTTP 请求实际执行
-├── PoolHealthTracker.cs       # 内存健康追踪实现
-├── Models/
-│   ├── PoolStrategyType.cs    # 策略枚举 (6 种)
-│   ├── PoolEndpoint.cs        # 端点模型
-│   ├── PoolRequest.cs         # 请求模型
-│   ├── PoolResponse.cs        # 响应模型
-│   ├── PoolHealthSnapshot.cs  # 健康快照
-│   └── PoolTestResult.cs      # 测试结果
-├── Strategies/
-│   ├── StrategyHelper.cs      # 策略公共工具
-│   ├── FailFastStrategy.cs    # 快速失败（选最优，失败立即返回）
-│   ├── RaceStrategy.cs        # 竞速模式（并行请求，取最快）
-│   ├── SequentialStrategy.cs  # 顺序容灾（按序尝试，失败切换）
-│   ├── RoundRobinStrategy.cs  # 轮询均衡（均匀分配）
-│   ├── WeightedRandomStrategy.cs  # 加权随机（按权重概率选择）
-│   └── LeastLatencyStrategy.cs    # 最低延迟（优先最快端点）
-└── Testing/
-    ├── IPoolEndpointTester.cs     # 端点测试接口
-    └── HttpPoolEndpointTester.cs  # HTTP 连通性测试实现
-```
-
-### 13.3 策略类型（PoolStrategyType）
-
-| 枚举值 | 名称 | 说明 | 可预测 |
-|--------|------|------|--------|
-| 0 | FailFast | 选最优端点，失败直接返回错误 | ✅ |
-| 1 | Race | 并行请求所有端点，取最先成功返回的结果 | ✅ |
-| 2 | Sequential | 按优先级顺序尝试，失败自动切换下一个 | ✅ |
-| 3 | RoundRobin | 请求均匀分配到所有可用端点 | ✅ |
-| 4 | WeightedRandom | 按优先级权重随机选择端点 | ❌（随机） |
-| 5 | LeastLatency | 优先选择历史响应最快的端点 | ❌（运行时） |
-
-- `ModelGroup.StrategyType` 字段（int，默认 0=FailFast）控制该模型池使用的策略
-- 前端管理界面仅展示前 4 种可预测策略，后 2 种保留在后端供高级配置
-
-### 13.4 ModelPoolFactory 桥接
-
-```csharp
-// 将现有 ModelGroup 实体转换为独立 IModelPool
-var pool = _modelPoolFactory.Create(modelGroup, platforms);
-var response = await pool.SendAsync(request, ct);
-```
-
-工厂自动完成：
-1. 将 `ModelGroupItem[]` 转换为 `PoolEndpoint[]`
-2. 解密 API Key（通过 `ApiKeyCrypto`）
-3. 根据 `ModelGroup.StrategyType` 选择对应的 `IPoolStrategy`
-
-### 13.5 管理端 API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/mds/model-groups/{id}/test` | POST | 向池内所有端点发送测试请求，返回连通性结果 |
-| `/api/mds/model-groups/{id}/health` | GET | 返回池内所有端点的健康快照 |
-| `/api/mds/model-groups/{id}/predict` | GET | 模拟下次调度路径（不发送真实请求） |
-
-### 13.6 前端可视化
-
-- **ModelPoolManagePage**：策略配置（icon 选择器）、模型列表管理
-- **PoolPredictionDialog**：调度预测可视化（4 种动画：Linear/Race/Weighted/RoundRobin）
-- 卡片右上角 Radar 图标：点击后查看该池的预测调度路径
+- `doc/design.platform.llm-gateway.md`
+- `doc/design.llm-gateway-physical-isolation.md`
+- `doc/rule.platform.llm-gateway.md`
+- `doc/rule.platform.ai-model-visibility.md`

@@ -1,189 +1,103 @@
-# 服务器权威性设计 (Server Authority Design)
+# 服务器权威性 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-04 | **状态**：已实现
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
-## 一、管理摘要
+## 管理摘要
 
-- **解决什么问题**：客户端被动断开连接（关闭页面、网络中断等）会取消服务器正在执行的 LLM 调用和数据库操作，导致资源浪费和脏数据
-- **方案概述**：业务逻辑统一使用 CancellationToken.None，SSE 写入捕获断开异常但继续处理，长任务通过 Run/Worker 模式与 HTTP 连接解耦
-- **业务价值**：确保 LLM token 不白费、数据操作完整性、断线续传用户体验
-- **影响范围**：prd-api 全部 Controller/Service 的 CancellationToken 使用、SSE 流式响应模式
-- **预计风险**：低 — 模式成熟，已在全系统统一落地
+- **解决的问题**：页面关闭、路由切换和网络中断会触发 HTTP 取消令牌，若直接传入 LLM 或数据库操作，服务器任务可能半途终止。
+- **核心方案**：区分被动断开与主动取消；已接收的业务任务由服务器负责完成，长任务使用 Run/Worker 与连接解耦。
+- **当前状态**：服务器权威取消策略、SSE 断开容错、心跳和 `afterSeq` 续传已在多个长任务链路落地。
+- **适用范围**：LLM、图片、视频、同步、批处理和任何具有持久业务结果的长任务。
 
-## 1. 问题背景
+## 问题背景
 
-在 Web 应用中，HTTP 连接（包括 SSE 流）随时可能因为以下原因断开：
+浏览器连接是临时传输通道，不是业务任务的生命周期。用户刷新页面可能只是换了一条连接，并不表示要放弃已经支付成本的模型调用。若把 `RequestAborted` 一路传到底层，客户端被动断开会造成 Token 浪费、部分写入、状态悬挂和无法恢复的用户体验。
 
-- 用户关闭浏览器标签页
-- 用户切换路由（SPA 页面跳转）
-- 网络中断或不稳定
-- 浏览器刷新
+另一方面，服务器权威不等于任务永远不能取消。用户明确点击取消时，系统应通过独立取消 API 修改任务状态并通知 Worker。
 
-ASP.NET Core 默认行为是：当客户端断开时，`HttpContext.RequestAborted`（即 Controller 方法接收到的 `CancellationToken`）会被触发，导致服务端正在执行的操作被取消。
+## 设计目标
 
-**这对短请求没问题，但对长时间运行的任务是灾难性的**：LLM 已经消耗了 token、数据库写了一半、图片生成到一半——这些不完整的操作浪费资源且留下脏数据。
+1. 被动断开不取消已经开始的业务任务。
+2. 主动取消有显式 API、状态和审计轨迹。
+3. 长任务状态与事件持久化，客户端可刷新后续读。
+4. SSE 写失败不影响业务处理和最终落库。
+5. Worker 关闭时把未完成任务收口到可解释状态。
 
-## 2. 核心设计决策
+## 核心决策
 
-**服务器端任务一旦启动，只有显式的用户主动取消请求才能中断。客户端被动断开连接不应取消服务器处理。**
+| 场景 | 服务器行为 |
+|------|------------|
+| 页面关闭、刷新、切路由 | 继续执行并保存结果 |
+| 网络暂时中断 | 继续执行，客户端按事件游标续读 |
+| SSE Response 已释放 | 停止写当前连接，不停止业务 |
+| 用户调用取消 API | 标记取消并由 Worker 在安全点结束 |
+| 服务进程关闭 | Worker 完成收尾或把未完成 Run 标记失败 |
 
-### 2.1 主动取消 vs 被动断开
+## 两种执行模式
 
-| 类型 | 触发方式 | 服务器行为 |
-|------|---------|-----------|
-| **主动取消** | 用户点击"取消"按钮 → 调用显式取消 API（如 `POST /runs/{id}/cancel`） | 允许取消任务 |
-| **被动断开** | 关闭页面、切换路由、网络中断、浏览器刷新 | **不取消**，继续完成任务并持久化结果 |
+### 连接内执行
 
-### 2.2 设计收益
+适用于持续时间较短、已有 SSE 协议且能够安全完成持久化的操作。业务调用和数据库写入使用服务器控制的取消策略；SSE 写入单独捕获连接取消与对象释放异常。连接断开后，后端停止向该 Response 写数据，但继续计算和落库。
 
-1. **资源不浪费**：LLM 调用已消耗的 token 不会白费
-2. **数据完整性**：数据库操作能完整执行，不留脏数据
-3. **断线续传**：用户重新连接后可查看已完成的结果（通过 `afterSeq` 机制）
+### Run/Worker
 
-## 3. 实现模式
+适用于图片、视频、批处理和长时间模型任务：
 
-### 3.1 SSE 流式响应模式
+1. HTTP 请求只创建 Run 并返回 Run ID。
+2. Worker 从持久队列或数据库领取任务。
+3. 每个阶段写入状态和单调递增事件序号。
+4. 客户端通过查询与 SSE 观察进度。
+5. 断线后以 `afterSeq` 或 `Last-Event-ID` 继续读取。
+6. 完成、失败和取消均形成终态。
 
-适用于需要实时推送结果给前端的场景（如 LLM 流式输出）。
+Run/Worker 是首选模式，因为它天然把业务生命周期从浏览器连接中剥离。
 
-**核心要点**：
-- 业务逻辑（LLM 调用、数据库操作）使用 `CancellationToken.None`
-- SSE 写入操作捕获 `OperationCanceledException` / `ObjectDisposedException`，客户端断开后跳过写入但继续处理
-- 用 `clientDisconnected` 标志避免重复的异常捕获开销
+## SSE 协议要求
 
-**标准实现**：
+- 长时间无业务事件时发送 keepalive，避免代理把连接判断为空闲。
+- 每个可回放事件具有稳定序号，重连只发送游标之后的事件。
+- 首次连接优先发送当前快照，再补增量事件。
+- 写入捕获连接取消和 Response 释放异常，不把它们当作业务失败。
+- `done`、`error`、`cancelled` 等终态来自持久状态，不只存在于某条连接。
+- 客户端重连必须去重，不能因重复事件再次执行副作用。
 
-```csharp
-public async Task StreamGenerateAsync(CancellationToken clientCt)
-{
-    Response.ContentType = "text/event-stream";
-    var clientDisconnected = false;
-    var fullResponse = new StringBuilder();
+## 取消边界
 
-    // ✅ LLM 调用使用 CancellationToken.None
-    await foreach (var chunk in client.StreamGenerateAsync(
-        prompt, messages, false, CancellationToken.None))
-    {
-        fullResponse.Append(chunk.Content);
+| 操作 | 取消令牌策略 |
+|------|--------------|
+| 请求参数校验与只读查询 | 可使用 HTTP 取消令牌 |
+| 已开始的 LLM 或外部 API 调用 | 使用服务器控制的令牌，不随客户端断开 |
+| 关键数据库写入与终态更新 | 使用服务器控制的令牌保证收口 |
+| SSE Response 写入 | 允许随连接取消，并捕获异常 |
+| Worker 主循环 | 使用 Host 停止令牌领取新任务 |
+| 已领取任务的收尾 | 使用独立令牌写回失败、取消或完成状态 |
 
-        if (!clientDisconnected)
-        {
-            try
-            {
-                await Response.WriteAsync($"data: {chunk}\n\n");
-                await Response.Body.FlushAsync();
-            }
-            catch (OperationCanceledException)
-            {
-                clientDisconnected = true;
-                _logger.LogDebug("客户端已断开，继续处理 LLM 响应");
-            }
-            catch (ObjectDisposedException)
-            {
-                clientDisconnected = true;
-            }
-        }
-    }
+不能机械地把所有 `CancellationToken` 都替换为 `None`。判断标准是：取消是否只代表传输通道消失，还是确实代表服务器应停止这项工作。
 
-    // ✅ 数据库操作使用 CancellationToken.None
-    await _db.SaveAsync(result, CancellationToken.None);
-}
-```
+## 状态一致性
 
-**反模式**：
+- Run 领取应具备原子性，避免多个 Worker 重复执行。
+- 状态只能沿合法方向流转，终态不能被迟到事件改回运行中。
+- 外部调用成功后，结果持久化与终态更新必须尽可能靠近，降低中间崩溃窗口。
+- 取消在安全点生效；已经完成且不可逆的外部副作用要按完成结果记录，不能伪装成未执行。
+- Worker 停止时未完成任务必须可重试或明确失败，不能永久停在 `running`。
 
-```csharp
-// ❌ 直接传递客户端 CancellationToken → 客户端关页面就全部取消
-await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, ct))
-{
-    await Response.WriteAsync($"data: {chunk}\n\n", ct);
-}
-await _db.SaveAsync(result, ct);  // 可能不会执行
-```
+## 事实来源
 
-### 3.2 Run/Worker 解耦模式
+| 文件 | 职责 |
+|------|------|
+| `.claude/rules/server-authority.md` | C# 变更的强制规则 |
+| `prd-api/src/PrdAgent.Api/Controllers/ChatRunsController.cs` | 快照、心跳与 `afterSeq` 续传示例 |
+| `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs` | 长任务 Worker 与终态处理 |
+| `prd-api/src/PrdAgent.Core/Interfaces/IRunEventStore.cs` | 事件游标存储契约 |
+| `prd-api/src/PrdAgent.Api/Controllers/Api/ReviewAgentController.cs` | 连接内 LLM 评审与断开后持久化 |
+| `prd-api/src/PrdAgent.Api/Controllers/OpenApiController.cs` | 外部 API 调用的服务器权威策略 |
 
-适用于长时间运行的任务（如图片生成、视频渲染）。
+## 验证重点
 
-**核心要点**：
-- Controller 只负责创建 Run 记录并入队，立即返回 `runId`
-- 后台 Worker 从队列消费并执行，完全与 HTTP 连接解耦
-- 前端通过 SSE 事件流（支持 `afterSeq` 断线续传）或轮询获取进度
-
-**架构**：
-
-```
-[Controller] → 创建 Run + 入队 → 返回 runId
-                    ↓
-[BackgroundWorker] → 消费队列 → 执行任务 → 持久化结果
-                    ↓
-[SSE Endpoint] ← 前端 afterSeq 断线续传 ← 查询 IRunEventStore
-```
-
-**Worker 中的 CancellationToken 使用**：
-
-```csharp
-// Worker 的 stoppingToken 仅用于应用关闭场景
-protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-{
-    while (!stoppingToken.IsCancellationRequested)
-    {
-        var run = await DequeueAsync(stoppingToken);
-        try
-        {
-            // 核心处理使用 CancellationToken.None
-            await ProcessRunAsync(run, CancellationToken.None);
-        }
-        catch (OperationCanceledException)
-        {
-            // 应用正在关闭，标记 run 为失败
-            await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED",
-                "服务正在停止", CancellationToken.None);
-        }
-    }
-}
-```
-
-### 3.3 SSE Keepalive 心跳
-
-SSE 连接需要定期发送心跳，防止代理服务器或浏览器因超时断开：
-
-```csharp
-// 每 10 秒发送 keepalive 注释
-if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
-{
-    try
-    {
-        await Response.WriteAsync(": keepalive\n\n", cancellationToken);
-        await Response.Body.FlushAsync(cancellationToken);
-    }
-    catch { break; }  // 客户端已断开
-    lastKeepAliveAt = DateTime.UtcNow;
-}
-```
-
-## 4. 已实现的场景
-
-| 场景 | 模式 | 关键文件 |
-|------|------|---------|
-| 对话执行 | Run/Worker | `ChatRunWorker.cs` |
-| 图片生成 | Run/Worker | `ImageGenRunWorker.cs` |
-| 视频生成 | Run/Worker | `VideoGenRunWorker.cs` |
-| 工作流 DAG 执行 | Run/Worker | `WorkflowRunWorker.cs` |
-| 文学创作标记生成 | SSE 流式 | `ImageMasterController.cs` → `GenerateArticleMarkers` |
-| 文学创作生图事件 | SSE 流式 | `LiteraryAgentImageGenController.cs` → `StreamRun` |
-| 工作流执行事件 | SSE 流式 | `WorkflowAgentController.cs` → `StreamExecution` |
-| 延时控制舱 | Worker 内部 | `CapsuleExecutor.cs` → `ExecuteDelayAsync` |
-
-## 5. 检查清单
-
-新增 SSE 端点或后台任务时，逐项检查：
-
-- [ ] LLM 调用是否使用 `CancellationToken.None`？
-- [ ] 数据库写操作是否使用 `CancellationToken.None`？
-- [ ] SSE 写入是否捕获 `OperationCanceledException` + `ObjectDisposedException`？
-- [ ] 是否有 `clientDisconnected` 标志避免重复捕获？
-- [ ] SSE 流是否有 10 秒 keepalive 心跳？
-- [ ] 是否支持 `afterSeq` 断线续传？
-- [ ] 长任务是否通过 Run/Worker 与 HTTP 连接解耦？
-- [ ] Worker 应用关闭时是否将 run 标记为失败？
+1. 执行中关闭页面，任务仍到达完成或失败终态。
+2. SSE 断开不会把业务异常记录为取消。
+3. 使用旧游标重连只补发缺失事件，且顺序稳定。
+4. 主动取消能停止后续阶段并保存取消状态。
+5. Worker 重启后不存在永久 `running` 的任务。
+6. 外部调用完成后即使客户端消失，结果仍能查询。

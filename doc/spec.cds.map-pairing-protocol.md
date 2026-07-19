@@ -1,354 +1,126 @@
-# spec.cds.map-pairing-protocol
+# CDS 与 MAP 配对协议 · 规格
 
-| 字段 | 内容 |
-|---|---|
-| 版本 | v1 |
-| 状态 | v1 MVP 已落地（CDS project instance discovery + MAP dynamic sidecar registry） |
-| 责任人 | Claude Code |
-| 关联 | `doc/plan.cds-shared-service-extension.md`、`doc/design.cds.agent.sdk-executor.md` |
+> **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
----
+## 0. 定义
 
-## 0. 一句话定义
+MAP 与独立 CDS 实例通过一次性剪贴板密钥建立双向信任。CDS 负责项目、部署和实例发现，MAP 保存加密后的长期连接凭据并消费实例。用户只执行“在 CDS 复制”和“在 MAP 粘贴”，不手填 base URL、projectId 或长期 token。
 
-**MAP 平台**（prd-admin / prd-api）和 **CDS**（独立部署平台）之间通过"剪贴板配对密钥"建立双向信任连接。配对完成后：CDS 自动准备项目和资源 → MAP 通过这条连接消费部署能力（实例发现 / 路由 / SSE 日志）。未来任何继承 Executor 接口的部署平台都通过同一协议接入。
+## 1. 用户流程
 
-## 1. 用户体验流（terminating diagram）
+1. CDS 管理员在系统设置创建配对密钥。
+2. CDS 显示带协议前缀的一次性文本和过期时间。
+3. 用户在 MAP 基础设施连接页粘贴文本并确认解析出的 CDS 名称和地址。
+4. MAP 后端调用 CDS accept；CDS 激活连接、准备 shared-service 项目并签发长期 token。
+5. MAP 加密保存 token，开始健康探测与实例发现。
 
-```
-[CDS 端]                                 [MAP 平台]
-1. CDS 系统设置 → 对接 MAP → [+ 创建连接密钥]
-   弹窗显示一段密文 + [复制到剪贴板]
-                    ↓ 用户复制
-                    ↓ 切到 MAP
-                                         2. 基础设施服务 → [+ 连接 CDS]
-                                            弹窗一个大 textarea，粘贴
-                                            [连接]
-                                         ↓ MAP 后端解析密文
-                                         ↓ POST cds_base_url/.../accept
-3. CDS 验证 + 创建 shared-service 项目
-   返回 { connection_id, cds_long_token,
-          project_id, instance_discovery_url }
-                                         ↓ MAP 加密落库 + 返回 UI
-                                         4. UI 列表显示 "已连接 CDS-X"
-                                            状态: 已连接
-```
-
-**关键体验承诺**：用户除了「点复制」+「点粘贴」外**不输入任何字段**。所有 base URL / token / project id / 健康检查间隔等都通过协议自动协商。
+浏览器不解析、保存或转发长期 token；所有握手由双方服务端完成。
 
 ## 2. 剪贴板密文格式（v1）
 
-```
-cds-connect:v1:<base64url(JSON)>
-```
+格式为 `cds-connect:v1:<base64url(JSON)>`。payload 字段：
 
-`<base64url(JSON)>` 解码后是：
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `version` | 是 | 固定为 `1` |
+| `cdsBaseUrl` | 是 | 用户可访问且 MAP 服务端可连接的 CDS 地址 |
+| `cdsId` | 是 | CDS 稳定实例标识 |
+| `cdsName` | 否 | UI 显示名 |
+| `pairingToken` | 是 | 一次性随机 token，只在 TTL 内有效 |
+| `issuedAt`、`expiresAt` | 是 | 签发和过期时间，默认十分钟 |
+| `scopes` | 是 | CDS 同意 MAP 使用的能力范围 |
+| `hint` | 否 | sidecar 支持和默认端口等非权威提示 |
 
-```jsonc
-{
-  "version": 1,
-  "cdsBaseUrl": "https://noroenrn.com",     // CDS 公开访问 URL
-  "cdsId": "cds-uuid-xxx",                  // CDS 实例的稳定标识
-  "cdsName": "noroenrn-prod",               // CDS 显示名（可选，给 UI 看）
-  "pairingToken": "pt_<random32>",          // 一次性配对令牌
-  "issuedAt": "2026-05-06T18:30:00Z",
-  "expiresAt": "2026-05-06T18:40:00Z",      // 默认 10 分钟 TTL
-  "scopes": [                                // CDS 同意 MAP 后续用这些能力
-    "shared-service:deploy",
-    "instance:read",
-    "deployment:stream"
-  ],
-  "hint": {                                  // 可选，给 MAP 一些环境提示
-    "supportsSidecar": true,
-    "defaultSidecarPort": 7400
-  }
-}
-```
+约束：
 
-设计要点：
-
-- **prefix 校验**：MAP 端用 `startsWith('cds-connect:v1:')` 快速判断。未来 v2 改 prefix `cds-connect:v2:`，老 MAP 直接报"不支持的版本"。
-- **base64url**（不是 base64）：避免 `+` `/` 在 URL/聊天工具里被破坏；不带 `=` padding。
-- **JSON**（不是 JWT）：明文可读，便于运维 cat 出来 debug；token 安全靠 pairing-token 一次性 + TTL，不靠加密。
-- **不含 `cdsLongToken`**：长效凭据通过后续 handshake 派发，剪贴板里只有"一次性配对凭据"，泄露也无法利用（10 分钟内一次失效）。
+- 使用 base64url 且不带 padding，协议版本通过前缀分流。
+- payload 可读但不能包含 `cdsLongToken`、SSH key 或模型密钥。
+- pairing token 在 CDS 只保存 hash，accept 成功或过期后不可重用。
+- MAP 必须向用户展示解析出的 CDS 地址，防止把恶意地址当作可信实例。
 
 ## 3. HTTP Handshake
 
-### 3.1 CDS 端：发放密钥
+### 3.1 CDS 发放密钥
 
-```
-POST /api/cds-system/connections/issue
-Body:
-  {
-    "name": "for noroenrn map",      // 可选，CDS 内部识别用
-    "scopes": [...],                 // 可选，默认 ['shared-service:deploy', 'instance:read', 'deployment:stream']
-    "ttlMinutes": 10                 // 可选，1~60
-  }
-Resp 201:
-  {
-    "connectionId": "conn_xxx",       // 待激活
-    "pairingToken": "pt_xxx",
-    "clipboardText": "cds-connect:v1:<base64url(...)>",
-    "expiresAt": "..."
-  }
-```
+`POST /api/cds-system/connections/issue` 接收可选名称、scopes 和 1 至 60 分钟 TTL，返回 connectionId、clipboardText 和 expiresAt。CDS 创建 `pending-pairing` 记录并保存 pairing token hash。
 
-CDS 内部建一条 `CdsConnection` 记录，状态 `pending-pairing`，写 `pairingTokenHash`。
+### 3.2 MAP 粘贴并调用 CDS accept
 
-### 3.2 MAP 端：粘贴 + 调用 CDS accept
+MAP 接口 `POST /api/infra-connections/paste` 只接收 clipboardText。MAP 解析后向 `{cdsBaseUrl}/api/cds-system/connections/accept` 发送：
 
-```
-POST /api/infra-connections/paste              [MAP 端 API]
-Body:
-  {
-    "clipboardText": "cds-connect:v1:..."
-  }
-```
+| 字段 | 说明 |
+| --- | --- |
+| `pairingToken` | 剪贴板中的一次性 token |
+| `mapBaseUrl`、`mapId`、`mapName` | MAP 的稳定身份与显示信息 |
+| `projectIntent` | 默认请求 `shared-service` 项目及显示名 |
 
-MAP 后端解析密文 → POST 到 CDS：
+CDS accept 必须原子完成：校验 hash、TTL 和未使用状态；消费 token；创建或复用符合意图的项目；签发长期 token；激活连接；保存 MAP 身份。响应包含 connectionId、长期 token 及过期时间、projectId、instanceDiscoveryUrl 和可选 deploy stream 模板。
 
-```
-POST {cdsBaseUrl}/api/cds-system/connections/accept     [对端 CDS API]
-Body:
-  {
-    "pairingToken": "pt_xxx",
-    "mapBaseUrl": "https://prd-agent.example.com",       // MAP 的公开访问 URL
-    "mapId": "map-uuid",                                 // MAP 实例标识
-    "mapName": "prd-agent prod",                         // 显示名
-    "projectIntent": {
-      "kind": "shared-service",
-      "name": "sidecar-pool",
-      "displayName": "Claude SDK Sidecar Pool"
-    }
-  }
-Resp 200:
-  {
-    "connectionId": "conn_xxx",
-    "cdsLongToken": "ct_<random32>",                     // 长效凭据，MAP 后续调 CDS 用
-    "cdsLongTokenExpiresAt": "...",                      // 默认 1 年
-    "projectId": "proj_xxx",                             // CDS 创建的 shared-service 项目
-    "instanceDiscoveryUrl": "/api/projects/proj_xxx/instances",
-    "deployStreamUrlTemplate": "/api/service-deployments/{id}/stream"
-  }
-```
-
-CDS 端 accept 行为：
-1. 校验 `pairingToken` SHA256 hash 匹配某个 pending connection 且未过期未使用
-2. 标记 pairingToken 为 used（一次性）
-3. 创建 shared-service 项目（kind='shared-service'）
-4. 生成 cdsLongToken，hash 存到 connection 记录
-5. 设置 connection.status='active'
-6. 写入对端信息（mapBaseUrl, mapId, mapName）
-7. 返回响应
-
-MAP 端收到响应后：
-1. `IDataProtector` 加密 cdsLongToken → 入库 `infra_connections` 集合
-2. 同时把 `mapId` / `mapBaseUrl` / `partner: 'cds'` 信息记录
-3. 返回 UI
+MAP 收到响应后用 `IDataProtector` 加密长期 token，保存连接、CDS 身份、projectId、scopes 和发现地址，再向前端返回脱敏视图。
 
 ### 3.3 失败语义
 
-| 场景 | HTTP | errorCode | 用户提示 |
-|---|---|---|---|
-| 密文格式错 | 400 | `clipboard_invalid_format` | "密钥格式不对，重新复制粘贴" |
-| 协议版本太新 | 400 | `clipboard_version_not_supported` | "MAP 版本太老，请先升级" |
-| pairingToken 过期 | 410 | `pairing_token_expired` | "密钥已过期（10 分钟），重新生成" |
-| pairingToken 已使用 | 410 | `pairing_token_used` | "密钥已被使用，重新生成" |
-| pairingToken 不存在 | 404 | `pairing_token_not_found` | "密钥无效" |
-| MAP 已连同一 CDS | 409 | `connection_duplicate` | "已有同 CDS 连接，先删除旧的" |
-| 网络不通 | 502 | `cds_unreachable` | "无法访问 CDS：{detail}" |
+| 场景 | HTTP | errorCode |
+| --- | ---: | --- |
+| 格式错误 | 400 | `clipboard_invalid_format` |
+| 不支持的版本 | 400 | `clipboard_version_not_supported` |
+| token 过期或已使用 | 410 | `pairing_token_expired` / `pairing_token_used` |
+| token 不存在 | 404 | `pairing_token_not_found` |
+| 同一 CDS 已连接 | 409 | `connection_duplicate` |
+| CDS 网络不可达 | 502 | `cds_unreachable` |
 
-### 3.4 MAP 消费实例发现（2026-05-13 MVP）
+错误响应不得包含 token、hash、内部连接串或远端响应正文中的敏感值。
 
-MAP 后台 `DynamicSidecarRegistry` 周期读取 active CDS 连接：
+### 3.4 实例发现
 
-1. 从 `infra_connections` 取 `PartnerBaseUrl`、`InstanceDiscoveryUrl`。
-2. 解密 `cdsLongToken`，以 `Authorization: Bearer <longToken>` 调用：
+MAP 的 `DynamicSidecarRegistry` 从 active 连接读取 PartnerBaseUrl 和 InstanceDiscoveryUrl，解密长期 token 后请求实例列表。每个实例至少包含 deploymentId、hostId、host、port、healthy 和 version；MAP 映射为 `Source=cds-pairing` 的动态实例。
 
-```
-GET {PartnerBaseUrl}{InstanceDiscoveryUrl}
-```
+CDS 配对实例是外部执行池，是否可路由由实例健康、adapter/profile 兼容和 MAP 策略共同决定，不能只因连接 active 就视为可执行。
 
-3. CDS 返回：
+## 4. 持久化契约
 
-```jsonc
-{
-  "projectId": "proj_xxx",
-  "instances": [
-    {
-      "deploymentId": "dep_xxx",
-      "hostId": "host_xxx",
-      "host": "10.0.0.8",
-      "port": 7400,
-      "healthy": true,
-      "tags": ["prod"],
-      "version": "v0.2.0"
-    }
-  ]
-}
-```
+### 4.1 MAP
 
-4. MAP 转成 `DynamicSidecarInstance`，`Source="cds-pairing"`。
+`infra_connections` 保存 Partner、PartnerId、PartnerBaseUrl、LongTokenEncrypted、LongTokenExpiresAt、ProjectId、InstanceDiscoveryUrl、Scopes、Status 和最近探测结果。长期 token 不返回浏览器。
 
-`cds-pairing` 实例是外部执行池：sidecar 自己持有 Anthropic key，因此 MAP 本地
-`ClaudeSdkExecutor.Enabled=false` 时仍允许路由到这些实例。sidecar Bearer token
-由 `ClaudeSdkExecutor:CdsDiscovery:SharedSidecarToken` 提供，未设置时退回
-`DefaultSidecarToken`。
+### 4.2 CDS
 
-## 4. 双方持久化数据
-
-### 4.1 MAP（`infra_connections` MongoDB 集合）
-
-```csharp
-public class InfraConnection {
-    public string Id;                          // 本地 id
-    public string Partner;                     // "cds"，未来 "k8s" / "nomad"
-    public string PartnerName;                 // CDS 实例显示名（来自 CDS）
-    public string PartnerId;                   // CDS 实例稳定 ID
-    public string PartnerBaseUrl;              // 配对后协商的 base URL
-    public string LongTokenEncrypted;          // IDataProtector 加密
-    public DateTime LongTokenExpiresAt;
-    public string ProjectId;                   // CDS 给 MAP 创建的 shared-service 项目
-    public string InstanceDiscoveryUrl;        // GET 实例列表的相对路径
-    public List<string> Scopes;                // 这条连接允许的能力
-    public string Status;                      // 'active' | 'token-rotating' | 'revoked' | 'unreachable'
-    public DateTime CreatedAt;
-    public DateTime UpdatedAt;
-    public DateTime? LastProbedAt;             // 最近一次健康探测
-    public bool? LastProbeOk;
-}
-```
-
-### 4.2 CDS（`CdsState.cdsConnections`）
-
-```typescript
-interface CdsConnection {
-  id: string;
-  name: string;                       // 自己看的标识
-  status: 'pending-pairing' | 'active' | 'revoked';
-  scopes: string[];
-
-  // 配对态字段（active 后失效）
-  pairingTokenHash?: string;          // SHA256 hash，明文不存
-  pairingExpiresAt?: string;
-
-  // 激活态字段
-  longTokenHash?: string;             // SHA256 hash
-  longTokenExpiresAt?: string;
-  longTokenIssuedAt?: string;
-  partnerKind: 'map';                 // 未来 'cli' / 'other'
-  partnerId?: string;
-  partnerName?: string;
-  partnerBaseUrl?: string;
-  projectId?: string;                 // 创建的 shared-service 项目
-
-  createdAt: string;
-  activatedAt?: string;
-  lastUsedAt?: string;
-}
-```
+`CdsState.cdsConnections` 或现行等价 store 保存连接状态、scopes、pairing token hash/TTL、long token hash/TTL、partner 身份、projectId 和审计时间。明文 token 只在签发响应中出现一次。
 
 ## 5. 安全模型
 
-| 威胁 | 缓解 |
-|---|---|
-| 剪贴板密钥被截获后被第三方使用 | TTL 10 分钟 + 一次性 + 仅含 pairing token，长效 token 不在剪贴板里 |
-| 密钥重放 | accept 标记 `used`，第二次 410 |
-| MAP 假装是别的 MAP 注入 partnerId | accept 后 partnerId/partnerBaseUrl 由 CDS 自己记录，鉴权时只信任 longToken hash 不信任 partnerId 自报 |
-| longToken 泄露 | rotate API（`POST /:id/rotate-long-token`）给老 token 一段宽限期，新 token 写过去 |
-| MAP 端 longToken 被偷 | IDataProtector 加密 + 不返前端（API 返回视图脱敏） |
-| 钓鱼：假冒 CDS 给的密钥指向恶意 base URL | 用户复制密钥源头是 CDS 自己 UI，base URL 写明在密钥里。MAP 端 UI 在 paste dialog 显示解析出的 base URL 让用户二次确认 |
+- 一次性 token 默认十分钟，成功后立即失效。
+- 长期 token 只保存 hash 或加密值，并支持撤销和轮换。
+- 鉴权只信任 token，不信任请求自报 mapId、partnerId 或 scope。
+- MAP 和 CDS 日志统一脱敏，禁止输出 clipboardText、长期 token 或请求 Authorization。
+- 删除连接必须同时停止后续探测；项目和运行资源是否删除需单独确认。
+- 重复 accept、并发 accept 和 token 轮换必须有状态机测试。
 
-## 6. 双方责任划分
+## 6. 责任划分
 
-| 责任 | MAP | CDS |
-|---|---|---|
-| 用户登记主机/SSH 凭据 | 不做 | 做（已实现） |
-| 部署执行（docker pull/run） | 不做 | 做（SidecarDeployer） |
-| 健康检查容器 | 不做 | 做 |
-| 实例发现（运行时给主系统看） | 消费 | 提供 GET /api/projects/:id/instances |
-| 业务路由 / 调度 / 流量 | 做（ClaudeSidecarRouter） | 不参与 |
-| 日志聚合 / 升级 / 回滚 | 不做 | 做 |
-| 凭据存储 | 仅 longToken（IDataProtector） | SSH 私钥 + 自身 token（sealToken） |
+| 能力 | MAP | CDS |
+| --- | --- | --- |
+| 用户与业务路由 | 权威 | 不负责 |
+| 主机、部署、容器健康和回滚 | 消费结果 | 权威 |
+| 实例发现 | 消费 | 提供 |
+| Agent 运行选择 | 权威 | 提供候选实例 |
+| 连接 token | 加密保存长期 token | 保存 token hash并签发 |
+| 审计 | 记录消费与失败 | 记录签发、激活、轮换和撤销 |
 
-## 7. 未来扩展（v2+）
+## 7. 未来扩展
 
-### 7.1 MAP 支持非标 executor
+v2 可以增加反向实例变更通知和其他 executor partner，但必须使用新协议版本或能力协商。Kubernetes、Nomad 或 CLI adapter 不得伪装为 CDS v1；它们需实现等价的 accept、listInstances、deploy 和 stream 契约。
 
-`InfraConnection.Partner` 取值扩展：
+## 8. v1 实现来源
 
-| Partner | 含义 | InstanceDiscoveryUrl |
-|---|---|---|
-| `cds` | 标准 CDS 实例（v1） | CDS 协议路径 |
-| `k8s` | Kubernetes 集群 | `kubectl get pods` 抽象 |
-| `nomad` | Nomad cluster | Nomad API |
-| `agent-cli` | 用户自部署的 CLI 适配器（非标） | `executor:GetInstances()` |
+- CDS：`cds/src/services/connection/pairing-service.ts`、`cds/src/routes/cds-system-connections.ts`
+- MAP：`InfraConnectionsController` 与 InfraConnections services
+- UI：CDS ConnectionsTab 与 MAP InfraServicesPage
+- 测试：CDS pairing-service 状态机和 MAP 连接测试
 
-只要对端实现下述 minimal interface 之一，MAP 就能消费：
+## 9. 非目标
 
-```typescript
-interface ExecutorPartner {
-  // 必须
-  acceptPairing(req): { longToken, instances: string };
-  listInstances(token): { host, port, healthy, version }[];
-
-  // 可选
-  deploy(spec): { deploymentId, streamUrl };
-  streamDeployment(id): SSE;
-}
-```
-
-### 7.2 CDS 支持任意 executor 接口的程序作为部署目标
-
-CDS 的 `RemoteHost` 抽象升级为 `DeployTarget`：
-
-```typescript
-type DeployTarget =
-  | { kind: 'ssh-host', sshHost, sshUser, ... }
-  | { kind: 'k8s-namespace', cluster, namespace, ... }
-  | { kind: 'nomad-job', cluster, jobspec, ... }
-  | { kind: 'cli-adapter', adapterUrl, adapterToken, ... };  // 用户自托管的 CLI executor
-```
-
-`SidecarDeployer.runDeployment` 按 `target.kind` 分派到对应的 `DeployerStrategy` 实现：
-
-```typescript
-interface DeployerStrategy {
-  connecting(target): Promise<void>;
-  installing(target, spec): Promise<void>;
-  verifying(target, spec): Promise<void>;
-}
-```
-
-### 7.3 数据回传统一接口
-
-任何 executor 完成部署后通过统一回传：
-
-```
-POST {map_callback_base_url}/api/infra-connections/:id/instance-changed
-Header: X-Connection-Token: <map_callback_token>  // accept 时 MAP 给 CDS 的反向 token
-Body:
-  {
-    "event": "deployed" | "removed" | "health_changed",
-    "instance": { host, port, healthy, version, deployedAt }
-  }
-```
-
-MAP 收到后即时刷新本地 registry，**无需轮询**。
-
-## 8. v1 落地清单
-
-| 块 | 文件 |
-|---|---|
-| **CDS 协议端** | `cds/src/types.ts` 加 CdsConnection；`cds/src/services/connection/pairing-service.ts`（新）；`cds/src/routes/cds-system-connections.ts`（新 issue / accept / list / delete / rotate-long-token） |
-| **CDS UI** | `cds/web/src/pages/cds-settings/tabs/ConnectionsTab.tsx`（新，运行时分组） |
-| **MAP 协议端** | `prd-api/.../Models/InfraConnection.cs`、`Services/InfraConnections/`（新）、`Controllers/Api/InfraConnectionsController.cs`（新 paste / list / delete） |
-| **MAP UI** | `prd-admin/src/pages/infra-services/InfraServicesPage.tsx`（从 wip 占位改造为真实功能） |
-| **测试** | CDS vitest 配对状态机；MAP 沙箱手测 |
-
-## 9. 不在 v1 范围
-
-- `rotate-long-token`（接口预留，逻辑 v1.1）
-- 反向 webhook（CDS → MAP 的 instance-changed 推送，v1 走 MAP 轮询）
-- v2 版本协议（仅在 v1 prefix 上加 `cds-connect:v2:` 前缀，遇到时报"不支持"）
-- 多 MAP 共用一个 CDS 的并发租户隔离（CDS 项目级隔离已天然支持，但 UI/告警未做）
+- 多 partner 的通用协议标准化。
+- 通过剪贴板传递长期凭据。
+- 浏览器直连 CDS accept。
+- 将 active 连接等同于可用 official SDK runtime。

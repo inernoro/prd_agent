@@ -1,6 +1,8 @@
-# 工程债务台账：系统级跨节点互传（Peer Sync）
+# 工程债务台账：系统级跨节点互传（Peer Sync） · 债务台账
 
-> 类型：debt | 模块：prd-api PeerSync + prd-admin 系统互联 | 关联：doc/design.platform.peer-sync.md
+> **版本**：v1.0 | **日期**：2026-06-23 | **状态**：开发中
+
+> 模块：prd-api PeerSync + prd-admin 系统互联 | 关联：doc/design.platform.peer-sync.md
 
 记录 v1 已知边界、后续可补项、未覆盖风险。下一次 session 接手先读这里。
 

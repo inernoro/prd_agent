@@ -100,7 +100,7 @@ def _write_markdown(path: str, payload: dict[str, Any]) -> None:
 
 
 def build_report() -> dict[str, Any]:
-    target_doc = _read("doc/plan.platform.llm-gateway-protocol-router.md")
+    target_doc = _read("doc/design.llm-gateway-physical-isolation.md")
     full_cutover_doc = _read("doc/plan.llm-gateway.full-cutover.md")
     brief = _read("assets/prototypes/llmgw-architecture-drawing-brief.md")
     html = _read("assets/prototypes/llmgw-architecture-map.html")
@@ -136,25 +136,22 @@ def build_report() -> dict[str, Any]:
     ok, detail = _contains_all(
         target_doc,
         [
-            "MAP / 外部系统",
-            "GW ingress adapter",
-            "GW Request IR",
-            "appCaller registry",
-            "GW router",
-            "GW model pools",
-            "provider adapter",
-            "OpenAI-compatible",
-            "Claude-compatible",
-            "Gemini-compatible",
-            "config-authority",
+            "MAP `prd-api`",
+            "`llmgw-serve`",
+            "appCaller",
+            "模型池",
+            "OpenAI",
+            "Anthropic",
+            "Gemini",
+            "配置权威",
         ],
     )
     checks.append(_check(
         "ssot",
-        "target_protocol_router_plan_declares_goal_chain",
+        "physical_isolation_design_declares_protocol_chain",
         ok,
         detail,
-        ["doc/plan.platform.llm-gateway-protocol-router.md"],
+        ["doc/design.llm-gateway-physical-isolation.md"],
     ))
 
     ok, detail = _contains_all(

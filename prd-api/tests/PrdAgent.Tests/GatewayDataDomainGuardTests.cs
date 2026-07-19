@@ -930,7 +930,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("上游接口类型", page);
         Assert.Contains("上游模型标识重复", page);
         Assert.Contains("当前填写的内容仍保留", page);
-        Assert.Contains("外部租户的 WebSocket 必须使用 WSS", page);
+        Assert.Contains("只有豆包流式语音识别可使用公网 WSS", page);
+        Assert.Contains("其他类型必须使用 HTTP/HTTPS", page);
         Assert.Contains("transformerType === 'fal-image'", page);
         Assert.Contains("transformerType === 'doubao-asr'", page);
         Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
@@ -1579,7 +1580,9 @@ public class GatewayDataDomainGuardTests
         var smoke = ReadRepoFile("scripts/gw-smoke.py");
 
         Assert.Contains("\"GatewayTransport\": \"http\"", smoke);
-        Assert.Contains("\"SourceSystem\": \"release-probe\"", smoke);
+        Assert.Contains("SMOKE_SOURCE_SYSTEM = os.environ.get(\"GW_SMOKE_SOURCE_SYSTEM\", \"release-probe\")", smoke);
+        Assert.Contains("\"SourceSystem\": SMOKE_SOURCE_SYSTEM", smoke);
+        Assert.DoesNotContain("\"SourceSystem\": \"release-probe\"", smoke);
         Assert.Contains("\"IngressProtocol\": \"gw-native\"", smoke);
         Assert.DoesNotContain("\"Context\": {\"UserId\": \"smoke-test\", \"IsHealthProbe\": True}", smoke);
     }
@@ -2922,7 +2925,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("prd-agent-web.model-lab.run::chat", plan);
         Assert.Contains("prd-agent.arena.battle::chat", plan);
         Assert.Contains("--include-report-agent-generate", plan);
-        Assert.Contains("report-agent.generate::chat/send", plan);
+        Assert.Contains("report-agent.generate::chat", plan);
         Assert.Contains("--include-visual-video-direct", script);
         Assert.Contains("--include-video-to-doc-asr", script);
         Assert.Contains("--include-video-to-text-asr-workflow", script);
@@ -2932,12 +2935,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("/api/workflow-agent/workflows", script);
         Assert.Contains("video-to-text", script);
         Assert.Contains("wait_visual_video_run", script);
-        Assert.Contains("visual-agent.videogen::video-gen:raw", plan);
-        Assert.Contains("video-agent.v2d.transcribe::asr:raw", plan);
-        Assert.Contains("video-agent.video-to-text::asr:raw", plan);
-        Assert.Contains("--include-visual-video-direct", plan);
-        Assert.Contains("--include-video-to-doc-asr", plan);
-        Assert.Contains("--include-video-to-text-asr-workflow", plan);
         Assert.Contains("No people, no faces, no logos, no letters, no readable text, no symbols.", script);
         Assert.Contains("Static test card with color blocks only, no text.", script);
         Assert.DoesNotContain("black text only", script);
@@ -3165,6 +3162,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("meta.sourceSystems.map", logsView);
         Assert.Contains("setFilterSourceSystem", logsView);
         Assert.DoesNotContain("<DistributionStrip", logsView);
+        Assert.Contains("aria-label=\"入口协议\"", logsView);
+        Assert.Contains("value={filterIngressProtocol}", logsView);
+        Assert.Contains("aria-label=\"路由策略\"", logsView);
+        Assert.Contains("value={filterModelPolicy}", logsView);
+        Assert.Contains("aria-label=\"来源系统\"", logsView);
+        Assert.Contains("value={filterSourceSystem}", logsView);
     }
 
     [Fact]
@@ -3191,6 +3194,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
         Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
         Assert.Contains("缺价格保持未知，不显示为 0", logsView);
+        Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
+        Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
 
     [Fact]

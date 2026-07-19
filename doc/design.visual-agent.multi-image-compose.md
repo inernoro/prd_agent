@@ -1,361 +1,118 @@
-# 多图组合生成设计 (Multi-Image Compose)
+# Visual Agent 多图组合生成设计 · 设计
 
-> **版本**：v1.0 | **日期**：2026-03-27 | **状态**：设计完成
-
----
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
 ## 一、管理摘要
 
-- **解决什么问题**：用户需要通过自然语言描述多张图片的组合关系（如"把大象放进房间"），当前系统不支持多图语义理解与融合生成
-- **方案概述**：两阶段 VLM 流水线——Stage 1 异步预提取图片描述，Stage 2 实时组合意图解析 + 生图，复用预处理结果减少 VLM 调用
-- **业务价值**：让视觉创作 Agent 支持多图组合生成，提升创作灵活性和用户体验
-- **影响范围**：后端（ImageAsset 模型、VisualAgent 服务、ImageGen Controller/Worker）、前端（组合生成 UI）
-- **预计风险**：中 — 依赖 VLM 语义理解准确性，语序变化可能影响结果
+- **解决什么问题**：用户引用多张图片时，系统需要稳定理解主体、背景、风格和空间关系，不能只按图片顺序拼接提示词。
+- **当前方案**：图片入库后提取可复用描述；组合请求先走确定性规则，再在需要时调用视觉模型解析意图，最终交给生图运行任务。
+- **核心收益**：减少重复视觉理解调用，同时避免“把 A 放进 B”和“B 中出现 A”因语序不同产生相反结果。
+- **边界**：本文只定义多图语义组合，不定义局部重绘、视频组合和具体模型参数。
 
----
+## 1. 目标
 
-## 1. 目标与边界
+- 支持一条指令引用多张已授权图片。
+- 明确区分主体图、场景图、风格图和其他参考图。
+- 复用图片描述，避免每次组合都重新理解全部图片。
+- 对常见句式优先确定性解析，复杂表达再调用模型。
+- 组合结果进入统一生图 Run/Worker 链路，保留进度和审计信息。
 
-### 1.1 目标
+## 2. 核心链路
 
-- 支持用户通过自然语言描述多张图片的组合关系（如"把@大象放进@房间"）
-- 系统自动理解意图并生成目标图片
-- 通过预提取图片描述 + 实时组合解析的两阶段架构实现高效处理
-- 解决"语序变化导致理解错误"的问题（如"把A放进B" vs "B里面有A"）
+| 阶段 | 输入 | 处理 | 输出 |
+|------|------|------|------|
+| 资产准备 | 上传或生成的图片 | 校验资产归属并提取视觉描述 | 可复用的图片语义 |
+| 引用解析 | 用户指令和图片引用 | 绑定引用序号、资产和描述 | 有序引用集合 |
+| 意图编译 | 指令与引用集合 | 规则优先，模型兜底 | 结构化组合意图 |
+| 提示词生成 | 组合意图 | 保留主体、关系、背景和风格约束 | 生图提示词 |
+| 生成执行 | 提示词与图片输入 | 进入统一生图 Worker | 生成结果与运行记录 |
 
-### 1.2 非目标
+图片描述提取失败不应使上传或既有生图结果失败。组合时如果描述缺失，可以按请求补提取或直接使用原图能力，具体取决于模型适配器。
 
-- 不支持视频组合
-- 不支持实时图片编辑（如 Inpainting）
-- 不在本文档定义具体生图模型参数细节
-
----
-
-## 2. 核心架构：两阶段 VLM 流水线
-
-```mermaid
-flowchart TB
-    subgraph stage1 [Stage 1: 预处理阶段]
-        Upload[图片上传] --> ExtractDesc[VLM 提取描述]
-        GenDone[生图完成] --> ExtractDesc
-        ExtractDesc --> StoreDesc[存储描述到 ImageAsset]
-    end
-    
-    subgraph stage2 [Stage 2: 组合生成阶段]
-        UserInput[用户输入: 把A放进B里] --> ParseRef[解析图片引用]
-        ParseRef --> LoadDesc[加载已有描述]
-        LoadDesc --> ComposeVLM[VLM 组合意图解析]
-        ComposeVLM --> GenPrompt[生成英文 Prompt]
-        GenPrompt --> ImageGen[生图模型]
-        ImageGen --> Result[返回结果]
-    end
-    
-    stage1 -.-> stage2
-```
-
-### 2.1 Stage 1: 异步预处理
-
-**触发时机**：
-- 图片上传成功后
-- 生图完成后
-
-**处理流程**：
-1. 调用 Vision LLM（如 GPT-4o、Claude 3.5 Sonnet）
-2. 提取图片的核心视觉描述（主体、背景、风格）
-3. 存储到 `ImageAsset.Description` 字段
-
-**特点**：
-- Fire-and-forget 异步执行，不阻塞主流程
-- 失败不影响上传/生图的成功响应
-
-### 2.2 Stage 2: 实时组合生成
-
-**触发时机**：
-- 用户发起多图组合请求
-
-**处理流程**：
-1. 解析用户指令中的图片引用
-2. 批量加载已有的图片描述
-3. 调用 VLM 进行语义理解，生成英文 Prompt
-4. 调用生图模型生成结果
-
-**特点**：
-- 复用 Stage 1 的预处理结果，减少 VLM 调用
-- 仅需一次 VLM 调用完成意图解析
-
----
-
-## 3. 数据模型变更
-
-### 3.1 ImageAsset 新增字段
-
-**文件**: `prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `Description` | `string?` | VLM 生成的图片描述（最大 500 字符） |
-| `DescriptionExtractedAt` | `DateTime?` | 描述提取时间 |
-| `DescriptionModelId` | `string?` | 提取时使用的模型标识 |
-
-### 3.2 数据库索引
-
-无需新增索引，现有 `(OwnerUserId, Sha256)` 唯一索引已满足查询需求。
-
----
-
-## 4. appCallerCode 定义
-
-遵循 `doc/rule.app-feature-definition.md` 规范：
-
-| appCallerCode | modelType | 用途 |
-|--------------|-----------|------|
-| `visual-agent.image.describe::vision` | vision | 图片描述提取（上传/生成后异步调用） |
-| `visual-agent.compose::vision` | vision | 多图组合意图解析（实时调用） |
-| `visual-agent.compose::generation` | generation | 组合生成 |
-
-**注册位置**: `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs`
-
-```csharp
-public static class VisualAgent
-{
-    public static class Image
-    {
-        public const string Describe = "visual-agent.image.describe::vision";
-        // ...existing...
-    }
-    
-    public static class Compose
-    {
-        public const string Intent = "visual-agent.compose::vision";
-        public const string Generation = "visual-agent.compose::generation";
-    }
-}
-```
-
----
-
-## 5. 服务层设计
-
-### 5.1 IImageDescriptionService
-
-**文件**: `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`
-
-**职责**：
-- 调用 VLM 提取单张图片的视觉描述
-- 异步执行，不阻塞上传流程
-- 结果回写到 `ImageAsset.Description`
-
-**接口定义**：
-```csharp
-public interface IImageDescriptionService
-{
-    /// <summary>
-    /// 异步提取图片描述（Fire-and-forget，不阻塞调用方）
-    /// </summary>
-    Task ExtractDescriptionAsync(string assetId, CancellationToken ct = default);
-}
-```
-
-**System Prompt**：
-```text
-你是图片描述专家。请用简洁的中文描述这张图片的核心内容。
-要求：
-- 描述主体对象（是什么、颜色、姿态、特征）
-- 描述环境/背景（场景、光线、氛围）
-- 80-150字，不超过200字
-- 不要以"这张图片"开头，直接描述
-```
-
-### 5.2 IMultiImageComposeService
-
-**文件**: `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`
-
-**职责**：
-- 解析用户输入中的图片引用
-- 加载对应图片的 Description
-- 调用 VLM 生成最终 Prompt
-
-**接口定义**：
-```csharp
-public interface IMultiImageComposeService
-{
-    /// <summary>
-    /// 解析多图组合请求，返回生成的英文 Prompt
-    /// </summary>
-    Task<string> ParseComposeIntentAsync(
-        string userInstruction,
-        List<ImageReference> images,
-        CancellationToken ct);
-}
-
-public class ImageReference
-{
-    public int Index { get; set; }
-    public string AssetId { get; set; } = string.Empty;
-    public string? Name { get; set; }
-}
-```
-
-**通用 System Prompt**（解决"乱序"问题的关键）：
-```text
-# Role
-你是 AI 绘画指令编译器。
-
-# Input
-你将收到：
-1. 一组图片描述，格式为 [Image N]: 描述内容
-2. 用户的组合指令，会引用 [Image N]
-
-# Task
-1. 语义解析：分析用户指令的逻辑关系（谁是主体、谁是背景、是否风格迁移）
-   - 不管语序如何（"把A放进B" 或 "B里面有A"），都要正确理解
-2. 生成一段详细的英文 Prompt，描述融合后的最终画面
-
-# Output
-只输出英文 Prompt，不要任何解释。
-```
-
----
-
-## 6. API 接口规范
-
-### 6.1 组合生成接口
-
-**路由**: `POST /api/visual-agent/image-gen/compose`
-
-**请求体**:
-```json
-{
-  "instruction": "把 [IMAGE_1] 放进 [IMAGE_2] 里",
-  "images": [
-    { "index": 1, "assetId": "abc123", "name": "大象.png" },
-    { "index": 2, "assetId": "def456", "name": "房间.jpg" }
-  ],
-  "size": "1024x1024",
-  "modelId": "nano-banana-pro",
-  "platformId": "...",
-  "configModelId": "..."
-}
-```
-
-**响应**:
-```json
-{
-  "success": true,
-  "data": {
-    "generatedPrompt": "A realistic photo of a large African elephant...",
-    "images": [{ "base64": "...", "url": "..." }]
-  }
-}
-```
-
-**错误码**:
-| 错误码 | HTTP | 说明 |
-|--------|------|------|
-| `CONTENT_EMPTY` | 400 | instruction 为空 |
-| `INVALID_FORMAT` | 400 | images 格式不正确 |
-| `ASSET_NOT_FOUND` | 404 | 引用的图片资产不存在 |
-| `LLM_ERROR` | 502 | VLM/生图模型调用失败 |
-
-### 6.2 手动触发描述提取
-
-**路由**: `POST /api/visual-agent/image-master/assets/{id}/describe`
-
-**响应**:
-```json
-{
-  "success": true,
-  "data": {
-    "description": "一只灰色的非洲大象...",
-    "extractedAt": "2026-01-30T10:00:00Z",
-    "modelId": "gpt-4o"
-  }
-}
-```
-
----
-
-## 7. 调用时序图
-
-### 7.1 Stage 1: 描述提取
-
-```mermaid
-sequenceDiagram
-    participant C as Controller
-    participant SVC as ImageDescriptionService
-    participant DB as MongoDB
-    participant VLM as Vision LLM
-
-    C->>C: 上传/生图成功
-    C-->>SVC: ExtractDescriptionAsync (fire-and-forget)
-    Note right of C: 不等待，立即返回
-    SVC->>DB: 查询 ImageAsset
-    DB-->>SVC: 返回资产信息
-    SVC->>VLM: 发送图片 + System Prompt
-    VLM-->>SVC: 返回描述文本
-    SVC->>DB: 更新 Description 字段
-```
-
-### 7.2 Stage 2: 组合生成
-
-```mermaid
-sequenceDiagram
-    participant FE as Frontend
-    participant API as ComposeController
-    participant SVC as MultiImageComposeService
-    participant DB as MongoDB
-    participant VLM as Vision LLM
-    participant IMG as ImageGen Client
-
-    FE->>API: POST /compose {instruction, images}
-    API->>DB: 批量查询 ImageAsset.Description
-    DB-->>API: 返回描述列表
-    API->>SVC: ParseComposeIntentAsync
-    SVC->>VLM: 发送描述 + 用户指令
-    VLM-->>SVC: 返回英文 Prompt
-    SVC-->>API: generatedPrompt
-    API->>IMG: GenerateAsync(prompt)
-    IMG-->>API: 生成的图片
-    API-->>FE: 返回结果
-```
-
----
-
-## 8. 调用时机汇总
-
-| 场景 | 触发点 | 实现方式 | appCallerCode |
-|------|--------|---------|---------------|
-| 图片上传 | `UploadAsset` 成功后 | Fire-and-forget | `visual-agent.image.describe::vision` |
-| 生图完成 | `ImageGenRunWorker` 成功后 | Fire-and-forget | `visual-agent.image.describe::vision` |
-| 手动触发 | `/assets/{id}/describe` | 同步等待 | `visual-agent.image.describe::vision` |
-| 组合生成 | `/compose` | 同步等待 | `visual-agent.compose::vision` + `generation` |
-
----
-
-## 9. 相关代码索引
-
-| 模块 | 文件路径 |
-|------|---------|
-| 数据模型 | `prd-api/src/PrdAgent.Core/Models/ImageAsset.cs` |
-| AppCaller 注册 | `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs` |
-| 描述提取服务 | `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs` |
-| 组合解析服务 | `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs` |
-| Compose 接口 | `prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs` |
-| 上传触发 | `prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs` |
-
-> 注：`ImageMasterController` 现已更名为 `VisualAgentController`。
-| DI 注册 | `prd-api/src/PrdAgent.Api/Program.cs` |
-
----
-
-## 10. 与三级调度的关系
-
-本功能遵循 `doc/design.platform.model-pool.md` 定义的三级调度机制：
-
-1. **专属模型池**：可为 `visual-agent.compose::vision` 配置专属 Vision 模型池
-2. **默认模型池**：未配置时回退到 `vision` 类型的默认池
-3. **直连单模型**：仅作为兜底
-
-日志要求：
-- 所有 VLM/生图调用必须写入 `LlmRequestContext`
-- 记录 `ModelResolutionType`、`ModelGroupId`、`ModelGroupName`
+## 3. 意图模型
+
+组合意图至少表达以下信息：
+
+| 字段 | 含义 |
+|------|------|
+| 主体 | 最终画面的主要对象，可来自一张或多张图 |
+| 场景 | 主体所处的背景、空间或环境 |
+| 关系 | 放入、替换、并列、穿戴、持有等语义关系 |
+| 风格 | 只迁移视觉风格，不默认复制原图内容 |
+| 保留约束 | 必须保留的身份、构图、颜色或材质特征 |
+| 排除约束 | 不应带入最终画面的元素 |
+
+图片数组顺序只用于引用，不决定语义角色。语义角色由用户指令和解析结果共同确定。
+
+## 4. 解析策略
+
+### 4.1 规则优先
+
+对明确的引用句式、角色标签和结构化选择，优先使用确定性规则。规则结果必须包含命中的依据，便于审计和回归测试。
+
+### 4.2 模型兜底
+
+当一句话存在多个可能主体、隐含关系或风格迁移要求时，调用视觉或多模态模型完成意图解析。模型只负责补足语义，不直接绕过资产权限和运行任务。
+
+### 4.3 降级原则
+
+- 引用资产不存在或不属于当前用户时直接拒绝。
+- 只有一张有效图片时降级为单图参考生成，不伪造多图关系。
+- 意图仍不明确时向用户指出冲突项，不静默选一个结果。
+- 描述提取和意图解析分别记录调用来源，便于定位质量问题。
+
+## 5. 服务职责
+
+| 组件 | 职责 |
+|------|------|
+| `ImageDescriptionService` | 提取并维护单图视觉描述 |
+| `MultiImageComposeService` | 将图片描述和用户指令编译为组合意图 |
+| `MultiImageDomainService` | 管理多图领域规则、校验和结构化结果 |
+| `ImageGenRunWorker` | 执行生图、推送进度并保存结果 |
+| `ImageAsset` | 保存图片资产及可复用描述信息 |
+
+领域结构位于 `PrdAgent.Core/Models/MultiImage`，接口边界位于 `IMultiImageDomainService`。Controller 只负责鉴权、请求校验和创建运行任务。
+
+## 6. 模型调用与可观测性
+
+| 调用 | appCallerCode | 要求 |
+|------|---------------|------|
+| 图片描述 | `VisualAgent.Image.Describe` | 记录资产、模型和提取时间 |
+| 组合意图 | `VisualAgent.Compose.Intent` | 记录规则命中或模型兜底原因 |
+| 图片生成 | 由生图运行任务选择 | 遵循统一模型池和 Run/Worker 规范 |
+
+模型调用必须经过 LLM Gateway 或对应的统一图像模型适配层。前端持续展示解析、生成和保存阶段，不能在模型调用期间只显示静止加载状态。
+
+## 7. 数据与权限边界
+
+- 所有引用先解析为受控资产标识，再读取存储地址和描述。
+- 不接受客户端提供的任意外部 URL 作为已授权资产。
+- 图片描述是辅助语义，不替代原图，也不能跨用户复用私有信息。
+- 生成结果按当前用户和运行任务归档，失败记录不得伪装成成功资产。
+- 删除或失效资产不得继续参与新的组合请求。
+
+## 8. 验收标准
+
+- 调换图片上传顺序，不改变明确指令中的主体和背景关系。
+- 同义语序得到等价组合意图。
+- 风格迁移不会默认把风格图主体复制进结果。
+- 无权限、缺失和重复引用均有明确错误。
+- 规则命中时不产生不必要的意图模型调用。
+- 模型兜底、生成过程和最终资产都可从运行记录追踪。
+
+## 9. 当前实现入口
+
+- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`
+- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`
+- `prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`
+- `prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs`
+- `prd-api/src/PrdAgent.Core/Models/MultiImage/`
+- `prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`
+- `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs`
+
+## 关联文档
+
+- `doc/design.visual-agent.md`
+- `doc/design.visual-agent.inline-image-chat.md`
+- `doc/design.visual-agent.multi-image-vision-api.md`
+- `doc/design.platform.model-pool.md`

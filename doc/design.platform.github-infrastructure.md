@@ -1,8 +1,9 @@
 # GitHub 基础设施层（Infrastructure.GitHub） · 设计
 
-> 状态：落地中 · 定位同 `design.platform.llm-gateway.md` · 关联 `rule.platform.app-identity.md`
+> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+> 定位同 `design.platform.llm-gateway.md` | 关联 `rule.platform.app-identity.md`
+
 
 ## 1. 管理摘要（30 秒看懂）
 
@@ -31,10 +32,10 @@
 
 | 消费方 | 现状 | 使用的 GitHub 能力 |
 |---|---|---|
-| **PR 审查工作台**（pr-review，V2） | ✅ main 上线 | Device Flow OAuth + 拉 PR 快照 + 拉 PR 历史（commits/reviews/comments/timeline/check-runs） |
-| **周报 Agent**（report-agent） | ✅ main 生产中 | `GitHubConnector` + `GitSyncWorker` 每 5 分钟轮询，拉 commits（自己写的 165 行 HttpClient 胶水代码） |
+| **PR 审查工作台**（pr-review，V2） | 是 main 上线 | Device Flow OAuth + 拉 PR 快照 + 拉 PR 历史（commits/reviews/comments/timeline/check-runs） |
+| **周报 Agent**（report-agent） | 是 main 生产中 | `GitHubConnector` + `GitSyncWorker` 每 5 分钟轮询，拉 commits（自己写的 165 行 HttpClient 胶水代码） |
 | **日报 / 其他检测** | 未来 | 未知，可能需要 commits / PRs / issues / check-runs |
-| **桌面自动更新** | ✅ main 生产中 | 前端 `DesktopDownloadDialog` 直接调 `api.github.com/repos/.../releases/latest` —— **不迁移**（前端范畴，不在后端基础设施范围内） |
+| **桌面自动更新** | 是 main 生产中 | 前端 `DesktopDownloadDialog` 直接调 `api.github.com/repos/.../releases/latest` —— **不迁移**（前端范畴，不在后端基础设施范围内） |
 
 三个后端消费方都需要"调 GitHub + 解析响应 + 分类错误"，但今天只有 PR 审查做得好。把它抽出来就等于让周报、日报、未来的检测功能**都继承同一套质量**：SSRF 白名单、体积截断、404 两步探测、限流错误分类……不用每个消费方都从头再写一遍。
 

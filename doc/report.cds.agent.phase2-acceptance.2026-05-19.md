@@ -1,8 +1,9 @@
-# CDS Agent Phase 2 验收报告
+# CDS Agent Phase 2 验收报告（grandfather 保留） · 报告
 
-日期：2026-05-19  
-分支：`codex/cds-agent-workbench-ui`  
-验收基线提交：`ea07d09cd`  
+> **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
+
+分支：`codex/cds-agent-workbench-ui`
+验收基线提交：`ea07d09cd`
 范围：Phase 2 可写协作闭环，本地验收通过；未执行远端发布。
 
 ## 验收结论

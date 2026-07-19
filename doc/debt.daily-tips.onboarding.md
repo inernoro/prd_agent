@@ -1,13 +1,14 @@
-# debt.daily-tips.onboarding
+# 每日小贴士新手引导 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-06-04 | **状态**：开发中
 
 | 字段 | 内容 |
 |---|---|
 | 模块 | 页面教程(小技巧)系统 |
 | 状态 | open(2026-06-04 统一升级后剩余尾巴) |
-| 关联 | `.claude/rules/onboarding-tips.md`、`doc/report.daily-tips.tutorial-coverage.md`、`DailyTipsController.BuildDefaultTips` |
+| 关联 | `.claude/rules/onboarding-tips.md`、`DailyTipsController.BuildDefaultTips` |
 | 提出 | 2026-06-04 教程系统统一(picker/镂空/返回动画/进度/学习中心/定时技能)交付时主动声明的已知边界 |
 
----
 
 ## 已知边界 / 待补
 

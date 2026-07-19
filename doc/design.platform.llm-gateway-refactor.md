@@ -1,378 +1,95 @@
 # LLM Gateway 图片生成重构 · 设计
 
-> **状态**：已实现（PR #490，分支 `claude/refactor-llm-gateway-arch-8f7eZ`，2026-04-23）
-> **关联**：`doc/design.platform.llm-gateway.md`（Gateway 总体设计）、`.claude/rules/compute-then-send.md`
+> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
----
+## 管理摘要
 
-## 一、管理摘要
+- **解决的问题**：图片生成链路曾在发送前再次解析模型，覆盖用户已经选择的模型，出现“选择 A、实际调用 B”。
+- **核心方案**：按 Compute-then-Send 原则把模型选择与网络发送分开；一次请求最多解析一次，发送阶段只消费已确定的结果。
+- **当前状态**：统一入口 `IImageGenGateway`、单次解析路径、模型适配器与回归守卫均已落地。
+- **适用范围**：图片生成 Controller、后台 Worker、视觉创作及其他调用生图能力的 Agent。
 
-- **根因**：`SendRawAsync` 内部对 `IModelResolver.ResolveAsync` 的第二次调用（传 `null` expectedModel）会覆盖业务方已算好的模型选择，导致"前端选 A 后端跑 B"。现有的 `ExpectedModelRespectingResolver` 装饰器是一次性补丁，靠 Scoped 实例字段在两次调用之间传递状态，本质脆弱。
-- **方案**：按 `compute-then-send` 原则将图片生成链路拆为**两阶段**：业务方只传 `appCallerCode + expectedModel + payload`，Gateway 内部单次 Resolve → Adapt → Execute → Parse，发送阶段不再 re-resolve。渐进落地：Phase 1 止血（`SendRawAsync` 接受已解析结果），Phase 2 新接口（`IImageGenGateway`），Phase 3 清理债务。
-- **影响范围**：`LlmGateway.SendRawAsync`、`OpenAIImageClient`、`ImageGenRunWorker`、`ImageGenController`；不影响文本流式路径（`SendAsync/StreamAsync`）。
-- **落地状态**：Phase 1（止血）、Phase 2（新接口）、Phase 3（清理债务）均已完成。`ImageGenRunWorker` 接入 `IImageGenGateway` 为 Phase 3 后续工作，其余全部落地。
+## 问题背景
 
----
+旧链路由业务层先解析用户指定模型，再由底层发送方法以空的期望模型重新解析。第二次结果可能回退到模型池默认项，从而覆盖第一次决策。为补救该问题曾使用带实例状态的 Resolver 装饰器在两次调用之间传值，但它依赖相同 DI Scope，无法形成可靠架构约束。
 
-## 二、背景与根因
+根因不是某个 Resolver 算错，而是发送阶段拥有了不该拥有的重新决策权。
 
-### 当前调用链（问题）
+## 设计目标
 
-```
-ImageGenController/Worker
-  └─ OpenAIImageClient.GenerateAsync(appCallerCode, modelName)
-       ├─ 第1次: _gateway.ResolveModelAsync(appCallerCode, "generation", modelName)
-       │          → resolution.ActualModel = "stub-image"  ✓
-       │          effectiveModelName = "stub-image"
-       │
-       └─ 第2次: _gateway.SendRawAsync(new GatewayRawRequest { ... })
-                  └─ LlmGateway.SendRawAsync 内部:
-                       _modelResolver.ResolveAsync(appCallerCode, "generation", null)
-                                                                               ^^^^
-                       → 返回池默认第一个模型 = "gpt-image-2-all"  ✗
-                       requestBody["model"] = "gpt-image-2-all"   ← 覆盖！
-```
+1. 用户或业务方已经确定的模型不得被下游静默改写。
+2. 模型调度、请求适配、HTTP 发送和响应解析各自单一职责。
+3. 业务层只处理业务状态，不感知上游平台报文差异。
+4. 新增同协议模型优先通过配置完成，只有协议形态全新时才增加适配器。
+5. 保留调度结果、实际模型和上游状态的可观测性。
 
-**现有补丁** `ExpectedModelRespectingResolver`：
+## 核心决策
 
-- Scoped 装饰器，用 `_pendingExpected` 实例字段缓存第一次 resolve 的 expectedModel，第二次调用时恢复。
-- 脆弱点：依赖"两次调用在同一 DI scope 同一实例"；任何 `IServiceScopeFactory.CreateScope()` 场景都会断。
-- 副作用：在 `_diag_resolver_calls` 集合写大量诊断文档，生产负担。
-
-### 真正的问题
-
-不是 resolve 写错了，是**根本不该在 send 阶段再 resolve**。
-
----
-
-## 三、目标架构（4 层 Gateway）
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  业务方（Api.dll）                                               │
-│  ■ 按参考图数量选 appCallerCode（3 行 if/else，业务逻辑）         │
-│  ■ 透传 expectedModel（用户 picker 选的）                        │
-│  ■ 后处理：水印 / 存 COS / 更新 run 状态                         │
-│                                                                 │
-│  唯一入口：                                                     │
-│      result = await gateway.GenerateImageAsync(                 │
-│                   appCallerCode, expectedModel, payload, ct)    │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │（DLL 边界）
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  LlmGateway（Infrastructure.dll）                               │
-│                                                                 │
-│  ① Resolver  (appCallerCode, expectedModel) → Resolution        │
-│     纯函数，可离线单测；写调度链路诊断日志                        │
-│                                                                 │
-│  ② Adapter   (Resolution, ImagePayload) → HttpSendPacket        │
-│     按 resolution.adapterKind 选适配器；业务方不关心 body 格式    │
-│                                                                 │
-│  ③ Executor  (HttpSendPacket, Resolution) → HttpSendRawResponse │
-│     只发 HTTP + 超时/重试；写 llmrequestlogs；健康回写           │
-│     Resolution 只用于写日志，不再参与组包                        │
-│                                                                 │
-│  ④ Parser    (HttpSendRawResponse, Resolution) → ImageResult    │
-│     按 adapterKind 反向解析各平台响应格式                        │
-│     统一返回 { images[], resolved, upstreamMeta }               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 关键不变量
-
-- **Resolver 最多调用一次**：同一次业务请求，`IModelResolver.ResolveAsync` 只执行一次。
-- **发送阶段无 re-resolve**：Executor 和 Parser 只接收已解析的 `Resolution`，不调 Resolver。
-- **Gateway 不含业务状态**：`ImageResult` 不含 `runId`/`artifactId`，业务方自己写。
-
----
-
-## 四、接口设计
-
-### 4.1 业务方调用入口
-
-```csharp
-// Infrastructure.dll（未来可剥离为独立服务）
-public interface IImageGenGateway
-{
-    Task<ImageGenGatewayResult> GenerateImageAsync(
-        string appCallerCode,
-        string? expectedModel,
-        ImageGenPayload payload,
-        CancellationToken ct = default);
-}
-
-public sealed class ImageGenPayload
-{
-    public required string Prompt { get; init; }
-    public int N { get; init; } = 1;
-    public string? Size { get; init; }
-    public string? ResponseFormat { get; init; }           // "url" | "b64_json"
-    public IReadOnlyList<ImageRefData>? Images { get; init; }  // 参考图（null=文生图）
-    public string? MaskBase64 { get; init; }               // 蒙版（图生图）
-}
-
-public sealed class ImageGenGatewayResult
-{
-    public bool Success { get; init; }
-    public string? ErrorCode { get; init; }
-    public string? ErrorMessage { get; init; }
-    public IReadOnlyList<ImageGenItem> Images { get; init; } = [];
-    public ImageGenResolution Resolved { get; init; } = null!;  // 实际使用的模型/平台
-    public UpstreamImageMeta? UpstreamMeta { get; init; }
-}
-
-public sealed class ImageGenItem
-{
-    public string? Url { get; init; }
-    public string? Base64 { get; init; }
-    public string? MimeType { get; init; }
-    public string? RevisedPrompt { get; init; }
-}
-```
-
-### 4.2 Gateway 内部 4 层契约（internal）
-
-```csharp
-// ① 计算层
-internal interface IImageGenResolver
-{
-    Task<ImageGenResolution> ResolveAsync(
-        string appCallerCode, string? expectedModel, CancellationToken ct);
-}
-
-// ② 转换层（按 adapterKind 注册查表，现有 ImageGenPlatformAdapterFactory 模式延续）
-internal interface IImageGenRequestAdapter
-{
-    string AdapterKind { get; }   // "openai" | "volces" | "google" | "exchange"
-    HttpSendPacket BuildRequest(ImageGenResolution resolved, ImageGenPayload payload);
-}
-
-// ③ 发送层（HttpClient + 重试 + llmrequestlogs + 健康回写）
-internal interface IImageGenExecutor
-{
-    Task<HttpSendRawResponse> ExecuteAsync(
-        HttpSendPacket packet, ImageGenResolution resolved, CancellationToken ct);
-    // resolved 仅用于写日志和健康回写，不参与组包
-}
-
-// ④ 解析层（按 adapterKind 反向解析）
-internal interface IImageGenResponseParser
-{
-    ImageGenGatewayResult Parse(HttpSendRawResponse raw, ImageGenResolution resolved);
-}
-```
-
-### 4.3 Resolution 对象（计算层输出）
-
-```csharp
-public sealed class ImageGenResolution
-{
-    public bool Success { get; init; }
-    public string? ErrorMessage { get; init; }
-
-    // 匹配结果
-    public string ActualModel { get; init; } = string.Empty;
-    public string? ExpectedModel { get; init; }
-    public string ResolutionType { get; init; } = string.Empty;  // DedicatedPool | DefaultPool | Legacy
-    public string? ModelGroupId { get; init; }
-    public string? ModelGroupName { get; init; }
-
-    // 平台信息
-    public string? PlatformId { get; init; }
-    public string? PlatformName { get; init; }
-    public string? PlatformType { get; init; }   // openai | volces | google | exchange
-    public string AdapterKind { get; init; } = "openai";  // 告知②③④选哪个适配器
-    public string? ApiUrl { get; init; }
-    public string? ApiKey { get; init; }
-
-    // Exchange 专用
-    public bool IsExchange { get; init; }
-    public string? ExchangeTransformerType { get; init; }
-}
-```
-
----
-
-## 五、迁移步骤（渐进式，Phase 1 优先止血）
-
-> **实施状态**：Phase 1 和 Phase 3 已完成；Phase 2 接口已建，`ImageGenRunWorker` 接入为后续工作。
-
-### Phase 1：`SendRawAsync` 止血 ✅ 已完成
-
-**目标**：不再二次 resolve，`ExpectedModelRespectingResolver` 可以卸掉。
-
-**改动点**：
-
-```
-LlmGateway.cs
-  新增 SendRawWithResolutionAsync(packet, resolution) — 接受预解析结果，不再内部 resolve
-  删除旧 SendRawAsync 方法（直接删除，不保留旧重载）
-
-OpenAIImageClient.cs（GenerateAsync）：
-  第1步：resolve（调 gateway.ResolveModelAsync）
-  第2步：构建 packet（原 RequestBody + multipart 逻辑）
-  第3步：调 gateway.SendRawWithResolutionAsync(packet, resolution)  ← 不再二次 resolve
-
-ExpectedModelRespectingResolver.cs：已删除（含 _diag_resolver_calls 写入）
-Program.cs：IModelResolver 注册改回直接注册 ModelResolver
-```
-
-**验证标准**（已通过）：
-- `_diag_resolver_calls` 集合不再产生新文档
-- 视觉创作选 stub-image → 实际调用也是 stub-image（见 llmrequestlogs.model 字段）
-- 所有现有生图场景（文生图/图生图/多图）通过 CDS 冒烟测试
-
-### Phase 2：新 `IImageGenGateway` 接口 ✅ 接口已建，Worker 接入待后续
-
-**目标**：`OpenAIImageClient` 的"选 appCallerCode + 业务路由"逻辑上移业务层，4 层 Gateway 完整落地。
-
-**改动点**：
-
-```
-✅ 新建 Infrastructure/LlmGateway/ImageGen/
-  IImageGenGateway.cs           ← 对外接口（§4.1）
-  ImageGenGateway.cs            ← 实现（4 层组合）
-  ... 其余配套文件
-
-✅ Program.cs DI 注册：添加 IImageGenGateway → ImageGenGateway
-
-⏳ ImageGenRunWorker.cs（视觉创作 Worker）：
-  未接入 IImageGenGateway — 后续 Phase 3 工作
-  if images.Count > 1  → appCallerCode = "visual-agent.image.vision::generation"
-  elif images.Count == 1 → appCallerCode = "visual-agent.image.img2img::generation"
-  else                 → appCallerCode = "visual-agent.image.text2img::generation"
-  result = await _imageGenGateway.GenerateImageAsync(appCallerCode, expectedModel, payload, ct)
-  (水印 / COS / artifact 写入仍在 Worker)
-
-⏳ ImageGenController.cs：同步调整（非 Worker 路径）— 后续工作
-
-⏳ OpenAIImageClient.cs：[Obsolete] 标注，逐步迁移调用方后删除 — 后续工作
-```
-
-### Phase 3：债务清理 ✅ 已完成
-
-```
-✅ 删除：
-  ExpectedModelRespectingResolver.cs（Phase 1 已删）
-  ResolverDebugController.cs 的 test-chain / simulate-worker 端点
-  （保留 inspect / test 用于 Resolver 单测）
-
-✅ 更新：
-  Program.cs DI 注册：已添加 IImageGenGateway → ImageGenGateway
-
-⏳ 后续：
-  OpenAIImageClient.cs（等 Worker 接入后再删）
-  _diag_resolver_calls MongoDB 集合（无新写入后可 drop）
-  doc/design.platform.llm-gateway.md：追加图片生成重构说明，引用本文
-```
-
----
-
-## 六、Adapter 注册设计
-
-延续 `ImageGenPlatformAdapterFactory` 的字符串查表模式，新增注册表：
-
-```csharp
-internal static class ImageGenRequestAdapterRegistry
-{
-    private static readonly Dictionary<string, IImageGenRequestAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["openai"]   = new OpenAIImageGenAdapter(),
-        ["volces"]   = new VolcesImageGenAdapter(),
-        ["google"]   = new GoogleImageGenAdapter(),
-        ["exchange"] = new ExchangeImageGenAdapter(),
-    };
-
-    public static IImageGenRequestAdapter Get(string adapterKind)
-        => _adapters.TryGetValue(adapterKind, out var a)
-            ? a
-            : _adapters["openai"];  // 默认 OpenAI 兼容
-}
-```
-
-新平台上架：实现接口 + 加一行注册，业务方零改动。
-
----
-
-## 七、日志字段规划
-
-Phase 1 保持现有 `llmrequestlogs` 结构不变；Phase 2 新增：
-
-| 字段 | 说明 |
+| 决策 | 约束 |
 |------|------|
-| `adapterKind` | 实际使用的适配器（openai / volces / google / exchange） |
-| `expectedModel` | 业务方传入的期望模型（可为 null） |
-| `actualModel` | 实际发给上游的模型名 |
-| `resolutionType` | DedicatedPool / DefaultPool / Legacy |
-| `modelGroupId` | 命中的模型组 ID |
-| `sizeRequested` | 原始请求尺寸 |
-| `sizeActual` | 适配后实际发出的尺寸 |
+| 单次 Resolve | 同一业务请求最多调用一次模型解析 |
+| 发送无决策 | Send 阶段不得再次调用 Resolver |
+| 统一生图入口 | API 与 Worker 依赖 `IImageGenGateway` 或 `IImageGenerationClient`，不直接依赖具体客户端 |
+| 配置驱动适配 | 尺寸、参数名、响应格式和平台类型由模型配置与适配器注册表处理 |
+| 业务状态外置 | run、artifact、水印和持久化由调用方负责，不进入 Gateway 结果模型 |
 
----
+## 整体方案
 
-## 八、风险与缓解
+图片请求按以下顺序处理：
 
-| 风险 | 概率 | 影响 | 缓解 |
-|------|------|------|------|
-| Phase 1 引入回归（SendRawWithResolutionAsync 新重载 body 构建逻辑与原版不一致） | 中 | 高 | CDS 部署后对文生图/图生图/多图三路径各跑一次冒烟测试 |
-| 业务方调用方漏迁移（仍用 OpenAIImageClient） | 低 | 中 | Phase 2 加 `[Obsolete]` 警告，CI 编译时 warning 可见 |
-| adapterKind 枚举扩展遗漏（新平台未注册） | 低 | 中 | `ImageGenRequestAdapterRegistry.Get` fallback 到 openai 并记录 warning，不崩溃 |
-| `_diag_resolver_calls` 集合数据量过大影响 MongoDB | 已有 | 低 | Phase 1 删装饰器后立即停止写入；历史数据可 `db.getCollection('_diag_resolver_calls').drop()` |
+1. 业务方提供 `appCallerCode`、期望模型和标准化图片生成载荷。
+2. Gateway 解析模型组、平台、实际模型与凭据。
+3. Request Builder 根据模型配置和平台适配器构建上游请求。
+4. 发送器只执行 HTTP、超时、重试、日志与健康回写。
+5. 解析器把不同平台响应转换为统一图片结果。
+6. 业务方保存图片、更新 Run 状态并执行水印等后处理。
 
----
+这条链路的事实入口是 `IImageGenGateway.GenerateImageAsync`。当前实现由 `ImageGenGateway` 委托 `IImageGenerationClient.GenerateUnifiedAsync` 完成解析、构建、发送和解析，但对调用方保持统一契约。
 
-## 九、实施结果（PR #490 落地情况）
+## 接口边界
 
-### 9.1 Phase 1 止血 — 已完成
+| 层级 | 输入 | 输出 | 不负责 |
+|------|------|------|--------|
+| 业务调用层 | 调用方标识、期望模型、标准载荷 | 业务处理结果 | 平台报文拼装 |
+| 调度层 | 调用方标识、能力类型、期望模型 | 已解析模型与平台 | HTTP 发送 |
+| 适配层 | 已解析结果、标准载荷 | 上游请求 | 修改模型选择 |
+| 发送层 | 已构建请求、已解析结果 | 原始响应 | 再次调度 |
+| 解析层 | 原始响应、适配器类型 | 统一图片结果 | run 与资产持久化 |
 
-| 计划 | 实际落地 |
-|------|---------|
-| 新增 `SendRawWithResolutionAsync` 重载，接受预解析 `GatewayModelResolution`，不再内部二次 resolve | ✅ 已实现 |
-| `OpenAIImageClient.GenerateAsync` 改调 `SendRawWithResolutionAsync` | ✅ 已迁移 |
-| 删除旧 `SendRawAsync` 方法 | ✅ 已删除（非 `[Obsolete]`，直接删除） |
+## 迁移结果
 
-**额外修复**：`SendRawWithResolutionAsync` 在回传结果时保留 `OriginalPoolId`、`OriginalPoolName`、`OriginalModels` 字段（早期版本丢失这些字段）。
-
-### 9.2 Phase 2 新接口 — 已完成（部分接入）
-
-| 计划 | 实际落地 |
-|------|---------|
-| 新建 `Infrastructure/LlmGateway/ImageGen/` 目录 | ✅ 已建 |
-| `IImageGenGateway` 接口 + `ImageGenGateway` 实现 | ✅ 已实现 |
-| DI 注册到 `Program.cs` | ✅ 已注册 |
-| `ImageGenRunWorker` 接入 `IImageGenGateway` | ⏳ Phase 3 后续工作，本 PR 未做 |
-
-### 9.3 Phase 3 债务清理 — 已完成
-
-| 计划 | 实际落地 |
-|------|---------|
-| 删除 `ExpectedModelRespectingResolver.cs` | ✅ 已删除 |
-| 删除 `ResolverDebugController.cs` 的 `test-chain` 和 `simulate-worker` 端点 | ✅ 已删除 |
-| 保留 `inspect` 和 `test` 端点 | ✅ 已保留 |
-
-### 9.4 同 PR 额外修复
-
-| 内容 | 说明 |
+| 项目 | 结果 |
 |------|------|
-| `GatewayModelResolution` 字段加 `[JsonIgnore]` | `ApiKey`、`ExchangeAuthScheme`、`ExchangeTransformerConfig` 三个敏感字段加注解，防止凭证泄漏到外部 API 响应体 |
-| `OpenRouterVideoClient.GetStatusAsync` 缓存 resolution | 将 `SubmitAsync` 时的 resolution 存入 `_submitResolution` 实例字段，避免每次 poll 都重新 resolve |
+| 二次解析止血 | `SendRawWithResolutionAsync` 接收已解析结果，发送阶段不再重新解析 |
+| 临时装饰器 | `ExpectedModelRespectingResolver` 与诊断集合已删除 |
+| 统一接口 | `IImageGenGateway` 与标准输入、输出模型已建立 |
+| 调用方收口 | API 和 Worker 通过 Gateway 接口调用，不直接 new 具体客户端 |
+| 适配器收口 | 模型参数构建集中到 Request Builder 和 Adapter Registry |
+| 自动守卫 | 测试禁止 API 层重新依赖具体生图客户端，并验证模型选择不被覆盖 |
 
-### 9.5 前端模型预解析（同期新增）
+## 可观测性与验证
 
-为文学 Agent 图片生成模块新增两个后端端点，解决前端加载时模型列表为空的体验问题：
+每次请求至少应能追踪调用方标识、期望模型、实际模型、解析类型、平台、适配器、耗时与错误码。验收重点不是“请求成功”这一点，而是实际模型必须等于调度结果，且一次请求没有第二次 Resolve。
 
-| 端点 | 用途 |
+关键回归测试位于：
+
+- `prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs`
+- `prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayServingEndpointContractTests.cs`
+- `prd-api/tests/PrdAgent.Tests/GatewayDataDomainGuardTests.cs`
+
+## 事实来源
+
+| 文件 | 职责 |
 |------|------|
-| `GET /api/literary-agent/image-gen/resolve-model` | 预解析当前用户可用的图片生成模型 |
-| `GET /api/literary-agent/image-gen/resolve-chat-model` | 预解析当前用户可用的对话模型 |
+| `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ImageGen/IImageGenGateway.cs` | 对外统一生图入口 |
+| `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ImageGen/ImageGenGateway.cs` | Gateway 实现 |
+| `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` | 通用发送与已解析结果路径 |
+| `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILlmGateway.cs` | 通用 Gateway 契约 |
+| `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs` | 后台业务编排与结果持久化 |
+| `.claude/rules/compute-then-send.md` | 强制不变量与审计清单 |
 
-`ArticleIllustrationEditorPage.tsx` 在页面加载时调用这两个端点预解析。若模型池 resolve 成功但 `enabledImageModels` / `enabledChatModels` 为空（所有候选模型健康检查失败），改为展示只读徽章"自动: {modelName}"，替换原来的红色"选择模型"报错态。
+## 关联文档
 
----
-
-## 十、关联设计文档
-
-- `doc/design.platform.llm-gateway.md` — Gateway 总体设计（三级调度、池策略、健康管理）
-- `.claude/rules/compute-then-send.md` — 算/发两阶段原则（本次重构的理论依据）
-- `.claude/rules/llm-gateway.md` — LLM Gateway 调用规范
+- `design.platform.llm-gateway.md`：Gateway 总体架构。
+- `plan.llm-gateway.full-cutover.md`：Gateway 旧路径清理与生产门禁。
+- `.claude/rules/compute-then-send.md`：所有外部模型调用共用的计算与发送边界。
