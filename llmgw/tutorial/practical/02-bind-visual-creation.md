@@ -15,8 +15,8 @@
 
 1. 进入“路由 → 模型池”，找到类型为“图片生成”的 generation 池。
 2. 希望多款模型同时供用户选择时，优先维护一个明确的视觉创作专用池；不要把每款模型都建成互不关联的单成员池。
-3. 打开“查看与维护”，在候选模型中选择 `gpt-image-2-all`，点击“添加/更新”或“追加模型”。
-4. 确认原有成员仍保留，新成员只出现一次。主推模型可设优先级 1，备选模型依次使用 2、3。
+3. 打开“查看与维护”，依次选择 `openai/gpt-image-2`、`google/gemini-3.1-flash-image` 和 `google/gemini-3.1-flash-lite-image`，点击“添加/更新”或“追加模型”。
+4. 确认原有成员仍保留，新成员各只出现一次。测试池可使用 10、20、30 作为优先级，为后续插入新成员保留空间。
 
 ![模型池详情先展示用途、默认状态和绑定 appCaller](https://cds.miduo.org/api/reports/assets/a89b7e254589e474e9d02c095af54f917f409a18ac7afb709c4653cd6651a5e7.png)
 
@@ -24,13 +24,13 @@
 6. 如果状态是 `discovered`，先把它治理为 active；请求类型必须是 generation。
 7. 在“配置路由与治理”中选择刚才维护的 generation 池并保存。
 8. 同样检查视觉创作实际使用的其他 generation 调用方，例如图片编辑、批量生图或画板生图。只绑定真实使用的调用方，不要把所有 generation appCaller 一次性改到同一池。
-9. 回到视觉创作页面刷新模型选择器，确认新增模型出现。
+9. 回到视觉创作页面刷新模型选择器。网关池内每个健康成员应展开为一项可精确选择的模型，而不是只显示池内第一项。
 
 ![appCaller 关联预览能核对模型池类型、候选模型和最近运行](https://cds.miduo.org/api/reports/assets/d6ed02a5558eb0f45a49ec2b0f0b3dba729f2aa9b404ce7beff44a7901ce16ad.png)
 
 ## 测试环境的典型错误
 
-- 已有 `gpt-image-2-all` 单成员池，但它引用的 Provider 已不存在。
+- 已有旧 preview 模型或单成员池，但它引用的 Provider 已不存在。
 - generation 默认池仍只有 `stub-image`。
 - `visual-agent.image.text2img::generation` 仍处于 discovered，`modelPoolId` 为空。
 
@@ -38,7 +38,7 @@
 
 ## 看到什么算成功
 
-- 视觉创作模型选择器至少出现原模型与 `gpt-image-2-all` 两款启用模型。
+- 视觉创作模型选择器出现 GPT Image 2、Nano Banana 2 和 Nano Banana 2 Lite 三项；保留测试桩时还会显示原测试项。
 - appCaller 状态为 active，请求类型为 generation，绑定池也属于 generation。
 - 池成员引用的 Provider 均存在且启用，没有孤立旧 platformId。
 - 用户明确选择某款模型后，期望模型与实际模型可以解释；发生回退时有原因。
