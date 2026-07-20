@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 
@@ -34,6 +35,7 @@ public sealed class HttpLlmGatewayClient
     private readonly PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? _ctxAccessor;
     private readonly IAssetStorage? _assetStorage;
     private readonly LlmGatewayDataContext? _gatewayData;
+    private readonly IPoolFailoverNotifier? _failoverNotifier;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
     private readonly int _failedMultipartHours;
@@ -54,13 +56,15 @@ public sealed class HttpLlmGatewayClient
         ILogger<HttpLlmGatewayClient> logger,
         PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null,
         IAssetStorage? assetStorage = null,
-        LlmGatewayDataContext? gatewayData = null)
+        LlmGatewayDataContext? gatewayData = null,
+        IPoolFailoverNotifier? failoverNotifier = null)
     {
         _httpFactory = httpFactory;
         _logger = logger;
         _ctxAccessor = ctxAccessor;
         _assetStorage = assetStorage;
         _gatewayData = gatewayData;
+        _failoverNotifier = failoverNotifier;
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
@@ -118,7 +122,15 @@ public sealed class HttpLlmGatewayClient
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeGatewayResponse(body);
             if (structured is not null)
+            {
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                    _failoverNotifier,
+                    structured.ErrorCode,
+                    structured.ErrorMessage,
+                    structured.Resolution?.ActualPlatformName,
+                    _logger);
                 return structured;
+            }
             if (!resp.IsSuccessStatusCode)
             {
                 return GatewayResponse.Fail("GATEWAY_HTTP_ERROR",
@@ -173,6 +185,8 @@ public sealed class HttpLlmGatewayClient
 
         if (earlyError != null)
         {
+            await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                _failoverNotifier, null, earlyError, null, _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
@@ -199,7 +213,14 @@ public sealed class HttpLlmGatewayClient
                     continue;
                 }
                 if (chunk != null)
+                {
+                    if (chunk.Type == GatewayChunkType.Error)
+                    {
+                        await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                            _failoverNotifier, null, chunk.Error, chunk.Resolution?.ActualPlatformName, _logger);
+                    }
                     yield return chunk;
+                }
             }
         }
         finally
@@ -293,7 +314,15 @@ public sealed class HttpLlmGatewayClient
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeRawResponse(body);
             if (structured is not null)
+            {
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                    _failoverNotifier,
+                    structured.ErrorCode,
+                    structured.ErrorMessage,
+                    structured.Resolution?.ActualPlatformName ?? resolution.ActualPlatformName,
+                    _logger);
                 return structured;
+            }
             if (!resp.IsSuccessStatusCode)
             {
                 return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
@@ -321,7 +350,15 @@ public sealed class HttpLlmGatewayClient
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeRawResponse(body);
             if (structured is not null)
+            {
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                    _failoverNotifier,
+                    structured.ErrorCode,
+                    structured.ErrorMessage,
+                    structured.Resolution?.ActualPlatformName,
+                    _logger);
                 return structured;
+            }
             if (!resp.IsSuccessStatusCode)
             {
                 return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR",
@@ -582,7 +619,7 @@ public sealed class HttpLlmGatewayClient
         return new HttpLlmClient(
             _httpFactory, _baseUrl, _gatewayKey,
             appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel, pinnedPlatformId, pinnedModelId,
-            JsonOpts, _logger, _ctxAccessor);
+            JsonOpts, _logger, _ctxAccessor, failoverNotifier: _failoverNotifier);
     }
 
     private static string Truncate(string? s, int max = 500)

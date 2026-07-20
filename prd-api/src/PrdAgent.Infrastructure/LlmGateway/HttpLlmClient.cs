@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.ModelPool;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -32,6 +33,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly JsonSerializerOptions _jsonOpts;
     private readonly ILogger _logger;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
+    private readonly IPoolFailoverNotifier? _failoverNotifier;
 
     public HttpLlmClient(
         IHttpClientFactory httpFactory,
@@ -48,7 +50,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         JsonSerializerOptions jsonOpts,
         ILogger logger,
         ILLMRequestContextAccessor? ctxAccessor = null,
-        bool defaultEnablePromptCache = true)
+        bool defaultEnablePromptCache = true,
+        IPoolFailoverNotifier? failoverNotifier = null)
     {
         _httpFactory = httpFactory;
         _baseUrl = baseUrl;
@@ -65,6 +68,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _logger = logger;
         _ctxAccessor = ctxAccessor;
         _defaultEnablePromptCache = defaultEnablePromptCache;
+        _failoverNotifier = failoverNotifier;
     }
 
     public string Provider => "gateway-http";
@@ -158,6 +162,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
 
         if (earlyError != null)
         {
+            await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                _failoverNotifier, null, earlyError, null, _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
@@ -182,7 +188,14 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                     continue;
                 }
                 if (chunk != null)
+                {
+                    if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                            _failoverNotifier, null, chunk.ErrorMessage, null, _logger);
+                    }
                     yield return chunk;
+                }
             }
         }
         finally

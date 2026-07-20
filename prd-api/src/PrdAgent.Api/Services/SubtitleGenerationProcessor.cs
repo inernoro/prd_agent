@@ -788,13 +788,34 @@ public class SubtitleGenerationProcessor
                 BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["bodyShape"] = "audio_data(base64)" }));
         }
 
-        // 豆包异步响应：result.utterances[] 含 start_time/end_time(毫秒) + text
+        // LlmGateway 的 DoubaoAsrTransformer 已把豆包原始响应转换为 Whisper 兼容结构：
+        // { text, segments: [{ start, end, text }] }。这里必须优先消费统一结构，不能继续只读
+        // 豆包旧结构，否则上游实际识别成功也会被业务层误判成“转录结果为空”。
+        // 旧 result.utterances 仅作为兼容兜底，便于处理历史测试桩或未经过 Transformer 的响应。
         var segments = new List<SubtitleSegment>();
         try
         {
             using var jdoc = JsonDocument.Parse(rawResp.Content);
             var root = jdoc.RootElement;
-            if (root.TryGetProperty("result", out var result)
+            if (root.TryGetProperty("segments", out var normalizedSegments)
+                && normalizedSegments.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var segment in normalizedSegments.EnumerateArray())
+                {
+                    var start = segment.TryGetProperty("start", out var s) ? s.GetDouble() : 0;
+                    var end = segment.TryGetProperty("end", out var e) ? e.GetDouble() : 0;
+                    var text = (segment.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                }
+            }
+            if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
+            {
+                var fullText = normalizedText.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText.Trim()));
+            }
+            if (segments.Count == 0 && root.TryGetProperty("result", out var result)
                 && result.TryGetProperty("utterances", out var utts)
                 && utts.ValueKind == JsonValueKind.Array)
             {
@@ -819,6 +840,24 @@ public class SubtitleGenerationProcessor
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] 豆包异步 ASR 响应解析失败");
+            throw new SubtitleAsrException(
+                $"豆包异步 ASR 响应解析失败: {ex.Message}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["bodyShape"] = "gateway-normalized-asr",
+                    ["reason"] = "invalid-json",
+                }));
+        }
+
+        if (segments.Count == 0)
+        {
+            throw new SubtitleAsrException(
+                "豆包异步 ASR 返回为空（音频可能无人声或上游响应结构异常）",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["bodyShape"] = "gateway-normalized-asr",
+                    ["reason"] = "empty-content",
+                }));
         }
 
         return segments;
