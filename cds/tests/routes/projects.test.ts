@@ -152,6 +152,18 @@ describe('Projects router (P4 Part 2)', () => {
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const projectId = req.header('x-test-project-key');
+      const globalProjects = req.header('x-test-global-projects');
+      if (projectId) (req as any).cdsProjectKey = { projectId, keyId: 'test-project-key' };
+      if (globalProjects) {
+        (req as any).cdsAccess = {
+          keyId: 'test-global-key',
+          access: { projects: globalProjects.split(',') },
+        };
+      }
+      next();
+    });
     const githubApp = {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
@@ -195,6 +207,50 @@ describe('Projects router (P4 Part 2)', () => {
       expect(project.branchCount).toBe(0);
       expect(typeof project.createdAt).toBe('string');
       expect(typeof project.updatedAt).toBe('string');
+    });
+
+    it('limits a project-scoped key to its own project', async () => {
+      ensureLegacyProject(stateService);
+      stateService.addProject({
+        id: 'alt',
+        slug: 'alt-project',
+        name: 'Alt Project',
+        kind: 'git',
+        legacyFlag: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const res = await request(server, 'GET', '/api/projects', undefined, {
+        'x-test-project-key': 'alt',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(1);
+      expect(res.body.projects.map((project: Project) => project.id)).toEqual(['alt']);
+    });
+
+    it('limits a scoped global key to its allowed projects', async () => {
+      ensureLegacyProject(stateService);
+      for (const id of ['alt-a', 'alt-b', 'hidden']) {
+        stateService.addProject({
+          id,
+          slug: id,
+          name: id,
+          kind: 'git',
+          legacyFlag: false,
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+      }
+
+      const res = await request(server, 'GET', '/api/projects', undefined, {
+        'x-test-global-projects': 'alt-a,alt-b',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(2);
+      expect(res.body.projects.map((project: Project) => project.id).sort()).toEqual(['alt-a', 'alt-b']);
     });
 
     it('reflects the current branch count from state.json', async () => {

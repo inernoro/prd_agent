@@ -1513,7 +1513,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // what triggered the failure.
   router.get('/projects', (req, res) => {
     try {
-      const projects = stateService.getProjects();
+      const machineScope = req as unknown as {
+        cdsProjectKey?: { projectId: string; keyId: string };
+        cdsAccess?: { keyId: string; access: AgentKeyAccess };
+      };
+      const scopedProjectIds = machineScope.cdsProjectKey
+        ? new Set([machineScope.cdsProjectKey.projectId])
+        : Array.isArray(machineScope.cdsAccess?.access.projects)
+          ? new Set(machineScope.cdsAccess.access.projects)
+          : null;
+      const projects = scopedProjectIds
+        ? stateService.getProjects().filter((project) => scopedProjectIds.has(project.id))
+        : stateService.getProjects();
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
