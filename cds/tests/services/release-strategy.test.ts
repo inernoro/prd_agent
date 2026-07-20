@@ -128,6 +128,7 @@ describe('release strategy discovery and generation', () => {
     expect(normalizeRepositoryIdentity('git@github.com:Owner/Repo.git')).toBe('owner/repo');
     expect(normalizeRepositoryIdentity('ssh://git@github.com/Owner/Repo.git')).toBe('owner/repo');
     expect(normalizeRepositoryIdentity('github.com/Owner/Repo.git')).toBe('owner/repo');
+    expect(normalizeRepositoryIdentity('https://proxy.example/github.com/Owner/Repo.git')).toBe('owner/repo');
   });
 
   it('executes a generated static release twice and preserves atomic current and previous versions', () => {
