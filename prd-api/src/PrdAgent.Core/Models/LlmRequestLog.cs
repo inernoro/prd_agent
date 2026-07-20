@@ -76,6 +76,12 @@ public class LlmRequestLog
     public string? IngressProtocol { get; set; }
 
     // Provider / 模型信息
+    /// <summary>调用方选择的稳定逻辑模型标识。</summary>
+    public string? LogicalModelId { get; set; }
+    public string? LogicalModelPublicId { get; set; }
+    /// <summary>网关实际命中的上游 Offering。</summary>
+    public string? OfferingId { get; set; }
+    public string? OfferingTargetKind { get; set; }
     public string Provider { get; set; } = string.Empty; // Claude/OpenAI/...
     public string Model { get; set; } = string.Empty;
     public string? ApiBase { get; set; }

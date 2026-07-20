@@ -422,7 +422,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
                     marker.UpdatedAt = now;
                     needUpdate = true;
                 }
-                else if (run.Status == ImageGenRunStatus.Running || run.Status == ImageGenRunStatus.Queued)
+                else if (run.Status == ImageGenRunStatus.Running
+                         || run.Status == ImageGenRunStatus.Queued
+                         || run.Status == ImageGenRunStatus.ScopedQueued)
                 {
                     if (now - run.CreatedAt > TimeSpan.FromMinutes(10))
                     {

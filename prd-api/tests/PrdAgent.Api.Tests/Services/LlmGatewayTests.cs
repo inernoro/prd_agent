@@ -1684,6 +1684,122 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
+    {
+        var googleCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-google",
+            OfferingTargetKind = "model",
+            ActualModel = "gemini-2.5-flash-image",
+            ActualPlatformId = "google-platform",
+            ActualPlatformName = "Google",
+            PlatformType = "google",
+            Protocol = "google",
+            ApiUrl = "https://generativelanguage.googleapis.com",
+            ApiKey = "google-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openai",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-2",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.example.com/v1",
+            ApiKey = "openai-key",
+            RetryCandidates = [googleCandidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model or endpoint not supported by this provider\"}}"),
+            (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "images/generations",
+            RequestBody = new JsonObject
+            {
+                ["prompt"] = "draw a clean icon",
+                ["n"] = 1,
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a clean icon",
+                Count = 1,
+                Size = "1024x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("offering-google", response.Resolution?.OfferingId);
+        Assert.Equal(2, http.RequestUris.Count);
+        Assert.Contains("images/generations", http.RequestUris[0]);
+        Assert.Contains("gemini-2.5-flash-image:generateContent", http.RequestUris[1]);
+        Assert.Contains("\"prompt\":\"draw a clean icon\"", http.RequestBodies[0]);
+        Assert.Contains("\"contents\"", http.RequestBodies[1]);
+        Assert.Contains("\"generationConfig\"", http.RequestBodies[1]);
+        Assert.DoesNotContain("\"prompt\":", http.RequestBodies[1]);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
+    {
+        var legacyResolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ExpectedModel = "nanobanana-2",
+            ActualModel = "openai/gpt-image-2",
+            ActualPlatformId = "legacy-platform",
+            ActualPlatformName = "Legacy Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://legacy.example.com/v1",
+            ApiKey = "legacy-key",
+            ModelGroupId = "legacy-pool",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/wrong.png\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "nanobanana-2",
+            RequiredLogicalModelPublicId = "nanobanana-2",
+            RequestBody = new JsonObject { ["prompt"] = "draw a yellow circle" },
+        }, legacyResolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGICAL_MODEL_RESOLUTION_MISMATCH", response.ErrorCode);
+        Assert.Equal(409, response.StatusCode);
+        Assert.Empty(http.RequestBodies);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenProviderIsNotOpenRouter_ShouldNotAddAppAttributionHeaders()
     {
         var resolution = new GatewayModelResolution
@@ -1810,6 +1926,52 @@ public class LlmGatewayTests
         Assert.Equal("https://provider.example.com/v1/messages", uri);
         var body = Assert.Single(http.RequestBodies);
         Assert.Contains("\"model\":\"claude-opus-via-compatible-platform\"", body);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenOfferingDefinesEndpointPath_ShouldOverrideProtocolDefault()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-chat",
+            LogicalModelPublicId = "chat-pro",
+            OfferingId = "offering-compatible",
+            OfferingTargetKind = "model",
+            OfferingEndpointPath = "/api/v2/inference",
+            ActualModel = "upstream-chat-pro",
+            ActualPlatformId = "compatible-platform",
+            ActualPlatformName = "Compatible Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-test",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://provider.example.com/api/v2/inference", Assert.Single(http.RequestUris));
+        Assert.Equal("offering-compatible", response.Resolution?.OfferingId);
     }
 
     [Fact]

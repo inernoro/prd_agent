@@ -26,6 +26,11 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
         {
             context = context with { RunId = prev.RunId };
         }
+        if (!string.IsNullOrWhiteSpace(prev?.LogicalModelPublicId)
+            && string.IsNullOrWhiteSpace(context.LogicalModelPublicId))
+        {
+            context = context with { LogicalModelPublicId = prev.LogicalModelPublicId };
+        }
         _current.Value = context;
         return new Scope(() => _current.Value = prev);
     }

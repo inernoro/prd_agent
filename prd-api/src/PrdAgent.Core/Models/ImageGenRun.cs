@@ -16,12 +16,12 @@ public class ImageGenRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
 
-    public ImageGenRunStatus Status { get; set; } = ImageGenRunStatus.Queued;
+    public ImageGenRunStatus Status { get; set; } = ImageGenRunStatus.ScopedQueued;
 
     /// <summary>
-    /// 入队时所在部署的作用域（分支预览 = 分支级 slug，生产 = null；
+    /// 入队时所在部署的作用域（分支预览 = 项目 + 分支 + commit revision，生产 = null；
     /// 取值链见 DeploymentScope.Current）。worker 只认领同作用域的 run，
-    /// 防止共享 Mongo 下旧构建的兄弟部署抢单用旧代码执行
+    /// 防止共享 Mongo 下兄弟部署或同分支残留旧 revision 抢单并用旧代码执行
     /// （见 DeploymentScope 注释与 cross-project-isolation 规则通道 8）。
     /// 不设默认值：由入队点显式盖戳，避免存量文档反序列化被误染。
     /// </summary>
@@ -43,7 +43,14 @@ public class ImageGenRun
     public string? ModelId { get; set; }
 
     /// <summary>
-    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
+    /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。
+    /// 该值在任务整个生命周期内保持稳定，不得被本次命中的上游模型名覆盖；
+    /// Provider、Endpoint 与实际模型由 LLM Gateway 独立解析。
+    /// </summary>
+    public string? LogicalModelPublicId { get; set; }
+
+    /// <summary>
+    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池, 4=逻辑模型）
     /// </summary>
     public ModelResolutionType? ModelResolutionType { get; set; }
 
@@ -170,7 +177,14 @@ public enum ImageGenRunStatus
     Running,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+
+    /// <summary>
+    /// 带部署作用域的新队列状态。旧版本 Worker 只查询 Queued，因此不会跨分支或跨 revision
+    /// 抢走新任务；当前版本 Worker 再以 DeploymentSlug 做第二层精确 fencing。
+    /// 数值追加在末尾，保持既有 Mongo 枚举值兼容。
+    /// </summary>
+    ScopedQueued
 }
 
 public class ImageGenRunPlanItem

@@ -111,6 +111,27 @@ public class GatewayResponse
 /// </summary>
 public class GatewayModelResolution
 {
+    /// <summary>调用方选择的逻辑模型 ID。</summary>
+    public string? LogicalModelId { get; init; }
+
+    /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
+    public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>本次实际命中的上游 Offering ID。</summary>
+    public string? OfferingId { get; init; }
+
+    /// <summary>Offering 指向的目标类型：model / exchange。</summary>
+    public string? OfferingTargetKind { get; init; }
+
+    /// <summary>Offering 级每分钟请求上限；null/0 表示不启用。</summary>
+    public int? OfferingRateLimitPerMinute { get; init; }
+
+    /// <summary>Offering 级最大并发。</summary>
+    public int? OfferingMaxConcurrency { get; init; }
+
+    /// <summary>Offering 级 endpoint path 覆盖；为空时由协议适配器生成。</summary>
+    public string? OfferingEndpointPath { get; init; }
+
     /// <summary>
     /// 调度是否成功
     /// </summary>

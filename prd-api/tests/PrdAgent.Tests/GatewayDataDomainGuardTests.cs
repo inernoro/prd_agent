@@ -10,6 +10,29 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
+    public void VisualCreation_AlwaysUsesDedicatedHttpGatewayForResolveAndSend()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+        var httpGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
+
+        Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILogicalModelGateway.cs"));
+        Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
+        Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
+        Assert.Contains("HttpLlmGatewayClient servingGateway", client);
+        Assert.True(
+            client.Split("var requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
+            "文生图与多图生图都必须直接选择独立 Gateway HTTP 边界");
+        Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
+        Assert.DoesNotContain("private readonly ILogicalModelGateway _logicalModelGateway", client);
+        Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);
+        Assert.DoesNotContain("_gateway.SendRawWithResolutionAsync", client);
+        Assert.Contains("requestGateway.ResolveRequiredLogicalModelAsync", client);
+        Assert.Contains("requestGateway.SendRawWithResolutionAsync", client);
+    }
+
+    [Fact]
     public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
     {
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
@@ -1041,6 +1064,54 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("await SyncProjectSceneActivityAsync(run.Id);", videoWorker);
         Assert.Contains("await SyncProjectSceneActivityAsync(runId);", videoWorker);
         Assert.Contains("ResolveProjectStatusForScenes(run.Scenes)", videoWorker);
+    }
+
+    [Fact]
+    public void VisualImageRun_PreservesLogicalModelIdentityAcrossWorkerAndRawGatewayBoundary()
+    {
+        var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var imageClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+
+        Assert.Contains("public string? LogicalModelPublicId { get; set; }", runModel);
+        Assert.Contains("LogicalModelPublicId = string.Equals(platformId, \"logical-model\"", imageController);
+        Assert.Contains("LogicalModelPublicId = string.Equals(platformId, \"logical-model\"", imageMasterController);
+        Assert.Contains("var frontendExpectedModelId = run.LogicalModelPublicId ?? run.ModelId;", imageWorker);
+        Assert.Contains("modelName: run.LogicalModelPublicId ?? run.ModelId", imageWorker);
+        Assert.Contains(".Set(x => x.LogicalModelPublicId, logicalModelPublicId)", imageWorker);
+        Assert.Contains("modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId", imageWorker);
+        Assert.Contains("RequiredLogicalModelPublicId = resolution.LogicalModelPublicId", imageClient);
+        Assert.Contains("ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName", imageClient);
+        Assert.Contains("ResolveRequiredLogicalModelAsync", imageClient);
+        Assert.Contains("ResolveRequiredLogicalModelPublicId(", imageClient);
+        Assert.Contains("string.Equals(platformId?.Trim(), \"logical-model\"", imageClient);
+        Assert.Contains("requiredLogicalModelPublicId: run.LogicalModelPublicId", imageWorker);
+        Assert.Contains("ResolveExplicitLogicalModelPublicId(run)", imageWorker);
+        Assert.Contains("run.DeploymentSlug", imageController);
+        Assert.Contains("显式逻辑模型跳过 MAP 模型池调度", imageWorker);
+        Assert.Contains(".Set(x => x.ModelResolutionType, ModelResolutionType.LogicalModel)", imageWorker);
+    }
+
+    [Fact]
+    public void VisualImageRun_UsesQueueStatusThatLegacyWorkersCannotClaim()
+    {
+        var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentImageGenController.cs");
+        var weeklyPosterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/WeeklyPosterController.cs");
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+
+        Assert.Contains("ScopedQueued", runModel);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", imageController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", imageMasterController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", literaryController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", weeklyPosterController);
+        Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued", imageWorker);
+        Assert.Contains("DeploymentScope.Current == null", imageWorker);
+        Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued", imageWorker);
     }
 
     [Fact]

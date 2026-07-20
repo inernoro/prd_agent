@@ -14,6 +14,30 @@ export type VisualAgentModelOption = Model & {
   poolName?: string;
 };
 
+export type VisualResultModelMeta = {
+  logicalModelPublicId?: string;
+  modelPool?: string;
+  actualModelPool?: string;
+  actualModel?: string;
+};
+
+/**
+ * 视觉创作的主展示只认应用选择的逻辑模型；上游模型仅作为旧任务兜底，
+ * 避免 Provider / Offering 细节重新泄漏回应用模型列表。
+ */
+export function resolveVisualResultModelLabel(
+  meta: VisualResultModelMeta | null | undefined,
+  fallback = '',
+): string {
+  return String(
+    meta?.logicalModelPublicId
+      ?? meta?.modelPool
+      ?? meta?.actualModelPool
+      ?? meta?.actualModel
+      ?? fallback,
+  ).trim();
+}
+
 const IMAGE_MODEL_LABELS: Record<string, string> = {
   'openai/gpt-image-2': 'OpenAI GPT Image 2',
   'google/gemini-3.1-flash-image': 'Google Nano Banana 2',

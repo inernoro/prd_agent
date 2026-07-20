@@ -1,55 +1,37 @@
-# 实战 02：让视觉创作显示多款图片模型
+# 实战 02：给逻辑模型连接多个上游 Offering
 
-模型已经创建，但视觉创作仍只显示一款，通常不是前端缓存问题，而是 appCaller、模型池和成员没有连成有效链路。本实战用 `visual-agent.image.text2img::generation` 说明如何补齐绑定。
+逻辑模型只是应用可见目录。真正能发请求，还需要至少一个启用的 Offering；为了故障切换，关键模型建议配置两个由不同 Provider 或不同 Endpoint 承载的 Offering。
 
-## 先理解四层关系
+## 配置原则
 
-1. Provider 回答“请求发到哪里、用哪把上游密钥”。
-2. 模型回答“上游调用什么标识、具备什么用途”。
-3. 模型池回答“这类业务可以从哪些模型中选择”。
-4. appCaller 回答“哪个业务使用哪个池”。
-
-任意一层缺失，视觉创作都可能只显示默认桩、显示旧模型，或运行时选不到新模型。
+- 一个 Offering 只指向一个 Gateway 已拥有的普通模型或 Exchange。
+- 同一逻辑模型的多个 Offering 应提供可替代的业务能力，不要把完全不同的产品混在一起。
+- 协议、上游模型覆盖、并发与 RPM 属于 Offering，不属于视觉创作。
+- `priority` 适合明确主备；`weighted` 适合多个稳定上游分担流量。
 
 ## 跟我做
 
-1. 进入“路由 → 模型池”，找到类型为“图片生成”的 generation 池。
-2. 希望多款模型同时供用户选择时，优先维护一个明确的视觉创作专用池；不要把每款模型都建成互不关联的单成员池。
-3. 打开“查看与维护”，依次选择 `openai/gpt-image-2`、`google/gemini-3.1-flash-image` 和 `google/gemini-3.1-flash-lite-image`，点击“添加/更新”或“追加模型”。
-4. 确认原有成员仍保留，新成员各只出现一次。测试池可使用 10、20、30 作为优先级，为后续插入新成员保留空间。
+1. 打开“路由 → 逻辑模型”，进入 `image2`。
+2. 新增主 Offering，目标选择 OpenAI 直连模型，协议按模型配置，优先级填 10，权重填 100，并填写供应商允许的最大并发和每分钟速率。
+3. 新增备用 Offering，目标选择 OpenRouter 或另一条兼容 Endpoint，优先级填 20。若真实上游模型名不同，在“上游模型覆盖”填写供应商精确 id。
+4. 为 `nanobanana-2` 配置 Google 原生 Offering 和一条兼容代理 Offering。Google 原生请求使用 `generateContent`，代理可能使用 OpenAI Images 或 Exchange；不用要求两者 wire shape 相同。
+5. 为 `nanobanana-2-lite` 至少配置一个启用 Offering。测试环境如果还没有可信备用上游，保留单 Offering 并明确记录，不要拿无效地址凑数量。
+6. 回视觉创作刷新模型选择器。列表项应是三个逻辑模型，而不是一个池、多个 Provider 或真实上游 id。
 
-![模型池详情先展示用途、默认状态和绑定 appCaller](https://cds.miduo.org/api/reports/assets/a89b7e254589e474e9d02c095af54f917f409a18ac7afb709c4653cd6651a5e7.png)
+## 为什么不同协议也能回退
 
-5. 进入“路由 → appCaller”，搜索 `visual-agent.image.text2img::generation`。
-6. 如果状态是 `discovered`，先把它治理为 active；请求类型必须是 generation。
-7. 在“配置路由与治理”中选择刚才维护的 generation 池并保存。
-8. 同样检查视觉创作实际使用的其他 generation 调用方，例如图片编辑、批量生图或画板生图。只绑定真实使用的调用方，不要把所有 generation appCaller 一次性改到同一池。
-9. 回到视觉创作页面刷新模型选择器。网关池内每个健康成员应展开为一项可精确选择的模型，而不是只显示池内第一项。
-
-![appCaller 关联预览能核对模型池类型、候选模型和最近运行](https://cds.miduo.org/api/reports/assets/d6ed02a5558eb0f45a49ec2b0f0b3dba729f2aa9b404ce7beff44a7901ce16ad.png)
-
-## 测试环境的典型错误
-
-- 已有旧 preview 模型或单成员池，但它引用的 Provider 已不存在。
-- generation 默认池仍只有 `stub-image`。
-- `visual-agent.image.text2img::generation` 仍处于 discovered，`modelPoolId` 为空。
-
-这三种情况同时出现时，新建更多同名池不会解决问题。应先恢复权威 Provider 和模型，再把模型纳入有效 generation 池，最后治理并绑定 appCaller。
+视觉创作提交 prompt、尺寸和参考图等业务信息。Gateway 保存协议无关的图片请求，在每次尝试前分别构建 OpenAI JSON、OpenAI multipart、OpenRouter 多模态消息、Google `generateContent` 或 Exchange 请求。首个上游 429、超时或 5xx 时，下一次请求会重新构建，不会把前一个供应商的 body 原样转发。
 
 ## 看到什么算成功
 
-- 视觉创作模型选择器出现 GPT Image 2、Nano Banana 2 和 Nano Banana 2 Lite 三项；保留测试桩时还会显示原测试项。
-- appCaller 状态为 active，请求类型为 generation，绑定池也属于 generation。
-- 池成员引用的 Provider 均存在且启用，没有孤立旧 platformId。
-- 用户明确选择某款模型后，期望模型与实际模型可以解释；发生回退时有原因。
+- `image2` 和 `nanobanana-2` 各有至少两个启用 Offering，目标、协议、优先级和限额可区分。
+- 视觉创作显示多个逻辑模型，列表不泄漏 Offering 数量、密钥或 Endpoint。
+- `visual-agent.image.text2img::generation` 能看到这些模型，其他未授权 appCaller 默认看不到。
+- 模型池没有为每个 Provider 复制一套离散组合。
 
 ## 常见失败
 
-- appCaller 不能设为 active：所选池不存在、类型不匹配或没有可解析成员。
-- 候选列表找不到模型：模型未启用，或没有声明“图片生成”用途。
-- 列表出现模型但调用失败：继续做实战 04，从 requestId 检查实际 Provider、协议和上游错误。
-- 只有管理员看得到配置：这是权限设计。Viewer 和普通成员不应拥有路由写权限，但业务页面仍可展示租户允许使用的模型。
-
-## 回滚
-
-记录变更前的 appCaller 池 ID。回滚时重新绑定原池或恢复原路由方式；保留新模型为停用状态便于排查。不要通过删除整池完成回滚。
+- 逻辑模型有记录但列表不显示：没有可用 Offering，或全部 Offering 已禁用、隔离。
+- 保存 Offering 返回 404：目标模型或 Exchange 不属于当前租户，Gateway 会 fail-closed。
+- Google 备用收到 OpenAI body：检查 Offering 协议和 canonical 图片请求是否贯通，不能通过改 EndpointPath 硬兼容。
+- 选择模型后实际走默认池：请求没有携带逻辑模型 PublicId，回应用网络请求核对 expected model。

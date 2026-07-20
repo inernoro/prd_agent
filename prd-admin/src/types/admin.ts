@@ -113,7 +113,15 @@ export type LlmRequestLogListItem = {
   platformId?: string | null;
   /** 平台名称（来自 LLMPlatform.Name，如"硅基流动"、"薇薇安"） */
   platformName?: string | null;
-  /** 模型解析类型：0=直连单模型, 1=默认模型池, 2=专属模型池 */
+  /** 用户选择的逻辑模型内部 ID */
+  logicalModelId?: string | null;
+  /** 用户选择的稳定逻辑模型公开标识 */
+  logicalModelPublicId?: string | null;
+  /** 本次实际命中的 Offering ID */
+  offeringId?: string | null;
+  /** Offering 目标类型：model/exchange */
+  offeringTargetKind?: string | null;
+  /** 模型解析类型：0=直连单模型, 1=默认模型池, 2=专属模型池, 4=逻辑模型 */
   modelResolutionType?: number | null;
   /** 模型池 ID */
   modelGroupId?: string | null;
@@ -180,6 +188,10 @@ export type LlmRequestLog = {
   appCallerCodeDisplayName?: string | null;
   provider: string;
   model: string;
+  logicalModelId?: string | null;
+  logicalModelPublicId?: string | null;
+  offeringId?: string | null;
+  offeringTargetKind?: string | null;
   apiBase?: string | null;
   path?: string | null;
   /** 外部请求 HTTP Method（GET/POST/...） */

@@ -10,7 +10,7 @@
  * - 时间线数据源 = workspace assets（生成图 + 参考图上传），无需解析桌面聊天标记。
  *
  * 设计规则对齐：artifact-is-experience（等待期主视觉是产物骨架）、chief-designer-usability
- * （单模型池不显示选择器）、ai-model-visibility（顶部展示当前模型池）、frontend-modal（预览走 createPortal）。
+ * （单模型不显示选择器）、ai-model-visibility（顶部展示当前模型）、frontend-modal（预览走 createPortal）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -229,7 +229,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       if (!prompt) return;
       const pool = pickedPool;
       if (!pool) {
-        toast.error('暂无可用生图模型', '请联系管理员配置模型池');
+        toast.error('暂无可用生图模型', '请联系管理员在 LLM Gateway 配置逻辑模型及上游');
         return;
       }
       const first = pool.models?.[0];
@@ -600,7 +600,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         <div className="flex-1 min-w-0 text-[14px] font-medium truncate" style={{ color: 'rgba(255,255,255,0.9)' }}>
           {title || '视觉创作'}
         </div>
-        {/* 模型可见性：展示当前模型池；多池可切换，单池纯展示 */}
+        {/* 模型可见性：展示当前逻辑模型；多个模型可切换，单模型纯展示 */}
         {pickedPool ? (
           enabledPools.length > 1 ? (
             <button
@@ -822,7 +822,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           )
         : null}
 
-      {/* 模型池选择（仅多池时可达） */}
+      {/* 模型选择（仅多个逻辑模型时可达） */}
       {poolSheetOpen
         ? createPortal(
             <div className="fixed inset-0 z-[120] flex flex-col justify-end" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setPoolSheetOpen(false)}>
