@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { normalizeThemeConfig } from '../themeApplier';
+import { THEME_ACCEPTANCE_TARGETS } from '../themeAcceptanceTargets';
 import {
   ACCENT_STYLES,
   DEFAULT_THEME_CONFIG,
@@ -19,6 +20,10 @@ const BUTTON_PATH = path.resolve(TEST_DIR, '../../components/design/Button.tsx')
 const DOCUMENT_STORE_PATH = path.resolve(TEST_DIR, '../../pages/document-store/DocumentStorePage.tsx');
 const SURFACE_PATH = path.resolve(TEST_DIR, '../../styles/surface.css');
 const TEAM_ACTIVITY_DIR = path.resolve(TEST_DIR, '../../pages/team-activity');
+const SETTINGS_PAGE_PATH = path.resolve(TEST_DIR, '../../pages/SettingsPage.tsx');
+const PEER_NODES_PATH = path.resolve(TEST_DIR, '../../pages/settings/PeerNodesSettings.tsx');
+const INFRA_SERVICES_PATH = path.resolve(TEST_DIR, '../../pages/infra-services/InfraServicesPage.tsx');
+const EMERGENCE_CARD_PATH = path.resolve(TEST_DIR, '../../pages/emergence/EmergenceTreeCard.tsx');
 
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -158,6 +163,50 @@ describe('主题系统契约', () => {
     expect(teamActivity).not.toContain('surface-tone-dark');
     expect(teamActivity).not.toMatch(/text-white\/(?:[1-4]?\d|5[0-5])\b/);
     expect(teamActivity).not.toMatch(/bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]/i);
+  });
+
+  it('设置子页、固定文字与动态文字色都服从自适应表面契约', () => {
+    const peerNodes = fs.readFileSync(PEER_NODES_PATH, 'utf8');
+    const infraServices = fs.readFileSync(INFRA_SERVICES_PATH, 'utf8');
+    const emergenceCard = fs.readFileSync(EMERGENCE_CARD_PATH, 'utf8');
+
+    expect(peerNodes).toContain('className="surface-raised relative overflow-hidden');
+    expect(peerNodes).not.toMatch(/linear-gradient\([^\n]*(?:22,\s*27,\s*36|34,\s*42,\s*55)/);
+    expect(peerNodes).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
+
+    expect(infraServices).toContain('text-token-primary');
+    expect(infraServices).toContain('className="surface rounded-xl p-5"');
+    expect(infraServices).not.toMatch(/text-white(?:\/\d+)?\b/);
+    expect(infraServices).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255|rgba\(0\s*,\s*0\s*,\s*0/);
+
+    expect(emergenceCard).toContain("color: 'var(--text-secondary)'");
+    expect(emergenceCard).toContain("background: 'linear-gradient(180deg, transparent, var(--bg-card-hover))'");
+    expect(emergenceCard).not.toMatch(/color:\s*hsla?\(/);
+  });
+
+  it('浏览器双主题矩阵覆盖所有设置 tab 与关键交互状态', () => {
+    const settingsPage = fs.readFileSync(SETTINGS_PAGE_PATH, 'utf8');
+    const tabBlock = settingsPage.slice(
+      settingsPage.indexOf('const tabs = useMemo'),
+      settingsPage.indexOf('const tabFromUrl'),
+    );
+    const settingsTabs = Array.from(tabBlock.matchAll(/key:\s*'([^']+)'/g), (match) => match[1]).sort();
+    const coveredSettingsTabs = THEME_ACCEPTANCE_TARGETS
+      .map((target) => new URL(target.path, 'https://theme-acceptance.local'))
+      .filter((url) => url.pathname === '/settings')
+      .map((url) => url.searchParams.get('tab'))
+      .filter((tab): tab is string => Boolean(tab))
+      .sort();
+
+    expect(coveredSettingsTabs).toEqual(settingsTabs);
+    THEME_ACCEPTANCE_TARGETS.forEach((target) => {
+      expect(target.themes).toEqual(['dark', 'light']);
+      expect(target.states.length).toBeGreaterThan(0);
+    });
+    expect(THEME_ACCEPTANCE_TARGETS.find((target) => target.id === 'command-palette')?.states)
+      .toContain('keyboard-overlay-open');
+    expect(THEME_ACCEPTANCE_TARGETS.find((target) => target.id === 'emergence')?.states)
+      .toContain('hover-primary-card');
   });
 
   it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {

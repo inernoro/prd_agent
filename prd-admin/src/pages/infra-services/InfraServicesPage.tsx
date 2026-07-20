@@ -53,7 +53,7 @@ import {
 const RESPONSIBILITY_SPLIT = [
   {
     side: 'CDS（部署 / 编排 / 健康 / 升级）',
-    color: 'rgba(99,179,237,0.85)',
+    color: 'var(--semantic-info-text)',
     items: [
       'RemoteHost 远程主机登记（SSH 凭据加密存储）',
       'shared-service Project 类型（绑定 git tag/release）',
@@ -65,7 +65,7 @@ const RESPONSIBILITY_SPLIT = [
   },
   {
     side: '本系统（路由 / 调度 / 业务监听）',
-    color: 'rgba(167,243,208,0.85)',
+    color: 'var(--semantic-success-text)',
     items: [
       'ClaudeSidecarRouter 多实例路由（tag/sticky/加权）',
       'DynamicSidecarRegistry 拉 CDS 实例发现 + 静态兜底',
@@ -109,20 +109,20 @@ function statusChipStyle(status: string): React.CSSProperties {
     case 'active':
       return {
         background: 'rgba(34,197,94,0.12)',
-        color: 'rgba(134,239,172,0.95)',
+        color: 'var(--semantic-success-text)',
         border: '1px solid rgba(34,197,94,0.35)',
       };
     case 'unreachable':
       return {
         background: 'rgba(245,158,11,0.12)',
-        color: 'rgba(252,211,77,0.95)',
+        color: 'var(--semantic-warning-text)',
         border: '1px solid rgba(245,158,11,0.35)',
       };
     case 'revoked':
     default:
       return {
         background: 'rgba(239,68,68,0.12)',
-        color: 'rgba(252,165,165,0.95)',
+        color: 'var(--semantic-danger-text)',
         border: '1px solid rgba(239,68,68,0.35)',
       };
   }
@@ -595,26 +595,26 @@ export default function InfraServicesPage() {
         key={c.id}
         className="rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-3"
         style={{
-          background: 'rgba(255,255,255,0.025)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-white truncate">{c.partnerName || c.partnerId}</span>
+            <span className="text-sm font-semibold text-token-primary truncate">{c.partnerName || c.partnerId}</span>
             <span
               className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-medium"
               style={statusChipStyle(c.status)}
             >
               {statusLabel(c.status)}
             </span>
-            <span className="text-[11px] text-white/40 uppercase tracking-wider">{c.partner}</span>
+            <span className="text-[11px] text-token-muted uppercase tracking-wider">{c.partner}</span>
           </div>
-          <div className="text-xs text-white/55 mt-0.5 font-mono truncate">{c.partnerBaseUrl}</div>
+          <div className="text-xs text-token-secondary mt-0.5 font-mono truncate">{c.partnerBaseUrl}</div>
           <div className="flex items-center gap-3 mt-2 flex-wrap">
             {c.projectId && (
-              <span className="text-xs text-white/55">
-                项目: <code className="px-1 py-0.5 rounded bg-white/5 text-white/80">{c.projectId}</code>
+              <span className="text-xs text-token-secondary">
+                项目: <code className="rounded bg-token-nested px-1 py-0.5 text-token-secondary">{c.projectId}</code>
               </span>
             )}
             {c.scopes.length > 0 && (
@@ -624,8 +624,8 @@ export default function InfraServicesPage() {
                     key={s}
                     className="text-[11px] px-1.5 py-0.5 rounded"
                     style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      color: 'rgba(255,255,255,0.7)',
+                      background: 'var(--nested-block-bg)',
+                      color: 'var(--text-primary)',
                     }}
                   >
                     {s}
@@ -634,7 +634,7 @@ export default function InfraServicesPage() {
               </div>
             )}
           </div>
-          <div className="text-[11px] text-white/40 mt-1.5">
+          <div className="text-[11px] text-token-muted mt-1.5">
             创建于 {formatRelative(c.createdAt)}
             {c.lastProbedAt
               ? ` · 上次探活${c.lastProbeOk === false ? '失败' : ''} ${formatRelative(c.lastProbedAt)}`
@@ -651,9 +651,9 @@ export default function InfraServicesPage() {
               disabled={busyId === c.id}
               className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs transition-colors"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: 'rgba(255,255,255,0.85)',
+                background: 'var(--bg-card-hover)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
               }}
             >
               {busyId === c.id ? <MapSpinner size={12} /> : <RefreshCw size={12} />} 探活
@@ -667,7 +667,7 @@ export default function InfraServicesPage() {
             style={{
               background: 'rgba(239,68,68,0.08)',
               border: '1px solid rgba(239,68,68,0.3)',
-              color: 'rgba(252,165,165,0.95)',
+              color: 'var(--semantic-danger-text)',
             }}
           >
             <Trash2 size={12} /> 删除
@@ -679,34 +679,34 @@ export default function InfraServicesPage() {
 
   function renderOperationTab() {
     const cardStyle: React.CSSProperties = {
-      background: 'rgba(255,255,255,0.025)',
-      border: '1px solid rgba(255,255,255,0.08)',
+      background: 'var(--nested-block-bg)',
+      border: '1px solid var(--border-subtle)',
     };
 
     if (activeOperationTab === 'instances') {
       return (
         <div className="grid gap-3 md:grid-cols-2">
           <div className="rounded-lg p-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">CDS 连接实例</div>
+            <div className="text-xs font-semibold text-token-secondary mb-2">CDS 连接实例</div>
             {activeConnection ? (
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-white font-medium">{activeConnection.partnerName || activeConnection.partnerId}</span>
+                  <span className="text-token-primary font-medium">{activeConnection.partnerName || activeConnection.partnerId}</span>
                   <span className="text-[11px] px-2 py-0.5 rounded-md" style={statusChipStyle(activeConnection.status)}>
                     {statusLabel(activeConnection.status)}
                   </span>
                 </div>
-                <div className="text-white/55 font-mono text-xs break-all">{activeConnection.partnerBaseUrl}</div>
-                <div className="text-white/55">项目：{activeConnection.projectId || '未绑定'}</div>
-                <div className="text-white/45">上次探活：{formatRelative(activeConnection.lastProbedAt)}</div>
+                <div className="text-token-secondary font-mono text-xs break-all">{activeConnection.partnerBaseUrl}</div>
+                <div className="text-token-secondary">项目：{activeConnection.projectId || '未绑定'}</div>
+                <div className="text-token-muted">上次探活：{formatRelative(activeConnection.lastProbedAt)}</div>
               </div>
             ) : (
-              <div className="text-sm text-white/45">没有 active CDS 连接。</div>
+              <div className="text-sm text-token-muted">没有 active CDS 连接。</div>
             )}
           </div>
           <div className="rounded-lg p-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">Agent runtime</div>
-            <div className="space-y-2 text-sm text-white/70">
+            <div className="text-xs font-semibold text-token-secondary mb-2">Agent runtime</div>
+            <div className="space-y-2 text-sm text-token-secondary">
               <div>默认 runtime：{activeSession?.runtime ?? 'claude-sdk'}</div>
               <div>当前 worker：{activeSession?.cdsWorkerId ?? '未启动'}</div>
               <div>当前容器：{activeSession?.cdsContainerName ?? '未分配'}</div>
@@ -722,19 +722,19 @@ export default function InfraServicesPage() {
       return (
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-lg p-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">当前路由策略</div>
-            <div className="text-sm text-white/75">active CDS 连接优先，失效连接自动排除。</div>
-            <div className="text-xs text-white/45 mt-2">命中连接：{activeConnection?.partnerName || activeConnection?.partnerId || '无'}</div>
+            <div className="text-xs font-semibold text-token-secondary mb-2">当前路由策略</div>
+            <div className="text-sm text-token-secondary">active CDS 连接优先，失效连接自动排除。</div>
+            <div className="text-xs text-token-muted mt-2">命中连接：{activeConnection?.partnerName || activeConnection?.partnerId || '无'}</div>
           </div>
           <div className="rounded-lg p-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">工具策略</div>
-            <div className="text-sm text-white/75">{activeSession?.toolPolicy || sessionDraft.toolPolicy}</div>
-            <div className="text-xs text-white/45 mt-2">危险工具默认需要人工确认。</div>
+            <div className="text-xs font-semibold text-token-secondary mb-2">工具策略</div>
+            <div className="text-sm text-token-secondary">{activeSession?.toolPolicy || sessionDraft.toolPolicy}</div>
+            <div className="text-xs text-token-muted mt-2">危险工具默认需要人工确认。</div>
           </div>
           <div className="rounded-lg p-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">模型路由</div>
-            <div className="text-sm text-white/75">{activeSession?.model || sessionDraft.model}</div>
-            <div className="text-xs text-white/45 mt-2">模型由系统级配置或会话配置写入，支持任意 OpenAI-compatible baseUrl 和 model。</div>
+            <div className="text-xs font-semibold text-token-secondary mb-2">模型路由</div>
+            <div className="text-sm text-token-secondary">{activeSession?.model || sessionDraft.model}</div>
+            <div className="text-xs text-token-muted mt-2">模型由系统级配置或会话配置写入，支持任意 OpenAI-compatible baseUrl 和 model。</div>
           </div>
         </div>
       );
@@ -750,13 +750,13 @@ export default function InfraServicesPage() {
             ['失败', String(failedSessions)],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg p-4" style={cardStyle}>
-              <div className="text-xs text-white/45">{label}</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+              <div className="text-xs text-token-muted">{label}</div>
+              <div className="mt-2 text-2xl font-semibold text-token-primary">{value}</div>
             </div>
           ))}
           <div className="rounded-lg p-4 sm:col-span-2 xl:col-span-4" style={cardStyle}>
-            <div className="text-xs font-semibold text-white/55 mb-2">最近事件</div>
-            <div className="text-sm text-white/65">
+            <div className="text-xs font-semibold text-token-secondary mb-2">最近事件</div>
+            <div className="text-sm text-token-secondary">
               {latestEvent ? `${latestEvent.type} #${latestEvent.seq} · ${formatRelative(latestEvent.createdAt)}` : '暂无事件'}
             </div>
           </div>
@@ -768,20 +768,20 @@ export default function InfraServicesPage() {
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-lg p-4" style={cardStyle}>
           <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="text-xs font-semibold text-white/55">模型运行配置</div>
+            <div className="text-xs font-semibold text-token-secondary">模型运行配置</div>
             <button
               type="button"
               onClick={() => void onImportDefaultRuntimeProfile()}
               disabled={agentBusy}
               title="从「模型管理」一键导入系统主模型为运行配置，不用手抄 baseUrl/key"
-              className="text-[11px] text-sky-200/85 hover:text-sky-100 disabled:opacity-45"
+              className="text-[11px] text-semantic-info hover-text-primary disabled:opacity-45"
             >
               从模型管理导入
             </button>
           </div>
           <div className="space-y-2">
             {runtimeProfiles.length === 0 ? (
-              <div className="text-sm text-white/45">还没有系统级模型配置。保存后会话可使用 Anthropic 或 OpenAI-compatible baseUrl 和 model。</div>
+              <div className="text-sm text-token-muted">还没有系统级模型配置。保存后会话可使用 Anthropic 或 OpenAI-compatible baseUrl 和 model。</div>
             ) : (
               runtimeProfiles.map((profile) => {
                 const note = profileTestNotes[profile.id];
@@ -792,18 +792,18 @@ export default function InfraServicesPage() {
                     data-testid={'runtime-profile-' + profile.id}
                     className="rounded-md px-3 py-2"
                     style={{
-                      background: 'rgba(0,0,0,0.18)',
-                      border: editing ? '1px solid rgba(99,179,237,0.45)' : '1px solid rgba(255,255,255,0.06)',
+                      background: 'var(--bg-input)',
+                      border: editing ? '1px solid var(--selection-border)' : '1px solid var(--border-subtle)',
                     }}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-white/85 truncate">{profile.name}</span>
-                      <span className="shrink-0 text-[11px] text-white/45">{profile.isDefault ? '默认' : profile.runtime}</span>
+                      <span className="text-sm font-medium text-token-primary truncate">{profile.name}</span>
+                      <span className="shrink-0 text-[11px] text-token-muted">{profile.isDefault ? '默认' : profile.runtime}</span>
                     </div>
-                    <div className="mt-1 text-xs text-white/50 break-all">{profile.baseUrl}</div>
-                    <div className="mt-1 text-xs text-white/50">protocol: {profile.protocol} · model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
+                    <div className="mt-1 text-xs text-token-muted break-all">{profile.baseUrl}</div>
+                    <div className="mt-1 text-xs text-token-muted">protocol: {profile.protocol} · model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
                     {note && (
-                      <div className={['mt-1.5 text-[11px]', note.ok ? 'text-emerald-300/90' : 'text-red-300/90'].join(' ')}>
+                      <div className={['mt-1.5 text-[11px]', note.ok ? 'text-semantic-success' : 'text-semantic-danger'].join(' ')}>
                         {note.text}
                       </div>
                     )}
@@ -814,8 +814,8 @@ export default function InfraServicesPage() {
                         type="button"
                         onClick={() => onEditRuntimeProfile(profile)}
                         disabled={agentBusy}
-                        className="rounded px-2 py-1 text-[11px] text-white/70 hover:text-white disabled:opacity-45"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        className="rounded px-2 py-1 text-[11px] text-token-secondary hover:text-token-primary disabled:opacity-45"
+                        style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                       >
                         编辑
                       </button>
@@ -825,7 +825,7 @@ export default function InfraServicesPage() {
                           onClick={() => void onSetDefaultRuntimeProfile(profile)}
                           disabled={agentBusy}
                           className="rounded px-2 py-1 text-[11px] disabled:opacity-45"
-                          style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.3)', color: 'rgba(186,230,253,0.95)' }}
+                          style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.3)', color: 'var(--semantic-info-text)' }}
                         >
                           设为默认
                         </button>
@@ -835,8 +835,8 @@ export default function InfraServicesPage() {
                         onClick={() => void onTestRuntimeProfile(profile)}
                         disabled={agentBusy || testingProfileId === profile.id}
                         title="对 baseUrl/model/key 发一次真实探测请求"
-                        className="rounded px-2 py-1 text-[11px] text-white/70 hover:text-white disabled:opacity-45 inline-flex items-center gap-1"
-                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        className="rounded px-2 py-1 text-[11px] text-token-secondary hover:text-token-primary disabled:opacity-45 inline-flex items-center gap-1"
+                        style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                       >
                         {testingProfileId === profile.id && <MapSpinner size={10} />}
                         {testingProfileId === profile.id ? '测试中' : '测试连通'}
@@ -848,8 +848,8 @@ export default function InfraServicesPage() {
                         className="rounded px-2 py-1 text-[11px] disabled:opacity-45"
                         style={
                           confirmDeleteProfileId === profile.id
-                            ? { background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)', color: 'rgba(252,165,165,1)' }
-                            : { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'rgba(252,165,165,0.9)' }
+                            ? { background: 'var(--button-danger-bg-hover)', border: '1px solid var(--button-danger-border)', color: 'var(--semantic-danger-text)' }
+                            : { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--semantic-danger-text)' }
                         }
                       >
                         {confirmDeleteProfileId === profile.id ? '确认删除?' : '删除'}
@@ -863,7 +863,7 @@ export default function InfraServicesPage() {
         </div>
         <div className="rounded-lg p-4 space-y-3" style={cardStyle}>
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-white/55">
+            <div className="text-xs font-semibold text-token-secondary">
               {editingProfileId ? '修改模型配置（API key 留空 = 沿用原 key）' : '新增模型配置'}
             </div>
             {editingProfileId && (
@@ -873,7 +873,7 @@ export default function InfraServicesPage() {
                   setEditingProfileId(null);
                   setRuntimeDraft((prev) => ({ ...prev, apiKey: '' }));
                 }}
-                className="text-[11px] text-white/55 hover:text-white/85"
+                className="text-[11px] text-token-secondary hover:text-token-primary"
               >
                 取消编辑
               </button>
@@ -884,14 +884,14 @@ export default function InfraServicesPage() {
               value={runtimeDraft.name}
               onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, name: e.target.value }))}
               placeholder="配置名称"
-              className="rounded-md px-3 py-2 text-sm text-white outline-none"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             />
             <select
               value={runtimeDraft.runtime}
               onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, runtime: e.target.value }))}
-              className="rounded-md px-3 py-2 text-sm text-white outline-none"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             >
               <option value="claude-sdk">claude-sdk</option>
               <option value="codex">codex</option>
@@ -904,8 +904,8 @@ export default function InfraServicesPage() {
                 protocol: e.target.value,
                 baseUrl: e.target.value === 'openai-compatible' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
               }))}
-              className="rounded-md px-3 py-2 text-sm text-white outline-none sm:col-span-2"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none sm:col-span-2"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             >
               <option value="anthropic">Anthropic Messages</option>
               <option value="openai-compatible">OpenAI-compatible Chat Completions</option>
@@ -914,26 +914,26 @@ export default function InfraServicesPage() {
               value={runtimeDraft.baseUrl}
               onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
               placeholder="https://api.example.com"
-              className="rounded-md px-3 py-2 text-sm text-white outline-none sm:col-span-2"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none sm:col-span-2"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             />
             <input
               value={runtimeDraft.model}
               onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, model: e.target.value }))}
               placeholder="model"
-              className="rounded-md px-3 py-2 text-sm text-white outline-none"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             />
             <input
               value={runtimeDraft.apiKey}
               onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder="API key"
               type="password"
-              className="rounded-md px-3 py-2 text-sm text-white outline-none"
-              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="rounded-md px-3 py-2 text-sm text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
             />
           </div>
-          <label className="inline-flex items-center gap-2 text-xs text-white/55">
+          <label className="inline-flex items-center gap-2 text-xs text-token-secondary">
             <input
               type="checkbox"
               checked={runtimeDraft.isDefault}
@@ -952,29 +952,29 @@ export default function InfraServicesPage() {
             }
             data-testid="save-runtime-profile"
             className="rounded-md px-3 py-1.5 text-xs disabled:opacity-45"
-            style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'rgba(186,230,253,0.96)' }}
+            style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'var(--semantic-info-text)' }}
           >
             {editingProfileId ? '保存修改' : '保存模型配置'}
           </button>
         </div>
         <div className="rounded-lg p-4" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55 mb-2">Hook profile</div>
-          <div className="text-sm text-white/75">可用配置：{hookProfiles.length}</div>
-          <div className="text-xs text-white/45 mt-2">新建会话弹窗可选择或快速创建 Hook profile。</div>
+          <div className="text-xs font-semibold text-token-secondary mb-2">Hook profile</div>
+          <div className="text-sm text-token-secondary">可用配置：{hookProfiles.length}</div>
+          <div className="text-xs text-token-muted mt-2">新建会话弹窗可选择或快速创建 Hook profile。</div>
         </div>
         <div className="rounded-lg p-4" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55 mb-2">授权范围</div>
+          <div className="text-xs font-semibold text-token-secondary mb-2">授权范围</div>
           <div className="flex flex-wrap gap-1.5">
             {(activeConnection?.scopes ?? []).map((scope) => (
-              <span key={scope} className="rounded px-2 py-1 text-[11px] text-white/70" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <span key={scope} className="rounded px-2 py-1 text-[11px] text-token-secondary" style={{ background: 'var(--nested-block-bg)' }}>
                 {scope}
               </span>
             ))}
-            {!activeConnection?.scopes?.length && <span className="text-sm text-white/45">暂无授权范围</span>}
+            {!activeConnection?.scopes?.length && <span className="text-sm text-token-muted">暂无授权范围</span>}
           </div>
         </div>
         <div className="rounded-lg p-4 md:col-span-2" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55 mb-2">内置 Agent 工具</div>
+          <div className="text-xs font-semibold text-token-secondary mb-2">内置 Agent 工具</div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-9">
             {[
               ['repo_list_files', '浏览仓库'],
@@ -987,13 +987,13 @@ export default function InfraServicesPage() {
               ['cds_bridge_snapshot', '读取远程页面'],
               ['cds_bridge_action', '操作远程页面'],
             ].map(([name, desc]) => (
-              <div key={name} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="text-xs font-semibold text-white/80">{name}</div>
-                <div className="mt-1 text-[11px] text-white/45">{desc}</div>
+              <div key={name} className="rounded-md px-3 py-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <div className="text-xs font-semibold text-token-secondary">{name}</div>
+                <div className="mt-1 text-[11px] text-token-muted">{desc}</div>
               </div>
             ))}
           </div>
-          <div className="mt-2 text-xs text-white/45">这些工具由 Claude sidecar runtime（自研 sidecar，Anthropic 协议；runtime 标识 claude-sdk）通过 MAP 回调执行，仓库工具默认工作目录是 CDS sandbox 内的 prd_agent 仓库，Bridge 工具通过 active CDS 长期连接操作预览页。</div>
+          <div className="mt-2 text-xs text-token-muted">这些工具由 Claude sidecar runtime（自研 sidecar，Anthropic 协议；runtime 标识 claude-sdk）通过 MAP 回调执行，仓库工具默认工作目录是 CDS sandbox 内的 prd_agent 仓库，Bridge 工具通过 active CDS 长期连接操作预览页。</div>
         </div>
       </div>
     );
@@ -1006,8 +1006,8 @@ export default function InfraServicesPage() {
     >
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold text-white">基础设施服务</h1>
-          <p className="text-sm text-white/60 mt-1.5 max-w-2xl">
+          <h1 className="text-xl font-semibold text-token-primary">基础设施服务</h1>
+          <p className="text-sm text-token-secondary mt-1.5 max-w-2xl">
             shared 基础设施服务（如 Claude sidecar runtime，自研 sidecar / Anthropic 协议）的连接管理、实例分布、路由策略与业务监控。
             部署 / 编排能力由 CDS 提供，本页通过 CDS 地址授权建立信任连接，配对密钥作为兜底路径保留。
           </p>
@@ -1018,7 +1018,7 @@ export default function InfraServicesPage() {
           className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
           style={{
             background: 'rgba(99,179,237,0.18)',
-            color: 'rgba(186,230,253,0.98)',
+            color: 'var(--semantic-info-text)',
             border: '1px solid rgba(99,179,237,0.45)',
           }}
         >
@@ -1027,18 +1027,18 @@ export default function InfraServicesPage() {
       </header>
 
       <section
-        className="rounded-xl p-5"
+        className="surface rounded-xl p-5"
         style={{
           background: 'rgba(34,197,94,0.06)',
           border: '1px solid rgba(34,197,94,0.25)',
         }}
       >
         <div className="flex items-start gap-3">
-          <ShieldCheck size={18} style={{ color: 'rgba(134,239,172,0.95)', marginTop: 2 }} />
-          <div className="text-sm text-white/85 leading-relaxed">
-            <strong className="text-white">v1 已上线：</strong>
+          <ShieldCheck size={18} style={{ color: 'var(--semantic-success-text)', marginTop: 2 }} />
+          <div className="text-sm text-token-primary leading-relaxed">
+            <strong className="text-token-primary">v1 已上线：</strong>
             输入 CDS 地址后跳转授权，授权完成自动回到 MAP 建立连接；无法跳转时仍可使用配对密钥兜底（
-            <code className="mx-1 px-1 py-0.5 rounded bg-white/10 text-white/90">
+            <code className="mx-1 px-1 py-0.5 rounded bg-token-nested text-token-primary">
               doc/spec.cds.map-pairing-protocol.md
             </code>
             ）。
@@ -1047,28 +1047,22 @@ export default function InfraServicesPage() {
         </div>
       </section>
 
-      <section
-        className="rounded-xl p-5"
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-        }}
-      >
+      <section className="surface rounded-xl p-5">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <div className="flex items-center gap-2">
-          <Server size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
-            <h3 className="text-sm font-semibold text-white">基础设施操作台</h3>
+          <Server size={16} style={{ color: 'var(--semantic-success-text)' }} />
+            <h3 className="text-sm font-semibold text-token-primary">基础设施操作台</h3>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <a
               href="/cds-agent"
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-sky-100 transition-colors hover:text-white"
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-semantic-info transition-colors hover-text-primary"
               style={{ background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(125,211,252,0.24)' }}
             >
               <Terminal size={14} />
               打开 CDS Agent
             </a>
-            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="inline-flex rounded-lg p-1" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
               {INFRA_OPERATION_TABS.map((tab) => (
                 <button
                   key={tab.key}
@@ -1076,8 +1070,8 @@ export default function InfraServicesPage() {
                   onClick={() => setActiveOperationTab(tab.key)}
                   className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                   style={{
-                    background: activeOperationTab === tab.key ? 'rgba(99,179,237,0.18)' : 'transparent',
-                    color: activeOperationTab === tab.key ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.55)',
+                    background: activeOperationTab === tab.key ? 'var(--selection-bg)' : 'transparent',
+                    color: activeOperationTab === tab.key ? 'var(--selection-text)' : 'var(--text-muted)',
                   }}
                 >
                   {tab.name}
@@ -1098,29 +1092,23 @@ export default function InfraServicesPage() {
           }}
         >
           <MapSpinner size={16} />
-          <div className="text-sm text-white/80">正在完成 CDS 授权连接...</div>
+          <div className="text-sm text-token-secondary">正在完成 CDS 授权连接...</div>
         </section>
       )}
 
       {/* 连接列表 */}
-      <section
-        className="rounded-xl p-5"
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-        }}
-      >
+      <section className="surface rounded-xl p-5">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
-            <Link2 size={16} style={{ color: 'rgba(186,230,253,0.95)' }} />
-            <h3 className="text-sm font-semibold text-white">已建立的连接</h3>
-            <span className="text-xs text-white/40">({usableConnections.length})</span>
+            <Link2 size={16} style={{ color: 'var(--semantic-info-text)' }} />
+            <h3 className="text-sm font-semibold text-token-primary">已建立的连接</h3>
+            <span className="text-xs text-token-muted">({usableConnections.length})</span>
           </div>
           <button
             type="button"
             onClick={() => void loadConnections()}
             disabled={loading}
-            className="inline-flex items-center gap-1 text-xs text-white/55 hover:text-white/85"
+            className="inline-flex items-center gap-1 text-xs text-token-secondary hover:text-token-primary"
             title="刷新列表"
           >
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
@@ -1141,10 +1129,10 @@ export default function InfraServicesPage() {
               </ul>
             ) : (
               <div
-                className="rounded-lg px-4 py-5 text-sm text-white/55"
+                className="rounded-lg px-4 py-5 text-sm text-token-secondary"
                 style={{
-                  background: 'rgba(255,255,255,0.025)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               >
                 当前没有可用连接，请重新连接 CDS。
@@ -1158,11 +1146,11 @@ export default function InfraServicesPage() {
                 <button
                   type="button"
                   onClick={() => setShowRevoked((v) => !v)}
-                  className="flex items-center gap-2 pt-1 text-xs font-semibold text-white/55 hover:text-white/80"
+                  className="flex items-center gap-2 pt-1 text-xs font-semibold text-token-secondary hover:text-token-primary"
                 >
                   <span>失效连接</span>
-                  <span className="text-white/35">({revokedConnections.length})</span>
-                  <span className="text-[11px] font-normal text-white/40">
+                  <span className="text-token-muted">({revokedConnections.length})</span>
+                  <span className="text-[11px] font-normal text-token-muted">
                     {showRevoked ? '收起' : '展开（已自动排除，不影响使用）'}
                   </span>
                 </button>
@@ -1180,16 +1168,16 @@ export default function InfraServicesPage() {
       <section
         className="rounded-xl p-5"
         style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
             <MessageSquare size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
-            <h3 className="text-sm font-semibold text-white">CDS Agent 测试台</h3>
+            <h3 className="text-sm font-semibold text-token-primary">CDS Agent 测试台</h3>
             {activeSession && (
-              <span className="text-xs text-white/45">
+              <span className="text-xs text-token-muted">
                 {activeSession.runtime}
                 {activeSession.cdsContainerName ? ` · ${activeSession.cdsContainerName}` : ''}
               </span>
@@ -1199,7 +1187,7 @@ export default function InfraServicesPage() {
             <button
               type="button"
               onClick={() => void loadAgentSessions()}
-              className="inline-flex items-center gap-1 text-xs text-white/55 hover:text-white/85"
+              className="inline-flex items-center gap-1 text-xs text-token-secondary hover:text-token-primary"
               title="刷新会话"
             >
               <RefreshCw size={12} /> 刷新
@@ -1212,7 +1200,7 @@ export default function InfraServicesPage() {
               style={{
                 background: 'rgba(99,179,237,0.16)',
                 border: '1px solid rgba(99,179,237,0.35)',
-                color: 'rgba(186,230,253,0.96)',
+                color: 'var(--semantic-info-text)',
               }}
             >
               <Plus size={13} /> 新建会话
@@ -1222,7 +1210,7 @@ export default function InfraServicesPage() {
 
         {!activeConnection ? (
           <div
-            className="rounded-lg px-4 py-5 text-sm text-white/60"
+            className="rounded-lg px-4 py-5 text-sm text-token-secondary"
             style={{
               background: 'rgba(245,158,11,0.08)',
               border: '1px solid rgba(245,158,11,0.22)',
@@ -1235,13 +1223,13 @@ export default function InfraServicesPage() {
             <div
               className="rounded-lg p-3 min-h-[280px]"
               style={{
-                background: 'rgba(255,255,255,0.025)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
               }}
             >
-              <div className="text-xs font-semibold text-white/60 mb-2">会话列表</div>
+              <div className="text-xs font-semibold text-token-secondary mb-2">会话列表</div>
               {agentSessions.length === 0 ? (
-                <div className="text-sm text-white/45 leading-relaxed py-8">
+                <div className="text-sm text-token-muted leading-relaxed py-8">
                   还没有会话。点击“新建会话”后，MAP 会创建本地会话并在启动时绑定 CDS worker。
                 </div>
               ) : (
@@ -1253,15 +1241,15 @@ export default function InfraServicesPage() {
                       onClick={() => setActiveSessionId(session.id)}
                       className="w-full text-left rounded-md px-3 py-2 transition-colors"
                       style={{
-                        background: session.id === activeSession?.id ? 'rgba(99,179,237,0.14)' : 'rgba(255,255,255,0.03)',
-                        border: session.id === activeSession?.id ? '1px solid rgba(99,179,237,0.35)' : '1px solid rgba(255,255,255,0.06)',
+                        background: session.id === activeSession?.id ? 'var(--selection-bg)' : 'var(--nested-block-bg)',
+                        border: session.id === activeSession?.id ? '1px solid var(--selection-border)' : '1px solid var(--border-subtle)',
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-white truncate">{session.title}</span>
-                        <span className="text-[11px] text-white/55">{agentStatusLabel(session.status)}</span>
+                        <span className="text-sm font-medium text-token-primary truncate">{session.title}</span>
+                        <span className="text-[11px] text-token-secondary">{agentStatusLabel(session.status)}</span>
                       </div>
-                      <div className="text-[11px] text-white/40 font-mono truncate mt-1">
+                      <div className="text-[11px] text-token-muted font-mono truncate mt-1">
                         {session.cdsSessionId ?? session.id}
                       </div>
                     </button>
@@ -1274,14 +1262,14 @@ export default function InfraServicesPage() {
               <div
                 className="rounded-lg p-3"
                 style={{
-                  background: 'rgba(255,255,255,0.025)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               >
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="text-sm font-semibold text-white">{activeSession?.title ?? '未选择会话'}</div>
-                    <div className="text-xs text-white/45 mt-1">
+                    <div className="text-sm font-semibold text-token-primary">{activeSession?.title ?? '未选择会话'}</div>
+                    <div className="text-xs text-token-muted mt-1">
                       {activeSession
                         ? `状态 ${agentStatusLabel(activeSession.status)} · 项目 ${activeSession.cdsProjectId}`
                         : '请选择或新建一个会话'}
@@ -1296,7 +1284,7 @@ export default function InfraServicesPage() {
                       style={{
                         background: 'rgba(34,197,94,0.12)',
                         border: '1px solid rgba(34,197,94,0.3)',
-                        color: 'rgba(134,239,172,0.96)',
+                        color: 'var(--semantic-success-text)',
                       }}
                     >
                       <Play size={12} /> 启动
@@ -1309,7 +1297,7 @@ export default function InfraServicesPage() {
                       style={{
                         background: 'rgba(239,68,68,0.08)',
                         border: '1px solid rgba(239,68,68,0.28)',
-                        color: 'rgba(252,165,165,0.95)',
+                        color: 'var(--semantic-danger-text)',
                       }}
                     >
                       <Square size={12} /> 停止
@@ -1322,10 +1310,10 @@ export default function InfraServicesPage() {
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     disabled={!activeSession || agentBusy}
-                    className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-token-primary placeholder:text-token-muted outline-none"
                     style={{
-                      background: 'rgba(0,0,0,0.22)',
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border-subtle)',
                     }}
                     placeholder="输入 prompt"
                   />
@@ -1337,7 +1325,7 @@ export default function InfraServicesPage() {
                     style={{
                       background: 'rgba(99,179,237,0.16)',
                       border: '1px solid rgba(99,179,237,0.35)',
-                      color: 'rgba(186,230,253,0.96)',
+                      color: 'var(--semantic-info-text)',
                     }}
                   >
                     {agentBusy ? <MapSpinner size={13} /> : <Send size={13} />} 发送
@@ -1349,14 +1337,14 @@ export default function InfraServicesPage() {
                 <div
                   className="rounded-lg p-3 min-h-[260px]"
                   style={{
-                    background: 'rgba(255,255,255,0.025)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
-                  <div className="text-xs font-semibold text-white/60 mb-2">事件时间线</div>
+                  <div className="text-xs font-semibold text-token-secondary mb-2">事件时间线</div>
                   <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
                     {agentEvents.length === 0 ? (
-                      <div className="text-sm text-white/40 py-8">暂无事件。启动或发送消息后会出现状态、工具调用和输出事件。</div>
+                      <div className="text-sm text-token-muted py-8">暂无事件。启动或发送消息后会出现状态、工具调用和输出事件。</div>
                     ) : (
                       agentEvents.map((event) => {
                         const payload = parseEventPayload(event);
@@ -1369,20 +1357,20 @@ export default function InfraServicesPage() {
                           key={event.id}
                           className="rounded-md px-3 py-2"
                           style={{
-                            background: 'rgba(0,0,0,0.18)',
-                            border: '1px solid rgba(255,255,255,0.06)',
+                            background: 'var(--bg-input)',
+                            border: '1px solid var(--border-subtle)',
                           }}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-xs font-semibold text-white/80">{event.type}</span>
+                              <span className="text-xs font-semibold text-token-secondary">{event.type}</span>
                               {isDangerousTool && (
                                 <span
                                   className="rounded px-1.5 py-0.5 text-[10px] font-medium"
                                   style={{
                                     background: 'rgba(245,158,11,0.14)',
                                     border: '1px solid rgba(245,158,11,0.3)',
-                                    color: 'rgba(253,230,138,0.95)',
+                                    color: 'var(--semantic-warning-text)',
                                   }}
                                 >
                                   危险工具需确认
@@ -1393,15 +1381,15 @@ export default function InfraServicesPage() {
                               <button
                                 type="button"
                                 onClick={() => void copyAgentWorkbenchText('事件 JSON', formatEventPayload(event))}
-                                className="inline-flex items-center justify-center rounded p-1 text-white/40 hover:text-white/75"
+                                className="inline-flex items-center justify-center rounded p-1 text-token-muted hover:text-token-primary"
                                 aria-label="复制事件 JSON"
                               >
                                 <Copy size={12} />
                               </button>
-                              <span className="text-[11px] text-white/35">#{event.seq}</span>
+                              <span className="text-[11px] text-token-muted">#{event.seq}</span>
                             </div>
                           </div>
-                          <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
+                          <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-token-secondary">
                             {formatEventPayload(event)}
                           </pre>
                           {waitingApproval && (
@@ -1413,7 +1401,7 @@ export default function InfraServicesPage() {
                                 style={{
                                   background: 'rgba(34,197,94,0.12)',
                                   border: '1px solid rgba(34,197,94,0.28)',
-                                  color: 'rgba(134,239,172,0.95)',
+                                  color: 'var(--semantic-success-text)',
                                 }}
                               >
                                 允许
@@ -1425,7 +1413,7 @@ export default function InfraServicesPage() {
                                 style={{
                                   background: 'rgba(239,68,68,0.1)',
                                   border: '1px solid rgba(239,68,68,0.3)',
-                                  color: 'rgba(252,165,165,0.95)',
+                                  color: 'var(--semantic-danger-text)',
                                 }}
                               >
                                 拒绝
@@ -1442,23 +1430,23 @@ export default function InfraServicesPage() {
                 <div
                   className="rounded-lg p-3 min-h-[260px]"
                   style={{
-                    background: 'rgba(255,255,255,0.025)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
-                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/60 mb-2">
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-token-secondary mb-2">
                     <span className="inline-flex items-center gap-2">
                       <Terminal size={13} /> 日志
                     </span>
                     <button
                       type="button"
                       onClick={() => void copyAgentWorkbenchText('日志', agentLogs)}
-                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-white/45 hover:text-white/80"
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-token-muted hover:text-token-primary"
                     >
                       <Copy size={12} /> 复制
                     </button>
                   </div>
-                  <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
+                  <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-token-secondary">
                     {agentLogs || '暂无日志。'}
                   </pre>
                 </div>
@@ -1474,18 +1462,18 @@ export default function InfraServicesPage() {
             key={block.side}
             className="rounded-xl p-5"
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
             }}
           >
             <div className="flex items-center gap-2 mb-3">
               <span className="w-1 h-4 rounded-sm" style={{ background: block.color }} />
-              <h3 className="text-sm font-semibold text-white">{block.side}</h3>
+              <h3 className="text-sm font-semibold text-token-primary">{block.side}</h3>
             </div>
-            <ul className="space-y-1.5 text-sm text-white/70">
+            <ul className="space-y-1.5 text-sm text-token-secondary">
               {block.items.map((it) => (
                 <li key={it} className="flex gap-2">
-                  <span className="text-white/30 select-none">·</span>
+                  <span className="text-token-muted select-none">·</span>
                   <span>{it}</span>
                 </li>
               ))}
@@ -1498,91 +1486,91 @@ export default function InfraServicesPage() {
       <section
         className="rounded-xl p-5"
         style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
-        <h3 className="text-sm font-semibold text-white mb-3">相关文档</h3>
+        <h3 className="text-sm font-semibold text-token-primary mb-3">相关文档</h3>
         <ul className="space-y-2 text-sm">
           <li>
             <a
               href="/doc/spec.cds.map-pairing-protocol.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               spec.cds.map-pairing-protocol.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">配对协议 v1（已落地）</span>
+            <span className="text-token-muted ml-2">配对协议 v1（已落地）</span>
           </li>
           <li>
             <a
               href="/doc/plan.cds-shared-service-extension.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               plan.cds-shared-service-extension.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">CDS 端扩展提案</span>
+            <span className="text-token-muted ml-2">CDS 端扩展提案</span>
           </li>
           <li>
             <a
               href="/doc/design.cds.agent.sdk-executor.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               design.cds.agent.sdk-executor.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">Claude sidecar runtime（claude-sdk 执行器）架构</span>
+            <span className="text-token-muted ml-2">Claude sidecar runtime（claude-sdk 执行器）架构</span>
           </li>
           <li>
             <a
               href="/doc/guide.cds.agent.workbench.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               guide.cds.agent.workbench.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">CDS Agent 用户指南</span>
+            <span className="text-token-muted ml-2">CDS Agent 用户指南</span>
           </li>
           <li>
             <a
               href="/doc/guide.cds.agent.code-review-quickstart.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               guide.cds.agent.code-review-quickstart.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">代码审查上手流程、官方 SDK 边界和当前 R1 阻塞</span>
+            <span className="text-token-muted ml-2">代码审查上手流程、官方 SDK 边界和当前 R1 阻塞</span>
           </li>
           <li>
             <a
               href="/doc/guide.cds.agent.admin.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               guide.cds.agent.admin.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">长期授权、模型配置和 Hook 管理指南</span>
+            <span className="text-token-muted ml-2">长期授权、模型配置和 Hook 管理指南</span>
           </li>
           <li>
             <a
               href="/doc/design.cds.agent.api.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               design.cds.agent.api.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">MAP/CDS Agent API 契约</span>
+            <span className="text-token-muted ml-2">MAP/CDS Agent API 契约</span>
           </li>
           <li>
             <a
               href="/doc/guide.cds.agent.runbook.md"
-              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+              className="inline-flex items-center gap-1.5 text-semantic-info hover-text-primary"
             >
               guide.cds.agent.runbook.md
               <ExternalLink size={12} />
             </a>
-            <span className="text-white/45 ml-2">部署、401、撤销和 PR 验收排障</span>
+            <span className="text-token-muted ml-2">部署、401、撤销和 PR 验收排障</span>
           </li>
         </ul>
       </section>
@@ -1594,24 +1582,24 @@ export default function InfraServicesPage() {
           title="新建 CDS Agent 会话"
           maxWidth="760px"
           content={
-          <div className="space-y-4 text-sm text-white/80">
+          <div className="space-y-4 text-sm text-token-secondary">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1">
-                <span className="text-xs text-white/55">标题</span>
+                <span className="text-xs text-token-secondary">标题</span>
                 <input
                   value={sessionDraft.title}
                   onChange={(e) => setSessionDraft((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full rounded-md px-3 py-2 text-white outline-none"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-white/55">Runtime</span>
+                <span className="text-xs text-token-secondary">Runtime</span>
                 <select
                   value={sessionDraft.runtime}
                   onChange={(e) => setSessionDraft((prev) => ({ ...prev, runtime: e.target.value }))}
-                  className="w-full rounded-md px-3 py-2 text-white outline-none"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                 >
                   <option value="claude-sdk">claude-sdk</option>
                   <option value="codex">codex</option>
@@ -1619,7 +1607,7 @@ export default function InfraServicesPage() {
                 </select>
               </label>
               <label className="space-y-1 sm:col-span-2">
-                <span className="text-xs text-white/55">系统级模型配置</span>
+                <span className="text-xs text-token-secondary">系统级模型配置</span>
                 <select
                   value={sessionDraft.runtimeProfileId}
                   onChange={(e) => {
@@ -1631,8 +1619,8 @@ export default function InfraServicesPage() {
                       model: profile?.model ?? prev.model,
                     }));
                   }}
-                  className="w-full rounded-md px-3 py-2 text-white outline-none"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                 >
                   <option value="">不使用系统模型配置</option>
                   {runtimeProfiles.map((profile) => (
@@ -1643,21 +1631,21 @@ export default function InfraServicesPage() {
                 </select>
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-white/55">Model</span>
+                <span className="text-xs text-token-secondary">Model</span>
                 <input
                   value={sessionDraft.model}
                   onChange={(e) => setSessionDraft((prev) => ({ ...prev, model: e.target.value }))}
-                  className="w-full rounded-md px-3 py-2 text-white outline-none"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-white/55">工具策略</span>
+                <span className="text-xs text-token-secondary">工具策略</span>
                 <select
                   value={sessionDraft.toolPolicy}
                   onChange={(e) => setSessionDraft((prev) => ({ ...prev, toolPolicy: e.target.value }))}
-                  className="w-full rounded-md px-3 py-2 text-white outline-none"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                 >
                   <option value="confirm-dangerous">非代码危险工具确认</option>
                   <option value="code-writable-confirm">代码可写需 MAP 审批</option>
@@ -1668,12 +1656,12 @@ export default function InfraServicesPage() {
             </div>
 
             <label className="space-y-1 block">
-              <span className="text-xs text-white/55">Hook profile</span>
+              <span className="text-xs text-token-secondary">Hook profile</span>
               <select
                 value={sessionDraft.hookProfileId}
                 onChange={(e) => setSessionDraft((prev) => ({ ...prev, hookProfileId: e.target.value }))}
-                className="w-full rounded-md px-3 py-2 text-white outline-none"
-                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
               >
                 <option value="">不使用 Hook</option>
                 {hookProfiles.map((profile) => (
@@ -1682,24 +1670,24 @@ export default function InfraServicesPage() {
               </select>
             </label>
 
-            <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <div className="text-xs font-semibold text-white/65">快速创建 Hook profile</div>
+            <div className="rounded-lg p-3 space-y-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
+              <div className="text-xs font-semibold text-token-secondary">快速创建 Hook profile</div>
               <input
                 value={hookDraft.name}
                 onChange={(e) => setHookDraft((prev) => ({ ...prev, name: e.target.value }))}
-                className="w-full rounded-md px-3 py-2 text-white outline-none"
-                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                className="w-full rounded-md px-3 py-2 text-token-primary outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 {(['beforeStart', 'afterStart', 'beforeStop', 'afterStop'] as const).map((key) => (
                   <label key={key} className="space-y-1">
-                    <span className="text-xs text-white/55">{key}</span>
+                    <span className="text-xs text-token-secondary">{key}</span>
                     <textarea
                       value={hookDraft[key]}
                       onChange={(e) => setHookDraft((prev) => ({ ...prev, [key]: e.target.value }))}
                       rows={2}
-                      className="w-full rounded-md px-3 py-2 text-white outline-none resize-none"
-                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      className="w-full rounded-md px-3 py-2 text-token-primary outline-none resize-none"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
                     />
                   </label>
                 ))}
@@ -1709,20 +1697,20 @@ export default function InfraServicesPage() {
                 onClick={() => void onCreateHookProfile()}
                 disabled={agentBusy}
                 className="rounded-md px-3 py-1.5 text-xs disabled:opacity-45"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.82)' }}
+                style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               >
                 保存并选中 Hook
               </button>
             </div>
 
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-md px-3 py-2 text-sm text-white/65">取消</button>
+              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-md px-3 py-2 text-sm text-token-secondary">取消</button>
               <button
                 type="button"
                 onClick={() => void onCreateAgentSession()}
                 disabled={agentBusy || !activeConnection}
                 className="rounded-md px-3 py-2 text-sm font-medium disabled:opacity-45"
-                style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'rgba(186,230,253,0.96)' }}
+                style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'var(--semantic-info-text)' }}
               >
                 创建会话
               </button>
@@ -1750,13 +1738,13 @@ function EmptyState({ onClickPaste }: { onClickPaste: () => void }) {
     <div
       className="rounded-lg py-10 px-6 flex flex-col items-center text-center"
       style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px dashed rgba(255,255,255,0.12)',
+        background: 'var(--nested-block-bg)',
+        border: '1px dashed var(--border-subtle)',
       }}
     >
-      <Link2 size={28} style={{ color: 'rgba(186,230,253,0.7)' }} />
-      <div className="mt-3 text-sm font-semibold text-white/90">还没有连接</div>
-      <div className="mt-1.5 text-xs text-white/55 max-w-md leading-relaxed">
+      <Link2 size={28} style={{ color: 'var(--semantic-info-text)' }} />
+      <div className="mt-3 text-sm font-semibold text-token-primary">还没有连接</div>
+      <div className="mt-1.5 text-xs text-token-secondary max-w-md leading-relaxed">
         在 CDS「系统设置 → 对接 MAP」生成一条连接密钥，复制到剪贴板，然后回到这里粘贴即可建立连接。
         密钥有效期 10 分钟，仅含一次性配对凭据。
       </div>
@@ -1766,7 +1754,7 @@ function EmptyState({ onClickPaste }: { onClickPaste: () => void }) {
         className="mt-4 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium"
         style={{
           background: 'rgba(99,179,237,0.18)',
-          color: 'rgba(186,230,253,0.98)',
+          color: 'var(--semantic-info-text)',
           border: '1px solid rgba(99,179,237,0.45)',
         }}
       >
@@ -1874,7 +1862,7 @@ function PasteDialog({
               border: '1px solid rgba(99,179,237,0.22)',
             }}
           >
-            <label className="block text-xs font-medium text-white/70 mb-1.5">CDS 地址</label>
+            <label className="block text-xs font-medium text-token-secondary mb-1.5">CDS 地址</label>
             <div className="flex gap-2">
               <input
                 value={cdsBaseUrl}
@@ -1884,9 +1872,9 @@ function PasteDialog({
                 spellCheck={false}
                 className="flex-1 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                 style={{
-                  background: 'rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.92)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
                 }}
               />
               <button
@@ -1896,7 +1884,7 @@ function PasteDialog({
                 className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium"
                 style={{
                   background: 'rgba(99,179,237,0.22)',
-                  color: 'rgba(186,230,253,0.98)',
+                  color: 'var(--semantic-info-text)',
                   border: '1px solid rgba(99,179,237,0.5)',
                   opacity: authorizing ? 0.6 : 1,
                 }}
@@ -1905,13 +1893,13 @@ function PasteDialog({
                 授权
               </button>
             </div>
-            <div className="text-[11px] text-white/45 mt-2 leading-relaxed">
+            <div className="text-[11px] text-token-muted mt-2 leading-relaxed">
               MAP 会跳转到 CDS 授权页，授权完成后自动回到本页建立连接。
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-white/70 mb-1.5">CDS 配对密钥（兜底）</label>
+            <label className="block text-xs font-medium text-token-secondary mb-1.5">CDS 配对密钥（兜底）</label>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -1920,13 +1908,13 @@ function PasteDialog({
               rows={6}
               className="w-full rounded-lg px-3 py-2.5 text-sm font-mono leading-relaxed resize-none focus:outline-none"
               style={{
-                background: 'rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: 'rgba(255,255,255,0.92)',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
               }}
             />
             {formatHint && (
-              <div className="text-xs mt-1.5" style={{ color: 'rgba(252,211,77,0.95)' }}>
+              <div className="text-xs mt-1.5" style={{ color: 'var(--semantic-warning-text)' }}>
                 {formatHint}
               </div>
             )}
@@ -1940,36 +1928,36 @@ function PasteDialog({
                 border: '1px solid rgba(99,179,237,0.25)',
               }}
             >
-              <div className="text-xs font-medium text-white/60 mb-1.5">请确认对端 CDS 信息：</div>
-              <div className="text-xs text-white/85 space-y-0.5">
+              <div className="text-xs font-medium text-token-secondary mb-1.5">请确认对端 CDS 信息：</div>
+              <div className="text-xs text-token-primary space-y-0.5">
                 <div>
-                  <span className="text-white/55">名称：</span>
+                  <span className="text-token-secondary">名称：</span>
                   {preview.cdsName ?? '(未提供)'}
                 </div>
                 <div className="font-mono">
-                  <span className="text-white/55">base URL：</span>
+                  <span className="text-token-secondary">base URL：</span>
                   {preview.cdsBaseUrl}
                 </div>
                 {preview.cdsId && (
-                  <div className="font-mono text-white/55">
-                    <span className="text-white/55">cdsId：</span>
+                  <div className="font-mono text-token-secondary">
+                    <span className="text-token-secondary">cdsId：</span>
                     {preview.cdsId}
                   </div>
                 )}
                 {preview.scopes && preview.scopes.length > 0 && (
-                  <div className="text-white/55">
-                    <span className="text-white/55">scopes：</span>
+                  <div className="text-token-secondary">
+                    <span className="text-token-secondary">scopes：</span>
                     {preview.scopes.join(', ')}
                   </div>
                 )}
                 {preview.expiresAt && (
-                  <div className={previewExpired ? 'text-red-300' : 'text-white/55'}>
-                    <span className="text-white/55">有效期至：</span>
+                  <div className={previewExpired ? 'text-semantic-danger' : 'text-token-secondary'}>
+                    <span className="text-token-secondary">有效期至：</span>
                     {new Date(preview.expiresAt).toLocaleString()} {previewExpired ? '(已过期)' : ''}
                   </div>
                 )}
               </div>
-              <div className="text-[11px] text-white/45 mt-2 leading-relaxed">
+              <div className="text-[11px] text-token-muted mt-2 leading-relaxed">
                 如果 base URL 不是你预期的 CDS 地址，请关闭弹窗并核对——切勿粘贴来源不明的密钥。
               </div>
             </div>
@@ -1981,7 +1969,7 @@ function PasteDialog({
               style={{
                 background: 'rgba(239,68,68,0.08)',
                 border: '1px solid rgba(239,68,68,0.3)',
-                color: 'rgba(252,165,165,0.98)',
+                color: 'var(--semantic-danger-text)',
               }}
             >
               {errorMsg}
@@ -1995,9 +1983,9 @@ function PasteDialog({
               disabled={submitting}
               className="rounded-md px-3 py-1.5 text-sm"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: 'rgba(255,255,255,0.85)',
+                background: 'var(--bg-card-hover)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
               }}
             >
               取消
@@ -2009,7 +1997,7 @@ function PasteDialog({
               className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium"
               style={{
                 background: 'rgba(99,179,237,0.22)',
-                color: 'rgba(186,230,253,0.98)',
+                color: 'var(--semantic-info-text)',
                 border: '1px solid rgba(99,179,237,0.5)',
                 opacity: submitting || !preview || previewExpired ? 0.6 : 1,
               }}

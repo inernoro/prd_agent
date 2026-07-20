@@ -29,8 +29,23 @@ const PATTERNS = {
   },
   themeRisk: {
     label: 'theme contract risk',
-    regex: /tone="dark"|surface-tone-dark|text-white\/(?:[1-4]?\d|5[0-5])\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
+    regex: /tone="dark"|surface-tone-dark|text-white(?:\/\d+)?\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
     weight: 3,
+  },
+  fixedThemeSurface: {
+    label: 'fixed theme surface',
+    regex: /background\s*:\s*['"`]?(?:rgba\(0\s*,\s*0\s*,\s*0\s*,\s*0\.(?:1[5-9]|2\d)|linear-gradient\([^\n]*(?:22\s*,\s*27\s*,\s*36|18\s*,\s*22\s*,\s*30))|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]/gi,
+    weight: 0,
+  },
+  fixedThemeText: {
+    label: 'fixed theme text',
+    regex: /text-white(?:\/\d+)?\b|color\s*:\s*['"`]rgba\(255\s*,\s*255\s*,\s*255\s*,/gi,
+    weight: 0,
+  },
+  dynamicTextColor: {
+    label: 'dynamic text color',
+    regex: /color\s*:\s*(?:hsla?\(|['"`]hsla?\()/gi,
+    weight: 0,
   },
   surfaceUse: {
     label: 'surface use',
@@ -131,6 +146,7 @@ function summarize(projectRoot) {
   const files = walkFiles(path.join(projectRoot, 'src'));
   const allRows = files.map((file) => analyzeFile(projectRoot, file));
   const rows = allRows.filter((row) => !isExcluded(row));
+  const emptyPatternCounts = Object.fromEntries(Object.keys(PATTERNS).map((key) => [key, 0]));
   const totals = rows.reduce(
     (acc, row) => {
       acc.files += 1;
@@ -138,16 +154,7 @@ function summarize(projectRoot) {
       for (const key of Object.keys(PATTERNS)) acc[key] += row[key];
       return acc;
     },
-    {
-      files: 0,
-      score: 0,
-      inlineStyle: 0,
-      hardColor: 0,
-      arbitraryTailwind: 0,
-      heavyEffect: 0,
-      themeRisk: 0,
-      surfaceUse: 0,
-    },
+    { files: 0, score: 0, ...emptyPatternCounts },
   );
 
   const modules = new Map();
@@ -156,12 +163,7 @@ function summarize(projectRoot) {
       module: row.module,
       files: 0,
       score: 0,
-      inlineStyle: 0,
-      hardColor: 0,
-      arbitraryTailwind: 0,
-      heavyEffect: 0,
-      themeRisk: 0,
-      surfaceUse: 0,
+      ...emptyPatternCounts,
     };
     current.files += 1;
     current.score += row.score;
@@ -200,6 +202,9 @@ function printHuman(report) {
   console.log(`Arbitrary Tailwind: ${report.totals.arbitraryTailwind}`);
   console.log(`Heavy visual effect: ${report.totals.heavyEffect}`);
   console.log(`Theme contract risk: ${report.totals.themeRisk}`);
+  console.log(`Fixed theme surface: ${report.totals.fixedThemeSurface}`);
+  console.log(`Fixed theme text: ${report.totals.fixedThemeText}`);
+  console.log(`Dynamic text color: ${report.totals.dynamicTextColor}`);
   console.log(`Surface/design usage signals: ${report.totals.surfaceUse}`);
 
   const columns = [
@@ -209,6 +214,9 @@ function printHuman(report) {
     { key: 'arbitraryTailwind', label: 'tw' },
     { key: 'heavyEffect', label: 'fx' },
     { key: 'themeRisk', label: 'theme' },
+    { key: 'fixedThemeSurface', label: 'fixed-bg' },
+    { key: 'fixedThemeText', label: 'fixed-text' },
+    { key: 'dynamicTextColor', label: 'dynamic-text' },
     { key: 'surfaceUse', label: 'surface' },
   ];
 

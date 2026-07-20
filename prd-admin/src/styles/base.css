@@ -180,6 +180,7 @@ select optgroup {
 .text-semantic-success { color: var(--semantic-success-text); }
 .text-semantic-warning { color: var(--semantic-warning-text); }
 .text-semantic-danger { color: var(--semantic-danger-text); }
+.text-semantic-info { color: var(--semantic-info-text); }
 .text-semantic-cyan { color: var(--semantic-cyan-text); }
 .text-semantic-purple { color: var(--semantic-purple-text); }
 .hover-text-primary:hover { color: var(--text-primary); }
