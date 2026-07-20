@@ -53,6 +53,18 @@ public class ImageGenRunWorker : BackgroundService
         return string.IsNullOrWhiteSpace(run.AppCallerCode) ? null : run.AppCallerCode;
     }
 
+    internal static string? ResolveExplicitLogicalModelPublicId(ImageGenRun run)
+    {
+        var persisted = (run.LogicalModelPublicId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(persisted)) return persisted;
+
+        if (!string.Equals(run.PlatformId, "logical-model", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var publicId = (run.ModelId ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(publicId) ? null : publicId;
+    }
+
     public ImageGenRunWorker(
         MongoDbContext db,
         IServiceScopeFactory scopeFactory,
@@ -1531,6 +1543,41 @@ public class ImageGenRunWorker : BackgroundService
     /// </summary>
     private async Task ResolveModelGroupAsync(ImageGenRun run, string appCallerCode, CancellationToken ct)
     {
+        // 显式逻辑模型是应用选择的稳定身份，不属于 MAP 模型池调度域。
+        // Worker 只固化该身份，Provider、Endpoint、Offering 与实际模型由独立 Gateway
+        // 在 GenerateUnifiedAsync 的单次 resolve 中决定。这里若继续走通用池解析，会把
+        // platformId/modelId 改写为旧池结果，导致随后无法识别逻辑模型并静默退回 inproc。
+        var explicitLogicalModelPublicId = ResolveExplicitLogicalModelPublicId(run);
+        if (!string.IsNullOrWhiteSpace(explicitLogicalModelPublicId))
+        {
+            run.PlatformId = "logical-model";
+            run.ModelId = explicitLogicalModelPublicId;
+            run.LogicalModelPublicId = explicitLogicalModelPublicId;
+            run.ModelResolutionType = ModelResolutionType.LogicalModel;
+            run.ModelGroupId = null;
+            run.ModelGroupName = null;
+            run.ConfigModelId = null;
+
+            var logicalUpdate = Builders<ImageGenRun>.Update
+                .Set(x => x.PlatformId, "logical-model")
+                .Set(x => x.ModelId, explicitLogicalModelPublicId)
+                .Set(x => x.LogicalModelPublicId, explicitLogicalModelPublicId)
+                .Set(x => x.ModelResolutionType, ModelResolutionType.LogicalModel)
+                .Set(x => x.ModelGroupId, null)
+                .Set(x => x.ModelGroupName, null)
+                .Set(x => x.ConfigModelId, null);
+            await _db.ImageGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                logicalUpdate,
+                cancellationToken: ct);
+
+            _logger.LogInformation(
+                "[生图模型匹配] 显式逻辑模型跳过 MAP 模型池调度: runId={RunId}, publicId={PublicId}",
+                run.Id,
+                explicitLogicalModelPublicId);
+            return;
+        }
+
         // 保存前端期望的模型信息（用于日志对比）
         var frontendExpectedPlatformId = run.PlatformId;
         // 逻辑模型公开 ID 是用户选择的稳定身份；上一次解析得到的真实上游模型只能用于展示与审计，
