@@ -235,12 +235,16 @@ var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSam
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
+// 逻辑模型属于独立 Gateway 配置域。默认即使 MAP 仍处于 inproc 迁移期，也装配统一路由器，
+// 让显式逻辑模型请求由 ShadowLlmGateway 强制转交 llmgw-serve；普通旧模型仍保持 inproc。
+// 紧急回滚可显式设置 false，但不得用旧模型池静默解释逻辑模型同名 key。
+var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true;
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
 }
-else if (isShadow || httpAllowlist.Count > 0)
+else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
 {
     // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
     // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
