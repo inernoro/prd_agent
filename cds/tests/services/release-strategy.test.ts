@@ -127,6 +127,7 @@ describe('release strategy discovery and generation', () => {
     expect(normalizeRepositoryIdentity('https://github.com/Owner/Repo.git')).toBe('owner/repo');
     expect(normalizeRepositoryIdentity('git@github.com:Owner/Repo.git')).toBe('owner/repo');
     expect(normalizeRepositoryIdentity('github.com/Owner/Repo')).toBe('owner/repo');
+    expect(normalizeRepositoryIdentity('https://git.miduo.org/github.com/Owner/Repo.git')).toBe('owner/repo');
   });
 
   it('executes a generated static release twice and preserves atomic current and previous versions', () => {
