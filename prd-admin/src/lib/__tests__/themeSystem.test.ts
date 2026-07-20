@@ -13,6 +13,7 @@ import {
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_ROOT = path.resolve(TEST_DIR, '../../..');
 const TOKENS_PATH = path.resolve(TEST_DIR, '../../styles/tokens.css');
+const MOBILE_COMPAT_GATE_PATH = path.resolve(TEST_DIR, '../../components/MobileCompatGate.tsx');
 
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -132,5 +133,14 @@ describe('主题系统契约', () => {
     expect(dockerfile).toContain('pnpm run build');
     expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
     expect(lightArtwork).toHaveLength(23);
+  });
+
+  it('移动端兼容提示复用跨主题语义色与固定暗色表面契约', () => {
+    const gate = fs.readFileSync(MOBILE_COMPAT_GATE_PATH, 'utf8');
+
+    expect(gate).toContain("color: 'var(--semantic-warning-text)'");
+    expect(gate).toContain('className="surface-tone-dark w-full max-w-md rounded-2xl p-5"');
+    expect(gate).toContain('data-surface-tone="dark"');
+    expect(gate).not.toContain("color: 'rgba(255, 236, 179");
   });
 });
