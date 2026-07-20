@@ -200,7 +200,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     private static bool ShouldRetryProviderStatus(int statusCode)
-        => statusCode is 402 or 408 or 409 or 425 or 429
+        // 401-404 均是当前 Offering 的凭据、授权、模型或端点不可用，切换到同一逻辑模型的
+        // 下一 Offering 是安全的；400 保持终止，避免对所有上游重复发送同一份非法请求。
+        => statusCode is >= 401 and <= 404
+           || statusCode is 408 or 409 or 425 or 429
            || statusCode is >= 500 and <= 599;
 
     private static bool IsAutoModelPolicy(GatewayRequest request)

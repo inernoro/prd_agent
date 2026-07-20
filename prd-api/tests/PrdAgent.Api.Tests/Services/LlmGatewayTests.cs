@@ -1642,7 +1642,7 @@ public class LlmGatewayTests
     }
 
     [Fact]
-    public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingFails_ShouldRebuildGoogleWireRequest()
+    public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
     {
         var googleCandidate = new ModelResolutionResult
         {
@@ -1680,7 +1680,7 @@ public class LlmGatewayTests
             RetryCandidates = [googleCandidate],
         };
         var http = new SequenceHttpClientFactory(
-            (429, "{\"error\":{\"message\":\"rate limited\"}}"),
+            (404, "{\"error\":{\"message\":\"model or endpoint not supported by this provider\"}}"),
             (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
         var gateway = new LlmGateway(
             new InMemoryModelResolver(),

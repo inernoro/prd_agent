@@ -16,3 +16,4 @@
 | refactor | prd-api | 视觉创作所有生图请求统一跨进程进入独立 Gateway，默认池和故障兜底不再由 MAP 进程内发送 |
 | fix | prd-api | 视觉创作编译期直接依赖 HTTP Serving 客户端，消除标记接口被错误装配为进程内网关的空间 |
 | fix | prd-api | 生图任务使用旧 Worker 不可识别的作用域队列状态并叠加 revision fencing，阻断共享 Mongo 下跨分支抢单 |
+| fix | llmgw | 上游返回 401 至 404 时自动切换同一逻辑模型的下一 Offering，避免单个 Provider 凭据或模型端点差异中断应用 |
