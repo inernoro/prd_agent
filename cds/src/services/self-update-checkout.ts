@@ -10,6 +10,102 @@ export interface SelfUpdateCheckoutResult {
   error?: string;
 }
 
+export type SelfUpdateTransitionIntent = 'release' | 'rollback';
+
+export interface SelfUpdateTransitionInput {
+  currentSha: string;
+  targetSha: string;
+  targetContainsCurrent: boolean;
+  intent?: string;
+  expectedFromSha?: string;
+  reason?: string;
+}
+
+export type SelfUpdateTransitionDecision =
+  | {
+      allowed: true;
+      mode: 'same-sha' | 'fast-forward' | SelfUpdateTransitionIntent;
+      reason: string;
+    }
+  | {
+      allowed: false;
+      code:
+        | 'non_fast_forward_update_requires_intent'
+        | 'invalid_transition_intent'
+        | 'expected_from_sha_required'
+        | 'expected_from_sha_mismatch'
+        | 'transition_reason_required';
+      message: string;
+    };
+
+function shaMatches(expected: string, actual: string): boolean {
+  const left = expected.trim().toLowerCase();
+  const right = actual.trim().toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(left) || !/^[0-9a-f]{7,40}$/.test(right)) return false;
+  return left === right || left.startsWith(right) || right.startsWith(left);
+}
+
+/**
+ * 共享 CDS 控制面的版本切换门禁。
+ *
+ * 旧客户端无需新增字段即可继续执行同 SHA 重启和快进更新。只有会丢掉当前
+ * 已部署提交的非快进切换，才要求调用方显式声明 release/rollback、当前 SHA
+ * 和原因。这样既阻断多 Agent 分支互相覆盖，也不会一次升级就让旧技能失效。
+ */
+export function evaluateSelfUpdateTransition(
+  input: SelfUpdateTransitionInput,
+): SelfUpdateTransitionDecision {
+  if (shaMatches(input.currentSha, input.targetSha)) {
+    return { allowed: true, mode: 'same-sha', reason: 'target equals current revision' };
+  }
+  if (input.targetContainsCurrent) {
+    return { allowed: true, mode: 'fast-forward', reason: 'target contains current revision' };
+  }
+
+  const rawIntent = input.intent?.trim() || '';
+  if (!rawIntent) {
+    return {
+      allowed: false,
+      code: 'non_fast_forward_update_requires_intent',
+      message: '目标版本不包含当前 CDS 提交；必须显式声明 release 或 rollback。',
+    };
+  }
+  if (rawIntent !== 'release' && rawIntent !== 'rollback') {
+    return {
+      allowed: false,
+      code: 'invalid_transition_intent',
+      message: 'transitionIntent 只允许 release 或 rollback。',
+    };
+  }
+  if (!input.expectedFromSha?.trim()) {
+    return {
+      allowed: false,
+      code: 'expected_from_sha_required',
+      message: '非快进切换必须提供 expectedFromSha，避免基于过期状态覆盖生产。',
+    };
+  }
+  if (!shaMatches(input.expectedFromSha, input.currentSha)) {
+    return {
+      allowed: false,
+      code: 'expected_from_sha_mismatch',
+      message: 'expectedFromSha 与当前 CDS 提交不一致，请重新读取 self-status。',
+    };
+  }
+  const reason = input.reason?.trim() || '';
+  if (reason.length < 8 || reason.length > 300 || /[\u0000-\u001f\u007f]/.test(reason)) {
+    return {
+      allowed: false,
+      code: 'transition_reason_required',
+      message: '非快进切换必须提供 8-300 字符且不含控制字符的原因。',
+    };
+  }
+  return {
+    allowed: true,
+    mode: rawIntent,
+    reason,
+  };
+}
+
 export function resolveSelfUpdateTargetBranch(currentBranch: string): string {
   const normalized = currentBranch.trim();
   if (!normalized || normalized === 'HEAD') return '';

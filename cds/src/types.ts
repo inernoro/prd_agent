@@ -2115,7 +2115,11 @@ export interface SelfUpdateRecord {
    *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
    *   - 'doc-only':  改动只触文档/changelogs,完全 noop
    *   - 'prebuilt':  命中 CI 预构建产物,跳过本机编译 */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
+  updateMode?: 'hot-reload' | 'restart' | 'restart-only' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
+  /** 共享控制面版本切换类型；同 SHA/快进兼容旧客户端，非快进必须显式发布或回滚。 */
+  transitionMode?: 'same-sha' | 'fast-forward' | 'release' | 'rollback';
+  /** 非快进发布或回滚的操作原因；用于历史审计。 */
+  transitionReason?: string;
   /** 结构化耗时明细。用于复查"每次慢在哪里",避免只能解析 steps 文本。
    *  常见字段:fetchMs/pullMs/validateMs/buildBackendMs/webBuildMs/totalMs,
    *  validate 内含 install_cds_ms/tsc_web_ms 等 validateBuildReadiness 原始计时。 */

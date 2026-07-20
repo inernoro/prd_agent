@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.9.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.10.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -2709,14 +2709,14 @@ def cmd_self_branches(args: argparse.Namespace) -> None:
     ok(body)
 
 
-def cmd_self_update(args: argparse.Namespace) -> None:
-    """SSE 流 → 把每个 event 打印出来（聚合成列表），等待 CDS 重启后回读。"""
-    payload = {"branch": args.branch} if args.branch else {}
-    url = _cds_base() + "/api/self-update"
+def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note: str) -> None:
+    """执行 CDS 自身 SSE 动作，并把 error 事件转换为非零退出码。"""
+    url = _cds_base() + path
     headers = {"Content-Type": "application/json", **_auth_headers()}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, method="POST", data=data, headers=headers)
     events: list[dict[str, Any]] = []
+    terminal_error: dict[str, Any] | None = None
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             cur_event = None
@@ -2732,14 +2732,19 @@ def cmd_self_update(args: argparse.Namespace) -> None:
                     if cur_event:
                         parsed["_event"] = cur_event
                     events.append(parsed)
+                    if cur_event == "error":
+                        terminal_error = parsed
                     if cur_event in ("done", "error"):
                         break
     except urllib.error.HTTPError as e:
-        die(f"self-update HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}", code=2)
+        die(f"{path} HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}", code=2)
     except (urllib.error.URLError, TimeoutError) as e:
         # 连接断开是正常的，CDS 重启时流会被 kill
         pass
-    if not args.no_wait:
+    if terminal_error is not None:
+        message = str(terminal_error.get("message") or terminal_error.get("code") or f"{path} 被服务端拒绝")
+        die(message, code=2, extra={"events": events})
+    if not no_wait:
         # Poll healthz until CDS is back (max 60s)
         for _ in range(12):
             time.sleep(5)
@@ -2752,7 +2757,34 @@ def cmd_self_update(args: argparse.Namespace) -> None:
                 break
         else:
             die("CDS 未能在 60s 内恢复", code=3, extra={"events": events})
-    ok({"events": events, "restarted": not args.no_wait}, note="self-update 完成")
+    ok({"events": events, "restarted": not no_wait}, note=note)
+
+
+def cmd_self_update(args: argparse.Namespace) -> None:
+    """更新 CDS 代码后重启；非快进切换必须提供显式发布或回滚意图。"""
+    payload = {"branch": args.branch} if args.branch else {}
+    if args.transition_intent:
+        payload["transitionIntent"] = args.transition_intent
+    if args.expected_from_sha:
+        payload["expectedFromSha"] = args.expected_from_sha
+    if args.reason:
+        payload["transitionReason"] = args.reason
+    _run_self_action(
+        "/api/self-update",
+        payload,
+        no_wait=args.no_wait,
+        note="self-update 完成",
+    )
+
+
+def cmd_self_restart(args: argparse.Namespace) -> None:
+    """只重启当前精确 SHA，不 fetch、checkout、pull 或 reset。"""
+    _run_self_action(
+        "/api/self-restart",
+        {},
+        no_wait=args.no_wait,
+        note="当前精确版本重启完成",
+    )
 
 
 def cmd_global_key_list(args: argparse.Namespace) -> None:
@@ -8042,8 +8074,24 @@ def _build_parser() -> argparse.ArgumentParser:
     slf = sub.add_parser("self", help="CDS 自身").add_subparsers(dest="sub", required=True)
     slf.add_parser("branches").set_defaults(func=cmd_self_branches)
     su = slf.add_parser("update"); su.add_argument("--branch")
+    su.add_argument(
+        "--transition-intent",
+        choices=("release", "rollback"),
+        help="仅非快进控制面切换使用；普通更新和重启不要传",
+    )
+    su.add_argument(
+        "--expected-from-sha",
+        help="非快进切换的当前 CDS SHA 乐观锁，先从 /api/self-status 获取",
+    )
+    su.add_argument(
+        "--reason",
+        help="非快进 release/rollback 的审计原因（8-300 字符）",
+    )
     su.add_argument("--no-wait", action="store_true", help="不等 CDS 重启")
     su.set_defaults(func=cmd_self_update)
+    sr = slf.add_parser("restart", help="只重启当前精确 SHA，不拉取或切换代码")
+    sr.add_argument("--no-wait", action="store_true", help="不等 CDS 重启")
+    sr.set_defaults(func=cmd_self_restart)
 
     gk = sub.add_parser("global-key", help="全局通行证").add_subparsers(dest="sub", required=True)
     gk.add_parser("list").set_defaults(func=cmd_global_key_list)
