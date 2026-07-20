@@ -135,4 +135,18 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
 
     expect(violations).toEqual([]);
   });
+
+  it('移动端百宝箱图片卡标题跟随媒体文字 token', () => {
+    const content = fs.readFileSync(
+      path.join(SRC_DIR, 'pages/ai-toolbox/MobileToolboxView.tsx'),
+      'utf8',
+    );
+    const agentCard = content.slice(
+      content.indexOf('function AgentCard('),
+      content.indexOf('/* ─────────── 空状态'),
+    );
+
+    expect(agentCard).toContain("color: hasArtwork ? 'var(--text-on-media)' : '#fff'");
+    expect(agentCard).not.toMatch(/useDataTheme|\bconst light\b|\bisLight\b|\bisDark\b/);
+  });
 });

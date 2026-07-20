@@ -238,7 +238,7 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         height: hasArtwork ? 216 : 150,
         borderRadius: 18,
         padding: 16,
-        color: '#fff',
+        color: hasArtwork ? 'var(--text-on-media)' : '#fff',
         background: hasArtwork ? 'var(--media-card-base)' : `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
         boxShadow: 'var(--media-card-shadow)',
       }}
@@ -252,6 +252,7 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
             right: 12,
             fontSize: 10,
             fontWeight: 700,
+            color: '#fff',
             background: 'rgba(0,0,0,0.3)',
             padding: '3px 7px',
             borderRadius: 7,
