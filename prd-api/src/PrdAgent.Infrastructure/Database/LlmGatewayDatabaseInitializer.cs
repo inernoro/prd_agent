@@ -80,6 +80,8 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_model_pools",
             "llmgw_platforms",
             "llmgw_models",
+            "llmgw_logical_models",
+            "llmgw_model_offerings",
             "llmgw_model_exchanges",
             "llmgw_service_keys",
             "llmgw_service_key_rate_windows",
@@ -275,6 +277,24 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PlatformId").Ascending("Enabled").Ascending("Priority"),
                 new CreateIndexOptions { Name = "idx_llmgw_model_tenant_platform_enabled_priority" }),
         }, ct);
+        await CreateBsonIndexesAsync("llmgw_logical_models", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("PublicIdNormalized"),
+                new CreateIndexOptions { Name = "uniq_llmgw_logical_model_tenant_public_id", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelType").Ascending("Enabled").Ascending("DisplayOrder"),
+                new CreateIndexOptions { Name = "idx_llmgw_logical_model_tenant_type_enabled_order" }),
+        }, ct);
+        await CreateBsonIndexesAsync("llmgw_model_offerings", new[]
+        {
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("TargetKind").Ascending("TargetId"),
+                new CreateIndexOptions { Name = "uniq_llmgw_offering_tenant_logical_target", Unique = true }),
+            new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("Enabled").Ascending("HealthStatus").Ascending("Priority"),
+                new CreateIndexOptions { Name = "idx_llmgw_offering_tenant_logical_route" }),
+        }, ct);
         await CreateBsonIndexesAsync("llmgw_model_exchanges", new[]
         {
             new CreateIndexModel<BsonDocument>(
@@ -461,6 +481,20 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 new CreateIndexOptions { Name = "ttl_llmgw_provider_concurrency_slot", ExpireAfter = TimeSpan.Zero }),
         }, cancellationToken: ct);
         await DropIndexIfPresentAsync(concurrencySlots, "uniq_llmgw_provider_concurrency_slot", ct);
+
+        var offeringRateWindows = _data.Database.GetCollection<GatewayOfferingRateWindowRecord>("llmgw_offering_rate_windows");
+        await offeringRateWindows.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayOfferingRateWindowRecord>(
+                Builders<GatewayOfferingRateWindowRecord>.IndexKeys
+                    .Ascending(x => x.TenantId)
+                    .Ascending(x => x.OfferingId)
+                    .Ascending(x => x.WindowStart),
+                new CreateIndexOptions { Name = "uniq_llmgw_offering_tenant_rate_window", Unique = true }),
+            new CreateIndexModel<GatewayOfferingRateWindowRecord>(
+                Builders<GatewayOfferingRateWindowRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions { Name = "ttl_llmgw_offering_rate_window", ExpireAfter = TimeSpan.Zero }),
+        }, cancellationToken: ct);
 
         _logger.LogInformation("[LlmGatewayData] 非破坏性治理索引已就绪；TTL 索引由 lifecycle worker 在持久化 dry-run 后启用");
     }

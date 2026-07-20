@@ -27,7 +27,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// JSON 口径与 serving 端严格对齐：PascalCase（PropertyNamingPolicy = null）。
 /// </summary>
 public sealed class HttpLlmGatewayClient
-    : PrdAgent.Infrastructure.LlmGateway.ILlmGateway, CoreGateway.ILlmGateway
+    : PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;
@@ -219,8 +219,9 @@ public sealed class HttpLlmGatewayClient
         // compute-then-send（见 .claude/rules/compute-then-send.md）：调用方已锁定 resolution，
         // serving 端 /gw/v1/raw 会基于 ExpectedModel 重 Resolve（仅在服务端 rehydrate ApiKey）。
         //   - 若调用方的解析本身失败：直接短路返回，绝不让 serving 重新选一个"能用的"模型（防"选 A 给 B"）。
-        //   - 否则：把 request.ExpectedModel 锁定为 resolution.ActualModel，serving 的重 Resolve 被 expectedModel
-        //     锁回同一个模型，与本仓既有 expectedModel-honoring 解析一致。ApiKey 等敏感字段绝不随 request 过线。
+        //   - 逻辑模型必须继续携带稳定 PublicId，让 serving 在同一逻辑模型的 Offerings 内重新解析；
+        //     禁止把第一次命中的真实上游名伪装成用户期望模型后掉回旧池。
+        //   - 旧直连/模型池仍锁定 resolution.ActualModel。ApiKey 等敏感字段绝不随 request 过线。
         if (!resolution.Success)
         {
             return GatewayRawResponse.Fail(
@@ -266,10 +267,14 @@ public sealed class HttpLlmGatewayClient
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
         {
+            CanonicalImageRequest = request.CanonicalImageRequest,
+            RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
-            ExpectedModel = string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            ExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+                ? resolution.LogicalModelPublicId
+                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
             PinnedPlatformId = request.PinnedPlatformId,
             PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,

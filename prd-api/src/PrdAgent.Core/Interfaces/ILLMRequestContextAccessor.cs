@@ -43,7 +43,12 @@ public record LlmRequestContext(
     string? ServiceKeyId = null,
     string? ClientCode = null,
     string? Environment = null,
-    string? ServiceKeyPrefix = null);
+    string? ServiceKeyPrefix = null,
+    /// <summary>
+    /// 业务 Run 已持久化的逻辑模型公开标识。只要 <see cref="ModelResolutionType"/> 为
+    /// <c>LogicalModel</c>，执行层就必须使用该稳定身份进入独立 Gateway，禁止重新猜测或退回旧模型池。
+    /// </summary>
+    string? LogicalModelPublicId = null);
 
 public interface ILLMRequestContextAccessor
 {

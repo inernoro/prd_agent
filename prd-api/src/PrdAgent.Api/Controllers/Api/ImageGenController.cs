@@ -1753,13 +1753,18 @@ public class ImageGenController : ControllerBase
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
-            Status = ImageGenRunStatus.Queued,
+            Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
             ConfigModelId = cfgModelId,
             PlatformId = platformId,
             ModelId = modelId,
-            // ⚠ 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
-            ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+            LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ? modelId
+                : null,
+            // 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
+            ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
+                : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,
@@ -1855,10 +1860,15 @@ public class ImageGenController : ControllerBase
             {
                 run.Id,
                 run.OwnerAdminId,
+                run.DeploymentSlug,
                 status = run.Status.ToString(),
                 run.ConfigModelId,
                 run.PlatformId,
                 run.ModelId,
+                run.LogicalModelPublicId,
+                modelResolutionType = run.ModelResolutionType?.ToString(),
+                run.ModelGroupId,
+                run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
                 run.MaxConcurrency,

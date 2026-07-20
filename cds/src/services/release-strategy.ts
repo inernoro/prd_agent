@@ -72,6 +72,7 @@ export function normalizeRepositoryIdentity(value?: string): string {
     }
   }
   return repositoryPath
+    .replace(/^\/*(?:www\.)?github\.com[/:]/i, '')
     .replace(/^\/+|\/+$/g, '')
     .replace(/\.git$/i, '')
     .toLowerCase();

@@ -21,7 +21,8 @@ public interface IImageGenerationClient
         string? modelId = null,
         string? platformId = null,
         string? modelName = null,
-        string? maskBase64 = null);
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null);
 
     Task<ApiResponse<ImageGenResult>> GenerateAsync(
         string prompt,
@@ -35,7 +36,8 @@ public interface IImageGenerationClient
         string? modelName = null,
         string? initImageBase64 = null,
         bool initImageProvided = false,
-        string? maskBase64 = null);
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null);
 
     Task<ApiResponse<ImageGenResult>> GenerateWithVisionAsync(
         string prompt,
@@ -45,5 +47,6 @@ public interface IImageGenerationClient
         string appCallerCode,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null);
+        string? modelName = null,
+        string? requiredLogicalModelPublicId = null);
 }

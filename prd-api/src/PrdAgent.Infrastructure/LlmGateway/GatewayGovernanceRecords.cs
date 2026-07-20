@@ -218,3 +218,14 @@ public sealed class GatewayProviderConcurrencySlotRecord
     public DateTime AcquiredAt { get; set; }
     public DateTime ExpiresAt { get; set; }
 }
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayOfferingRateWindowRecord
+{
+    public string Id { get; set; } = string.Empty;
+    public string TenantId { get; set; } = string.Empty;
+    public string OfferingId { get; set; } = string.Empty;
+    public DateTime WindowStart { get; set; }
+    public long Count { get; set; }
+    public DateTime ExpiresAt { get; set; }
+}

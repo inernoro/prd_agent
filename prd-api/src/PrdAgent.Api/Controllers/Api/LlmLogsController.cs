@@ -250,6 +250,10 @@ public class LlmLogsController : ControllerBase
                 x.HttpMethod,
                 x.PlatformId,
                 x.PlatformName,
+                x.LogicalModelId,
+                x.LogicalModelPublicId,
+                x.OfferingId,
+                x.OfferingTargetKind,
                 x.ModelResolutionType,
                 x.ModelGroupId,
                 x.ModelGroupName,
@@ -316,6 +320,10 @@ public class LlmLogsController : ControllerBase
                 x.HttpMethod,
                 x.PlatformId,
                 x.PlatformName,
+                x.LogicalModelId,
+                x.LogicalModelPublicId,
+                x.OfferingId,
+                x.OfferingTargetKind,
                 x.ModelResolutionType,
                 x.ModelGroupId,
                 x.ModelGroupName,
@@ -1286,4 +1294,3 @@ public class BatchModelStatsItem
     public string PlatformId { get; set; } = string.Empty;
     public string ModelId { get; set; } = string.Empty;
 }
-

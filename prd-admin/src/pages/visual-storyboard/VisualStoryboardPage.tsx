@@ -89,7 +89,7 @@ export default function VisualStoryboardPage() {
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
-  // 每个有模型的池 = 一个可选关键帧模型（取池内最高优先级模型）。
+  // 每个逻辑模型 = 一个可选关键帧模型；旧环境仍兼容模型池投影。
   // 不再硬绑 pool[0]：单个 OpenRouter 模型（如 gpt-5.4-image-2）偶发 404 时，
   // 用户可在下拉里换到其他可用出图模型，关键帧/图生视频不被单一模型拖垮。
   const modelOptions = useMemo(() => {
@@ -270,7 +270,7 @@ export default function VisualStoryboardPage() {
       return;
     }
     if (!activeModel) {
-      toast.warning('暂无可用生图模型，请先在「模型池管理」配置生图模型池');
+      toast.warning('暂无可用生图模型，请先在 LLM Gateway 配置逻辑模型及上游');
       return;
     }
     if (busy) return;
@@ -511,7 +511,7 @@ export default function VisualStoryboardPage() {
           {modelsLoading ? (
             '加载生图模型中…'
           ) : modelOptions.length === 0 ? (
-            '暂无生图模型池 —— 请先在「模型池管理」创建一个「视频生成 / 文生图」模型池'
+            '暂无生图模型 —— 请先在 LLM Gateway 创建逻辑模型并添加可用上游'
           ) : (
             <>
               <span className="shrink-0">关键帧模型</span>
@@ -529,7 +529,7 @@ export default function VisualStoryboardPage() {
                 >
                   {modelOptions.map((o) => (
                     <option key={o.key} value={o.key}>
-                      {o.poolName}（{o.modelName}）
+                      {o.poolName}
                     </option>
                   ))}
                 </select>

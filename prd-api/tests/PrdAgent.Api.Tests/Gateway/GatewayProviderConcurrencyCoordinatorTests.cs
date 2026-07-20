@@ -124,7 +124,82 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
         remaining.ShouldBe(0);
     }
 
-    private static ModelResolutionResult Resolution(string platform, string model, int platformLimit, int modelLimit)
+    [Fact]
+    public async Task OfferingRateLimit_IsAtomicAcrossServingInstances_AndIsolatedByOffering()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var windows = scope.Context.Database.GetCollection<GatewayOfferingRateWindowRecord>(
+            "llmgw_offering_rate_windows");
+        await windows.Indexes.CreateOneAsync(new CreateIndexModel<GatewayOfferingRateWindowRecord>(
+            Builders<GatewayOfferingRateWindowRecord>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.OfferingId)
+                .Ascending(x => x.WindowStart),
+            new CreateIndexOptions { Unique = true }));
+        var first = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var second = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var limited = Resolution("platform-a", "model-a", 0, 0, "offering-a", 1);
+
+        var firstAdmission = await first.AcquireAsync("tenant-a", limited, 30, CancellationToken.None);
+        var secondAdmission = await second.AcquireAsync("tenant-a", limited, 30, CancellationToken.None);
+        var otherOffering = await second.AcquireAsync(
+            "tenant-a",
+            Resolution("platform-a", "model-a", 0, 0, "offering-b", 1),
+            30,
+            CancellationToken.None);
+
+        firstAdmission.Allowed.ShouldBeTrue();
+        secondAdmission.Allowed.ShouldBeFalse();
+        secondAdmission.ErrorCode.ShouldBe("PROVIDER_RATE_LIMIT_EXHAUSTED");
+        otherOffering.Allowed.ShouldBeTrue();
+        (await windows.CountDocumentsAsync(FilterDefinition<GatewayOfferingRateWindowRecord>.Empty)).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task OfferingConcurrency_IsAtomicAndDoesNotCollideForSameUpstreamModel()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var first = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var second = new GatewayProviderConcurrencyCoordinator(
+            scope.Context,
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+        var offeringA = Resolution("platform-a", "shared-model", 0, 0, "offering-a", null, 1);
+
+        var firstAdmission = await first.AcquireAsync("tenant-a", offeringA, 30, CancellationToken.None);
+        var secondAdmission = await second.AcquireAsync("tenant-a", offeringA, 30, CancellationToken.None);
+        var otherOffering = await second.AcquireAsync(
+            "tenant-a",
+            Resolution("platform-a", "shared-model", 0, 0, "offering-b", null, 1),
+            30,
+            CancellationToken.None);
+
+        firstAdmission.Allowed.ShouldBeTrue();
+        secondAdmission.Allowed.ShouldBeFalse();
+        secondAdmission.ErrorCode.ShouldBe("PROVIDER_CONCURRENCY_EXHAUSTED");
+        otherOffering.Allowed.ShouldBeTrue();
+
+        if (firstAdmission.Lease is not null) await firstAdmission.Lease.DisposeAsync();
+        if (otherOffering.Lease is not null) await otherOffering.Lease.DisposeAsync();
+    }
+
+    private static ModelResolutionResult Resolution(
+        string platform,
+        string model,
+        int platformLimit,
+        int modelLimit,
+        string? offeringId = null,
+        int? offeringRateLimit = null,
+        int? offeringMaxConcurrency = null)
         => new()
         {
             Success = true,
@@ -132,6 +207,9 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
             ActualModel = model,
             PlatformMaxConcurrency = platformLimit,
             ModelMaxConcurrency = modelLimit,
+            OfferingId = offeringId,
+            OfferingRateLimitPerMinute = offeringRateLimit,
+            OfferingMaxConcurrency = offeringMaxConcurrency,
         };
 
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()
