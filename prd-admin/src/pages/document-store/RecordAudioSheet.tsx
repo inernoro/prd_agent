@@ -259,7 +259,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
   };
 
   const body = state === 'unavailable' ? (
-    <div className="flex flex-col items-center gap-4 py-6 text-center">
+    <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col items-center justify-center gap-4 py-8 text-center">
       <span
         className="flex h-14 w-14 items-center justify-center rounded-full"
         style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)' }}>
@@ -271,7 +271,9 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
       </Button>
     </div>
   ) : (
-    <div className="flex flex-col items-center gap-4">
+    <div
+      aria-live="polite"
+      className="mx-auto flex min-h-full w-full max-w-[560px] flex-col items-center justify-center gap-5 py-8 text-center">
       {/* 状态行：录音中红点脉冲 / 已暂停 */}
       <div className="flex items-center gap-2 text-[12px] font-semibold">
         {state === 'requesting' ? (
@@ -297,7 +299,11 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
       </p>
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
-      <canvas ref={canvasRef} width={560} height={56} className="w-full" style={{ height: 56 }} />
+      <div
+        className="w-full rounded-[16px] px-3 py-4"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+        <canvas ref={canvasRef} width={560} height={64} className="w-full" style={{ height: 64 }} />
+      </div>
 
       {/* 静音确认：整段峰值电平过低 → 上传前拦一道 */}
       {confirmSilent && (
@@ -333,9 +339,9 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
           aria-label="完成录音并转录"
           className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
           style={{
-            background: 'linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.95))',
+            background: 'rgba(34,197,94,0.95)',
             color: '#fff',
-            boxShadow: '0 8px 22px rgba(34,197,94,0.4)',
+            border: '1px solid rgba(134,239,172,0.45)',
           }}>
           <Square size={20} fill="currentColor" />
         </button>
@@ -380,13 +386,13 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
             <button
               onClick={() => stopRecorder('discard')}
               aria-label="取消录音"
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover:bg-white/6">
               <X size={15} />
             </button>
           </div>
         </div>
         <div
-          className={`flex-1 ${isMobile ? 'px-4 py-4' : 'px-5 py-6'}`}
+          className={`flex flex-1 ${isMobile ? 'px-4' : 'px-5 py-6'}`}
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {body}
         </div>

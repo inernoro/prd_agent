@@ -99,6 +99,7 @@ export function TranscribeFlowDrawer({
   const [archivedTo, setArchivedTo] = useState<string | null>(null);
   // 上传进度（大录音文件不再"卡住没反馈"）
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [runningSeconds, setRunningSeconds] = useState(0);
   // 结果区双页签：整理结果（markdown）/ 转录原文（run.transcriptText，2026-07-13 用户确认交互）
   const [summaryView, setSummaryView] = useState<'summary' | 'raw'>('summary');
   const [rawTranscript, setRawTranscript] = useState<string | null>(null);
@@ -296,6 +297,17 @@ export function TranscribeFlowDrawer({
 
   const running = status === 'uploading' || status === 'running';
   const inPlace = !!entryId && outputEntryId === entryId;
+  const activeStep = steps.find(step => step.state === 'active');
+
+  useEffect(() => {
+    if (!running) return;
+    const startedAt = Date.now();
+    setRunningSeconds(0);
+    const timer = window.setInterval(() => {
+      setRunningSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, runId]);
 
   // ── 流式贴底滚动（业界标准 stick-to-bottom：贴底才自动滚，上滑即打断，回到底部恢复） ──
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -322,9 +334,34 @@ export function TranscribeFlowDrawer({
   }, []);
 
   const body = (
-    <>
+    <div className={running ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
+      {running && (
+        <div className="mx-auto flex w-full max-w-[340px] flex-col items-center text-center" aria-live="polite">
+          <motion.div
+            className="mb-4 flex h-20 w-20 items-center justify-center rounded-[24px]"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+            animate={{ borderColor: ['var(--border-faint)', 'rgba(96,165,250,0.55)', 'var(--border-faint)'] }}
+            transition={{ duration: 2.4, repeat: Infinity }}>
+            <MapSpinner size={28} />
+          </motion.div>
+          <p className="text-[18px] font-semibold text-token-primary">
+            {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
+          </p>
+          <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
+            {status === 'uploading'
+              ? '录音正在安全上传，随后会自动转录并整理成笔记'
+              : (activeStep?.sub || '正在处理录音内容，完成后会原位保存到当前文档')}
+          </p>
+          <p className="mt-3 text-[11px] tabular-nums text-token-muted">
+            已进行 {formatProcessDuration(runningSeconds)}
+          </p>
+        </div>
+      )}
+
       {/* 阶段清单（Notion 式逐项点亮） */}
-      <div className="space-y-2.5">
+      <div
+        className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
+        style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
         {steps.map((s) => (
           <div key={s.key} className="flex items-center gap-2.5">
             <StepIcon state={s.state} />
@@ -351,7 +388,7 @@ export function TranscribeFlowDrawer({
 
       {/* 上传进度条：仅上传阶段显示 */}
       {status === 'uploading' && (
-        <div>
+        <div className="mx-auto w-full max-w-[340px]">
           <div className="mb-1 flex items-center justify-between text-[11px] text-token-muted">
             <span>正在上传录音</span>
             <span className="tabular-nums">{uploadPercent}%</span>
@@ -369,7 +406,7 @@ export function TranscribeFlowDrawer({
           完成后不在这里展示——完成态的摘要在下方操作区之后以 markdown 渲染（限高内滚），
           保证「查看/换方式/归档」操作不被长摘要顶出屏幕（2026-07-13 用户反馈按钮太靠下）。 */}
       {summaryText && status !== 'done' && (
-        <div className="surface-inset rounded-[12px] p-3.5">
+        <div className="surface-inset mx-auto w-full max-w-[380px] rounded-[12px] p-3.5">
           <p className="mb-2 text-[11px] font-semibold text-token-muted">摘要</p>
           <div className="text-[13px] leading-relaxed text-token-primary">
             <StreamingText
@@ -557,7 +594,7 @@ export function TranscribeFlowDrawer({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 
   const header = (
@@ -573,7 +610,8 @@ export function TranscribeFlowDrawer({
       </div>
       <button
         onClick={onClose}
-        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+        aria-label="关闭录音转录"
+        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover:bg-white/6">
         <X size={15} />
       </button>
     </div>
@@ -581,7 +619,7 @@ export function TranscribeFlowDrawer({
 
   const footer = (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-token-muted">
+      <span className="min-w-0 flex-1 text-[11px] text-token-muted">
         {running ? '可关闭面板，任务在后台继续' : ''}
       </span>
       <div className="flex items-center gap-2">
@@ -617,7 +655,6 @@ export function TranscribeFlowDrawer({
         style={isMobile ? {
           height: '100dvh',
           maxHeight: '100dvh',
-          paddingBottom: 'env(safe-area-inset-bottom)',
           background: 'var(--bg-primary)',
         } : undefined}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
@@ -630,7 +667,7 @@ export function TranscribeFlowDrawer({
           <div
             ref={scrollRef}
             onScroll={handleBodyScroll}
-            className={`h-full space-y-4 ${isMobile ? 'px-4 pb-5' : 'px-5 py-5'}`}
+            className={`h-full ${isMobile ? 'px-4' : 'px-5'}`}
             style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {body}
           </div>
@@ -648,18 +685,26 @@ export function TranscribeFlowDrawer({
             </button>
           )}
         </div>
-        {!isMobile && (
-          <div
-            className="shrink-0 px-5 pb-5 pt-4"
-            style={{ borderTop: '1px solid var(--border-faint)' }}>
-            {footer}
-          </div>
-        )}
+        <div
+          className={`shrink-0 px-4 pt-3 ${isMobile ? '' : 'px-5 pb-5 pt-4'}`}
+          style={{
+            borderTop: '1px solid var(--border-faint)',
+            paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 12px)' : undefined,
+            background: 'var(--bg-primary)',
+          }}>
+          {footer}
+        </div>
       </motion.div>
     </motion.div>
   );
 
   return createPortal(overlay, document.body);
+}
+
+function formatProcessDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function StepIcon({ state }: { state: StepState }) {

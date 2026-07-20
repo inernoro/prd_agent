@@ -70,9 +70,11 @@ import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
 import {
+  hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutOrphanedDocumentStoreEntry,
+  withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -115,6 +117,7 @@ import {
   getStoresAnalyticsSummary,
   getUserPreferences,
   getAgentRun,
+  getOrCreateQuickCaptureStore,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -2525,6 +2528,10 @@ export function DocumentStorePage() {
   // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
   const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
   const [detailInitialAction, setDetailInitialAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
+  const [quickCaptureResolving, setQuickCaptureResolving] = useState(
+    () => hasQuickRecordRequest(location.search),
+  );
+  const quickCaptureRequestInFlightRef = useRef(false);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -2559,6 +2566,48 @@ export function DocumentStorePage() {
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, location.hash, location.pathname, navigate]);
+
+  // 全局底栏「+」双击快捷录音：服务端幂等找到或创建快捷知识库，进入后复用详情页同一录音状态机。
+  // quickRecord 是一次性意图，消费后从 URL 删除，避免刷新页面再次自动打开麦克风。
+  useEffect(() => {
+    if (!hasQuickRecordRequest(location.search)) {
+      setQuickCaptureResolving(false);
+      return;
+    }
+    if (quickCaptureRequestInFlightRef.current) return;
+    quickCaptureRequestInFlightRef.current = true;
+    setQuickCaptureResolving(true);
+    let alive = true;
+
+    void getOrCreateQuickCaptureStore()
+      .then((res) => {
+        if (!alive) return;
+        if (!res.success) {
+          toast.error('快捷录音启动失败', res.error?.message ?? '无法准备快捷知识库');
+          navigate({
+            pathname: location.pathname,
+            search: withoutQuickRecordRequest(location.search),
+            hash: location.hash,
+          }, { replace: true });
+          return;
+        }
+
+        setPendingEntryId(null);
+        setDetailInitialAction('record');
+        setSelectedStoreId(res.data.id);
+        navigate({
+          pathname: location.pathname,
+          search: withDocumentStoreEntry(withoutQuickRecordRequest(location.search), res.data.id, null),
+          hash: location.hash,
+        }, { replace: true });
+      })
+      .finally(() => {
+        if (alive) setQuickCaptureResolving(false);
+        quickCaptureRequestInFlightRef.current = false;
+      });
+
+    return () => { alive = false; };
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   // 同一知识库内若 URL 的 entry 发生变化，需要单独恢复选中文档。
   useEffect(() => {
@@ -2912,6 +2961,24 @@ export function DocumentStorePage() {
   }, [tagStats, tagQuery]);
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
+  if (quickCaptureResolving) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center px-6" style={{ background: 'var(--bg-primary)' }}>
+        <div className="flex max-w-[320px] flex-col items-center text-center">
+          <div
+            className="mb-5 flex h-16 w-16 items-center justify-center rounded-[20px]"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+            <MapSpinner size={24} />
+          </div>
+          <p className="text-[16px] font-semibold text-token-primary">正在打开快捷录音</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
+            正在准备你的快捷知识库，完成后会自动开始录音
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (selectedStoreId) {
     return <StoreDetailView
       storeId={selectedStoreId}

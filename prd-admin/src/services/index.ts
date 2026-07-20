@@ -1941,6 +1941,7 @@ export type {
 // ── Document Store 文档空间 ──
 export {
   createDocumentStoreReal as createDocumentStore,
+  getOrCreateQuickCaptureStore,
   listDocumentStoresReal as listDocumentStores,
   getDocumentStoreReal as getDocumentStore,
   updateDocumentStoreReal as updateDocumentStore,

@@ -371,6 +371,50 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentStore>.Ok(store));
     }
 
+    /// <summary>
+    /// 获取当前用户的快捷记录知识库；不存在时原子创建。
+    /// 使用按用户确定的 _id，而不是按名称查找，用户重命名后仍会回到同一个库，
+    /// 并发双击或多设备同时触发也不会创建重复知识库。
+    /// </summary>
+    [HttpPost("stores/quick-capture")]
+    public async Task<IActionResult> GetOrCreateQuickCaptureStore(CancellationToken cancellationToken)
+    {
+        var userId = GetUserId();
+        var storeId = QuickCaptureStorePolicy.BuildStoreId(userId);
+        var now = DateTime.UtcNow;
+
+        var update = Builders<DocumentStore>.Update
+            .SetOnInsert(s => s.Name, QuickCaptureStorePolicy.Name)
+            .SetOnInsert(s => s.Description, QuickCaptureStorePolicy.Description)
+            .SetOnInsert(s => s.OwnerId, userId)
+            .SetOnInsert(s => s.Tags, new List<string> { QuickCaptureStorePolicy.Tag })
+            .SetOnInsert(s => s.IsPublic, false)
+            .SetOnInsert(s => s.CreatedAt, now)
+            .SetOnInsert(s => s.UpdatedAt, now);
+
+        var store = await _db.DocumentStores.FindOneAndUpdateAsync<DocumentStore>(
+            s => s.Id == storeId,
+            update,
+            new FindOneAndUpdateOptions<DocumentStore, DocumentStore>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After,
+            },
+            cancellationToken);
+
+        if (!string.Equals(store.OwnerId, userId, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "[document-store] Quick capture store identity collision: {StoreId}, requested by {UserId}, owned by {OwnerId}",
+                storeId,
+                userId,
+                store.OwnerId);
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "快捷知识库身份冲突，请联系管理员"));
+        }
+
+        return Ok(ApiResponse<DocumentStore>.Ok(store));
+    }
+
     /// <summary>获取文档空间列表。scope=team + teamId 时返回该团队共享的空间，默认返回我的</summary>
     [HttpGet("stores")]
     public async Task<IActionResult> ListStores(

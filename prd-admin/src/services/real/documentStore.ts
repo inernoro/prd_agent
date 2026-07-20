@@ -19,6 +19,17 @@ export const createDocumentStoreReal: CreateDocumentStoreContract = async (input
   });
 };
 
+/**
+ * 获取当前用户唯一的快捷知识库。服务端按用户稳定身份原子 find-or-create，
+ * 不按名称匹配，因此用户重命名后仍会回到同一个库。
+ */
+export async function getOrCreateQuickCaptureStore() {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStore>(
+    api.documentStore.stores.quickCapture(),
+    { method: 'POST' },
+  );
+}
+
 export const listDocumentStoresReal: ListDocumentStoresContract = async (page = 1, pageSize = 20) => {
   return await apiRequest(`${api.documentStore.stores.list()}?page=${page}&pageSize=${pageSize}`, {
     method: 'GET',
@@ -115,7 +126,7 @@ export const deleteDocumentEntryReal: DeleteDocumentEntryContract = async (entry
 
 /**
  * 上传文件到文档空间（multipart/form-data）。
- * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
 export async function uploadDocumentFile(storeId: string, file: File): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;
@@ -194,7 +205,7 @@ export async function uploadDocumentFileWithProgress(
 
 /**
  * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
- * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
 export async function replaceDocumentFile(entryId: string, file: File): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;

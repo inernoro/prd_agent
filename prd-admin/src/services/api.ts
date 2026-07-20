@@ -1278,6 +1278,7 @@ export const api = {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
+      quickCapture: () => '/api/document-store/stores/quick-capture',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
       size: (storeId: string) => `/api/document-store/stores/${storeId}/size`,
       setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
