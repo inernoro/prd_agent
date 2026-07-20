@@ -1,12 +1,12 @@
 ---
 name: cds
-version: 0.9.0
+version: 0.10.0
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, defines the preview-URL slug formula, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.9.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址公式"
+> **版本**：v0.10.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址公式"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -241,14 +241,46 @@ $CLI env set MAP_AI_USER=ai-bot --scope <projectId>
 
 `cds-compose.yml` 的 `x-cds-env` 段 = 项目级 scope 的声明源。修改后需要重新 deploy 才生效。
 
+## Agent 操作者身份（渐进兼容）
+
+新版 cdscli 会为每次进程生成随机 `agentSessionId`，并在 Codex 环境可用时附带
+`threadId` / `turnId`。服务端为变更请求生成 `requestId` / `operationId`，将这些
+字段关联到操作事件、发布记录和 CDS 自更新历史。self update/restart 的 CLI 结果
+会直接返回这些关联 ID，复盘时不再依赖临时浏览器响应头。
+
+第一阶段只采集和关联，不参与鉴权：旧版技能没有身份头时仍可使用，并标记为
+`identityVersion=0`、`confidence=legacy`；新版声明标记为 `identityVersion=1`、
+`confidence=declared`。`declared` 只表示格式有效，不代表身份已由服务端验证。
+不得因为缺少身份头拒绝旧客户端，也不得把调用方声明提升成可信身份。
+
 ## CDS 服务自更新（改了 cds/ 目录的代码）
 
 触发条件（AI 自动判断）：`git diff --name-only HEAD~1 HEAD | grep ^cds/` 非空。
 
 ```bash
+$CLI self restart                        # 只重启当前精确 SHA，不拉代码、不切分支
 $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 # 重启约 10s，CLI 内部已轮询 /api/config 等恢复
 ```
+
+用户只说“重启 CDS”时必须使用 `self restart`。只有明确要求把 CDS 更新到某个
+分支或提交时才使用 `self update`，禁止再把普通重启隐式升级为代码发布。
+
+共享 CDS 会保留当前运行提交。旧技能在“同 SHA”与“目标包含当前提交”的快进更新
+中无需新增参数，仍可直接使用。若目标分支不包含当前提交，服务端会在 checkout
+之前拒绝，避免一个 Agent 的分支整体覆盖另一个 Agent 已上线的修复。
+
+只有经过核对的正式换代或回滚，才允许显式解除非快进门禁：
+
+```bash
+$CLI self update --branch <branch> \
+  --transition-intent release \
+  --expected-from-sha <当前 self-status headSha> \
+  --reason "说明为什么目标分支可以替代当前控制面版本"
+```
+
+`--transition-intent` 只允许 `release` / `rollback`。不得把它作为日常兼容参数；
+`expected-from-sha` 是乐观锁，生产版本已变化时请求必须失败并重新审计。
 
 注意：self-update 期间 CDS API 短暂不可用（~10s），CDS 内部 state.json 迁移逻辑会自动跑。
 

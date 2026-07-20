@@ -738,7 +738,7 @@ public class PlatformsController : ControllerBase
             "  \"tags\": string[],     // 仅允许这些值：vision, embedding, rerank, function_calling, web_search, reasoning, free\n" +
             "  \"confidence\": number  // 0-1，可选\n" +
             "}\n\n" +
-            "分组建议：按产品家族/系列（例如 doubao-vision, doubao-1.5, qwen2.5, gpt-4o 等），避免过长；不要返回空字符串。\n" +
+            "分组建议：按产品家族/系列（例如 doubao-vision, doubao-1.5, qwen2.5, gpt-5.6 等），避免过长；不要返回空字符串。\n" +
             "标签规则：一个模型可同时拥有多个标签；不确定时可只给 reasoning。\n";
 
         var input = new

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
 import {
   checkoutSelfUpdateTarget,
+  evaluateSelfUpdateTransition,
   recommendSelfUpdateTargetBranch,
   resolveRemoteDefaultBranch,
   resolveSelfUpdateTargetBranch,
@@ -100,5 +101,84 @@ describe('self-update branch recommendation', () => {
 
   it('falls back to main instead of exposing HEAD', () => {
     expect(recommendSelfUpdateTargetBranch('HEAD', ['feature/test', 'main'])).toBe('main');
+  });
+});
+
+describe('self-update production transition guard', () => {
+  const currentSha = 'dfbb677fc6068bac729a07cfaaba9675fb4dc95d';
+  const targetSha = 'f167b2fed365292c2f6c13f9f7154adc60d6db2d';
+
+  it('keeps legacy clients compatible for same-sha restart', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha: currentSha,
+      targetContainsCurrent: true,
+    })).toMatchObject({ allowed: true, mode: 'same-sha' });
+  });
+
+  it('keeps legacy clients compatible for fast-forward updates', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: true,
+    })).toMatchObject({ allowed: true, mode: 'fast-forward' });
+  });
+
+  it('blocks a non-fast-forward branch replacement without explicit intent', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: false,
+    })).toEqual({
+      allowed: false,
+      code: 'non_fast_forward_update_requires_intent',
+      message: '目标版本不包含当前 CDS 提交；必须显式声明 release 或 rollback。',
+    });
+  });
+
+  it('requires optimistic locking and an audit reason for an explicit release', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: false,
+      intent: 'release',
+      expectedFromSha: '319d2a0ef',
+      reason: '发布新的控制面能力',
+    })).toMatchObject({ allowed: false, code: 'expected_from_sha_mismatch' });
+
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: false,
+      intent: 'release',
+      expectedFromSha: currentSha,
+      reason: 'short',
+    })).toMatchObject({ allowed: false, code: 'transition_reason_required' });
+  });
+
+  it('allows an intentional non-fast-forward release with current-SHA lock', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: false,
+      intent: 'release',
+      expectedFromSha: 'dfbb677fc',
+      reason: '把已验证的共享控制面修复纳入新的发布基线',
+    })).toEqual({
+      allowed: true,
+      mode: 'release',
+      reason: '把已验证的共享控制面修复纳入新的发布基线',
+    });
+  });
+
+  it('rejects control characters in audit reasons', () => {
+    expect(evaluateSelfUpdateTransition({
+      currentSha,
+      targetSha,
+      targetContainsCurrent: false,
+      intent: 'rollback',
+      expectedFromSha: currentSha,
+      reason: '回滚到稳定版本\n伪造日志',
+    })).toMatchObject({ allowed: false, code: 'transition_reason_required' });
   });
 });

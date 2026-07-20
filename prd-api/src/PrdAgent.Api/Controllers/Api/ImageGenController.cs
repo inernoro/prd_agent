@@ -414,7 +414,7 @@ public class ImageGenController : ControllerBase
     /// <summary>
     /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
     /// </summary>
-    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-image-1.5）</param>
     [HttpGet("adapter-info")]
     public IActionResult GetAdapterInfo([FromQuery] string modelId)
     {

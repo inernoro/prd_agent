@@ -18,7 +18,10 @@
  * 差异较大；本函数只关心 `req.headers` 的 shape，不依赖具体 framework。
  */
 
+import { establishAgentOperationContext } from './agent-operation-context.js';
+
 export function resolveActorFromRequest(req: unknown): string {
+  establishAgentOperationContext(req);
   const headers = (req as { headers?: Record<string, string | string[] | undefined> })
     ?.headers || {};
   // 1. X-CDS-Trigger 优先 — 内部 HTTP 自调(webhook/slash command 触发的

@@ -51,4 +51,30 @@ describe('resolveActorFromRequest', () => {
     expect(resolveActorFromRequest({ headers: { 'x-cds-trigger': ['webhook'] } })).toBe('system:webhook');
     expect(resolveActorFromRequest({ headers: { 'x-ai-impersonate': ['bob'] } })).toBe('ai:bob');
   });
+
+  it('解析 actor 时同时建立声明身份和 operation 响应头', () => {
+    const responseHeaders = new Map<string, string>();
+    const req = {
+      headers: {
+        'x-ai-access-key': 'secret',
+        'x-cds-agent-session-id': 'cdscli_session_actor',
+        'x-codex-thread-id': 'thread-actor',
+      },
+      cdsRequestId: 'req_actor',
+      res: { setHeader: (name: string, value: string) => responseHeaders.set(name, value) },
+    };
+
+    expect(resolveActorFromRequest(req)).toBe('ai');
+    expect(req).toMatchObject({
+      cdsRequestId: 'req_actor',
+      cdsOperationId: expect.stringMatching(/^op_/),
+      cdsAgentIdentity: {
+        identityVersion: 1,
+        confidence: 'declared',
+        agentSessionId: 'cdscli_session_actor',
+        threadId: 'thread-actor',
+      },
+    });
+    expect(responseHeaders.get('X-CDS-Operation-Id')).toBe(req.cdsOperationId);
+  });
 });

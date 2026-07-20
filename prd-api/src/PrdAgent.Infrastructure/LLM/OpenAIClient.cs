@@ -13,6 +13,8 @@ namespace PrdAgent.Infrastructure.LLM;
 /// </summary>
 public class OpenAIClient : ILLMClient
 {
+    private const string DefaultModel = "gpt-5.6-sol";
+
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
     private readonly string _model;
@@ -30,7 +32,7 @@ public class OpenAIClient : ILLMClient
     public OpenAIClient(
         HttpClient httpClient,
         string apiKey,
-        string model = "gpt-4-turbo",
+        string model = DefaultModel,
         int maxTokens = 4096,
         double temperature = 0.7,
         bool enablePromptCache = true,
@@ -125,10 +127,13 @@ public class OpenAIClient : ILLMClient
             });
         }
 
+        var isGpt56Family = IsGpt56FamilyModel(_model);
         var requestBody = new OpenAIRequest
         {
             Model = _model,
-            MaxTokens = _maxTokens,
+            MaxTokens = isGpt56Family ? null : _maxTokens,
+            MaxCompletionTokens = isGpt56Family ? _maxTokens : null,
+            ReasoningEffort = isGpt56Family ? "none" : null,
             Temperature = _temperature,
             Messages = allMessages,
             Stream = true,
@@ -154,7 +159,9 @@ public class OpenAIClient : ILLMClient
             var reqForLog = new
             {
                 model = _model,
-                max_tokens = _maxTokens,
+                max_tokens = isGpt56Family ? (int?)null : _maxTokens,
+                max_completion_tokens = isGpt56Family ? _maxTokens : (int?)null,
+                reasoning_effort = isGpt56Family ? "none" : null,
                 temperature = _temperature,
                 stream = true,
                 stream_options = new { include_usage = true },
@@ -421,6 +428,15 @@ public class OpenAIClient : ILLMClient
                         FinishReason: finishReason));
             }
         }
+    }
+
+    private static bool IsGpt56FamilyModel(string model)
+    {
+        var normalized = (model ?? string.Empty).Trim().ToLowerInvariant();
+        var slash = normalized.LastIndexOf('/');
+        if (slash >= 0 && slash < normalized.Length - 1)
+            normalized = normalized[(slash + 1)..];
+        return normalized == "gpt-5.6" || normalized.StartsWith("gpt-5.6-", StringComparison.Ordinal);
     }
 
     private static OpenAIStreamEvent? TryParseEvent(string data)

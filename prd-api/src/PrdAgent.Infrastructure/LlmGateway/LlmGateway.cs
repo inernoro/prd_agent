@@ -48,6 +48,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     };
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
     private const string MaxTokensField = "max_tokens";
+    private const string MaxCompletionTokensField = "max_completion_tokens";
 
     public LlmGateway(
         IModelResolver modelResolver,
@@ -109,9 +110,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (cap is not > 0)
             return null;
 
-        if (!requestBody.TryGetPropertyValue(MaxTokensField, out var raw) || raw == null)
+        var tokenField = UsesOpenAiProtocol(resolution)
+                         && IsGpt56FamilyModel(resolution.ActualModel)
+                         && requestBody["messages"] is JsonArray
+            ? MaxCompletionTokensField
+            : MaxTokensField;
+
+        if (!requestBody.TryGetPropertyValue(tokenField, out var raw) || raw == null)
         {
-            requestBody[MaxTokensField] = cap.Value;
+            requestBody[tokenField] = cap.Value;
             return cap.Value;
         }
 
@@ -120,7 +127,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         if (requested > cap.Value)
         {
-            requestBody[MaxTokensField] = cap.Value;
+            requestBody[tokenField] = cap.Value;
             return cap.Value;
         }
 
@@ -316,6 +323,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = CloneEffectiveRequestBody(request);
                 requestBody["model"] = activeResolution.ActualModel;
                 requestBody["stream"] = false;
+                ApplyGpt56ChatCompletionsCompatibility(requestBody, activeResolution);
                 var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, activeResolution);
                 if (cappedMaxTokens.HasValue)
                 {
@@ -559,6 +567,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = CloneEffectiveRequestBody(request);
                 requestBody["model"] = resolution.ActualModel;
                 requestBody["stream"] = true;
+                ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
                 var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
                 if (cappedMaxTokens.HasValue)
                 {
@@ -1333,6 +1342,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
             requestBody["model"] = resolution.ActualModel;
+            if (IsChatCompletionsEndpoint(endpoint))
+                ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
             ApplyResolvedMaxTokensCap(requestBody, resolution);
             if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
             {
@@ -1692,6 +1703,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // JSON 请求
                 var requestBody = request.RequestBody ?? new JsonObject();
                 requestBody["model"] = resolution.ActualModel;
+                if (IsChatCompletionsEndpoint(endpoint))
+                    ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
                 if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
                 {
@@ -2826,6 +2839,62 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => requestBody.TryGetPropertyValue("tools", out var tools)
            && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
 
+    private static void ApplyGpt56ChatCompletionsCompatibility(JsonObject requestBody, ModelResolutionResult resolution)
+    {
+        if (!UsesOpenAiProtocol(resolution)
+            || !IsGpt56FamilyModel(resolution.ActualModel)
+            || requestBody["messages"] is not JsonArray)
+        {
+            return;
+        }
+
+        if (!requestBody.ContainsKey("reasoning_effort"))
+            requestBody["reasoning_effort"] = "none";
+
+        if (requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
+        {
+            if (!requestBody.ContainsKey(MaxCompletionTokensField))
+                requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
+            requestBody.Remove(MaxTokensField);
+        }
+    }
+
+    private static bool UsesOpenAiProtocol(ModelResolutionResult resolution)
+    {
+        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? resolution.PlatformType
+            : resolution.Protocol;
+        return string.Equals(protocol, "openai", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGpt56FamilyModel(string? model)
+    {
+        var normalized = (model ?? string.Empty).Trim().ToLowerInvariant();
+        var slash = normalized.LastIndexOf('/');
+        if (slash >= 0 && slash < normalized.Length - 1)
+            normalized = normalized[(slash + 1)..];
+        return normalized == "gpt-5.6" || normalized.StartsWith("gpt-5.6-", StringComparison.Ordinal);
+    }
+
+    private static bool IsChatCompletionsEndpoint(string? endpointPath)
+        => !string.IsNullOrWhiteSpace(endpointPath)
+           && endpointPath.Contains("chat/completions", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasIncompatibleGpt56ToolReasoning(JsonObject requestBody, ModelResolutionResult resolution)
+    {
+        if (!UsesOpenAiProtocol(resolution)
+            || !IsGpt56FamilyModel(resolution.ActualModel)
+            || !RequestHasTools(requestBody))
+        {
+            return false;
+        }
+
+        return !requestBody.TryGetPropertyValue("reasoning_effort", out var effort)
+               || effort is not JsonValue effortValue
+               || !effortValue.TryGetValue<string>(out var effortText)
+               || !string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error)
     {
         error = null;
@@ -2840,6 +2909,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
+        {
+            error = GatewayResponse.Fail(
+                "GPT56_TOOLS_REQUIRE_REASONING_NONE",
+                $"模型 {resolution.ActualModel} 通过 Chat Completions 调用函数工具时 reasoning_effort 必须为 none；需要推理与工具并用时请改用 Responses API。",
+                400);
             return true;
         }
 
@@ -2936,6 +3014,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (requestBody is not null && HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
+        {
+            error = GatewayRawResponse.Fail(
+                "GPT56_TOOLS_REQUIRE_REASONING_NONE",
+                $"模型 {resolution.ActualModel} 通过 Chat Completions 调用函数工具时 reasoning_effort 必须为 none；需要推理与工具并用时请改用 Responses API。",
+                400);
             return true;
         }
 

@@ -707,7 +707,7 @@ public class ModelsController : ControllerBase
     /// <summary>
     /// 根据平台侧模型ID直接获取适配信息（无需查询数据库，支持任意模型）
     /// </summary>
-    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-5.6-sol）</param>
     [HttpGet("adapter-info")]
     public IActionResult GetAdapterInfoByModelId([FromQuery] string modelId)
     {

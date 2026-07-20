@@ -816,6 +816,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/operator/requests': '列出运维审批请求',
     'GET /cds-system/docker-networks': '查看 Docker 分支网络容量',
     'POST /self-update': '自我更新',
+    'POST /self-restart': '重启当前 CDS 精确版本',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
     'GET /ai/pending': '查看待处理 AI 请求',
@@ -2077,6 +2078,7 @@ export function createServer(deps: ServerDeps): express.Express {
           /\/container-exec/,
           /\/factory-reset/,
           /\/self-update/,
+          /\/self-restart/,
           /\/storage-mode\/switch/,
           /\/cleanup(\?|$)/,
           /\/cleanup-orphans/,
@@ -3959,6 +3961,7 @@ export function installSpaFallback(
   // served from the Vite bundle; old .html filenames are kept only as
   // explicit redirects below. There is no legacy static-page fallback.
   const reactIndex = path.join(reactDist, 'index.html');
+  const previousReactIndex = path.join(`${reactDist}.previous`, 'index.html');
   if (fs.existsSync(reactIndex)) {
     // ── Static assets (content-hashed, immutable) ──
     // Vite emits content-hashed filenames under /assets, so every file is
@@ -3973,6 +3976,11 @@ export function installSpaFallback(
     // `no-cache`; note the host nginx still appends `no-cache` via add_header
     // until exec_cds.sh's template fix is reloaded (see render_nginx()).
     const assetsDir = path.join(reactDist, 'assets');
+    // self-update 原子换代时会把原 dist 保留为 dist.previous。已打开的页面
+    // 可能在换代后才触发旧懒加载 chunk；当前产物不存在该哈希文件时，
+    // 只回退查找上一代 assets。两个目录都是固定受控根，仍执行同样的路径穿越检查。
+    const previousAssetsDir = path.join(`${reactDist}.previous`, 'assets');
+    const assetSearchDirs = [assetsDir, previousAssetsDir];
     const ASSET_COMPRESS_CACHE = new Map<string, Buffer>();
     // Bound the in-memory compressed-asset cache. Each zero-downtime web rebuild
     // emits new content-hashed filenames while the daemon does NOT restart, so
@@ -4011,16 +4019,21 @@ export function installSpaFallback(
       } catch {
         return next();
       }
-      const filePath = path.join(assetsDir, rel);
-      // Path-traversal guard: resolved path must stay inside assetsDir.
-      if (!filePath.startsWith(assetsDir + path.sep)) return next();
-      let isFile = false;
-      try {
-        isFile = fs.statSync(filePath).isFile();
-      } catch {
-        return next();
+      let filePath = '';
+      for (const assetRoot of assetSearchDirs) {
+        const candidate = path.join(assetRoot, rel);
+        // Path-traversal guard: resolved path must stay inside the selected assets root.
+        if (!candidate.startsWith(assetRoot + path.sep)) return next();
+        try {
+          if (fs.statSync(candidate).isFile()) {
+            filePath = candidate;
+            break;
+          }
+        } catch {
+          /* try previous generation */
+        }
       }
-      if (!isFile) return next();
+      if (!filePath) return next();
 
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Vary', 'Accept-Encoding');
@@ -4104,22 +4117,41 @@ export function installSpaFallback(
     // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
     // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
     // 生产实例走原 sendFile 路径，零改动。
-    let previewInstanceIndexHtml: string | null = null;
+    let previewInstanceIndexCache: { filePath: string; mtimeMs: number; html: string } | null = null;
+    const resolveReactIndex = (): string | null => {
+      if (fs.existsSync(reactIndex)) return reactIndex;
+      if (fs.existsSync(previousReactIndex)) return previousReactIndex;
+      return null;
+    };
     const sendReactIndex = (res: express.Response): void => {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      if (!isPreviewInstance()) {
-        res.sendFile(reactIndex);
+      const selectedIndex = resolveReactIndex();
+      if (!selectedIndex) {
+        res.status(503).type('text/plain').send('CDS web release is switching; retry shortly.');
         return;
       }
-      if (previewInstanceIndexHtml === null) {
-        const raw = fs.readFileSync(reactIndex, 'utf-8');
-        previewInstanceIndexHtml = raw.replace(
-          '<head>',
-          '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
-        );
+      if (!isPreviewInstance()) {
+        res.sendFile(selectedIndex);
+        return;
+      }
+      const mtimeMs = fs.statSync(selectedIndex).mtimeMs;
+      if (
+        previewInstanceIndexCache === null ||
+        previewInstanceIndexCache.filePath !== selectedIndex ||
+        previewInstanceIndexCache.mtimeMs !== mtimeMs
+      ) {
+        const raw = fs.readFileSync(selectedIndex, 'utf-8');
+        previewInstanceIndexCache = {
+          filePath: selectedIndex,
+          mtimeMs,
+          html: raw.replace(
+            '<head>',
+            '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+          ),
+        };
       }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(previewInstanceIndexHtml);
+      res.send(previewInstanceIndexCache.html);
     };
     app.get('*', (req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
