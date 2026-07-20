@@ -230,8 +230,8 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
             onBlur={closeHover}
             className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors cursor-pointer ${
               active
-                ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
-                : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
+                ? 'bg-cyan-500/15 text-semantic-cyan border-cyan-500/35'
+                : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
             }`}
           >
             {p.label}
@@ -246,8 +246,8 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
         title="活动密度刷选条：拖动两个把手刷选任意窗口"
         className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors cursor-pointer ${
           customDisplay
-            ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
-            : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
+            ? 'bg-cyan-500/15 text-semantic-cyan border-cyan-500/35'
+            : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
         }`}
       >
         <CalendarRange size={13} />
@@ -310,33 +310,30 @@ function MicroPreview({
   const { line, area } = sparkPath(seg, 160, 26);
   return (
     <div
-      className="rounded-[11px] border px-3 py-3 pointer-events-none"
+      className="surface-popover rounded-[11px] px-3 py-3 pointer-events-none"
       style={{
         position: 'fixed',
         left,
         top,
         width,
         zIndex: 10040,
-        background: '#1a1c20',
-        borderColor: 'rgba(255,255,255,0.16)',
-        boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
         animation: 'voc-micro-in .16s ease both',
       }}
     >
       <style>{`@keyframes voc-micro-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-      <div className="text-[11px] text-white/40 mb-2">{label} · 真实聚合</div>
+      <div className="text-[11px] text-token-muted mb-2">{label} · 真实聚合</div>
       <div className="flex gap-3.5 mb-2">
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: TEAL_SOFT }}>
             {loading ? '—' : summary.signal.toLocaleString()}
           </div>
-          <div className="text-[10px] text-white/40">信号</div>
+          <div className="text-[10px] text-token-muted">信号</div>
         </div>
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: ROSE }}>
             {loading ? '—' : summary.pain.toLocaleString()}
           </div>
-          <div className="text-[10px] text-white/40">痛点</div>
+          <div className="text-[10px] text-token-muted">痛点</div>
         </div>
       </div>
       {seg.length > 0 ? (
@@ -345,7 +342,7 @@ function MicroPreview({
           <path d={line} fill="none" stroke={TEAL_SOFT} strokeWidth={1.6} strokeLinejoin="round" />
         </svg>
       ) : (
-        <div className="h-[26px] flex items-center text-[10px] text-white/25">暂无密度数据</div>
+        <div className="h-[26px] flex items-center text-[10px] text-token-muted">暂无密度数据</div>
       )}
     </div>
   );
@@ -517,16 +514,14 @@ function BrushPopover({
   return (
     <div
       ref={overlayRef}
+      className="surface-popover"
       style={{
         position: 'fixed',
         left: popPos.left,
         top: popPos.top,
         width: popPos.width,
         zIndex: 10030,
-        background: '#1a1c20',
-        border: '1px solid rgba(255,255,255,0.16)',
         borderRadius: 13,
-        boxShadow: '0 20px 50px rgba(0,0,0,0.55)',
         minHeight: 0,
         overscrollBehavior: 'contain',
         animation: 'voc-brush-in .2s ease both',
@@ -541,11 +536,11 @@ function BrushPopover({
       )}
       <div className="relative" style={{ zIndex: 10031, padding: isMobile ? '12px 12px 10px' : '14px 16px 12px' }}>
         <div className="flex items-center justify-between mb-2.5">
-          <span className="text-[12px] font-semibold text-white/80">活动密度刷选条</span>
+          <span className="text-[12px] font-semibold text-token-primary">活动密度刷选条</span>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center justify-center w-5 h-5 rounded text-white/40 hover:text-white/80 cursor-pointer"
+            className="inline-flex items-center justify-center w-5 h-5 rounded text-token-muted hover-text-primary cursor-pointer"
             title="关闭"
           >
             <X size={13} />
@@ -598,31 +593,31 @@ function BrushPopover({
             </div>
           </div>
         </div>
-        <div className="flex justify-between mt-2 text-[10px] text-white/35">
+        <div className="flex justify-between mt-2 text-[10px] text-token-muted">
           <span>{n > 0 ? fmtMD(new Date(days[0].dayStart)) : ''}</span>
           <span>{n > 1 ? fmtMD(new Date(days[Math.floor(n / 2)].dayStart)) : ''}</span>
           <span>今天</span>
         </div>
 
         {/* 回显 + 应用 */}
-        <div className="flex items-center gap-2.5 flex-wrap mt-3 pt-3 border-t border-white/[0.08]">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[11px]">
-            <span className="text-white/40">窗口</span>
+        <div className="flex items-center gap-2.5 flex-wrap mt-3 pt-3 border-t border-token-subtle">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-token-subtle bg-token-nested text-[11px]">
+            <span className="text-token-muted">窗口</span>
             <span className="font-semibold tabular-nums" style={{ color: TEAL_SOFT }}>{rangeLabel}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[11px]">
-            <span className="text-white/40">信号</span>
-            <span className="font-semibold tabular-nums text-white/85">{summary.signal.toLocaleString()}</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-token-subtle bg-token-nested text-[11px]">
+            <span className="text-token-muted">信号</span>
+            <span className="font-semibold tabular-nums text-token-primary">{summary.signal.toLocaleString()}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[11px]">
-            <span className="text-white/40">痛点</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-token-subtle bg-token-nested text-[11px]">
+            <span className="text-token-muted">痛点</span>
             <span className="font-semibold tabular-nums" style={{ color: ROSE }}>{summary.pain.toLocaleString()}</span>
           </span>
           <button
             type="button"
             onClick={apply}
             disabled={n === 0}
-            className="ml-auto inline-flex items-center px-3 h-[28px] rounded-md text-[12px] font-semibold border border-cyan-500/35 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ml-auto inline-flex items-center px-3 h-[28px] rounded-md text-[12px] font-semibold border border-cyan-500/35 bg-cyan-500/15 text-semantic-cyan hover:bg-cyan-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             应用范围
           </button>

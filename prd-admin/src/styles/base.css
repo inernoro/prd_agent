@@ -177,6 +177,14 @@ select optgroup {
 .text-token-success { color: var(--status-done, var(--canvas-state-completed)); }
 .text-token-warning { color: var(--status-going, var(--canvas-state-paused)); }
 .text-token-error { color: var(--status-error, var(--canvas-state-failed)); }
+.text-semantic-success { color: var(--semantic-success-text); }
+.text-semantic-warning { color: var(--semantic-warning-text); }
+.text-semantic-danger { color: var(--semantic-danger-text); }
+.text-semantic-cyan { color: var(--semantic-cyan-text); }
+.text-semantic-purple { color: var(--semantic-purple-text); }
+.hover-text-primary:hover { color: var(--text-primary); }
+.hover-text-semantic-cyan:hover { color: var(--semantic-cyan-text); }
+.hover-border-token:hover { border-color: var(--border-hover); }
 .bg-token-nested { background: var(--nested-block-bg); }
 .bg-token-card { background: var(--bg-card); }
 .border-token-subtle { border-color: var(--border-subtle); }

@@ -42,7 +42,7 @@ function PanelCard({ title, extra, children }: { title: string; extra?: ReactNod
     <GlassCard className="shrink-0">
       <div className="px-4 py-3.5 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] tracking-widest text-white/40">{title}</span>
+          <span className="text-[11px] tracking-widest text-token-muted">{title}</span>
           {extra}
         </div>
         {children}
@@ -99,7 +99,7 @@ export function MemberStatsPanel({
             deltaPct != null ? (
               <div
                 className="flex items-center gap-1 text-[11px] font-medium"
-                style={{ color: deltaPct >= 0 ? '#6ee7b7' : 'rgba(255,255,255,0.45)' }}
+                style={{ color: deltaPct >= 0 ? 'var(--semantic-success-text)' : 'var(--text-muted)' }}
               >
                 {deltaPct >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
                 {compareLabel} {deltaPct >= 0 ? '+' : ''}
@@ -112,19 +112,19 @@ export function MemberStatsPanel({
                 {compareLabel}为 0 · 本期全为新增
               </div>
             ) : (
-              <div className="text-[11px] text-white/40">{compareLabel}与本期均无动作</div>
+              <div className="text-[11px] text-token-muted">{compareLabel}与本期均无动作</div>
             )
           ) : null}
-          <div className="text-[12px] text-white/50 pt-0.5">
-            <span className="text-white/85 font-semibold tabular-nums">{stats.activeMembers}</span> 位成员活跃 ·{' '}
-            <span className="text-white/85 font-semibold tabular-nums">{stats.modules.length}</span> 个模块
+          <div className="text-[12px] text-token-secondary pt-0.5">
+            <span className="text-token-primary font-semibold tabular-nums">{stats.activeMembers}</span> 位成员活跃 ·{' '}
+            <span className="text-token-primary font-semibold tabular-nums">{stats.modules.length}</span> 个模块
           </div>
         </div>
       </PanelCard>
 
-      <PanelCard title="成员排行" extra={<span className="text-[10px] text-white/30">点击下钻</span>}>
+      <PanelCard title="成员排行" extra={<span className="text-[10px] text-token-muted">点击下钻</span>}>
         {stats.actors.length === 0 ? (
-          <div className="text-[12px] text-white/35">该范围内暂无动作</div>
+          <div className="text-[12px] text-token-muted">该范围内暂无动作</div>
         ) : (
           <div className="flex flex-col gap-0.5">
             {stats.actors.map((a, idx) => {
@@ -136,12 +136,12 @@ export function MemberStatsPanel({
                   onClick={() => onPickActor(a.actorId)}
                   title={active ? '点击取消筛选' : '只看 TA 的动态'}
                   className={`flex items-center gap-2 min-w-0 w-full text-left rounded-md px-1 py-1 transition-colors ${
-                    active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'
+                    active ? 'bg-token-nested' : 'hover-bg-soft'
                   }`}
                 >
                   <span
                     className="w-4 text-[11px] font-bold tabular-nums text-center shrink-0"
-                    style={{ color: RANK_COLORS[idx] ?? 'rgba(255,255,255,0.3)' }}
+                    style={{ color: RANK_COLORS[idx] ?? 'var(--text-muted)' }}
                   >
                     {idx + 1}
                   </span>
@@ -151,10 +151,10 @@ export function MemberStatsPanel({
                     className="w-5 h-5 rounded-full shrink-0 object-cover"
                   />
                   <span className="flex-1 min-w-0 flex flex-col gap-1">
-                    <span className="text-[12px] text-white/75 truncate leading-none">
+                    <span className="text-[12px] text-token-primary truncate leading-none">
                       {privacy ? maskName(a.actorName || a.actorId) : a.actorName || a.actorId}
                     </span>
-                    <span className="block h-1 rounded-sm bg-white/[0.05] overflow-hidden">
+                    <span className="block h-1 rounded-sm bg-token-nested overflow-hidden">
                       <span
                         className="block h-full rounded-sm transition-all duration-700"
                         style={{
@@ -164,7 +164,7 @@ export function MemberStatsPanel({
                       />
                     </span>
                   </span>
-                  <span className="text-[11px] text-white/55 tabular-nums w-8 text-right shrink-0">{a.count}</span>
+                  <span className="text-[11px] text-token-secondary tabular-nums w-8 text-right shrink-0">{a.count}</span>
                 </button>
               );
             })}
@@ -207,9 +207,9 @@ export function CategoryStatsPanel({
 
   return (
     <>
-      <PanelCard title="模块分布" extra={<span className="text-[10px] text-white/30">点击下钻</span>}>
+      <PanelCard title="模块分布" extra={<span className="text-[10px] text-token-muted">点击下钻</span>}>
         {stats.modules.length === 0 ? (
-          <div className="text-[12px] text-white/35">该范围内暂无动作</div>
+          <div className="text-[12px] text-token-muted">该范围内暂无动作</div>
         ) : (
           <div className="flex flex-col gap-0.5">
             {stats.modules.map((m) => {
@@ -223,23 +223,23 @@ export function CategoryStatsPanel({
                   onClick={() => onPickModule(m.key)}
                   title={active ? '点击取消筛选' : `只看「${m.label}」`}
                   className={`flex items-center gap-2 min-w-0 w-full text-left rounded-md px-1 py-1 transition-colors ${
-                    active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'
+                    active ? 'bg-token-nested' : 'hover-bg-soft'
                   }`}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: meta.accent }} />
                   <span className="flex-1 min-w-0 flex flex-col gap-1">
                     <span className="flex items-baseline justify-between gap-2">
-                      <span className="text-[12px] text-white/75 truncate leading-none">{m.label}</span>
-                      <span className="text-[10px] text-white/35 tabular-nums shrink-0">{pct}%</span>
+                      <span className="text-[12px] text-token-primary truncate leading-none">{m.label}</span>
+                      <span className="text-[10px] text-token-muted tabular-nums shrink-0">{pct}%</span>
                     </span>
-                    <span className="block h-1 rounded-sm bg-white/[0.05] overflow-hidden">
+                    <span className="block h-1 rounded-sm bg-token-nested overflow-hidden">
                       <span
                         className="block h-full rounded-sm transition-all duration-700"
                         style={{ width: `${pct}%`, background: meta.accent }}
                       />
                     </span>
                   </span>
-                  <span className="text-[11px] text-white/55 tabular-nums w-8 text-right shrink-0">{m.count}</span>
+                  <span className="text-[11px] text-token-secondary tabular-nums w-8 text-right shrink-0">{m.count}</span>
                 </button>
               );
             })}
@@ -249,7 +249,7 @@ export function CategoryStatsPanel({
 
       <PanelCard title="动作类型">
         {stats.actions.length === 0 ? (
-          <div className="text-[12px] text-white/35">该范围内暂无动作</div>
+          <div className="text-[12px] text-token-muted">该范围内暂无动作</div>
         ) : (
           <div className="flex flex-col gap-0.5">
             {stats.actions.map((a) => {
@@ -263,14 +263,14 @@ export function CategoryStatsPanel({
                   >
                     <ActionIcon size={10} style={{ color: meta.accent }} />
                   </span>
-                  <span className="flex-1 min-w-0 text-[12px] text-white/70 truncate">{a.label}</span>
-                  <span className="w-16 h-1 rounded-sm bg-white/[0.05] overflow-hidden shrink-0">
+                  <span className="flex-1 min-w-0 text-[12px] text-token-primary truncate">{a.label}</span>
+                  <span className="w-16 h-1 rounded-sm bg-token-nested overflow-hidden shrink-0">
                     <span
                       className="block h-full rounded-sm transition-all duration-700"
                       style={{ width: `${(a.count / actionMax) * 100}%`, background: meta.accent }}
                     />
                   </span>
-                  <span className="text-[11px] text-white/55 tabular-nums w-8 text-right shrink-0">{a.count}</span>
+                  <span className="text-[11px] text-token-secondary tabular-nums w-8 text-right shrink-0">{a.count}</span>
                 </div>
               );
             })}
@@ -282,7 +282,7 @@ export function CategoryStatsPanel({
         title="活跃时段"
         extra={
           peakCount > 0 ? (
-            <span className="text-[10px] text-white/30 tabular-nums">
+            <span className="text-[10px] text-token-muted tabular-nums">
               峰值 {peakHour}时 · {peakCount} 条{stats.sampled ? '（采样）' : ''}
             </span>
           ) : undefined
@@ -310,7 +310,7 @@ export function CategoryStatsPanel({
               ))}
             </div>
           </div>
-          <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
+          <div className="flex justify-between text-[10px] text-token-muted tabular-nums">
             <span>0时</span>
             <span>6时</span>
             <span>12时</span>

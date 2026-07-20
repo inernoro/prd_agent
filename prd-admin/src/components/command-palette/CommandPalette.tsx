@@ -13,6 +13,7 @@ import {
   type NavCatalogItem,
 } from '@/lib/unifiedNavCatalog';
 import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
+import { Surface } from '@/components/design/Surface';
 
 function getIcon(name: string | undefined, size = 16) {
   if (!name) return <LucideIcons.Circle size={size} />;
@@ -37,6 +38,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [navigationMode, setNavigationMode] = useState<'keyboard' | 'pointer'>('keyboard');
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -67,6 +69,7 @@ export function CommandPalette() {
     if (open) {
       setQuery('');
       setCursor(0);
+      setNavigationMode('keyboard');
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
@@ -144,9 +147,11 @@ export function CommandPalette() {
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        setNavigationMode('keyboard');
         setCursor((c) => Math.min(flat.length - 1, c + 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        setNavigationMode('keyboard');
         setCursor((c) => Math.max(0, c - 1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -172,14 +177,12 @@ export function CommandPalette() {
 
   return createPortal(
     <div
+      className="surface-backdrop"
       onClick={() => setOpen(false)}
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'rgba(0, 0, 0, 0.55)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -187,7 +190,9 @@ export function CommandPalette() {
         animation: 'cmdPaletteFade 160ms ease-out',
       }}
     >
-      <div
+      <Surface
+        variant="raised"
+        className="overflow-hidden"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'min(680px, 94vw)',
@@ -196,10 +201,6 @@ export function CommandPalette() {
           display: 'flex',
           flexDirection: 'column',
           borderRadius: 16,
-          overflow: 'hidden',
-          background: 'linear-gradient(180deg, rgba(22,22,28,0.98), rgba(15,16,20,0.98))',
-          border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 40px 120px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.04)',
           animation: 'cmdPaletteSlide 200ms cubic-bezier(.2,.8,.2,1)',
         }}
       >
@@ -209,10 +210,10 @@ export function CommandPalette() {
             alignItems: 'center',
             gap: 10,
             padding: '14px 16px',
-            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            borderBottom: '1px solid var(--border-faint)',
           }}
         >
-          <Search size={16} style={{ color: 'rgba(255,255,255,0.5)' }} />
+          <Search size={16} style={{ color: 'var(--text-muted)' }} />
           <input
             ref={inputRef}
             data-tour-id="command-palette-input"
@@ -228,7 +229,7 @@ export function CommandPalette() {
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: 'var(--text-primary, #fff)',
+              color: 'var(--text-primary)',
               fontSize: 15,
               lineHeight: 1.4,
             }}
@@ -239,7 +240,7 @@ export function CommandPalette() {
               alignItems: 'center',
               gap: 4,
               fontSize: 11,
-              color: 'rgba(255,255,255,0.4)',
+              color: 'var(--text-muted)',
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
             }}
             title="按 ESC 关闭"
@@ -263,7 +264,7 @@ export function CommandPalette() {
               style={{
                 padding: '40px 16px',
                 textAlign: 'center',
-                color: 'rgba(255,255,255,0.45)',
+                color: 'var(--text-muted)',
                 fontSize: 13,
               }}
             >
@@ -282,7 +283,7 @@ export function CommandPalette() {
                     fontWeight: 700,
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
-                    color: 'rgba(255,255,255,0.35)',
+                    color: 'var(--text-muted)',
                   }}
                 >
                   {group.label}
@@ -296,8 +297,13 @@ export function CommandPalette() {
                   return (
                     <div
                       key={it.id}
+                      className="surface-option"
                       data-cmd-index={idx}
-                      onMouseEnter={() => setCursor(idx)}
+                      data-active={active && navigationMode === 'keyboard'}
+                      onMouseEnter={() => {
+                        setNavigationMode('pointer');
+                        setCursor(idx);
+                      }}
                       onContextMenu={(e) => {
                         if (!pinnable || pinned) return;
                         e.preventDefault();
@@ -311,9 +317,6 @@ export function CommandPalette() {
                         padding: '9px 12px',
                         margin: '2px 4px',
                         borderRadius: 10,
-                        background: active ? 'rgba(129,140,248,0.16)' : 'transparent',
-                        color: 'var(--text-primary, #fff)',
-                        transition: 'background 120ms',
                       }}
                     >
                       <button
@@ -335,17 +338,15 @@ export function CommandPalette() {
                         title={`${it.label}（点击跳转${pinnable && !pinned ? ' / 右键加到导航' : ''}）`}
                       >
                         <div
+                          className="surface-option-icon"
                           style={{
                             flexShrink: 0,
                             width: 32,
                             height: 32,
                             borderRadius: 8,
-                            background: active ? 'rgba(129,140,248,0.22)' : 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.08)',
                             display: 'inline-flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            color: active ? '#c7d2fe' : 'rgba(255,255,255,0.75)',
                           }}
                         >
                           {getIcon(it.icon, 15)}
@@ -355,7 +356,7 @@ export function CommandPalette() {
                             style={{
                               fontSize: 13,
                               fontWeight: 600,
-                              color: 'var(--text-primary, #fff)',
+                              color: 'var(--text-primary)',
                               lineHeight: 1.3,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -386,7 +387,7 @@ export function CommandPalette() {
                             <div
                               style={{
                                 fontSize: 11,
-                                color: 'rgba(255,255,255,0.5)',
+                                color: 'var(--text-muted)',
                                 marginTop: 2,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -410,8 +411,8 @@ export function CommandPalette() {
                               fontSize: 10,
                               padding: '3px 6px',
                               borderRadius: 6,
-                              color: 'rgba(134,239,172,0.85)',
-                              background: 'rgba(34,197,94,0.10)',
+                              color: 'var(--semantic-success-text)',
+                              background: 'var(--status-done-soft)',
                             }}
                           >
                             <Check size={11} />
@@ -434,9 +435,9 @@ export function CommandPalette() {
                               padding: '4px 7px',
                               borderRadius: 6,
                               cursor: 'pointer',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                              background: active ? 'rgba(129,140,248,0.18)' : 'rgba(255,255,255,0.04)',
-                              color: active ? '#c7d2fe' : 'rgba(255,255,255,0.65)',
+                              border: '1px solid var(--border-subtle)',
+                              background: active ? 'var(--selection-bg)' : 'var(--nested-block-bg)',
+                              color: active ? 'var(--selection-text)' : 'var(--text-secondary)',
                               opacity: active ? 1 : 0.6,
                               transition: 'opacity 120ms, background 120ms',
                             }}
@@ -449,7 +450,7 @@ export function CommandPalette() {
                       {active && !pinnable && (
                         <CornerDownLeft
                           size={13}
-                          style={{ color: 'rgba(199,210,254,0.9)', flexShrink: 0 }}
+                          style={{ color: 'var(--selection-text)', flexShrink: 0 }}
                         />
                       )}
                     </div>
@@ -466,44 +467,44 @@ export function CommandPalette() {
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '8px 14px',
-            borderTop: '1px solid rgba(255,255,255,0.06)',
+            borderTop: '1px solid var(--border-faint)',
             fontSize: 11,
-            color: 'rgba(255,255,255,0.45)',
-            background: 'rgba(255,255,255,0.02)',
+            color: 'var(--text-muted)',
+            background: 'var(--nested-block-bg)',
           }}
         >
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <kbd style={kbdStyle}>↑</kbd>
-              <kbd style={kbdStyle}>↓</kbd>
+              <kbd className="surface-kbd" style={kbdStyle}>↑</kbd>
+              <kbd className="surface-kbd" style={kbdStyle}>↓</kbd>
               <span>导航</span>
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <kbd style={kbdStyle}>
+              <kbd className="surface-kbd" style={kbdStyle}>
                 <CornerDownLeft size={10} />
               </kbd>
               <span>进入</span>
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <kbd style={kbdStyle}>{isMac ? <Command size={10} /> : 'Ctrl'}</kbd>
-              <kbd style={kbdStyle}>
+              <kbd className="surface-kbd" style={kbdStyle}>{isMac ? <Command size={10} /> : 'Ctrl'}</kbd>
+              <kbd className="surface-kbd" style={kbdStyle}>
                 <CornerDownLeft size={10} />
               </kbd>
               <span>加到导航</span>
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <kbd style={kbdStyle}>ESC</kbd>
+              <kbd className="surface-kbd" style={kbdStyle}>ESC</kbd>
               <span>关闭</span>
             </span>
           </div>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span>命令面板</span>
             <ArrowRight size={10} />
-            <kbd style={kbdStyle}>{isMac ? <Command size={10} /> : 'Ctrl'}</kbd>
-            <kbd style={kbdStyle}>K</kbd>
+            <kbd className="surface-kbd" style={kbdStyle}>{isMac ? <Command size={10} /> : 'Ctrl'}</kbd>
+            <kbd className="surface-kbd" style={kbdStyle}>K</kbd>
           </div>
         </div>
-      </div>
+      </Surface>
 
       <style>{`
         @keyframes cmdPaletteFade {
@@ -528,9 +529,6 @@ const kbdStyle: React.CSSProperties = {
   height: 18,
   padding: '0 4px',
   borderRadius: 4,
-  background: 'rgba(255,255,255,0.08)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: 'rgba(255,255,255,0.7)',
   fontSize: 10,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   fontWeight: 600,

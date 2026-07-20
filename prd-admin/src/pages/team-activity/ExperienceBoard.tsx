@@ -116,13 +116,13 @@ export function ExperienceBoard({
         <Header />
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
-          <span className="text-sm text-emerald-300/85">两个声道都很安静</span>
-          <span className="text-[12px] text-white/40">既无遥测痛点也无用户提交的缺陷。可换时间范围，或</span>
+          <span className="text-sm text-semantic-success">两个声道都很安静</span>
+          <span className="text-[12px] text-token-muted">既无遥测痛点也无用户提交的缺陷。可换时间范围，或</span>
           {onSwitchHeatmap ? (
             <button
               type="button"
               onClick={onSwitchHeatmap}
-              className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 bg-white/[0.03] text-[11px] text-white/55 hover:text-white/85 hover:border-white/25 transition-colors cursor-pointer"
+              className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-token-subtle bg-token-nested text-[11px] text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
             >
               切回体验全景热力图
             </button>
@@ -152,11 +152,11 @@ export function ExperienceBoard({
 
 function ChannelHead({ icon: Icon, tint, title, subtitle }: { icon: typeof Activity; tint: string; title: string; subtitle: string }) {
   return (
-    <div className="flex items-center gap-2 px-1 sticky top-0 z-[1] py-1.5" style={{ background: 'rgba(16,17,19,0.72)', backdropFilter: 'blur(6px)' }}>
+    <div className="viz-sticky-surface flex items-center gap-2 px-1 sticky top-0 z-[1] py-1.5">
       <Icon size={14} className="shrink-0" style={{ color: tint }} />
       {/* 标题不折叠（如「行为之声」四字），副标过窄时截断让位 */}
-      <span className="text-[12.5px] font-semibold text-white/80 whitespace-nowrap shrink-0">{title}</span>
-      <span className="text-[10.5px] text-white/35 truncate min-w-0">{subtitle}</span>
+      <span className="text-[12.5px] font-semibold text-token-primary whitespace-nowrap shrink-0">{title}</span>
+      <span className="text-[10.5px] text-token-muted truncate min-w-0">{subtitle}</span>
     </div>
   );
 }
@@ -173,7 +173,7 @@ function BehaviorChannel({
     <div className="flex flex-col gap-2 min-w-0">
       <ChannelHead icon={Activity} tint="rgba(94,234,212,0.85)" title="行为之声" subtitle={`遥测自动发现 · ${items.length} 项`} />
       {items.length === 0 ? (
-        <div className="text-[11px] text-white/30 px-2 py-4 text-center border border-dashed border-white/[0.06] rounded-lg">
+        <div className="text-[11px] text-token-muted px-2 py-4 text-center border border-dashed border-token-subtle rounded-lg">
           遥测暂无痛点
         </div>
       ) : (
@@ -188,11 +188,9 @@ function BehaviorChannel({
               disabled={!clickable}
               onClick={clickable ? () => onSelectTarget!(it.target, { label: `${it.kindLabel} · ${it.target}`, metric: it.metric, kind: it.kind }) : undefined}
               title={clickable ? `下钻 ${it.target}` : it.target}
-              className="flex flex-col gap-1.5 rounded-lg px-2.5 py-2 text-left border transition-colors hover:border-white/20"
+              className="surface-row flex flex-col gap-1.5 rounded-lg px-2.5 py-2 text-left border border-token-subtle transition-colors hover-border-token"
               style={{
                 cursor: clickable ? 'pointer' : 'default',
-                background: 'rgba(255,255,255,0.02)',
-                borderColor: 'rgba(255,255,255,0.07)',
                 animation: 'voc-board-in .35s ease both',
                 animationDelay: `${i * 35}ms`,
               }}
@@ -202,16 +200,16 @@ function BehaviorChannel({
                   <KIcon size={11} style={{ color: meta.accent }} />
                 </span>
                 <span className="text-[11px] font-semibold shrink-0" style={{ color: meta.accent }}>{it.kindLabel}</span>
-                <span className="text-[11px] text-white/30 font-mono truncate">{it.target}</span>
+                <span className="text-[11px] text-token-muted font-mono truncate">{it.target}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10.5px] text-amber-200/75 font-mono tabular-nums">{it.metric}</span>
-                <span className="inline-flex items-center gap-1 text-[10.5px] text-white/35 tabular-nums">
+                <span className="text-[10.5px] text-semantic-warning font-mono tabular-nums">{it.metric}</span>
+                <span className="inline-flex items-center gap-1 text-[10.5px] text-token-muted tabular-nums">
                   <Users size={10} />
                   {it.userCount} 人 · {it.eventCount} 次
                 </span>
                 {it.defectTitle ? (
-                  <span className="inline-flex items-center gap-1 text-[10.5px] text-rose-200/70 truncate">
+                  <span className="inline-flex items-center gap-1 text-[10.5px] text-semantic-danger truncate">
                     <Bug size={10} />
                     {it.defectTitle}
                   </span>
@@ -241,16 +239,16 @@ function UserChannel({
     <div className="flex flex-col gap-2 min-w-0">
       <ChannelHead icon={Megaphone} tint="rgba(167,139,250,0.85)" title="用户之声" subtitle={`真实缺陷 · ${defects?.length ?? 0} 条`} />
       {defects === null ? (
-        <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-white/40">
+        <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-token-muted">
           <MapSpinner size={12} />
           正在拉取用户提交的缺陷…
         </div>
       ) : error ? (
-        <div className="text-[11px] text-amber-200/70 px-2 py-4 text-center border border-dashed border-white/[0.1] rounded-lg">
+        <div className="text-[11px] text-semantic-warning px-2 py-4 text-center border border-dashed border-token-subtle rounded-lg">
           需接入缺陷数据源（{error}）
         </div>
       ) : defects.length === 0 ? (
-        <div className="text-[11px] text-white/30 px-2 py-4 text-center border border-dashed border-white/[0.06] rounded-lg">
+        <div className="text-[11px] text-token-muted px-2 py-4 text-center border border-dashed border-token-subtle rounded-lg">
           暂无用户提交的缺陷
         </div>
       ) : (
@@ -263,10 +261,8 @@ function UserChannel({
               type="button"
               onClick={onOpenDefect}
               title={`在缺陷管理中查看 ${d.defectNo}`}
-              className="flex flex-col gap-1.5 rounded-lg px-2.5 py-2 text-left border transition-colors hover:border-white/20 cursor-pointer"
+              className="surface-row flex flex-col gap-1.5 rounded-lg px-2.5 py-2 text-left border border-token-subtle transition-colors hover-border-token cursor-pointer"
               style={{
-                background: 'rgba(255,255,255,0.02)',
-                borderColor: 'rgba(255,255,255,0.07)',
                 animation: 'voc-board-in .35s ease both',
                 animationDelay: `${(startIdx + i) * 35}ms`,
               }}
@@ -276,10 +272,10 @@ function UserChannel({
                   <Bug size={11} style={{ color: sev.color }} />
                 </span>
                 <span className="text-[11px] font-semibold shrink-0" style={{ color: sev.color }}>{sev.label}</span>
-                <span className="text-[11.5px] text-white/80 truncate">{title}</span>
+                <span className="text-[11.5px] text-token-primary truncate">{title}</span>
               </div>
-              <div className="flex items-center gap-2 flex-wrap text-[10.5px] text-white/35 tabular-nums">
-                <span className="font-mono text-white/30">{d.defectNo}</span>
+              <div className="flex items-center gap-2 flex-wrap text-[10.5px] text-token-muted tabular-nums">
+                <span className="font-mono text-token-muted">{d.defectNo}</span>
                 {d.reporterName ? (
                   <span className="inline-flex items-center gap-1">
                     <Users size={10} />
@@ -302,10 +298,10 @@ function UserChannel({
 function Header() {
   return (
     <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+      <span className="text-[13px] font-semibold text-token-primary inline-flex items-center gap-2.5 min-w-0 flex-wrap">
         <span className="whitespace-nowrap">声道看板</span>
-        <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
-          <Megaphone size={12} className="text-cyan-300/70" />
+        <span className="hidden sm:inline-flex text-[11px] text-token-muted font-normal items-center gap-1.5 whitespace-nowrap">
+          <Megaphone size={12} className="text-semantic-cyan" />
           行为之声（遥测痛点）+ 用户之声（真实缺陷）
         </span>
       </span>

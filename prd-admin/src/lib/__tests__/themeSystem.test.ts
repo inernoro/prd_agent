@@ -14,6 +14,8 @@ const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_ROOT = path.resolve(TEST_DIR, '../../..');
 const TOKENS_PATH = path.resolve(TEST_DIR, '../../styles/tokens.css');
 const MOBILE_COMPAT_GATE_PATH = path.resolve(TEST_DIR, '../../components/MobileCompatGate.tsx');
+const COMMAND_PALETTE_PATH = path.resolve(TEST_DIR, '../../components/command-palette/CommandPalette.tsx');
+const TEAM_ACTIVITY_DIR = path.resolve(TEST_DIR, '../../pages/team-activity');
 
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -117,8 +119,29 @@ describe('主题系统契约', () => {
       expect(contrastRatio(match![1], '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
     });
     expect(lightBlock).toContain('--workflow-accent-text-lightness: 36%');
+    const selectionText = lightBlock.match(/--selection-text:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    expect(selectionText).toBeTruthy();
+    expect(contrastRatio(selectionText!, '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
     expect(tokens).toContain('.surface-tone-dark');
     expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
+  });
+
+  it('关键自适应入口禁止回退为固定暗色表面或低对比小字', () => {
+    const commandPalette = fs.readFileSync(COMMAND_PALETTE_PATH, 'utf8');
+    const teamActivity = fs.readdirSync(TEAM_ACTIVITY_DIR)
+      .filter((name) => name.endsWith('.tsx'))
+      .map((name) => fs.readFileSync(path.join(TEAM_ACTIVITY_DIR, name), 'utf8'))
+      .join('\n');
+
+    expect(commandPalette).toContain('variant="raised"');
+    expect(commandPalette).toContain('className="surface-backdrop"');
+    expect(commandPalette).not.toMatch(/linear-gradient\([^\n]*(?:22,22,28|15,16,20)/);
+    expect(commandPalette).not.toMatch(/var\(--text-primary,\s*#fff\)/);
+
+    expect(teamActivity).not.toContain('tone="dark"');
+    expect(teamActivity).not.toContain('surface-tone-dark');
+    expect(teamActivity).not.toMatch(/text-white\/(?:[1-4]?\d|5[0-5])\b/);
+    expect(teamActivity).not.toMatch(/bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]/i);
   });
 
   it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {

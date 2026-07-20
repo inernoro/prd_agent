@@ -200,6 +200,46 @@
   border-top: 1px solid var(--nested-block-border);
 }
 
+/* 选择项契约：鼠标悬浮先走中性表面，当前项/键盘游标才使用品牌靛蓝。 */
+.surface-option {
+  color: var(--text-primary);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.surface-option:hover {
+  background: var(--bg-card-hover);
+}
+
+.surface-option[data-active="true"] {
+  background: var(--selection-bg);
+}
+
+.surface-option-icon {
+  color: var(--text-secondary);
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+.surface-option[data-active="true"] .surface-option-icon {
+  color: var(--selection-text);
+  background: var(--selection-icon-bg);
+  border-color: var(--selection-border);
+}
+
+.surface-kbd {
+  color: var(--text-muted);
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+.viz-sticky-surface {
+  color: var(--text-secondary);
+  background: var(--viz-sticky-bg);
+  border-color: var(--border-faint);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 .surface-tab {
   color: var(--text-muted);
   border-bottom: 2px solid transparent;

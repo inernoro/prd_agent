@@ -27,6 +27,11 @@ const PATTERNS = {
     regex: /linear-gradient|radial-gradient|boxShadow|box-shadow|backdrop-filter|drop-shadow|filter:/g,
     weight: 2,
   },
+  themeRisk: {
+    label: 'theme contract risk',
+    regex: /tone="dark"|surface-tone-dark|text-white\/(?:[1-4]?\d|5[0-5])\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
+    weight: 3,
+  },
   surfaceUse: {
     label: 'surface use',
     regex: /\bsurface(?:-|")|\bGlassCard\b|\bCard\b|\bButton\b|\bPageHeader\b/g,
@@ -140,6 +145,7 @@ function summarize(projectRoot) {
       hardColor: 0,
       arbitraryTailwind: 0,
       heavyEffect: 0,
+      themeRisk: 0,
       surfaceUse: 0,
     },
   );
@@ -154,6 +160,7 @@ function summarize(projectRoot) {
       hardColor: 0,
       arbitraryTailwind: 0,
       heavyEffect: 0,
+      themeRisk: 0,
       surfaceUse: 0,
     };
     current.files += 1;
@@ -192,6 +199,7 @@ function printHuman(report) {
   console.log(`Hard-coded color: ${report.totals.hardColor}`);
   console.log(`Arbitrary Tailwind: ${report.totals.arbitraryTailwind}`);
   console.log(`Heavy visual effect: ${report.totals.heavyEffect}`);
+  console.log(`Theme contract risk: ${report.totals.themeRisk}`);
   console.log(`Surface/design usage signals: ${report.totals.surfaceUse}`);
 
   const columns = [
@@ -200,6 +208,7 @@ function printHuman(report) {
     { key: 'hardColor', label: 'color' },
     { key: 'arbitraryTailwind', label: 'tw' },
     { key: 'heavyEffect', label: 'fx' },
+    { key: 'themeRisk', label: 'theme' },
     { key: 'surfaceUse', label: 'surface' },
   ];
 
@@ -210,6 +219,7 @@ function printHuman(report) {
   console.log('- Convert container-level background/border/shadow styles to surface, surface-inset, or GlassCard.');
   console.log('- Keep semantic status colors, but route repeated palettes through tokens.');
   console.log('- Treat experience pages as explicit exceptions instead of letting their visual language leak into admin pages.');
+  console.log('- Migrate theme contract risks: fixed dark scopes, low-opacity white text, and mixed fixed/adaptive colors.');
 }
 
 const report = summarize(resolveProjectRoot());
