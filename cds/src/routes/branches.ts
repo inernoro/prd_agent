@@ -1917,34 +1917,152 @@ function selfUpdatePrebuiltEnabled(): boolean {
   return !['0', 'false', 'off', 'no'].includes(raw);
 }
 
-export function replaceDirectoriesAtomically(pairs: Array<{ currentPath: string; nextPath: string }>): void {
+export interface AtomicDirectoryReplacement {
+  currentPath: string;
+  nextPath: string;
+  /**
+   * 指定后保留 currentPath 的上一代。适用于内容哈希静态资源：
+   * 新 index.html 上线后，已打开的旧页面仍可以请求上一代懒加载模块。
+   */
+  previousPath?: string;
+}
+
+export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void {
   const stamp = Date.now();
   const backups = pairs.map((pair, idx) => ({
     ...pair,
     backupPath: `${pair.currentPath}.old.${stamp}.${idx}`,
+    previousBackupPath: pair.previousPath
+      ? `${pair.previousPath}.old.${stamp}.${idx}`
+      : undefined,
     hadCurrent: fs.existsSync(pair.currentPath),
+    hadPrevious: Boolean(pair.previousPath && fs.existsSync(pair.previousPath)),
+    currentMoved: false,
+    nextMoved: false,
   }));
   try {
     for (const pair of backups) {
-      if (pair.hadCurrent) fs.renameSync(pair.currentPath, pair.backupPath);
+      if (!fs.existsSync(pair.nextPath)) {
+        throw new Error(`atomic replacement candidate missing: ${pair.nextPath}`);
+      }
+    }
+    for (const pair of backups) {
+      if (pair.previousPath) {
+        if (pair.hadPrevious && pair.previousBackupPath) {
+          fs.renameSync(pair.previousPath, pair.previousBackupPath);
+        }
+        if (pair.hadCurrent) {
+          fs.renameSync(pair.currentPath, pair.previousPath);
+          pair.currentMoved = true;
+        }
+      } else if (pair.hadCurrent) {
+        fs.renameSync(pair.currentPath, pair.backupPath);
+        pair.currentMoved = true;
+      }
     }
     for (const pair of backups) {
       fs.renameSync(pair.nextPath, pair.currentPath);
-    }
-    for (const pair of backups) {
-      if (pair.hadCurrent) fs.rmSync(pair.backupPath, { recursive: true, force: true });
+      pair.nextMoved = true;
     }
   } catch (err) {
-    for (const pair of backups) {
+    for (const pair of [...backups].reverse()) {
       try {
-        if (fs.existsSync(pair.currentPath)) fs.rmSync(pair.currentPath, { recursive: true, force: true });
-        if (pair.hadCurrent && fs.existsSync(pair.backupPath)) fs.renameSync(pair.backupPath, pair.currentPath);
+        if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
+          fs.rmSync(pair.currentPath, { recursive: true, force: true });
+        }
+        if (pair.previousPath) {
+          if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
+            fs.renameSync(pair.previousPath, pair.currentPath);
+          }
+          if (pair.hadPrevious && pair.previousBackupPath && fs.existsSync(pair.previousBackupPath)) {
+            fs.renameSync(pair.previousBackupPath, pair.previousPath);
+          }
+        } else if (pair.currentMoved && fs.existsSync(pair.backupPath)) {
+          fs.renameSync(pair.backupPath, pair.currentPath);
+        }
       } catch {
         /* best-effort rollback */
       }
     }
     throw err;
   }
+  // 新产物已全部就位后才清理临时备份。清理失败不能反向触发回滚：
+  // rmSync 可能已部分删除备份，此时回滚反而会丢失已上线的完整产物。
+  for (const pair of backups) {
+    try {
+      if (pair.previousPath) {
+        if (pair.hadPrevious && pair.previousBackupPath) {
+          fs.rmSync(pair.previousBackupPath, { recursive: true, force: true });
+        }
+      } else if (pair.hadCurrent) {
+        fs.rmSync(pair.backupPath, { recursive: true, force: true });
+      }
+    } catch {
+      /* stale backup is safe to clean on the next maintenance pass */
+    }
+  }
+}
+
+export type WebDistValidation =
+  | { ok: true; entryFiles: string[] }
+  | { ok: false; error: string };
+
+// pnpm 的 run 参数在脚本名后直接传给 Vite。这里不能加额外的 `--`，
+// 否则 Vite 5 会忽略 outDir 并回退到在线 dist。
+export const WEB_DIST_BUILD_COMMAND = 'pnpm build --outDir dist.next --emptyOutDir';
+
+/**
+ * 验证 Vite 候选产物的 HTML 和实际入口资源。
+ * 不能只检查 index.html 存在，否则缺失入口 JS/CSS 仍会被切到线上。
+ */
+export function validateWebDistCandidate(candidatePath: string): WebDistValidation {
+  const indexPath = path.join(candidatePath, 'index.html');
+  let html = '';
+  try {
+    const stat = fs.statSync(indexPath);
+    if (!stat.isFile() || stat.size <= 0) {
+      return { ok: false, error: 'candidate index.html is empty' };
+    }
+    html = fs.readFileSync(indexPath, 'utf8');
+  } catch {
+    return { ok: false, error: 'candidate index.html is missing' };
+  }
+
+  const candidateRoot = path.resolve(candidatePath);
+  const entryFiles = new Set<string>();
+  const attributePattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  for (const match of html.matchAll(attributePattern)) {
+    const raw = match[1].trim();
+    if (!raw || raw.startsWith('#') || raw.startsWith('data:') || raw.startsWith('//')) continue;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) continue;
+    let relative = raw.split(/[?#]/, 1)[0];
+    try {
+      relative = decodeURIComponent(relative);
+    } catch {
+      return { ok: false, error: `candidate entry path is not decodable: ${raw}` };
+    }
+    relative = relative.replace(/^\.?\//, '');
+    if (!relative) continue;
+    const resolved = path.resolve(candidateRoot, relative);
+    if (!resolved.startsWith(candidateRoot + path.sep)) {
+      return { ok: false, error: `candidate entry escapes output directory: ${raw}` };
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile() || stat.size <= 0) {
+        return { ok: false, error: `candidate entry is empty: ${relative}` };
+      }
+    } catch {
+      return { ok: false, error: `candidate entry is missing: ${relative}` };
+    }
+    entryFiles.add(relative);
+  }
+
+  const files = [...entryFiles];
+  if (!files.some((file) => /\.(?:m?js)$/i.test(file))) {
+    return { ok: false, error: 'candidate index.html has no local JavaScript entry' };
+  }
+  return { ok: true, entryFiles: files };
 }
 
 async function tryApplyCdsPrebuiltForSelfUpdate(input: {
@@ -1992,16 +2110,24 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
   }
 
   const distEntry = path.join(fetched.distDir, 'index.js');
-  const webEntry = path.join(fetched.webDistDir, 'index.html');
-  if (!fs.existsSync(distEntry) || !fs.existsSync(webEntry)) {
+  const webValidation = validateWebDistCandidate(fetched.webDistDir);
+  if (!fs.existsSync(distEntry)) {
     try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
-    return { applied: false, reason: 'prebuilt artifact missing dist/index.js or web-dist/index.html' };
+    return { applied: false, reason: 'prebuilt artifact missing dist/index.js' };
+  }
+  if (!webValidation.ok) {
+    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    return { applied: false, reason: `prebuilt web artifact invalid: ${webValidation.error}` };
   }
 
   try {
     replaceDirectoriesAtomically([
       { currentPath: path.join(cdsDir, 'dist'), nextPath: fetched.distDir },
-      { currentPath: path.join(cdsDir, 'web', 'dist'), nextPath: fetched.webDistDir },
+      {
+        currentPath: path.join(cdsDir, 'web', 'dist'),
+        nextPath: fetched.webDistDir,
+        previousPath: path.join(cdsDir, 'web', 'dist.previous'),
+      },
     ]);
     try { fs.writeFileSync(path.join(cdsDir, 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     try { fs.writeFileSync(path.join(cdsDir, 'web', 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
@@ -9828,8 +9954,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *
    * 行为:
    *   - .build-sha 已匹配 newHead → 跳过(no-op,~ms)
-   *   - 否则:删 .build-sha → pnpm install → pnpm build(每 15s 心跳防 cloudflare
-   *     100s 切流)→ 写新 .build-sha(full SHA)
+   *   - 否则:pnpm install → 候选目录 pnpm build(每 5s 心跳防止中间层切流)
+   *     → 校验入口资源 → 写新 .build-sha(full SHA) → 原子换代
    *   - 失败:writeFileSync .build-error + .cds/web-build.log,并抛错中止 self-update
    *     成功态。否则后端 HEAD 已更新而 web/dist 仍是旧包,会造成"看似更新成功,
    *     前端实际没变"。
@@ -9851,6 +9977,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const repoRoot = config.repoRoot;
     const webDir = path.join(repoRoot, 'cds', 'web');
     const webDist = path.join(webDir, 'dist');
+    const webDistNext = path.join(webDir, 'dist.next');
+    const webDistPrevious = path.join(webDir, 'dist.previous');
     const webShaFile = path.join(webDist, '.build-sha');
     // .web-input-sha 是 cds/web 子树的"上次构建快照锚点":存的是
     // `git log -1 --format=%H HEAD -- cds/web` 的输出(最近一次触动 cds/web
@@ -9918,9 +10046,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       return finishWebBuildTiming(true, 'web-input-match');
     }
-    send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
+    send('web-build', 'running', `正在候选目录重建 web/dist (日志: cds/.cds/web-build.log)`);
     try {
-      try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
       const buildStartedAt = Date.now();
       // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
       // 切了 SSE 长连接。15s 一次的 tick 在 vite 子进程长时间无 stdout 时仍可能
@@ -9946,8 +10073,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           send('web-build', 'error', message);
           // Bugbot PR #524 第十一轮:install 失败时也要写 .build-error,与
           // build 失败路径一致,这样 /api/self-status 能通过 webBuildError 识别;
-          // 否则 .build-sha 已被前面 unlinkSync 删掉,但 webBuildError=''
-          // bundleStale 仅靠 SHA 不一致间接触发 — 失败原因看不到。
+          // 否则 webBuildError='' 时只能从旧 SHA 与新 HEAD 不一致间接
+          // 判断 bundleStale，操作人看不到安装阶段的真实失败原因。
           try {
             fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
             fs.writeFileSync(webBuildLogPath,
@@ -9961,24 +10088,70 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ignore */ }
           abortWebBuild(message);
         } else {
+          // 禁止 Vite 直接清空在线 web/dist。候选目录必须与 dist 同父目录，
+          // 这样后续 rename 是同文件系统原子操作。构建失败期间旧 index 和旧 chunk
+          // 始终保持可读。
+          try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
           const wBuild = await shell.exec(
-            'pnpm build',
+            WEB_DIST_BUILD_COMMAND,
             { cwd: webDir, timeout: 300_000 },
           );
           clearInterval(heartbeat);
           if (wBuild.exitCode === 0) {
+            const candidate = validateWebDistCandidate(webDistNext);
+            if (!candidate.ok) {
+              const message = `web build 产物校验失败: ${candidate.error}`;
+              send('web-build', 'error', message);
+              try {
+                fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+                fs.writeFileSync(webBuildLogPath,
+                  `=== ${new Date().toISOString()} in-process web candidate validation to ${newHead} ===\n` +
+                  `VALIDATION: ${candidate.error}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
+                );
+                fs.writeFileSync(
+                  path.join(webDist, '.build-error'),
+                  `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=validate\nerror=${candidate.error}\nlog=${webBuildLogPath}\n`,
+                );
+              } catch { /* ignore */ }
+              abortWebBuild(message);
+            }
             // 写 FULL sha(40字符)与 'git rev-parse HEAD' 输出一致(no-op 检测要求)
             let fullHeadForSha = '';
             try {
               fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
             } catch { /* fallback 用 short */ }
-            try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
-            // 同步写 .web-input-sha:下次自更新若 cds/web 子树没动,fast-path 命中。
             try {
-              if (lastWebChange) fs.writeFileSync(webInputShaFile, lastWebChange + '\n');
-            } catch { /* 写不上不致命,下次走 ① 路径或正式构建 */ }
+              fs.writeFileSync(
+                path.join(webDistNext, '.build-sha'),
+                (fullHeadForSha || newHead) + '\n',
+              );
+              if (lastWebChange) {
+                fs.writeFileSync(path.join(webDistNext, '.web-input-sha'), lastWebChange + '\n');
+              }
+            } catch (err) {
+              const message = `web build 产物标记写入失败: ${(err as Error).message}`;
+              send('web-build', 'error', message);
+              abortWebBuild(message);
+            }
+            try {
+              replaceDirectoriesAtomically([{
+                currentPath: webDist,
+                nextPath: webDistNext,
+                previousPath: webDistPrevious,
+              }]);
+            } catch (err) {
+              const message = `web/dist 原子切换失败，已保留旧产物: ${(err as Error).message}`;
+              send('web-build', 'error', message);
+              try {
+                fs.writeFileSync(
+                  path.join(webDist, '.build-error'),
+                  `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=swap\nerror=${(err as Error).message}\nlog=${webBuildLogPath}\n`,
+                );
+              } catch { /* ignore */ }
+              abortWebBuild(message);
+            }
             const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
-            send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+            send('web-build', 'done', `web/dist 已原子切换到 ${newHead} (${elapsed}s)`);
             return finishWebBuildTiming(false, 'rebuilt');
           } else {
             const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
@@ -10000,6 +10173,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       } finally {
         clearInterval(heartbeat);
+        try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
       }
     } catch (err) {
       if (!res.writableEnded) {
