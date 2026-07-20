@@ -319,6 +319,7 @@ export default function MobileHomePage() {
               {agentChips.map((t) => {
                 const Icon = iconFor(t.icon);
                 const hasArtwork = hasAgentCardArtwork(t.agentKey);
+                const agentAccent = accentFor(t.agentKey);
                 return (
                   <button
                     key={t.id}
@@ -338,7 +339,7 @@ export default function MobileHomePage() {
                   >
                     {hasArtwork ? (
                       <>
-                        <AgentCardArtwork agentKey={t.agentKey} compact />
+                        <AgentCardArtwork agentKey={t.agentKey} compact tint={agentAccent.from} />
                         <span className="relative z-10 flex w-full items-start justify-between gap-2">
                           <span
                             className="line-clamp-2"
@@ -367,7 +368,7 @@ export default function MobileHomePage() {
                       </>
                     ) : (
                       <>
-                        <AppStoreAppIcon Icon={Icon} accent={accentFor(t.agentKey)} size={36} />
+                        <AppStoreAppIcon Icon={Icon} accent={agentAccent} size={36} />
                         <span className="whitespace-nowrap" style={{ ...AS_TYPE.itemSubtitle, fontWeight: 600, color: C.label }}>
                           {t.name}
                         </span>

@@ -77,7 +77,6 @@ import { getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
-import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -472,7 +471,6 @@ export default function AgentLauncherPage() {
   const { isMobile } = useBreakpoint();
   // 浅色外观（2026-07-17 全局化）下隐藏 hero 的暗色装饰层、改走文字 token，
   // 否则白字/白雾直接糊在纸面上（首页是门面，浅色必须能看）
-  const isLight = useDataTheme() === 'light';
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
@@ -615,13 +613,7 @@ export default function AgentLauncherPage() {
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
                     <div
-                      className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
-                      style={{
-                        background: isLight ? 'var(--nested-block-bg)' : 'rgba(247, 247, 251, 0.045)',
-                        border: `1px solid ${isLight ? 'var(--nested-block-border)' : 'rgba(247, 247, 251, 0.13)'}`,
-                        color: isLight ? 'var(--text-muted)' : 'rgba(214, 216, 212, 0.78)',
-                        textShadow: 'none',
-                      }}
+                      className="home-launcher-eyebrow inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
                     >
                       <Sparkles size={10} />
                       MAP · 米多智能体生态平台
@@ -629,27 +621,15 @@ export default function AgentLauncherPage() {
                   </Reveal>
                   <Reveal delay={REVEAL.heroTitle} duration={REVEAL_DURATION} offset={20}>
                     <h1
-                      className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
+                      className={`home-launcher-title font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
                       style={{
-                        color: 'var(--text-primary, #fff)',
-                        textShadow: isLight ? 'none' : '0 1px 12px rgba(0,0,0,0.35)',
                         lineHeight: 1.15,
                       }}
                     >
                       {greeting}
                       {displayName ? '，' : ''}
                       {displayName && (
-                        <span
-                          style={isLight
-                            // 浅色：银白渐变在纸面上隐形，名字直接走主文字色
-                            ? { color: 'var(--text-primary)' }
-                            : {
-                                background: 'linear-gradient(100deg, #F7F7FB 0%, #C8C5BE 100%)',
-                                WebkitBackgroundClip: 'text',
-                                WebkitTextFillColor: 'transparent',
-                                backgroundClip: 'text',
-                              }}
-                        >
+                        <span className="home-launcher-display-name">
                           {displayName}
                         </span>
                       )}
@@ -658,10 +638,8 @@ export default function AgentLauncherPage() {
                   <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
                     <div
                       data-tour-id="home-subtitle"
-                      className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
+                      className={`home-launcher-subtitle mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
-                        color: isLight ? 'var(--text-secondary)' : 'rgba(247, 247, 251, 0.72)',
-                        textShadow: isLight ? 'none' : '0 1px 4px rgba(0,0,0,0.2)',
                         maxWidth: 520,
                       }}
                     >

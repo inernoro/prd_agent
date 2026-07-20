@@ -8,7 +8,7 @@
    用实底暗色表面 + 精致边框 + 干净阴影替代模糊玻璃，
    类似 Linear / Notion / Vercel Dashboard 的现代暗色 UI。
 
-   CSS 变量已在 themeComputed.ts 中按性能模式切换为实底值，
+   CSS 变量已在 tokens.css 的材质契约中切换为实底值，
    此处仅需清除 backdrop-filter 并微调视觉细节。
    ======================================== */
 
@@ -30,7 +30,7 @@ html[data-perf-mode="performance"][data-material="solid"] *::after {
    界面材质 · 素色（data-material="solid"，2026-07-16 系统级统一）
    与性能模式共用「清除 backdrop-filter + 实底 token」的表面机制，但只改材质、
    不带性能模式压缩过渡/动画的副作用。玻璃 token（--glass-bg-*）已由
-   themeComputed 切为高不透明实底，这里补两件事：
+   tokens.css 切为高不透明实底，这里补两件事：
    1) 全局清 blur（含 inline 与伪元素）——86 处散装 backdrop-filter 一次统一；
    2) 压平主要 chrome 的棱光内高光与超大投影（「浮肿感」的来源）。
    ======================================== */

@@ -21,6 +21,7 @@ import prReviewArtwork from '@/assets/agent-card-art/pr-review.webp';
 import cdsAgentArtwork from '@/assets/agent-card-art/cds-agent.webp';
 import techDocFormatAgentArtwork from '@/assets/agent-card-art/tech-doc-format-agent.webp';
 import emergenceAgentArtwork from '@/assets/agent-card-art/emergence-agent.webp';
+import type { CSSProperties } from 'react';
 
 interface AgentCardPresentation {
   artwork: string;
@@ -84,7 +85,8 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint 
   return (
     <div
       aria-hidden
-      className="absolute inset-0 pointer-events-none"
+      className="agent-card-artwork absolute inset-0 pointer-events-none"
+      data-compact={compact ? 'true' : 'false'}
       style={imageHeight ? { clipPath: `inset(0 0 calc(100% - ${imageHeight}) 0)` } : undefined}
     >
       <img
@@ -93,25 +95,16 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint 
         draggable={false}
         loading="lazy"
         decoding="async"
-        className="absolute inset-0 h-full w-full object-cover object-center opacity-[0.86] transition-[transform,opacity] duration-500 group-hover:scale-[1.015] group-hover:opacity-[0.92]"
+        className="agent-card-artwork-image absolute inset-0 h-full w-full object-cover object-center"
       />
       {tint && (
         <div
-          className="absolute inset-0 opacity-70 transition-opacity duration-300 group-hover:opacity-85"
-          style={{
-            background: `linear-gradient(128deg, ${tint} 0%, transparent 72%)`,
-            mixBlendMode: 'color',
-          }}
+          className="agent-card-artwork-tint absolute inset-0"
+          style={{ '--agent-card-tint': tint } as CSSProperties}
         />
       )}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: compact
-            ? 'var(--media-card-overlay-compact)'
-            : 'var(--media-card-overlay)',
-        }}
-      />
+      <div className="agent-card-artwork-wash absolute inset-0" />
+      <div className="agent-card-artwork-overlay absolute inset-0" />
       <div
         className="absolute inset-0"
         style={{ boxShadow: 'var(--media-card-inset)' }}

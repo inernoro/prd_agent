@@ -24,6 +24,13 @@ import { fileURLToPath } from 'node:url';
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = path.resolve(TEST_DIR, '../..');
 const BASELINE_PATH = path.join(TEST_DIR, 'themeHardcodeBaseline.json');
+const SEMANTIC_THEME_CONSUMERS = [
+  'components/agent-shell/AgentCardArtwork.tsx',
+  'pages/AgentLauncherPage.tsx',
+  'pages/ai-toolbox/components/ToolCard.tsx',
+  'styles/home-launcher.css',
+  'styles/media-card.css',
+] as const;
 
 /** 白透明表面（浅色下隐形）。 */
 const WHITE_ALPHA_RE = /rgba\(\s*255\s*,\s*255\s*,\s*255/g;
@@ -99,7 +106,7 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
       if (counts.darkHex > base.darkHex) {
         violations.push(
           `${file}: 深色 hex 字面量由 ${base.darkHex} 增至 ${counts.darkHex} —— 浅色主题下会变成漂浮暗块。` +
-            `请改用 var(--bg-base)/var(--bg-elevated)/var(--panel-solid)，或走 useDataTheme()/useAppStoreColors() 双皮肤分支`,
+            `请改用 var(--bg-base)/var(--bg-elevated)/var(--panel-solid) 等语义 token，不要在组件里新增明暗分支`,
         );
       }
     }
@@ -114,5 +121,18 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
         ...violations,
       ].join('\n'),
     ).toEqual([]);
+  });
+
+  it('共享首页与图片卡只消费语义 token，不新增页面级明暗分支', () => {
+    const violations = SEMANTIC_THEME_CONSUMERS.flatMap((relativePath) => {
+      const content = fs.readFileSync(path.join(SRC_DIR, relativePath), 'utf8');
+      const reasons: string[] = [];
+      if (/useDataTheme|useMobileThemeStore/.test(content)) reasons.push('读取主题状态');
+      if (/\[data-theme=["']light["']\]/.test(content)) reasons.push('声明浅色选择器');
+      if (/\bisLight\b|\bisDark\b/.test(content)) reasons.push('维护明暗布尔分支');
+      return reasons.map((reason) => `${relativePath}: ${reason}`);
+    });
+
+    expect(violations).toEqual([]);
   });
 });

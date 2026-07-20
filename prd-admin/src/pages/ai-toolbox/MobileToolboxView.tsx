@@ -224,7 +224,6 @@ export function MobileToolboxView() {
 /* ─────────── 智能体大卡（单列大图） ─────────── */
 
 function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
-  const light = useDataTheme() === 'light';
   const accent = accentFor(item.agentKey);
   const Icon = iconFor(item.icon);
   const hasArtwork = hasAgentCardArtwork(item.agentKey);
@@ -241,10 +240,10 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         padding: 16,
         color: '#fff',
         background: hasArtwork ? 'var(--media-card-base)' : `linear-gradient(135deg, ${accent.from}, ${accent.to})`,
-        boxShadow: light ? '0 8px 22px -12px rgba(20,21,26,0.35)' : '0 8px 22px -10px rgba(0,0,0,0.6)',
+        boxShadow: 'var(--media-card-shadow)',
       }}
     >
-      <AgentCardArtwork agentKey={item.agentKey} compact />
+      <AgentCardArtwork agentKey={item.agentKey} compact tint={accent.from} />
       {pcOnly && (
         <span
           className="absolute z-10"

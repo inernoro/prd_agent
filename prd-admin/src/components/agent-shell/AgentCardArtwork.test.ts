@@ -44,8 +44,20 @@ describe('AgentCardArtwork', () => {
       createElement(AgentCardArtwork, { agentKey: 'visual-agent', tint: 'hsl(271 68% 64%)' }),
     );
 
-    expect(html).toContain('linear-gradient(128deg, hsl(271 68% 64%) 0%, transparent 72%)');
-    expect(html).toContain('mix-blend-mode:color');
+    expect(html).toContain('agent-card-artwork-tint');
+    expect(html).toContain('--agent-card-tint:hsl(271 68% 64%)');
+    expect(html).toContain('agent-card-artwork-wash');
+    expect(html).toContain('agent-card-artwork-overlay');
+  });
+
+  it('用共享契约区分紧凑遮罩，不在组件里判断明暗主题', () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentCardArtwork, { agentKey: 'visual-agent', compact: true }),
+    );
+
+    expect(html).toContain('data-compact="true"');
+    expect(html).toContain('agent-card-artwork-image');
+    expect(html).not.toContain('data-theme');
   });
 
   it('高密度任务标识保留可访问名称并省略重复标签', () => {

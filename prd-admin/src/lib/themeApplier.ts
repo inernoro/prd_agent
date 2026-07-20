@@ -5,7 +5,36 @@
 
 import type { ThemeConfig } from '@/types/theme';
 import { DEFAULT_THEME_CONFIG } from '@/types/theme';
-import { computeThemeVars } from './themeComputed';
+
+/**
+ * 旧版主题运行时曾把这些变量以内联样式写到 <html>，迫使浅色 token 使用
+ * !important 才能覆盖。现在明暗配色与材质均由 tokens.css 统一管理；这里仅
+ * 清理存量内联值，避免热更新或旧会话继续污染 CSS 级联。
+ */
+const LEGACY_INLINE_THEME_VARS = [
+  '--bg-base',
+  '--bg-elevated',
+  '--bg-card',
+  '--glass-bg-start',
+  '--glass-bg-end',
+  '--glass-border',
+  '--border-subtle',
+  '--border-default',
+  '--border-hover',
+  '--border-faint',
+  '--nested-block-bg',
+  '--nested-block-border',
+  '--list-item-bg',
+  '--list-item-border',
+  '--list-item-hover-bg',
+  '--table-header-bg',
+  '--table-row-border',
+  '--table-row-hover-bg',
+] as const;
+
+function clearLegacyInlineThemeVars(root: HTMLElement): void {
+  LEGACY_INLINE_THEME_VARS.forEach((key) => root.style.removeProperty(key));
+}
 
 /**
  * 检测当前平台是否为 Windows
@@ -79,15 +108,11 @@ export function applyThemeToDOM(rawConfig: ThemeConfig): void {
   const config = normalizeThemeConfig(rawConfig);
   const reduceEffects = shouldReduceEffects(config);
   const solidMaterial = isSolidMaterial(config);
-  // 表面 token 只由材质决定（素色 → 实底 token 集；玻璃 → 玻璃 token 集），
-  // 性能模式不再参与表面判定，只通过 data-perf-mode 压动画。
-  const vars = computeThemeVars(config, solidMaterial);
   const root = document.documentElement;
 
-  // 注入计算后的 CSS 变量
-  Object.entries(vars).forEach(([key, value]) => {
-    root.style.setProperty(key, String(value));
-  });
+  // 明暗与材质的视觉值只允许在 tokens.css 定义。运行时只挂语义属性，
+  // 组件无需也不应自行判断 light / dark。
+  clearLegacyInlineThemeVars(root);
 
   // 设置 data 属性供 CSS 选择器使用
   root.dataset.themeDepth = config.colorDepth;
@@ -111,33 +136,7 @@ export function applyThemeToDOM(rawConfig: ThemeConfig): void {
 export function clearThemeFromDOM(): void {
   const root = document.documentElement;
 
-  // 清除 CSS 变量
-  const varsToRemove = [
-    '--bg-base',
-    '--bg-elevated',
-    '--bg-card',
-    '--glass-bg-start',
-    '--glass-bg-end',
-    '--glass-border',
-    '--border-subtle',
-    '--border-default',
-    '--border-hover',
-    '--border-faint',
-    // 内嵌块样式变量
-    '--nested-block-bg',
-    '--nested-block-border',
-    '--list-item-bg',
-    '--list-item-border',
-    '--list-item-hover-bg',
-    // 表格样式变量
-    '--table-header-bg',
-    '--table-row-border',
-    '--table-row-hover-bg',
-  ];
-
-  varsToRemove.forEach((key) => {
-    root.style.removeProperty(key);
-  });
+  clearLegacyInlineThemeVars(root);
 
   // 清除 data 属性
   delete root.dataset.themeDepth;

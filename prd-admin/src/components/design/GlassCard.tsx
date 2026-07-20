@@ -198,7 +198,7 @@ function buildObsidianStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // 背景：使用 CSS 变量（已在 themeComputed 中切换为纯平实底值）。
+  // 背景：使用 CSS 变量（已在 tokens.css 的材质契约中切换为纯平实底值）。
   // 2026-07-16 现代化重做：去掉白色顶部镜面高光——那是「塑料亚克力感」的来源；
   // 素色的层级只靠 细描边 + 底色阶梯 表达（Linear/Vercel 式扁平）。
   // gold / accentHue 变体保留一层极轻的色彩顶部氛围（身份色，不是镜面反光）。

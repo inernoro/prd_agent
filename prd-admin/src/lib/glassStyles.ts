@@ -3,9 +3,9 @@
  *
  * 设计思路：
  * - 质量模式：液态玻璃 backdrop-filter blur，背景使用 CSS 变量中的半透明值
- * - 性能模式：globals.css 的 `html[data-perf-mode="performance"] *` 规则
- *   会用 !important 清除所有 backdrop-filter；themeComputed.ts 同时把
- *   --glass-bg-start / --glass-bg-end 切换为实底暗色值，因此引用 CSS 变量
+ * - 素色材质：legacy.css 的 `html[data-material="solid"] *` 规则
+ *   会清除所有 backdrop-filter；tokens.css 同时把
+ *   --glass-bg-start / --glass-bg-end 切换为实底值，因此引用 CSS 变量
  *   的组件自动得到 Obsidian 风格。
  *
  * 使用方式：

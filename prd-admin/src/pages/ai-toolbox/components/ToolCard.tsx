@@ -325,7 +325,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           border: hasArtwork ? 'none' : glassTileStyle(accent).border,
         }}
       >
-        <AgentCardArtwork agentKey={item.agentKey} />
+        <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} />
         {hasArtwork && (
           <div
             aria-hidden
