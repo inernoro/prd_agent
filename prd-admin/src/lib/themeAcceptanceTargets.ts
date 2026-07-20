@@ -32,6 +32,7 @@ export const THEME_ACCEPTANCE_TARGETS: readonly ThemeAcceptanceTarget[] = [
   { id: 'voc', path: '/team-activity', themes: BOTH_THEMES, states: ['default', 'populated-state'] },
   { id: 'command-palette', path: '/', themes: BOTH_THEMES, states: ['keyboard-overlay-open'] },
   { id: 'emergence', path: '/emergence', themes: BOTH_THEMES, states: ['default', 'hover-primary-card', 'empty-state', 'populated-state'] },
+  { id: 'project-route-agent', path: '/project-route-agent', themes: BOTH_THEMES, states: ['default', 'selected-tab', 'populated-state'] },
   settingsTarget('user-space'),
   settingsTarget('account'),
   settingsTarget('skin'),
@@ -44,4 +45,3 @@ export const THEME_ACCEPTANCE_TARGETS: readonly ThemeAcceptanceTarget[] = [
   settingsTarget('short-links'),
   settingsTarget('peer-sync'),
 ];
-

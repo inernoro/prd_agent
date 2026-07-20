@@ -29,8 +29,13 @@ const PATTERNS = {
   },
   themeRisk: {
     label: 'theme contract risk',
-    regex: /tone="dark"|surface-tone-dark|text-white(?:\/\d+)?\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
+    regex: /text-white(?:\/\d+)?\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
     weight: 3,
+  },
+  declaredDarkScope: {
+    label: 'declared dark scope',
+    regex: /surface-tone-dark|data-surface-tone=["']dark["']/gi,
+    weight: 0,
   },
   fixedThemeSurface: {
     label: 'fixed theme surface',
@@ -60,6 +65,12 @@ const EXCLUDE_PATTERNS = getArgValues('--exclude')
   .flatMap((value) => value.split(','))
   .map((value) => value.trim())
   .filter(Boolean);
+
+// Only experiences whose whole page is intentionally dark may bypass adaptive
+// surface/text findings. Local dark islands still remain visible to the scan.
+const FULL_DARK_SURFACE_FILES = new Set([
+  'pages/cds-agent/CdsAgentPage.tsx',
+]);
 
 function getArgValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -124,6 +135,12 @@ function analyzeFile(projectRoot, filePath) {
     counts[key] = countMatches(text, pattern.regex);
   }
 
+  const undeclaredThemeRisk = FULL_DARK_SURFACE_FILES.has(relativePath)
+    ? counts.dynamicTextColor
+    : Math.max(0, counts.fixedThemeSurface - counts.declaredDarkScope)
+      + counts.fixedThemeText
+      + counts.dynamicTextColor;
+
   const score =
     counts.inlineStyle * PATTERNS.inlineStyle.weight +
     counts.hardColor * PATTERNS.hardColor.weight +
@@ -134,6 +151,7 @@ function analyzeFile(projectRoot, filePath) {
     path: relativePath,
     module: moduleKey(relativePath),
     score,
+    undeclaredThemeRisk,
     ...counts,
   };
 }
@@ -151,10 +169,11 @@ function summarize(projectRoot) {
     (acc, row) => {
       acc.files += 1;
       acc.score += row.score;
+      acc.undeclaredThemeRisk += row.undeclaredThemeRisk;
       for (const key of Object.keys(PATTERNS)) acc[key] += row[key];
       return acc;
     },
-    { files: 0, score: 0, ...emptyPatternCounts },
+    { files: 0, score: 0, undeclaredThemeRisk: 0, ...emptyPatternCounts },
   );
 
   const modules = new Map();
@@ -163,10 +182,12 @@ function summarize(projectRoot) {
       module: row.module,
       files: 0,
       score: 0,
+      undeclaredThemeRisk: 0,
       ...emptyPatternCounts,
     };
     current.files += 1;
     current.score += row.score;
+    current.undeclaredThemeRisk += row.undeclaredThemeRisk;
     for (const key of Object.keys(PATTERNS)) current[key] += row[key];
     modules.set(row.module, current);
   }
@@ -177,6 +198,9 @@ function summarize(projectRoot) {
     excluded: EXCLUDE_PATTERNS,
     totals,
     topFiles: rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, PRINT_TOP),
+    topThemeRisks: rows.filter((row) => row.undeclaredThemeRisk > 0)
+      .sort((a, b) => b.undeclaredThemeRisk - a.undeclaredThemeRisk)
+      .slice(0, PRINT_TOP),
     topModules: Array.from(modules.values()).filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, PRINT_TOP),
   };
 }
@@ -205,6 +229,7 @@ function printHuman(report) {
   console.log(`Fixed theme surface: ${report.totals.fixedThemeSurface}`);
   console.log(`Fixed theme text: ${report.totals.fixedThemeText}`);
   console.log(`Dynamic text color: ${report.totals.dynamicTextColor}`);
+  console.log(`Undeclared theme risk: ${report.totals.undeclaredThemeRisk}`);
   console.log(`Surface/design usage signals: ${report.totals.surfaceUse}`);
 
   const columns = [
@@ -214,6 +239,8 @@ function printHuman(report) {
     { key: 'arbitraryTailwind', label: 'tw' },
     { key: 'heavyEffect', label: 'fx' },
     { key: 'themeRisk', label: 'theme' },
+    { key: 'undeclaredThemeRisk', label: 'undeclared' },
+    { key: 'declaredDarkScope', label: 'dark-scope' },
     { key: 'fixedThemeSurface', label: 'fixed-bg' },
     { key: 'fixedThemeText', label: 'fixed-text' },
     { key: 'dynamicTextColor', label: 'dynamic-text' },
@@ -222,6 +249,7 @@ function printHuman(report) {
 
   printTable('Top modules', report.topModules, [...columns, { key: 'module', label: 'module' }]);
   printTable('Top files', report.topFiles, [...columns, { key: 'path', label: 'path' }]);
+  printTable('Top undeclared theme risks', report.topThemeRisks, [...columns, { key: 'path', label: 'path' }]);
 
   console.log('\nNext actions');
   console.log('- Convert container-level background/border/shadow styles to surface, surface-inset, or GlassCard.');

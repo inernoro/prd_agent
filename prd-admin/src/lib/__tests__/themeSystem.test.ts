@@ -24,6 +24,9 @@ const SETTINGS_PAGE_PATH = path.resolve(TEST_DIR, '../../pages/SettingsPage.tsx'
 const PEER_NODES_PATH = path.resolve(TEST_DIR, '../../pages/settings/PeerNodesSettings.tsx');
 const INFRA_SERVICES_PATH = path.resolve(TEST_DIR, '../../pages/infra-services/InfraServicesPage.tsx');
 const EMERGENCE_CARD_PATH = path.resolve(TEST_DIR, '../../pages/emergence/EmergenceTreeCard.tsx');
+const CDS_AGENT_PATH = path.resolve(TEST_DIR, '../../pages/cds-agent/CdsAgentPage.tsx');
+const PROJECT_ROUTE_PATH = path.resolve(TEST_DIR, '../../pages/project-route-agent/ProjectRouteAgentPage.tsx');
+const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-debt-report.mjs');
 
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -182,6 +185,30 @@ describe('主题系统契约', () => {
     expect(emergenceCard).toContain("color: 'var(--text-secondary)'");
     expect(emergenceCard).toContain("background: 'linear-gradient(180deg, transparent, var(--bg-card-hover))'");
     expect(emergenceCard).not.toMatch(/color:\s*hsla?\(/);
+  });
+
+  it('有意固定暗色的体验页必须显式声明暗色 scope', () => {
+    const cdsAgent = fs.readFileSync(CDS_AGENT_PATH, 'utf8');
+
+    expect(cdsAgent.match(/surface-tone-dark/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(cdsAgent.match(/data-surface-tone="dark"/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('局部暗色 scope 不得豁免整份文件的主题风险', () => {
+    const reportScript = fs.readFileSync(STYLE_DEBT_REPORT_PATH, 'utf8');
+
+    expect(reportScript).toContain('FULL_DARK_SURFACE_FILES.has(relativePath)');
+    expect(reportScript).toContain('counts.fixedThemeSurface - counts.declaredDarkScope');
+    expect(reportScript).not.toContain('counts.declaredDarkScope > 0\n    ? counts.dynamicTextColor');
+  });
+
+  it('风险扫描外扩发现的普通管理页保持自适应，局部暗色弹窗显式隔离', () => {
+    const projectRoute = fs.readFileSync(PROJECT_ROUTE_PATH, 'utf8');
+
+    expect(projectRoute).toContain('text-token-primary');
+    expect(projectRoute).toContain('className="surface-tone-dark relative rounded-xl');
+    expect(projectRoute).toContain('data-surface-tone="dark"');
+    expect(projectRoute).not.toMatch(/text-white(?:\/\d+)?\b|bg-white\/\d+|border-white\/\d+/);
   });
 
   it('浏览器双主题矩阵覆盖所有设置 tab 与关键交互状态', () => {
