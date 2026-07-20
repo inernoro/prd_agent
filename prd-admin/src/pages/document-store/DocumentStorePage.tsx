@@ -76,6 +76,12 @@ import {
   withoutOrphanedDocumentStoreEntry,
   withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
+import {
+  consumeDetailInitialAction,
+  detailInitialActionForStore,
+  type DetailInitialActionRequest,
+  type DocumentStoreDetailAction,
+} from './detailInitialAction';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
@@ -858,7 +864,7 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction, onInitialActionConsumed }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
@@ -866,7 +872,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 当前深链指定的文档；首次进入及浏览器前进/后退时均需同步 */
   initialEntryId?: string;
   /** 进入时自动触发的新增动作（外层知识库列表「+」选库后带入；挂载时消费一次） */
-  initialAction?: 'doc' | 'record' | 'upload' | 'video';
+  initialAction?: DetailInitialActionRequest;
+  /** 自动动作是真正的一次性意图：开始执行即通知父层清除，不能跟着下一次知识库挂载重放。 */
+  onInitialActionConsumed: (requestId: number) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1431,15 +1439,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, []);
 
   // 外层列表「+」选库进入后自动触发对应新增动作（消费一次；与库内 FAB 出一样的结果）
-  const initialActionConsumedRef = useRef(false);
+  const initialActionConsumedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!initialAction || initialActionConsumedRef.current || !store || loading) return;
-    initialActionConsumedRef.current = true;
-    if (initialAction === 'doc') void handleCreateDocument();
-    else if (initialAction === 'record') setShowRecorder(true);
-    else if (initialAction === 'upload') fileInputRef.current?.click();
-    else if (initialAction === 'video') handleOpenVideoParser();
-  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser]);
+    if (!initialAction || initialActionConsumedRef.current === initialAction.id || !store || loading) return;
+    initialActionConsumedRef.current = initialAction.id;
+    onInitialActionConsumed(initialAction.id);
+    if (initialAction.action === 'doc') void handleCreateDocument();
+    else if (initialAction.action === 'record') setShowRecorder(true);
+    else if (initialAction.action === 'upload') fileInputRef.current?.click();
+    else if (initialAction.action === 'video') handleOpenVideoParser();
+  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser, onInitialActionConsumed]);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
@@ -2546,8 +2555,9 @@ export function DocumentStorePage() {
     return initialDeepLinkRef.current.storeId ? initialDeepLinkRef.current.entryId : null;
   });
   // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
-  const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
-  const [detailInitialAction, setDetailInitialAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
+  const [storePickerAction, setStorePickerAction] = useState<DocumentStoreDetailAction | null>(null);
+  const [detailInitialAction, setDetailInitialAction] = useState<DetailInitialActionRequest | null>(null);
+  const detailInitialActionSequenceRef = useRef(0);
   const [quickCaptureResolving, setQuickCaptureResolving] = useState(
     () => hasQuickRecordRequest(location.search),
   );
@@ -2613,7 +2623,11 @@ export function DocumentStorePage() {
         }
 
         setPendingEntryId(null);
-        setDetailInitialAction('record');
+        setDetailInitialAction({
+          id: ++detailInitialActionSequenceRef.current,
+          storeId: res.data.id,
+          action: 'record',
+        });
         setSelectedStoreId(res.data.id);
         navigate({
           pathname: location.pathname,
@@ -3004,7 +3018,10 @@ export function DocumentStorePage() {
       storeId={selectedStoreId}
       key={selectedStoreId}
       initialEntryId={pendingEntryId ?? undefined}
-      initialAction={detailInitialAction ?? undefined}
+      initialAction={detailInitialActionForStore(detailInitialAction, selectedStoreId)}
+      onInitialActionConsumed={(requestId) => {
+        setDetailInitialAction(current => consumeDetailInitialAction(current, requestId));
+      }}
       onBack={() => {
         setSelectedStoreId(null);
         setPendingEntryId(null);
@@ -4028,7 +4045,11 @@ export function DocumentStorePage() {
           scope={tab === 'team' ? 'team' : 'mine'}
           teamId={tab === 'team' ? teamScope.teamId : null}
           onPick={(storeId) => {
-            setDetailInitialAction(storePickerAction);
+            setDetailInitialAction({
+              id: ++detailInitialActionSequenceRef.current,
+              storeId,
+              action: storePickerAction,
+            });
             setStorePickerAction(null);
             setSelectedStoreId(storeId);
           }}
