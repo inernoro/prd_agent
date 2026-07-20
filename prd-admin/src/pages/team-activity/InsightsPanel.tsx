@@ -483,7 +483,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
   if (loading && !data) {
     return (
-      <GlassCard className="flex-1" style={{ minHeight: 0 }}>
+      <GlassCard className="flex-1" tone="dark" style={{ minHeight: 0 }}>
         <div className="h-full flex items-center justify-center">
           <MapSectionLoader text="正在从行为信号中聚合洞察…" />
         </div>
@@ -676,7 +676,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   );
 
   return (
-    <GlassCard className="flex-1 flex flex-col" mobileFlush style={{ minHeight: 0 }}>
+    <GlassCard className="flex-1 flex flex-col" tone="dark" mobileFlush style={{ minHeight: 0 }}>
       <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
         @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
         @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

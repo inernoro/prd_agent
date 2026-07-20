@@ -53,18 +53,6 @@ const D = {
   tooltipBorder: 'rgba(91,140,255,0.15)',
 } as const;
 
-// Icon accent colors (used sparingly for icons / progress bars only)
-const AI = {
-  indigo:  '#818cf8',
-  purple:  '#a78bfa',
-  cyan:    '#22d3ee',
-  emerald: '#34d399',
-  amber:   '#fbbf24',
-  rose:    '#fb7185',
-  blue:    '#60a5fa',
-  slate:   'rgba(148,163,184,0.7)',
-} as const;
-
 // Monochrome primary palette for chart segments
 const MONO = [
   '#5B8CFF', '#7BA6FF', '#4171E6', '#9ABDFF', '#3058C7', '#809FD4', 'rgba(91,140,255,0.35)',
@@ -445,9 +433,9 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
 
 
 const MEDAL_STYLES = [
-  { color: AI.amber, bg: 'rgba(251,191,36,0.06)', border: 'rgba(251,191,36,0.12)', medal: '🥇' },
-  { color: 'rgba(203,213,225,0.8)', bg: 'rgba(203,213,225,0.04)', border: 'rgba(203,213,225,0.10)', medal: '🥈' },
-  { color: 'rgba(180,152,108,0.75)', bg: 'rgba(180,152,108,0.04)', border: 'rgba(180,152,108,0.10)', medal: '🥉' },
+  { color: 'var(--semantic-warning-text)', bg: 'rgba(251,191,36,0.06)', border: 'rgba(251,191,36,0.12)', medal: '1' },
+  { color: 'var(--semantic-neutral-text)', bg: 'rgba(148,163,184,0.06)', border: 'rgba(148,163,184,0.14)', medal: '2' },
+  { color: 'var(--semantic-orange-text)', bg: 'rgba(180,152,108,0.06)', border: 'rgba(180,152,108,0.14)', medal: '3' },
 ];
 
 function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeaderboard | null; loading: boolean }) {

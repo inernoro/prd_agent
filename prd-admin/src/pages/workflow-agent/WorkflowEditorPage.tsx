@@ -232,7 +232,7 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                       className="w-6 h-6 rounded-[6px] flex items-center justify-center flex-shrink-0"
                       style={{
                         background: `hsla(${meta.accentHue}, 60%, 55%, ${isDisabled ? '0.06' : '0.12'})`,
-                        color: `hsla(${meta.accentHue}, 60%, 65%, ${isDisabled ? '0.4' : '0.9'})`,
+                        color: `hsla(${meta.accentHue}, 60%, var(--workflow-accent-text-lightness), ${isDisabled ? '0.4' : '0.9'})`,
                       }}
                     >
                       <Icon className="w-3 h-3" />
@@ -775,7 +775,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               className="w-8 h-8 rounded-[8px] flex items-center justify-center flex-shrink-0"
               style={{
                 background: `hsla(${accentHue}, 60%, 55%, 0.12)`,
-                color: `hsla(${accentHue}, 60%, 65%, 0.9)`,
+                color: `hsla(${accentHue}, 60%, var(--workflow-accent-text-lightness), 0.9)`,
               }}
             >
               {CIcon ? <CIcon className="w-4 h-4" /> : <span>{fallbackBadge}</span>}

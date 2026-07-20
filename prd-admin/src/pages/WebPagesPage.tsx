@@ -2469,13 +2469,13 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-1">
               {shared && (
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
                   <Link2 size={9} /> 已分享
                 </span>
               )}
               <h3
                 className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
-                style={{ color: shared ? '#fbbf24' : 'var(--text-primary)' }}
+                style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
                 onClick={handleVisit}
                 title={site.title}
               >
@@ -2684,7 +2684,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         <div className="flex items-center gap-2">
           {shared && (
             <span
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium"
+              style={{ color: 'var(--semantic-warning-text)' }}
               title="已分享"
             >
               <Link2 size={10} /> 已分享
@@ -2692,7 +2693,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           )}
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
-            style={{ color: shared ? '#fbbf24' : 'var(--text-primary)' }}
+            style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}

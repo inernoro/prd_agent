@@ -11,7 +11,22 @@ import {
 } from '@/types/theme';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ADMIN_ROOT = path.resolve(TEST_DIR, '../../..');
 const TOKENS_PATH = path.resolve(TEST_DIR, '../../styles/tokens.css');
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+  const linear = channels.map((channel) => (
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
 
 describe('主题系统契约', () => {
   it('默认配置只向用户暴露外观和材质的稳定预设', () => {
@@ -58,7 +73,7 @@ describe('主题系统契约', () => {
     const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
     const lightBlock = tokens.slice(
       tokens.indexOf('[data-theme="light"]'),
-      tokens.indexOf('html, body'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
     );
     const artworkTokenPattern = /--agent-card-artwork-[^:]+:\s*url\('\.\.\/assets\/agent-card-art\/[^']+\.webp'\);/g;
 
@@ -74,5 +89,48 @@ describe('主题系统契约', () => {
     expect(lightBlock).not.toMatch(/#fff(?:fff)?\b/i);
     expect(lightBlock).not.toContain('rgba(255, 255, 255');
     expect(lightBlock).not.toContain('!important');
+  });
+
+  it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
+    const semanticNames = [
+      'success',
+      'warning',
+      'danger',
+      'info',
+      'neutral',
+      'purple',
+      'pink',
+      'orange',
+      'cyan',
+      'indigo',
+    ];
+
+    semanticNames.forEach((name) => {
+      const match = lightBlock.match(new RegExp(`--semantic-${name}-text:\\s*(#[0-9a-fA-F]{6})`));
+      expect(match?.[1]).toBeTruthy();
+      expect(contrastRatio(match![1], '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
+    });
+    expect(lightBlock).toContain('--workflow-accent-text-lightness: 36%');
+    expect(tokens).toContain('.surface-tone-dark');
+    expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
+  });
+
+  it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(ADMIN_ROOT, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    const dockerfile = fs.readFileSync(path.join(ADMIN_ROOT, 'Dockerfile'), 'utf8');
+    const artworkDir = path.join(ADMIN_ROOT, 'src/assets/agent-card-art');
+    const lightArtwork = fs.readdirSync(artworkDir).filter((name) => name.endsWith('-light.webp'));
+
+    expect(packageJson.scripts.build).toBe('tsc && vite build');
+    expect(dockerfile).toContain('pnpm run build');
+    expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
+    expect(lightArtwork).toHaveLength(23);
   });
 });

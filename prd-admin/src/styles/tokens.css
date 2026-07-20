@@ -53,6 +53,19 @@
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.60);
 
+  /* 跨主题状态文字：组件只表达语义，不再各自维护明暗两套前景色。 */
+  --semantic-success-text: #86efac;
+  --semantic-warning-text: #fcd34d;
+  --semantic-danger-text: #fca5a5;
+  --semantic-info-text: #93c5fd;
+  --semantic-neutral-text: #cbd5e1;
+  --semantic-purple-text: #d8b4fe;
+  --semantic-pink-text: #f9a8d4;
+  --semantic-orange-text: #fdba74;
+  --semantic-cyan-text: #67e8f9;
+  --semantic-indigo-text: #a5b4fc;
+  --workflow-accent-text-lightness: 65%;
+
   /* 首页启动器：普通瓦片与全局外观开关。色彩由类别 accent 动态注入，
      这些 token 只负责跨主题可读的中性承载面。 */
   --launcher-tile-bg: rgba(255, 255, 255, 0.055);
@@ -295,6 +308,18 @@
   --text-secondary: rgba(15, 23, 42, 0.78);
   --text-muted: rgba(15, 23, 42, 0.68);          /* 暖灰底上保持 WCAG AA 对比度。 */
 
+  --semantic-success-text: #166534;
+  --semantic-warning-text: #854d0e;
+  --semantic-danger-text: #b91c1c;
+  --semantic-info-text: #1d4ed8;
+  --semantic-neutral-text: #475569;
+  --semantic-purple-text: #6b21a8;
+  --semantic-pink-text: #9d174d;
+  --semantic-orange-text: #9a3412;
+  --semantic-cyan-text: #155e75;
+  --semantic-indigo-text: #4338ca;
+  --workflow-accent-text-lightness: 36%;
+
   /* 浅色图片卡消费独立浅色插画，不再把暗图用滤镜与白色蒙层洗亮。 */
   --agent-card-artwork-arena: url('../assets/agent-card-art/arena-light.webp');
   --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent-light.webp');
@@ -417,6 +442,28 @@
   /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层暖纸色卡片形成层级差,
      既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
   --bg-nested:        rgba(15, 23, 42, 0.025);
+}
+
+/* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
+   仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
+.surface-tone-dark {
+  color-scheme: dark;
+  --bg-card: rgba(255, 255, 255, 0.08);
+  --bg-card-hover: rgba(255, 255, 255, 0.11);
+  --bg-input: rgba(255, 255, 255, 0.07);
+  --bg-input-hover: rgba(255, 255, 255, 0.10);
+  --bg-nested: rgba(255, 255, 255, 0.025);
+  --glass-bg-start: rgb(30, 30, 36);
+  --glass-bg-end: rgb(25, 25, 30);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --border-faint: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-default: rgba(255, 255, 255, 0.18);
+  --border-hover: rgba(255, 255, 255, 0.24);
+  --text-primary: #f7f7fb;
+  --text-secondary: rgba(247, 247, 251, 0.80);
+  --text-muted: rgba(247, 247, 251, 0.60);
+  --workflow-accent-text-lightness: 65%;
 }
 
 html, body {

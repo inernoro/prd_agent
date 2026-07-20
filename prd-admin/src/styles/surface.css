@@ -1094,26 +1094,26 @@
   padding: 0 16px;
   font-size: 11px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-muted);
 }
 
 .marketplace-compat-label {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   margin-right: 2px;
 }
 
 .marketplace-compat-agent {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .marketplace-compat-agent-muted {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .marketplace-compat-dot {
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--border-hover);
 }
 
 .marketplace-filter-content {

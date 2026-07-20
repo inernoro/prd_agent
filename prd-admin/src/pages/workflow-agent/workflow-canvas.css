@@ -306,7 +306,7 @@
 }
 
 .workflow-boolean-field-check {
-  color: hsla(var(--workflow-accent-hue), 60%, 65%, 0.95);
+  color: hsla(var(--workflow-accent-hue), 60%, var(--workflow-accent-text-lightness), 0.95);
 }
 
 /* ──── 连线中点 "+" 按钮 ──── */
@@ -380,7 +380,7 @@
 
 .workflow-accent-icon {
   background: hsla(var(--workflow-accent-hue), 60%, 55%, 0.12);
-  color: hsla(var(--workflow-accent-hue), 60%, 65%, 0.9);
+  color: hsla(var(--workflow-accent-hue), 60%, var(--workflow-accent-text-lightness), 0.9);
 }
 
 .workflow-palette-item {
