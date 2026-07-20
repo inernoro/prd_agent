@@ -604,7 +604,7 @@ export type TranscribeStyleParams = {
   customPrompt?: string;
 };
 
-/** 发起录音转录全链路任务（ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档） */
+/** 发起录音转录。默认只保存 ASR 原文；显式传 styleKey 时才继续生成对应整理结果。 */
 export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(
     api.documentStore.entries.transcribe(entryId),
@@ -625,6 +625,14 @@ export async function restyleTranscribeRun(runId: string, style: TranscribeStyle
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(
     api.documentStore.stores.transcribeRestyle(runId),
     { method: 'POST', body: style },
+  );
+}
+
+/** 保存用户校对后的转录原文，并更新同一录音文档的「转录全文」小节 */
+export async function updateTranscribeTranscript(runId: string, transcriptText: string) {
+  return await apiRequest<{ updated: boolean; transcriptText: string }>(
+    api.documentStore.stores.transcribeTranscript(runId),
+    { method: 'PUT', body: { transcriptText } },
   );
 }
 

@@ -7,6 +7,12 @@ import { deriveTranscribeSteps } from '../transcribeFlowSteps';
  * 断言 Notion 式四步清单逐项点亮的行为真的发生。
  */
 describe('deriveTranscribeSteps', () => {
+  it('快捷录音默认没有 AI 整理步骤', () => {
+    const steps = deriveTranscribeSteps({ ...base, status: 'running', phase: '识别中', includeSummary: false });
+    expect(steps.map(step => step.key)).toEqual(['upload', 'transcribe', 'save']);
+    expect(steps.at(-1)?.label).toBe('保存录音和原文');
+  });
+
   const base = { hasFile: true, hasEntry: true, summaryFailed: false } as const;
 
   it('上传中：第一步 active，其余 pending', () => {

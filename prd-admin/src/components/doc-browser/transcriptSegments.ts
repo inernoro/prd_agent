@@ -57,6 +57,33 @@ export function parseTranscriptSegments(md: string): TranscriptSegment[] {
   return timed.length > 0 ? timed : plain;
 }
 
+/** 替换第 index 条转录文字，保留该句时间戳与全文外的摘要内容。 */
+export function replaceTranscriptSegmentText(md: string, index: number, nextText: string): string {
+  if (index < 0 || !nextText.trim()) return md;
+  const marker = '## 转录全文';
+  const markerIdx = md.indexOf(marker);
+  const bodyStart = markerIdx >= 0 ? markerIdx + marker.length : 0;
+  const head = md.slice(0, bodyStart);
+  const lines = md.slice(bodyStart).split('\n');
+  const hasTimed = lines.some(raw => TS_LINE_RE.test(raw.trim()));
+  let cursor = -1;
+
+  const updated = lines.map((raw) => {
+    const line = raw.trim();
+    const timed = TS_LINE_RE.exec(line);
+    const eligible = hasTimed
+      ? !!timed
+      : !!line && !line.startsWith('#') && !line.startsWith('>') && !/^_.*_$/.test(line);
+    if (!eligible) return raw;
+    cursor += 1;
+    if (cursor !== index) return raw;
+    if (timed) return `**[${timed[1]} - ${timed[2]}]** ${nextText.trim()}`;
+    const indent = raw.match(/^\s*/)?.[0] ?? '';
+    return indent + nextText.trim();
+  });
+  return head + updated.join('\n');
+}
+
 /** 提取「摘要」与「转录全文」之间的整理结果，供音频原文页原地展示。 */
 export function extractTranscriptSummary(md: string): string {
   if (!md) return '';

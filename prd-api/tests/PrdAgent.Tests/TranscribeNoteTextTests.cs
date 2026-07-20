@@ -10,6 +10,24 @@ namespace PrdAgent.Tests;
 /// </summary>
 public class TranscribeNoteTextTests
 {
+    [Fact]
+    public void ReplaceTranscriptSection_PreservesSummaryAndReplacesRawText()
+    {
+        const string note = "## 摘要\n\n旧摘要\n\n## 转录全文\n\n旧原文";
+
+        var result = TranscribeNoteText.ReplaceTranscriptSection(note, "  用户修订后的原文  ");
+
+        Assert.Equal("## 摘要\n\n旧摘要\n\n## 转录全文\n\n用户修订后的原文\n", result);
+    }
+
+    [Fact]
+    public void ReplaceTranscriptSection_AppendsMarkerForLegacyNote()
+    {
+        var result = TranscribeNoteText.ReplaceTranscriptSection("用户已有内容", "修订原文");
+
+        Assert.Equal("用户已有内容\n\n## 转录全文\n\n修订原文\n", result);
+    }
+
     // ── LooksLikeNoSpeech ──
 
     [Theory]

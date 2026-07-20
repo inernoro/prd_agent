@@ -149,8 +149,8 @@ public class SubtitleGenerationProcessor
     }
 
     /// <summary>
-    /// 录音转录全链路（kind = transcribe）：ASR 转录 + AI 摘要 → 原地写回源音频 entry。
-    /// 音频附件、转录全文与整理结果共用同一个知识库文档，条目 Id / 标题 / 目录位置保持不变。
+    /// 录音转录（kind = transcribe）：默认只做 ASR 并原地写回原文。
+    /// 只有请求显式携带整理方式时才继续调用 LLM；录音、原文与可选整理结果始终共用同一文档。
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
@@ -198,29 +198,33 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException(
                 "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。");
 
-        // 2) AI 摘要（流式 delta 推给前端逐字生长）。摘要失败不摧毁整条链路：转录稿仍然交付。
-        await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
+        // 2) 可选整理。默认录音链路不调用 LLM，先把原文最快交给用户；
+        // 只有用户显式选择了整理方式（TemplateKey 非空）才生成整理结果。
         var summary = "";
-        try
+        if (!string.IsNullOrWhiteSpace(run.TemplateKey))
         {
-            summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[doc-store-agent] 转录摘要生成失败，降级为仅转录全文 run={RunId}", run.Id);
+            await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
             try
             {
-                await runStore.AppendEventAsync(
-                    DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
-                    new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
-                    ct: CancellationToken.None);
+                summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
             }
-            catch { /* ignore */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[doc-store-agent] 转录整理生成失败，降级为仅保存原文 run={RunId}", run.Id);
+                try
+                {
+                    await runStore.AppendEventAsync(
+                        DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
+                        new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
+                        ct: CancellationToken.None);
+                }
+                catch { /* ignore */ }
+            }
         }
 
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
 
-        // 3) 落库：摘要 + 转录全文原地写回源音频 entry。
+        // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
         // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
         var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
         await _applyService.SaveContentAsync(
@@ -230,19 +234,21 @@ public class SubtitleGenerationProcessor
         // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
         // Metadata，整字典回写会用加载时的旧快照覆盖掉对方刚写入的键（Codex P2 lost-update）。
         // 旧数据 Metadata 可能是 BSON null（dotted $set 会失败），此时整字典写入无并发丢失风险。
+        var selectedStyleKey = string.IsNullOrWhiteSpace(run.TemplateKey)
+            ? null
+            : TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey;
         var metaUpdate = entry.Metadata == null
             ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string>
             {
                 ["transcribe_entry_id"] = entry.Id,
                 ["generated_kind"] = "transcribe",
-                ["transcribe_style_key"] = TranscribeStyleRegistry.Find(run.TemplateKey)?.Key
-                    ?? TranscribeStyleRegistry.DefaultKey,
             })
-            : Builders<DocumentEntry>.Update
-                .Set(e => e.Metadata["transcribe_entry_id"], entry.Id)
-                .Set(e => e.Metadata["generated_kind"], "transcribe")
-                .Set(e => e.Metadata["transcribe_style_key"],
-                    TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey);
+            : Builders<DocumentEntry>.Update.Combine(
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_entry_id"], entry.Id),
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata["generated_kind"], "transcribe"),
+                selectedStyleKey == null
+                    ? Builders<DocumentEntry>.Update.Unset(e => e.Metadata["transcribe_style_key"])
+                    : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], selectedStyleKey));
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
             metaUpdate,
@@ -285,10 +291,10 @@ public class SubtitleGenerationProcessor
         await UpdateProgressAsync(db, runStore, run, 20, "准备中");
         var noteMd = await _applyService.LoadContentAsync(noteEntry);
 
-        // 转录文本：优先原 run 存的纯文本；老数据兜底从笔记「## 转录全文」节反解
-        var transcript = prior.TranscriptText;
-        if (string.IsNullOrWhiteSpace(transcript))
-            transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
+        // 笔记正文是用户可编辑的权威原文：优先读取当前「转录全文」，run 快照只做老数据兜底。
+        // 否则用户刚校对的内容会在下一次一键整理时被旧 ASR 快照悄悄覆盖语义。
+        var transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
+        if (string.IsNullOrWhiteSpace(transcript)) transcript = prior.TranscriptText;
         if (string.IsNullOrWhiteSpace(transcript))
             throw new InvalidOperationException("找不到原转录文本（笔记可能被改动过），请对源音频重新发起转录");
 
@@ -326,7 +332,7 @@ public class SubtitleGenerationProcessor
                 .Set(r => r.OutputEntryId, noteEntry.Id)
                 .Set(r => r.GeneratedText, summary)
                 // 链式重整理：把转录文本继续带在新 run 上，下一次 restyle 不必回溯最初 run
-                .Set(r => r.TranscriptText, prior.TranscriptText)
+                .Set(r => r.TranscriptText, transcript)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
 

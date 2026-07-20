@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines } from 'lucide-react';
+import { AudioLines, Check, Pencil, X } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { InteractiveTranscriptDialog } from '@/components/doc-browser/InteractiveTranscriptDialog';
 import {
   parseTranscriptSegments,
   hasUsableTimestamps,
   activeSegmentIndex,
+  replaceTranscriptSegmentText,
 } from '@/components/doc-browser/transcriptSegments';
 
 /**
@@ -23,6 +24,7 @@ export function TranscriptKaraoke({
   documentMode = false,
   styleKey,
   onRestyle,
+  onSaveNote,
 }: {
   src: string;
   noteMd: string;
@@ -31,12 +33,17 @@ export function TranscriptKaraoke({
   /** 当前整理方式来自音频 entry metadata；旧数据为空时按后端默认方式展示。 */
   styleKey?: string;
   onRestyle?: () => void;
+  /** 同页校对：保存修改后的整份转录 markdown。 */
+  onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [interactiveOpen, setInteractiveOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const seekRef = useRef<((sec: number) => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -124,11 +131,51 @@ export function TranscriptKaraoke({
           {segments.map((s, i) => {
             const active = synced && i === activeIdx;
             const dist = Math.abs(i - activeIdx);
+            if (documentMode && editingIndex === i && onSaveNote) {
+              return (
+                <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+                  <textarea
+                    autoFocus
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    rows={2}
+                    className="w-full resize-y rounded-[8px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
+                      <X size={12} /> 取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingEdit || !editDraft.trim()}
+                      onClick={() => {
+                        const next = replaceTranscriptSegmentText(noteMd, i, editDraft);
+                        setSavingEdit(true);
+                        void onSaveNote(next)
+                          .then((ok) => { if (ok !== false) setEditingIndex(null); })
+                          .finally(() => setSavingEdit(false));
+                      }}
+                      className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
+                      style={{ background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }}>
+                      <Check size={12} /> 保存
+                    </button>
+                  </div>
+                </div>
+              );
+            }
             return (
               <button
                 key={i}
                 ref={(el) => { lineRefs.current[i] = el; }}
-                onClick={() => { if (synced && s.start >= 0) seekRef.current?.(s.start); }}
+                onClick={() => {
+                  if (documentMode && onSaveNote) {
+                    setEditingIndex(i);
+                    setEditDraft(s.text);
+                    return;
+                  }
+                  if (synced && s.start >= 0) seekRef.current?.(s.start);
+                }}
                 className={`min-h-11 w-full rounded-[10px] px-3 py-1.5 leading-relaxed transition-all duration-300 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${synced ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
                   fontSize: active ? 15 : 13,
@@ -141,9 +188,10 @@ export function TranscriptKaraoke({
                   transform: active ? 'scale(1.02)' : 'scale(1)',
                   background: active ? 'rgba(168,85,247,0.10)' : 'transparent',
                 }}
-                title={synced && s.start >= 0 ? '点击跳到这一句' : undefined}
+                title={documentMode && onSaveNote ? '点击修改这句原文' : synced && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
-                {s.text}
+                <span>{s.text}</span>
+                {documentMode && onSaveNote && <Pencil size={11} className="ml-2 inline opacity-45" />}
               </button>
             );
           })}

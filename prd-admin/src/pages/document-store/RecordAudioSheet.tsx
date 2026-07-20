@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { listDocumentStoresWithPreview } from '@/services';
 import { vaultStartSession, vaultAppendChunk, vaultDeleteSession } from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 
@@ -23,15 +24,16 @@ import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 export type RecordAudioSheetProps = {
   /** 当前知识库：保险箱会话记录归属库，恢复时只在同库提示（避免笔记落错库） */
   storeId?: string;
+  storeName?: string;
   onClose: () => void;
   /**
    * 录音完成：产出音频 File（命名「录音 YYYY-MM-DD HH-mm」+ 按容器定扩展名）。
    * vaultSessionId 是本机保险箱会话 id——调用方必须在【上传成功】后才删除它，
    * 上传失败/断网时保留，下次进页可恢复（不丢数据）。
    */
-  onComplete: (file: File, vaultSessionId: string) => void;
+  onComplete: (file: File, vaultSessionId: string, targetStoreId?: string) => void;
   /** 「上传音频文件」兜底：打开既有的 audio file input */
-  onPickFile: () => void;
+  onPickFile: (targetStoreId?: string) => void;
 };
 
 type RecState = 'requesting' | 'recording' | 'paused' | 'unavailable';
@@ -51,11 +53,17 @@ function formatElapsed(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: RecordAudioSheetProps) {
+export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPickFile }: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
   const [unavailableReason, setUnavailableReason] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
+  const [storeOptions, setStoreOptions] = useState<{ id: string; name: string }[]>(
+    storeId ? [{ id: storeId, name: storeName || '当前知识库' }] : [],
+  );
+  const targetStoreIdRef = useRef(targetStoreId);
+  targetStoreIdRef.current = targetStoreId;
   // 静音守卫：整段峰值电平过低时，完成前先确认（避免上传一段空录音）
   const [confirmSilent, setConfirmSilent] = useState(false);
   const peakLevelRef = useRef(0);
@@ -72,6 +80,18 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
   const finishModeRef = useRef<'complete' | 'discard' | 'abandon'>('discard');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    void listDocumentStoresWithPreview(1, 200, { scope: 'mine' }).then((res) => {
+      if (!res.success) return;
+      const mine = res.data.items.map((item) => ({ id: item.id, name: item.name }));
+      if (storeId && !mine.some(item => item.id === storeId)) {
+        mine.unshift({ id: storeId, name: storeName || '当前知识库' });
+      }
+      setStoreOptions(mine);
+      if (!targetStoreIdRef.current && mine[0]) setTargetStoreId(mine[0].id);
+    });
+  }, [storeId, storeName]);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -142,7 +162,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
             const baseMime = (rec.mimeType || mimeRef.current).split(';')[0] || 'audio/webm';
             const blob = new Blob(chunksRef.current, { type: baseMime });
             const file = new File([blob], buildFileName(recordingExtension(baseMime)), { type: baseMime });
-            onCompleteRef.current(file, vaultIdRef.current);
+            onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
             void vaultDeleteSession(vaultIdRef.current);
@@ -266,7 +286,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
         <MicOff size={24} />
       </span>
       <p className="max-w-[300px] text-[13px] leading-relaxed text-token-secondary">{unavailableReason}</p>
-      <Button variant="primary" size="sm" onClick={() => { onClose(); onPickFile(); }}>
+      <Button variant="primary" size="sm" onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}>
         <FileUp size={14} /> 上传音频文件
       </Button>
     </div>
@@ -293,6 +313,21 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
         )}
       </div>
 
+      {storeOptions.length > 0 && (
+        <label
+          className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+          <span className="shrink-0 text-[12px] font-semibold text-token-secondary">保存到</span>
+          <select
+            value={targetStoreId}
+            onChange={(event) => setTargetStoreId(event.target.value)}
+            className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] text-token-primary outline-none"
+            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+            {storeOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+          </select>
+        </label>
+      )}
+
       {/* 计时大字 */}
       <p className="text-[40px] font-semibold tabular-nums leading-none text-token-primary">
         {formatElapsed(elapsed)}
@@ -316,7 +351,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
           }}>
           <p className="mb-2">整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。</p>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="xs" onClick={() => stopRecorder('complete')}>仍要转录</Button>
+            <Button variant="secondary" size="xs" onClick={() => stopRecorder('complete')}>仍要转成文字</Button>
             <Button variant="ghost" size="xs" onClick={() => stopRecorder('discard')}>放弃本次录音</Button>
             <Button variant="ghost" size="xs" onClick={() => setConfirmSilent(false)}>继续录</Button>
           </div>
@@ -336,7 +371,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
         <button
           onClick={requestComplete}
           disabled={state === 'requesting'}
-          aria-label="完成录音并转录"
+          aria-label="结束录音并转成文字"
           className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
           style={{
             background: 'rgba(34,197,94,0.95)',
@@ -347,7 +382,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
         </button>
         <span className="w-12" />
       </div>
-      <p className="text-[11px] text-token-muted">点绿色按钮完成录音，自动开始转录与摘要</p>
+      <p className="text-[11px] text-token-muted">结束后先生成可编辑原文，是否整理由你决定</p>
     </div>
   );
 
@@ -379,8 +414,8 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
                 <Mic size={15} />
               </div>
               <div>
-                <p className="text-[14px] font-semibold text-token-primary">录音转笔记</p>
-                <p className="text-[11px] text-token-muted">录完自动转录并生成摘要</p>
+                <p className="text-[14px] font-semibold text-token-primary">快捷录音</p>
+                <p className="text-[11px] text-token-muted">录完先生成可编辑原文</p>
               </div>
             </div>
             <button
@@ -401,7 +436,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
             className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 py-4'}`}
             style={{ borderTop: '1px solid var(--border-faint)' }}>
             <button
-              onClick={() => { stopRecorder('discard'); onPickFile(); }}
+              onClick={() => { stopRecorder('discard'); onPickFile(targetStoreId || storeId); }}
               className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover:bg-white/6">
               <FileUp size={13} /> 已有录音文件？上传音频文件
             </button>

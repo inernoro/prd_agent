@@ -3143,8 +3143,8 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>
-    /// 发起录音转录全链路任务（音视频 → ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档）。
-    /// 移动端 Notion 式录音流程的后端入口。可选指定整理方式（styleKey/styleContext/customPrompt）。
+    /// 发起录音转录任务。默认只执行 ASR 并保存原文；只有显式指定 styleKey 时才继续整理。
+    /// 录音、原文和可选整理结果原地保存在同一文档。
     /// </summary>
     [HttpPost("entries/{entryId}/transcribe")]
     public async Task<IActionResult> TranscribeEntry(string entryId, [FromBody] TranscribeStyleRequest? request = null)
@@ -3174,6 +3174,45 @@ public class DocumentStoreController : ControllerBase
             .Select(s => new { key = s.Key, label = s.Label, description = s.Description })
             .ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 保存用户修订后的转录原文。只替换同页「转录全文」小节并保留录音附件、摘要与版本历史。
+    /// </summary>
+    [HttpPut("agent-runs/{runId}/transcript")]
+    public async Task<IActionResult> UpdateTranscribeTranscript(
+        string runId,
+        [FromBody] UpdateTranscribeTranscriptRequest request,
+        [FromServices] ContentReprocessApplyService applyService)
+    {
+        var transcript = request.TranscriptText?.Trim();
+        if (string.IsNullOrWhiteSpace(transcript))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "转录原文不能为空"));
+        if (transcript.Length > 100_000)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "转录原文不能超过 100000 字"));
+
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.Id == runId && r.Kind == DocumentStoreAgentRunKind.Transcribe)
+            .FirstOrDefaultAsync();
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录任务不存在"));
+        if (run.Status != DocumentStoreRunStatus.Done || string.IsNullOrWhiteSpace(run.OutputEntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "转录尚未完成，无法编辑原文"));
+
+        var userId = GetUserId();
+        var (entry, _, err) = await LoadWritableEntryAsync(run.OutputEntryId, userId);
+        if (err != null) return err;
+
+        var current = await applyService.LoadContentAsync(entry!);
+        var updated = TranscribeNoteText.ReplaceTranscriptSection(current, transcript);
+        await applyService.SaveContentAsync(
+            entry!, updated, userId, _db,
+            preserveFileIdentity: !string.IsNullOrWhiteSpace(entry!.AttachmentId));
+        await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+            r => r.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update.Set(r => r.TranscriptText, transcript));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true, transcriptText = transcript }));
     }
 
     /// <summary>
@@ -5824,6 +5863,12 @@ public class TranscribeStyleRequest
 
     /// <summary>自定义整理要求（styleKey == custom 时必填）</summary>
     public string? CustomPrompt { get; set; }
+}
+
+public class UpdateTranscribeTranscriptRequest
+{
+    /// <summary>用户校对后的完整转录原文</summary>
+    public string TranscriptText { get; set; } = string.Empty;
 }
 
 public class ReprocessRequest

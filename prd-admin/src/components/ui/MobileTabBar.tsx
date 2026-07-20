@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, type CSSProperties, type MouseEvent } from 'react';
+import { useState, useCallback, useEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
@@ -15,15 +15,10 @@ import {
   Bug,
   FileBarChart,
   Presentation,
-  Mic,
   ChevronRight,
   X,
   type LucideIcon,
 } from 'lucide-react';
-import {
-  isQuickRecordDoubleActivation,
-  QUICK_RECORD_DOUBLE_ACTIVATION_MS,
-} from './mobileCreateShortcut';
 
 /* ── 快速创建入口 ── */
 interface CreateAction {
@@ -37,14 +32,6 @@ interface CreateAction {
 
 /** 最近热门：平台当前主推的创作方式（带「热门」标签的大行卡） */
 const HOT_ACTIONS: CreateAction[] = [
-  {
-    key: 'quick-record',
-    label: '快捷录音',
-    desc: '自动进入快捷知识库，录完直接转成笔记',
-    icon: Mic,
-    path: '/document-store?quickRecord=1',
-    color: '#34D399',
-  },
   {
     key: 'kb-article',
     label: '知识库文章',
@@ -112,8 +99,6 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
-  const lastCenterActivationRef = useRef<number | null>(null);
-  const singleActivationTimerRef = useRef<number | null>(null);
   // 双主题（2026-07-12「底部没有白」修复）:跟随 <html data-theme>,浅色时整条 Tab 栏
   // 与快速创建抽屉走白底墨字,不再永远压一条黑边在浅色页面底部。
   const light = useDataTheme() === 'light';
@@ -194,33 +179,6 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
-  }, []);
-
-  const handleCenterActivation = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    const now = event.timeStamp;
-    if (isQuickRecordDoubleActivation(lastCenterActivationRef.current, now)) {
-      lastCenterActivationRef.current = null;
-      if (singleActivationTimerRef.current !== null) {
-        window.clearTimeout(singleActivationTimerRef.current);
-        singleActivationTimerRef.current = null;
-      }
-      setMenuOpen(false);
-      navigate('/document-store?quickRecord=1');
-      return;
-    }
-
-    lastCenterActivationRef.current = now;
-    singleActivationTimerRef.current = window.setTimeout(() => {
-      singleActivationTimerRef.current = null;
-      lastCenterActivationRef.current = null;
-      toggleMenu();
-    }, QUICK_RECORD_DOUBLE_ACTIVATION_MS);
-  }, [navigate, toggleMenu]);
-
-  useEffect(() => () => {
-    if (singleActivationTimerRef.current !== null) {
-      window.clearTimeout(singleActivationTimerRef.current);
-    }
   }, []);
 
   // ESC 关闭抽屉
@@ -465,11 +423,11 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
               return (
                 <button
                   key={tab.key}
-                  onClick={handleCenterActivation}
-                  aria-label="快速创建；双击开始快捷录音"
-                  title="单击快速创建，双击快捷录音"
+                  onClick={toggleMenu}
+                  aria-label="快速创建"
+                  title="快速创建"
                   className="flex-1 flex items-center justify-center active:scale-95 transition-transform"
-                  style={{ minHeight: 'var(--mobile-min-touch, 44px)', touchAction: 'manipulation' }}
+                  style={{ minHeight: 'var(--mobile-min-touch, 44px)' }}
                 >
                   <div
                     style={{

@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 录音转笔记的纯文本处理函数（无 IO / 无 LLM），供 SubtitleGenerationProcessor 调用、
-/// PrdAgent.Tests 单测覆盖：静音/拒答判定、摘要节替换、转录全文反解、风格化摘要提示词组装。
+/// PrdAgent.Tests 单测覆盖：静音/拒答判定、摘要节替换、转录全文编辑、风格化摘要提示词组装。
 /// </summary>
 public static class TranscribeNoteText
 {
@@ -53,6 +53,26 @@ public static class TranscribeNoteText
         if (idx < 0) return null;
         var body = noteMd[(idx + TranscriptMarker.Length)..].Trim();
         return string.IsNullOrWhiteSpace(body) ? null : body;
+    }
+
+    /// <summary>
+    /// 替换笔记中的「转录全文」正文。摘要和用户在其前方补充的内容保持不动；
+    /// 老文档缺少固定标题时，在末尾补上转录全文小节。
+    /// </summary>
+    public static string ReplaceTranscriptSection(string noteMd, string newTranscript)
+    {
+        var transcript = newTranscript.Trim();
+        var idx = noteMd.IndexOf(TranscriptMarker, StringComparison.Ordinal);
+        if (idx < 0)
+        {
+            var prefix = noteMd.TrimEnd();
+            var glue = prefix.Length > 0 ? "\n\n" : "";
+            return prefix + glue + TranscriptMarker + "\n\n" + transcript + "\n";
+        }
+
+        var head = noteMd[..idx].TrimEnd();
+        var headGlue = head.Length > 0 ? "\n\n" : "";
+        return head + headGlue + TranscriptMarker + "\n\n" + transcript + "\n";
     }
 
     /// <summary>

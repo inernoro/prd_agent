@@ -1313,6 +1313,7 @@ export const api = {
       // 录音转笔记：整理方式列表 + 换个整理方式（免重跑 ASR）
       transcribeStyles: () => `/api/document-store/transcribe-styles`,
       transcribeRestyle: (runId: string) => `/api/document-store/agent-runs/${runId}/restyle`,
+      transcribeTranscript: (runId: string) => `/api/document-store/agent-runs/${runId}/transcript`,
       // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
       autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
     },

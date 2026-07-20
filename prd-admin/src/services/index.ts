@@ -1977,6 +1977,7 @@ export {
   transcribeEntry,
   listTranscribeStyles,
   restyleTranscribeRun,
+  updateTranscribeTranscript,
   // 批次 C：浏览事件埋点
   logEntryView,
   leaveEntryView,

@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Plus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import {
+  CREATE_PALETTE_DOUBLE_ACTIVATION_MS,
+  isCreatePaletteDoubleActivation,
+} from './createPaletteGesture';
 
 /**
  * 库内唯一「新增」入口：右下角悬浮「+」，点击后竖排展开动作菜单（speed-dial）。
@@ -28,10 +32,16 @@ export type PaletteAction = {
   children?: PaletteAction[];
 };
 
-export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
+export function CreatePaletteFab({ actions, onDoubleActivation }: {
+  actions: PaletteAction[];
+  /** 双击右下角主按钮时直接执行；单击仍展开原有新增菜单。 */
+  onDoubleActivation?: () => void;
+}) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const lastActivationRef = useRef<number | null>(null);
+  const singleActivationTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -39,6 +49,12 @@ export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
+
+  useEffect(() => () => {
+    if (singleActivationTimerRef.current !== null) {
+      window.clearTimeout(singleActivationTimerRef.current);
+    }
+  }, []);
 
   // 关闭时重置分组展开态，下次打开回到干净的一级菜单
   useEffect(() => {
@@ -56,6 +72,32 @@ export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
   const fireLeaf = (a: PaletteAction) => {
     setOpen(false);
     a.onClick?.();
+  };
+
+  const handleMainActivation = (event: MouseEvent<HTMLButtonElement>) => {
+    if (!onDoubleActivation) {
+      setOpen(value => !value);
+      return;
+    }
+
+    const now = event.timeStamp;
+    if (isCreatePaletteDoubleActivation(lastActivationRef.current, now)) {
+      lastActivationRef.current = null;
+      if (singleActivationTimerRef.current !== null) {
+        window.clearTimeout(singleActivationTimerRef.current);
+        singleActivationTimerRef.current = null;
+      }
+      setOpen(false);
+      onDoubleActivation();
+      return;
+    }
+
+    lastActivationRef.current = now;
+    singleActivationTimerRef.current = window.setTimeout(() => {
+      singleActivationTimerRef.current = null;
+      lastActivationRef.current = null;
+      setOpen(value => !value);
+    }, CREATE_PALETTE_DOUBLE_ACTIVATION_MS);
   };
 
   const renderRow = (a: PaletteAction, opts: { child?: boolean; index: number }) => {
@@ -169,16 +211,17 @@ export function CreatePaletteFab({ actions }: { actions: PaletteAction[] }) {
         {/* 主按钮：展开时「+」旋转 45 度变关闭 */}
         <motion.button
           data-tour-id="doc-create-fab"
-          aria-label={open ? '收起新增菜单' : '新增内容'}
-          title="新增：写文章 / 录音转笔记 / 上传与导入…"
+          aria-label={open ? '收起新增菜单；双击开始录音' : '新增内容；双击开始录音'}
+          title="单击新增内容，双击直接录音"
           className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full"
           style={{
             background: 'linear-gradient(135deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))',
             color: '#fff',
             boxShadow: '0 8px 24px rgba(59,130,246,0.45)',
+            touchAction: 'manipulation',
           }}
           whileTap={{ scale: 0.92 }}
-          onClick={() => setOpen(v => !v)}
+          onClick={handleMainActivation}
         >
           <motion.span
             className="flex items-center justify-center"

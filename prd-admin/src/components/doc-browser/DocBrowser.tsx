@@ -324,7 +324,7 @@ import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-sto
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow, History, AlertTriangle } from 'lucide-react';
-import { listInlineComments, createInlineComment, deleteInlineComment, listTranscribeStyles } from '@/services';
+import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
@@ -448,6 +448,8 @@ export type DocBrowserProps = {
   onTranscribe?: (entryId: string, styleKey?: string) => void;
   /** 「添加」菜单项：录音转笔记入口（Notion 式录音流程）。调用方决定打开录音面板或音频文件选择。 */
   onUploadAudio?: () => void;
+  /** 右下角加号双击快捷录音；与单击菜单里的当前库录音动作分开。 */
+  onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
@@ -654,13 +656,10 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
   return ct.startsWith('audio/') || ct.startsWith('video/');
 }
 
-// 整理方式列表的模块级缓存（SSOT 在后端注册表；同一 session 只拉一次）
-let transcribeStylesCache: { key: string; label: string; description: string }[] | null = null;
-
 /**
  * 录音/上传音频的统一结果区（音频块下方常驻，2026-07-13 用户确认交互）：
- * - 未转录 → 「开始转录」主按钮 + 整理方式快捷按钮（选哪种就按哪种风格直接开始）；
- * - 已转录 → 历史产物 chips（转录笔记 / 字幕，点击跳转打开）+「换个整理方式」。
+ * - 未转录 → 只生成可编辑原文，不提前强迫用户选整理方式；
+ * - 已转录 → 原文留在当前录音页，整理作为用户主动选择的下一步。
  */
 function TranscribeHeroCard({
   currentEntryId,
@@ -673,27 +672,13 @@ function TranscribeHeroCard({
   currentEntryId: string;
   noteEntryId?: string;
   subtitleEntryId?: string;
-  /** 发起转录；styleKey 为空走默认智能摘要 */
+  /** 发起原文转录；整理在完成后另选 */
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
   /** 换个整理方式（免重跑转录，打开整理面板） */
   onRestyle?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>(transcribeStylesCache ?? []);
-  useEffect(() => {
-    // 只有能发起转录时才需要风格列表（分享只读视图不拉）
-    if (!onStart || noteEntryId || transcribeStylesCache) return;
-    void listTranscribeStyles().then((res) => {
-      if (res.success) {
-        transcribeStylesCache = res.data.items;
-        setStyles(res.data.items);
-      }
-    });
-  }, [onStart, noteEntryId]);
-
-  const quickStyles = styles.filter(s => s.key !== 'custom' && s.key !== 'general');
-
   return (
     <div
       className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
@@ -705,10 +690,10 @@ function TranscribeHeroCard({
           </div>
           <div className="min-w-0">
             <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音、原文与整理结果已保存在本页' : noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
+              {inPlace ? '录音和原文已保存在本页' : noteEntryId ? '录音原文已生成' : '把录音转成文字'}
             </p>
             <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '文档位置与标题保持不变，可随时播放或重新整理' : noteEntryId ? '点下方产物直达；也可以换个方式重新整理' : 'AI 将转录这段音频并按所选方式整理'}
+              {inPlace ? '位置与标题保持不变，需要时再一键整理' : noteEntryId ? '点下方打开原文，需要时再一键整理' : '先生成可编辑原文，不自动总结或改写'}
             </p>
           </div>
         </div>
@@ -717,31 +702,10 @@ function TranscribeHeroCard({
             onClick={() => onStart()}
             className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
             style={{ background: 'rgba(59,130,246,0.9)', color: '#fff' }}>
-            开始转录
+            转成文字
           </button>
         )}
       </div>
-
-      {/* 未转录：整理方式快捷按钮（点哪个就按那种风格直接开始，少一步选择） */}
-      {!noteEntryId && onStart && quickStyles.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-token-muted">或按方式直接开始：</span>
-          {quickStyles.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => onStart(s.key)}
-              title={s.description}
-              className="cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
-              style={{
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-faint)',
-              }}>
-              {s.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* 已转录：历史产物 chips + 换个整理方式 */}
       {(noteEntryId || subtitleEntryId) && (
@@ -779,7 +743,7 @@ function TranscribeHeroCard({
                 color: 'var(--text-secondary)',
                 border: '1px solid var(--border-faint)',
               }}>
-              <Wand2 size={11} /> 换个整理方式
+              <Wand2 size={11} /> 一键整理
             </button>
           )}
         </div>
@@ -1777,6 +1741,7 @@ export function DocBrowser({
   onGenerateSubtitle,
   onTranscribe,
   onUploadAudio,
+  onQuickRecord,
   onRestyleTranscribe,
   onReprocess,
   onShareEntry,
@@ -3871,6 +3836,13 @@ export function DocBrowser({
                     onRestyleTranscribe={onRestyleTranscribe && selectedEntryData
                       ? () => onRestyleTranscribe(selectedEntryData.id)
                       : undefined}
+                    onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
+                      const saved = audioNoteId === selectedEntryData?.id
+                        ? await commitLocalSave(audioNoteId, nextNoteMd)
+                        : await onSaveContent(audioNoteId, nextNoteMd).then(() => true).catch(() => false);
+                      if (saved) setTranscriptNoteMd(nextNoteMd);
+                      return saved;
+                    } : undefined}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
@@ -4094,6 +4066,7 @@ export function DocBrowser({
           上传/导入类动作归入「上传与导入」分组，点分组展开子项、再点收起（2026-07-12 用户确认）。 */}
       {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
         <CreatePaletteFab
+          onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),

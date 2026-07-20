@@ -7,6 +7,7 @@ import {
   estimateTranscriptSegments,
   parseSummaryModules,
   activeSummaryModuleIndex,
+  replaceTranscriptSegmentText,
 } from '../transcriptSegments';
 
 /**
@@ -45,6 +46,13 @@ const PLAIN_NOTE = `# 独白 · 转录笔记
 `;
 
 describe('parseTranscriptSegments', () => {
+  it('编辑单句时保留时间戳与摘要', () => {
+    expect(replaceTranscriptSegmentText(TIMED_NOTE, 1, '用户修订后的第二句。')).toContain(
+      '**[00:05 - 00:12]** 用户修订后的第二句。',
+    );
+    expect(replaceTranscriptSegmentText(TIMED_NOTE, 1, '用户修订后的第二句。')).toContain('本周主要讨论三件事。');
+  });
+
   it('解析带时间戳行：秒数与文本正确，摘要区不混入', () => {
     const segs = parseTranscriptSegments(TIMED_NOTE);
     expect(segs).toHaveLength(3);
