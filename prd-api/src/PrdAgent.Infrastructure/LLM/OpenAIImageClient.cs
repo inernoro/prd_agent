@@ -34,7 +34,6 @@ namespace PrdAgent.Infrastructure.LLM;
 public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
-    private readonly ILlmGateway _gateway;
     private readonly ILogicalModelGateway _logicalModelGateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
@@ -46,7 +45,6 @@ public class OpenAIImageClient : IImageGenerationClient
 
     public OpenAIImageClient(
         MongoDbContext db,
-        ILlmGateway gateway,
         ILogicalModelGateway logicalModelGateway,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
@@ -57,7 +55,6 @@ public class OpenAIImageClient : IImageGenerationClient
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _db = db;
-        _gateway = gateway;
         _logicalModelGateway = logicalModelGateway;
         _httpClientFactory = httpClientFactory;
         _config = config;
@@ -67,14 +64,6 @@ public class OpenAIImageClient : IImageGenerationClient
         _fontRegistry = fontRegistry;
         _ctxAccessor = ctxAccessor;
     }
-
-    internal static ILlmGateway SelectRequestGateway(
-        ILlmGateway configuredGateway,
-        ILogicalModelGateway logicalModelGateway,
-        string? requiredLogicalModelPublicId)
-        => string.IsNullOrWhiteSpace(requiredLogicalModelPublicId)
-            ? configuredGateway
-            : logicalModelGateway;
 
     internal static string ResolveRequiredLogicalModelPublicId(
         string? requiredLogicalModelPublicId,
@@ -203,7 +192,9 @@ public class OpenAIImageClient : IImageGenerationClient
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
             requiredLogicalModelPublicId, platformId, modelId, modelName);
-        var requestGateway = SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel);
+        // 视觉创作只依赖独立 Gateway。显式逻辑模型、未显式选模型时的默认池与故障兜底
+        // 都在 Gateway 内部完成；MAP 不再保留第二条进程内上游发送路径。
+        var requestGateway = _logicalModelGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)
@@ -1235,7 +1226,8 @@ public class OpenAIImageClient : IImageGenerationClient
         // 通过 Gateway 解析模型调度
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
             requiredLogicalModelPublicId, platformId, modelId, modelName);
-        var requestGateway = SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel);
+        // 多图生图与文生图使用同一独立 Gateway 边界，避免协议分支重新引入 MAP 旧池。
+        var requestGateway = _logicalModelGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)

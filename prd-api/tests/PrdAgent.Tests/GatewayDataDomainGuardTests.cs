@@ -10,7 +10,7 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
-    public void ExplicitLogicalImageModel_UsesDedicatedHttpGatewayForResolveAndSend()
+    public void VisualCreation_AlwaysUsesDedicatedHttpGatewayForResolveAndSend()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
         var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
@@ -21,8 +21,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
         Assert.Contains("private readonly ILogicalModelGateway _logicalModelGateway", client);
         Assert.True(
-            client.Split("SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel)", StringSplitOptions.None).Length - 1 == 2,
-            "文生图与多图生图都必须在解析前选择逻辑模型 HTTP 边界");
+            client.Split("var requestGateway = _logicalModelGateway;", StringSplitOptions.None).Length - 1 == 2,
+            "文生图与多图生图都必须直接选择独立 Gateway HTTP 边界");
+        Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
         Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);
         Assert.DoesNotContain("_gateway.SendRawWithResolutionAsync", client);
         Assert.Contains("requestGateway.ResolveRequiredLogicalModelAsync", client);
