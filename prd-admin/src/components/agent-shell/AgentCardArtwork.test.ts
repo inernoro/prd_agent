@@ -3,7 +3,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { buildStaticAgents } from '@/lib/homeLauncherItems';
-import { AgentCardArtwork, AgentCardFrame, AgentCardTask, getAgentCardTask, hasAgentCardArtwork } from './AgentCardArtwork';
+import {
+  AgentCardArtwork,
+  AgentCardFrame,
+  AgentCardTask,
+  getAgentCardArtworkToken,
+  getAgentCardTask,
+  hasAgentCardArtwork,
+} from './AgentCardArtwork';
 
 describe('AgentCardArtwork', () => {
   it('为全部内置智能体提供职责化背景', () => {
@@ -29,6 +36,18 @@ describe('AgentCardArtwork', () => {
       .map((item) => item.agentKey);
 
     expect(missingTasks).toEqual([]);
+  });
+
+  it('为每个智能体提供唯一的主题素材 token', () => {
+    const builtinAgents = [
+      ...BUILTIN_TOOLS.filter((item) => item.kind === 'agent'),
+      ...buildStaticAgents(),
+    ];
+    const artworkTokens = builtinAgents.map((item) => getAgentCardArtworkToken(item.agentKey));
+
+    expect(artworkTokens.every(Boolean)).toBe(true);
+    expect(new Set(artworkTokens).size).toBe(23);
+    expect(getAgentCardArtworkToken('visual-agent')).toBe('--agent-card-artwork-visual-agent');
   });
 
   it('支持限制图片高度，为下部信息面板留出空间', () => {
@@ -57,6 +76,7 @@ describe('AgentCardArtwork', () => {
 
     expect(html).toContain('data-compact="true"');
     expect(html).toContain('agent-card-artwork-image');
+    expect(html).toContain('background-image:var(--agent-card-artwork-visual-agent)');
     expect(html).not.toContain('data-theme');
   });
 

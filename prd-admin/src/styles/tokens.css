@@ -98,6 +98,29 @@
   --login-cta-shadow: 0 0 32px rgba(214, 216, 212, 0.08), 0 10px 32px rgba(0, 0, 0, 0.50);
 
   /* 智能体图片卡契约：组件只消费这些 token，不直接判断 light / dark。 */
+  --agent-card-artwork-arena: url('../assets/agent-card-art/arena.webp');
+  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent.webp');
+  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent.webp');
+  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent.webp');
+  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent.webp');
+  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent.webp');
+  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent.webp');
+  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent.webp');
+  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent.webp');
+  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent.webp');
+  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent.webp');
+  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review.webp');
+  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent.webp');
+  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent.webp');
+  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent.webp');
+  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent.webp');
+  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent.webp');
+  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent.webp');
+  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent.webp');
+  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent.webp');
+  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
+  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
+  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
@@ -231,40 +254,38 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg-base: #FAF9F5;          /* Anthropic claude.ai 官方暖白,S≈3% 极轻暖偏,L≈97% 几乎纯白 */
-  --bg-elevated: #F0EEE8;      /* elevated 对应同步提亮,保持与 base 的层次 */
-  /* 浅色卡片必须用纯白制造层级。
-     原值 rgba(26, 26, 31, 0.05) 在 #FAF9F5 上视觉差仅约 4% L,
-     卡片"浮"不起来 — Anthropic Claude.ai 等顶级浅色 UX 都用纯白卡 + hairline 描边 */
-  --bg-card: #FFFFFF;
+  --bg-base: #EEEAE3;
+  --bg-elevated: #E4DED5;
+  /* 浅色界面用暖灰底、象牙卡和石墨文字建立层级，避免页面与卡片通体纯白。 */
+  --bg-card: #F8F5EF;
   --bg-card-hover: rgba(26, 26, 31, 0.04);
-  --bg-input: #ffffff;
-  --bg-input-hover: #fafafa;
+  --bg-input: #FBF8F3;
+  --bg-input-hover: #F4F0E9;
 
-  --panel: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.96) 100%);
-  --panel-solid: #ffffff;
+  --panel: linear-gradient(180deg, #F8F5EF 0%, #F1ECE4 100%);
+  --panel-solid: #F8F5EF;
 
   --border-faint: rgba(26, 26, 31, 0.08);
   --border-subtle: rgba(26, 26, 31, 0.12);
   --border-default: rgba(26, 26, 31, 0.18);
   --border-hover: rgba(26, 26, 31, 0.28);
 
-  /* 玻璃效果:浅底上用"近纯白卡片"叠加形成清晰层次 */
-  --glass-bg-start: rgba(255, 255, 255, 1);
-  --glass-bg-end: rgba(255, 255, 255, 0.96);
+  /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
+  --glass-bg-start: rgba(248, 245, 239, 0.98);
+  --glass-bg-end: rgba(239, 234, 225, 0.96);
   --glass-border: rgba(26, 26, 31, 0.14);
 
-  --glass-bg: rgba(255, 255, 255, 0.98);
-  --glass-bg-strong: #ffffff;
+  --glass-bg: rgba(248, 245, 239, 0.94);
+  --glass-bg-strong: #F8F5EF;
   --glass-ring: rgba(26, 26, 31, 0.10);
   --glass-shadow: 0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 4px rgba(15, 23, 42, 0.04);
 
   /* 同 themeApplier 管理：嵌套块/列表/表格 —— 浅色下也需覆盖避免白底白字 */
   --nested-block-bg: rgba(26, 26, 31, 0.04);
   --nested-block-border: rgba(26, 26, 31, 0.08);
-  --list-item-bg: rgba(255, 255, 255, 0.85);
+  --list-item-bg: rgba(248, 245, 239, 0.88);
   --list-item-border: rgba(26, 26, 31, 0.08);
-  --list-item-hover-bg: rgba(255, 255, 255, 0.95);
+  --list-item-hover-bg: rgba(251, 248, 243, 0.96);
   --table-header-bg: rgba(26, 26, 31, 0.04);
   --table-row-border: rgba(26, 26, 31, 0.06);
   --table-row-hover-bg: rgba(26, 26, 31, 0.03);
@@ -272,31 +293,54 @@
   /* 文字色加深到 slate-900 色阶,确保米底上达到 WCAG AAA 7:1 对比度 */
   --text-primary: #0F172A;
   --text-secondary: rgba(15, 23, 42, 0.78);
-  --text-muted: rgba(15, 23, 42, 0.68);          /* 0.58 在 #FAF9F5 上仅 4.2:1 不达 WCAG AA,提到 0.68 后 ≈ 4.8:1 达 AA */
+  --text-muted: rgba(15, 23, 42, 0.68);          /* 暖灰底上保持 WCAG AA 对比度。 */
 
-  /* 浅色图片卡走高键纸面视觉；共享插画层负责提亮暗色母图。 */
-  --media-card-base: #ffffff;
-  --media-card-panel: rgba(255, 255, 255, 0.94);
-  --media-card-panel-strong: rgba(255, 255, 255, 0.98);
-  --media-card-panel-translucent: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.98) 100%);
-  --media-card-glass: rgba(255, 255, 255, 0.88);
+  /* 浅色图片卡消费独立浅色插画，不再把暗图用滤镜与白色蒙层洗亮。 */
+  --agent-card-artwork-arena: url('../assets/agent-card-art/arena-light.webp');
+  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent-light.webp');
+  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent-light.webp');
+  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent-light.webp');
+  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent-light.webp');
+  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent-light.webp');
+  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent-light.webp');
+  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent-light.webp');
+  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent-light.webp');
+  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent-light.webp');
+  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent-light.webp');
+  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review-light.webp');
+  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent-light.webp');
+  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent-light.webp');
+  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent-light.webp');
+  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent-light.webp');
+  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent-light.webp');
+  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent-light.webp');
+  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent-light.webp');
+  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent-light.webp');
+  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
+  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
+  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');
+  --media-card-base: #E6E0D7;
+  --media-card-panel: rgba(241, 236, 228, 0.94);
+  --media-card-panel-strong: rgba(245, 241, 234, 0.98);
+  --media-card-panel-translucent: linear-gradient(180deg, rgba(235, 229, 220, 0.80) 0%, rgba(245, 241, 234, 0.96) 100%);
+  --media-card-glass: rgba(238, 232, 223, 0.88);
   --media-card-tag-bg: rgba(15, 23, 42, 0.055);
   --media-card-tag-border: rgba(15, 23, 42, 0.11);
   --media-card-tag-text: rgba(15, 23, 42, 0.76);
   --media-card-border: rgba(15, 23, 42, 0.13);
   --media-card-border-hover: rgba(99, 102, 241, 0.52);
   --media-card-edge: rgba(15, 23, 42, 0.10);
-  --media-card-overlay: linear-gradient(90deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.18) 46%, transparent 100%), linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.12) 52%, rgba(255, 255, 255, 0.62) 82%, rgba(255, 255, 255, 0.88) 100%);
-  --media-card-overlay-compact: linear-gradient(90deg, rgba(255, 255, 255, 0.76) 0%, rgba(255, 255, 255, 0.16) 50%, transparent 100%), linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.16) 48%, rgba(255, 255, 255, 0.68) 80%, rgba(255, 255, 255, 0.92) 100%);
-  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(255, 255, 255, 0.42);
+  --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
+  --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
+  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
   --media-card-task: #6d28d9;
   --media-card-task-muted: rgba(15, 23, 42, 0.58);
   --text-on-media: #172033;
   --text-on-media-muted: rgba(15, 23, 42, 0.68);
 
-  --launcher-tile-bg: rgba(255, 255, 255, 0.92);
+  --launcher-tile-bg: rgba(248, 245, 239, 0.94);
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
-  --launcher-control-bg: rgba(255, 255, 255, 0.78);
+  --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
   --launcher-theme-icon: #6d28d9;
   --launcher-theme-icon-bg: rgba(139, 92, 246, 0.13);
@@ -314,20 +358,20 @@
   --home-name-background: none;
   --home-name-fill: var(--text-primary);
 
-  /* 浅色卡使用高键柔光图：原始暗色母图由共享渲染层统一提亮，标题同步改为深色。 */
-  --media-card-shadow: 0 8px 22px -12px rgba(20, 21, 26, 0.24);
-  --media-art-filter: saturate(0.78) contrast(0.72) brightness(1.48);
-  --media-art-opacity: 0.82;
-  --media-art-opacity-hover: 0.90;
-  --media-art-tint-opacity: 0.42;
-  --media-art-tint-opacity-hover: 0.54;
+  /* 浅色原图保持自然材质，只做轻微色彩校正与类别提示。 */
+  --media-card-shadow: 0 8px 22px -12px rgba(74, 62, 48, 0.28);
+  --media-art-filter: saturate(1) contrast(1.10) brightness(0.94);
+  --media-art-opacity: 1;
+  --media-art-opacity-hover: 1;
+  --media-art-tint-opacity: 0.06;
+  --media-art-tint-opacity-hover: 0.10;
   --media-art-tint-blend: soft-light;
-  --media-art-wash: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.18) 56%, rgba(255, 255, 255, 0.52));
-  --media-art-wash-blend: screen;
+  --media-art-wash: linear-gradient(135deg, transparent, transparent);
+  --media-art-wash-blend: normal;
 
-  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
+  /* 阴影:暖灰底上的阴影保持克制,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
-     与 #FAF9F5 暖白底协调 — Anthropic Claude.ai 同款 warm shadow tone。 */
+     与暖纸色表面协调。 */
   --shadow-card: 0 1px 3px rgba(89, 65, 50, 0.06), 0 1px 2px rgba(89, 65, 50, 0.04);
   --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05);
   --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05);          /* 微 elevation,卡片/segment thumb */
@@ -356,8 +400,7 @@
   --status-idle-soft:     rgba(71, 85, 105, 0.06);
   --status-idle-border:   rgba(71, 85, 105, 0.18);
 
-  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。
-     底色 #FAF9F5 下 alpha 0.08 约等于 #E8E7E4 的描边视觉。 */
+  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
   --hairline:             rgba(15, 23, 42, 0.08);
   --hairline-strong:      rgba(15, 23, 42, 0.14);
 
@@ -365,13 +408,13 @@
      周报 Agent / SkillAgentDialog / TemplateManager 等 122 处使用,
      若浅色不覆盖会落到暗色值导致深底浅字。
      设计原则同 --bg-card / --bg-input,不再单独造一套色阶。 */
-  --bg-primary:       #FFFFFF;
+  --bg-primary:       #F8F5EF;
   --bg-secondary:     rgba(15, 23, 42, 0.05);
   --bg-tertiary:      rgba(15, 23, 42, 0.08);
   --border-primary:   rgba(15, 23, 42, 0.14);
   --border-secondary: rgba(15, 23, 42, 0.08);
 
-  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层 #FFFFFF 卡片形成 ~3% L 差,
+  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层暖纸色卡片形成层级差,
      既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
   --bg-nested:        rgba(15, 23, 42, 0.025);
 }
