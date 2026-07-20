@@ -1,5 +1,30 @@
 * { box-sizing: border-box; }
 
+/* CDS 同款主题水波：快照期间冻结普通 CSS transition，避免新旧主题在截图时串色。 */
+.theme-transition-snapshotting,
+.theme-transition-snapshotting *,
+.theme-transition-snapshotting *::before,
+.theme-transition-snapshotting *::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 9999; }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01ms;
+  }
+}
+
 /* ── Glass 组件类（与 prd-desktop 对齐） ── */
 .ui-glass-panel {
   background: var(--glass-bg);

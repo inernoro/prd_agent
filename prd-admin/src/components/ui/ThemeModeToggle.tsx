@@ -1,9 +1,10 @@
 import { Moon, Sun } from 'lucide-react';
+import type { MouseEventHandler } from 'react';
 import type { MobileThemeMode } from '@/stores/mobileThemeStore';
 
 type ThemeModeToggleProps = {
   mode: MobileThemeMode;
-  onToggle: () => void;
+  onToggle: MouseEventHandler<HTMLButtonElement>;
 };
 
 /**

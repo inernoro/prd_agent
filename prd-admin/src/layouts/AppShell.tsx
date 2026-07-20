@@ -88,6 +88,8 @@ import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
 import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
+import { MapBrandMark } from '@/components/ui/MapBrandMark';
+import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -201,7 +203,7 @@ export default function AppShell() {
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
-  const toggleThemeMode = useMobileThemeStore((st) => st.toggle);
+  const setThemeMode = useMobileThemeStore((st) => st.setMode);
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
   // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
   const ownsThemeRef = useRef(false);
@@ -212,21 +214,23 @@ export default function AppShell() {
   // 导航到普通页由这里重申。自管主题路由(纸面身份,页面自己 set/remove data-theme)
   // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
   useEffect(() => {
-    const root = document.documentElement;
-    // 只列真正自己 set/remove data-theme 的页面(weekly-poster 无所有者,已移除 —— Codex P2 三轮)
-    const selfManaged = ['/daily-post', '/report-agent'].some(
-      (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
-    );
-    if (selfManaged) {
+    if (!applyDocumentThemeMode(mobileThemeMode, location.pathname)) {
       // 属性所有权移交给页面:壳层卸载也不清理,避免误清页面自管的主题(Codex P2 二轮)。
       // 离开该路由回普通页时,下方 set/remove 会重新接管所有权。
       ownsThemeRef.current = false;
       return;
     }
-    if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
-    else root.removeAttribute('data-theme');
     ownsThemeRef.current = true;
   }, [mobileThemeMode, location.pathname]);
+
+  const handleThemeModeToggle = useCallback<React.MouseEventHandler<HTMLButtonElement>>((event) => {
+    transitionThemeMode({
+      mode: mobileThemeMode === 'light' ? 'dark' : 'light',
+      pathname: location.pathname,
+      origin: event,
+      commit: setThemeMode,
+    });
+  }, [location.pathname, mobileThemeMode, setThemeMode]);
 
   // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
   useEffect(
@@ -1234,19 +1238,18 @@ export default function AppShell() {
           }}
         >
           {/* ── 顶部 Logo 区域 ── */}
-          <div
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            aria-label="返回首页"
+            title="MAP 智能体平台"
             className={cn(
-              'shrink-0 flex items-center',
+              'shrink-0 flex items-center transition-opacity hover:opacity-90',
               collapsed ? 'justify-center py-2' : 'px-3 py-2'
             )}
           >
-            <img
-              src="/favicon.png"
-              alt="Logo"
-              className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
-              draggable={false}
-            />
-          </div>
+            <MapBrandMark expanded={!collapsed} />
+          </button>
 
           {/* ── 首页按钮 ── */}
           {homeItem && (
@@ -1397,7 +1400,7 @@ export default function AppShell() {
             )}
           >
             <div className="mb-1 flex justify-center px-1">
-              <ThemeModeToggle mode={mobileThemeMode} onToggle={toggleThemeMode} />
+              <ThemeModeToggle mode={mobileThemeMode} onToggle={handleThemeModeToggle} />
             </div>
             {/* 分隔线 */}
             <div

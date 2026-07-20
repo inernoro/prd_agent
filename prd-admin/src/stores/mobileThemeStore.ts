@@ -1,7 +1,7 @@
 /**
  * 全局明暗（外观）偏好 SSOT（2026-07-17 升级：从移动端专属扩展到全站）：
  * 暗色默认，浅色可手动切换；桌面与移动共用本 store，
- * 入口有两个——首页移动端右上角切换、设置 → 皮肤设置「外观」。
+ * 入口有两个——全局侧栏切换、设置 → 皮肤设置「外观」。
  * 由 AppShell 统一把 mode 落到 <html data-theme="light">
  * （tokens.css 已有全量白天 token 覆盖；纸面身份页自管主题，壳层不插手）。
  *
@@ -18,15 +18,13 @@ export type MobileThemeMode = 'light' | 'dark';
 interface MobileThemeState {
   mode: MobileThemeMode;
   setMode: (mode: MobileThemeMode) => void;
-  toggle: () => void;
 }
 
 export const useMobileThemeStore = create<MobileThemeState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       mode: 'dark',
       setMode: (mode) => set({ mode }),
-      toggle: () => set({ mode: get().mode === 'dark' ? 'light' : 'dark' }),
     }),
     {
       // v2:默认从 light 改为 dark,换 key 让所有人回到新默认(旧 key 弃用)
