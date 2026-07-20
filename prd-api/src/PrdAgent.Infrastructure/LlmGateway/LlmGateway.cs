@@ -1299,7 +1299,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
             requestBody["model"] = resolution.ActualModel;
-            if (IsChatCompletionsEndpoint(request.EndpointPath))
+            if (IsChatCompletionsEndpoint(endpoint))
                 ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
             ApplyResolvedMaxTokensCap(requestBody, resolution);
             if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
@@ -1544,7 +1544,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // JSON 请求
                 var requestBody = request.RequestBody ?? new JsonObject();
                 requestBody["model"] = resolution.ActualModel;
-                if (IsChatCompletionsEndpoint(request.EndpointPath))
+                if (IsChatCompletionsEndpoint(endpoint))
                     ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
                 if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))

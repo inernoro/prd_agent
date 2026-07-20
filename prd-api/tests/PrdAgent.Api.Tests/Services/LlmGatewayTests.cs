@@ -1604,6 +1604,48 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ActualModel = "gpt-5.6-terra",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.com",
+            ApiKey = "sk-test-key"
+        };
+        var http = new SequenceHttpClientFactory();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.System.HealthProbe.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["max_tokens"] = 8,
+                ["stream"] = false
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://api.openai.com/v1/chat/completions", Assert.Single(http.RequestUris));
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-5.6-terra", (string?)body["model"]);
+        Assert.Equal("none", (string?)body["reasoning_effort"]);
+        Assert.Equal(8, (int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenOpenRouter_ShouldPrefixAppAttributionTitle()
     {
         var resolution = new GatewayModelResolution
