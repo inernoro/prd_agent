@@ -4309,7 +4309,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 return;
               }
               failMsg = '生成完成但无图片数据，请重试';
-            } else if (run.status === 'Queued' || run.status === 'Running') {
+            } else if (run.status === 'ScopedQueued' || run.status === 'Queued' || run.status === 'Running') {
               // 后端仍在跑：保留 running，交给看门狗/对账
               return;
             } else if (run.status === 'Failed' || run.status === 'Cancelled') {
@@ -4572,7 +4572,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   return;
                 }
                 failMsg = '生成完成但无图片数据，请重试';
-              } else if (run.status === 'Queued' || run.status === 'Running') {
+              } else if (run.status === 'ScopedQueued' || run.status === 'Queued' || run.status === 'Running') {
                 return;
               } else if (run.status === 'Failed' || run.status === 'Cancelled') {
                 const errItem = res.data.items?.find((i) => i.errorMessage);
@@ -9355,7 +9355,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       return;
                     }
                     failMsg = '生成完成但无图片数据，请重试';
-                  } else if (run.status === 'Queued' || run.status === 'Running') {
+                  } else if (run.status === 'ScopedQueued' || run.status === 'Queued' || run.status === 'Running') {
                     return;
                   } else if (run.status === 'Failed' || run.status === 'Cancelled') {
                     const errItem = res.data.items?.find(i => i.errorMessage);

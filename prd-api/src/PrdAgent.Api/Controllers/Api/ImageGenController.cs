@@ -1753,7 +1753,7 @@ public class ImageGenController : ControllerBase
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
-            Status = ImageGenRunStatus.Queued,
+            Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
             ConfigModelId = cfgModelId,
             PlatformId = platformId,

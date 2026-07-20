@@ -170,7 +170,21 @@ public class ImageGenRunWorker : BackgroundService
         // DeploymentScope.Current，CDS_PROJECT_ID 标记 + BULLMQ_PREFIX/VITE_GIT_BRANCH）；
         // 生产作用域为 null——Mongo 的 Eq null 同时匹配「字段为 null」与「字段缺失」，
         // 天然兼容本字段上线前的存量 run（仍由生产 worker 消化，行为不变）。
-        var filter = Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.Queued)
+        // 第一层 fencing 是 ScopedQueued：旧 Worker 只认识 Queued，永远不会看见新任务。
+        // 第二层 fencing 是 DeploymentSlug：即使两个新 Worker 共用 Mongo，也只有同 revision 能认领。
+        var scoped = await ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued, ct);
+        if (scoped != null) return scoped;
+
+        // 仅生产作用域继续消化升级前遗留的 Queued。预览环境禁止碰 legacy Queued，
+        // 否则仍可能与尚未升级的兄弟分支 Worker 竞争。
+        return DeploymentScope.Current == null
+            ? await ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued, ct)
+            : null;
+    }
+
+    private async Task<ImageGenRun?> ClaimNextRunByStatusAsync(ImageGenRunStatus pendingStatus, CancellationToken ct)
+    {
+        var filter = Builders<ImageGenRun>.Filter.Eq(x => x.Status, pendingStatus)
                      & Builders<ImageGenRun>.Filter.Ne(x => x.CancelRequested, true)
                      & Builders<ImageGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         var update = Builders<ImageGenRun>.Update

@@ -1095,6 +1095,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VisualImageRun_UsesQueueStatusThatLegacyWorkersCannotClaim()
+    {
+        var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentImageGenController.cs");
+        var weeklyPosterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/WeeklyPosterController.cs");
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+
+        Assert.Contains("ScopedQueued", runModel);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", imageController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", imageMasterController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", literaryController);
+        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", weeklyPosterController);
+        Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued", imageWorker);
+        Assert.Contains("DeploymentScope.Current == null", imageWorker);
+        Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued", imageWorker);
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");

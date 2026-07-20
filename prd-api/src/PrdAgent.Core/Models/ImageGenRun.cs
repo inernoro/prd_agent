@@ -16,7 +16,7 @@ public class ImageGenRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
 
-    public ImageGenRunStatus Status { get; set; } = ImageGenRunStatus.Queued;
+    public ImageGenRunStatus Status { get; set; } = ImageGenRunStatus.ScopedQueued;
 
     /// <summary>
     /// 入队时所在部署的作用域（分支预览 = 项目 + 分支 + commit revision，生产 = null；
@@ -177,7 +177,14 @@ public enum ImageGenRunStatus
     Running,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+
+    /// <summary>
+    /// 带部署作用域的新队列状态。旧版本 Worker 只查询 Queued，因此不会跨分支或跨 revision
+    /// 抢走新任务；当前版本 Worker 再以 DeploymentSlug 做第二层精确 fencing。
+    /// 数值追加在末尾，保持既有 Mongo 枚举值兼容。
+    /// </summary>
+    ScopedQueued
 }
 
 public class ImageGenRunPlanItem

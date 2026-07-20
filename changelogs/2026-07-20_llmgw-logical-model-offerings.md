@@ -15,3 +15,4 @@
 | fix | prd-api | 将逻辑模型公开 ID 随 Run 上下文贯穿执行链，并在 Shadow 网关四条发送路径硬隔离旧模型池 |
 | refactor | prd-api | 视觉创作所有生图请求统一跨进程进入独立 Gateway，默认池和故障兜底不再由 MAP 进程内发送 |
 | fix | prd-api | 视觉创作编译期直接依赖 HTTP Serving 客户端，消除标记接口被错误装配为进程内网关的空间 |
+| fix | prd-api | 生图任务使用旧 Worker 不可识别的作用域队列状态并叠加 revision fencing，阻断共享 Mongo 下跨分支抢单 |

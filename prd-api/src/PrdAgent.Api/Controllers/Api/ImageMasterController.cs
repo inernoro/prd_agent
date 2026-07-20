@@ -1634,7 +1634,7 @@ public class ImageMasterController : ControllerBase
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
-                Status = ImageGenRunStatus.Queued,
+                Status = ImageGenRunStatus.ScopedQueued,
                 DeploymentSlug = DeploymentScope.Current,
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
@@ -2937,7 +2937,9 @@ public class ImageMasterController : ControllerBase
                     needUpdate = true;
                 }
                 // Run 还在运行，但超时（超过 10 分钟认为卡住）
-                else if (run.Status == ImageGenRunStatus.Running || run.Status == ImageGenRunStatus.Queued)
+                else if (run.Status == ImageGenRunStatus.Running
+                         || run.Status == ImageGenRunStatus.Queued
+                         || run.Status == ImageGenRunStatus.ScopedQueued)
                 {
                     var elapsed = now - run.CreatedAt;
                     if (elapsed > TimeSpan.FromMinutes(10))
