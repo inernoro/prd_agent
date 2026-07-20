@@ -10,3 +10,4 @@
 | fix | prd-api | 显式逻辑模型在生图 Worker 中跳过 MAP 模型池预解析，保留公开 ID 并由独立 Gateway 单次解析上游 |
 | fix | prd-api | 显式逻辑模型的解析与发送强制共用独立 Gateway HTTP 边界，不再受 MAP 全局 inproc 模式影响 |
 | fix | prd-api | 预览环境 Run 队列作用域加入 commit revision fencing，阻止同分支残留旧 Worker 抢走新架构任务 |
+| ops | prd-api | 生图 Run 管理员查询返回部署作用域，支持精确审计任务由哪个项目、分支和 revision 入队 |

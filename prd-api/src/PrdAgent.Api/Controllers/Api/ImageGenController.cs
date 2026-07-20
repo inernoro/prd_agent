@@ -1860,6 +1860,7 @@ public class ImageGenController : ControllerBase
             {
                 run.Id,
                 run.OwnerAdminId,
+                run.DeploymentSlug,
                 status = run.Status.ToString(),
                 run.ConfigModelId,
                 run.PlatformId,
