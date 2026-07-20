@@ -278,8 +278,24 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
     else if (rec.state === 'paused') { rec.resume(); setState('recording'); }
   };
 
+  const destinationPicker = storeOptions.length > 0 ? (
+    <label
+      className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
+      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+      <span className="shrink-0 text-[12px] font-semibold text-token-secondary">保存到</span>
+      <select
+        value={targetStoreId}
+        onChange={(event) => setTargetStoreId(event.target.value)}
+        className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] text-token-primary outline-none"
+        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+        {storeOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+      </select>
+    </label>
+  ) : null;
+
   const body = state === 'unavailable' ? (
     <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col items-center justify-center gap-4 py-8 text-center">
+      {destinationPicker}
       <span
         className="flex h-14 w-14 items-center justify-center rounded-full"
         style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)' }}>
@@ -313,20 +329,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
         )}
       </div>
 
-      {storeOptions.length > 0 && (
-        <label
-          className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-          <span className="shrink-0 text-[12px] font-semibold text-token-secondary">保存到</span>
-          <select
-            value={targetStoreId}
-            onChange={(event) => setTargetStoreId(event.target.value)}
-            className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] text-token-primary outline-none"
-            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-            {storeOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
-          </select>
-        </label>
-      )}
+      {destinationPicker}
 
       {/* 计时大字 */}
       <p className="text-[40px] font-semibold tabular-nums leading-none text-token-primary">
