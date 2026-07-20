@@ -25,8 +25,42 @@ const settleTimeoutMs = Math.max(5000, parseInt(process.env.VERIFY_OPEN_SETTLE_T
 
 const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true });
+// CDS 登录态深链的安全回退：匿名分享不适合内部报告时，允许调用方仅通过环境变量
+// 注入 AI access key。密钥不写入 URL、日志或报告，且只发送给目标 CDS host。
+const aiAccessKey = process.env.AI_ACCESS_KEY || '';
+let targetHost = '';
+try { targetHost = new URL(url).host; } catch {}
+if (aiAccessKey && /(^|\.)cds\.miduo\.org$/i.test(targetHost)) {
+  await ctx.setExtraHTTPHeaders({ 'X-AI-Access-Key': aiAccessKey });
+}
 const page = await ctx.newPage();
 const attempts = [];
+
+async function inspectRenderedContent() {
+  const texts = [];
+  let imgCount = 0;
+  for (const frame of page.frames()) {
+    try {
+      texts.push(await frame.locator('body').innerText());
+      imgCount += await frame.locator('img').count();
+    } catch {
+      // 跨代切换或 iframe 导航期间 frame 可能瞬时销毁；下一轮轮询会重新读取。
+    }
+  }
+  return { text: texts.join('\n'), imgCount };
+}
+
+async function waitForRenderedContent(text, minImages) {
+  const deadline = Date.now() + settleTimeoutMs;
+  let snapshot = { text: '', imgCount: 0 };
+  while (Date.now() < deadline) {
+    snapshot = await inspectRenderedContent();
+    const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
+    if (hasText && snapshot.imgCount >= minImages) return snapshot;
+    await sleep(500);
+  }
+  return snapshot;
+}
 
 async function runAttempt(attempt) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -36,20 +70,12 @@ async function runAttempt(attempt) {
     await page.getByText(new RegExp(mustText)).first().click({ timeout: 8000 }).catch(() => {});
     await page.getByText(new RegExp(mustText)).first().waitFor({ state: 'visible', timeout: settleTimeoutMs }).catch(() => {});
   }
-  await page.waitForFunction(
-    ({ text, minImg }) => {
-      const body = document.body && document.body.innerText || '';
-      const hasText = text ? body.includes(text) || new RegExp(text).test(body) : body.trim().length > 200;
-      const imgCount = document.querySelectorAll('img').length;
-      return hasText && imgCount >= minImg;
-    },
-    { text: mustText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), minImg },
-    { timeout: settleTimeoutMs, polling: 500 },
-  ).catch(() => {});
+  const rendered = await waitForRenderedContent(mustText, minImg);
   await sleep(1000);
-  const txt = await page.locator('body').innerText();
-  const imgCount = await page.locator('img').count();
-  const hasText = mustText ? txt.includes(mustText.replace(/[.*+?^${}()|[\]\\]/g, '')) || new RegExp(mustText).test(txt) : txt.length > 200;
+  const finalRendered = await inspectRenderedContent();
+  const txt = finalRendered.text || rendered.text;
+  const imgCount = Math.max(finalRendered.imgCount, rendered.imgCount);
+  const hasText = mustText ? txt.includes(mustText) : txt.length > 200;
   const okImg = imgCount >= minImg;
   // 死页判定只在「内容没渲染出来」时才有意义：报告正文完全可能合法地包含
   // "不存在 / 已失效" 等词（如缺陷描述、整改记录），全文扫词会把正常报告误杀。

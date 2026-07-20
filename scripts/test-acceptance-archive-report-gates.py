@@ -93,6 +93,63 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
 """
     assert_has_error(archive._problem_localization_errors(visual_overlay, annotated_manifest), "没有链接到截图锚点")
 
+    mobile_body = """
+## 移动端验收
+
+视口 390×844，使用真实触控完成首页导航入口路径；结果状态正常。
+页面滚动归属正确，无横向溢出，顶部和底部无遮挡或裁切。
+"""
+    desktop_narrow = [{
+        "name": "01-desktop-narrow",
+        "viewport": {"width": 390, "height": 844},
+        "touchPoints": 0,
+        "isMobile": False,
+    }]
+    assert_has_error(
+        archive._mobile_acceptance_errors("L1", mobile_body, desktop_narrow),
+        "真实触控移动端证据",
+    )
+
+    mobile_entry = {
+        "name": "02-mobile-entry",
+        "viewport": {"width": 390, "height": 844},
+        "touchPoints": 1,
+        "isMobile": True,
+        "mobilePathId": "mobile-primary",
+        "mobileStage": "entry",
+    }
+    assert_no_errors(archive._mobile_acceptance_errors("L1", mobile_body, [mobile_entry]))
+    assert_has_error(
+        archive._mobile_acceptance_errors("L2", mobile_body, [mobile_entry]),
+        "L2 需要 >= 2 张",
+    )
+
+    mobile_result = {
+        "name": "03-mobile-result",
+        "viewport": {"width": 390, "height": 844},
+        "touchPoints": 1,
+        "isMobile": True,
+        "mobilePathId": "mobile-primary",
+        "mobileStage": "result",
+    }
+    assert_no_errors(archive._mobile_acceptance_errors("L2", mobile_body, [mobile_entry, mobile_result]))
+
+    duplicate_stage = dict(mobile_result, mobileStage="entry")
+    assert_has_error(
+        archive._mobile_acceptance_errors("L2", mobile_body, [mobile_entry, duplicate_stage]),
+        "入口/操作阶段与结果/状态阶段",
+    )
+
+    thin_mobile_body = """
+## 移动端验收
+
+视口 390×844，触控进入导航路径，结果状态正常。
+"""
+    assert_has_error(
+        archive._mobile_acceptance_errors("L1", thin_mobile_body, [mobile_entry]),
+        "滚动结论",
+    )
+
     html = archive.build_interactive_html("日报", "fail", "# 日报\n\n正文", annotated_manifest)
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
