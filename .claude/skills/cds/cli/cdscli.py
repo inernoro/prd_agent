@@ -2745,8 +2745,15 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
     req = urllib.request.Request(url, method="POST", data=data, headers=headers)
     events: list[dict[str, Any]] = []
     terminal_error: dict[str, Any] | None = None
+    correlation: dict[str, str] = {"agentSessionId": _AGENT_SESSION_ID}
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            request_id = resp.headers.get("X-CDS-Request-Id")
+            operation_id = resp.headers.get("X-CDS-Operation-Id")
+            if request_id:
+                correlation["requestId"] = request_id
+            if operation_id:
+                correlation["operationId"] = operation_id
             cur_event = None
             for line_bytes in resp:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
@@ -2765,13 +2772,23 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
                     if cur_event in ("done", "error"):
                         break
     except urllib.error.HTTPError as e:
-        die(f"{path} HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}", code=2)
+        request_id = e.headers.get("X-CDS-Request-Id") if e.headers else None
+        operation_id = e.headers.get("X-CDS-Operation-Id") if e.headers else None
+        if request_id:
+            correlation["requestId"] = request_id
+        if operation_id:
+            correlation["operationId"] = operation_id
+        die(
+            f"{path} HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}",
+            code=2,
+            extra=correlation,
+        )
     except (urllib.error.URLError, TimeoutError) as e:
         # 连接断开是正常的，CDS 重启时流会被 kill
         pass
     if terminal_error is not None:
         message = str(terminal_error.get("message") or terminal_error.get("code") or f"{path} 被服务端拒绝")
-        die(message, code=2, extra={"events": events})
+        die(message, code=2, extra={"events": events, **correlation})
     if not no_wait:
         # Poll healthz until CDS is back (max 60s)
         for _ in range(12):
@@ -2785,7 +2802,7 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
                 break
         else:
             die("CDS 未能在 60s 内恢复", code=3, extra={"events": events})
-    ok({"events": events, "restarted": not no_wait}, note=note)
+    ok({"events": events, "restarted": not no_wait, **correlation}, note=note)
 
 
 def cmd_self_update(args: argparse.Namespace) -> None:

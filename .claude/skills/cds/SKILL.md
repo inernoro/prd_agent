@@ -241,6 +241,18 @@ $CLI env set MAP_AI_USER=ai-bot --scope <projectId>
 
 `cds-compose.yml` 的 `x-cds-env` 段 = 项目级 scope 的声明源。修改后需要重新 deploy 才生效。
 
+## Agent 操作者身份（渐进兼容）
+
+新版 cdscli 会为每次进程生成随机 `agentSessionId`，并在 Codex 环境可用时附带
+`threadId` / `turnId`。服务端为变更请求生成 `requestId` / `operationId`，将这些
+字段关联到操作事件、发布记录和 CDS 自更新历史。self update/restart 的 CLI 结果
+会直接返回这些关联 ID，复盘时不再依赖临时浏览器响应头。
+
+第一阶段只采集和关联，不参与鉴权：旧版技能没有身份头时仍可使用，并标记为
+`identityVersion=0`、`confidence=legacy`；新版声明标记为 `identityVersion=1`、
+`confidence=declared`。`declared` 只表示格式有效，不代表身份已由服务端验证。
+不得因为缺少身份头拒绝旧客户端，也不得把调用方声明提升成可信身份。
+
 ## CDS 服务自更新（改了 cds/ 目录的代码）
 
 触发条件（AI 自动判断）：`git diff --name-only HEAD~1 HEAD | grep ^cds/` 非空。

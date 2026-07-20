@@ -56,6 +56,46 @@ class CdsCliAgentIdentityTests(unittest.TestCase):
         self.assertNotIn("X-Codex-Thread-Id", headers)
         self.assertNotIn("X-CDS-Operation-Reason", headers)
 
+    def test_self_action_surfaces_server_correlation_ids(self) -> None:
+        class FakeResponse:
+            headers = {
+                "X-CDS-Request-Id": "req_server_123",
+                "X-CDS-Operation-Id": "op_server_456",
+            }
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def __iter__(self):
+                return iter((
+                    b"event: done\n",
+                    b'data: {"message":"scheduled"}\n',
+                ))
+
+        with mock.patch.object(cdscli, "_AGENT_SESSION_ID", "cdscli_session_789"), mock.patch.object(
+            cdscli.urllib.request, "urlopen", return_value=FakeResponse(),
+        ), mock.patch.object(cdscli, "ok") as ok_mock:
+            cdscli._run_self_action(
+                "/api/self-restart",
+                {},
+                no_wait=True,
+                note="restart scheduled",
+            )
+
+        ok_mock.assert_called_once_with(
+            {
+                "events": [{"message": "scheduled", "_event": "done"}],
+                "restarted": False,
+                "agentSessionId": "cdscli_session_789",
+                "requestId": "req_server_123",
+                "operationId": "op_server_456",
+            },
+            note="restart scheduled",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
