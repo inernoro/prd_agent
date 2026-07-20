@@ -88,6 +88,7 @@ import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
+import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -201,6 +202,7 @@ export default function AppShell() {
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
+  const toggleThemeMode = useMobileThemeStore((st) => st.toggle);
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
   // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
   const ownsThemeRef = useRef(false);
@@ -1228,7 +1230,7 @@ export default function AppShell() {
             // flush rail：无圆角，只保留右侧发丝分隔线（覆盖 glassSidebar 的四边 border/浮岛投影）
             borderRadius: 0,
             border: 'none',
-            borderRight: '1px solid rgba(255,255,255,0.08)',
+            borderRight: '1px solid var(--border-faint)',
             boxShadow: 'none',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
@@ -1263,8 +1265,8 @@ export default function AppShell() {
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
                   width: 56,
                   padding: '6px 0 4px',
-                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                  background: activeKey === '/' ? 'var(--launcher-control-bg)' : 'transparent',
+                  border: activeKey === '/' ? '1px solid var(--launcher-control-border)' : '1px solid transparent',
                 }}
                 title={homeItem.label}
               >
@@ -1275,7 +1277,7 @@ export default function AppShell() {
                   style={{
                     width: 28,
                     height: 28,
-                    color: activeKey === '/' ? 'rgba(255, 255, 255, 0.88)' : undefined,
+                    color: activeKey === '/' ? 'var(--text-primary)' : undefined,
                   }}
                 >
                   {homeItem.icon}
@@ -1315,9 +1317,7 @@ export default function AppShell() {
                       className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
                       style={{
                         height: 1,
-                        background: collapsed
-                          ? 'rgba(255, 255, 255, 0.06)'
-                          : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                        background: 'var(--border-faint)',
                         width: collapsed ? 24 : undefined,
                       }}
                     />
@@ -1351,8 +1351,8 @@ export default function AppShell() {
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                             width: 56,
                             padding: '6px 0 4px',
-                            background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                            border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                            background: active ? 'var(--launcher-control-bg)' : 'transparent',
+                            border: active ? '1px solid var(--launcher-control-border)' : '1px solid transparent',
                           }}
                           title={it.description ? `${it.label} - ${it.description}` : it.label}
                         >
@@ -1364,7 +1364,7 @@ export default function AppShell() {
                             style={{
                               width: 28,
                               height: 28,
-                              color: active ? 'rgba(255, 255, 255, 0.88)' : undefined,
+                              color: active ? 'var(--text-primary)' : undefined,
                             }}
                           >
                             {it.icon}
@@ -1398,14 +1398,15 @@ export default function AppShell() {
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
             )}
           >
+            <div className="mb-1 flex justify-center px-1">
+              <ThemeModeToggle mode={mobileThemeMode} onToggle={toggleThemeMode} />
+            </div>
             {/* 分隔线 */}
             <div
               className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
               style={{
                 height: 1,
-                background: collapsed
-                  ? 'rgba(255, 255, 255, 0.06)'
-                  : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                background: 'var(--border-faint)',
                 width: collapsed ? 24 : undefined,
               }}
             />

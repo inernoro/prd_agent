@@ -1,0 +1,93 @@
+/* 首页视觉层：只负责工作台门面的色彩与交互，不改变页面信息结构。 */
+.home-launcher-color-field {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 390px;
+  pointer-events: none;
+  background:
+    radial-gradient(52% 86% at 8% 0%, rgba(124, 58, 237, 0.28) 0%, transparent 68%),
+    radial-gradient(44% 72% at 88% 4%, rgba(14, 165, 233, 0.20) 0%, transparent 70%),
+    radial-gradient(32% 58% at 58% 18%, rgba(244, 114, 182, 0.10) 0%, transparent 72%);
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.72) 54%, transparent 100%);
+  opacity: 0.9;
+}
+
+[data-theme="light"] .home-launcher-color-field {
+  background:
+    radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
+    radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),
+    radial-gradient(36% 64% at 58% 6%, rgba(251, 146, 60, 0.14) 0%, transparent 72%);
+  opacity: 1;
+}
+
+.home-launcher-search {
+  background: color-mix(in srgb, var(--bg-input) 88%, transparent);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.home-launcher-search:hover {
+  border-color: var(--border-default);
+}
+
+.home-launcher-search:focus {
+  background: var(--bg-input);
+  border-color: rgba(99, 102, 241, 0.58);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.home-launcher-quick-link {
+  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-launcher-quick-link:hover {
+  background: var(--bg-card);
+  border-color: var(--border-default);
+}
+
+.home-learning-center {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(139, 92, 246, 0.16), transparent 48%),
+    color-mix(in srgb, var(--bg-card) 76%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-learning-center:hover {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(139, 92, 246, 0.22), transparent 52%),
+    var(--bg-card);
+  border-color: rgba(139, 92, 246, 0.38);
+}
+
+.home-launcher-recent {
+  background: color-mix(in srgb, var(--launcher-tile-bg) 74%, transparent);
+  border: 1px solid var(--launcher-tile-border);
+}
+
+.home-launcher-recent-more {
+  border: 1px dashed var(--border-default);
+  color: var(--text-muted);
+}
+
+.home-launcher-recent-more:hover {
+  border-color: rgba(99, 102, 241, 0.54);
+  color: var(--text-primary);
+}
+
+.home-launcher-section-count {
+  background: var(--nested-block-bg);
+  color: var(--text-muted);
+}
+
+@media (max-width: 767px) {
+  .home-launcher-color-field { height: 300px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-launcher-search,
+  .home-launcher-quick-link,
+  .home-launcher-recent { transition: none; }
+}

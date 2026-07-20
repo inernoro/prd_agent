@@ -53,6 +53,15 @@
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.60);
 
+  /* 首页启动器：普通瓦片与全局外观开关。色彩由类别 accent 动态注入，
+     这些 token 只负责跨主题可读的中性承载面。 */
+  --launcher-tile-bg: rgba(255, 255, 255, 0.055);
+  --launcher-tile-border: rgba(255, 255, 255, 0.10);
+  --launcher-control-bg: rgba(255, 255, 255, 0.045);
+  --launcher-control-border: rgba(255, 255, 255, 0.09);
+  --launcher-theme-icon: #c4b5fd;
+  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.16);
+
   /* 登录页固定暗色视觉：石墨、暖银、冷白，不跟随应用内容主题反相。 */
   --login-bg: #0e0f11;
   --login-backdrop-overlay: radial-gradient(ellipse 82% 58% at 50% -8%, rgba(222, 224, 220, 0.10) 0%, rgba(143, 146, 142, 0.045) 34%, rgba(14, 15, 17, 0.24) 66%, rgba(14, 15, 17, 0.84) 100%);
@@ -232,25 +241,33 @@
   --text-secondary: rgba(15, 23, 42, 0.78) !important;
   --text-muted: rgba(15, 23, 42, 0.68) !important;          /* 0.58 在 #FAF9F5 上仅 4.2:1 不达 WCAG AA,提到 0.68 后 ≈ 4.8:1 达 AA */
 
-  /* 封面图本身不随页面主题反相，前景色保持稳定对比。 */
-  --media-card-base: #141418 !important;
-  --media-card-panel: rgba(20, 20, 24, 0.92) !important;
-  --media-card-panel-strong: rgba(20, 20, 24, 0.97) !important;
-  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.18) 0%, rgba(20, 20, 24, 0.52) 100%) !important;
-  --media-card-glass: rgba(20, 20, 24, 0.76) !important;
-  --media-card-tag-bg: rgba(247, 247, 251, 0.06) !important;
-  --media-card-tag-border: rgba(247, 247, 251, 0.10) !important;
-  --media-card-tag-text: rgba(247, 247, 251, 0.68) !important;
-  --media-card-border: rgba(247, 247, 251, 0.13) !important;
-  --media-card-border-hover: rgba(247, 247, 251, 0.24) !important;
-  --media-card-edge: rgba(247, 247, 251, 0.08) !important;
-  --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%) !important;
-  --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%) !important;
-  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32) !important;
-  --media-card-task: #7cfc00 !important;
-  --media-card-task-muted: rgba(214, 216, 212, 0.62) !important;
+  /* 浅色首页不再把整组插画卡强制回黑墙：图片区保留暗底确保白色标题可读，
+     底部信息层回到纸面色，形成“彩色图像 + 浅色信息”的明确分层。 */
+  --media-card-base: #ffffff !important;
+  --media-card-panel: rgba(255, 255, 255, 0.94) !important;
+  --media-card-panel-strong: rgba(255, 255, 255, 0.98) !important;
+  --media-card-panel-translucent: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.98) 100%) !important;
+  --media-card-glass: rgba(255, 255, 255, 0.88) !important;
+  --media-card-tag-bg: rgba(15, 23, 42, 0.055) !important;
+  --media-card-tag-border: rgba(15, 23, 42, 0.11) !important;
+  --media-card-tag-text: rgba(15, 23, 42, 0.76) !important;
+  --media-card-border: rgba(15, 23, 42, 0.13) !important;
+  --media-card-border-hover: rgba(99, 102, 241, 0.52) !important;
+  --media-card-edge: rgba(15, 23, 42, 0.10) !important;
+  --media-card-overlay: linear-gradient(90deg, rgba(15, 23, 42, 0.78) 0%, rgba(15, 23, 42, 0.16) 48%, rgba(15, 23, 42, 0.04) 100%), linear-gradient(180deg, rgba(15, 23, 42, 0.08) 0%, rgba(15, 23, 42, 0.10) 48%, rgba(15, 23, 42, 0.34) 72%, rgba(15, 23, 42, 0.58) 100%) !important;
+  --media-card-overlay-compact: linear-gradient(90deg, rgba(15, 23, 42, 0.76) 0%, rgba(15, 23, 42, 0.12) 52%, rgba(15, 23, 42, 0.04) 100%), linear-gradient(180deg, rgba(15, 23, 42, 0.06) 0%, rgba(15, 23, 42, 0.12) 50%, rgba(15, 23, 42, 0.42) 78%, rgba(15, 23, 42, 0.66) 100%) !important;
+  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -40px 64px rgba(15, 23, 42, 0.14) !important;
+  --media-card-task: #c4b5fd !important;
+  --media-card-task-muted: rgba(247, 247, 251, 0.72) !important;
   --text-on-media: #f7f7fb !important;
-  --text-on-media-muted: rgba(247, 247, 251, 0.66) !important;
+  --text-on-media-muted: rgba(247, 247, 251, 0.78) !important;
+
+  --launcher-tile-bg: rgba(255, 255, 255, 0.92) !important;
+  --launcher-tile-border: rgba(15, 23, 42, 0.11) !important;
+  --launcher-control-bg: rgba(255, 255, 255, 0.78) !important;
+  --launcher-control-border: rgba(15, 23, 42, 0.12) !important;
+  --launcher-theme-icon: #6d28d9 !important;
+  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.13) !important;
 
   /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),

@@ -78,19 +78,16 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
       onClick={() => navigate('/learning-center')}
       data-tour-id={anchorId}
       title="进入学习中心：看全部官方教程 + 你的等级与掌握进度"
-      className="w-full text-left rounded-xl flex items-center gap-3"
+      className="home-learning-center w-full cursor-pointer text-left rounded-xl flex items-center gap-3 transition-colors duration-200"
       style={{
         padding: '11px 13px',
-        background: 'linear-gradient(120deg, rgba(247,247,251,0.055), rgba(247,247,251,0.025))',
-        border: '1px solid rgba(247,247,251,0.13)',
-        cursor: 'pointer',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
       }}
     >
       <div className="relative shrink-0" style={{ width: 46, height: 46 }}>
         <svg width={46} height={46} viewBox="0 0 46 46" style={{ transform: 'rotate(-90deg)' }}>
-          <circle cx={23} cy={23} r={R} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={3} />
+          <circle cx={23} cy={23} r={R} fill="none" stroke="var(--border-subtle)" strokeWidth={3} />
           <circle cx={23} cy={23} r={R} fill="none" stroke={tier.board} strokeWidth={3} strokeLinecap="round" strokeDasharray={`${dash} ${C}`} style={{ transition: 'stroke-dasharray 600ms cubic-bezier(.4,0,.2,1)' }} />
         </svg>
         <span className="absolute inset-0 flex items-center justify-center"><LevelHat level={level} size={26} /></span>

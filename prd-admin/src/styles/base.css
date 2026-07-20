@@ -243,8 +243,8 @@ select optgroup {
 
 /* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
 .nav-item-hover:hover {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-color: rgba(255, 255, 255, 0.06) !important;
+  background: var(--launcher-control-bg) !important;
+  border-color: var(--launcher-control-border) !important;
 }
 
 /* react-syntax-highlighter (Prism) 代码块 token span 防类名碰撞。

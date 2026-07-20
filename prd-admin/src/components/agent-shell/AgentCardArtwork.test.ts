@@ -39,6 +39,15 @@ describe('AgentCardArtwork', () => {
     expect(html).toContain('clip-path:inset(0 0 calc(100% - 57%) 0)');
   });
 
+  it('支持按智能体类别给灰阶插画注入色彩层', () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentCardArtwork, { agentKey: 'visual-agent', tint: 'hsl(271 68% 64%)' }),
+    );
+
+    expect(html).toContain('linear-gradient(128deg, hsl(271 68% 64%) 0%, transparent 72%)');
+    expect(html).toContain('mix-blend-mode:color');
+  });
+
   it('高密度任务标识保留可访问名称并省略重复标签', () => {
     const html = renderToStaticMarkup(
       createElement(AgentCardTask, { agentKey: 'visual-agent', dense: true }),

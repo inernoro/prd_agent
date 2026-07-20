@@ -67,6 +67,8 @@ interface AgentCardArtworkProps {
   compact?: boolean;
   /** 编辑型卡片只让图片占据上部，给下方信息面板留出稳定空间。 */
   imageHeight?: string;
+  /** 首页按智能体类别注入的色彩；保留原图结构，只改变灰阶插画的情绪层。 */
+  tint?: string;
 }
 
 /**
@@ -75,7 +77,7 @@ interface AgentCardArtworkProps {
  * 图片只负责表达智能体职责；名称、说明、状态与操作仍由真实 HTML 渲染，
  * 保持可访问性和跨端清晰度。下半部遮罩对应图片自带柔焦区，为文字保留安静背景。
  */
-export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: AgentCardArtworkProps) {
+export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint }: AgentCardArtworkProps) {
   const src = agentKey ? AGENT_CARD_PRESENTATION[agentKey]?.artwork : undefined;
   if (!src) return null;
 
@@ -93,6 +95,15 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: Age
         decoding="async"
         className="absolute inset-0 h-full w-full object-cover object-center opacity-[0.86] transition-[transform,opacity] duration-500 group-hover:scale-[1.015] group-hover:opacity-[0.92]"
       />
+      {tint && (
+        <div
+          className="absolute inset-0 opacity-70 transition-opacity duration-300 group-hover:opacity-85"
+          style={{
+            background: `linear-gradient(128deg, ${tint} 0%, transparent 72%)`,
+            mixBlendMode: 'color',
+          }}
+        />
+      )}
       <div
         className="absolute inset-0"
         style={{
