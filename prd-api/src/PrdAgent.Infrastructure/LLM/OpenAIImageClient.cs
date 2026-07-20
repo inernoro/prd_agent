@@ -76,6 +76,25 @@ public class OpenAIImageClient : IImageGenerationClient
             ? configuredGateway
             : logicalModelGateway;
 
+    internal static string ResolveRequiredLogicalModelPublicId(
+        string? requiredLogicalModelPublicId,
+        string? platformId,
+        string? modelId,
+        string? modelName)
+    {
+        var required = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(required)) return required;
+
+        // 逻辑模型平台标记是第二道不可降级契约。即使调用层遗漏了独立参数，也必须从
+        // 稳定模型身份恢复，而不是把同名 publicId 交给普通模型池解释。
+        if (!string.Equals(platformId?.Trim(), "logical-model", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        var stableModelId = (modelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(stableModelId)) stableModelId = (modelId ?? string.Empty).Trim();
+        return stableModelId;
+    }
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -182,7 +201,8 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
-        var requiredLogicalModel = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
+            requiredLogicalModelPublicId, platformId, modelId, modelName);
         var requestGateway = SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel);
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
@@ -1213,7 +1233,8 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度
-        var requiredLogicalModel = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
+            requiredLogicalModelPublicId, platformId, modelId, modelName);
         var requestGateway = SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel);
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(

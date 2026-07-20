@@ -1,11 +1,28 @@
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LLM;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
 public sealed class ImageGenLogicalModelRoutingTests
 {
+    [Theory]
+    [InlineData("image2", "legacy", "ignored", "ignored", "image2")]
+    [InlineData(null, "logical-model", "image2", null, "image2")]
+    [InlineData(null, "LOGICAL-MODEL", "fallback-id", "nanobanana-2", "nanobanana-2")]
+    [InlineData(null, "legacy-platform", "image2", "image2", "")]
+    public void ImageClient_RecoversRequiredLogicalModelFromStablePlatformMarker(
+        string? required,
+        string? platformId,
+        string? modelId,
+        string? modelName,
+        string expected)
+    {
+        Assert.Equal(expected, OpenAIImageClient.ResolveRequiredLogicalModelPublicId(
+            required, platformId, modelId, modelName));
+    }
+
     [Fact]
     public void ResolveExplicitLogicalModelPublicId_PrefersPersistedStableIdentity()
     {

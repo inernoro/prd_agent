@@ -1082,6 +1082,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RequiredLogicalModelPublicId = resolution.LogicalModelPublicId", imageClient);
         Assert.Contains("ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName", imageClient);
         Assert.Contains("ResolveRequiredLogicalModelAsync", imageClient);
+        Assert.Contains("ResolveRequiredLogicalModelPublicId(", imageClient);
+        Assert.Contains("string.Equals(platformId?.Trim(), \"logical-model\"", imageClient);
         Assert.Contains("requiredLogicalModelPublicId: run.LogicalModelPublicId", imageWorker);
         Assert.Contains("ResolveExplicitLogicalModelPublicId(run)", imageWorker);
         Assert.Contains("run.DeploymentSlug", imageController);
