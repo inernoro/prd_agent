@@ -12,3 +12,4 @@
 | fix | prd-api | 预览环境 Run 队列作用域加入 commit revision fencing，阻止同分支残留旧 Worker 抢走新架构任务 |
 | ops | prd-api | 生图 Run 管理员查询返回部署作用域，支持精确审计任务由哪个项目、分支和 revision 入队 |
 | fix | prd-api | 生图客户端以 logical-model 平台标记恢复稳定模型身份并强制独立 Gateway，阻断参数缺失时退回同名旧模型池 |
+| fix | prd-api | 将逻辑模型公开 ID 随 Run 上下文贯穿执行链，并在 Shadow 网关四条发送路径硬隔离旧模型池 |

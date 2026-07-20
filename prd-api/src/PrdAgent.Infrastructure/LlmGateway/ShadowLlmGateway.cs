@@ -69,6 +69,13 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// <summary>该 appCallerCode 是否已灰度翻 http（白名单命中 → http 权威）。</summary>
     private bool RouteToHttp(string appCallerCode) => _httpAllowlist.Contains(appCallerCode);
 
+    private bool ContextRequiresLogicalModel(out string? logicalModelPublicId)
+    {
+        var current = _ctx?.Current;
+        logicalModelPublicId = current?.LogicalModelPublicId?.Trim();
+        return current?.ModelResolutionType == ModelResolutionType.LogicalModel;
+    }
+
     /// <summary>
     /// 逻辑模型属于独立 Gateway 的配置域。即使 MAP 仍处于 inproc/shadow 迁移期，
     /// 只要应用显式选择了逻辑模型，就不能再让 MAP 内旧模型池解释同名 key。
@@ -115,6 +122,20 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
     {
+        if (ContextRequiresLogicalModel(out var requiredLogicalModel))
+        {
+            requiredLogicalModel = FirstNonBlank(requiredLogicalModel, request.GetEffectiveExpectedModel());
+            if (string.IsNullOrWhiteSpace(requiredLogicalModel))
+            {
+                return GatewayResponse.Fail(
+                    "LOGICAL_MODEL_ID_REQUIRED",
+                    "当前业务任务声明为逻辑模型，但缺少逻辑模型公开标识，已拒绝退回旧模型池。",
+                    422);
+            }
+
+            return await _http.SendAsync(WithExpectedLogicalModel(request, requiredLogicalModel), ct);
+        }
+
         if (RouteToHttp(request.AppCallerCode))
             return await _http.SendAsync(request, ct);       // 已灰度：http 权威
         // 关键：在 inproc 改写 request.RequestBody["model"] 为其选中的实际模型**之前**捕获有效期望模型。
@@ -131,6 +152,20 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
         GatewayRequest request, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        if (ContextRequiresLogicalModel(out var requiredLogicalModel))
+        {
+            requiredLogicalModel = FirstNonBlank(requiredLogicalModel, request.GetEffectiveExpectedModel());
+            if (string.IsNullOrWhiteSpace(requiredLogicalModel))
+                throw new InvalidOperationException("当前业务任务声明为逻辑模型，但缺少逻辑模型公开标识，已拒绝退回旧模型池。");
+
+            await foreach (var chunk in _http.StreamAsync(
+                               WithExpectedLogicalModel(request, requiredLogicalModel), ct))
+            {
+                yield return chunk;
+            }
+            yield break;
+        }
+
         if (RouteToHttp(request.AppCallerCode))
         {
             await foreach (var chunk in _http.StreamAsync(request, ct))  // 已灰度：http 权威流
@@ -165,6 +200,26 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? pinnedModelId = null,
         CancellationToken ct = default)
     {
+        if (ContextRequiresLogicalModel(out var requiredLogicalModel))
+        {
+            requiredLogicalModel = FirstNonBlank(requiredLogicalModel, expectedModel);
+            if (string.IsNullOrWhiteSpace(requiredLogicalModel))
+            {
+                return new GatewayModelResolution
+                {
+                    Success = false,
+                    ResolutionType = "NotFound",
+                    ErrorMessage = "当前业务任务声明为逻辑模型，但缺少逻辑模型公开标识，已拒绝退回旧模型池。",
+                };
+            }
+
+            return await _http.ResolveRequiredLogicalModelAsync(
+                appCallerCode,
+                modelType,
+                requiredLogicalModel,
+                ct);
+        }
+
         if (RouteToHttp(appCallerCode))
             return await _http.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
 
@@ -230,6 +285,45 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
     {
+        if (ContextRequiresLogicalModel(out var contextLogicalModel))
+        {
+            var requiredLogicalModel = FirstNonBlank(
+                contextLogicalModel,
+                request.RequiredLogicalModelPublicId,
+                resolution.LogicalModelPublicId,
+                request.ExpectedModel,
+                resolution.ExpectedModel);
+            if (string.IsNullOrWhiteSpace(requiredLogicalModel))
+            {
+                return GatewayRawResponse.Fail(
+                    "LOGICAL_MODEL_ID_REQUIRED",
+                    "当前业务任务声明为逻辑模型，但缺少逻辑模型公开标识，已拒绝退回旧模型池。",
+                    422);
+            }
+
+            if (!resolution.Success
+                || !string.Equals(
+                    requiredLogicalModel,
+                    resolution.LogicalModelPublicId?.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                resolution = await _http.ResolveRequiredLogicalModelAsync(
+                    request.AppCallerCode,
+                    request.ModelType,
+                    requiredLogicalModel,
+                    ct);
+                if (!resolution.Success)
+                {
+                    return GatewayRawResponse.Fail(
+                        "LOGICAL_MODEL_RESOLVE_FAILED",
+                        resolution.ErrorMessage ?? $"逻辑模型 {requiredLogicalModel} 解析失败。",
+                        503);
+                }
+            }
+
+            return await _http.SendRawWithResolutionAsync(request, resolution, ct);
+        }
+
         if (RouteToHttp(request.AppCallerCode) || !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId))
             return await _http.SendRawWithResolutionAsync(request, resolution, ct);
 
@@ -448,6 +542,26 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ExpectBinaryResponse = request.ExpectBinaryResponse,
         Context = request.Context,
     };
+
+    private static GatewayRequest WithExpectedLogicalModel(GatewayRequest request, string logicalModelPublicId)
+        => new()
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            ExpectedModel = logicalModelPublicId,
+            PinnedPlatformId = null,
+            PinnedModelId = null,
+            RequestBody = request.RequestBody?.DeepClone().AsObject(),
+            RequestBodyRaw = request.RequestBodyRaw,
+            Stream = request.Stream,
+            EnablePromptCache = request.EnablePromptCache,
+            TimeoutSeconds = request.TimeoutSeconds,
+            IncludeThinking = request.IncludeThinking,
+            Context = request.Context,
+        };
+
+    private static string? FirstNonBlank(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
 
     private static int RawSize(GatewayRawResponse response)
         => response.BinaryContent?.Length ?? response.Content?.Length ?? 0;
