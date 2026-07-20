@@ -71,6 +71,10 @@ export function normalizeRepositoryIdentity(value?: string): string {
       repositoryPath = raw;
     }
   }
+  // Some production checkouts use a host-prefixed path without a URL scheme,
+  // for example `github.com/owner/repo.git`. Treat the DNS-like first segment
+  // as transport identity so it compares equal to the bound `owner/repo`.
+  repositoryPath = repositoryPath.replace(/^(?:[^/@\s]+@)?(?:[^/]+\.)+[^/]+\//, '');
   return repositoryPath
     .replace(/^\/+|\/+$/g, '')
     .replace(/\.git$/i, '')
