@@ -959,6 +959,45 @@ describe('Server route ordering (regression)', () => {
     expect(unknown.body).not.toContain('DASHBOARD');
   });
 
+  it('react mount: serves a missing hashed asset from the previous web generation', async () => {
+    const app = buildApp();
+    const reactDist = path.join(tmpDir, 'react-dist');
+    const previousDist = `${reactDist}.previous`;
+    fs.mkdirSync(path.join(reactDist, 'assets'), { recursive: true });
+    fs.mkdirSync(path.join(previousDist, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'index.html'), '<html><body>CURRENT</body></html>');
+    fs.writeFileSync(
+      path.join(previousDist, 'assets', 'ProjectListPage-old.js'),
+      'export const generation = "previous";',
+    );
+
+    installSpaFallback(app, webDir, reactDist);
+    server = await startServer(app);
+
+    const asset = await request(server, '/assets/ProjectListPage-old.js');
+    expect(asset.status).toBe(200);
+    expect(asset.contentType).toContain('application/javascript');
+    expect(asset.body).toContain('generation = "previous"');
+    expect(asset.headers['cache-control']).toContain('immutable');
+  });
+
+  it('react mount: serves the previous index during the directory switch gap', async () => {
+    const app = buildApp();
+    const reactDist = path.join(tmpDir, 'react-dist');
+    const previousDist = `${reactDist}.previous`;
+    fs.mkdirSync(reactDist, { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'index.html'), '<html><body>PREVIOUS_INDEX</body></html>');
+
+    installSpaFallback(app, webDir, reactDist);
+    server = await startServer(app);
+    fs.renameSync(reactDist, previousDist);
+
+    const page = await request(server, '/project-list');
+    expect(page.status).toBe(200);
+    expect(page.contentType).toContain('text/html');
+    expect(page.body).toContain('PREVIOUS_INDEX');
+  });
+
   it('regression: SPA fallback installed TOO EARLY now returns JSON 404 (not HTML)', async () => {
     // This test memorializes a production failure mode + the 2026-05-04 hardening.
     //

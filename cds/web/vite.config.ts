@@ -20,6 +20,14 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, './dist'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // One-time generation boundary for the atomic dist rollout. The
+        // executable banner is retained in every emitted module, forcing new
+        // fingerprints so browsers cannot reuse a previously failed chunk.
+        banner: 'globalThis.__CDS_ATOMIC_WEB_DIST_GENERATION__ = "v1";',
+      },
+    },
     // 2026-05-04 fix:关 sourcemap + 用 esbuild minify 降内存。
     // production CDS host 实测 vite build 在 rollup "rendering chunks" 阶段 OOM。
     // sourcemap 占内存巨大(每个 chunk 都要 inline source) — 关掉省 ~40% RAM。
