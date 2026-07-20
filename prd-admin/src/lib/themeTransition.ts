@@ -24,7 +24,7 @@ type ThemeModeTransitionOptions = {
   commit: (mode: MobileThemeMode) => void;
 };
 
-const SELF_MANAGED_THEME_PATHS = ['/daily-post', '/report-agent'];
+const SELF_MANAGED_THEME_PATHS = ['/daily-post'];
 let activeTransition: ViewTransitionLike | null = null;
 
 export function isSelfManagedThemePath(pathname: string): boolean {

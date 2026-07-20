@@ -9,3 +9,5 @@
 | fix | prd-admin | 修复风险扫描外扩发现的项目路由页面浅色文字，并显式隔离 CDS Agent 与授权弹窗的固定暗色 scope |
 | fix | prd-admin | 修复风险榜首周报海报工作台浅色主题白字，并将创建弹窗固定暗色限制在显式 scope 内 |
 | polish | prd-admin | 重设计侧栏 MAP 路径品牌标识并为全局主题入口增加 CDS 同款圆形水波切换动效 |
+| refactor | prd-admin | 将周报智能体明暗状态、切换动效与语义色接入全局主题唯一来源并保留编辑风格品牌层 |
+| polish | prd-admin | 将周报日常记录中的字符图标统一替换为 Lucide 图标 |

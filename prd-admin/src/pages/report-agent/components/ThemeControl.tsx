@@ -1,27 +1,29 @@
-import { useCallback } from 'react';
+import { useCallback, type MouseEvent } from 'react';
 import { Moon, Sun, type LucideIcon } from 'lucide-react';
-import { useDataTheme } from '../hooks/useDataTheme';
+import { useLocation } from 'react-router-dom';
+import { transitionThemeMode } from '@/lib/themeTransition';
+import { useMobileThemeStore, type MobileThemeMode } from '@/stores/mobileThemeStore';
 
-export type ColorScheme = 'dark' | 'light';
-
-const OPTIONS: { value: ColorScheme; label: string; icon: LucideIcon }[] = [
+const OPTIONS: { value: MobileThemeMode; label: string; icon: LucideIcon }[] = [
   { value: 'dark', label: '暗色', icon: Moon },
   { value: 'light', label: '浅色', icon: Sun },
 ];
 
-export interface ThemeControlProps {
-  value: ColorScheme;
-  onChange: (value: ColorScheme) => void;
-}
-
-export function ThemeControl({ value, onChange }: ThemeControlProps) {
-  const dataTheme = useDataTheme();
-  const isLight = dataTheme === 'light';
+export function ThemeControl() {
+  const location = useLocation();
+  const value = useMobileThemeStore((state) => state.mode);
+  const setMode = useMobileThemeStore((state) => state.setMode);
   const handleClick = useCallback(
-    (next: ColorScheme) => {
-      if (next !== value) onChange(next);
+    (next: MobileThemeMode, event: MouseEvent<HTMLButtonElement>) => {
+      if (next === value) return;
+      transitionThemeMode({
+        mode: next,
+        pathname: location.pathname,
+        origin: event,
+        commit: setMode,
+      });
     },
-    [value, onChange]
+    [location.pathname, setMode, value]
   );
 
   return (
@@ -39,15 +41,11 @@ export function ThemeControl({ value, onChange }: ThemeControlProps) {
             type="button"
             role="radio"
             aria-checked={selected}
-            onClick={() => handleClick(opt.value)}
+            onClick={(event) => handleClick(opt.value, event)}
             className="px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all duration-150 whitespace-nowrap flex items-center gap-1"
             style={{
-              background: selected
-                ? (isLight ? 'var(--accent-claude-soft)' : 'rgba(59,130,246,.15)')
-                : 'transparent',
-              color: selected
-                ? (isLight ? 'var(--accent-claude)' : 'rgba(59,130,246,.95)')
-                : 'var(--text-secondary)',
+              background: selected ? 'var(--report-accent-soft)' : 'transparent',
+              color: selected ? 'var(--report-accent)' : 'var(--text-secondary)',
             }}
           >
             <Icon size={12} />

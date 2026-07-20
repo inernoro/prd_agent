@@ -64,7 +64,58 @@
   --semantic-orange-text: #fdba74;
   --semantic-cyan-text: #67e8f9;
   --semantic-indigo-text: #a5b4fc;
+  --semantic-success-soft: rgba(34, 197, 94, 0.12);
+  --semantic-success-border: rgba(34, 197, 94, 0.24);
+  --semantic-warning-soft: rgba(245, 158, 11, 0.12);
+  --semantic-warning-border: rgba(245, 158, 11, 0.24);
+  --semantic-danger-soft: rgba(239, 68, 68, 0.12);
+  --semantic-danger-border: rgba(239, 68, 68, 0.24);
+  --semantic-info-soft: rgba(59, 130, 246, 0.12);
+  --semantic-info-border: rgba(59, 130, 246, 0.24);
+  --semantic-neutral-soft: rgba(148, 163, 184, 0.10);
+  --semantic-neutral-border: rgba(148, 163, 184, 0.20);
+  --semantic-purple-soft: rgba(168, 85, 247, 0.12);
+  --semantic-purple-border: rgba(168, 85, 247, 0.24);
+  --semantic-pink-soft: rgba(236, 72, 153, 0.12);
+  --semantic-pink-border: rgba(236, 72, 153, 0.24);
+  --semantic-orange-soft: rgba(249, 115, 22, 0.12);
+  --semantic-orange-border: rgba(249, 115, 22, 0.24);
+  --semantic-cyan-soft: rgba(34, 211, 238, 0.12);
+  --semantic-cyan-border: rgba(34, 211, 238, 0.24);
+  --semantic-indigo-soft: rgba(129, 140, 248, 0.12);
+  --semantic-indigo-border: rgba(129, 140, 248, 0.24);
   --workflow-accent-text-lightness: 65%;
+
+  /* 周报品牌层：明暗状态由全局主题持有，周报仅声明编辑风格点缀。
+     暗色沿用平台靛蓝；浅色块覆盖为暖陶橙。历史变量保留为迁移别名。 */
+  --report-accent: var(--accent-primary);
+  --report-accent-hover: var(--accent-gold-2);
+  --report-accent-soft: rgba(var(--accent-primary-rgb), 0.14);
+  --report-accent-border: rgba(var(--accent-primary-rgb), 0.32);
+  --report-status-done: var(--semantic-success-text);
+  --report-status-done-soft: var(--semantic-success-soft);
+  --report-status-done-border: var(--semantic-success-border);
+  --report-status-going: var(--semantic-warning-text);
+  --report-status-going-soft: var(--semantic-warning-soft);
+  --report-status-going-border: var(--semantic-warning-border);
+  --report-status-idle: var(--semantic-neutral-text);
+  --report-status-idle-soft: var(--semantic-neutral-soft);
+  --report-status-idle-border: var(--semantic-neutral-border);
+  --accent-claude: var(--report-accent);
+  --accent-claude-hover: var(--report-accent-hover);
+  --accent-claude-soft: var(--report-accent-soft);
+  --accent-claude-border: var(--report-accent-border);
+  --status-done: var(--report-status-done);
+  --status-done-soft: var(--report-status-done-soft);
+  --status-done-border: var(--report-status-done-border);
+  --status-going: var(--report-status-going);
+  --status-going-soft: var(--report-status-going-soft);
+  --status-going-border: var(--report-status-going-border);
+  --status-idle: var(--report-status-idle);
+  --status-idle-soft: var(--report-status-idle-soft);
+  --status-idle-border: var(--report-status-idle-border);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
 
   /* 首页启动器：普通瓦片与全局外观开关。色彩由类别 accent 动态注入，
      这些 token 只负责跨主题可读的中性承载面。 */
@@ -348,6 +399,26 @@
   --semantic-orange-text: #9a3412;
   --semantic-cyan-text: #155e75;
   --semantic-indigo-text: #4338ca;
+  --semantic-success-soft: rgba(22, 101, 52, 0.12);
+  --semantic-success-border: rgba(22, 101, 52, 0.24);
+  --semantic-warning-soft: rgba(133, 77, 14, 0.12);
+  --semantic-warning-border: rgba(133, 77, 14, 0.24);
+  --semantic-danger-soft: rgba(185, 28, 28, 0.12);
+  --semantic-danger-border: rgba(185, 28, 28, 0.24);
+  --semantic-info-soft: rgba(29, 78, 216, 0.12);
+  --semantic-info-border: rgba(29, 78, 216, 0.24);
+  --semantic-neutral-soft: rgba(71, 85, 105, 0.10);
+  --semantic-neutral-border: rgba(71, 85, 105, 0.20);
+  --semantic-purple-soft: rgba(107, 33, 168, 0.12);
+  --semantic-purple-border: rgba(107, 33, 168, 0.24);
+  --semantic-pink-soft: rgba(157, 23, 77, 0.12);
+  --semantic-pink-border: rgba(157, 23, 77, 0.24);
+  --semantic-orange-soft: rgba(154, 52, 18, 0.12);
+  --semantic-orange-border: rgba(154, 52, 18, 0.24);
+  --semantic-cyan-soft: rgba(21, 94, 117, 0.12);
+  --semantic-cyan-border: rgba(21, 94, 117, 0.24);
+  --semantic-indigo-soft: rgba(67, 56, 202, 0.12);
+  --semantic-indigo-border: rgba(67, 56, 202, 0.24);
   --workflow-accent-text-lightness: 36%;
 
   --accent-primary: #4f46e5;
@@ -462,25 +533,20 @@
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18);
 
-  /* ── Anthropic 调色扩展（周报 Agent 专用点缀色，其他页面不消费即无感） ── */
-  --accent-claude:        #CC785C;               /* Claude 橙,主 accent */
-  --accent-claude-hover:  #B8684C;
-  --accent-claude-soft:   rgba(204, 120, 92, 0.10);
-  --accent-claude-border: rgba(204, 120, 92, 0.28);
-
-  /* ── Editorial 状态语义（精修：柔化饱和度，配合米底）──
-     moss-green: 完成态,替代过饱和的 green-700
-     amber: 进行中态,米底上自然的"待办"色感
-     hairline: 真正 1px 可见的深描边 (不是 4% alpha 的透明线) */
-  --status-done:          #5A8F5E;               /* 柔和墨绿,用于 100% 完成 */
-  --status-done-soft:     rgba(90, 143, 94, 0.12);
-  --status-done-border:   rgba(90, 143, 94, 0.32);
-  --status-going:         #B8784C;               /* 琥珀暖橙,用于进行中 */
-  --status-going-soft:    rgba(184, 120, 76, 0.10);
-  --status-going-border:  rgba(184, 120, 76, 0.28);
-  --status-idle:          rgba(71, 85, 105, 0.75);
-  --status-idle-soft:     rgba(71, 85, 105, 0.06);
-  --status-idle-border:   rgba(71, 85, 105, 0.18);
+  /* 周报浅色品牌覆盖：保留暖纸张与陶橙辨识度，状态仍服从全局语义层。 */
+  --report-accent: #CC785C;
+  --report-accent-hover: #B8684C;
+  --report-accent-soft: rgba(204, 120, 92, 0.10);
+  --report-accent-border: rgba(204, 120, 92, 0.28);
+  --report-status-done: #5A8F5E;
+  --report-status-done-soft: rgba(90, 143, 94, 0.12);
+  --report-status-done-border: rgba(90, 143, 94, 0.32);
+  --report-status-going: #B8784C;
+  --report-status-going-soft: rgba(184, 120, 76, 0.10);
+  --report-status-going-border: rgba(184, 120, 76, 0.28);
+  --report-status-idle: rgba(71, 85, 105, 0.75);
+  --report-status-idle-soft: rgba(71, 85, 105, 0.06);
+  --report-status-idle-border: rgba(71, 85, 105, 0.18);
 
   /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
   --hairline:             rgba(15, 23, 42, 0.08);

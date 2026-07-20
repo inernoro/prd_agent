@@ -205,13 +205,13 @@ export default function AppShell() {
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
-  // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
+  // 仍保留纸面身份的独立页面主题。
   const ownsThemeRef = useRef(false);
 
   // 全局明暗偏好（2026-07-17 升级：从移动端专属扩展到全站，桌面同样生效）:
   // 暗色默认、可切换（首页移动端右上角 / 设置 → 皮肤设置「外观」共用同一 store）,
   // 壳层统一落 <html data-theme>。deps 带 pathname:自管主题的页面卸载清属性后,
-  // 导航到普通页由这里重申。自管主题路由(纸面身份,页面自己 set/remove data-theme)
+  // 导航到普通页由这里重申。自管主题路由(独立纸面身份,页面自己 set/remove data-theme)
   // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
   useEffect(() => {
     if (!applyDocumentThemeMode(mobileThemeMode, location.pathname)) {

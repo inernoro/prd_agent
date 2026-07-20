@@ -28,6 +28,7 @@ const CDS_AGENT_PATH = path.resolve(TEST_DIR, '../../pages/cds-agent/CdsAgentPag
 const PROJECT_ROUTE_PATH = path.resolve(TEST_DIR, '../../pages/project-route-agent/ProjectRouteAgentPage.tsx');
 const WEEKLY_POSTER_PATH = path.resolve(TEST_DIR, '../../pages/weekly-poster/PosterDesignerPage.tsx');
 const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-debt-report.mjs');
+const REPORT_COLORS_PATH = path.resolve(TEST_DIR, '../../pages/report-agent/hooks/lightModeColors.ts');
 
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -141,6 +142,25 @@ describe('主题系统契约', () => {
     expect(contrastRatio(buttonForeground!, buttonBackground!)).toBeGreaterThanOrEqual(4.5);
     expect(tokens).toContain('.surface-tone-dark');
     expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
+  });
+
+  it('周报仅保留品牌 token，语义色数值统一归 tokens.css 管理', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const reportColors = fs.readFileSync(REPORT_COLORS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
+
+    ['accent', 'status-done', 'status-going', 'status-idle'].forEach((name) => {
+      expect(darkBlock).toContain(`--report-${name}:`);
+      expect(lightBlock).toContain(`--report-${name}:`);
+    });
+    expect(reportColors).toContain('var(--semantic-${token}-text)');
+    expect(reportColors).toContain('var(${prefix})');
+    expect(reportColors).not.toMatch(/rgba\(|#[0-9a-fA-F]{3,8}/);
+    expect(reportColors).not.toContain('if (isLight)');
   });
 
   it('关键自适应入口禁止回退为固定暗色表面或低对比小字', () => {
