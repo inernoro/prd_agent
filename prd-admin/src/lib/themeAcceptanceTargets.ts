@@ -3,6 +3,8 @@ export type ThemeAcceptanceState =
   | 'hover-primary-card'
   | 'keyboard-overlay-open'
   | 'selected-tab'
+  | 'selected-page'
+  | 'dialog-open'
   | 'empty-state'
   | 'populated-state';
 
@@ -33,6 +35,7 @@ export const THEME_ACCEPTANCE_TARGETS: readonly ThemeAcceptanceTarget[] = [
   { id: 'command-palette', path: '/', themes: BOTH_THEMES, states: ['keyboard-overlay-open'] },
   { id: 'emergence', path: '/emergence', themes: BOTH_THEMES, states: ['default', 'hover-primary-card', 'empty-state', 'populated-state'] },
   { id: 'project-route-agent', path: '/project-route-agent', themes: BOTH_THEMES, states: ['default', 'selected-tab', 'populated-state'] },
+  { id: 'weekly-poster', path: '/weekly-poster', themes: BOTH_THEMES, states: ['populated-state', 'selected-page', 'dialog-open'] },
   settingsTarget('user-space'),
   settingsTarget('account'),
   settingsTarget('skin'),

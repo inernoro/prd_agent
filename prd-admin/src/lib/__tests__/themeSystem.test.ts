@@ -26,6 +26,7 @@ const INFRA_SERVICES_PATH = path.resolve(TEST_DIR, '../../pages/infra-services/I
 const EMERGENCE_CARD_PATH = path.resolve(TEST_DIR, '../../pages/emergence/EmergenceTreeCard.tsx');
 const CDS_AGENT_PATH = path.resolve(TEST_DIR, '../../pages/cds-agent/CdsAgentPage.tsx');
 const PROJECT_ROUTE_PATH = path.resolve(TEST_DIR, '../../pages/project-route-agent/ProjectRouteAgentPage.tsx');
+const WEEKLY_POSTER_PATH = path.resolve(TEST_DIR, '../../pages/weekly-poster/PosterDesignerPage.tsx');
 const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-debt-report.mjs');
 
 function relativeLuminance(hex: string): number {
@@ -209,6 +210,15 @@ describe('主题系统契约', () => {
     expect(projectRoute).toContain('className="surface-tone-dark relative rounded-xl');
     expect(projectRoute).toContain('data-surface-tone="dark"');
     expect(projectRoute).not.toMatch(/text-white(?:\/\d+)?\b|bg-white\/\d+|border-white\/\d+/);
+  });
+
+  it('周报海报工作台的普通文字随主题切换，固定暗色仅保留在创建弹窗与媒体内容', () => {
+    const weeklyPoster = fs.readFileSync(WEEKLY_POSTER_PATH, 'utf8');
+
+    expect(weeklyPoster).toContain('className={`${rootClass} relative overflow-hidden text-token-primary');
+    expect(weeklyPoster).toContain('className="surface-tone-dark fixed inset-0');
+    expect(weeklyPoster).toContain("color: 'var(--semantic-success-text)'");
+    expect(weeklyPoster).not.toMatch(/text-white\/\d+/);
   });
 
   it('浏览器双主题矩阵覆盖所有设置 tab 与关键交互状态', () => {
