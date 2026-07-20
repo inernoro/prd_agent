@@ -34,7 +34,7 @@ namespace PrdAgent.Infrastructure.LLM;
 public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
-    private readonly ILogicalModelGateway _logicalModelGateway;
+    private readonly ILogicalModelGateway _servingGateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
@@ -45,7 +45,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
     public OpenAIImageClient(
         MongoDbContext db,
-        ILogicalModelGateway logicalModelGateway,
+        HttpLlmGatewayClient servingGateway,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<OpenAIImageClient> logger,
@@ -55,7 +55,7 @@ public class OpenAIImageClient : IImageGenerationClient
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _db = db;
-        _logicalModelGateway = logicalModelGateway;
+        _servingGateway = servingGateway;
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
@@ -194,7 +194,7 @@ public class OpenAIImageClient : IImageGenerationClient
             requiredLogicalModelPublicId, platformId, modelId, modelName);
         // 视觉创作只依赖独立 Gateway。显式逻辑模型、未显式选模型时的默认池与故障兜底
         // 都在 Gateway 内部完成；MAP 不再保留第二条进程内上游发送路径。
-        var requestGateway = _logicalModelGateway;
+        var requestGateway = _servingGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)
@@ -1227,7 +1227,7 @@ public class OpenAIImageClient : IImageGenerationClient
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
             requiredLogicalModelPublicId, platformId, modelId, modelName);
         // 多图生图与文生图使用同一独立 Gateway 边界，避免协议分支重新引入 MAP 旧池。
-        var requestGateway = _logicalModelGateway;
+        var requestGateway = _servingGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)

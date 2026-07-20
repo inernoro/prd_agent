@@ -19,11 +19,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILogicalModelGateway.cs"));
         Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
         Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
-        Assert.Contains("private readonly ILogicalModelGateway _logicalModelGateway", client);
+        Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
+        Assert.Contains("HttpLlmGatewayClient servingGateway", client);
         Assert.True(
-            client.Split("var requestGateway = _logicalModelGateway;", StringSplitOptions.None).Length - 1 == 2,
+            client.Split("var requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
             "文生图与多图生图都必须直接选择独立 Gateway HTTP 边界");
         Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
+        Assert.DoesNotContain("private readonly ILogicalModelGateway _logicalModelGateway", client);
         Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);
         Assert.DoesNotContain("_gateway.SendRawWithResolutionAsync", client);
         Assert.Contains("requestGateway.ResolveRequiredLogicalModelAsync", client);
