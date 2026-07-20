@@ -1604,6 +1604,48 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ActualModel = "gpt-5.6-terra",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.com",
+            ApiKey = "sk-test-key"
+        };
+        var http = new SequenceHttpClientFactory();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.System.HealthProbe.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["max_tokens"] = 8,
+                ["stream"] = false
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://api.openai.com/v1/chat/completions", Assert.Single(http.RequestUris));
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-5.6-terra", (string?)body["model"]);
+        Assert.Equal("none", (string?)body["reasoning_effort"]);
+        Assert.Equal(8, (int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenOpenRouter_ShouldPrefixAppAttributionTitle()
     {
         var resolution = new GatewayModelResolution
@@ -2196,6 +2238,75 @@ public class LlmGatewayTests
 
     #region Helper Methods
 
+    [Fact]
+    public async Task SendAsync_Gpt56ChatCompletions_NormalizesLegacyParameters()
+    {
+        var http = new SequenceHttpClientFactory();
+        var gateway = CreateGatewayForModel("gpt-5.6-sol", http);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["max_tokens"] = 128,
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "lookup" }
+                    }
+                }
+            }
+        });
+
+        Assert.True(response.Success);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-5.6-sol", (string?)body["model"]);
+        Assert.Equal("none", (string?)body["reasoning_effort"]);
+        Assert.Equal(128, (int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+    }
+
+    [Fact]
+    public async Task SendAsync_Gpt56ToolsWithReasoning_FailsBeforeHttp()
+    {
+        var http = new SequenceHttpClientFactory();
+        var gateway = CreateGatewayForModel("gpt-5.6-terra", http);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["reasoning_effort"] = "low",
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "lookup" }
+                    }
+                }
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("GPT56_TOOLS_REQUIRE_REASONING_NONE", response.ErrorCode);
+        Assert.Empty(http.RequestBodies);
+    }
+
     private static LlmGateway CreateCapabilityGateGateway(string modelType, params LLMModelCapability[] capabilities)
     {
         var resolver = new InMemoryModelResolver()
@@ -2229,6 +2340,40 @@ public class LlmGatewayTests
             });
 
         return new LlmGateway(resolver, new TestHttpClientFactory(), new TestLogger<LlmGateway>());
+    }
+
+    private static LlmGateway CreateGatewayForModel(string modelId, IHttpClientFactory httpClientFactory)
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "openai-platform",
+                Name = "OpenAI",
+                PlatformType = "openai",
+                ApiUrl = "https://api.openai.com",
+                Enabled = true
+            }, "sk-test-key")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "gpt-5-6-pool",
+                Name = "GPT-5.6 Pool",
+                Code = "gpt-5-6-pool",
+                ModelType = ModelTypes.Chat,
+                IsDefaultForType = true,
+                Priority = 0,
+                Models = new List<ModelGroupItem>
+                {
+                    new()
+                    {
+                        PlatformId = "openai-platform",
+                        ModelId = modelId,
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                }
+            });
+
+        return new LlmGateway(resolver, httpClientFactory, new TestLogger<LlmGateway>());
     }
 
     private static LlmGateway CreateTestGateway()
