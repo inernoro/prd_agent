@@ -114,11 +114,10 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
-        // 二进制/文件条目（无 DocumentId、有 AttachmentId）的附件元信息：批量取出，导出时带上其访问 URL，
-        // 接收方据此下载 + 重传到自己存储 + 重建条目（debt.platform.peer-sync A 系列：二进制附件跨节点）。
-        var attachmentIds = entries
-            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
-            .Select(e => e.AttachmentId!).Distinct().ToList();
+        // 所有文件条目的附件元信息都要批量取出：
+        // - 纯二进制条目用 URL 跨节点重传；
+        // - 双形态条目在 ParsedPrd 缺失或正文为空时，用 ExtractedText 兜底。
+        var attachmentIds = AttachmentIdsForExport(entries);
         var attById = attachmentIds.Count > 0
             ? (await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
                 .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
@@ -130,20 +129,14 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
                 content = (await _documentService.GetByIdAsync(e.DocumentId))?.RawContent;
 
-            // 该条目的附件（若有）与它是否为「可跨节点传输的文件条目」：有附件且附件有可下载 URL →
-            // 走 peerAttachment，接收方据此下载重传重建文件（此时 content 保持 null，交由二进制分支处理）。
+            // 该条目的附件（若有）与导出形态由同一处解析，避免双形态条目在 ParsedPrd 缺失时
+            // 被误当成二进制，或因未加载附件而丢失 ExtractedText。
             Attachment? att = null;
             if (!e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId))
                 attById.TryGetValue(e.AttachmentId!, out att);
-            var transferableFile = att != null && !string.IsNullOrWhiteSpace(att.Url);
-
-            // 关键修复（对端收不到文档）：文本条目（非文件夹、且不是可传输文件条目）必须以「非 null 正文」导出。
-            // 接收方 ApplyRecords 用 `fe.Content == null` 判定为「二进制」，无 peerAttachment 就静默 skipped，
-            // 于是「DocumentId 为空 / ParsedPrd 缺失 / 空文档 / 仅有附件提取文本但附件无下载 URL」这类条目会在对端
-            // 被当二进制丢弃、永远建不出来，而发送方却记 skipped=已一致、显示同步成功（用户实测：对端只剩文件夹、0 B）。
-            // 与 GetEntryContent 的渲染兜底同口径：优先正文 → 退附件提取文本 → 兜底空串，保证文本条目始终按文本在对端建出。
-            if (!e.IsFolder && !transferableFile && string.IsNullOrEmpty(content))
-                content = (att != null ? att.ExtractedText : null) ?? string.Empty;
+            var exportPayload = ResolveExportPayload(e, content, att);
+            content = exportPayload.Content;
+            var transferableFile = exportPayload.TransferableFile;
 
             string? parentLineage = null;
             if (!string.IsNullOrEmpty(e.ParentId) && byId.TryGetValue(e.ParentId, out var parent))
@@ -226,6 +219,33 @@ public class DocumentStoreSyncResource : ISyncableResource
         };
     }
 
+    internal static IReadOnlyList<string> AttachmentIdsForExport(IEnumerable<DocumentEntry> entries)
+        => entries
+            .Where(e => !e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    internal static (string? Content, bool TransferableFile) ResolveExportPayload(
+        DocumentEntry entry,
+        string? documentContent,
+        Attachment? attachment)
+    {
+        if (entry.IsFolder)
+            return (null, false);
+
+        // 只有没有 ParsedPrd 身份的附件条目才是纯二进制文件。双形态条目即使正文暂时缺失，
+        // 也必须保持文本形态，并按页面读取口径退回 Attachment.ExtractedText。
+        var transferableFile = string.IsNullOrEmpty(entry.DocumentId)
+            && attachment != null
+            && !string.IsNullOrWhiteSpace(attachment.Url);
+        var content = documentContent;
+        if (!transferableFile && string.IsNullOrEmpty(content))
+            content = attachment?.ExtractedText ?? string.Empty;
+
+        return (content, transferableFile);
+    }
+
     public async Task<string?> ComputeSignatureAsync(string itemId, CancellationToken ct)
     {
         var store = await _db.DocumentStores.Find(s => s.Id == itemId).FirstOrDefaultAsync(ct);
@@ -242,14 +262,11 @@ public class DocumentStoreSyncResource : ISyncableResource
         //   路径（漂移检测调用），可接受；apply 路径本来就要全量传输 RawContent，带宽匹配。
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == itemId).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
-        // 二进制附件条目：纳入「来源附件标识」做签名，否则仅二进制文件变化的库签名不变 → 漂移检测误报「已同步」。
-        // 标识用 peerSourceAttachmentUrl（接收节点）∥ att.Url（源节点）—— 两节点对同一份文件得到同一个值，
-        // 与是否共享 CDN 无关，避免「内容一致但签名永不同」的伪漂移。
-        var binAttachmentIds = entries
-            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
-            .Select(e => e.AttachmentId!).Distinct().ToList();
-        var binAttById = binAttachmentIds.Count > 0
-            ? (await _db.Attachments.Find(a => binAttachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
+        // 签名必须与导出使用完全相同的附件集合和形态判定：双形态条目正文缺失时会导出
+        // ExtractedText，签名也必须计算这份正文，否则两端内容一致后仍会永久漂移。
+        var signatureAttachmentIds = AttachmentIdsForExport(entries);
+        var signatureAttById = signatureAttachmentIds.Count > 0
+            ? (await _db.Attachments.Find(a => signatureAttachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
                 .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
             : new Dictionary<string, Attachment>();
         string? ParentLineage(string? parentId)
@@ -258,22 +275,29 @@ public class DocumentStoreSyncResource : ISyncableResource
         foreach (var e in entries)
         {
             string contentHash = string.Empty;
+            string? documentContent = null;
             if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
-            {
-                var doc = await _documentService.GetByIdAsync(e.DocumentId);
-                contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
-            }
-            else if (!e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+                documentContent = (await _documentService.GetByIdAsync(e.DocumentId))?.RawContent;
+
+            Attachment? attachment = null;
+            if (!e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId))
+                signatureAttById.TryGetValue(e.AttachmentId!, out attachment);
+            var exportPayload = ResolveExportPayload(e, documentContent, attachment);
+
+            if (exportPayload.TransferableFile)
             {
                 // 标识 + 源头字节数都取「源头侧口径」，保证两节点对同一文件得同一签名：
                 // 接收方读 metadata 的 peerSourceAttachmentUrl/Size；源头节点（无该 metadata）读自身 att.Url/att.Size。
                 // 不能用 e.FileSize（entry 字段，与 att.Size 不同口径）做签名，否则两侧恒不等（Bugbot: size mismatch loop）。
-                binAttById.TryGetValue(e.AttachmentId!, out var att);
                 var attIdentity = e.Metadata != null && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var src) && !string.IsNullOrEmpty(src)
                     ? src
-                    : (att?.Url ?? string.Empty);
-                var attSize = AppliedSourceAttachmentSize(e.Metadata) ?? att?.Size ?? 0;
+                    : (attachment?.Url ?? string.Empty);
+                var attSize = AppliedSourceAttachmentSize(e.Metadata) ?? attachment?.Size ?? 0;
                 contentHash = Sha256Hex("attachment:" + attIdentity + ":" + attSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            else if (!e.IsFolder)
+            {
+                contentHash = Sha256Hex(exportPayload.Content ?? string.Empty);
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
             // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
