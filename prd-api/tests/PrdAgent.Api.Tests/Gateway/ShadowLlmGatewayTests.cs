@@ -254,6 +254,34 @@ public class ShadowLlmGatewayTests
     }
 
     [Fact]
+    public async Task RequiredLogicalModel_DoesNotDependOnInprocCatalogAndNeverFallsBack()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools = [],
+            RawContent = "legacy-raw",
+        };
+        var http = new FakeGateway(LogicalRes("nanobanana-2", "upstream-nano"))
+        {
+            RawContent = "gateway-raw",
+        };
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance);
+
+        var resolved = await shadow.ResolveRequiredLogicalModelAsync(
+            "demo.app::generation", "generation", "nanobanana-2");
+
+        resolved.Success.ShouldBeTrue();
+        resolved.LogicalModelPublicId.ShouldBe("nanobanana-2");
+        inproc.ResolveCount.ShouldBe(0, "显式逻辑模型不得依赖 MAP 目录反推");
+        http.ResolveCount.ShouldBe(1);
+
+        var raw = await shadow.SendRawWithResolutionAsync(RawReq(), resolved);
+        raw.Content.ShouldBe("gateway-raw");
+        http.RawCount.ShouldBe(1);
+        inproc.RawCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Raw_FullSample_WritesRawComparison()
     {
         var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };

@@ -648,7 +648,11 @@ public class ImageGenRunWorker : BackgroundService
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
                             modelName: run.LogicalModelPublicId ?? run.ModelId,
-                            maskBase64: run.MaskBase64);
+                            maskBase64: run.MaskBase64,
+                            requiredLogicalModelPublicId: run.LogicalModelPublicId
+                                ?? (string.Equals(run.PlatformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                                    ? run.ModelId
+                                    : null));
 
                         if (!res.Success || res.Data == null)
                         {

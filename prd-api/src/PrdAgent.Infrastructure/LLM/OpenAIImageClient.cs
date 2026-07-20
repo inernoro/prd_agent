@@ -84,7 +84,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string? modelId = null,
         string? platformId = null,
         string? modelName = null,
-        string? maskBase64 = null)
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null)
     {
         // 所有生图操作产出的文件都是 AI 生成内容
         using var _ = RegistryAssetStorage.ScopeAs("generated");
@@ -93,7 +94,8 @@ public class OpenAIImageClient : IImageGenerationClient
         {
             // 文生图：无参考图
             return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-                modelId, platformId, modelName);
+                modelId, platformId, modelName,
+                requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         }
 
         if (images.Count == 1)
@@ -102,7 +104,8 @@ public class OpenAIImageClient : IImageGenerationClient
             return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
                 modelId, platformId, modelName,
                 initImageBase64: images[0], initImageProvided: true,
-                maskBase64: maskBase64);
+                maskBase64: maskBase64,
+                requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         }
 
         // 多图生图（2+ 张参考图）→ 转为 ImageRefData 列表
@@ -125,7 +128,7 @@ public class OpenAIImageClient : IImageGenerationClient
         }).ToList();
 
         return await GenerateWithVisionAsync(prompt, imageRefs, size, ct, appCallerCode,
-            modelId, platformId, modelName);
+            modelId, platformId, modelName, requiredLogicalModelPublicId);
     }
 
 
@@ -141,7 +144,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string? modelName = null,
         string? initImageBase64 = null,
         bool initImageProvided = false,
-        string? maskBase64 = null)
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -167,7 +171,11 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
+        var requiredLogicalModel = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+            ? await _gateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode, "generation", requiredLogicalModel, ct)
+            : await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -1157,7 +1165,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string appCallerCode,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null)
+        string? modelName = null,
+        string? requiredLogicalModelPublicId = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -1192,7 +1201,11 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
+        var requiredLogicalModel = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+            ? await _gateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode, "generation", requiredLogicalModel, ct)
+            : await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,

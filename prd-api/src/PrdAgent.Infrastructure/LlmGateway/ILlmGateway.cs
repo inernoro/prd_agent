@@ -77,6 +77,52 @@ public interface ILlmGateway
         CancellationToken ct = default);
 
     /// <summary>
+    /// 解析调用方已经声明的逻辑模型。该契约不能退回同名旧模型池：返回结果必须携带
+    /// 相同的 LogicalModelPublicId，否则按解析失败处理。
+    /// </summary>
+    async Task<GatewayModelResolution> ResolveRequiredLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        string logicalModelPublicId,
+        CancellationToken ct = default)
+    {
+        var required = (logicalModelPublicId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(required))
+        {
+            return new GatewayModelResolution
+            {
+                Success = false,
+                ResolutionType = "NotFound",
+                ErrorMessage = "逻辑模型公开标识不能为空",
+            };
+        }
+
+        var resolution = await ResolveModelAsync(
+            appCallerCode,
+            modelType,
+            expectedModel: required,
+            pinnedPlatformId: null,
+            pinnedModelId: null,
+            ct);
+        if (resolution.Success
+            && string.Equals(
+                required,
+                resolution.LogicalModelPublicId?.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return resolution;
+        }
+
+        return new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = required,
+            ErrorMessage = $"逻辑模型 {required} 未能在当前租户与 appCaller 下解析，已拒绝退回其他模型池。",
+        };
+    }
+
+    /// <summary>
     /// 获取指定 AppCallerCode 可用的模型池列表
     /// </summary>
     Task<List<AvailableModelPool>> GetAvailablePoolsAsync(

@@ -196,6 +196,22 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return inproc;
     }
 
+    public async Task<GatewayModelResolution> ResolveRequiredLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        string logicalModelPublicId,
+        CancellationToken ct = default)
+    {
+        // 调用方已经在业务任务中持久化了逻辑模型身份时，不再依赖后台作用域重新查询目录
+        // 来猜测它是不是逻辑模型。独立 Gateway 是唯一权威，且其默认接口实现会校验返回
+        // LogicalModelPublicId 与 required 完全一致，失败时不会退回 MAP 同名旧池。
+        return await _http.ResolveRequiredLogicalModelAsync(
+            appCallerCode,
+            modelType,
+            logicalModelPublicId,
+            ct);
+    }
+
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode, string modelType, CancellationToken ct = default)
     {
