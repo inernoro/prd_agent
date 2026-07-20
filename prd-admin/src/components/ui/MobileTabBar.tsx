@@ -203,8 +203,14 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
   /* ── 「快速创建」底部抽屉 ── */
   const createSheet = (
     <div
+      aria-hidden={!menuOpen}
       className="fixed inset-0"
-      style={{ zIndex: 200, pointerEvents: menuOpen ? 'auto' : 'none' }}
+      style={{
+        zIndex: 200,
+        pointerEvents: menuOpen ? 'auto' : 'none',
+        visibility: menuOpen ? 'visible' : 'hidden',
+        transition: menuOpen ? 'visibility 0s' : 'visibility 0s linear 0.3s',
+      }}
     >
       {/* 背景遮罩 */}
       <div
@@ -221,8 +227,8 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
 
       {/* 抽屉本体 */}
       <div
-        role="dialog"
-        aria-modal="true"
+        role={menuOpen ? 'dialog' : undefined}
+        aria-modal={menuOpen ? 'true' : undefined}
         aria-label="快速创建"
         className="absolute left-0 right-0 bottom-0"
         style={{
