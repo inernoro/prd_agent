@@ -1214,6 +1214,23 @@ export interface ReleaseLogEntry {
   phase?: string;
 }
 
+/**
+ * 渐进式 Agent 操作者声明。第一阶段仅采集，不参与鉴权或强制拦截。
+ * `declared` 只代表调用方提供了通过格式校验的字段，绝不等同 `verified`。
+ */
+export interface AgentOperatorIdentitySummary {
+  identityVersion: 0 | 1;
+  confidence: 'legacy' | 'declared';
+  agentSessionId?: string;
+  threadId?: string;
+  turnId?: string;
+  skillName?: string;
+  skillVersion?: string;
+  operationReason?: string;
+  /** 只记录字段名，不保留非法原值。 */
+  invalidFields?: string[];
+}
+
 export interface ReleaseRun {
   releaseId: string;
   projectId: string;
@@ -1238,6 +1255,9 @@ export interface ReleaseRun {
   logs: ReleaseLogEntry[];
   seq: number;
   previousReleaseId?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
   errorMessage?: string;
@@ -2039,6 +2059,9 @@ export interface ActiveSelfUpdate {
   branch: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   actor?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   /** 当前阶段标签(validate / build-backend / web-build / restart 等) */
   step?: string;
   /** Sidecar updater 进程 PID — 主进程启动时用 process.kill(pid, 0) 探活,
@@ -2098,6 +2121,9 @@ export interface SelfUpdateRecord {
   error?: string;
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
   actor?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   /** 完整的 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
    *  recordSelfUpdate 把当前 active-update.json 的 logTail 转储到这里,
    *  历史抽屉点条目就能展开看完整步骤。截断到 50 行(与 active 同 ring buffer)。
@@ -2115,7 +2141,11 @@ export interface SelfUpdateRecord {
    *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
    *   - 'doc-only':  改动只触文档/changelogs,完全 noop
    *   - 'prebuilt':  命中 CI 预构建产物,跳过本机编译 */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
+  updateMode?: 'hot-reload' | 'restart' | 'restart-only' | 'noOp' | 'web-only' | 'doc-only' | 'prebuilt';
+  /** 共享控制面版本切换类型；同 SHA/快进兼容旧客户端，非快进必须显式发布或回滚。 */
+  transitionMode?: 'same-sha' | 'fast-forward' | 'release' | 'rollback';
+  /** 非快进发布或回滚的操作原因；用于历史审计。 */
+  transitionReason?: string;
   /** 结构化耗时明细。用于复查"每次慢在哪里",避免只能解析 steps 文本。
    *  常见字段:fetchMs/pullMs/validateMs/buildBackendMs/webBuildMs/totalMs,
    *  validate 内含 install_cds_ms/tsc_web_ms 等 validateBuildReadiness 原始计时。 */
