@@ -168,7 +168,9 @@ internal class ClaudeUsage
 internal class OpenAIRequest
 {
     public string Model { get; set; } = string.Empty;
-    public int MaxTokens { get; set; }
+    public int? MaxTokens { get; set; }
+    public int? MaxCompletionTokens { get; set; }
+    public string? ReasoningEffort { get; set; }
     public double Temperature { get; set; }
     public List<OpenAIRequestMessage> Messages { get; set; } = new();
     public bool Stream { get; set; }
@@ -266,4 +268,3 @@ internal class OpenAIPromptTokensDetails
 }
 
 #endregion
-

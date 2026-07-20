@@ -116,7 +116,7 @@ const visionAllowedModels = [
   'gpt-4.1(?:-[\\w-]+)?',
   'gpt-4o(?:-[\\w-]+)?',
   'gpt-4.5(?:-[\\w-]+)',
-  'gpt-5(?:-[\\w-]+)?',
+  'gpt-5(?:\\.\\d+)?(?:-[\\w-]+)?',
   'chatgpt-4o(?:-[\\w-]+)?',
   'o1(?:-[\\w-]+)?',
   'o3(?:-[\\w-]+)?',
@@ -204,7 +204,7 @@ const FUNCTION_CALLING_MODELS = [
   'gpt-4',
   'gpt-4.5',
   'gpt-oss(?:-[\\w-]+)',
-  'gpt-5(?:-[0-9-]+)?',
+  'gpt-5(?:\\.\\d+)?(?:-[\\w-]+)?',
   'o(1|3|4)(?:-[\\w-]+)?',
   'claude',
   'qwen',
@@ -298,15 +298,13 @@ function isOpenAIReasoningModel(model: CherryModelInput): boolean {
 
 function isSupportedReasoningEffortOpenAIModel(model: CherryModelInput): boolean {
   const modelId = getLowerBaseModelName(model.id);
-  const isGPT5SeriesModel = modelId.includes('gpt-5') && !modelId.includes('gpt-5.1') && !modelId.includes('gpt-5.2');
-  const isGPT51SeriesModel = modelId.includes('gpt-5.1');
-  const isGPT52SeriesModel = modelId.includes('gpt-5.2');
+  const isGPT5SeriesModel = /(?:^|\/)gpt-5(?:\.\d+)?(?:-|$)/.test(modelId);
   return (
     (modelId.includes('o1') && !(modelId.includes('o1-preview') || modelId.includes('o1-mini'))) ||
     modelId.includes('o3') ||
     modelId.includes('o4') ||
     modelId.includes('gpt-oss') ||
-    ((isGPT5SeriesModel || isGPT51SeriesModel || isGPT52SeriesModel) && !modelId.includes('chat'))
+    (isGPT5SeriesModel && !modelId.includes('chat'))
   );
 }
 
@@ -578,5 +576,4 @@ export function matchCherryAvailableTab(tab: CherryAvailableTab, model: CherryMo
   // reasoning tab（Cherry：严格 isReasoningModel）
   return isReasoningModel(model);
 }
-
 
