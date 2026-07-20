@@ -1214,6 +1214,23 @@ export interface ReleaseLogEntry {
   phase?: string;
 }
 
+/**
+ * 渐进式 Agent 操作者声明。第一阶段仅采集，不参与鉴权或强制拦截。
+ * `declared` 只代表调用方提供了通过格式校验的字段，绝不等同 `verified`。
+ */
+export interface AgentOperatorIdentitySummary {
+  identityVersion: 0 | 1;
+  confidence: 'legacy' | 'declared';
+  agentSessionId?: string;
+  threadId?: string;
+  turnId?: string;
+  skillName?: string;
+  skillVersion?: string;
+  operationReason?: string;
+  /** 只记录字段名，不保留非法原值。 */
+  invalidFields?: string[];
+}
+
 export interface ReleaseRun {
   releaseId: string;
   projectId: string;
@@ -1238,6 +1255,9 @@ export interface ReleaseRun {
   logs: ReleaseLogEntry[];
   seq: number;
   previousReleaseId?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
   errorMessage?: string;
@@ -2039,6 +2059,9 @@ export interface ActiveSelfUpdate {
   branch: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   actor?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   /** 当前阶段标签(validate / build-backend / web-build / restart 等) */
   step?: string;
   /** Sidecar updater 进程 PID — 主进程启动时用 process.kill(pid, 0) 探活,
@@ -2098,6 +2121,9 @@ export interface SelfUpdateRecord {
   error?: string;
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
   actor?: string;
+  requestId?: string;
+  operationId?: string;
+  agentIdentity?: AgentOperatorIdentitySummary;
   /** 完整的 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
    *  recordSelfUpdate 把当前 active-update.json 的 logTail 转储到这里,
    *  历史抽屉点条目就能展开看完整步骤。截断到 50 行(与 active 同 ring buffer)。
