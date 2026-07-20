@@ -297,8 +297,8 @@ export function LogsView() {
         const tp = getTransportMeta(it.transport);
         return (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
-            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
-              {it.model || DASH}
+            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+              {it.logicalModelPublicId || it.model || DASH}
             </span>
             {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
             {tp ? <Chip label={tp.label} color={tp.color} bg={tp.bg} title={`网关传输通道：${tp.label}`} /> : null}
@@ -366,8 +366,8 @@ export function LogsView() {
         return <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.model}>
-            {it.model || DASH}
+          <span className="lg-truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+            {it.logicalModelPublicId || it.model || DASH}
           </span>
         );
       case 'provider':

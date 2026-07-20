@@ -35,10 +35,10 @@ public class LLMModel
     /// <summary>模型ID（通过 IIdGenerator 生成）</summary>
     public string Id { get; set; } = string.Empty;
     
-    /// <summary>模型显示名称 (如: GPT-4 Turbo)</summary>
+    /// <summary>模型显示名称 (如: GPT-5.6 Sol)</summary>
     public string Name { get; set; } = string.Empty;
     
-    /// <summary>模型ID/实际调用名 (如: gpt-4-turbo-preview)</summary>
+    /// <summary>模型ID/实际调用名 (如: gpt-5.6-sol)</summary>
     public string ModelName { get; set; } = string.Empty;
     
     /// <summary>API地址 (可继承自平台)</summary>
@@ -128,4 +128,3 @@ public class LLMModel
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
-

@@ -441,7 +441,7 @@ function normalizeImageGenPools(res: ApiResponse<ModelGroupForApp[]>): ApiRespon
 }
 
 /**
- * 获取视觉创作所有生图场景的模型池列表（后端合并去重 text2img + img2img + vision）
+ * 获取视觉创作所有生图场景的逻辑模型列表。旧环境由后端返回模型池兼容投影。
  * 调用 /api/visual-agent/image-gen/models
  */
 export async function getVisualAgentImageGenModelsReal() {
@@ -449,7 +449,7 @@ export async function getVisualAgentImageGenModelsReal() {
 }
 
 /**
- * 仅文生图(text2img)可用的模型池——分镜台关键帧等纯文生图场景用，
+ * 仅文生图(text2img)可用的逻辑模型——分镜台关键帧等纯文生图场景用，
  * 避免合并列表里的 img2img/vision-only 池被选中后让每帧都失败。
  * 调用 /api/visual-agent/image-gen/models/text2img
  */

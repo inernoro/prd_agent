@@ -13,6 +13,7 @@ import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
 import { ModelsPage } from '@/pages/ModelsPage';
+import { LogicalModelsPage } from '@/pages/LogicalModelsPage';
 import { ExchangesPage } from '@/pages/ExchangesPage';
 import { AuditsPage } from '@/pages/AuditsPage';
 import { ShadowPage } from '@/pages/ShadowPage';
@@ -98,6 +99,7 @@ export function App() {
             <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />
             <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><PlatformsPage /></RequirePageAccess>} />
             <Route path="/models" element={<RequirePageAccess page="routeConfig"><ModelsPage /></RequirePageAccess>} />
+            <Route path="/logical-models" element={<RequirePageAccess page="routeConfig"><LogicalModelsPage /></RequirePageAccess>} />
             <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><ExchangesPage /></RequirePageAccess>} />
             <Route path="/audits" element={<RequirePageAccess page="audits"><AuditsPage /></RequirePageAccess>} />
             <Route path="/service-keys" element={<RequirePageAccess page="serviceKeys"><ServiceKeysPage /></RequirePageAccess>} />

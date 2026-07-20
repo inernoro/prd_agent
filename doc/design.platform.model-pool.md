@@ -1,127 +1,132 @@
-# 大模型池设计（三级调度/三级链路） · 设计
+# 逻辑模型、上游 Offering 与默认模型池设计
 
-> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v3.0 | **日期**：2026-07-20 | **状态**：开发中
 
 ## 一、管理摘要
 
-- **解决什么问题**：模型调用需要按业务用途绑定模型、在端点故障时降级，并能解释最终选中了哪个平台、模型和池。
-- **当前方案**：appCallerCode 声明模型类型与专属池，Resolver 按专属池、默认池、兼容配置依次解析，再按健康和能力选择池内成员。
-- **健康闭环**：业务调用记录成功和失败，后台探活使已隔离端点有机会恢复，池耗尽与恢复形成通知和日志。
-- **事实源演进**：网关控制面逐步拥有模型池权威；MAP 侧集合仍承担兼容读取，不能形成无规则双写。
+- **应用看什么**：应用只维护自己有权使用的逻辑模型列表，例如 `image2`、`nanobanana-2`。它不读取 Provider、Endpoint、密钥或上游真实模型名。
+- **Gateway 管什么**：Gateway 为每个逻辑模型维护一个或多个 Offering。每个 Offering 指向平台模型或 Exchange，并独立声明协议、优先级、权重、并发、分钟速率和健康状态。
+- **模型池做什么**：模型池不再承担应用的全部离散模型组合。只有请求未显式选择逻辑模型时，模型池才提供 appCaller 专属默认、模型类型默认与 legacy 兜底。
+- **为什么这样拆**：同一逻辑模型可由多个不同协议、不同限额的上游供给；应用选择稳定能力，Gateway 负责路由和故障切换，双方可以独立演进。
 
 ## 1. 核心对象
 
 | 对象 | 责任 |
-|------|------|
-| LLMAppCaller | 用稳定 appCallerCode 表达业务调用用途和模型要求 |
-| ModelRequirement | 指定模型类型、候选池和能力约束 |
-| ModelGroup | 表达同类模型的池、优先级、默认属性和策略 |
-| ModelGroupItem | 绑定平台与模型，并保存健康、失败计数和能力快照 |
-| ModelResolver | 解析调用方、池、成员、平台配置和最终发送参数 |
-| LlmRequestContext | 保存用户、调用方、运行和审计上下文 |
+|---|---|
+| appCaller | 表达谁在什么业务场景调用，并承载权限、预算、速率与 PromptPolicy |
+| GatewayLogicalModel | 面向应用的稳定公开模型标识、名称、类型、能力与 appCaller 可见范围 |
+| GatewayModelOffering | 把一个逻辑模型连接到一个真实上游目标，并保存路由和治理参数 |
+| Provider / Endpoint / Credential | 保存供应商、请求地址、协议和只写凭据；不暴露给应用 |
+| LLMModel / ModelExchange | 表达可执行的普通模型或异构 Exchange 目标 |
+| ModelGroup | 只在没有显式逻辑模型时提供默认与兼容兜底 |
+| ModelResolver | 在一次计算阶段完成租户、权限、逻辑模型、Offering 和重试候选解析 |
 
-appCallerCode 是业务用途，不等于模型名。一个调用点不得通过临时字符串绕开注册表，也不能把前端选择直接当成最终解析结果。
+appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实上游模型名是 Gateway 执行细节。三个标识不得互相代替。
 
-## 2. 三级解析
+## 2. 解析顺序
 
 解析顺序固定为：
 
-1. 当前 appCaller 对应模型类型的专属模型池。
-2. 同模型类型的默认模型池。
-3. 尚未迁移部署的 legacy 模型标记兼容路径。
+1. 请求显式给出模型时，先按当前租户、模型类型和 appCaller 可见范围解析逻辑模型。
+2. 对该逻辑模型读取启用且未隔离的 Offering，按 `priority` 或 `weighted` 产生一次性主候选与有界重试候选。
+3. 请求未显式给出模型时，才按 appCaller 专属模型池、模型类型默认池、legacy 兼容配置依次解析。
+4. 显式模型不存在、跨租户或无权限时 fail-closed，不能静默退回默认池并伪装成用户所选模型。
 
-每一级只选择已启用、类型匹配且未被判定为不可用的候选。解析失败必须返回已检查的层级和原因，不能静默选用不同模型类型。
+解析阶段一次性确定候选，发送阶段不得再次调用 Resolver。这样可以保证界面选择、预算预占、日志与真实请求使用同一份决策。
 
-legacy 是迁移兜底，不是长期并行调度系统。新调用和新配置必须进入模型池与调用方注册体系。
+## 3. 应用模型列表
 
-## 3. 池内选择
+视觉创作等应用从 Gateway 的租户模型目录读取列表。目录只返回：
 
-| 条件 | 处理 |
-|------|------|
-| 指定期望模型且可用 | 在候选池中优先选择匹配项 |
-| Healthy 成员存在 | 按池策略和优先级选择 |
-| 仅 Degraded 成员存在 | 允许降级使用并记录健康状态 |
-| 成员 Unavailable | 普通业务流量跳过，等待探活恢复 |
-| 能力不满足 | 跳过并记录 capability mismatch |
-| 全池耗尽 | 尝试下一候选池，最终返回结构化不可用错误 |
+- 逻辑模型 PublicId、显示名、模型类型和能力；
+- 当前 appCaller 是否可见；
+- 是否至少存在一个可用 Offering。
 
-模型能力至少包括视觉、函数调用、图片生成、thinking 和结构化输出等。池成员的能力快照优先；旧数据缺失时可以从平台模型配置补足，但要记录来源。
+目录不得返回上游密钥、真实 Endpoint、Provider 内部配置或候选顺序。应用提交 PublicId，日志同时保存 PublicId、OfferingId、实际模型和 Provider，既保持应用稳定，又能完成运维追踪。
 
-## 4. 健康状态与故障转移
+迁移期间，既有“可用模型池”接口可以返回逻辑模型的兼容投影，避免一次重写所有调用方。只要租户已经有逻辑模型，投影不得再把池成员或上游名称当成应用选项；没有逻辑模型数据时才回退旧池列表。
 
-池成员状态为 Healthy、Degraded 和 Unavailable。当前失败阈值由 Resolver 实现维护：连续失败达到降级阈值后降低优先级，达到隔离阈值后停止承接普通流量；任意受认可的成功可恢复健康并清零连续失败。
+## 4. Offering 路由与异构协议
 
-业务成功和失败只更新实际使用的池与成员。超时、上游 5xx、协议错误和明确限流可以计入健康；用户输入错误、内容策略拒绝和主动取消不应错误惩罚模型。
+同一逻辑模型可以拥有多个 Offering，例如：
 
-### 自动探活
+| 逻辑模型 | Offering | 协议 | 典型用途 |
+|---|---|---|---|
+| `image2` | OpenAI 直连 | OpenAI Images | 主上游 |
+| `image2` | OpenRouter | OpenAI Chat 多模态 | 备用上游 |
+| `nanobanana-2` | Google 直连 | Gemini `generateContent` | 主上游 |
+| `nanobanana-2` | 兼容平台代理 | OpenAI Images 或 Exchange | 备用上游 |
 
-Unavailable 成员没有正常业务流量，必须由 `ModelPoolHealthProbeService` 在冷却后发起低成本探活。探活遵循：
+不同 Offering 的请求形状完全不同时，Gateway 必须从协议无关的 canonical request 重新构建下一次请求。禁止把第一个上游的 JSON 或 multipart 原样发给第二个上游。图片请求至少保留 prompt、数量、尺寸、响应格式、参考图与 mask；每次尝试再生成对应的 endpoint、鉴权头和 body。
 
-- 限制并发和频率，避免放大上游故障或额度消耗。
-- 使用最小请求并标记 `IsHealthProbe`，与用户调用日志区分。
-- 成功后恢复成员，失败后更新最近探活信息并等待下一窗口。
-- 探活写入与业务健康写入必须指向同一权威池集合。
-- 全池不可用与恢复可以通知管理员，但要做去重和冷却。
+重试只处理受认可的上游故障，例如 429、超时与 5xx。用户输入错误、权限拒绝、内容策略拒绝和主动取消不得被误判为健康故障，也不得无限重试。
 
-## 5. compute-then-send
+## 5. 策略、限流与健康
 
-模型解析与发送分为两个阶段。发送阶段接收已经解析的结果，不再重新解析模型；否则可能出现配额、日志或界面显示选中 A，真正请求却发送到 B。
+`priority` 先使用健康且优先级数值更小的 Offering；`weighted` 在健康候选中按权重选主候选，并保留其余候选作为有界故障切换顺序。所有策略必须满足：
 
-跨进程网关模式下，明文密钥不随解析 DTO 穿越 HTTP 边界。网关侧拥有解析和发送时，MAP 只能取得脱敏的选择摘要用于展示与前置判断。
+- 禁用或 Unavailable 的 Offering 不承接普通流量；
+- 不跨租户、不跨逻辑模型、不跨 appCaller 授权范围；
+- Offering 的并发和每分钟速率在 Gateway 数据面执行，不交给应用自觉遵守；
+- 多个 serving 实例共享 Mongo 原子速率窗口和并发租约；
+- 一次失败只更新实际命中的 Offering；成功清理连续失败并恢复健康；
+- 最终选择与每次尝试都写入同一请求日志。
 
-## 6. 策略与优先级
+平台和模型级并发仍可作为更粗粒度总闸。Offering 级限制表达某条具体供应线路的额度，任一层触顶时可以尝试同一逻辑模型的下一个 Offering；候选耗尽后返回结构化 429。
 
-池策略可以表达顺序、权重、成本或能力偏好，但所有策略都必须满足：
+## 6. 模型池的保留边界
 
-- 不选择禁用或 Unavailable 成员。
-- 不跨越模型类型与调用方授权范围。
-- 选择结果可解释并写入日志。
-- 同一请求重试有上限，避免在多个坏端点间无限循环。
-- 期望模型只是偏好，是否允许降级由调用契约决定。
+模型池仍有三个合法用途：
 
-策略实现和前端编辑器不得各自维护一套枚举映射；服务端策略类型是权威。
+1. 调用方没有显式选择模型时的默认选择；
+2. 特殊 appCaller 的专属默认与兼容策略；
+3. 旧调用方和回滚版本的非破坏性兼容。
 
-## 7. 日志与可观测性
+模型池不再负责把每个应用模型与每个上游做笛卡尔组合。新应用不得通过读取池成员来推断完整模型目录，也不得要求为每个 appCaller 复制一套相同池。
 
-每次调用至少记录：appCallerCode、modelType、解析层级、池 ID 与名称、平台、期望模型、实际模型、候选摘要、健康状态、耗时、首字节、错误分类和是否探活。
+## 7. 权威、迁移与回滚
 
-日志不能包含明文平台密钥。流式请求的开始、首字节和终态必须属于同一次调用记录，Watchdog 不能把仍在运行的长推理误判为孤儿。
+新权威集合为 `llmgw_logical_models` 与 `llmgw_model_offerings`。Offering 复用 Gateway 已拥有的 `llmgw_models`、`llmgw_platforms` 和 `llmgw_model_exchanges`，凭据继续只写和加密保存。
 
-## 8. 权威与兼容
+迁移采用兼容投影，不删除旧集合：
 
-网关独立化后，`llmgw_model_pools` 和网关调用方注册逐步成为权威。MAP 的 `model_groups` 与 `llm_app_callers` 在迁移期可以兼容读取，但必须明确 lookup status 和来源。
+- 新版应用先读逻辑模型；旧版应用仍可读模型池投影；
+- 逻辑模型命中时不写伪造的 ModelGroupId，日志使用 LogicalModelId 与 OfferingId；
+- 没有逻辑模型数据时保留旧三级池解析；
+- 回滚到旧版本不需要恢复被删除的数据，因为本变更不删除池、平台、模型或 Exchange。
 
-以下行为禁止：
+禁止同时无来源地双写两套健康状态。逻辑模型路径写 Offering 健康；旧池路径写池成员健康。
 
-- 无来源地在 MAP 与 GW 两个集合同时写健康状态。
-- 删除或失效池后仍保留悬挂调用方绑定。
-- 用平台默认模型绕过模型池失败。
-- 在前端硬编码模型类型、策略和健康状态的业务含义。
+## 8. 日志与可观测性
+
+每次请求至少记录：TenantId、appCallerCode、逻辑模型 PublicId、OfferingId、实际 Provider、实际模型、协议、endpoint 摘要、每次上游尝试、耗时、错误分类、token、价格证据和是否回退。
+
+用户日志列表以逻辑模型为主，实际上游作为次级信息；详情页同时展示两层，避免用户把正常故障切换误认为“模型偷偷变了”。任何日志和 API 都不得回显明文凭据。
 
 ## 9. 当前事实入口
 
 | 能力 | 事实入口 |
-|------|----------|
+|---|---|
+| 逻辑模型与 Offering 模型 | `prd-api/src/PrdAgent.Core/Models/GatewayLogicalModel.cs` |
 | 解析与健康写入 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
 | 解析契约 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/IModelResolver.cs` |
-| 网关调用 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
-| 自动探活 | `prd-api/src/PrdAgent.Infrastructure/ModelPool/ModelPoolHealthProbeService.cs` |
-| 模型池模型 | `prd-api/src/PrdAgent.Core/Models/ModelGroup.cs` |
-| 调用方模型 | `prd-api/src/PrdAgent.Core/Models/LLMAppCaller.cs` |
-| 注册同步 | `prd-api/src/PrdAgent.Api/Services/AppCallerRegistrySyncService.cs` |
+| 多协议发送与重试 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
+| Offering 限流与并发 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayProviderConcurrencyCoordinator.cs` |
+| 控制台管理 API | `llmgw/console-api/Program.cs` |
+| 视觉创作模型目录 | `prd-admin/src/services/real/visualCreation.ts` |
 
 ## 10. 验收标准
 
-- 专属池、默认池和 legacy 解析顺序可通过日志证明。
-- Healthy、Degraded、Unavailable 成员的选择行为符合约束。
-- 全池不可用后，探活可以恢复端点且不依赖普通业务流量。
-- 模型能力不满足时不会发送请求后才发现错误。
-- 期望模型、实际模型、池和平台在日志与用户界面一致。
-- MAP 与 GW 并存期能解释每次读取和健康写入的权威来源。
+- 视觉创作能显示多个租户授权逻辑模型，选择值是 PublicId，不泄漏上游。
+- 同一逻辑模型至少可配置两个不同协议的 Offering；首个 429、超时或 5xx 后会按第二个协议重建请求。
+- Offering 的并发、RPM、健康和启停在多 serving 实例下生效并彼此隔离。
+- 显式未知模型和无权限模型 fail-closed；未显式选模型才使用默认池。
+- 日志能同时回答“用户选了什么”和“Gateway 实际走了哪个上游”。
+- 旧池数据保持可读，回滚不需要数据恢复或删除新集合。
 
 ## 关联文档
 
 - `doc/design.platform.llm-gateway.md`
 - `doc/design.llm-gateway-physical-isolation.md`
+- `doc/plan.platform.llm-gateway-external-platform.md`
 - `doc/rule.platform.llm-gateway.md`
-- `doc/rule.platform.ai-model-visibility.md`

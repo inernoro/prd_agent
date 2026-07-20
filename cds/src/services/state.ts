@@ -20,6 +20,7 @@ import {
   appendLogLine as appendActiveUpdateLogLine,
   tickHeartbeat as tickActiveUpdateHeartbeat,
 } from '../updater/active-update-store.js';
+import { getAgentOperationContext } from './agent-operation-context.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -2064,9 +2065,16 @@ export class StateService {
     if (this.state.releaseRuns[run.releaseId]) {
       throw new Error(`ReleaseRun already exists: ${run.releaseId}`);
     }
-    this.state.releaseRuns[run.releaseId] = run;
+    const context = getAgentOperationContext();
+    const enriched: ReleaseRun = {
+      ...run,
+      requestId: run.requestId ?? context?.requestId,
+      operationId: run.operationId ?? context?.operationId,
+      agentIdentity: run.agentIdentity ?? context?.identity,
+    };
+    this.state.releaseRuns[run.releaseId] = enriched;
     this.save();
-    return run;
+    return enriched;
   }
 
   patchReleaseRun(id: string, fields: Partial<ReleaseRun>): ReleaseRun {
@@ -3259,15 +3267,25 @@ export class StateService {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
     // 调用方传了自己的 steps 时不覆盖(留兜底);否则从 active 抓。
+    const active = this.repoRoot ? readActiveUpdate(this.repoRoot) : this.activeSelfUpdateMem;
     let stepsForRecord = record.steps;
     if (!stepsForRecord) {
-      const cur = this.repoRoot ? readActiveUpdate(this.repoRoot) : this.activeSelfUpdateMem;
-      if (cur && Array.isArray(cur.logTail) && cur.logTail.length > 0) {
-        stepsForRecord = cur.logTail;
+      if (active && Array.isArray(active.logTail) && active.logTail.length > 0) {
+        stepsForRecord = active.logTail;
       }
     }
+    const context = getAgentOperationContext();
     const list = this.state.selfUpdateHistory || [];
-    list.push({ ...record, steps: stepsForRecord });
+    list.push({
+      ...record,
+      // active-update.json belongs to the original operation and survives the
+      // daemon restart. Prefer it over any unrelated request context that may
+      // happen to be active when the new process finalizes the history row.
+      requestId: record.requestId ?? active?.requestId ?? context?.requestId,
+      operationId: record.operationId ?? active?.operationId ?? context?.operationId,
+      agentIdentity: record.agentIdentity ?? active?.agentIdentity ?? context?.identity,
+      steps: stepsForRecord,
+    });
     while (list.length > StateService.SELF_UPDATE_HISTORY_MAX) list.shift();
     this.state.selfUpdateHistory = list;
     // 同步落盘 — 即将 process.exit 的路径上若不存,新进程读不到 record。
@@ -3449,8 +3467,12 @@ export class StateService {
   private activeSelfUpdateMem: import('../types.js').ActiveSelfUpdate | null = null;
 
   markSelfUpdateActive(rec: import('../types.js').ActiveSelfUpdate): void {
+    const context = getAgentOperationContext();
     const enriched: import('../types.js').ActiveSelfUpdate = {
       ...rec,
+      requestId: rec.requestId ?? context?.requestId,
+      operationId: rec.operationId ?? context?.operationId,
+      agentIdentity: rec.agentIdentity ?? context?.identity,
       pid: rec.pid ?? process.pid,
       lastTickAt: rec.lastTickAt ?? new Date().toISOString(),
       logTail: rec.logTail ?? [],

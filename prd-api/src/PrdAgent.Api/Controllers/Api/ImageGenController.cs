@@ -414,7 +414,7 @@ public class ImageGenController : ControllerBase
     /// <summary>
     /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
     /// </summary>
-    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
+    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-image-1.5）</param>
     [HttpGet("adapter-info")]
     public IActionResult GetAdapterInfo([FromQuery] string modelId)
     {
@@ -1753,13 +1753,18 @@ public class ImageGenController : ControllerBase
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
-            Status = ImageGenRunStatus.Queued,
+            Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
             ConfigModelId = cfgModelId,
             PlatformId = platformId,
             ModelId = modelId,
-            // ⚠ 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
-            ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+            LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ? modelId
+                : null,
+            // 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
+            ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
+                : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,
@@ -1855,10 +1860,15 @@ public class ImageGenController : ControllerBase
             {
                 run.Id,
                 run.OwnerAdminId,
+                run.DeploymentSlug,
                 status = run.Status.ToString(),
                 run.ConfigModelId,
                 run.PlatformId,
                 run.ModelId,
+                run.LogicalModelPublicId,
+                modelResolutionType = run.ModelResolutionType?.ToString(),
+                run.ModelGroupId,
+                run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
                 run.MaxConcurrency,

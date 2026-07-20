@@ -1503,20 +1503,39 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       </div>
                       {/* 第三部分：大模型匹配信息 */}
                       <div className="mt-1 flex items-center gap-2 min-w-0 flex-wrap">
-                        {/* 模型池标签：专属模型池 / 默认模型池 / 直连单模型（三者互斥） */}
+                        {/* 路由标签：逻辑模型 / 专属模型池 / 默认模型池 / 直连单模型（互斥） */}
                         {(() => {
                           const groupName = (it.modelGroupName || '').trim();
-                          // modelResolutionType: 0=直连单模型, 1=默认模型池, 2=专属模型池
+                          const logicalModel = (it.logicalModelPublicId || it.logicalModelId || '').trim();
+                          // modelResolutionType: 0=直连单模型, 1=默认模型池, 2=专属模型池, 4=逻辑模型
                           // 后端使用 JsonStringEnumConverter，枚举会序列化为字符串名称（如 "DedicatedPool"）
                           const raw = it.modelResolutionType as unknown;
                           const resolutionType =
                             raw === 'DirectModel' || raw === 0 ? 0 :
                             raw === 'DefaultPool' || raw === 1 ? 1 :
                             raw === 'DedicatedPool' || raw === 2 ? 2 :
+                            raw === 'LogicalModel' || raw === 4 ? 4 :
                             (raw == null ? 0 : -1); // null/undefined 默认为直连单模型，其他未知值为 -1
                           const b = requestTypeToBadge(it.requestType);
 
-                          if (resolutionType === 0) {
+                          if (resolutionType === 4) {
+                            return (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                                title={`逻辑模型：${logicalModel || it.expectedModel || '未记录'}${it.offeringId ? `，Offering：${it.offeringId}` : ''}`}
+                                style={{
+                                  background: 'rgba(99, 102, 241, 0.12)',
+                                  border: '1px solid rgba(99, 102, 241, 0.30)',
+                                  color: 'rgba(129, 140, 248, 0.98)'
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Layers size={10} />
+                                逻辑模型：{logicalModel || it.expectedModel || '未记录'}
+                              </button>
+                            );
+                          } else if (resolutionType === 0) {
                             // 直连单模型
                             return (
                               <button

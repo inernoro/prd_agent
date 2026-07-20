@@ -35,6 +35,60 @@ public class GatewayMultipartHttpTests
     };
 
     [Fact]
+    public async Task HttpClient_LogicalModelRawRequest_PreservesPublicIdAndCanonicalImageContract()
+    {
+        GatewayRawRequest? captured = null;
+        var handler = new CapturingHandler(async request =>
+        {
+            var body = await request.Content!.ReadAsStringAsync();
+            captured = JsonSerializer.Deserialize<GatewayRawRequest>(body, PascalJson);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new GatewayRawResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = "ok",
+                }, options: PascalJson),
+            };
+        });
+        var client = new HttpLlmGatewayClient(
+            new SingleClientFactory(new HttpClient(handler)),
+            Config("http://llmgw.test"),
+            NullLogger<HttpLlmGatewayClient>.Instance);
+
+        var response = await client.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = "visual-agent.image.text2img::generation",
+                ModelType = "generation",
+                ExpectedModel = "google/gemini-3.1-flash-image",
+                CanonicalImageRequest = new GatewayCanonicalImageRequest
+                {
+                    Prompt = "draw a yellow circle",
+                    Count = 1,
+                    Size = "1024x1024",
+                },
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                ResolutionType = "LogicalModel",
+                LogicalModelId = "logical-nano",
+                LogicalModelPublicId = "nanobanana-2",
+                OfferingId = "offering-google",
+                ActualModel = "google/gemini-3.1-flash-image",
+            });
+
+        response.Success.ShouldBeTrue();
+        captured.ShouldNotBeNull();
+        captured!.ExpectedModel.ShouldBe("nanobanana-2");
+        captured.RequiredLogicalModelPublicId.ShouldBe("nanobanana-2");
+        captured.CanonicalImageRequest.ShouldNotBeNull();
+        captured.CanonicalImageRequest!.Prompt.ShouldBe("draw a yellow circle");
+    }
+
+    [Fact]
     public async Task HttpClient_UploadsInlineMultipartFiles_AsRefs_WithoutSerializingBytes()
     {
         var storage = new MemoryAssetStorage();
@@ -114,6 +168,13 @@ public class GatewayMultipartHttpTests
             {
                 Content = new StringContent(JsonSerializer.Serialize(new GatewayRawRequest
                 {
+                    RequiredLogicalModelPublicId = "image2",
+                    CanonicalImageRequest = new GatewayCanonicalImageRequest
+                    {
+                        Prompt = "draw",
+                        Count = 1,
+                        Size = "1024x1024",
+                    },
                     AppCallerCode = "demo.app::image",
                     ModelType = "generation",
                     IsMultipart = true,
@@ -141,7 +202,10 @@ public class GatewayMultipartHttpTests
             raw.ShouldNotBeNull();
             raw!.Success.ShouldBeTrue();
             gateway.CapturedRaw.ShouldNotBeNull();
-            gateway.CapturedRaw!.MultipartFiles.ShouldNotBeNull();
+            gateway.CapturedRaw!.RequiredLogicalModelPublicId.ShouldBe("image2");
+            gateway.CapturedRaw.CanonicalImageRequest.ShouldNotBeNull();
+            gateway.CapturedRaw.CanonicalImageRequest!.Prompt.ShouldBe("draw");
+            gateway.CapturedRaw.MultipartFiles.ShouldNotBeNull();
             gateway.CapturedRaw.MultipartFiles!.ShouldContainKey("image");
             var file = gateway.CapturedRaw.MultipartFiles["image"];
             file.FileName.ShouldBe("image.png");

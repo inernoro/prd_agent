@@ -48,6 +48,27 @@ public interface IModelResolver
 /// </summary>
 public class ModelResolutionResult
 {
+    /// <summary>调用方选择的逻辑模型 ID；旧池路径为空。</summary>
+    public string? LogicalModelId { get; init; }
+
+    /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
+    public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>本次实际命中的 Offering ID。</summary>
+    public string? OfferingId { get; init; }
+
+    /// <summary>Offering 指向的目标类型：model / exchange。</summary>
+    public string? OfferingTargetKind { get; init; }
+
+    /// <summary>Offering 级每分钟请求上限；null/0 表示不启用。</summary>
+    public int? OfferingRateLimitPerMinute { get; init; }
+
+    /// <summary>Offering 级最大并发；与平台、底层模型并发分别计数。</summary>
+    public int? OfferingMaxConcurrency { get; init; }
+
+    /// <summary>Offering 级 endpoint path 覆盖；为空时由协议适配器生成。</summary>
+    public string? OfferingEndpointPath { get; init; }
+
     /// <summary>
     /// 调度是否成功
     /// </summary>
@@ -260,6 +281,13 @@ public class ModelResolutionResult
     {
         return new GatewayModelResolution
         {
+            LogicalModelId = LogicalModelId,
+            LogicalModelPublicId = LogicalModelPublicId,
+            OfferingId = OfferingId,
+            OfferingTargetKind = OfferingTargetKind,
+            OfferingRateLimitPerMinute = OfferingRateLimitPerMinute,
+            OfferingMaxConcurrency = OfferingMaxConcurrency,
+            OfferingEndpointPath = OfferingEndpointPath,
             Success = Success,
             ErrorMessage = ErrorMessage,
             ResolutionType = ResolutionType,
@@ -353,7 +381,14 @@ public class ModelResolutionResult
         ModelGroup group,
         LLMPlatform platform,
         string? apiKey,
-        LLMModel? modelConfig = null)
+        LLMModel? modelConfig = null,
+        string? logicalModelId = null,
+        string? logicalModelPublicId = null,
+        string? offeringId = null,
+        string? offeringTargetKind = null,
+        int? offeringMaxConcurrency = null,
+        int? offeringRateLimitPerMinute = null,
+        string? offeringEndpointPath = null)
     {
         // P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType。
         // 旧池成员可能没有能力快照；解析阶段可传入匹配到的 LLMModel，只补协议/能力元数据，
@@ -361,6 +396,13 @@ public class ModelResolutionResult
         var (protocol, reason) = ResolveProtocol(model.Protocol, modelConfig?.Protocol, platform.PlatformType);
         return new ModelResolutionResult
         {
+            LogicalModelId = logicalModelId,
+            LogicalModelPublicId = logicalModelPublicId,
+            OfferingId = offeringId,
+            OfferingTargetKind = offeringTargetKind,
+            OfferingMaxConcurrency = offeringMaxConcurrency,
+            OfferingRateLimitPerMinute = offeringRateLimitPerMinute,
+            OfferingEndpointPath = offeringEndpointPath,
             Success = true,
             ResolutionType = resolutionType,
             ExpectedModel = expectedModel,
@@ -372,9 +414,9 @@ public class ModelResolutionResult
             ResolutionReason = reason,
             ApiUrl = platform.ApiUrl,
             ApiKey = apiKey,
-            ModelGroupId = group.Id,
-            ModelGroupName = group.Name,
-            ModelGroupCode = group.Code,
+            ModelGroupId = logicalModelId is null ? group.Id : null,
+            ModelGroupName = logicalModelId is null ? group.Name : null,
+            ModelGroupCode = logicalModelId is null ? group.Code : null,
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
             MaxTokens = model.MaxTokens,
@@ -401,10 +443,24 @@ public class ModelResolutionResult
         ModelGroupItem model,
         ModelGroup group,
         ModelExchange exchange,
-        string? apiKey)
+        string? apiKey,
+        string? logicalModelId = null,
+        string? logicalModelPublicId = null,
+        string? offeringId = null,
+        string? offeringTargetKind = null,
+        int? offeringMaxConcurrency = null,
+        int? offeringRateLimitPerMinute = null,
+        string? offeringEndpointPath = null)
     {
         return new ModelResolutionResult
         {
+            LogicalModelId = logicalModelId,
+            LogicalModelPublicId = logicalModelPublicId,
+            OfferingId = offeringId,
+            OfferingTargetKind = offeringTargetKind,
+            OfferingMaxConcurrency = offeringMaxConcurrency,
+            OfferingRateLimitPerMinute = offeringRateLimitPerMinute,
+            OfferingEndpointPath = offeringEndpointPath,
             Success = true,
             ResolutionType = resolutionType,
             ExpectedModel = expectedModel,
@@ -420,9 +476,9 @@ public class ModelResolutionResult
                 : "protocol-from-pool-item",
             ApiUrl = exchange.TargetUrl,
             ApiKey = apiKey,
-            ModelGroupId = group.Id,
-            ModelGroupName = group.Name,
-            ModelGroupCode = group.Code,
+            ModelGroupId = logicalModelId is null ? group.Id : null,
+            ModelGroupName = logicalModelId is null ? group.Name : null,
+            ModelGroupCode = logicalModelId is null ? group.Code : null,
             ModelPriority = model.Priority,
             HealthStatus = model.HealthStatus.ToString(),
             MaxTokens = model.MaxTokens,

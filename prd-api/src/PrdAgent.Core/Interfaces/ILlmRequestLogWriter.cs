@@ -93,7 +93,11 @@ public record LlmLogStart(
     string? ServiceKeyPrefix = null,
     string? PromptPolicyId = null,
     int? PromptPolicyVersion = null,
-    string? PromptPolicyHash = null);
+    string? PromptPolicyHash = null,
+    string? LogicalModelId = null,
+    string? LogicalModelPublicId = null,
+    string? OfferingId = null,
+    string? OfferingTargetKind = null);
 
 public record LlmLogDone(
     int? StatusCode,

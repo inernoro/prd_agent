@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildServerEventQuery, compactServerEventValue, normalizeLogText } from '../../src/services/server-event-log-store.js';
+import {
+  buildServerEventQuery,
+  compactServerEventValue,
+  enrichServerEventRecord,
+  normalizeLogText,
+} from '../../src/services/server-event-log-store.js';
+import { runWithAgentOperationContext } from '../../src/services/agent-operation-context.js';
 
 describe('ServerEventLogStore query builder', () => {
   it('matches operationId in both new top-level field and legacy details.operationId', () => {
@@ -72,5 +78,33 @@ describe('ServerEventLogStore query builder', () => {
 
     const compacted = compactServerEventValue(nested);
     expect(JSON.stringify(compacted)).toContain('max depth reached');
+  });
+
+  it('enriches mutation events from the central operation context', () => {
+    const enriched = runWithAgentOperationContext({
+      requestId: 'req_event_1',
+      operationId: 'op_event_1',
+      identity: {
+        identityVersion: 1,
+        confidence: 'declared',
+        agentSessionId: 'session-event-1',
+        operationReason: 'safe reason',
+      },
+    }, () => enrichServerEventRecord({
+      category: 'system',
+      severity: 'info',
+      source: 'api-mutation',
+      action: 'api.request.completed',
+    }));
+
+    expect(enriched).toMatchObject({
+      requestId: 'req_event_1',
+      operationId: 'op_event_1',
+      agentIdentity: {
+        identityVersion: 1,
+        confidence: 'declared',
+        agentSessionId: 'session-event-1',
+      },
+    });
   });
 });

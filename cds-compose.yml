@@ -217,6 +217,8 @@ services:
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
       # 避免依赖代码缺省值。需要验证 HTTP 时由对应 CDS profile 明确改成 http/shadow。
       LlmGateway__Mode: "inproc"
+      # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
+      LlmGateway__LogicalModelsRequireHttp: "true"
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。

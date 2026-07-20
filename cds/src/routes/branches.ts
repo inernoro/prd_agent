@@ -32,6 +32,7 @@ import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import {
   checkoutSelfUpdateTarget,
+  evaluateSelfUpdateTransition,
   recommendSelfUpdateTargetBranch,
   resolveRemoteDefaultBranch,
   resolveSelfUpdateTargetBranch,
@@ -1917,34 +1918,152 @@ function selfUpdatePrebuiltEnabled(): boolean {
   return !['0', 'false', 'off', 'no'].includes(raw);
 }
 
-export function replaceDirectoriesAtomically(pairs: Array<{ currentPath: string; nextPath: string }>): void {
+export interface AtomicDirectoryReplacement {
+  currentPath: string;
+  nextPath: string;
+  /**
+   * 指定后保留 currentPath 的上一代。适用于内容哈希静态资源：
+   * 新 index.html 上线后，已打开的旧页面仍可以请求上一代懒加载模块。
+   */
+  previousPath?: string;
+}
+
+export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void {
   const stamp = Date.now();
   const backups = pairs.map((pair, idx) => ({
     ...pair,
     backupPath: `${pair.currentPath}.old.${stamp}.${idx}`,
+    previousBackupPath: pair.previousPath
+      ? `${pair.previousPath}.old.${stamp}.${idx}`
+      : undefined,
     hadCurrent: fs.existsSync(pair.currentPath),
+    hadPrevious: Boolean(pair.previousPath && fs.existsSync(pair.previousPath)),
+    currentMoved: false,
+    nextMoved: false,
   }));
   try {
     for (const pair of backups) {
-      if (pair.hadCurrent) fs.renameSync(pair.currentPath, pair.backupPath);
+      if (!fs.existsSync(pair.nextPath)) {
+        throw new Error(`atomic replacement candidate missing: ${pair.nextPath}`);
+      }
+    }
+    for (const pair of backups) {
+      if (pair.previousPath) {
+        if (pair.hadPrevious && pair.previousBackupPath) {
+          fs.renameSync(pair.previousPath, pair.previousBackupPath);
+        }
+        if (pair.hadCurrent) {
+          fs.renameSync(pair.currentPath, pair.previousPath);
+          pair.currentMoved = true;
+        }
+      } else if (pair.hadCurrent) {
+        fs.renameSync(pair.currentPath, pair.backupPath);
+        pair.currentMoved = true;
+      }
     }
     for (const pair of backups) {
       fs.renameSync(pair.nextPath, pair.currentPath);
-    }
-    for (const pair of backups) {
-      if (pair.hadCurrent) fs.rmSync(pair.backupPath, { recursive: true, force: true });
+      pair.nextMoved = true;
     }
   } catch (err) {
-    for (const pair of backups) {
+    for (const pair of [...backups].reverse()) {
       try {
-        if (fs.existsSync(pair.currentPath)) fs.rmSync(pair.currentPath, { recursive: true, force: true });
-        if (pair.hadCurrent && fs.existsSync(pair.backupPath)) fs.renameSync(pair.backupPath, pair.currentPath);
+        if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
+          fs.rmSync(pair.currentPath, { recursive: true, force: true });
+        }
+        if (pair.previousPath) {
+          if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
+            fs.renameSync(pair.previousPath, pair.currentPath);
+          }
+          if (pair.hadPrevious && pair.previousBackupPath && fs.existsSync(pair.previousBackupPath)) {
+            fs.renameSync(pair.previousBackupPath, pair.previousPath);
+          }
+        } else if (pair.currentMoved && fs.existsSync(pair.backupPath)) {
+          fs.renameSync(pair.backupPath, pair.currentPath);
+        }
       } catch {
         /* best-effort rollback */
       }
     }
     throw err;
   }
+  // 新产物已全部就位后才清理临时备份。清理失败不能反向触发回滚：
+  // rmSync 可能已部分删除备份，此时回滚反而会丢失已上线的完整产物。
+  for (const pair of backups) {
+    try {
+      if (pair.previousPath) {
+        if (pair.hadPrevious && pair.previousBackupPath) {
+          fs.rmSync(pair.previousBackupPath, { recursive: true, force: true });
+        }
+      } else if (pair.hadCurrent) {
+        fs.rmSync(pair.backupPath, { recursive: true, force: true });
+      }
+    } catch {
+      /* stale backup is safe to clean on the next maintenance pass */
+    }
+  }
+}
+
+export type WebDistValidation =
+  | { ok: true; entryFiles: string[] }
+  | { ok: false; error: string };
+
+// pnpm 的 run 参数在脚本名后直接传给 Vite。这里不能加额外的 `--`，
+// 否则 Vite 5 会忽略 outDir 并回退到在线 dist。
+export const WEB_DIST_BUILD_COMMAND = 'pnpm build --outDir dist.next --emptyOutDir';
+
+/**
+ * 验证 Vite 候选产物的 HTML 和实际入口资源。
+ * 不能只检查 index.html 存在，否则缺失入口 JS/CSS 仍会被切到线上。
+ */
+export function validateWebDistCandidate(candidatePath: string): WebDistValidation {
+  const indexPath = path.join(candidatePath, 'index.html');
+  let html = '';
+  try {
+    const stat = fs.statSync(indexPath);
+    if (!stat.isFile() || stat.size <= 0) {
+      return { ok: false, error: 'candidate index.html is empty' };
+    }
+    html = fs.readFileSync(indexPath, 'utf8');
+  } catch {
+    return { ok: false, error: 'candidate index.html is missing' };
+  }
+
+  const candidateRoot = path.resolve(candidatePath);
+  const entryFiles = new Set<string>();
+  const attributePattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  for (const match of html.matchAll(attributePattern)) {
+    const raw = match[1].trim();
+    if (!raw || raw.startsWith('#') || raw.startsWith('data:') || raw.startsWith('//')) continue;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) continue;
+    let relative = raw.split(/[?#]/, 1)[0];
+    try {
+      relative = decodeURIComponent(relative);
+    } catch {
+      return { ok: false, error: `candidate entry path is not decodable: ${raw}` };
+    }
+    relative = relative.replace(/^\.?\//, '');
+    if (!relative) continue;
+    const resolved = path.resolve(candidateRoot, relative);
+    if (!resolved.startsWith(candidateRoot + path.sep)) {
+      return { ok: false, error: `candidate entry escapes output directory: ${raw}` };
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile() || stat.size <= 0) {
+        return { ok: false, error: `candidate entry is empty: ${relative}` };
+      }
+    } catch {
+      return { ok: false, error: `candidate entry is missing: ${relative}` };
+    }
+    entryFiles.add(relative);
+  }
+
+  const files = [...entryFiles];
+  if (!files.some((file) => /\.(?:m?js)$/i.test(file))) {
+    return { ok: false, error: 'candidate index.html has no local JavaScript entry' };
+  }
+  return { ok: true, entryFiles: files };
 }
 
 async function tryApplyCdsPrebuiltForSelfUpdate(input: {
@@ -1992,16 +2111,24 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
   }
 
   const distEntry = path.join(fetched.distDir, 'index.js');
-  const webEntry = path.join(fetched.webDistDir, 'index.html');
-  if (!fs.existsSync(distEntry) || !fs.existsSync(webEntry)) {
+  const webValidation = validateWebDistCandidate(fetched.webDistDir);
+  if (!fs.existsSync(distEntry)) {
     try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
-    return { applied: false, reason: 'prebuilt artifact missing dist/index.js or web-dist/index.html' };
+    return { applied: false, reason: 'prebuilt artifact missing dist/index.js' };
+  }
+  if (!webValidation.ok) {
+    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    return { applied: false, reason: `prebuilt web artifact invalid: ${webValidation.error}` };
   }
 
   try {
     replaceDirectoriesAtomically([
       { currentPath: path.join(cdsDir, 'dist'), nextPath: fetched.distDir },
-      { currentPath: path.join(cdsDir, 'web', 'dist'), nextPath: fetched.webDistDir },
+      {
+        currentPath: path.join(cdsDir, 'web', 'dist'),
+        nextPath: fetched.webDistDir,
+        previousPath: path.join(cdsDir, 'web', 'dist.previous'),
+      },
     ]);
     try { fs.writeFileSync(path.join(cdsDir, 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     try { fs.writeFileSync(path.join(cdsDir, 'web', 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
@@ -2097,6 +2224,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
     }
+  }
+
+  function scheduleDetachedCdsRestart(input: {
+    branchLabel: string;
+    source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    delayMs?: number;
+    exitOnFailure?: boolean;
+  }): void {
+    const launch = () => {
+      const cdsDir = path.join(config.repoRoot, 'cds');
+      const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
+      try {
+        fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
+        fs.appendFileSync(
+          errorLogPath,
+          `\n=== ${input.source} spawn at ${new Date().toISOString()} (branch=${input.branchLabel || '(same)'}) ===\n`,
+        );
+        const out = fs.openSync(errorLogPath, 'a');
+        const errFd = fs.openSync(errorLogPath, 'a');
+        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
+          cwd: cdsDir,
+          detached: true,
+          stdio: ['ignore', out, errFd],
+          env: { ...process.env },
+        });
+        child.on('error', (err) => {
+          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+        });
+        child.unref();
+        branchOperationCoordinator?.interruptAll(
+          `CDS restart requested by ${input.source}`,
+          input.source,
+        );
+        setTimeout(() => process.exit(0), 1000);
+      } catch (spawnErr) {
+        try {
+          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
+        } catch {
+          /* ignore */
+        }
+        if (input.exitOnFailure) {
+          branchOperationCoordinator?.interruptAll(
+            `CDS restart failed for ${input.source}`,
+            input.source,
+          );
+          setTimeout(() => process.exit(1), 1000);
+        }
+      }
+    };
+    setTimeout(launch, Math.max(0, input.delayMs || 0));
   }
 
   async function flushBranchStateBeforeSuccess(context: {
@@ -9828,8 +10005,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *
    * 行为:
    *   - .build-sha 已匹配 newHead → 跳过(no-op,~ms)
-   *   - 否则:删 .build-sha → pnpm install → pnpm build(每 15s 心跳防 cloudflare
-   *     100s 切流)→ 写新 .build-sha(full SHA)
+   *   - 否则:pnpm install → 候选目录 pnpm build(每 5s 心跳防止中间层切流)
+   *     → 校验入口资源 → 写新 .build-sha(full SHA) → 原子换代
    *   - 失败:writeFileSync .build-error + .cds/web-build.log,并抛错中止 self-update
    *     成功态。否则后端 HEAD 已更新而 web/dist 仍是旧包,会造成"看似更新成功,
    *     前端实际没变"。
@@ -9851,6 +10028,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const repoRoot = config.repoRoot;
     const webDir = path.join(repoRoot, 'cds', 'web');
     const webDist = path.join(webDir, 'dist');
+    const webDistNext = path.join(webDir, 'dist.next');
+    const webDistPrevious = path.join(webDir, 'dist.previous');
     const webShaFile = path.join(webDist, '.build-sha');
     // .web-input-sha 是 cds/web 子树的"上次构建快照锚点":存的是
     // `git log -1 --format=%H HEAD -- cds/web` 的输出(最近一次触动 cds/web
@@ -9918,9 +10097,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       return finishWebBuildTiming(true, 'web-input-match');
     }
-    send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
+    send('web-build', 'running', `正在候选目录重建 web/dist (日志: cds/.cds/web-build.log)`);
     try {
-      try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
       const buildStartedAt = Date.now();
       // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
       // 切了 SSE 长连接。15s 一次的 tick 在 vite 子进程长时间无 stdout 时仍可能
@@ -9946,8 +10124,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           send('web-build', 'error', message);
           // Bugbot PR #524 第十一轮:install 失败时也要写 .build-error,与
           // build 失败路径一致,这样 /api/self-status 能通过 webBuildError 识别;
-          // 否则 .build-sha 已被前面 unlinkSync 删掉,但 webBuildError=''
-          // bundleStale 仅靠 SHA 不一致间接触发 — 失败原因看不到。
+          // 否则 webBuildError='' 时只能从旧 SHA 与新 HEAD 不一致间接
+          // 判断 bundleStale，操作人看不到安装阶段的真实失败原因。
           try {
             fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
             fs.writeFileSync(webBuildLogPath,
@@ -9961,24 +10139,70 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ignore */ }
           abortWebBuild(message);
         } else {
+          // 禁止 Vite 直接清空在线 web/dist。候选目录必须与 dist 同父目录，
+          // 这样后续 rename 是同文件系统原子操作。构建失败期间旧 index 和旧 chunk
+          // 始终保持可读。
+          try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
           const wBuild = await shell.exec(
-            'pnpm build',
+            WEB_DIST_BUILD_COMMAND,
             { cwd: webDir, timeout: 300_000 },
           );
           clearInterval(heartbeat);
           if (wBuild.exitCode === 0) {
+            const candidate = validateWebDistCandidate(webDistNext);
+            if (!candidate.ok) {
+              const message = `web build 产物校验失败: ${candidate.error}`;
+              send('web-build', 'error', message);
+              try {
+                fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+                fs.writeFileSync(webBuildLogPath,
+                  `=== ${new Date().toISOString()} in-process web candidate validation to ${newHead} ===\n` +
+                  `VALIDATION: ${candidate.error}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
+                );
+                fs.writeFileSync(
+                  path.join(webDist, '.build-error'),
+                  `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=validate\nerror=${candidate.error}\nlog=${webBuildLogPath}\n`,
+                );
+              } catch { /* ignore */ }
+              abortWebBuild(message);
+            }
             // 写 FULL sha(40字符)与 'git rev-parse HEAD' 输出一致(no-op 检测要求)
             let fullHeadForSha = '';
             try {
               fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
             } catch { /* fallback 用 short */ }
-            try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
-            // 同步写 .web-input-sha:下次自更新若 cds/web 子树没动,fast-path 命中。
             try {
-              if (lastWebChange) fs.writeFileSync(webInputShaFile, lastWebChange + '\n');
-            } catch { /* 写不上不致命,下次走 ① 路径或正式构建 */ }
+              fs.writeFileSync(
+                path.join(webDistNext, '.build-sha'),
+                (fullHeadForSha || newHead) + '\n',
+              );
+              if (lastWebChange) {
+                fs.writeFileSync(path.join(webDistNext, '.web-input-sha'), lastWebChange + '\n');
+              }
+            } catch (err) {
+              const message = `web build 产物标记写入失败: ${(err as Error).message}`;
+              send('web-build', 'error', message);
+              abortWebBuild(message);
+            }
+            try {
+              replaceDirectoriesAtomically([{
+                currentPath: webDist,
+                nextPath: webDistNext,
+                previousPath: webDistPrevious,
+              }]);
+            } catch (err) {
+              const message = `web/dist 原子切换失败，已保留旧产物: ${(err as Error).message}`;
+              send('web-build', 'error', message);
+              try {
+                fs.writeFileSync(
+                  path.join(webDist, '.build-error'),
+                  `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=swap\nerror=${(err as Error).message}\nlog=${webBuildLogPath}\n`,
+                );
+              } catch { /* ignore */ }
+              abortWebBuild(message);
+            }
             const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
-            send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+            send('web-build', 'done', `web/dist 已原子切换到 ${newHead} (${elapsed}s)`);
             return finishWebBuildTiming(false, 'rebuilt');
           } else {
             const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
@@ -10000,6 +10224,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       } finally {
         clearInterval(heartbeat);
+        try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
       }
     } catch (err) {
       if (!res.writableEnded) {
@@ -20535,6 +20760,129 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
   });
 
+  // POST /api/self-restart — restart the exact currently running revision.
+  // This endpoint intentionally performs no fetch, checkout, pull or reset.
+  // Operators who only need to restart the daemon must not accidentally turn
+  // that action into a shared control-plane release.
+  router.post('/self-restart', async (req, res) => {
+    if (isPreviewInstance()) {
+      res.status(403).json({
+        error: 'preview_instance',
+        message: 'CDS 预览实例不支持控制面重启。',
+      });
+      return;
+    }
+    initSSE(res);
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor =
+      cdsUser?.githubLogin ||
+      cdsUser?.login ||
+      cdsUser?.username ||
+      resolveActorFromRequest(req) ||
+      'unknown';
+    const existingActive = stateService.getActiveSelfUpdate();
+    if (isSelfUpdateBusy(existingActive)) {
+      sendSSE(res, 'error', {
+        code: 'self_update_busy',
+        message: '已有 CDS 更新或重启正在进行，本次精确版本重启已拒绝。',
+        activeSelfUpdate: existingActive,
+      });
+      res.end();
+      return;
+    }
+
+    const startedAt = Date.now();
+    let branch = '';
+    let fullSha = '';
+    let terminalStateCommitted = false;
+    const commitSelfRestartState = (terminal = false): void => {
+      const history = stateService.getSelfUpdateHistory(20);
+      selfStatusCache.commitSelfUpdateState(
+        {
+          activeSelfUpdate: stateService.getActiveSelfUpdate(),
+          lastSelfUpdate: history[0] ?? null,
+          selfUpdateHistory: history,
+        },
+        { terminal },
+      );
+      if (terminal) terminalStateCommitted = true;
+    };
+    try {
+      branch = resolveSelfUpdateTargetBranch(
+        (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot })).stdout,
+      );
+      fullSha = (await shell.exec('git rev-parse HEAD', { cwd: config.repoRoot })).stdout.trim();
+      if (!/^[0-9a-f]{40}$/i.test(fullSha)) {
+        throw new Error('无法读取当前 CDS 完整提交 SHA');
+      }
+      stateService.markSelfUpdateActive({
+        startedAt: new Date().toISOString(),
+        branch,
+        trigger: 'manual',
+        actor,
+      });
+      stateService.updateSelfUpdateStep('restart', {
+        level: 'info',
+        logText: `[restart] 仅重启当前精确版本 ${fullSha.slice(0, 8)}，不拉取或切换代码`,
+      });
+      commitSelfRestartState();
+      const drainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
+      if (drainTimeoutMs > 0) {
+        sendSSE(res, 'step', {
+          step: 'drain',
+          status: 'running',
+          title: `等待分支操作排空，最多 ${Math.floor(drainTimeoutMs / 1000)} 秒`,
+        });
+        await waitForRestartSafeBranchOperationsForRoute('api.self-restart', drainTimeoutMs);
+      }
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch,
+        fromSha: fullSha.slice(0, 8),
+        toSha: fullSha.slice(0, 8),
+        trigger: 'manual',
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        actor,
+        updateMode: 'restart-only',
+      });
+      commitSelfRestartState(true);
+      await flushSelfUpdateStateBeforeRestart({
+        trigger: 'manual',
+        branch,
+        fromSha: fullSha.slice(0, 8),
+        toSha: fullSha.slice(0, 8),
+        actor,
+      });
+      sendSSE(res, 'step', {
+        step: 'restart',
+        status: 'running',
+        title: `正在重启当前 CDS ${fullSha.slice(0, 8)}，代码版本不会变化`,
+      });
+      sendSSE(res, 'done', {
+        message: `CDS 将重启当前精确版本 ${fullSha.slice(0, 8)}`,
+        branch,
+        commitSha: fullSha,
+        mode: 'restart-only',
+      });
+      res.end();
+      scheduleDetachedCdsRestart({
+        branchLabel: branch,
+        source: 'api.self-restart',
+        delayMs: 500,
+        exitOnFailure: true,
+      });
+    } catch (err) {
+      stateService.clearSelfUpdateActive();
+      if (!terminalStateCommitted) commitSelfRestartState(true);
+      sendSSE(res, 'error', {
+        code: 'self_restart_failed',
+        message: (err as Error).message,
+      });
+      res.end();
+    }
+  });
+
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
     // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
@@ -20547,7 +20895,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
     // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
-    let { branch, force } = req.body as { branch?: string; force?: boolean };
+    let { branch, force, transitionIntent, expectedFromSha, transitionReason } = req.body as {
+      branch?: string;
+      force?: boolean;
+      transitionIntent?: string;
+      expectedFromSha?: string;
+      transitionReason?: string;
+    };
     const forceMode = force === true;
     const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
@@ -20611,6 +20965,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
     const startedAt = Date.now();
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
+    let transitionMode: string | undefined;
+    let acceptedTransitionReason: string | undefined;
 
     // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
     // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
@@ -20699,6 +21055,72 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           recordFailure(`不合法的分支名: ${branch}`);
           return;
         }
+
+        // 在 checkout/reset 之前完成版本继承门禁。旧技能仍可执行同 SHA 或
+        // 快进更新；只有会丢掉当前控制面提交的非快进切换，才要求明确声明
+        // release/rollback、当前 SHA 和原因。
+        const refCheck = await shell.exec(
+          `git rev-parse --verify --quiet origin/${branch}`,
+          { cwd: repoRoot },
+        );
+        if (refCheck.exitCode !== 0) {
+          const msg =
+            `远端分支 origin/${branch} 不存在或已被删除。` +
+            `请改选 main 或别的活分支(可在「目标分支」下拉重选)。` +
+            `如果你刚把分支合并到 main 后被自动删,选 main 即可。`;
+          send('checkout', 'error', msg);
+          sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
+          res.end();
+          recordFailure(`origin/${branch} 不存在`);
+          return;
+        }
+        const currentFullSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+        const targetFullSha = (await shell.exec(`git rev-parse origin/${branch}`, { cwd: repoRoot })).stdout.trim();
+        if (!/^[0-9a-f]{40}$/i.test(currentFullSha) || !/^[0-9a-f]{40}$/i.test(targetFullSha)) {
+          const message = '无法解析当前或目标 CDS 的完整提交 SHA，已在切换代码前停止。';
+          send('transition-guard', 'error', message);
+          sendSSE(res, 'error', { code: 'invalid_transition_sha', message });
+          res.end();
+          recordFailure(message);
+          return;
+        }
+        const ancestorResult = await shell.exec(
+          `git merge-base --is-ancestor ${currentFullSha} ${targetFullSha}`,
+          { cwd: repoRoot },
+        );
+        const transition = evaluateSelfUpdateTransition({
+          currentSha: currentFullSha,
+          targetSha: targetFullSha,
+          targetContainsCurrent: ancestorResult.exitCode === 0,
+          intent: transitionIntent,
+          expectedFromSha,
+          reason: transitionReason,
+        });
+        if (!transition.allowed) {
+          send('transition-guard', 'error', transition.message);
+          sendSSE(res, 'error', {
+            code: transition.code,
+            message: transition.message,
+            currentSha: currentFullSha,
+            targetSha: targetFullSha,
+            targetBranch: branch,
+            hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+          });
+          res.end();
+          recordFailure(`${transition.code}: ${transition.message}`);
+          return;
+        }
+        transitionMode = transition.mode;
+        acceptedTransitionReason = transition.reason;
+        send(
+          'transition-guard',
+          transition.mode === 'release' || transition.mode === 'rollback' ? 'warning' : 'done',
+          transition.mode === 'fast-forward'
+            ? '版本继承检查通过：目标包含当前 CDS 提交'
+            : transition.mode === 'same-sha'
+              ? '版本继承检查通过：目标与当前 CDS 提交一致'
+              : `已确认非快进 ${transition.mode}：${transition.reason}`,
+        );
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
         // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
@@ -20729,29 +21151,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             ? `已通过控制面隔离分支对齐 ${branch}`
             : `已切换到 ${branch}`,
         );
-      }
-
-      // 2026-05-04 fix:fetch 之后先校验 origin/<target> ref 存在,
-      // 避免 reset 失败时报英文 git stack trace。常见场景:用户上次
-      // self-update 切到了某个 feat 分支,后来该分支合并 main 后被
-      // 自动删 head ref,此时 cds.miduo.org 的 HEAD 是 stale,reset 必报
-      // "ambiguous argument" 错误。给个友好提示 + 建议切到 main。
-      if (branch) {
-        const refCheck = await shell.exec(
-          `git rev-parse --verify --quiet origin/${branch}`,
-          { cwd: repoRoot },
-        );
-        if (refCheck.exitCode !== 0) {
-          const msg =
-            `远端分支 origin/${branch} 不存在或已被删除。` +
-            `请改选 main 或别的活分支(可在「目标分支」下拉重选)。` +
-            `如果你刚把分支合并到 main 后被自动删,选 main 即可。`;
-          send('checkout', 'error', msg);
-          sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
-          res.end();
-          recordFailure(`origin/${branch} 不存在`);
-          return;
-        }
       }
 
       // #746 guard #2 — 分支新鲜度警告(非阻断)。
@@ -20943,7 +21342,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
-          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+          ...({
+            updateMode: 'web-only',
+            transitionMode,
+            transitionReason: acceptedTransitionReason,
+          } as Record<string, unknown>),
         });
         return;
       }
@@ -21204,7 +21607,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         status: 'success',
         durationMs: Date.now() - startedAt,
         actor,
-        ...({ updateMode } as Record<string, unknown>),
+        ...({
+          updateMode,
+          transitionMode,
+          transitionReason: acceptedTransitionReason,
+        } as Record<string, unknown>),
       });
       // Mongo-backed state is write-behind. This path exits the process about
       // one second after sending the restart event. A stuck Mongo write must
@@ -21242,44 +21649,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // so that silent spawn failures (e.g., exec_cds.sh not understanding an
       // argument) leave a forensic trail. Without this, the whole CDS cluster
       // goes dark with no clue why.
-      setTimeout(() => {
-        const cdsDir = path.join(repoRoot, 'cds');
-        const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
-        try {
-          // Ensure directory exists
-          fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
-          const stamp = new Date().toISOString();
-          fs.appendFileSync(errorLogPath, `\n=== self-update spawn at ${stamp} (branch=${branch || '(same)'}) ===\n`);
-
-          const out = fs.openSync(errorLogPath, 'a');
-          const errFd = fs.openSync(errorLogPath, 'a');
-          const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
-            cwd: cdsDir,
-            detached: true,
-            stdio: ['ignore', out, errFd],
-            env: { ...process.env },
-          });
-          child.on('error', (err) => {
-            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
-          });
-          child.unref();
-
-          // Exit ourselves after a brief delay so exec_cds.sh can bind the port.
-          // If the new process failed to start, the next admin to hit CDS will
-          // see an empty upstream — and will find a forensic trail in
-          // .cds/self-update-error.log.
-          branchOperationCoordinator?.interruptAll('CDS self-update is restarting the process', 'api.self-update');
-          setTimeout(() => process.exit(0), 1000);
-        } catch (spawnErr) {
-          // Something went wrong before spawn; write it out and still exit
-          // (caller already received 'done' SSE; they're expecting restart).
-          try {
-            fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-          } catch { /* can't log either; give up silently */ }
-          branchOperationCoordinator?.interruptAll('CDS self-update spawn failed; process is exiting', 'api.self-update');
-          setTimeout(() => process.exit(1), 500);
-        }
-      }, 500);
+      scheduleDetachedCdsRestart({
+        branchLabel: branch || '',
+        source: 'api.self-update',
+        delayMs: 500,
+        exitOnFailure: true,
+      });
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       if (!res.writableEnded) {
@@ -21385,7 +21760,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // 跳过 no-op fast-path,即使 HEAD === origin 且 dist .build-sha 都已对上,
     // 也走完整 fetch + reset + analyze + (热/冷/web-only) 流程。这样测试人员
     // 可以反复点同一 commit 看更新链路。"强制更新"按钮应当传 force:true。
-    const { branch, force } = (req.body || {}) as { branch?: string; force?: boolean };
+    const { branch, force, transitionIntent, expectedFromSha, transitionReason } = (req.body || {}) as {
+      branch?: string;
+      force?: boolean;
+      transitionIntent?: string;
+      expectedFromSha?: string;
+      transitionReason?: string;
+    };
     const forceMode = force === true;
     const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
@@ -21424,6 +21805,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
     const startedAt = Date.now();
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
+    let forceSyncTransitionMode: string | undefined;
+    let forceSyncTransitionReason: string | undefined;
 
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
@@ -21530,6 +21913,54 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         return;
       }
 
+      const currentFullSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+      const targetFullSha = (await shell.exec(`git rev-parse origin/${target}`, { cwd: repoRoot })).stdout.trim();
+      if (!/^[0-9a-f]{40}$/i.test(currentFullSha) || !/^[0-9a-f]{40}$/i.test(targetFullSha)) {
+        const message = '无法解析当前或目标 CDS 的完整提交 SHA，已在切换代码前停止。';
+        send('transition-guard', 'error', message);
+        sendSSE(res, 'error', { code: 'invalid_transition_sha', message });
+        res.end();
+        recordFailure(message);
+        return;
+      }
+      const ancestorResult = await shell.exec(
+        `git merge-base --is-ancestor ${currentFullSha} ${targetFullSha}`,
+        { cwd: repoRoot },
+      );
+      const transition = evaluateSelfUpdateTransition({
+        currentSha: currentFullSha,
+        targetSha: targetFullSha,
+        targetContainsCurrent: ancestorResult.exitCode === 0,
+        intent: transitionIntent,
+        expectedFromSha,
+        reason: transitionReason,
+      });
+      if (!transition.allowed) {
+        send('transition-guard', 'error', transition.message);
+        sendSSE(res, 'error', {
+          code: transition.code,
+          message: transition.message,
+          currentSha: currentFullSha,
+          targetSha: targetFullSha,
+          targetBranch: target,
+          hint: '强制同步不能绕过版本继承门禁；请显式声明 release/rollback、expectedFromSha 和原因。',
+        });
+        res.end();
+        recordFailure(`${transition.code}: ${transition.message}`);
+        return;
+      }
+      forceSyncTransitionMode = transition.mode;
+      forceSyncTransitionReason = transition.reason;
+      send(
+        'transition-guard',
+        transition.mode === 'release' || transition.mode === 'rollback' ? 'warning' : 'done',
+        transition.mode === 'fast-forward'
+          ? '版本继承检查通过：目标包含当前 CDS 提交'
+          : transition.mode === 'same-sha'
+            ? '版本继承检查通过：目标与当前 CDS 提交一致'
+            : `已确认非快进 ${transition.mode}：${transition.reason}`,
+      );
+
       // Step 3a: checkout target branch BEFORE the hard reset.
       //
       // Without this, calling with {branch:'develop'} while HEAD is on
@@ -21628,7 +22059,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           durationMs: Date.now() - startedAt,
           actor,
           // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"
-          ...({ noOp: true } as Record<string, unknown>),
+          ...({
+            noOp: true,
+            transitionMode: forceSyncTransitionMode,
+            transitionReason: forceSyncTransitionReason,
+          } as Record<string, unknown>),
         });
         return;
       }
@@ -21693,7 +22128,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
-          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+          ...({
+            updateMode: 'web-only',
+            transitionMode: forceSyncTransitionMode,
+            transitionReason: forceSyncTransitionReason,
+          } as Record<string, unknown>),
         });
         return;
       }
@@ -21736,7 +22175,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
-          ...({ updateMode: 'doc-only' } as Record<string, unknown>),
+          ...({
+            updateMode: 'doc-only',
+            transitionMode: forceSyncTransitionMode,
+            transitionReason: forceSyncTransitionReason,
+          } as Record<string, unknown>),
         });
         return;
       } else if (impact.hotReloadablePaths.length === 0) {
@@ -22051,7 +22494,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         actor,
         // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
-        ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
+        ...({
+          updateMode: hotEligible ? 'hot-reload' : 'restart',
+          transitionMode: forceSyncTransitionMode,
+          transitionReason: forceSyncTransitionReason,
+        } as Record<string, unknown>),
       });
       // Same durability requirement as /api/self-update: this code path
       // intentionally exits the daemon. Bound this flush so a stuck write-behind
@@ -22087,39 +22534,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       res.end();
 
-      // Same restart technique as /api/self-update — spawn a detached bash
-      // that runs exec_cds.sh daemon and let the current process die after
-      // a short grace period so the child can bind the port.
-      const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
-      try {
-        fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
-        fs.appendFileSync(
-          errorLogPath,
-          `\n=== self-force-sync spawn at ${new Date().toISOString()} (branch=${target}) ===\n`,
-        );
-        const out = fs.openSync(errorLogPath, 'a');
-        const errFd = fs.openSync(errorLogPath, 'a');
-        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
-          cwd: cdsDir,
-          detached: true,
-          stdio: ['ignore', out, errFd],
-          env: { ...process.env },
-        });
-        child.on('error', (err) => {
-          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
-        });
-        child.unref();
-        branchOperationCoordinator?.interruptAll('CDS force-sync is restarting the process', 'api.self-force-sync');
-        setTimeout(() => process.exit(0), 1000);
-      } catch (spawnErr) {
-        // If we can't spawn the replacement, at least we've persisted the
-        // reset — operator can manually `./exec_cds.sh restart` afterwards.
-        try {
-          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-        } catch {
-          /* ignore */
-        }
-      }
+      scheduleDetachedCdsRestart({
+        branchLabel: target,
+        source: 'api.self-force-sync',
+      });
     } catch (err) {
       if (!res.writableEnded) {
         sendSSE(res, 'error', { message: (err as Error).message });

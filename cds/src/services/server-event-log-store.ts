@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { MongoClient, type Collection } from 'mongodb';
 import { maskSecrets } from './secret-masker.js';
+import { getAgentOperationContext } from './agent-operation-context.js';
+import type { AgentOperatorIdentitySummary } from '../types.js';
 
 export type ServerEventCategory = 'container' | 'docker' | 'system';
 export type ServerEventSeverity = 'info' | 'warn' | 'error';
@@ -24,6 +26,7 @@ export interface ServerEventRecord {
   upstream?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  agentIdentity?: AgentOperatorIdentitySummary;
   operationKind?: string | null;
   operationTrigger?: string | null;
   operationActor?: string | null;
@@ -216,6 +219,19 @@ export function normalizeLogText(text: string, tailLines?: number): ServerEventR
   };
 }
 
+export function enrichServerEventRecord(
+  record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string },
+): typeof record {
+  const context = getAgentOperationContext();
+  const identity = record.agentIdentity ?? context?.identity;
+  return {
+    ...record,
+    requestId: record.requestId ?? context?.requestId,
+    operationId: resolveOperationId(record) ?? context?.operationId,
+    agentIdentity: identity ? compactServerEventValue(identity) as AgentOperatorIdentitySummary : undefined,
+  };
+}
+
 export class ServerEventLogStore implements ServerEventLogSink {
   private client: MongoClient | null = null;
   private collection: Collection<ServerEventRecord> | null = null;
@@ -283,39 +299,39 @@ export class ServerEventLogStore implements ServerEventLogSink {
   }
 
   private buildDocument(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): ServerEventRecord {
+    const enriched = enrichServerEventRecord(record);
     return {
-      ...record,
+      ...enriched,
       _id: `${createServerEventId()}:${Date.now()}`,
-      ts: record.ts ? new Date(record.ts) : new Date(),
-      severity: record.severity,
-      operationId: resolveOperationId(record),
-      operationKind: resolveStringField(record as Record<string, unknown>, 'operationKind', 'kind'),
-      operationTrigger: resolveStringField(record as Record<string, unknown>, 'operationTrigger', 'trigger'),
-      operationActor: resolveStringField(record as Record<string, unknown>, 'operationActor', 'actor'),
-      operationSource: resolveStringField(record as Record<string, unknown>, 'operationSource', 'source'),
-      commitSha: resolveStringField(record as Record<string, unknown>, 'commitSha'),
-      message: record.message ? truncateUtf8(record.message, MAX_TEXT_BYTES) : undefined,
-      docker: record.docker ? compactServerEventValue(record.docker) as Record<string, unknown> : undefined,
-      inspect: record.inspect ? compactServerEventValue(record.inspect) as Record<string, unknown> : undefined,
-      details: record.details ? compactServerEventValue(record.details) as Record<string, unknown> : undefined,
-      command: record.command
+      ts: enriched.ts ? new Date(enriched.ts) : new Date(),
+      severity: enriched.severity,
+      operationKind: resolveStringField(enriched as Record<string, unknown>, 'operationKind', 'kind'),
+      operationTrigger: resolveStringField(enriched as Record<string, unknown>, 'operationTrigger', 'trigger'),
+      operationActor: resolveStringField(enriched as Record<string, unknown>, 'operationActor', 'actor'),
+      operationSource: resolveStringField(enriched as Record<string, unknown>, 'operationSource', 'source'),
+      commitSha: resolveStringField(enriched as Record<string, unknown>, 'commitSha'),
+      message: enriched.message ? truncateUtf8(enriched.message, MAX_TEXT_BYTES) : undefined,
+      docker: enriched.docker ? compactServerEventValue(enriched.docker) as Record<string, unknown> : undefined,
+      inspect: enriched.inspect ? compactServerEventValue(enriched.inspect) as Record<string, unknown> : undefined,
+      details: enriched.details ? compactServerEventValue(enriched.details) as Record<string, unknown> : undefined,
+      command: enriched.command
         ? {
-          name: record.command.name,
-          exitCode: record.command.exitCode,
-          stdoutPreview: record.command.stdoutPreview ? truncateUtf8(record.command.stdoutPreview, MAX_TEXT_BYTES) : undefined,
-          stderrPreview: record.command.stderrPreview ? truncateUtf8(record.command.stderrPreview, MAX_TEXT_BYTES) : undefined,
+          name: enriched.command.name,
+          exitCode: enriched.command.exitCode,
+          stdoutPreview: enriched.command.stdoutPreview ? truncateUtf8(enriched.command.stdoutPreview, MAX_TEXT_BYTES) : undefined,
+          stderrPreview: enriched.command.stderrPreview ? truncateUtf8(enriched.command.stderrPreview, MAX_TEXT_BYTES) : undefined,
         }
         : undefined,
-      logs: record.logs?.text
+      logs: enriched.logs?.text
         ? {
-          ...record.logs,
-          text: truncateUtf8(record.logs.text, MAX_TEXT_BYTES),
+          ...enriched.logs,
+          text: truncateUtf8(enriched.logs.text, MAX_TEXT_BYTES),
         }
-        : record.logs,
-      error: record.error
+        : enriched.logs,
+      error: enriched.error
         ? {
-          code: record.error.code,
-          message: record.error.message ? truncateUtf8(record.error.message, MAX_ERROR_MESSAGE) : undefined,
+          code: enriched.error.code,
+          message: enriched.error.message ? truncateUtf8(enriched.error.message, MAX_ERROR_MESSAGE) : undefined,
         }
         : undefined,
     };

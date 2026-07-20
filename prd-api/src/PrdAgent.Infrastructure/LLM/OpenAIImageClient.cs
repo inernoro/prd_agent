@@ -34,7 +34,7 @@ namespace PrdAgent.Infrastructure.LLM;
 public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
-    private readonly ILlmGateway _gateway;
+    private readonly ILogicalModelGateway _servingGateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
@@ -45,7 +45,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
     public OpenAIImageClient(
         MongoDbContext db,
-        ILlmGateway gateway,
+        HttpLlmGatewayClient servingGateway,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<OpenAIImageClient> logger,
@@ -55,7 +55,7 @@ public class OpenAIImageClient : IImageGenerationClient
         ILLMRequestContextAccessor? ctxAccessor = null)
     {
         _db = db;
-        _gateway = gateway;
+        _servingGateway = servingGateway;
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
@@ -63,6 +63,25 @@ public class OpenAIImageClient : IImageGenerationClient
         _watermarkRenderer = watermarkRenderer;
         _fontRegistry = fontRegistry;
         _ctxAccessor = ctxAccessor;
+    }
+
+    internal static string ResolveRequiredLogicalModelPublicId(
+        string? requiredLogicalModelPublicId,
+        string? platformId,
+        string? modelId,
+        string? modelName)
+    {
+        var required = (requiredLogicalModelPublicId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(required)) return required;
+
+        // 逻辑模型平台标记是第二道不可降级契约。即使调用层遗漏了独立参数，也必须从
+        // 稳定模型身份恢复，而不是把同名 publicId 交给普通模型池解释。
+        if (!string.Equals(platformId?.Trim(), "logical-model", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        var stableModelId = (modelName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(stableModelId)) stableModelId = (modelId ?? string.Empty).Trim();
+        return stableModelId;
     }
 
 
@@ -84,7 +103,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string? modelId = null,
         string? platformId = null,
         string? modelName = null,
-        string? maskBase64 = null)
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null)
     {
         // 所有生图操作产出的文件都是 AI 生成内容
         using var _ = RegistryAssetStorage.ScopeAs("generated");
@@ -93,7 +113,8 @@ public class OpenAIImageClient : IImageGenerationClient
         {
             // 文生图：无参考图
             return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-                modelId, platformId, modelName);
+                modelId, platformId, modelName,
+                requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         }
 
         if (images.Count == 1)
@@ -102,7 +123,8 @@ public class OpenAIImageClient : IImageGenerationClient
             return await GenerateAsync(prompt, n, size, responseFormat, ct, appCallerCode,
                 modelId, platformId, modelName,
                 initImageBase64: images[0], initImageProvided: true,
-                maskBase64: maskBase64);
+                maskBase64: maskBase64,
+                requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         }
 
         // 多图生图（2+ 张参考图）→ 转为 ImageRefData 列表
@@ -125,7 +147,7 @@ public class OpenAIImageClient : IImageGenerationClient
         }).ToList();
 
         return await GenerateWithVisionAsync(prompt, imageRefs, size, ct, appCallerCode,
-            modelId, platformId, modelName);
+            modelId, platformId, modelName, requiredLogicalModelPublicId);
     }
 
 
@@ -141,7 +163,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string? modelName = null,
         string? initImageBase64 = null,
         bool initImageProvided = false,
-        string? maskBase64 = null)
+        string? maskBase64 = null,
+        string? requiredLogicalModelPublicId = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -167,7 +190,15 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度（获取平台信息用于适配器选择）
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
+        var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
+            requiredLogicalModelPublicId, platformId, modelId, modelName);
+        // 视觉创作只依赖独立 Gateway。显式逻辑模型、未显式选模型时的默认池与故障兜底
+        // 都在 Gateway 内部完成；MAP 不再保留第二条进程内上游发送路径。
+        var requestGateway = _servingGateway;
+        var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+            ? await requestGateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode, "generation", requiredLogicalModel, ct)
+            : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -178,7 +209,6 @@ public class OpenAIImageClient : IImageGenerationClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
-
         // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
         if (string.IsNullOrWhiteSpace(apiUrl) ||
             !Uri.TryCreate(apiUrl, UriKind.Absolute, out var apiUrlUri) ||
@@ -318,6 +348,15 @@ public class OpenAIImageClient : IImageGenerationClient
 
         // 归一化尺寸（某些平台有最小尺寸要求）
         var normalizedSize = platformAdapter.NormalizeSize(size);
+        var canonicalImageRequest = new GatewayCanonicalImageRequest
+        {
+            Prompt = prompt,
+            Count = n,
+            Size = requestedSizeNorm,
+            ResponseFormat = responseFormat,
+            Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
+            MaskBase64 = maskBase64,
+        };
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -415,11 +454,13 @@ public class OpenAIImageClient : IImageGenerationClient
                         "[OpenAIImageClient] Exchange 统一请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Size={Size}",
                         appCallerCode, initImageBase64 != null, requestedSizeNorm);
 
-                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
@@ -448,11 +489,13 @@ public class OpenAIImageClient : IImageGenerationClient
                         "AspectRatio={AspectRatio}, ImageSize={ImageSize}, Endpoint={Endpoint}",
                         appCallerCode, initImageBase64 != null, maskBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
 
-                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
                         IsMultipart = false,
@@ -512,11 +555,13 @@ public class OpenAIImageClient : IImageGenerationClient
                         "[OpenAIImageClient] OpenRouter 图片请求(chat/completions + modalities): AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
                         appCallerCode, initImageBase64 != null, effectiveModelName);
 
-                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
                         IsMultipart = false,
@@ -566,7 +611,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
                         IsMultipart = false,
@@ -582,7 +629,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     };
 
-                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
+                    return await requestGateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
                 else
                 {
@@ -653,7 +700,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
                         MultipartFields = multipartFields,
@@ -670,7 +719,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     };
 
-                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
+                    return await requestGateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
             }
 
@@ -1139,7 +1188,8 @@ public class OpenAIImageClient : IImageGenerationClient
         string appCallerCode,
         string? modelId = null,
         string? platformId = null,
-        string? modelName = null)
+        string? modelName = null,
+        string? requiredLogicalModelPublicId = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -1174,7 +1224,14 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
 
         // 通过 Gateway 解析模型调度
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
+        var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
+            requiredLogicalModelPublicId, platformId, modelId, modelName);
+        // 多图生图与文生图使用同一独立 Gateway 边界，避免协议分支重新引入 MAP 旧池。
+        var requestGateway = _servingGateway;
+        var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+            ? await requestGateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode, "generation", requiredLogicalModel, ct)
+            : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -1184,6 +1241,16 @@ public class OpenAIImageClient : IImageGenerationClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
+        var canonicalImageRequest = new GatewayCanonicalImageRequest
+        {
+            Prompt = prompt,
+            Count = 1,
+            Size = NormalizeSizeString(size) ?? size,
+            Images = imageRefs.Select(image => image.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? image.Base64
+                    : $"data:{image.MimeType ?? "image/png"};base64,{image.Base64}")
+                .ToList(),
+        };
 
         // Exchange 统一路径：多图也用标准 JSON 格式（不走 Vision Chat API）
         if (resolution.IsExchange)
@@ -1216,13 +1283,15 @@ public class OpenAIImageClient : IImageGenerationClient
 
             try
             {
-                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                var gatewayResp = await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
-                    ExpectedModel = effectiveModelName,
+                    ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                     RequestBody = exchangeBody,
                     IsMultipart = false,
+                    CanonicalImageRequest = canonicalImageRequest,
+                    RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                     TimeoutSeconds = exchangeTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1383,14 +1452,16 @@ public class OpenAIImageClient : IImageGenerationClient
                 var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
                 googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
 
-                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                var gatewayResp = await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
-                    ExpectedModel = effectiveModelName,
+                    ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                     EndpointPath = googleEndpointPath,
                     RequestBody = googleBody,
                     IsMultipart = false,
+                    CanonicalImageRequest = canonicalImageRequest,
+                    RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                     TimeoutSeconds = googleTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1592,10 +1663,12 @@ public class OpenAIImageClient : IImageGenerationClient
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
-                ExpectedModel = effectiveModelName,
+                ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                 EndpointPath = "/v1/chat/completions",
                 RequestBody = requestBody,
                 IsMultipart = false,
+                CanonicalImageRequest = canonicalImageRequest,
+                RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                 TimeoutSeconds = 120,
                 Context = new GatewayRequestContext
                 {
@@ -1615,7 +1688,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 }
             };
 
-            var gatewayResp = await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, ct);
+            var gatewayResp = await requestGateway.SendRawWithResolutionAsync(gatewayRequest, resolution, ct);
             var respBody = gatewayResp.Content ?? string.Empty;
 
             _logger.LogInformation(

@@ -205,6 +205,8 @@ var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool
 var gwModelPoolTypes = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pool_types");
 var gwPlatforms = gatewayDatabase.GetCollection<BsonDocument>("llmgw_platforms");
 var gwModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_models");
+var gwLogicalModels = gatewayDatabase.GetCollection<BsonDocument>("llmgw_logical_models");
+var gwModelOfferings = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_offerings");
 var gwModelExchanges = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_exchanges");
 var serviceKeys = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_keys");
 var serviceKeyDirectory = gatewayDatabase.GetCollection<BsonDocument>("llmgw_service_key_directory");
@@ -2300,6 +2302,265 @@ app.MapGet("/gw/models", async (HttpContext http, string? platformId, bool? enab
     var data = new ModelsData { Items = docs.Select(MapModel).ToList(), Total = docs.Count };
     return Json(ApiEnvelope<ModelsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
+
+// 逻辑模型目录：调用方只看到 PublicId；Offerings 展示实际 Provider/Endpoint 供运维维护。
+app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, bool? enabled) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var filters = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(modelType)) filters.Add(fb.Eq("ModelType", modelType.Trim()));
+    if (enabled is not null) filters.Add(fb.Eq("Enabled", enabled.Value));
+    var filter = filters.Count == 0 ? fb.Empty : fb.And(filters);
+    var logicalDocs = await gwLogicalModels.Find(TenantAccess.Filter(http, filter))
+        .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("Name"))
+        .ToListAsync();
+    var logicalIds = logicalDocs.Select(x => x.GetStringOrEmpty("_id")).Where(x => x.Length > 0).ToList();
+    var offeringDocs = logicalIds.Count == 0
+        ? new List<BsonDocument>()
+        : await gwModelOfferings.Find(TenantAccess.Filter(http, fb.In("LogicalModelId", logicalIds)))
+            .Sort(Builders<BsonDocument>.Sort.Ascending("Priority"))
+            .ToListAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var data = new LogicalModelsData
+    {
+        Items = logicalDocs.Select(x => MapLogicalModel(x, offeringDocs, modelDocs, exchangeDocs, platformDocs)).ToList(),
+        Total = logicalDocs.Count,
+    };
+    return Json(ApiEnvelope<LogicalModelsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogicalModelRequest? body) =>
+{
+    var publicId = body?.PublicId?.Trim() ?? string.Empty;
+    var name = body?.Name?.Trim() ?? string.Empty;
+    var modelType = body?.ModelType?.Trim().ToLowerInvariant() ?? string.Empty;
+    if (publicId.Length is < 2 or > 160 || !System.Text.RegularExpressions.Regex.IsMatch(publicId, "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$"))
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_PUBLIC_ID", "模型标识只允许字母、数字、点、下划线、冒号、斜杠和连字符"), jsonOptions, 400);
+    if (name.Length is < 2 or > 120)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_NAME", "模型名称长度必须为 2 到 120"), jsonOptions, 400);
+    if (modelType.Length is < 2 or > 40 || !System.Text.RegularExpressions.Regex.IsMatch(modelType, "^[a-z0-9-]+$"))
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_MODEL_TYPE", "模型类型格式不正确"), jsonOptions, 400);
+    var strategy = (body?.RoutingStrategy ?? "priority").Trim().ToLowerInvariant();
+    if (strategy is not ("priority" or "weighted"))
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_STRATEGY", "路由策略仅支持 priority 或 weighted"), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var normalized = publicId.ToLowerInvariant();
+    if (await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalized))).AnyAsync())
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("DUPLICATE_LOGICAL_MODEL", "当前租户已存在相同模型标识"), jsonOptions, 409);
+
+    var now = DateTime.UtcNow;
+    var id = $"gw-logical-{Guid.NewGuid():N}";
+    var capabilities = (body?.Capabilities ?? new()).Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var appCallers = (body?.AllowedAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    var document = new BsonDocument
+    {
+        { "_id", id }, { "TenantId", tenantId }, { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+        { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
+        { "AllowedAppCallerCodes", new BsonArray(appCallers) }, { "RoutingStrategy", strategy },
+        { "Enabled", true }, { "DisplayOrder", Math.Clamp(body?.DisplayOrder ?? 100, 0, 10000) },
+        { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
+        { "CreatedAt", now }, { "UpdatedAt", now },
+    };
+    await gwLogicalModels.InsertOneAsync(document);
+    await WriteOperationAuditAsync(operationAudits, http, "logical-model.create", "llmgw_logical_model", id, name, true, null,
+        new BsonDocument { { "publicId", publicId }, { "modelType", modelType }, { "routingStrategy", strategy } });
+    return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
+        document,
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>())), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromBody] UpdateLogicalModelRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "缺少更新内容"), jsonOptions, 400);
+    var updates = new List<UpdateDefinition<BsonDocument>>();
+    if (body.Name is not null)
+    {
+        var name = body.Name.Trim();
+        if (name.Length is < 2 or > 120)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_NAME", "模型名称长度必须为 2 到 120"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("Name", name));
+    }
+    if (body.RoutingStrategy is not null)
+    {
+        var strategy = body.RoutingStrategy.Trim().ToLowerInvariant();
+        if (strategy is not ("priority" or "weighted"))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_STRATEGY", "路由策略仅支持 priority 或 weighted"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("RoutingStrategy", strategy));
+    }
+    if (body.Capabilities is not null)
+    {
+        var capabilities = body.Capabilities.Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        updates.Add(Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray(capabilities)));
+    }
+    if (body.AllowedAppCallerCodes is not null)
+    {
+        var appCallers = body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        updates.Add(Builders<BsonDocument>.Update.Set("AllowedAppCallerCodes", new BsonArray(appCallers)));
+    }
+    if (body.DisplayOrder is not null)
+        updates.Add(Builders<BsonDocument>.Update.Set("DisplayOrder", Math.Clamp(body.DisplayOrder.Value, 0, 10000)));
+    if (body.Description is not null)
+        updates.Add(string.IsNullOrWhiteSpace(body.Description)
+            ? Builders<BsonDocument>.Update.Unset("Description")
+            : Builders<BsonDocument>.Update.Set("Description", body.Description.Trim()));
+    if (updates.Count == 0)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+    var updated = await gwLogicalModels.FindOneAndUpdateAsync(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+        Builders<BsonDocument>.Update.Combine(updates),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updated is null)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
+        new BsonDocument { { "fieldCount", updates.Count - 1 } });
+    var offerings = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).ToListAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(updated, offerings, modelDocs, exchangeDocs, platformDocs)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string id, [FromBody] CreateModelOfferingRequest? body) =>
+{
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (logical is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("LOGICAL_MODEL_NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    var targetKind = (body?.TargetKind ?? "model").Trim().ToLowerInvariant();
+    var targetId = body?.TargetId?.Trim() ?? string.Empty;
+    if (targetKind is not ("model" or "exchange") || targetId.Length == 0)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_TARGET", "必须选择 model 或 exchange 上游"), jsonOptions, 400);
+    var target = targetKind == "model"
+        ? await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync()
+        : await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync();
+    if (target is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_NOT_FOUND", "上游目标不存在或不属于当前租户"), jsonOptions, 404);
+    if (target.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_DISABLED", "上游目标已停用"), jsonOptions, 409);
+    if (body?.MaxConcurrency is < 1 or > 10000)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_MAX_CONCURRENCY", "最大并发必须为 1 到 10000"), jsonOptions, 400);
+    if (body?.RateLimitPerMinute is < 1 or > 1000000)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
+    if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
+    var duplicate = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", id), fb.Eq("TargetKind", targetKind), fb.Eq("TargetId", targetId));
+    if (await gwModelOfferings.Find(duplicate).AnyAsync())
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
+
+    var now = DateTime.UtcNow;
+    var offeringId = $"gw-offering-{Guid.NewGuid():N}";
+    var document = new BsonDocument
+    {
+        { "_id", offeringId }, { "TenantId", tenantId }, { "LogicalModelId", id },
+        { "TargetKind", targetKind }, { "TargetId", targetId },
+        { "UpstreamModelId", string.IsNullOrWhiteSpace(body?.UpstreamModelId) ? BsonNull.Value : body.UpstreamModelId.Trim() },
+        { "Protocol", string.IsNullOrWhiteSpace(body?.Protocol) ? BsonNull.Value : body.Protocol.Trim().ToLowerInvariant() },
+        { "EndpointPath", string.IsNullOrWhiteSpace(body?.EndpointPath) ? BsonNull.Value : body.EndpointPath.Trim() },
+        { "Priority", Math.Clamp(body?.Priority ?? 100, 0, 10000) }, { "Weight", Math.Clamp(body?.Weight ?? 100, 1, 10000) },
+        { "Enabled", true }, { "HealthStatus", 0 }, { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+        { "MaxConcurrency", body?.MaxConcurrency is > 0 ? body.MaxConcurrency.Value : BsonNull.Value },
+        { "RateLimitPerMinute", body?.RateLimitPerMinute is > 0 ? body.RateLimitPerMinute.Value : BsonNull.Value },
+        { "Notes", string.IsNullOrWhiteSpace(body?.Notes) ? BsonNull.Value : body.Notes.Trim() },
+        { "CreatedAt", now }, { "UpdatedAt", now },
+    };
+    await gwModelOfferings.InsertOneAsync(document);
+    await WriteOperationAuditAsync(operationAudits, http, "model-offering.create", "llmgw_model_offering", offeringId, targetId, true, null,
+        new BsonDocument { { "logicalModelId", id }, { "targetKind", targetKind }, { "targetId", targetId } });
+    var platformsForMap = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var item = MapLogicalModel(
+        logical,
+        new List<BsonDocument> { document },
+        targetKind == "model" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
+        targetKind == "exchange" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
+        platformsForMap).Offerings.Single();
+    return Json(ApiEnvelope<ModelOfferingItem>.Ok(item), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少更新内容"), jsonOptions, 400);
+    if (body.MaxConcurrency is < 0 or > 10000)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_MAX_CONCURRENCY", "最大并发必须为空、0 或 1 到 10000"), jsonOptions, 400);
+    if (body.RateLimitPerMinute is < 0 or > 1000000)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为空、0 或 1 到 1000000"), jsonOptions, 400);
+    if (!IsSafeOfferingEndpointPath(body.EndpointPath))
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
+    var updates = new List<UpdateDefinition<BsonDocument>>();
+    if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
+    if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
+    if (body.EndpointPath is not null) updates.Add(SetOrUnset("EndpointPath", body.EndpointPath));
+    if (body.Priority is not null) updates.Add(Builders<BsonDocument>.Update.Set("Priority", Math.Clamp(body.Priority.Value, 0, 10000)));
+    if (body.Weight is not null) updates.Add(Builders<BsonDocument>.Update.Set("Weight", Math.Clamp(body.Weight.Value, 1, 10000)));
+    if (body.MaxConcurrency is not null) updates.Add(body.MaxConcurrency > 0 ? Builders<BsonDocument>.Update.Set("MaxConcurrency", body.MaxConcurrency.Value) : Builders<BsonDocument>.Update.Unset("MaxConcurrency"));
+    if (body.RateLimitPerMinute is not null) updates.Add(body.RateLimitPerMinute > 0 ? Builders<BsonDocument>.Update.Set("RateLimitPerMinute", body.RateLimitPerMinute.Value) : Builders<BsonDocument>.Update.Unset("RateLimitPerMinute"));
+    if (body.Notes is not null) updates.Add(SetOrUnset("Notes", body.Notes));
+    if (updates.Count == 0)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter, Builders<BsonDocument>.Update.Combine(updates),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updated is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    await WriteOperationAuditAsync(operationAudits, http, "model-offering.update", "llmgw_model_offering", offeringId, updated.GetStringOrEmpty("TargetId"), true, null,
+        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", updates.Count - 1 } });
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    return Json(ApiEnvelope<ModelOfferingItem>.Ok(MapLogicalModel(logical!, new List<BsonDocument> { updated }, modelDocs, exchangeDocs, platformDocs).Offerings.Single()), jsonOptions);
+
+    UpdateDefinition<BsonDocument> SetOrUnset(string field, string? value)
+        => string.IsNullOrWhiteSpace(value) ? Builders<BsonDocument>.Update.Unset(field) : Builders<BsonDocument>.Update.Set(field, value.Trim());
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id, [FromBody] ToggleEnabledRequest? body) =>
+{
+    if (body?.Enabled is not bool enabled)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "缺少 enabled 字段"), jsonOptions, 400);
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var updated = await gwLogicalModels.FindOneAndUpdateAsync(filter,
+        Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updated is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
+        updated,
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>(),
+        Array.Empty<BsonDocument>())), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", async (HttpContext http, string logicalId, string offeringId, [FromBody] ToggleEnabledRequest? body) =>
+{
+    if (body?.Enabled is not bool enabled)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少 enabled 字段"), jsonOptions, 400);
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter,
+        Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
+        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    if (updated is null) return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var item = MapLogicalModel(logical!, new List<BsonDocument> { updated }, modelDocs, exchangeDocs, platformDocs).Offerings.Single();
+    return Json(ApiEnvelope<ModelOfferingItem>.Ok(item), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
 
 // 字段级参数能力元数据：控制台以此维护 parameter:<name>，运行时 strict gate 以同一批参数收紧。
 app.MapGet("/gw/parameter-capabilities/meta", () =>
@@ -8870,6 +9131,10 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     ReleaseCommit = d.AsNullableString("ReleaseCommit"),
     Provider = d.GetStringOrEmpty("Provider"),
     Model = d.GetStringOrEmpty("Model"),
+    LogicalModelId = d.AsNullableString("LogicalModelId"),
+    LogicalModelPublicId = d.AsNullableString("LogicalModelPublicId"),
+    OfferingId = d.AsNullableString("OfferingId"),
+    OfferingTargetKind = d.AsNullableString("OfferingTargetKind"),
     PlatformId = d.AsNullableString("PlatformId"),
     PlatformName = d.AsNullableString("PlatformName"),
     GroupId = d.AsNullableString("GroupId"),
@@ -8942,6 +9207,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     IngressProtocol = d.AsNullableString("IngressProtocol"),
     Provider = d.GetStringOrEmpty("Provider"),
     Model = d.GetStringOrEmpty("Model"),
+    LogicalModelId = d.AsNullableString("LogicalModelId"),
+    LogicalModelPublicId = d.AsNullableString("LogicalModelPublicId"),
+    OfferingId = d.AsNullableString("OfferingId"),
+    OfferingTargetKind = d.AsNullableString("OfferingTargetKind"),
     RequestBodyRedacted = d.AsNullableString("RequestBodyRedacted"),
     SystemPromptText = d.AsNullableString("SystemPromptText"),
     PromptPolicyId = d.AsNullableString("PromptPolicyId"),
@@ -9001,6 +9270,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
 
 static RouterTraceDto BuildRouterTrace(BsonDocument d)
 {
+    var logicalModelId = d.AsNullableString("LogicalModelId");
+    var logicalModelPublicId = d.AsNullableString("LogicalModelPublicId");
+    var offeringId = d.AsNullableString("OfferingId");
+    var offeringTargetKind = d.AsNullableString("OfferingTargetKind");
     var mode = NormalizeResolutionMode(d.AsNullableString("ModelResolutionType"), d.AsNullableString("ResolutionReason"));
     var requestedModel = d.AsNullableString("ExpectedModel");
     var actualModel = d.AsNullableString("Model");
@@ -9043,6 +9316,10 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
     Add("ingress", "request type", d.AsNullableString("RequestType"));
     Add("policy", "model policy", modelPolicy ?? mode);
     Add("policy", "requested model", requestedModel);
+    Add("model", "logical model", !string.IsNullOrWhiteSpace(logicalModelPublicId) && !string.IsNullOrWhiteSpace(logicalModelId)
+        ? $"{logicalModelPublicId} ({logicalModelId})" : logicalModelPublicId ?? logicalModelId);
+    Add("model", "offering", !string.IsNullOrWhiteSpace(offeringTargetKind) && !string.IsNullOrWhiteSpace(offeringId)
+        ? $"{offeringTargetKind} ({offeringId})" : offeringId);
     Add("pool", "requested pool", modelPoolId);
     Add("pool", "model pool", !string.IsNullOrWhiteSpace(groupName) && !string.IsNullOrWhiteSpace(groupId) ? $"{groupName} ({groupId})" : groupName ?? groupId);
     Add("provider", "provider", provider);
@@ -9058,6 +9335,10 @@ static RouterTraceDto BuildRouterTrace(BsonDocument d)
     var attempts = MapProviderAttempts(d);
     return new RouterTraceDto
     {
+        LogicalModelId = logicalModelId,
+        LogicalModelPublicId = logicalModelPublicId,
+        OfferingId = offeringId,
+        OfferingTargetKind = offeringTargetKind,
         Mode = mode,
         RequestedModel = requestedModel,
         ActualModel = actualModel,
@@ -9715,6 +9996,91 @@ static ModelItem MapModel(BsonDocument d)
         PriceCurrency = d.AsNullableString("PriceCurrency"),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+    };
+}
+
+static bool IsSafeOfferingEndpointPath(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value)) return true;
+    var path = value.Trim();
+    return path.Length <= 500
+           && !path.StartsWith("//", StringComparison.Ordinal)
+           && !path.Contains("http://", StringComparison.OrdinalIgnoreCase)
+           && !path.Contains("https://", StringComparison.OrdinalIgnoreCase)
+           && !path.Contains('\\')
+           && !path.Any(char.IsControl);
+}
+
+static LogicalModelItem MapLogicalModel(
+    BsonDocument logical,
+    IReadOnlyCollection<BsonDocument> offeringDocs,
+    IReadOnlyCollection<BsonDocument> modelDocs,
+    IReadOnlyCollection<BsonDocument> exchangeDocs,
+    IReadOnlyCollection<BsonDocument> platformDocs)
+{
+    var logicalId = logical.GetStringOrEmpty("_id");
+    var modelById = modelDocs.Where(x => !string.IsNullOrWhiteSpace(x.GetStringOrEmpty("_id")))
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var exchangeById = exchangeDocs.Where(x => !string.IsNullOrWhiteSpace(x.GetStringOrEmpty("_id")))
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var platformById = platformDocs.Where(x => !string.IsNullOrWhiteSpace(x.GetStringOrEmpty("_id")))
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var offerings = offeringDocs
+        .Where(x => string.Equals(x.GetStringOrEmpty("LogicalModelId"), logicalId, StringComparison.Ordinal))
+        .OrderBy(x => x.AsNullableInt("Priority") ?? 100)
+        .Select(x =>
+        {
+            var targetKind = x.AsNullableString("TargetKind") ?? "model";
+            var targetId = x.GetStringOrEmpty("TargetId");
+            BsonDocument? target = null;
+            string? providerName = null;
+            if (string.Equals(targetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+            {
+                exchangeById.TryGetValue(targetId, out target);
+            }
+            else if (modelById.TryGetValue(targetId, out target))
+            {
+                var platformId = target.AsNullableString("PlatformId");
+                if (!string.IsNullOrWhiteSpace(platformId) && platformById.TryGetValue(platformId, out var platform))
+                    providerName = platform.AsNullableString("Name");
+            }
+            return new ModelOfferingItem
+            {
+                Id = x.GetStringOrEmpty("_id"),
+                LogicalModelId = logicalId,
+                TargetKind = targetKind,
+                TargetId = targetId,
+                TargetName = target?.AsNullableString("Name") ?? target?.AsNullableString("ModelName") ?? targetId,
+                ProviderName = providerName,
+                UpstreamModelId = x.AsNullableString("UpstreamModelId"),
+                Protocol = x.AsNullableString("Protocol"),
+                EndpointPath = x.AsNullableString("EndpointPath"),
+                Priority = x.AsNullableInt("Priority") ?? 100,
+                Weight = x.AsNullableInt("Weight") ?? 100,
+                Enabled = x.AsNullableBool("Enabled") ?? true,
+                HealthStatus = x.AsNullableInt("HealthStatus") ?? 0,
+                ConsecutiveFailures = x.AsNullableInt("ConsecutiveFailures") ?? 0,
+                ConsecutiveSuccesses = x.AsNullableInt("ConsecutiveSuccesses") ?? 0,
+                MaxConcurrency = x.AsNullableInt("MaxConcurrency"),
+                RateLimitPerMinute = x.AsNullableInt("RateLimitPerMinute"),
+                Notes = x.AsNullableString("Notes"),
+            };
+        }).ToList();
+    return new LogicalModelItem
+    {
+        Id = logicalId,
+        PublicId = logical.GetStringOrEmpty("PublicId"),
+        Name = logical.GetStringOrEmpty("Name"),
+        ModelType = logical.GetStringOrEmpty("ModelType"),
+        Capabilities = logical.AsStringList("Capabilities"),
+        AllowedAppCallerCodes = logical.AsStringList("AllowedAppCallerCodes"),
+        RoutingStrategy = logical.AsNullableString("RoutingStrategy") ?? "priority",
+        Enabled = logical.AsNullableBool("Enabled") ?? true,
+        DisplayOrder = logical.AsNullableInt("DisplayOrder") ?? 100,
+        Description = logical.AsNullableString("Description"),
+        CreatedAt = logical.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        UpdatedAt = logical.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+        Offerings = offerings,
     };
 }
 

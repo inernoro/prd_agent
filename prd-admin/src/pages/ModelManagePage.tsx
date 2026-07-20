@@ -2376,7 +2376,7 @@ export default function ModelManagePage() {
                 onChange={(e) => setModelForm((s) => ({ ...s, modelName: e.target.value }))}
                 className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
                 style={inputStyle}
-                placeholder="如 gpt-4o"
+                placeholder="如 gpt-5.6-sol"
               />
             </div>
 

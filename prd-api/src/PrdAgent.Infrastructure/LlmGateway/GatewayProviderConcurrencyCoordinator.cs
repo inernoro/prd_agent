@@ -42,6 +42,10 @@ public sealed class GatewayProviderConcurrencyCoordinator
         int timeoutSeconds,
         CancellationToken ct)
     {
+        var offeringRateAdmission = await CheckOfferingRateLimitAsync(tenantId, resolution, ct);
+        if (!offeringRateAdmission.Allowed)
+            return offeringRateAdmission;
+
         var platformId = resolution.ActualPlatformId?.Trim();
         var model = resolution.ActualModel?.Trim();
         if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(model))
@@ -52,6 +56,8 @@ public sealed class GatewayProviderConcurrencyCoordinator
             limits.Add(($"platform:{platformId}", resolution.PlatformMaxConcurrency.Value));
         if (resolution.ModelMaxConcurrency is > 0)
             limits.Add(($"model:{platformId}:{model}", resolution.ModelMaxConcurrency.Value));
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && resolution.OfferingMaxConcurrency is > 0)
+            limits.Add(($"offering:{resolution.OfferingId.Trim()}", resolution.OfferingMaxConcurrency.Value));
         if (limits.Count == 0)
             return GatewayProviderConcurrencyAdmission.Allow();
 
@@ -77,6 +83,68 @@ public sealed class GatewayProviderConcurrencyCoordinator
 
         return GatewayProviderConcurrencyAdmission.Allow(
             new GatewayProviderConcurrencyLease(this, tenantId, leaseId, acquired));
+    }
+
+    private async Task<GatewayProviderConcurrencyAdmission> CheckOfferingRateLimitAsync(
+        string tenantId,
+        ModelResolutionResult resolution,
+        CancellationToken ct)
+    {
+        var offeringId = resolution.OfferingId?.Trim();
+        var limit = resolution.OfferingRateLimitPerMinute;
+        if (string.IsNullOrWhiteSpace(offeringId) || limit is not > 0)
+            return GatewayProviderConcurrencyAdmission.Allow();
+
+        var now = DateTime.UtcNow;
+        var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+        var collection = _data.Database.GetCollection<GatewayOfferingRateWindowRecord>("llmgw_offering_rate_windows");
+        var filter = Builders<GatewayOfferingRateWindowRecord>.Filter.And(
+            Builders<GatewayOfferingRateWindowRecord>.Filter.Eq(x => x.TenantId, tenantId),
+            Builders<GatewayOfferingRateWindowRecord>.Filter.Eq(x => x.OfferingId, offeringId),
+            Builders<GatewayOfferingRateWindowRecord>.Filter.Eq(x => x.WindowStart, windowStart));
+        var update = Builders<GatewayOfferingRateWindowRecord>.Update
+            .SetOnInsert(x => x.Id, $"offering-rate:{Sha256Hex(tenantId)}:{Sha256Hex(offeringId)}:{windowStart.Ticks}")
+            .SetOnInsert(x => x.TenantId, tenantId)
+            .SetOnInsert(x => x.OfferingId, offeringId)
+            .SetOnInsert(x => x.WindowStart, windowStart)
+            .Set(x => x.ExpiresAt, windowStart.AddMinutes(10))
+            .Inc(x => x.Count, 1);
+
+        GatewayOfferingRateWindowRecord window;
+        try
+        {
+            window = await collection.FindOneAndUpdateAsync(
+                filter,
+                update,
+                new FindOneAndUpdateOptions<GatewayOfferingRateWindowRecord>
+                {
+                    IsUpsert = true,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                ct);
+        }
+        catch (MongoException ex) when (IsDuplicateKey(ex))
+        {
+            window = await collection.FindOneAndUpdateAsync(
+                filter,
+                update,
+                new FindOneAndUpdateOptions<GatewayOfferingRateWindowRecord>
+                {
+                    IsUpsert = false,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                ct) ?? throw new InvalidOperationException("offering rate window disappeared after duplicate upsert");
+        }
+
+        if (window.Count <= limit.Value)
+            return GatewayProviderConcurrencyAdmission.Allow();
+
+        _logger.LogWarning(
+            "[GatewayRate] offering rate exhausted offering={OfferingId} limit={Limit} count={Count}",
+            offeringId,
+            limit.Value,
+            window.Count);
+        return GatewayProviderConcurrencyAdmission.Reject("PROVIDER_RATE_LIMIT_EXHAUSTED");
     }
 
     private async Task<string?> TryAcquireSlotAsync(
@@ -160,6 +228,11 @@ public sealed class GatewayProviderConcurrencyCoordinator
 
     private static string Sha256Hex(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static bool IsDuplicateKey(MongoException ex)
+        => ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey }
+           || ex is MongoCommandException { Code: 11000 or 11001 }
+           || ex.InnerException is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey };
 }
 
 public sealed class GatewayProviderConcurrencyLease : IAsyncDisposable

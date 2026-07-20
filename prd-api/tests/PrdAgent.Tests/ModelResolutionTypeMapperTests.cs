@@ -11,6 +11,7 @@ public sealed class ModelResolutionTypeMapperTests
     [InlineData("DefaultPool", ModelResolutionType.DefaultPool)]
     [InlineData("DirectModel", ModelResolutionType.DirectModel)]
     [InlineData("Legacy", ModelResolutionType.Legacy)]
+    [InlineData("LogicalModel", ModelResolutionType.LogicalModel)]
     public void Parse_ShouldMapServingResolutionToLogResolution(
         string servingResolution,
         ModelResolutionType expected)

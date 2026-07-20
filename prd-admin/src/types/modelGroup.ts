@@ -62,7 +62,7 @@ export interface ModelGroup {
  */
 export interface ModelGroupForApp extends ModelGroup {
   /** 解析类型：GatewayRegistryPool(网关池)、DedicatedPool(专属池)、DefaultPool(默认池)、DirectModel(传统配置) */
-  resolutionType: 'GatewayRegistryPool' | 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
+  resolutionType: 'LogicalModel' | 'GatewayRegistryPool' | 'DedicatedPool' | 'DefaultPool' | 'DirectModel';
   /** 是否为该应用的专属模型池 */
   isDedicated: boolean;
   /** 是否为该类型的默认模型池 */

@@ -53,9 +53,8 @@ public class ImageAsset
     public DateTime? DescriptionExtractedAt { get; set; }
 
     /// <summary>
-    /// 提取描述时使用的模型标识（如 gpt-4o、claude-3-5-sonnet）。
+    /// 提取描述时使用的模型标识（如 gpt-5.6-sol、claude-3-5-sonnet）。
     /// </summary>
     public string? DescriptionModelId { get; set; }
 }
-
 

@@ -34,7 +34,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="PrdAgent.Tests" />
+    <InternalsVisibleTo Include="PrdAgent.Api.Tests" />
   </ItemGroup>
 
 </Project>
-
