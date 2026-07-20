@@ -334,7 +334,7 @@
 }
 
 .surface-action-danger {
-  color: var(--status-error, var(--canvas-state-failed));
+  color: var(--semantic-danger-text);
 }
 
 .surface-action-primary {

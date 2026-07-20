@@ -16,6 +16,8 @@ const TOKENS_PATH = path.resolve(TEST_DIR, '../../styles/tokens.css');
 const MOBILE_COMPAT_GATE_PATH = path.resolve(TEST_DIR, '../../components/MobileCompatGate.tsx');
 const AGENT_SWITCHER_PATH = path.resolve(TEST_DIR, '../../components/agent-switcher/AgentSwitcher.tsx');
 const BUTTON_PATH = path.resolve(TEST_DIR, '../../components/design/Button.tsx');
+const DOCUMENT_STORE_PATH = path.resolve(TEST_DIR, '../../pages/document-store/DocumentStorePage.tsx');
+const SURFACE_PATH = path.resolve(TEST_DIR, '../../styles/surface.css');
 const TEAM_ACTIVITY_DIR = path.resolve(TEST_DIR, '../../pages/team-activity');
 
 function relativeLuminance(hex: string): number {
@@ -135,6 +137,8 @@ describe('主题系统契约', () => {
   it('关键自适应入口禁止回退为固定暗色表面或低对比小字', () => {
     const agentSwitcher = fs.readFileSync(AGENT_SWITCHER_PATH, 'utf8');
     const button = fs.readFileSync(BUTTON_PATH, 'utf8');
+    const documentStore = fs.readFileSync(DOCUMENT_STORE_PATH, 'utf8');
+    const surface = fs.readFileSync(SURFACE_PATH, 'utf8');
     const teamActivity = fs.readdirSync(TEAM_ACTIVITY_DIR)
       .filter((name) => name.endsWith('.tsx'))
       .map((name) => fs.readFileSync(path.join(TEAM_ACTIVITY_DIR, name), 'utf8'))
@@ -146,6 +150,9 @@ describe('主题系统契约', () => {
     expect(agentSwitcher).not.toMatch(/linear-gradient\([^\n]*(?:22,\s*23,\s*32|16,\s*17,\s*25)/);
     expect(button).not.toMatch(/LIGHT_STYLES|DARK_STYLES|useDataTheme|\bisLight\b|\bisDark\b/);
     expect(button).toContain('button-${variant}');
+    expect(documentStore).not.toContain("color: 'rgba(59,130,246,0.95)'");
+    expect(documentStore).toContain("color: 'var(--selection-text)'");
+    expect(surface).toMatch(/\.surface-action-danger\s*\{[^}]*var\(--semantic-danger-text\)/s);
 
     expect(teamActivity).not.toContain('tone="dark"');
     expect(teamActivity).not.toContain('surface-tone-dark');
