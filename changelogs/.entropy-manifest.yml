@@ -460,3 +460,8 @@ processed:
   - 2026-07-13_llmgw-maintenance-ledger-runtime-skip.md
   - 2026-07-13_llmgw-maintenance-runtime-gate.md
   - 2026-07-13_llmgw-native-canary-source.md
+  - 2026-07-20_cds-atomic-web-dist.md
+  - 2026-07-20_cds-production-update-guard.md
+  - 2026-07-20_cds-progressive-agent-identity.md
+  - 2026-07-20_cds-release-proxy-repository-normalization.md
+  - 2026-07-20_cds-release-repository-normalization.md
