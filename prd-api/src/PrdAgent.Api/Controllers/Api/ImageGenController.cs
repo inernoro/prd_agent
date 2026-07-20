@@ -1758,6 +1758,9 @@ public class ImageGenController : ControllerBase
             ConfigModelId = cfgModelId,
             PlatformId = platformId,
             ModelId = modelId,
+            LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ? modelId
+                : null,
             // 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
             ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                 ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel

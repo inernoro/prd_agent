@@ -43,6 +43,13 @@ public class ImageGenRun
     public string? ModelId { get; set; }
 
     /// <summary>
+    /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。
+    /// 该值在任务整个生命周期内保持稳定，不得被本次命中的上游模型名覆盖；
+    /// Provider、Endpoint 与实际模型由 LLM Gateway 独立解析。
+    /// </summary>
+    public string? LogicalModelPublicId { get; set; }
+
+    /// <summary>
     /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池, 4=逻辑模型）
     /// </summary>
     public ModelResolutionType? ModelResolutionType { get; set; }

@@ -310,7 +310,9 @@ public class ImageGenRunWorker : BackgroundService
                         await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Running, null, null, null, null, null, ct);
                         await AppendEventAsync(run, "image", new { type = "imageStart", runId = run.Id, itemIndex = curItemIndex, imageIndex, prompt = curPrompt, size = reqSize, requestedSize = reqSize, modelId = run.ModelId, platformId = run.PlatformId }, ct);
 
-                        var requestedModelId = !string.IsNullOrWhiteSpace(run.ConfigModelId) ? run.ConfigModelId : run.ModelId;
+                        var requestedModelId = !string.IsNullOrWhiteSpace(run.LogicalModelPublicId)
+                            ? run.LogicalModelPublicId
+                            : !string.IsNullOrWhiteSpace(run.ConfigModelId) ? run.ConfigModelId : run.ModelId;
 
                         // 多图处理：解析 @imgN 引用，构建增强 prompt，加载图片
                         string? initImageBase64 = null;
@@ -645,7 +647,7 @@ public class ImageGenRunWorker : BackgroundService
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
-                            modelName: run.ModelId,
+                            modelName: run.LogicalModelPublicId ?? run.ModelId,
                             maskBase64: run.MaskBase64);
 
                         if (!res.Success || res.Data == null)
@@ -720,9 +722,10 @@ public class ImageGenRunWorker : BackgroundService
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
                         var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
                         var doneIsAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+                        var doneDisplayModel = run.LogicalModelPublicId ?? run.ModelGroupName;
                         // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
                         // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
-                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
@@ -740,6 +743,7 @@ public class ImageGenRunWorker : BackgroundService
                             sizeAdjusted,
                             ratioAdjusted,
                             modelId = run.ModelId,
+                            logicalModelPublicId = run.LogicalModelPublicId,
                             modelGroupName = run.ModelGroupName,
                             isAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
                             platformId = run.PlatformId,
@@ -1525,7 +1529,9 @@ public class ImageGenRunWorker : BackgroundService
     {
         // 保存前端期望的模型信息（用于日志对比）
         var frontendExpectedPlatformId = run.PlatformId;
-        var frontendExpectedModelId = run.ModelId;
+        // 逻辑模型公开 ID 是用户选择的稳定身份；上一次解析得到的真实上游模型只能用于展示与审计，
+        // 不能反过来成为下一次解析输入，否则同名旧模型池会重新接管请求。
+        var frontendExpectedModelId = run.LogicalModelPublicId ?? run.ModelId;
         var frontendExpectedConfigModelId = run.ConfigModelId;
         
         // 详细日志：记录输入参数（包含图片引用数量）
@@ -1562,6 +1568,7 @@ public class ImageGenRunWorker : BackgroundService
         string? modelGroupName = null;
         string? resolvedPlatformId = null;
         string? resolvedModelId = null;
+        string? logicalModelPublicId = run.LogicalModelPublicId;
 
         try
         {
@@ -1602,6 +1609,7 @@ public class ImageGenRunWorker : BackgroundService
                 modelGroupName = resolved.ModelGroupName;
                 resolvedPlatformId = resolved.ActualPlatformId;
                 resolvedModelId = resolved.ActualModel;
+                logicalModelPublicId = resolved.LogicalModelPublicId ?? logicalModelPublicId;
             }
         }
         catch (Exception ex)
@@ -1644,7 +1652,8 @@ public class ImageGenRunWorker : BackgroundService
         var updateDef = Builders<ImageGenRun>.Update
             .Set(x => x.ModelResolutionType, resolutionType)
             .Set(x => x.ModelGroupId, modelGroupId)
-            .Set(x => x.ModelGroupName, modelGroupName);
+            .Set(x => x.ModelGroupName, modelGroupName)
+            .Set(x => x.LogicalModelPublicId, logicalModelPublicId);
 
         // 如果通过模型池调度获取了结果，使用调度结果更新 Run
         if (hasSchedulerResult)
@@ -1661,6 +1670,7 @@ public class ImageGenRunWorker : BackgroundService
         run.ModelResolutionType = resolutionType;
         run.ModelGroupId = modelGroupId;
         run.ModelGroupName = modelGroupName;
+        run.LogicalModelPublicId = logicalModelPublicId;
 
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
     }

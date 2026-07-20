@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ModelHealthStatus, PoolStrategyType, type ModelGroupForApp } from '@/types/modelGroup';
-import { buildVisualAgentModelOptions } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, resolveVisualResultModelLabel } from './visualAgentModelOptions';
 
 function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
   return {
@@ -76,5 +76,23 @@ describe('buildVisualAgentModelOptions', () => {
       resolutionType: 'LogicalModel',
     });
     expect(options[0]?.id).not.toContain('openrouter');
+  });
+});
+
+describe('resolveVisualResultModelLabel', () => {
+  it('逻辑模型始终覆盖真实上游模型与旧模型池', () => {
+    expect(resolveVisualResultModelLabel({
+      logicalModelPublicId: 'nanobanana-2',
+      modelPool: 'Nano Banana 2',
+      actualModelPool: '旧默认图像池',
+      actualModel: 'google/gemini-3.1-flash-image',
+    })).toBe('nanobanana-2');
+  });
+
+  it('旧任务按实际模型池、上游模型、原消息依次兜底', () => {
+    expect(resolveVisualResultModelLabel({ actualModelPool: '旧默认图像池', actualModel: 'upstream' }, 'selected'))
+      .toBe('旧默认图像池');
+    expect(resolveVisualResultModelLabel({ actualModel: 'upstream' }, 'selected')).toBe('upstream');
+    expect(resolveVisualResultModelLabel(null, 'selected')).toBe('selected');
   });
 });

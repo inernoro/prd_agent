@@ -566,7 +566,9 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
-  /** 后端实际调度后使用的模型（覆盖前端选择的 modelPool 展示） */
+  /** 视觉创作选择的稳定逻辑模型公开 ID。Provider 与 Offering 只在 Gateway 日志展示。 */
+  logicalModelPublicId?: string;
+  /** 后端实际调度后使用的上游模型，仅用于诊断元数据，不覆盖逻辑模型展示。 */
   actualModel?: string;
   /** 后端实际调度命中的模型池名 */
   actualModelPool?: string;
@@ -1113,8 +1115,9 @@ type ImageGenRunStreamPayload = {
   url?: unknown;
   originalUrl?: unknown;
   originalSha256?: unknown;
-  // 后端 runStart / imageDone 推送的实际调度结果（用于"展示实际使用的模型"）
+  // 后端 runStart / imageDone 推送的模型身份；逻辑模型用于主展示，上游模型仅用于诊断。
   modelId?: unknown;
+  logicalModelPublicId?: unknown;
   modelGroupName?: unknown;
   platformId?: unknown;
   isAdaptive?: unknown;
@@ -4262,6 +4265,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               prompt: displayPrompt || undefined,
               runId,
               modelPool: modelPoolName,
+              logicalModelPublicId: String(o.logicalModelPublicId ?? '').trim()
+                || (pickedModel?.platformId === 'logical-model' ? pickedModel.modelName : undefined),
               actualModel: actualModelFromSse,
               actualModelPool: actualPoolFromSse,
               effectiveSize: effectiveSizeFromSse,
@@ -4532,6 +4537,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 prompt,
                 runId,
                 modelPool: modelPoolName,
+                logicalModelPublicId: String(o.logicalModelPublicId ?? '').trim()
+                  || (pickedModel?.platformId === 'logical-model' ? pickedModel.modelName : undefined),
                 actualModel: String(o.modelId ?? '').trim() || undefined,
                 actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
                 effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,
@@ -6447,16 +6454,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           justifyContent: 'center',
                         }}
                       >
-                        <span
+                        <Check
+                          aria-hidden="true"
+                          size={Math.max(20, Math.min(selW, selH) * 0.15)}
+                          strokeWidth={3}
                           style={{
                             color: 'white',
-                            fontSize: Math.max(20, Math.min(selW, selH) * 0.15),
-                            fontWeight: 700,
-                            textShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
                           }}
-                        >
-                          ✓
-                        </span>
+                        />
                       </div>
                     ) : null}
 
@@ -9316,6 +9322,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     prompt: desc.trim(),
                     runId,
                     modelPool: modelPoolName,
+                    logicalModelPublicId: String(o.logicalModelPublicId ?? '').trim()
+                      || (pickedModel?.platformId === 'logical-model' ? pickedModel.modelName : undefined),
                     actualModel: String(o.modelId ?? '').trim() || undefined,
                     actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
                     effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,

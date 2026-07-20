@@ -1044,6 +1044,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VisualImageRun_PreservesLogicalModelIdentityAcrossWorkerAndRawGatewayBoundary()
+    {
+        var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
+        var imageController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var imageMasterController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var imageClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+
+        Assert.Contains("public string? LogicalModelPublicId { get; set; }", runModel);
+        Assert.Contains("LogicalModelPublicId = string.Equals(platformId, \"logical-model\"", imageController);
+        Assert.Contains("LogicalModelPublicId = string.Equals(platformId, \"logical-model\"", imageMasterController);
+        Assert.Contains("var frontendExpectedModelId = run.LogicalModelPublicId ?? run.ModelId;", imageWorker);
+        Assert.Contains("modelName: run.LogicalModelPublicId ?? run.ModelId", imageWorker);
+        Assert.Contains(".Set(x => x.LogicalModelPublicId, logicalModelPublicId)", imageWorker);
+        Assert.Contains("modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId", imageWorker);
+        Assert.Contains("RequiredLogicalModelPublicId = resolution.LogicalModelPublicId", imageClient);
+        Assert.Contains("ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName", imageClient);
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");

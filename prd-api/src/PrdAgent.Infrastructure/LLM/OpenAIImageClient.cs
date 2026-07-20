@@ -427,8 +427,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
@@ -461,8 +462,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
                         IsMultipart = false,
@@ -526,8 +528,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
                         IsMultipart = false,
@@ -577,8 +580,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
                         IsMultipart = false,
@@ -665,8 +669,9 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
-                        ExpectedModel = effectiveModelName,
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
                         MultipartFields = multipartFields,
@@ -1243,10 +1248,11 @@ public class OpenAIImageClient : IImageGenerationClient
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
-                    ExpectedModel = effectiveModelName,
+                    ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                     RequestBody = exchangeBody,
                     IsMultipart = false,
                     CanonicalImageRequest = canonicalImageRequest,
+                    RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                     TimeoutSeconds = exchangeTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1411,11 +1417,12 @@ public class OpenAIImageClient : IImageGenerationClient
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
-                    ExpectedModel = effectiveModelName,
+                    ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                     EndpointPath = googleEndpointPath,
                     RequestBody = googleBody,
                     IsMultipart = false,
                     CanonicalImageRequest = canonicalImageRequest,
+                    RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                     TimeoutSeconds = googleTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1617,11 +1624,12 @@ public class OpenAIImageClient : IImageGenerationClient
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
-                ExpectedModel = effectiveModelName,
+                ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                 EndpointPath = "/v1/chat/completions",
                 RequestBody = requestBody,
                 IsMultipart = false,
                 CanonicalImageRequest = canonicalImageRequest,
+                RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                 TimeoutSeconds = 120,
                 Context = new GatewayRequestContext
                 {

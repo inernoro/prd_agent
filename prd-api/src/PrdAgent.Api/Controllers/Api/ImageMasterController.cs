@@ -1639,6 +1639,9 @@ public class ImageMasterController : ControllerBase
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,
+                LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                    ? modelId
+                    : null,
                 // 用户显式选择优先。逻辑模型只携带稳定 PublicId，真实上游由 Gateway 决定；
                 // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
                 ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
