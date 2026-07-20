@@ -927,7 +927,8 @@ public class SubtitleGenerationProcessor
     }
 
     /// <summary>
-    /// 用 ffmpeg 从视频中抽音频（16kHz mono wav）。依赖 /usr/local/bin/ffmpeg（host 挂载）。
+    /// 用 ffmpeg 从音视频中抽取 16kHz mono WAV；短于 15 秒时在末尾补静音，
+    /// 避免 ASR 将清晰的短句稳定误判为无语音。依赖 host 的 ffmpeg。
     /// </summary>
     private async Task<byte[]> ExtractAudioWithFfmpegAsync(byte[] videoBytes)
     {
@@ -939,11 +940,11 @@ public class SubtitleGenerationProcessor
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(psi.ArgumentList, tmpIn, tmpOut);
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
             // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大，

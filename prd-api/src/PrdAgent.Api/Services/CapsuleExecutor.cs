@@ -6994,11 +6994,11 @@ function safeChart(canvasId, config) {
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                ArgumentList = { "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(psi.ArgumentList, videoPath, tmpOut);
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
@@ -7019,7 +7019,7 @@ function safeChart(canvasId, config) {
     }
 
     /// <summary>
-    /// ffmpeg 抽音（16kHz mono wav）。依赖 host 的 ffmpeg 二进制（CDS 容器已预装）。
+    /// ffmpeg 抽音（16kHz mono WAV，短于 15 秒时补尾部静音）。依赖 host 的 ffmpeg 二进制（CDS 容器已预装）。
     /// 与 SubtitleGenerationProcessor.ExtractAudioWithFfmpegAsync 保持参数一致。
     /// 注：本接口用于「已经持有完整 byte[]」的场景；流式下载请用 ExtractAudioWithFfmpegFromFileAsync。
     /// </summary>
@@ -7033,11 +7033,11 @@ function safeChart(canvasId, config) {
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(psi.ArgumentList, tmpIn, tmpOut);
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
             // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大
