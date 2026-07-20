@@ -240,9 +240,16 @@ var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgno
 // 紧急回滚可显式设置 false，但不得用旧模型池静默解释逻辑模型同名 key。
 var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true;
 
+// 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
+// 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
+
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 }
 else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
 {
@@ -261,13 +268,7 @@ else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
                 sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
                 concurrencyCoordinator: sp.GetService<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>(),
                 configuration: sp.GetRequiredService<IConfiguration>()),
-            http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<IAssetStorage>(),
-                sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()),
+            http: sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,

@@ -27,7 +27,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// JSON 口径与 serving 端严格对齐：PascalCase（PropertyNamingPolicy = null）。
 /// </summary>
 public sealed class HttpLlmGatewayClient
-    : PrdAgent.Infrastructure.LlmGateway.ILlmGateway, CoreGateway.ILlmGateway
+    : PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;

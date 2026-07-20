@@ -10,6 +10,26 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
+    public void ExplicitLogicalImageModel_UsesDedicatedHttpGatewayForResolveAndSend()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+        var httpGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
+
+        Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILogicalModelGateway.cs"));
+        Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
+        Assert.Contains("private readonly ILogicalModelGateway _logicalModelGateway", client);
+        Assert.True(
+            client.Split("SelectRequestGateway(_gateway, _logicalModelGateway, requiredLogicalModel)", StringSplitOptions.None).Length - 1 == 2,
+            "文生图与多图生图都必须在解析前选择逻辑模型 HTTP 边界");
+        Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);
+        Assert.DoesNotContain("_gateway.SendRawWithResolutionAsync", client);
+        Assert.Contains("requestGateway.ResolveRequiredLogicalModelAsync", client);
+        Assert.Contains("requestGateway.SendRawWithResolutionAsync", client);
+    }
+
+    [Fact]
     public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
     {
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");

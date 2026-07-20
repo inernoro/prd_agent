@@ -8,3 +8,4 @@
 | fix | prd-admin | 视觉创作生成记录以稳定逻辑模型为主展示，上游模型仅保留在 Gateway 审计日志中 |
 | docs | llmgw | 将模型池教程重写为逻辑模型目录、多上游路由、故障切换与日志验收实战 |
 | fix | prd-api | 显式逻辑模型在生图 Worker 中跳过 MAP 模型池预解析，保留公开 ID 并由独立 Gateway 单次解析上游 |
+| fix | prd-api | 显式逻辑模型的解析与发送强制共用独立 Gateway HTTP 边界，不再受 MAP 全局 inproc 模式影响 |
