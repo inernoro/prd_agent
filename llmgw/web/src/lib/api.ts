@@ -32,6 +32,13 @@ import type {
   EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
+  LogicalModelsData,
+  LogicalModelItem,
+  ModelOfferingItem,
+  CreateLogicalModelRequest,
+  UpdateLogicalModelRequest,
+  CreateModelOfferingRequest,
+  UpdateModelOfferingRequest,
   GatewayAppCallersData,
   GatewayAppCaller,
   CreateGatewayAppCallerRequest,
@@ -316,6 +323,35 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
 }
 export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
   return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
+}
+export function getLogicalModels(params?: { modelType?: string; enabled?: boolean }): Promise<ApiResponse<LogicalModelsData>> {
+  return apiRequest<LogicalModelsData>('/logical-models', {
+    query: { modelType: params?.modelType, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
+  });
+}
+export function createLogicalModel(req: CreateLogicalModelRequest): Promise<ApiResponse<LogicalModelItem>> {
+  return apiRequest<LogicalModelItem>('/logical-models', { method: 'POST', body: req });
+}
+export function updateLogicalModel(id: string, req: UpdateLogicalModelRequest): Promise<ApiResponse<LogicalModelItem>> {
+  return apiRequest<LogicalModelItem>(`/logical-models/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function createModelOffering(logicalModelId: string, req: CreateModelOfferingRequest): Promise<ApiResponse<ModelOfferingItem>> {
+  return apiRequest<ModelOfferingItem>(`/logical-models/${encodeURIComponent(logicalModelId)}/offerings`, { method: 'POST', body: req });
+}
+export function updateModelOffering(logicalModelId: string, offeringId: string, req: UpdateModelOfferingRequest): Promise<ApiResponse<ModelOfferingItem>> {
+  return apiRequest<ModelOfferingItem>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}`,
+    { method: 'PUT', body: req },
+  );
+}
+export function setLogicalModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<LogicalModelItem>> {
+  return apiRequest<LogicalModelItem>(`/logical-models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
+}
+export function setModelOfferingEnabled(logicalModelId: string, offeringId: string, enabled: boolean): Promise<ApiResponse<ModelOfferingItem>> {
+  return apiRequest<ModelOfferingItem>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}/enabled`,
+    { method: 'PUT', body: { enabled } },
+  );
 }
 export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
   return apiRequest<ParameterCapabilitiesMetaData>('/parameter-capabilities/meta');

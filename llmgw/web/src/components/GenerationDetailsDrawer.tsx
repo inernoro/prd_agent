@@ -126,6 +126,8 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
         <TraceMini label="运行 ID" value={trace?.runId || detail.runId} mono />
         <TraceMini label="路由策略" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
         <TraceMini label="期望模型" value={trace?.requestedModel || detail.expectedModel} mono />
+        <TraceMini label="逻辑模型" value={trace?.logicalModelPublicId || detail.logicalModelPublicId || trace?.logicalModelId || detail.logicalModelId} mono />
+        <TraceMini label="Offering" value={trace?.offeringId || detail.offeringId} mono />
         <TraceMini label="实际模型" value={trace?.actualModel || detail.model} mono />
         <TraceMini label="请求模型池" value={trace?.modelPoolId || detail.modelPoolId} mono />
         <TraceMini label="实际模型池" value={trace?.modelGroupName || detail.modelGroupName || trace?.modelGroupId || detail.modelGroupId} />
@@ -366,7 +368,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           <div>
             <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>生成详情</div>
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 12 }}>{detail.model || DASH}</span>
+              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 12 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
               <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 12 }}>{detail.platformName || detail.provider || DASH}</span>
               <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 11 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-muted)' }}>{logId}</div>}

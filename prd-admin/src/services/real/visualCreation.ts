@@ -146,7 +146,7 @@ export async function generateVisualImage(p: {
 }
 
 /**
- * 获取生图可用模型列表（按 appKey 使用对应模型池）。
+ * 获取生图可用逻辑模型列表（按 appKey 做权限过滤；旧环境兼容模型池投影）。
  * 返回 { value: modelId, label: modelId }[] 去重列表。
  */
 export async function listVisualModels(appKey: 'visual-agent' | 'literary-agent' = 'visual-agent'): Promise<ApiResponse<{ value: string; label: string }[]>> {

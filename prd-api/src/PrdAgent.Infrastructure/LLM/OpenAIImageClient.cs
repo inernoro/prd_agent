@@ -178,7 +178,6 @@ public class OpenAIImageClient : IImageGenerationClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
-
         // 验证 apiUrl 必须是有效的 HTTP(S) URL，避免 file:// 等无效协议
         if (string.IsNullOrWhiteSpace(apiUrl) ||
             !Uri.TryCreate(apiUrl, UriKind.Absolute, out var apiUrlUri) ||
@@ -318,6 +317,15 @@ public class OpenAIImageClient : IImageGenerationClient
 
         // 归一化尺寸（某些平台有最小尺寸要求）
         var normalizedSize = platformAdapter.NormalizeSize(size);
+        var canonicalImageRequest = new GatewayCanonicalImageRequest
+        {
+            Prompt = prompt,
+            Count = n,
+            Size = requestedSizeNorm,
+            ResponseFormat = responseFormat,
+            Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
+            MaskBase64 = maskBase64,
+        };
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -420,6 +428,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
@@ -453,6 +462,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
                         IsMultipart = false,
@@ -517,6 +527,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
                         IsMultipart = false,
@@ -567,6 +578,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
                         IsMultipart = false,
@@ -654,6 +666,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
                         MultipartFields = multipartFields,
@@ -1184,6 +1197,16 @@ public class OpenAIImageClient : IImageGenerationClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
+        var canonicalImageRequest = new GatewayCanonicalImageRequest
+        {
+            Prompt = prompt,
+            Count = 1,
+            Size = NormalizeSizeString(size) ?? size,
+            Images = imageRefs.Select(image => image.Base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? image.Base64
+                    : $"data:{image.MimeType ?? "image/png"};base64,{image.Base64}")
+                .ToList(),
+        };
 
         // Exchange 统一路径：多图也用标准 JSON 格式（不走 Vision Chat API）
         if (resolution.IsExchange)
@@ -1223,6 +1246,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     ExpectedModel = effectiveModelName,
                     RequestBody = exchangeBody,
                     IsMultipart = false,
+                    CanonicalImageRequest = canonicalImageRequest,
                     TimeoutSeconds = exchangeTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1391,6 +1415,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     EndpointPath = googleEndpointPath,
                     RequestBody = googleBody,
                     IsMultipart = false,
+                    CanonicalImageRequest = canonicalImageRequest,
                     TimeoutSeconds = googleTimeout,
                     Context = new GatewayRequestContext
                     {
@@ -1596,6 +1621,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 EndpointPath = "/v1/chat/completions",
                 RequestBody = requestBody,
                 IsMultipart = false,
+                CanonicalImageRequest = canonicalImageRequest,
                 TimeoutSeconds = 120,
                 Context = new GatewayRequestContext
                 {

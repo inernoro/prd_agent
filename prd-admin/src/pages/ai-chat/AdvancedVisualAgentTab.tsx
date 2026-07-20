@@ -1153,10 +1153,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(true);
-  // 统一模型池列表（合并所有生成类型，去重）
+  // 统一模型目录。新配置返回逻辑模型；没有逻辑目录时兼容返回旧模型池投影。
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
-  // 将模型池转换为 Model 兼容对象，用于选择器展示
+  // 将模型目录转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
   type ModelWithSource = VisualAgentModelOption;
   // 直接使用统一的模型池列表
@@ -1168,7 +1168,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return buildVisualAgentModelOptions(filteredPools);
   }, [filteredPools]);
 
-  // 模型列表：使用模型池（后端已包含 3 级回退：专属池 > 默认池 > 传统配置）
+  // 模型列表：优先使用逻辑模型；旧环境继续走模型池兼容投影。
   const allImageGenModels = useMemo<ModelWithSource[]>(() => {
     return poolModels;
   }, [poolModels]);
@@ -2445,7 +2445,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
-    // 通过视觉创作专属端点获取模型池（后端已合并去重所有生成类型，含 3 级回退）
+    // 通过视觉创作专属端点获取逻辑模型目录；旧环境由后端提供模型池兼容投影。
     getVisualAgentImageGenModels()
       .then((poolsRes) => {
         if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
@@ -3745,9 +3745,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!reqText) return;
     let pickedModel = forcedPick.forced ?? effectiveModel;
     if (!pickedModel) {
-      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）';
+      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请在 LLM Gateway 配置逻辑模型及至少一个上游）';
       setError(msg);
-      pushMsg('Assistant', '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）');
+      pushMsg('Assistant', '暂无可用生图模型（请在 LLM Gateway 配置逻辑模型及至少一个上游）');
       return;
     }
 
@@ -7145,8 +7145,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
                             {(() => {
                               const first = allImageGenModels[0];
-                              if (first?.isDedicated) return '绘图模型（专属模型池）';
-                              if (first?.isDefault) return '绘图模型（默认模型池）';
+                              if (first?.resolutionType === 'LogicalModel') return '绘图模型';
+                              if (first?.isDedicated) return '绘图模型（兼容专属池）';
+                              if (first?.isDefault) return '绘图模型（兼容默认池）';
                               if (first?.isLegacy) return '绘图模型（默认生图）';
                               return '绘图模型';
                             })()}
@@ -7205,10 +7206,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 const isPool = m.id.startsWith('pool_');
                                 // 根据来源类型生成标签
                                 const getSourceLabel = () => {
-                                  if (m.isDedicated) return '专属池';
-                                  if (m.isDefault) return '默认池';
+                                  if (m.resolutionType === 'LogicalModel') return '逻辑模型';
+                                  if (m.isDedicated) return '兼容专属池';
+                                  if (m.isDefault) return '兼容默认池';
                                   if (m.isLegacy) return '默认生图';
-                                  if (isPool) return '模型池';
+                                  if (isPool) return '兼容模型池';
                                   return disabled ? '已禁用' : '已启用';
                                 };
                                 const sourceLabel = getSourceLabel();

@@ -139,7 +139,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || !string.IsNullOrWhiteSpace(request.ExpectedModel)
+            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId))
         {
@@ -168,7 +168,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || !string.IsNullOrWhiteSpace(request.ExpectedModel)
+            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId))
         {
@@ -338,19 +338,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, activeResolution, request.TimeoutSeconds, ct);
                 if (!concurrency.Allowed)
                 {
-                    const string message = "上游平台或模型已达到最大并发";
+                    var message = ProviderAdmissionMessage(concurrency.ErrorCode);
                     CompleteLastSendAttempt(providerAttempts, 429, 0, message);
                     if (attemptIndex < retryResolutions.Count - 1)
                     {
                         AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
-                            "previous candidate reached provider concurrency limit");
+                            $"previous candidate admission rejected: {concurrency.ErrorCode}");
                         continue;
                     }
                     return GatewayResponse.Fail(concurrency.ErrorCode, message, 429);
                 }
                 await using var providerLease = concurrency.Lease;
 
-                var endpoint = activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType);
+                var endpoint = string.IsNullOrWhiteSpace(activeResolution.OfferingEndpointPath)
+                    ? activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType)
+                    : BuildOfferingEndpoint(activeResolution.ApiUrl!, activeResolution.OfferingEndpointPath);
                 var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
 
@@ -395,7 +397,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 // 4. 更新健康状态
-                if (!string.IsNullOrWhiteSpace(activeResolution.ModelGroupId))
+                if (HasTrackedHealthRoute(activeResolution))
                 {
                     if (response.IsSuccessStatusCode)
                     {
@@ -578,20 +580,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
                 if (!concurrency.Allowed)
                 {
-                    terminalError = "上游平台或模型已达到最大并发";
+                    terminalError = ProviderAdmissionMessage(concurrency.ErrorCode);
                     terminalStatusCode = 429;
                     CompleteLastSendAttempt(providerAttempts, 429, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
                     {
                         AddPendingProviderAttempt(providerAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
-                            "previous candidate reached provider concurrency limit");
+                            $"previous candidate admission rejected: {concurrency.ErrorCode}");
                         continue;
                     }
                     break;
                 }
                 providerLease = concurrency.Lease;
 
-                var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
+                var endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
+                    ? adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
+                    : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
                 var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
@@ -635,7 +639,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendCode, resolution.ActualModel);
                     CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
-                    if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                    if (HasTrackedHealthRoute(resolution))
                         await _modelResolver.RecordFailureAsync(resolution, ct);
                     if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
                     {
@@ -662,7 +666,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 terminalError = errorMsg;
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
-                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                if (HasTrackedHealthRoute(resolution))
                     await _modelResolver.RecordFailureAsync(resolution, ct);
 
                 if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus((int)rawResponse.StatusCode))
@@ -887,7 +891,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     _logWriter?.MarkError(logId, streamAbortMsg!, streamAbortCode);
                 }
-                if (!string.IsNullOrWhiteSpace(finalResolution.ModelGroupId))
+                if (HasTrackedHealthRoute(finalResolution))
                 {
                     await _modelResolver.RecordFailureAsync(finalResolution, ct);
                 }
@@ -914,7 +918,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 7. 更新健康状态（成功）
-            if (resolution is not null && !string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            if (resolution is not null && HasTrackedHealthRoute(resolution))
             {
                 await _modelResolver.RecordSuccessAsync(finalResolution, ct);
             }
@@ -969,6 +973,48 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 timeoutSeconds,
                 ct);
 
+    private static bool HasTrackedHealthRoute(ModelResolutionResult resolution)
+        => !string.IsNullOrWhiteSpace(resolution.ModelGroupId)
+           || !string.IsNullOrWhiteSpace(resolution.OfferingId);
+
+    private static string ProviderAdmissionMessage(string errorCode)
+        => string.Equals(errorCode, "PROVIDER_RATE_LIMIT_EXHAUSTED", StringComparison.Ordinal)
+            ? "上游 Offering 已达到每分钟速率上限"
+            : "上游平台、模型或 Offering 已达到最大并发";
+
+    private static string BuildEndpointFromPath(string apiUrl, string endpointPath)
+    {
+        var baseUrl = apiUrl.TrimEnd('/');
+        endpointPath = endpointPath.Trim();
+        var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
+            baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (hasVersionSuffix)
+        {
+            if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                endpointPath = endpointPath[3..];
+            else if (endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
+                endpointPath = endpointPath[2..];
+            return $"{baseUrl}{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(
+                endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return $"{baseUrl}{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
+
+        return $"{baseUrl}/v1{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
+    }
+
+    private static string BuildOfferingEndpoint(string apiUrl, string endpointPath)
+    {
+        var baseUri = new Uri($"{apiUrl.TrimEnd('/')}/", UriKind.Absolute);
+        endpointPath = endpointPath.Trim();
+        if (endpointPath.StartsWith('/'))
+            return $"{baseUri.Scheme}://{baseUri.Authority}{endpointPath}";
+
+        return $"{apiUrl.TrimEnd('/')}/{endpointPath.TrimStart('/')}";
+    }
+
     /// <inheritdoc />
     public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request,
@@ -986,6 +1032,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = new ModelResolutionResult
         {
+            LogicalModelId = resolution.LogicalModelId,
+            LogicalModelPublicId = resolution.LogicalModelPublicId,
+            OfferingId = resolution.OfferingId,
+            OfferingTargetKind = resolution.OfferingTargetKind,
+            OfferingRateLimitPerMinute = resolution.OfferingRateLimitPerMinute,
+            OfferingMaxConcurrency = resolution.OfferingMaxConcurrency,
+            OfferingEndpointPath = resolution.OfferingEndpointPath,
             Success = resolution.Success,
             ResolutionType = resolution.ResolutionType,
             ExpectedModel = resolution.ExpectedModel,
@@ -1146,6 +1199,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         out RawHttpRequestBuildResult? result)
     {
         result = null;
+        if (request.CanonicalImageRequest is not null)
+            request = RebuildCanonicalImageRequest(request, resolution);
         var isExchange = resolution.IsExchange;
         var adapter = isExchange ? null : GetAdapterForResolution(resolution);
         string endpoint;
@@ -1154,43 +1209,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             endpoint = ResolveEndpointTemplate(resolution.ApiUrl!, resolution.ActualModel);
         }
-        else if (string.IsNullOrWhiteSpace(request.EndpointPath))
+        else if (string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath ?? request.EndpointPath))
         {
             endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
                 ?? $"{resolution.ApiUrl!.TrimEnd('/')}/v1/chat/completions";
         }
         else
         {
-            var baseUrl = resolution.ApiUrl!.TrimEnd('/');
-            var endpointPath = request.EndpointPath;
-            var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
-                baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            if (hasVersionSuffix)
-            {
-                if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
-                {
-                    endpointPath = endpointPath[3..];
-                }
-                else if (endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
-                {
-                    endpointPath = endpointPath[2..];
-                }
-
-                endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-            }
-            else
-            {
-                if (System.Text.RegularExpressions.Regex.IsMatch(
-                    endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                {
-                    endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-                }
-                else
-                {
-                    endpoint = $"{baseUrl}/v1{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-                }
-            }
+            endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
+                ? BuildEndpointFromPath(resolution.ApiUrl!, request.EndpointPath!)
+                : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
         }
 
         HttpRequestMessage httpRequest;
@@ -1327,6 +1355,151 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
+    private static GatewayRawRequest RebuildCanonicalImageRequest(
+        GatewayRawRequest source,
+        ModelResolutionResult resolution)
+    {
+        var spec = source.CanonicalImageRequest!;
+        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
+        var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
+        var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        JsonObject? body = null;
+        Dictionary<string, object>? multipartFields = null;
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null;
+        var endpointPath = source.EndpointPath;
+        var isMultipart = false;
+
+        if (resolution.IsExchange)
+        {
+            body = new JsonObject { ["prompt"] = spec.Prompt, ["n"] = Math.Max(1, spec.Count) };
+            if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            if (images.Count > 0)
+            {
+                var imageUrls = new JsonArray();
+                foreach (var image in images) imageUrls.Add(image);
+                body["image_urls"] = imageUrls;
+            }
+            endpointPath = null;
+        }
+        else if (normalizedProtocol is "google" or "gemini" or "gemini-compatible")
+        {
+            var (aspectRatio, imageSize) = LLM.Adapters.GooglePlatformAdapter.ParseSizeToGoogleParams(spec.Size);
+            body = LLM.Adapters.GooglePlatformAdapter.BuildGoogleRequestBody(
+                resolution.ActualModel!, spec.Prompt, aspectRatio, imageSize, images, spec.MaskBase64);
+            endpointPath = LLM.Adapters.GooglePlatformAdapter.BuildGoogleEndpointPath(resolution.ActualModel!);
+        }
+        else if (normalizedProtocol == "openrouter"
+                 || (resolution.ApiUrl?.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            JsonNode userContent;
+            if (images.Count == 0)
+            {
+                userContent = JsonValue.Create(spec.Prompt)!;
+            }
+            else
+            {
+                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = spec.Prompt });
+                foreach (var image in images)
+                {
+                    content.Add(new JsonObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JsonObject { ["url"] = EnsureImageDataUri(image) }
+                    });
+                }
+                userContent = content;
+            }
+            body = new JsonObject
+            {
+                ["model"] = resolution.ActualModel,
+                ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = userContent }),
+                ["modalities"] = new JsonArray("image", "text"),
+            };
+            endpointPath = "chat/completions";
+        }
+        else
+        {
+            var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
+                resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
+            var effectiveSize = adapter.NormalizeSize(spec.Size);
+            var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
+            if (images.Count == 0)
+            {
+                var requestObject = adapter.BuildGenerationRequest(
+                    resolution.ActualModel!, spec.Prompt, Math.Max(1, spec.Count), effectiveSize, effectiveFormat);
+                body = JsonNode.Parse(adapter.SerializeRequest(requestObject))?.AsObject() ?? new JsonObject();
+                endpointPath = "images/generations";
+            }
+            else if (TryDecodeCanonicalImage(images[0], out var bytes, out var mimeType))
+            {
+                isMultipart = true;
+                endpointPath = "images/edits";
+                multipartFields = new Dictionary<string, object>
+                {
+                    ["prompt"] = spec.Prompt,
+                    ["n"] = Math.Max(1, spec.Count),
+                };
+                if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
+                if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
+                multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["image"] = ("input.png", bytes, mimeType),
+                };
+            }
+        }
+
+        if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
+            endpointPath = resolution.OfferingEndpointPath;
+
+        return new GatewayRawRequest
+        {
+            AppCallerCode = source.AppCallerCode,
+            ModelType = source.ModelType,
+            ExpectedModel = source.ExpectedModel,
+            PinnedPlatformId = source.PinnedPlatformId,
+            PinnedModelId = source.PinnedModelId,
+            EndpointPath = endpointPath,
+            RequestBody = body ?? source.RequestBody,
+            IsMultipart = isMultipart,
+            MultipartFields = multipartFields,
+            MultipartFiles = multipartFiles,
+            HttpMethod = source.HttpMethod,
+            ExtraHeaders = source.ExtraHeaders,
+            TimeoutSeconds = source.TimeoutSeconds,
+            ExpectBinaryResponse = source.ExpectBinaryResponse,
+            Context = source.Context,
+            CanonicalImageRequest = spec,
+        };
+    }
+
+    private static string EnsureImageDataUri(string value)
+        => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
+
+    private static bool TryDecodeCanonicalImage(string value, out byte[] bytes, out string mimeType)
+    {
+        bytes = Array.Empty<byte>();
+        mimeType = "image/png";
+        try
+        {
+            var raw = value;
+            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var comma = value.IndexOf(',');
+                if (comma < 0) return false;
+                var meta = value[5..comma];
+                var separator = meta.IndexOf(';');
+                if (separator > 0) mimeType = meta[..separator];
+                raw = value[(comma + 1)..];
+            }
+            bytes = Convert.FromBase64String(raw);
+            return bytes.Length > 0;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// 发送阶段的核心实现：接收已解析的 <see cref="ModelResolutionResult"/>，
     /// 执行 HTTP 请求、日志写入、健康状态回写等所有"发送后"逻辑。
@@ -1348,10 +1521,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
             {
-                return GatewayRawResponse.Fail(
-                    concurrency.ErrorCode,
-                    "上游平台或模型已达到最大并发",
-                    429);
+                var admissionMessage = ProviderAdmissionMessage(concurrency.ErrorCode);
+                if (request.CanonicalImageRequest is not null
+                    && resolution.RetryCandidates is { Count: > 0 })
+                {
+                    var candidate = resolution.RetryCandidates[0];
+                    candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
+                    var rebuiltRequest = RebuildCanonicalImageRequest(request, candidate);
+                    return await ExecuteRawWithResolutionAsync(rebuiltRequest, candidate, startedAt, ct);
+                }
+                return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
             }
             providerLease = concurrency.Lease;
 
@@ -1376,7 +1555,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // Exchange 模式：直接使用目标 URL，支持 {model} 占位符替换
                 endpoint = ResolveEndpointTemplate(resolution.ApiUrl!, resolution.ActualModel);
             }
-            else if (string.IsNullOrWhiteSpace(request.EndpointPath))
+            else if (string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath ?? request.EndpointPath))
             {
                 // 使用适配器构建默认 endpoint（处理不同平台的 URL 格式）
                 endpoint = adapter?.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
@@ -1384,44 +1563,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
             else
             {
-                // 使用自定义 endpoint path
-                var baseUrl = resolution.ApiUrl!.TrimEnd('/');
-                var endpointPath = request.EndpointPath;
-
-                // 检测 baseUrl 是否已包含版本号
-                var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
-                    baseUrl, @"/(api/)?v\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-                if (hasVersionSuffix)
-                {
-                    // baseUrl 已有版本号（如 /api/v3）
-                    // 如果 endpointPath 以 /v1 开头，移除它避免重复
-                    if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        endpointPath = endpointPath[3..]; // 移除 "/v1"
-                    }
-                    else if (endpointPath.StartsWith("v1/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        endpointPath = endpointPath[2..]; // 移除 "v1"
-                    }
-                    endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-                }
-                else
-                {
-                    // baseUrl 没有版本号（如 https://api.vveai.com 或 https://api.apiyi.com）
-                    // 检测 endpointPath 是否已包含版本号（v1, v1beta, v2 等）
-                    if (System.Text.RegularExpressions.Regex.IsMatch(
-                        endpointPath, @"^/?v\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    {
-                        // endpointPath 已包含版本号，直接拼接
-                        endpoint = $"{baseUrl}{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-                    }
-                    else
-                    {
-                        // endpointPath 不包含版本号，添加 /v1
-                        endpoint = $"{baseUrl}/v1{(endpointPath.StartsWith("/") ? "" : "/")}{endpointPath}";
-                    }
-                }
+                endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
+                    ? BuildEndpointFromPath(resolution.ApiUrl!, request.EndpointPath!)
+                    : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
             }
 
             // 3. 构建 HTTP 请求
@@ -1630,7 +1774,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                  && ShouldRetryProviderStatus((int)response.StatusCode);
                  attemptIndex++)
             {
-                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                if (HasTrackedHealthRoute(resolution))
                 {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
                 }
@@ -1685,8 +1829,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (!retryConcurrency.Allowed)
                 {
                     var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                    const string message = "上游平台或模型已达到最大并发";
+                    var message = ProviderAdmissionMessage(retryConcurrency.ErrorCode);
                     CompleteLastSendAttempt(rawProviderAttempts, 429, 0, message);
+                    if (attemptIndex < retryResolutions.Count - 1)
+                    {
+                        AddPendingProviderAttempt(rawProviderAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
+                            $"previous candidate admission rejected: {retryConcurrency.ErrorCode}");
+                        continue;
+                    }
                     await FinishRawLogAsync(logId, 429, message, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
                     return GatewayRawResponse.Fail(retryConcurrency.ErrorCode, message, 429);
                 }
@@ -1897,7 +2047,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
 
             // 7. 更新健康状态
-            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            if (HasTrackedHealthRoute(resolution))
             {
                 if (response.IsSuccessStatusCode)
                 {
@@ -2073,7 +2223,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var statusCode = streamResult.Success ? 200 : 502;
             var content = BuildDoubaoStreamAsrVerboseJson(streamResult);
 
-            if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            if (HasTrackedHealthRoute(resolution))
             {
                 if (streamResult.Success)
                     await _modelResolver.RecordSuccessAsync(resolution, ct);
@@ -3101,6 +3251,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RequestId: request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
                     Provider: resolution.ActualPlatformName ?? resolution.ActualPlatformId,
                     Model: resolution.ActualModel,
+                    LogicalModelId: resolution.LogicalModelId,
+                    LogicalModelPublicId: resolution.LogicalModelPublicId,
+                    OfferingId: resolution.OfferingId,
+                    OfferingTargetKind: resolution.OfferingTargetKind,
                     ApiBase: new Uri(endpoint).GetLeftPart(UriPartial.Authority),
                     Path: new Uri(endpoint).AbsolutePath.TrimStart('/'),
                     HttpMethod: "POST",
@@ -3477,6 +3631,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RequestId: request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
                     Provider: resolution.ActualPlatformName ?? resolution.ActualPlatformId,
                     Model: resolution.ActualModel,
+                    LogicalModelId: resolution.LogicalModelId,
+                    LogicalModelPublicId: resolution.LogicalModelPublicId,
+                    OfferingId: resolution.OfferingId,
+                    OfferingTargetKind: resolution.OfferingTargetKind,
                     ApiBase: new Uri(endpoint).GetLeftPart(UriPartial.Authority),
                     Path: new Uri(endpoint).AbsolutePath.TrimStart('/'),
                     HttpMethod: request.HttpMethod,

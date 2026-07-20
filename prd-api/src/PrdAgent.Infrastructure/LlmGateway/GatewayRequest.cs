@@ -464,6 +464,12 @@ public sealed class GatewayAppCallerRecord
 public class GatewayRawRequest
 {
     /// <summary>
+    /// 图片生成的协议无关请求。仅用于 Offering 故障切换时按下一上游的 wire adapter 重新构建请求，
+    /// 避免把 OpenAI images body 原样发送给 Google generateContent 或 Exchange。
+    /// </summary>
+    public GatewayCanonicalImageRequest? CanonicalImageRequest { get; init; }
+
+    /// <summary>
     /// 应用调用标识（必填）
     /// </summary>
     public required string AppCallerCode { get; init; }
@@ -554,6 +560,16 @@ public class GatewayRawRequest
     /// 请求上下文（用于日志）
     /// </summary>
     public GatewayRequestContext? Context { get; init; }
+}
+
+public sealed class GatewayCanonicalImageRequest
+{
+    public string Prompt { get; init; } = string.Empty;
+    public int Count { get; init; } = 1;
+    public string? Size { get; init; }
+    public string? ResponseFormat { get; init; }
+    public List<string> Images { get; init; } = new();
+    public string? MaskBase64 { get; init; }
 }
 
 /// <summary>

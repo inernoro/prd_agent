@@ -208,6 +208,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
 // 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。生产必须显式配置；
@@ -254,6 +255,7 @@ else if (isShadow || httpAllowlist.Count > 0)
                 sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
                 sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
+                concurrencyCoordinator: sp.GetService<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>(),
                 configuration: sp.GetRequiredService<IConfiguration>()),
             http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
                 sp.GetRequiredService<IHttpClientFactory>(),
