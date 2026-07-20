@@ -11,3 +11,4 @@
 | polish | prd-admin | 重设计侧栏 MAP 路径品牌标识并为全局主题入口增加 CDS 同款圆形水波切换动效 |
 | refactor | prd-admin | 将周报智能体明暗状态、切换动效与语义色接入全局主题唯一来源并保留编辑风格品牌层 |
 | polish | prd-admin | 将周报日常记录中的字符图标统一替换为 Lucide 图标 |
+| fix | prd-admin | 将周报浅色卡片的纯白表面迁移到全局暖纸张 surface token |

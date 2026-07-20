@@ -287,7 +287,7 @@ export function ReportMainView() {
                     style={{
                       color: seg.active ? 'var(--text-primary)' : 'var(--text-muted)',
                       background: seg.active
-                        ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
+                        ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
                         : 'transparent',
                       boxShadow: seg.active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
@@ -340,7 +340,7 @@ export function ReportMainView() {
                       style={{
                         color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         background: active
-                          ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
+                          ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
                           : 'transparent',
                         boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                       }}
@@ -499,7 +499,7 @@ function MiniReportCard({
     <div
       className="group relative flex flex-col rounded-xl cursor-pointer transition-all duration-200 hover:translate-y-[-2px] w-full min-w-0"
       style={{
-        background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+        background: isLight ? 'var(--bg-card)' : 'var(--surface-glass)',
         backdropFilter: isLight ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
@@ -595,7 +595,7 @@ function MiniReportCard({
             className="w-2 h-2 rounded-full flex-shrink-0"
             style={{
               background: colors.border,
-              boxShadow: `0 0 0 2px ${isLight ? '#FFFFFF' : 'var(--surface-glass)'}`,
+              boxShadow: `0 0 0 2px ${isLight ? 'var(--bg-card)' : 'var(--surface-glass)'}`,
             }}
           />
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
@@ -724,7 +724,7 @@ function ReportTimelineView({
     [allWeekKeys, selectedWeekKey],
   );
 
-  const treeBg = isLight ? '#FFFFFF' : 'var(--surface-glass)';
+  const treeBg = isLight ? 'var(--bg-card)' : 'var(--surface-glass)';
   const treeBorder = isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)';
 
   return (

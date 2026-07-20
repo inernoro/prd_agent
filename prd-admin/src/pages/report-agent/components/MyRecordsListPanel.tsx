@@ -284,7 +284,7 @@ export function MyRecordsListPanel() {
                     style={{
                       color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                       background: active
-                        ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
+                        ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
                         : 'transparent',
                       boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
