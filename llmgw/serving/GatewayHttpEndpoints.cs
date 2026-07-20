@@ -4829,6 +4829,8 @@ public static class GatewayHttpEndpoints
         var source = request.Context;
         return new GatewayRawRequest
         {
+            CanonicalImageRequest = request.CanonicalImageRequest,
+            RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
@@ -5208,6 +5210,8 @@ public static class GatewayHttpEndpoints
 
         var hydrated = new GatewayRawRequest
         {
+            CanonicalImageRequest = request.CanonicalImageRequest,
+            RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,

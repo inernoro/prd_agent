@@ -43,7 +43,7 @@ public class ImageGenRun
     public string? ModelId { get; set; }
 
     /// <summary>
-    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）
+    /// 模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池, 4=逻辑模型）
     /// </summary>
     public ModelResolutionType? ModelResolutionType { get; set; }
 

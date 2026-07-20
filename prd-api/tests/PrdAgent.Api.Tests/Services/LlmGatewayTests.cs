@@ -1719,6 +1719,45 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
+    {
+        var legacyResolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ExpectedModel = "nanobanana-2",
+            ActualModel = "openai/gpt-image-2",
+            ActualPlatformId = "legacy-platform",
+            ActualPlatformName = "Legacy Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://legacy.example.com/v1",
+            ApiKey = "legacy-key",
+            ModelGroupId = "legacy-pool",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/wrong.png\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "nanobanana-2",
+            RequiredLogicalModelPublicId = "nanobanana-2",
+            RequestBody = new JsonObject { ["prompt"] = "draw a yellow circle" },
+        }, legacyResolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGICAL_MODEL_RESOLUTION_MISMATCH", response.ErrorCode);
+        Assert.Equal(409, response.StatusCode);
+        Assert.Empty(http.RequestBodies);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenProviderIsNotOpenRouter_ShouldNotAddAppAttributionHeaders()
     {
         var resolution = new GatewayModelResolution

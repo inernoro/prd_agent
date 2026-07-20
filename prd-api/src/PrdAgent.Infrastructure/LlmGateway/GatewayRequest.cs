@@ -470,6 +470,13 @@ public class GatewayRawRequest
     public GatewayCanonicalImageRequest? CanonicalImageRequest { get; init; }
 
     /// <summary>
+    /// 跨进程 compute-then-send 时必须保持的逻辑模型公开标识。
+    /// serving 重新解析凭据后若未命中同一个逻辑模型，必须硬失败，禁止退回旧模型池。
+    /// 该字段只由已完成预解析的受信任 MAP 到 Serving 调用链写入。
+    /// </summary>
+    public string? RequiredLogicalModelPublicId { get; init; }
+
+    /// <summary>
     /// 应用调用标识（必填）
     /// </summary>
     public required string AppCallerCode { get; init; }
@@ -487,8 +494,8 @@ public class GatewayRawRequest
 
     /// <summary>
     /// 期望使用的模型名称（可选）。
-    /// 由调用方在第一次 Resolve 后将 resolution.ActualModel 传入，
-    /// Gateway 在内部 Resolve 时直接透传，防止二次 Resolve 选出不同模型。
+    /// 逻辑模型调用传公开标识；旧直连/模型池调用传第一次解析得到的实际模型。
+    /// Gateway 在内部 Resolve 时直接透传，防止跨进程二次 Resolve 丢失用户选择。
     /// </summary>
     public string? ExpectedModel { get; init; }
 

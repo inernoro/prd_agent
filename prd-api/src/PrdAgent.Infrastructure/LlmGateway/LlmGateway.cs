@@ -1028,6 +1028,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
                 resolution.ErrorMessage ?? "未找到可用模型", 404);
 
+        if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
+            && !string.Equals(
+                request.RequiredLogicalModelPublicId.Trim(),
+                resolution.LogicalModelPublicId?.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return GatewayRawResponse.Fail(
+                "LOGICAL_MODEL_RESOLUTION_MISMATCH",
+                $"逻辑模型 {request.RequiredLogicalModelPublicId.Trim()} 未能在当前租户与 appCaller 下解析，已拒绝退回其他模型池。",
+                409);
+        }
+
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = new ModelResolutionResult
