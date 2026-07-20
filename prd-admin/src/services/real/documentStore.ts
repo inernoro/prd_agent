@@ -203,6 +203,70 @@ export async function uploadDocumentFileWithProgress(
   });
 }
 
+export type RecordingUploadSession = {
+  sessionId: string;
+  nextChunkIndex: number;
+  uploadedBytes: number;
+  expiresAt: string;
+};
+
+/** 建立录音实时保护会话；后续分片必须按 index 顺序上传。 */
+export async function startRecordingUpload(storeId: string, fileName: string, mimeType: string) {
+  return await apiRequest<RecordingUploadSession>(
+    api.documentStore.entries.recordingUploadStart(storeId),
+    { method: 'POST', body: { fileName, mimeType } },
+  );
+}
+
+/** 上传单个二进制录音分片。FormData/JSON 都会改变原字节，因此直接 fetch。 */
+export async function appendRecordingUploadChunk(sessionId: string, index: number, chunk: Blob) {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const res = await fetch(api.documentStore.entries.recordingUploadChunk(sessionId, index), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: chunk,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: text || `HTTP ${res.status}` } } as import('@/types/api').ApiResponse<{
+      accepted: boolean;
+      duplicate: boolean;
+      nextChunkIndex: number;
+      uploadedBytes: number;
+    }>;
+  }
+  return await res.json() as import('@/types/api').ApiResponse<{
+    accepted: boolean;
+    duplicate: boolean;
+    nextChunkIndex: number;
+    uploadedBytes: number;
+  }>;
+}
+
+/** 合并已确认分片并创建正常音频条目。重复调用会返回同一条目。 */
+export async function completeRecordingUpload(sessionId: string) {
+  return await apiRequest<{
+    entry: import('@/services/contracts/documentStore').DocumentEntry;
+    attachmentId: string;
+    documentId?: string;
+    fileUrl: string;
+    sessionId: string;
+    reused: boolean;
+  }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
+}
+
+/** 用户主动放弃时清理服务端临时录音分片。 */
+export async function cancelRecordingUpload(sessionId: string) {
+  return await apiRequest<{ deleted: boolean }>(
+    api.documentStore.entries.recordingUploadStatus(sessionId),
+    { method: 'DELETE' },
+  );
+}
+
 /**
  * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
  * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。

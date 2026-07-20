@@ -369,12 +369,7 @@ public class SubtitleGenerationProcessor
 
         var systemPrompt = TranscribeNoteText.BuildSummarySystemPrompt(run);
 
-        var maxChars = 30000;
-        var clipped = transcript.Length > maxChars ? transcript[..maxChars] : transcript;
-        var userContent = $"录音标题：{title}\n\n转录全文：\n{clipped}";
-        // 补充背景（如"参会人：张三、李四"）只帮助理解，硬约束禁止据此编造
-        if (!string.IsNullOrWhiteSpace(run.StyleContext))
-            userContent = $"补充背景（仅用于理解人物/场景，禁止据此编造转录中没有的内容）：{run.StyleContext.Trim()}\n\n{userContent}";
+        var userContent = TranscribeNoteText.BuildSummaryUserContent(run, title, transcript);
         var messages = new List<LLMMessage>
         {
             new() { Role = "user", Content = userContent },

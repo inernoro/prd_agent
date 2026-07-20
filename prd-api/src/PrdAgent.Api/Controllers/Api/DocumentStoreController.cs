@@ -51,6 +51,8 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
+    /// <summary>录音实时上传的单个传输分片上限；前端默认切为 512 KB。</summary>
+    private const long MaxRecordingChunkBytes = 1024 * 1024;
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -1568,96 +1570,349 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        // 1) 存储到 COS / 本地 — 传 fileName 进去，让 SaveAsync 优先用原始扩展名
-        // 而不是从 mime 反推（mime 不可靠：m4a 浏览器报 octet-stream，反推到 .png）
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+        var stored = await CreateUploadedDocumentEntryAsync(
+            store, userId, userName, avatarFileName, file.FileName, mime, bytes, parentId, ct);
 
-        // 2) 提取文本内容
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = stored.Entry,
+            attachmentId = stored.Attachment.AttachmentId,
+            documentId = stored.DocumentId,
+            fileUrl = stored.FileUrl,
+        }));
+    }
+
+    /// <summary>
+    /// 建立录音实时上传会话。客户端可以在 MediaRecorder 持续录音时顺序发送小分片，
+    /// 即使手机页面随后被系统回收，已确认的分片仍保留在服务端。
+    /// </summary>
+    [HttpPost("stores/{storeId}/recording-uploads")]
+    public async Task<IActionResult> StartRecordingUpload(
+        string storeId,
+        [FromBody] StartRecordingUploadRequest request)
+    {
+        var userId = GetUserId();
+        var expiredBefore = DateTime.UtcNow;
+        await _db.DocumentRecordingUploadSessions.DeleteManyAsync(
+            s => s.ExpiresAt <= expiredBefore,
+            CancellationToken.None);
+        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+            c => c.CreatedAt <= expiredBefore.AddDays(-1),
+            CancellationToken.None);
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var fileName = Path.GetFileName(request.FileName?.Trim());
+        if (string.IsNullOrWhiteSpace(fileName) || fileName.Length > 240)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音文件名无效"));
+
+        var mime = InferMime(request.MimeType?.Trim() ?? "", fileName);
+        if (!mime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音实时上传仅支持音频"));
+
+        var session = new DocumentRecordingUploadSession
+        {
+            StoreId = storeId,
+            UserId = userId,
+            FileName = fileName,
+            MimeType = mime,
+        };
+        await _db.DocumentRecordingUploadSessions.InsertOneAsync(session, cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            sessionId = session.Id,
+            nextChunkIndex = session.NextChunkIndex,
+            uploadedBytes = session.UploadedBytes,
+            expiresAt = session.ExpiresAt,
+        }));
+    }
+
+    /// <summary>查询录音上传偏移，供网络恢复后继续从 nextChunkIndex 发送。</summary>
+    [HttpGet("recording-uploads/{sessionId}")]
+    public async Task<IActionResult> GetRecordingUpload(string sessionId)
+    {
+        var session = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == GetUserId())
+            .FirstOrDefaultAsync();
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            sessionId = session.Id,
+            status = session.Status,
+            nextChunkIndex = session.NextChunkIndex,
+            uploadedBytes = session.UploadedBytes,
+            entryId = session.EntryId,
+            expiresAt = session.ExpiresAt,
+        }));
+    }
+
+    /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
+    [HttpPost("recording-uploads/{sessionId}/chunks/{index:int}")]
+    [RequestSizeLimit(MaxRecordingChunkBytes)]
+    public async Task<IActionResult> AppendRecordingUploadChunk(string sessionId, int index)
+    {
+        if (index < 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分片编号不能为负数"));
+
+        var userId = GetUserId();
+        var session = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync();
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+        if (session.Status != DocumentRecordingUploadStatus.Uploading || session.ExpiresAt <= DateTime.UtcNow)
+            return StatusCode(StatusCodes.Status410Gone,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束或过期"));
+        if (index < session.NextChunkIndex)
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                accepted = true,
+                duplicate = true,
+                nextChunkIndex = session.NextChunkIndex,
+                uploadedBytes = session.UploadedBytes,
+            }));
+        if (index > session.NextChunkIndex)
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, $"分片顺序不连续，应从 {session.NextChunkIndex} 继续"));
+
+        await using var ms = new MemoryStream();
+        await Request.Body.CopyToAsync(ms, CancellationToken.None);
+        var bytes = ms.ToArray();
+        if (bytes.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片不能为空"));
+        if (bytes.LongLength > MaxRecordingChunkBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片不能超过 1 MB"));
+        if (session.UploadedBytes + bytes.LongLength > MaxUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小不能超过 20 MB"));
+
+        var existing = await _db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == sessionId && c.Index == index)
+            .FirstOrDefaultAsync();
+        if (existing == null)
+        {
+            existing = new DocumentRecordingUploadChunk
+            {
+                SessionId = sessionId,
+                Index = index,
+                Data = bytes,
+                SizeBytes = bytes.LongLength,
+            };
+            await _db.DocumentRecordingUploadChunks.InsertOneAsync(existing, cancellationToken: CancellationToken.None);
+        }
+
+        var nextBytes = session.UploadedBytes + existing.SizeBytes;
+        var update = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId
+                 && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Uploading
+                 && s.NextChunkIndex == index,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.NextChunkIndex, index + 1)
+                .Set(s => s.UploadedBytes, nextBytes)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
+            cancellationToken: CancellationToken.None);
+        if (update.ModifiedCount == 0)
+        {
+            var latest = await _db.DocumentRecordingUploadSessions.Find(s => s.Id == sessionId).FirstOrDefaultAsync();
+            if (latest?.NextChunkIndex != index + 1)
+                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分片状态发生变化，请查询偏移后重试"));
+            session = latest;
+        }
+        else
+        {
+            session.NextChunkIndex = index + 1;
+            session.UploadedBytes = nextBytes;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            accepted = true,
+            duplicate = false,
+            nextChunkIndex = session.NextChunkIndex,
+            uploadedBytes = session.UploadedBytes,
+        }));
+    }
+
+    /// <summary>拼接已确认分片，创建正式音频条目；重复完成请求返回同一 entry。</summary>
+    [HttpPost("recording-uploads/{sessionId}/complete")]
+    public async Task<IActionResult> CompleteRecordingUpload(string sessionId)
+    {
+        var userId = GetUserId();
+        var session = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync();
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+
+        if (session.Status == DocumentRecordingUploadStatus.Completed && !string.IsNullOrWhiteSpace(session.EntryId))
+        {
+            var completedEntry = await _db.DocumentEntries.Find(e => e.Id == session.EntryId).FirstOrDefaultAsync();
+            if (completedEntry != null)
+                return Ok(ApiResponse<object>.Ok(new { entry = completedEntry, sessionId, reused = true }));
+        }
+        if (session.Status != DocumentRecordingUploadStatus.Uploading)
+            return StatusCode(StatusCodes.Status410Gone,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == session.StoreId).FirstOrDefaultAsync();
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var chunks = await _db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == sessionId)
+            .SortBy(c => c.Index)
+            .ToListAsync();
+        if (chunks.Count == 0 || chunks.Count != session.NextChunkIndex)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片尚未全部确认"));
+        for (var i = 0; i < chunks.Count; i++)
+        {
+            if (chunks[i].Index != i)
+                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"录音缺少第 {i} 个分片"));
+        }
+
+        await using var joined = new MemoryStream((int)session.UploadedBytes);
+        foreach (var chunk in chunks)
+            await joined.WriteAsync(chunk.Data, CancellationToken.None);
+        var audioBytes = joined.ToArray();
+        if (audioBytes.LongLength != session.UploadedBytes || audioBytes.LongLength > MaxUploadBytes)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片大小校验失败"));
+
+        var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
+        var stored = await CreateUploadedDocumentEntryAsync(
+            store, actorId, actorName, avatarFileName,
+            session.FileName, session.MimeType, audioBytes, parentId: null, CancellationToken.None);
+
+        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId && s.UserId == userId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.EntryId, stored.Entry.Id)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+            c => c.SessionId == sessionId,
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = stored.Entry,
+            attachmentId = stored.Attachment.AttachmentId,
+            documentId = stored.DocumentId,
+            fileUrl = stored.FileUrl,
+            sessionId,
+            reused = false,
+        }));
+    }
+
+    /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>
+    [HttpDelete("recording-uploads/{sessionId}")]
+    public async Task<IActionResult> CancelRecordingUpload(string sessionId)
+    {
+        var userId = GetUserId();
+        var session = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync();
+        if (session == null)
+            return Ok(ApiResponse<object>.Ok(new { deleted = false }));
+        if (session.Status == DocumentRecordingUploadStatus.Completed)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已完成的录音不能取消上传"));
+
+        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+            c => c.SessionId == sessionId,
+            cancellationToken: CancellationToken.None);
+        await _db.DocumentRecordingUploadSessions.DeleteOneAsync(
+            s => s.Id == sessionId && s.UserId == userId,
+            cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>
+        CreateUploadedDocumentEntryAsync(
+            DocumentStore store,
+            string userId,
+            string? userName,
+            string? avatarFileName,
+            string fileName,
+            string mime,
+            byte[] bytes,
+            string? parentId,
+            CancellationToken cancellationToken)
+    {
+        // 传原始文件名，让存储优先沿用扩展名；浏览器上报的 m4a MIME 并不可靠。
+        var stored = await _assetStorage.SaveAsync(
+            bytes, mime, cancellationToken,
+            domain: "prd-agent", type: "doc", fileName: fileName);
+
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
-        {
-            extractedText = _fileContentExtractor.Extract(bytes, mime, file.FileName);
-        }
+            extractedText = _fileContentExtractor.Extract(bytes, mime, fileName);
         else if (mime.StartsWith("text/") || mime == "application/json" || mime == "application/xml")
-        {
-            // 纯文本格式直接读取
             extractedText = System.Text.Encoding.UTF8.GetString(bytes);
-        }
 
-        // 3) 创建 Attachment 记录
         var attachment = new Attachment
         {
             UploaderId = userId,
-            FileName = file.FileName,
+            FileName = fileName,
             MimeType = mime,
-            Size = file.Length,
+            Size = bytes.LongLength,
             Url = stored.Url,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
         };
-        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: cancellationToken);
 
-        // 4) 如果有提取到的文本，解析为 ParsedPrd 存储
         string? documentId = null;
         if (!string.IsNullOrWhiteSpace(extractedText))
         {
             var parsed = await _documentService.ParseAsync(extractedText);
-            parsed.Title = Path.GetFileNameWithoutExtension(file.FileName);
+            parsed.Title = Path.GetFileNameWithoutExtension(fileName);
             await _documentService.SaveAsync(parsed);
             documentId = parsed.Id;
         }
 
-        // 5) 创建 DocumentEntry（关联 Attachment + ParsedPrd）
-        // 保留完整文件名（含扩展名），便于前端按扩展名显示图标
-        var title = file.FileName ?? Path.GetFileNameWithoutExtension(file.FileName);
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
-
-        // 截取前 2000 字符作为内容索引（供内容搜索使用）
         var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
-
         var entry = new DocumentEntry
         {
-            StoreId = storeId,
+            StoreId = store.Id,
             ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
             AttachmentId = attachment.AttachmentId,
             DocumentId = documentId,
-            Title = title,
+            Title = fileName,
             Summary = summary?.Trim(),
             SourceType = DocumentSourceType.Upload,
             ContentType = mime,
-            FileSize = file.Length,
+            FileSize = bytes.LongLength,
             CreatedBy = userId,
             CreatedByName = userName,
             CreatedByAvatarFileName = avatarFileName,
             UpdatedBy = userId,
             UpdatedByName = userName,
             ContentIndex = contentIndex?.Trim(),
-            // 新上传文件立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
             LastChangedAt = DateTime.UtcNow,
         };
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
-
-        // 更新空间文档计数
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: cancellationToken);
         await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == storeId,
+            s => s.Id == store.Id,
             Builders<DocumentStore>.Update
                 .Inc(s => s.DocumentCount, 1)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            cancellationToken: cancellationToken);
 
-        _logger.LogInformation("[document-store] File uploaded: {EntryId} '{FileName}' ({Size}B) to store {StoreId} by {UserId}",
-            entry.Id, file.FileName, file.Length, storeId, userId);
-
+        _logger.LogInformation(
+            "[document-store] File uploaded: {EntryId} '{FileName}' ({Size}B) to store {StoreId} by {UserId}",
+            entry.Id, fileName, bytes.LongLength, store.Id, userId);
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            entry,
-            attachmentId = attachment.AttachmentId,
-            documentId,
-            fileUrl = stored.Url,
-        }));
+        return (entry, attachment, documentId, stored.Url);
     }
 
     /// <summary>
@@ -3171,7 +3426,13 @@ public class DocumentStoreController : ControllerBase
     public IActionResult ListTranscribeStyles()
     {
         var items = TranscribeStyleRegistry.All
-            .Select(s => new { key = s.Key, label = s.Label, description = s.Description })
+            .Select(s => new
+            {
+                key = s.Key,
+                label = s.Label,
+                description = s.Description,
+                contextInput = s.ContextInput,
+            })
             .ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -5863,6 +6124,15 @@ public class TranscribeStyleRequest
 
     /// <summary>自定义整理要求（styleKey == custom 时必填）</summary>
     public string? CustomPrompt { get; set; }
+}
+
+public class StartRecordingUploadRequest
+{
+    /// <summary>录音文件名，必须包含可识别的音频扩展名</summary>
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>浏览器录音 MIME，服务端会结合文件扩展名兜底推断</summary>
+    public string MimeType { get; set; } = "audio/webm";
 }
 
 public class UpdateTranscribeTranscriptRequest

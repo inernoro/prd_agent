@@ -74,6 +74,24 @@ export async function vaultStartSession(id: string, mime: string, storeId?: stri
   }
 }
 
+/** 录音中切换目标知识库时同步更新保险箱归属，崩溃恢复不会回到旧库。 */
+export async function vaultUpdateSessionStore(id: string, storeId: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    const tx = db.transaction(META_STORE, 'readwrite');
+    const store = tx.objectStore(META_STORE);
+    const current = await new Promise<{ id: string; mime: string; startedAt: number; storeId?: string } | null>((resolve) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    });
+    if (current) store.put({ ...current, storeId });
+    await txDone(tx);
+  } catch { /* best-effort */ }
+  db.close();
+}
+
 /** 追加一个音频分片（逐条插入，不重写既有数据） */
 export async function vaultAppendChunk(sessionId: string, blob: Blob): Promise<void> {
   const db = await openDb();

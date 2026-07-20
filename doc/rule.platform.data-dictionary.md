@@ -110,6 +110,8 @@
 | `document_store_favorites` | `DocumentStoreFavorite` | 知识库收藏记录 | `(StoreId, UserId)` 去重 |
 | `document_store_share_links` | `DocumentStoreShareLink` | 知识库分享链接（Token + 过期时间 + 访问计数） | `token` 唯一；`StoreId` |
 | `document_store_agent_runs` | `DocumentStoreAgentRun` | 知识库 Agent 任务（`Kind`: subtitle 字幕生成 / reprocess 文档再加工）。含 Run 状态机、流式产物、模板 key、自定义提示词 | （按 `SourceEntryId`、`Kind`、`Status` 查询；事件流走 `IRunEventStore`） |
+| `document_recording_upload_sessions` | `DocumentRecordingUploadSession` | 手机录音分片上传会话：记录目标知识库、下一分片序号、已确认字节数和完成后的音频条目 | `ExpiresAt` 过期会话在新会话建立时清理；建议部署 TTL 索引 |
+| `document_recording_upload_chunks` | `DocumentRecordingUploadChunk` | 录音期间顺序写入的临时二进制分片，完成后拼接进正式附件并立即删除 | `(SessionId, Index)` 逻辑唯一；超过一天的遗留分片在新会话建立时清理 |
 | `document_store_view_events` | `DocumentStoreViewEvent` | 知识库浏览事件（谁访问了哪篇文档、停留多久）。含匿名访客 `AnonSessionToken`、`EnteredAt`、`LeftAt`、`DurationMs`、`UserAgent`、`Referer` | （按 `StoreId`、`EnteredAt desc` 查询） |
 | `document_inline_comments` | `DocumentInlineComment` | 文档划词评论（按 `SelectedText + ContextBefore/After` 锚定，非整章评论）。`Status`: active/orphaned；正文更新时由 `InlineCommentRebinder.TryRebind` 重锚定 | （按 `EntryId`、`CreatedAt` 查询） |
 | `mentions` | `Mention` | 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。关键字段：`FromType`/`FromId`（引用源实体，MVP 仅 "document"）+ `ToType`/`ToId`（被引用实体）+ `AnchorText`（用户在源里看到的字面，如 "[[xxx]]" 的 xxx）+ `Context`（前后约 60 字上下文，反向链接展示用）+ `ScopeId`（作用域=StoreId）+ `IsAutoDetected`（false=用户显式 [[]]，true=AI 自动补链）。写入时机：`DocumentStoreController.UpdateEntryContent` 保存正文时 `MentionService.ResyncDocumentMentionsAsync` 先删后写；删除时 `DeleteEntry` 级联 `CascadeDeleteAsync` 清掉 from/to 任一为被删 entry 的记录 | 建议手动建索引（`no-auto-index` 规则）：`{ ScopeId: 1 }`（宇宙图全图）+ `{ ToType: 1, ToId: 1 }`（反向链接）+ `{ FromType: 1, FromId: 1 }`（先删后写）|

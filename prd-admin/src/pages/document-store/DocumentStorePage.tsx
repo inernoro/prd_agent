@@ -971,6 +971,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     style?: import('@/services/real/documentStore').TranscribeStyleParams;
     restyleRun?: { runId: string; outputEntryId: string };
     storeId?: string;
+    /** 本次入口新建的录音，允许用户明确取消并删除；已有条目转录不显示删除。 */
+    isNewRecording?: boolean;
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
@@ -1004,7 +1006,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (ok) {
         const file = await vaultLoadSessionFile(latest.id);
         if (file) {
-          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id });
+          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id, isNewRecording: true });
           transcribeFlowOpenRef.current = true;
         }
         // 本库更老的滞留会话一并清理，只恢复最新一段（避免弹窗轰炸）
@@ -1645,7 +1647,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         onChange={e => {
           const f = e.target.files?.[0];
           if (f) {
-            setTranscribeFlow({ file: f, title: f.name, storeId: audioUploadStoreRef.current });
+            setTranscribeFlow({ file: f, title: f.name, storeId: audioUploadStoreRef.current, isNewRecording: true });
             transcribeFlowOpenRef.current = true;
           }
           e.target.value = '';
@@ -2108,7 +2110,21 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             onClose={() => setShowRecorder(false)}
             onComplete={(file, vaultSessionId, targetStoreId) => {
               setShowRecorder(false);
-              setTranscribeFlow({ file, title: file.name, vaultSessionId, storeId: targetStoreId || storeId });
+              setTranscribeFlow({ file, title: file.name, vaultSessionId, storeId: targetStoreId || storeId, isNewRecording: true });
+              transcribeFlowOpenRef.current = true;
+            }}
+            onUploaded={(entry, vaultSessionId, targetStoreId) => {
+              const destination = targetStoreId || storeId;
+              setShowRecorder(false);
+              if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
+              void vaultDeleteSession(vaultSessionId);
+              setTranscribeFlow({
+                entryId: entry.id,
+                title: entry.title,
+                vaultSessionId,
+                storeId: destination,
+                isNewRecording: true,
+              });
               transcribeFlowOpenRef.current = true;
             }}
             onPickFile={(targetStoreId) => {
@@ -2173,7 +2189,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
               if (rid && !transcribeFlowOpenRef.current) setBgTranscribeRunId(rid);
             }}
-            onDiscardEntry={transcribeFlow.file ? async (entryId) => {
+            onDiscardEntry={transcribeFlow.isNewRecording ? async (entryId) => {
               const res = await deleteDocumentEntry(entryId);
               if (!res.success) throw new Error(res.error?.message ?? '取消失败');
               if ((transcribeFlow.storeId || storeId) === storeId) {

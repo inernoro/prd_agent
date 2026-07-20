@@ -12,6 +12,7 @@ import { api } from '@/services/api';
 import { transcribeEntry, getAgentRun, uploadDocumentFileWithProgress, listTranscribeStyles, restyleTranscribeRun, updateTranscribeTranscript } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { deriveTranscribeSteps, type TranscribeStepState } from './transcribeFlowSteps';
+import { parseMeetingContext } from './transcribeStyleContext';
 
 /**
  * 录音转录全链路：上传音频 → 生成可编辑原文 → 保存；整理是用户主动选择的下一步。
@@ -91,7 +92,12 @@ export function TranscribeFlowDrawer({
   const hasStartedRef = useRef(false);
   const initialStyleRef = useRef(initialStyle);
   // 整理方式（完成后可换风格重新整理，免重跑 ASR）。列表来自后端 SSOT，禁止前端硬编码。
-  const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>([]);
+  const [styles, setStyles] = useState<{
+    key: string;
+    label: string;
+    description: string;
+    contextInput?: { label: string; description: string; placeholder: string; example?: string | null } | null;
+  }[]>([]);
   const [styleKey, setStyleKey] = useState(initialStyle?.styleKey || 'general');
   const [styleContext, setStyleContext] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
@@ -112,6 +118,7 @@ export function TranscribeFlowDrawer({
   const [includeSummary, setIncludeSummary] = useState(!!initialStyle?.styleKey || !!restyleRun);
   const [discarding, setDiscarding] = useState(false);
   const rawFetchedRef = useRef(false);
+  const completedRunRef = useRef<string | null>(restyleRun?.runId ?? null);
 
   // 完成后取转录原文（run 上带 transcriptText；老 run 没存则显示指引）
   useEffect(() => {
@@ -155,7 +162,10 @@ export function TranscribeFlowDrawer({
         if (d.generatedText) setSummaryText(d.generatedText);
         if (d.outputEntryId) {
           setOutputEntryId(d.outputEntryId);
-          onDone?.(d.outputEntryId);
+          if (!runId || completedRunRef.current !== runId) {
+            completedRunRef.current = runId;
+            onDone?.(d.outputEntryId);
+          }
         }
       },
       error: (data) => {
@@ -164,9 +174,11 @@ export function TranscribeFlowDrawer({
         setErrorMessage(d.message ?? '未知错误');
       },
     },
-    onError: (msg) => {
-      setStatus('failed');
-      setErrorMessage(msg);
+    onError: () => {
+      // 流连接在移动网络切换时可能中断；run 状态由下面的轮询继续确认，
+      // 不能仅凭 SSE 断线把一个实际已完成的任务判成失败。
+      setPhase('正在重新确认任务状态');
+      setErrorMessage(null);
     },
   });
 
@@ -177,11 +189,16 @@ export function TranscribeFlowDrawer({
     const r = res.data;
     if (r.phase) setPhase(r.phase);
     if (r.status === 'done') {
+      setPhase('完成');
       setStatus('done');
+      setErrorMessage(null);
       if (r.generatedText) setSummaryText(r.generatedText);
       if (r.outputEntryId) {
         setOutputEntryId(r.outputEntryId);
-        onDone?.(r.outputEntryId);
+        if (completedRunRef.current !== rid) {
+          completedRunRef.current = rid;
+          onDone?.(r.outputEntryId);
+        }
       }
     } else if (r.status === 'failed') {
       setStatus('failed');
@@ -190,6 +207,15 @@ export function TranscribeFlowDrawer({
       setErrorMessage(diagIdx >= 0 ? fullErr.slice(0, diagIdx) : fullErr);
     }
   }, [onDone]);
+
+  // SSE 是即时体验，轮询是正确性兜底。只要 run 未终态，每 2 秒查询一次；
+  // 即便 done 事件在 Safari 后台切换时丢失，也会在下一轮自动收敛。
+  useEffect(() => {
+    if (!runId || status !== 'running') return;
+    void refreshRun(runId);
+    const timer = window.setInterval(() => { void refreshRun(runId); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [runId, status, refreshRun]);
 
   const startTranscribe = useCallback(async (targetEntryId: string) => {
     setStatus('running');
@@ -298,10 +324,11 @@ export function TranscribeFlowDrawer({
       setPhase('排队中');
       onRunTracking?.(res.data.runId);
       setRunId(res.data.runId); // runId 变化触发 SSE 重订阅
+      void refreshRun(res.data.runId);
     } finally {
       setRestyleSubmitting(false);
     }
-  }, [runId, restyleSubmitting, styleKey, styleContext, customPrompt, abort, onRunTracking]);
+  }, [runId, restyleSubmitting, styleKey, styleContext, customPrompt, abort, onRunTracking, refreshRun]);
 
   const saveRawTranscript = useCallback(async () => {
     if (!runId || !rawDraft.trim() || savingRaw) return;
@@ -337,6 +364,20 @@ export function TranscribeFlowDrawer({
   const running = status === 'uploading' || status === 'running';
   const inPlace = !!entryId && outputEntryId === entryId;
   const activeStep = steps.find(step => step.state === 'active');
+  const selectedStyle = styles.find(style => style.key === styleKey);
+  const meetingContextFields = useMemo(
+    () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
+    [selectedStyle?.contextInput, styleContext],
+  );
+  const runningDescription = status === 'uploading'
+    ? '录音正在安全保存，随后只生成可编辑原文'
+    : phase.includes('写入')
+      ? 'AI 整理已经返回，正在把录音、原文和整理结果写入同一文档'
+      : runningSeconds >= 20
+        ? '任务仍在后台执行，系统每 2 秒确认一次状态；关闭面板也不会中断'
+        : (activeStep?.sub || (includeSummary
+          ? '正在按你选择的方式整理，完成后保存到同一录音文档'
+          : '正在把录音转成文字，完成后自动保存'));
 
   useEffect(() => {
     if (!running) return;
@@ -387,11 +428,7 @@ export function TranscribeFlowDrawer({
             {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
           </p>
           <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
-            {status === 'uploading'
-              ? '录音正在安全保存，随后只生成可编辑原文'
-              : (activeStep?.sub || (includeSummary
-                ? '正在按你选择的方式整理，完成后保存到同一录音文档'
-                : '正在把录音转成文字，完成后自动保存'))}
+            {runningDescription}
           </p>
           <p className="mt-3 text-[11px] tabular-nums text-token-muted">
             已进行 {formatProcessDuration(runningSeconds)}
@@ -561,13 +598,51 @@ export function TranscribeFlowDrawer({
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
             />
           )}
-          <input
-            value={styleContext}
-            onChange={(e) => setStyleContext(e.target.value)}
-            placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
-            className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-          />
+          {selectedStyle?.contextInput ? (
+            <div className="mb-2.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <label className="text-[11px] font-semibold text-token-secondary">{selectedStyle.contextInput.label}</label>
+                {selectedStyle.contextInput.example && !styleContext.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setStyleContext(selectedStyle.contextInput?.example || '')}
+                    className="min-h-11 px-2 text-[11px] font-semibold"
+                    style={{ color: 'var(--accent-primary, rgba(96,165,250,0.95))' }}>
+                    填入示例
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-[11px] leading-relaxed text-token-muted">{selectedStyle.contextInput.description}</p>
+              <textarea
+                value={styleContext}
+                onChange={(e) => setStyleContext(e.target.value)}
+                rows={6}
+                placeholder={selectedStyle.contextInput.placeholder}
+                className="w-full resize-y rounded-[10px] px-3 py-2 text-[12px] leading-relaxed text-token-primary outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+              />
+              {meetingContextFields.length > 0 && (
+                <div className="mt-2 rounded-[9px] px-3 py-2" style={{ background: 'var(--bg-elevated)' }}>
+                  <p className="mb-1.5 text-[10px] font-semibold text-token-muted">已识别字段</p>
+                  <div className="space-y-1">
+                    {meetingContextFields.map(field => (
+                      <p key={field.label} className="text-[11px] leading-relaxed text-token-secondary">
+                        <span className="font-semibold">{field.label}：</span>{field.value}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <input
+              value={styleContext}
+              onChange={(e) => setStyleContext(e.target.value)}
+              placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
+              className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+            />
+          )}
           <Button
             variant="secondary"
             size="sm"

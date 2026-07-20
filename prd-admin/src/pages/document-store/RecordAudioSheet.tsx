@@ -5,8 +5,15 @@ import { motion } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { listDocumentStoresWithPreview } from '@/services';
-import { vaultStartSession, vaultAppendChunk, vaultDeleteSession } from './recordingVault';
+import {
+  appendRecordingUploadChunk,
+  cancelRecordingUpload,
+  completeRecordingUpload,
+  listDocumentStoresWithPreview,
+  startRecordingUpload,
+} from '@/services';
+import type { DocumentEntry } from '@/services/contracts/documentStore';
+import { vaultStartSession, vaultAppendChunk, vaultDeleteSession, vaultUpdateSessionStore } from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 
 /**
@@ -32,14 +39,17 @@ export type RecordAudioSheetProps = {
    * 上传失败/断网时保留，下次进页可恢复（不丢数据）。
    */
   onComplete: (file: File, vaultSessionId: string, targetStoreId?: string) => void;
+  /** 实时分片已在服务端合并为条目，直接进入转录，避免再次上传整段文件。 */
+  onUploaded: (entry: DocumentEntry, vaultSessionId: string, targetStoreId?: string) => void;
   /** 「上传音频文件」兜底：打开既有的 audio file input */
   onPickFile: (targetStoreId?: string) => void;
 };
 
-type RecState = 'requesting' | 'recording' | 'paused' | 'unavailable';
+type RecState = 'requesting' | 'recording' | 'paused' | 'finalizing' | 'unavailable';
 
 /** 后端单文件上限 20MB；录到接近上限时自动收尾，避免上传被拒 */
 const MAX_BYTES = 19 * 1024 * 1024;
+const TRANSPORT_CHUNK_BYTES = 512 * 1024;
 
 function buildFileName(ext: string): string {
   const d = new Date();
@@ -53,12 +63,15 @@ function formatElapsed(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPickFile }: RecordAudioSheetProps) {
+export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
   const [unavailableReason, setUnavailableReason] = useState('');
   const [elapsed, setElapsed] = useState(0);
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
+  const [protectedBytes, setProtectedBytes] = useState(0);
+  const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
+  const [changingDestination, setChangingDestination] = useState(false);
   const [storeOptions, setStoreOptions] = useState<{ id: string; name: string }[]>(
     storeId ? [{ id: storeId, name: storeName || '当前知识库' }] : [],
   );
@@ -75,11 +88,93 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
   const chunksRef = useRef<Blob[]>([]);
   const bytesRef = useRef(0);
   const mimeRef = useRef('audio/webm');
+  const fileNameRef = useRef('');
+  const uploadSessionIdRef = useRef<string | null>(null);
+  const uploadSessionPromiseRef = useRef<Promise<string | null> | null>(null);
+  const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const uploadChunkIndexRef = useRef(0);
+  const liveUploadFailedRef = useRef(false);
   // 完成/取消/组件卸载 的意图标记：onstop 回调按它决定产出 File / 删保险箱 / 保留保险箱。
   // abandon = 录音中组件被卸载（如 SPA 路由跳走）：保留保险箱数据，下次进页可恢复。
   const finishModeRef = useRef<'complete' | 'discard' | 'abandon'>('discard');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onUploadedRef = useRef(onUploaded);
+  onUploadedRef.current = onUploaded;
+
+  const ensureUploadSession = useCallback(async (): Promise<string | null> => {
+    if (uploadSessionIdRef.current) return uploadSessionIdRef.current;
+    if (liveUploadFailedRef.current) return null;
+    if (uploadSessionPromiseRef.current) return await uploadSessionPromiseRef.current;
+    const destination = targetStoreIdRef.current || storeId;
+    if (!destination || !fileNameRef.current) return null;
+    uploadSessionPromiseRef.current = startRecordingUpload(destination, fileNameRef.current, mimeRef.current)
+      .then((res) => {
+        if (!res.success) {
+          liveUploadFailedRef.current = true;
+          setLiveProtection('local');
+          return null;
+        }
+        uploadSessionIdRef.current = res.data.sessionId;
+        setLiveProtection('active');
+        return res.data.sessionId;
+      })
+      .catch(() => {
+        liveUploadFailedRef.current = true;
+        setLiveProtection('local');
+        return null;
+      });
+    return await uploadSessionPromiseRef.current;
+  }, [storeId]);
+
+  const queueLiveChunk = useCallback((blob: Blob) => {
+    uploadQueueRef.current = uploadQueueRef.current.then(async () => {
+      const sessionId = await ensureUploadSession();
+      if (!sessionId || liveUploadFailedRef.current) return;
+      for (let offset = 0; offset < blob.size; offset += TRANSPORT_CHUNK_BYTES) {
+        const part = blob.slice(offset, Math.min(blob.size, offset + TRANSPORT_CHUNK_BYTES), blob.type);
+        const index = uploadChunkIndexRef.current;
+        const res = await appendRecordingUploadChunk(sessionId, index, part);
+        if (!res.success) {
+          liveUploadFailedRef.current = true;
+          setLiveProtection('local');
+          return;
+        }
+        uploadChunkIndexRef.current = res.data.nextChunkIndex;
+        setProtectedBytes(res.data.uploadedBytes);
+      }
+    }).catch(() => {
+      liveUploadFailedRef.current = true;
+      setLiveProtection('local');
+    });
+  }, [ensureUploadSession]);
+
+  const changeDestination = useCallback(async (nextStoreId: string) => {
+    if (changingDestination) return;
+    setChangingDestination(true);
+    setTargetStoreId(nextStoreId);
+    targetStoreIdRef.current = nextStoreId;
+    void vaultUpdateSessionStore(vaultIdRef.current, nextStoreId);
+
+    // 已开始实时保护时，切库会重新建立会话，并把内存中的既有分片顺序补传到新库。
+    // 这样用户不必在录音前做选择，也不会出现 UI 显示新库而文件实际留在旧库。
+    try {
+      if (!uploadSessionIdRef.current && !uploadSessionPromiseRef.current && !liveUploadFailedRef.current) return;
+      await uploadQueueRef.current;
+      const previousSessionId = uploadSessionIdRef.current;
+      if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
+      uploadSessionIdRef.current = null;
+      uploadSessionPromiseRef.current = null;
+      uploadChunkIndexRef.current = 0;
+      liveUploadFailedRef.current = false;
+      uploadQueueRef.current = Promise.resolve();
+      setProtectedBytes(0);
+      setLiveProtection('pending');
+      for (const chunk of chunksRef.current) queueLiveChunk(chunk);
+    } finally {
+      setChangingDestination(false);
+    }
+  }, [changingDestination, queueLiveChunk]);
 
   useEffect(() => {
     void listDocumentStoresWithPreview(1, 200, { scope: 'mine' }).then((res) => {
@@ -138,6 +233,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
 
         const mime = selectRecordingMimeType((candidate) => MediaRecorder.isTypeSupported(candidate));
         mimeRef.current = mime || 'audio/webm';
+        fileNameRef.current = buildFileName(recordingExtension(mimeRef.current));
         const rec = new MediaRecorder(stream, {
           ...(mime ? { mimeType: mime } : {}),
           audioBitsPerSecond: 64_000,
@@ -150,6 +246,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
             bytesRef.current += e.data.size;
             // 分片实时落本机保险箱：崩溃/断网/忘关都不丢已录内容
             void vaultAppendChunk(vaultIdRef.current, e.data);
+            queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
               finishModeRef.current = 'complete';
@@ -157,15 +254,32 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
             }
           }
         };
-        rec.onstop = () => {
+        rec.onstop = async () => {
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
+            setState('finalizing');
+            await uploadQueueRef.current;
+            const sessionId = uploadSessionIdRef.current;
+            if (sessionId && !liveUploadFailedRef.current) {
+              const completed = await completeRecordingUpload(sessionId).catch(() => null);
+              if (completed?.success) {
+                onUploadedRef.current(completed.data.entry, vaultIdRef.current, targetStoreIdRef.current || storeId);
+                onClose();
+                return;
+              }
+              liveUploadFailedRef.current = true;
+              setLiveProtection('local');
+            }
             const baseMime = (rec.mimeType || mimeRef.current).split(';')[0] || 'audio/webm';
             const blob = new Blob(chunksRef.current, { type: baseMime });
-            const file = new File([blob], buildFileName(recordingExtension(baseMime)), { type: baseMime });
+            const file = new File([blob], fileNameRef.current || buildFileName(recordingExtension(baseMime)), { type: baseMime });
+            if (sessionId) void cancelRecordingUpload(sessionId);
             onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
             void vaultDeleteSession(vaultIdRef.current);
+            await uploadQueueRef.current;
+            const sessionId = uploadSessionIdRef.current;
+            if (sessionId) void cancelRecordingUpload(sessionId);
           }
           // abandon（录音中被卸载）：保留保险箱，下次进页提示恢复
           if (finishModeRef.current !== 'abandon') onClose();
@@ -285,7 +399,8 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
       <span className="shrink-0 text-[12px] font-semibold text-token-secondary">保存到</span>
       <select
         value={targetStoreId}
-        onChange={(event) => setTargetStoreId(event.target.value)}
+        onChange={(event) => { void changeDestination(event.target.value); }}
+        disabled={state === 'finalizing' || changingDestination}
         className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] text-token-primary outline-none"
         style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
         {storeOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
@@ -314,6 +429,8 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
       <div className="flex items-center gap-2 text-[12px] font-semibold">
         {state === 'requesting' ? (
           <><MapSpinner size={12} /><span className="text-token-muted">正在请求麦克风权限…</span></>
+        ) : state === 'finalizing' ? (
+          <><MapSpinner size={12} /><span className="text-token-muted">正在完成保存…</span></>
         ) : state === 'paused' ? (
           <span className="text-token-muted">已暂停</span>
         ) : (
@@ -335,6 +452,28 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
       <p className="text-[40px] font-semibold tabular-nums leading-none text-token-primary">
         {formatElapsed(elapsed)}
       </p>
+
+      <div
+        className="flex min-h-11 w-full items-center justify-between rounded-[12px] px-3 text-left"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+        <span>
+          <span className="block text-[12px] font-semibold text-token-primary">
+            {liveProtection === 'active' ? '录音正在实时保护' : liveProtection === 'local' ? '录音已保存在本机' : '正在建立实时保护'}
+          </span>
+          <span className="mt-0.5 block text-[11px] text-token-muted">
+            {liveProtection === 'active'
+              ? '录音分片已持续传到服务端，手机中断时可减少丢失'
+              : liveProtection === 'local'
+                ? '网络恢复后仍可用本机保险箱整段上传'
+                : '录音已同步写入本机保险箱'}
+          </span>
+        </span>
+        {protectedBytes > 0 && (
+          <span className="shrink-0 pl-3 text-[11px] tabular-nums text-token-muted">
+            {(protectedBytes / 1024).toFixed(0)} KB
+          </span>
+        )}
+      </div>
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
       <div
@@ -365,7 +504,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
       <div className="flex items-center gap-3">
         <button
           onClick={togglePause}
-          disabled={state === 'requesting'}
+          disabled={state === 'requesting' || state === 'finalizing'}
           aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
           className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
           style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
@@ -373,7 +512,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
         </button>
         <button
           onClick={requestComplete}
-          disabled={state === 'requesting'}
+          disabled={state === 'requesting' || state === 'finalizing'}
           aria-label="结束录音并转成文字"
           className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
           style={{
@@ -385,7 +524,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onPi
         </button>
         <span className="w-12" />
       </div>
-      <p className="text-[11px] text-token-muted">结束后先生成可编辑原文，是否整理由你决定</p>
+      <p className="text-[11px] text-token-muted">
+        {state === 'finalizing' ? '正在核对已上传分片，完成后开始生成原文' : '结束后先生成可编辑原文，是否整理由你决定'}
+      </p>
     </div>
   );
 
