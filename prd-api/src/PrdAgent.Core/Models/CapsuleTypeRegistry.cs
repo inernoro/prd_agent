@@ -1183,7 +1183,7 @@ public static class CapsuleTypeRegistry
                 new() { Value = "codex-sdk", Label = "Codex SDK" },
                 new() { Value = "fake", Label = "Fake Runtime（仅用于链路自测）" },
             }},
-            new() { Key = "model", Label = "模型", FieldType = "text", Required = false, Placeholder = "claude-sonnet-4-5 / gpt-5.2 / 自定义模型名" },
+            new() { Key = "model", Label = "模型", FieldType = "text", Required = false, Placeholder = "claude-sonnet-4-5 / gpt-5.6-sol / 自定义模型名" },
             new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "readonly-auto", Options = new()
             {
                 new() { Value = "readonly-auto", Label = "只读自动允许" },
