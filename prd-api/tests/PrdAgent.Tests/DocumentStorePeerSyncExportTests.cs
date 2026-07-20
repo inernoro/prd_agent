@@ -1,5 +1,7 @@
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Sync.Resources;
+using System.Security.Cryptography;
+using System.Text;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -71,4 +73,41 @@ public class DocumentStorePeerSyncExportTests
         Assert.False(payload.TransferableFile);
         Assert.Equal(string.Empty, payload.Content);
     }
+
+    [Fact]
+    public void MissingParsedPrdFallsBackToVersionOnlyWhenContentHashMatchesDocumentId()
+    {
+        const string content = "# 完整正文\n\n来自不可变版本快照";
+        var documentId = Sha256(content);
+        var version = new DocumentEntryVersion
+        {
+            EntryId = "entry-1",
+            Content = content,
+            ContentHash = documentId,
+            VersionNumber = 3,
+        };
+
+        var resolved = DocumentStoreSyncResource.ResolveVerifiedVersionContent(documentId, version);
+
+        Assert.Equal(content, resolved);
+    }
+
+    [Fact]
+    public void CorruptedVersionCannotReplaceMissingParsedPrd()
+    {
+        var version = new DocumentEntryVersion
+        {
+            EntryId = "entry-1",
+            Content = "被篡改的正文",
+            ContentHash = Sha256("原正文"),
+            VersionNumber = 3,
+        };
+
+        var resolved = DocumentStoreSyncResource.ResolveVerifiedVersionContent(version.ContentHash, version);
+
+        Assert.Null(resolved);
+    }
+
+    private static string Sha256(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }

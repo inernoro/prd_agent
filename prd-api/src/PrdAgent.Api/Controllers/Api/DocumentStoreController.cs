@@ -1409,23 +1409,7 @@ public class DocumentStoreController : ControllerBase
         var updated = 0;
         foreach (var entry in entries)
         {
-            string? text = null;
-
-            // 优先从 ParsedPrd 获取
-            if (!string.IsNullOrEmpty(entry.DocumentId))
-            {
-                var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-                if (doc != null) text = doc.RawContent;
-            }
-
-            // 兜底从 Attachment.ExtractedText 获取
-            if (string.IsNullOrEmpty(text) && !string.IsNullOrEmpty(entry.AttachmentId))
-            {
-                var att = await _db.Attachments
-                    .Find(a => a.AttachmentId == entry.AttachmentId)
-                    .FirstOrDefaultAsync();
-                if (att != null) text = att.ExtractedText;
-            }
+            var (_, text) = await ResolveEntryTextAsync(entry);
 
             if (!string.IsNullOrEmpty(text))
             {
@@ -1794,51 +1778,7 @@ public class DocumentStoreController : ControllerBase
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 优先从 ParsedPrd 读取完整内容
-        string? content = null;
-        string? title = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null)
-            {
-                content = doc.RawContent;
-                title = doc.Title;
-            }
-        }
-
-        // 兜底：从 Attachment.ExtractedText 读取
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments
-                .Find(a => a.AttachmentId == entry.AttachmentId)
-                .FirstOrDefaultAsync();
-            if (att != null)
-            {
-                content = att.ExtractedText;
-                title = att.FileName;
-            }
-        }
-
-        // 文件下载 URL
-        string? fileUrl = null;
-        if (!string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments
-                .Find(a => a.AttachmentId == entry.AttachmentId)
-                .FirstOrDefaultAsync();
-            fileUrl = att?.Url;
-        }
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            entryId = entry.Id,
-            title = title ?? entry.Title,
-            content,
-            contentType = entry.ContentType,
-            fileUrl,
-            hasContent = !string.IsNullOrEmpty(content),
-        }));
+        return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
     }
 
     /// <summary>把知识库条目一键生成海报/教程/文案 HTML，并发布到网页托管。</summary>
@@ -2885,26 +2825,7 @@ public class DocumentStoreController : ControllerBase
     /// <summary>读取条目的 Markdown 正文（同 GetEntryContent 口径：ParsedPrd 优先，Attachment.ExtractedText 兜底）</summary>
     private async Task<(string title, string? content)> LoadEntryMarkdownAsync(DocumentEntry entry)
     {
-        string? content = null;
-        string? title = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null)
-            {
-                content = doc.RawContent;
-                title = doc.Title;
-            }
-        }
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            if (att != null)
-            {
-                content = att.ExtractedText;
-                title ??= att.FileName;
-            }
-        }
+        var (title, content) = await ResolveEntryTextAsync(entry);
         return (title ?? entry.Title, content);
     }
 
@@ -4749,6 +4670,16 @@ public class DocumentStoreController : ControllerBase
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
             if (doc != null) { content = doc.RawContent; title = doc.Title; }
+            else
+            {
+                var version = await _db.DocumentEntryVersions
+                    .Find(v => v.EntryId == entry.Id && v.ContentHash == entry.DocumentId)
+                    .SortByDescending(v => v.VersionNumber)
+                    .FirstOrDefaultAsync();
+                if (version != null
+                    && string.Equals(ComputeSha256(version.Content), entry.DocumentId, StringComparison.OrdinalIgnoreCase))
+                    content = version.Content;
+            }
         }
         if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrEmpty(entry.AttachmentId))
         {
@@ -4760,18 +4691,7 @@ public class DocumentStoreController : ControllerBase
 
     private async Task<object> BuildEntryContentPayloadAsync(DocumentEntry entry)
     {
-        string? content = null;
-        string? title = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null) { content = doc.RawContent; title = doc.Title; }
-        }
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
-        }
+        var (title, content) = await ResolveEntryTextAsync(entry);
 
         string? fileUrl = null;
         if (!string.IsNullOrEmpty(entry.AttachmentId))
@@ -4783,7 +4703,7 @@ public class DocumentStoreController : ControllerBase
         return new
         {
             entryId = entry.Id,
-            title = title ?? entry.Title,
+            title,
             content,
             contentType = entry.ContentType,
             fileUrl,

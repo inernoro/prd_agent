@@ -125,7 +125,6 @@ public sealed class DocumentStorePublisherController : ControllerBase
             snapshotSha256,
             applyAllowed = duplicateSourceIds.Count == 0
                            && malformedNodeIds.Count == 0
-                           && missingContentNodeIds.Count == 0
                            && repairRequiredNodeIds.Count == 0,
             conflicts = new { duplicateSourceIds, malformedNodeIds, missingContentNodeIds, repairRequiredNodeIds },
             nodes,
@@ -148,13 +147,6 @@ public sealed class DocumentStorePublisherController : ControllerBase
         var all = await _db.DocumentEntries.Find(entry => entry.StoreId == storeId).ToListAsync(ct);
         if (DocumentStorePublisherPolicy.HasIdentityConflicts(all, request.Publisher))
             return ConflictResult("受管节点存在重复 sourceId 或缺失合法 sourceId；请先修复快照冲突再发布");
-        foreach (var managedDocument in all.Where(entry => !entry.IsFolder
-                                                            && entry.Metadata.TryGetValue(DocumentStorePublisherPolicy.PublisherKey, out var marker)
-                                                            && string.Equals(marker, request.Publisher, StringComparison.Ordinal)))
-        {
-            if (await ReadContentAsync(managedDocument) == null)
-                return ConflictResult("受管文档存在缺失正文；请先恢复正文再发布");
-        }
         var unrelatedRepairRequired = all.Any(entry => entry.Metadata.TryGetValue(DocumentStorePublisherPolicy.PublisherKey, out var marker)
                                                        && string.Equals(marker, request.Publisher, StringComparison.Ordinal)
                                                        && entry.Metadata.TryGetValue(DocumentStorePublisherPolicy.SourceIdKey, out var managedSourceId)
@@ -200,13 +192,24 @@ public sealed class DocumentStorePublisherController : ControllerBase
             return ConflictResult("远端节点已变化，expectedUpdatedAt 不匹配；请重新生成 plan");
 
         var currentContent = existing.IsFolder ? string.Empty : await ReadContentAsync(existing);
-        if (currentContent == null)
-            return ConflictResult("文档正文缺失，无法安全比较或覆盖；请先恢复正文");
-        var currentSha256 = DocumentStorePublisherPolicy.Sha256(currentContent);
         existing.Metadata.TryGetValue(DocumentStorePublisherPolicy.LastAppliedSha256Key, out var recordedLastApplied);
         if (!string.IsNullOrWhiteSpace(request.LastAppliedSha256)
             && !string.Equals(recordedLastApplied, request.LastAppliedSha256, StringComparison.OrdinalIgnoreCase))
             return ConflictResult("plan 中的 lastAppliedSha256 与远端 marker 不一致；请重新生成 plan");
+
+        // 正文实体缺失时允许发布器用仓库原文自愈，但必须由受管 metadata 的两份哈希同时证明
+        // 目标正文就是最后一次成功发布的版本。这样不会把未知人工内容当成可覆盖对象。
+        if (currentContent == null)
+        {
+            existing.Metadata.TryGetValue(DocumentStorePublisherPolicy.SourceSha256Key, out var recordedSourceSha256);
+            if (!string.Equals(recordedSourceSha256, targetSha256, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(recordedLastApplied, targetSha256, StringComparison.OrdinalIgnoreCase))
+                return ConflictResult("文档正文缺失，且发布 marker 无法证明目标版本；拒绝自动覆盖");
+            var repairMetadata = BuildMetadata(existing.Metadata, request, sourceId, targetSha256, kind);
+            return await UpdateDocumentAsync(existing, store, request, parentId, repairMetadata, targetContent, targetSha256);
+        }
+
+        var currentSha256 = DocumentStorePublisherPolicy.Sha256(currentContent);
 
         var decision = DocumentStorePublisherPolicy.Decide(true, currentSha256, recordedLastApplied, targetSha256);
         if (decision == PublisherContentDecision.Conflict)

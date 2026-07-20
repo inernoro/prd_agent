@@ -127,7 +127,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             string? content = null;
             if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
-                content = (await _documentService.GetByIdAsync(e.DocumentId))?.RawContent;
+                content = await ReadDocumentOrVerifiedVersionAsync(e, ct);
 
             // 该条目的附件（若有）与导出形态由同一处解析，避免双形态条目在 ParsedPrd 缺失时
             // 被误当成二进制，或因未加载附件而丢失 ExtractedText。
@@ -246,6 +246,32 @@ public class DocumentStoreSyncResource : ISyncableResource
         return (content, transferableFile);
     }
 
+    private async Task<string?> ReadDocumentOrVerifiedVersionAsync(DocumentEntry entry, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(entry.DocumentId)) return null;
+
+        var documentContent = (await _documentService.GetByIdAsync(entry.DocumentId))?.RawContent;
+        if (documentContent != null) return documentContent;
+
+        // ParsedPrd 是正文主表，但历史清理竞态可能留下悬空 DocumentId。版本快照保存完整正文，
+        // 只允许回退到「EntryId、记录哈希、正文实算哈希都与 DocumentId 完全一致」的版本，
+        // 禁止拿截断到 2000 字的 ContentIndex 冒充全文。
+        var version = await _db.DocumentEntryVersions
+            .Find(v => v.EntryId == entry.Id && v.ContentHash == entry.DocumentId)
+            .SortByDescending(v => v.VersionNumber)
+            .FirstOrDefaultAsync(ct);
+        return ResolveVerifiedVersionContent(entry.DocumentId, version);
+    }
+
+    internal static string? ResolveVerifiedVersionContent(string documentId, DocumentEntryVersion? version)
+    {
+        if (version == null
+            || !string.Equals(version.ContentHash, documentId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(Sha256Hex(version.Content), documentId, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return version.Content;
+    }
+
     public async Task<string?> ComputeSignatureAsync(string itemId, CancellationToken ct)
     {
         var store = await _db.DocumentStores.Find(s => s.Id == itemId).FirstOrDefaultAsync(ct);
@@ -277,7 +303,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             string contentHash = string.Empty;
             string? documentContent = null;
             if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
-                documentContent = (await _documentService.GetByIdAsync(e.DocumentId))?.RawContent;
+                documentContent = await ReadDocumentOrVerifiedVersionAsync(e, ct);
 
             Attachment? attachment = null;
             if (!e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId))

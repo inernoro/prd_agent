@@ -148,6 +148,35 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         (await fixture.ReadDocumentContentAsync(afterNoop.DocumentId!)).ShouldBe(content + "\n\n人工修订");
     }
 
+    [Fact]
+    public async Task PublisherDocumentFlow_MissingDocumentIsRepairedWhenBothMarkersMatchSource()
+    {
+        await using var fixture = await PublisherMongoFixture.CreateAsync();
+        var store = await fixture.InsertStoreAsync("owner-a");
+        var controller = fixture.CreateController("owner-a");
+        const string content = "# 第 0 章\n\n可由受控发布源无损恢复的正文";
+
+        (await controller.PutNode(
+                store.Id,
+                "chapter-00",
+                DocumentRequest("run-a", "第 0 章：这本书怎么用", content),
+                CancellationToken.None))
+            .ShouldBeOfType<OkObjectResult>();
+        var created = await fixture.Db.DocumentEntries.Find(entry => entry.StoreId == store.Id).SingleAsync();
+        await fixture.DeleteDocumentAsync(created.DocumentId!);
+
+        var snapshot = await controller.Snapshot(store.Id, "publisher-a", CancellationToken.None);
+        snapshot.ShouldBeOfType<OkObjectResult>();
+
+        var repair = DocumentRequest("run-b", "第 0 章：这本书怎么用", content);
+        repair.ExpectedUpdatedAt = created.UpdatedAt;
+        repair.LastAppliedSha256 = DocumentStorePublisherPolicy.Sha256(content);
+        (await controller.PutNode(store.Id, "chapter-00", repair, CancellationToken.None))
+            .ShouldBeOfType<OkObjectResult>();
+
+        (await fixture.ReadDocumentContentAsync(created.DocumentId!)).ShouldBe(content);
+    }
+
     private static readonly string EmptySha = DocumentStorePublisherPolicy.Sha256(string.Empty);
 
     private static PublisherPutNodeRequest Request(string runId, string title)
@@ -270,6 +299,9 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         public async Task<string?> ReadDocumentContentAsync(string documentId)
             => (await _documents.GetByIdAsync(documentId))?.RawContent;
 
+        public Task DeleteDocumentAsync(string documentId)
+            => _documents.DeleteAsync(documentId);
+
         public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
     }
 
@@ -306,6 +338,12 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         }
 
         public int EstimateTokens(string content) => content.Length / 4;
+
+        public Task DeleteAsync(string documentId)
+        {
+            _documents.Remove(documentId);
+            return Task.CompletedTask;
+        }
 
         public async Task ReplaceContentAsync(string documentId, string content)
         {

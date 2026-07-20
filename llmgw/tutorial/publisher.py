@@ -390,7 +390,13 @@ def build_plan(source: TutorialSource, snapshot: dict[str, Any]) -> list[PlanIte
         current = remote.get("contentSha256")
         metadata = remote.get("metadata") if isinstance(remote.get("metadata"), dict) else {}
         last_applied = metadata.get("lastAppliedSha256")
-        if current != node.source_sha256 and current != last_applied:
+        source_marker = metadata.get("sourceSha256")
+        if current is None and node.kind == "document":
+            if last_applied == node.source_sha256 and source_marker == node.source_sha256:
+                plan.append(PlanItem(node, "update", remote.get("updatedAt"), last_applied, "正文实体缺失，按发布 marker 自愈"))
+            else:
+                plan.append(PlanItem(node, "conflict", remote.get("updatedAt"), last_applied, "正文实体缺失且发布 marker 不匹配"))
+        elif current != node.source_sha256 and current != last_applied:
             plan.append(PlanItem(node, "conflict", remote.get("updatedAt"), last_applied, "远端正文被人工修改"))
         elif current == node.source_sha256:
             plan.append(PlanItem(node, "verify-noop", remote.get("updatedAt"), last_applied, "正文一致，由服务端核对标题和元数据"))

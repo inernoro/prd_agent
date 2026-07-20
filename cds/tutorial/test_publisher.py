@@ -39,6 +39,28 @@ class CdsTutorialPublisherTests(unittest.TestCase):
         self.assertEqual(len(self.source.nodes), len(plan))
         self.assertTrue(all(item.action == "create" for item in plan))
 
+    def test_missing_remote_content_with_matching_markers_is_planned_as_repair(self):
+        node = next(node for node in self.source.nodes if node.source_id == "book-index")
+        plan = publisher.core.build_plan(self.source, {
+            "applyAllowed": True,
+            "conflicts": {"missingContentNodeIds": ["node-book-index"]},
+            "nodes": [{
+                "id": "node-book-index",
+                "isFolder": False,
+                "managed": True,
+                "sourceId": node.source_id,
+                "updatedAt": "2026-07-20T00:00:00Z",
+                "contentSha256": None,
+                "metadata": {
+                    "sourceSha256": node.source_sha256,
+                    "lastAppliedSha256": node.source_sha256,
+                },
+            }],
+        })
+        item = next(item for item in plan if item.node.source_id == node.source_id)
+        self.assertEqual("update", item.action)
+        self.assertIn("自愈", item.reason)
+
     def test_request_body_uses_cds_category(self):
         node = next(node for node in self.source.nodes if node.source_id == "book-index")
         item = publisher.core.PlanItem(node, "create", None, None, "远端不存在")
