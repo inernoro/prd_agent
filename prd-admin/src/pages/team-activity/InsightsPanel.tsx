@@ -785,7 +785,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   </span>
                   <div className="flex-1 min-w-0 flex flex-col gap-1.5">
                     <div className="flex items-center gap-2.5 flex-wrap">
-                      <span className="text-[11px] font-semibold" style={{ color: meta.accent }}>
+                      <span className="text-[11px] font-semibold" style={{ color: meta.text }}>
                         {item.kindLabel}
                       </span>
                       <span className="text-[13px] text-token-primary font-mono break-all">{item.target}</span>

@@ -25,6 +25,7 @@ import {
   type LauncherGroup,
 } from '@/lib/launcherCatalog';
 import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
+import { Surface } from '@/components/design/Surface';
 
 interface Section {
   key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility' | 'infra' | 'menu';
@@ -135,28 +136,19 @@ function LauncherCard({
       title={item.description}
     >
       <div
-        className="relative w-full rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 transition-all duration-200 cursor-pointer"
+        className="surface-option relative w-full rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 cursor-pointer"
+        data-active={isActive}
         style={{
           minHeight: 96,
-          background: isActive
-            ? `linear-gradient(135deg, ${accent}22 0%, rgba(255,255,255,0.03) 100%)`
-            : 'rgba(255, 255, 255, 0.025)',
-          border: `1px solid ${isActive ? `${accent}55` : 'rgba(255,255,255,0.06)'}`,
-          boxShadow: isActive
-            ? `0 0 0 1px ${accent}40 inset, 0 6px 20px -8px ${accent}55`
-            : '0 1px 4px rgba(0,0,0,0.2)',
-          transform: isActive ? 'translateY(-1px)' : 'translateY(0)',
-        }}
+          border: '1px solid var(--border-faint)',
+          boxShadow: 'var(--shadow-card-sm)',
+          '--item-accent': accent,
+        } as React.CSSProperties}
       >
         {/* 顶部：图标 + 徽标 */}
         <div className="flex items-center justify-between w-full">
           <div
-            className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
-            style={{
-              background: isActive ? `${accent}20` : 'rgba(255,255,255,0.04)',
-              color: isActive ? accent : 'rgba(255,255,255,0.75)',
-              border: `1px solid ${isActive ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
-            }}
+            className="agent-switcher-card-icon shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
           >
             {getIcon(item.icon, 15)}
           </div>
@@ -164,7 +156,7 @@ function LauncherCard({
             {item.wip && (
               <span
                 className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
-                style={{ background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c' }}
+                style={{ background: 'var(--status-going-soft)', color: 'var(--semantic-warning-text)' }}
               >
                 WIP
               </span>
@@ -172,7 +164,7 @@ function LauncherCard({
             {badge && (
               <span
                 className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
-                style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }}
+                style={{ background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }}
               >
                 {badge}
               </span>
@@ -183,7 +175,7 @@ function LauncherCard({
         {/* 名称（长名也换行显示，不截断） */}
         <div
           className="text-[12.5px] font-semibold leading-tight w-full break-words"
-          style={{ color: isActive ? '#fff' : 'rgba(255,255,255,0.92)' }}
+          style={{ color: 'var(--text-primary)' }}
         >
           {item.name}
         </div>
@@ -191,9 +183,7 @@ function LauncherCard({
         {/* 描述（自然换行、不截断；卡片高度随内容增长） */}
         <div
           className="text-[10.5px] leading-snug w-full break-words"
-          style={{
-            color: isActive ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.44)',
-          }}
+          style={{ color: 'var(--text-muted)' }}
         >
           {item.description}
         </div>
@@ -207,9 +197,9 @@ function LauncherCard({
           className="absolute top-1.5 right-1.5 w-5 h-5 rounded-[5px] flex items-center justify-center transition-opacity cursor-pointer"
           style={{
             opacity: isPinned ? 1 : isActive ? 0.85 : 0,
-            background: isPinned ? `${accent}30` : 'rgba(255,255,255,0.05)',
-            color: isPinned ? accent : 'rgba(255,255,255,0.6)',
-            border: `1px solid ${isPinned ? `${accent}60` : 'rgba(255,255,255,0.08)'}`,
+            background: isPinned ? 'var(--selection-icon-bg)' : 'var(--nested-block-bg)',
+            color: isPinned ? 'var(--selection-text)' : 'var(--text-muted)',
+            border: `1px solid ${isPinned ? 'var(--selection-border)' : 'var(--nested-block-border)'}`,
           }}
           title={isPinned ? '取消置顶' : '置顶到前台'}
           aria-label={isPinned ? '取消置顶' : '置顶'}
@@ -469,23 +459,13 @@ export function AgentSwitcher() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-start justify-center"
+      className="surface-backdrop fixed inset-0 z-[200] flex items-start justify-center"
       onClick={handleBackdrop}
       style={{
         animation: 'switcherBgIn 0.18s ease-out both',
         paddingTop: '8vh',
       }}
     >
-      {/* 背景 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: 'rgba(8, 9, 15, 0.72)',
-          backdropFilter: 'blur(14px)',
-          WebkitBackdropFilter: 'blur(14px)',
-        }}
-      />
-
       {/* 面板 */}
       <div
         className="relative w-[92vw] max-w-[1080px]"
@@ -498,31 +478,22 @@ export function AgentSwitcher() {
         aria-modal="true"
         aria-label="命令面板"
       >
-        <div
+        <Surface
+          variant="raised"
           className="h-full flex flex-col rounded-[20px] overflow-hidden"
-          style={{
-            background: 'linear-gradient(180deg, rgba(22, 23, 32, 0.96) 0%, rgba(16, 17, 25, 0.96) 100%)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            boxShadow:
-              '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.02) inset',
-          }}
         >
           {/* 搜索栏 */}
           <div
             className="shrink-0 flex items-center gap-3 px-5 h-[60px]"
-            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ borderBottom: '1px solid var(--border-faint)' }}
           >
             {/* 内嵌搜索容器：focus-within 时展示圆角矩形 ring —
                  全局 :focus-visible 的矩形 outline 会在纯 input 上表现为直角，
                  用 no-focus-ring 压掉后由本容器承担视觉反馈。 */}
             <label
-              className="flex-1 flex items-center gap-2 h-10 px-3 rounded-xl transition-colors cursor-text agent-switcher-search"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-              }}
+              className="surface-inset flex-1 flex items-center gap-2 h-10 px-3 rounded-xl transition-colors cursor-text agent-switcher-search"
             >
-              <Search size={16} style={{ color: 'rgba(255,255,255,0.4)' }} />
+              <Search size={16} style={{ color: 'var(--text-muted)' }} />
               <input
                 ref={inputRef}
                 value={searchQuery}
@@ -540,7 +511,7 @@ export function AgentSwitcher() {
                 }}
                 placeholder="搜索 Agent、工具或页面..."
                 className="flex-1 bg-transparent outline-none text-[15px] no-focus-ring"
-                style={{ color: '#fff' }}
+                style={{ color: 'var(--text-primary)' }}
               />
               {searchQuery && (
                 <button
@@ -550,7 +521,7 @@ export function AgentSwitcher() {
                     setSearchQuery('');
                   }}
                   className="w-5 h-5 rounded-md flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}
+                  style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                   aria-label="清空搜索"
                 >
                   <X size={11} />
@@ -558,12 +529,7 @@ export function AgentSwitcher() {
               )}
             </label>
             <div
-              className="text-[11px] px-2 py-1 rounded"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                color: 'rgba(255,255,255,0.4)',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}
+              className="surface-kbd text-[11px] px-2 py-1 rounded"
             >
               Esc 关闭
             </div>
@@ -577,11 +543,11 @@ export function AgentSwitcher() {
             {sections.length === 0 ? (
               <div
                 className="h-full flex flex-col items-center justify-center gap-2"
-                style={{ color: 'rgba(255,255,255,0.4)' }}
+                style={{ color: 'var(--text-muted)' }}
               >
                 <Search size={24} style={{ opacity: 0.4 }} />
                 <div className="text-[13px]">没有匹配的条目</div>
-                <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   试试其他关键词，或按 Esc 关闭
                 </div>
               </div>
@@ -590,21 +556,21 @@ export function AgentSwitcher() {
                 {sections.map((section) => (
                   <div key={section.key}>
                     <div className="flex items-center gap-2 mb-2.5">
-                      <span style={{ color: 'rgba(255,255,255,0.45)' }}>{section.icon}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{section.icon}</span>
                       <span
                         className="text-[11px] font-bold uppercase tracking-wider"
-                        style={{ color: 'rgba(255,255,255,0.55)' }}
+                        style={{ color: 'var(--text-secondary)' }}
                       >
                         {section.title}
                       </span>
                       {section.subtitle && (
-                        <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.28)' }}>
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                           · {section.subtitle}
                         </span>
                       )}
                       <span
                         className="ml-auto text-[10px]"
-                        style={{ color: 'rgba(255,255,255,0.3)' }}
+                        style={{ color: 'var(--text-muted)' }}
                       >
                         {section.items.length}
                       </span>
@@ -654,16 +620,16 @@ export function AgentSwitcher() {
           <div
             className="shrink-0 flex items-center justify-between px-5 h-[38px] text-[11px]"
             style={{
-              borderTop: '1px solid rgba(255,255,255,0.06)',
-              color: 'rgba(255,255,255,0.4)',
-              background: 'rgba(255,255,255,0.015)',
+              borderTop: '1px solid var(--border-faint)',
+              color: 'var(--text-muted)',
+              background: 'var(--bg-secondary)',
             }}
           >
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1.5">
                 <kbd
                   className="px-1.5 py-0.5 rounded font-mono"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}
                 >
                   ↑↓←→
                 </kbd>
@@ -672,7 +638,7 @@ export function AgentSwitcher() {
               <span className="flex items-center gap-1.5">
                 <kbd
                   className="px-1.5 py-0.5 rounded font-mono"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}
                 >
                   Enter
                 </kbd>
@@ -683,11 +649,11 @@ export function AgentSwitcher() {
                 <span>点击星标置顶</span>
               </span>
             </div>
-            <div style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <div style={{ color: 'var(--text-muted)' }}>
               {flatList.length} 个入口 · 在「设置 → 我的空间」管理
             </div>
           </div>
-        </div>
+        </Surface>
       </div>
 
       <style>{`
@@ -706,9 +672,9 @@ export function AgentSwitcher() {
           }
         }
         .agent-switcher-search:focus-within {
-          background: rgba(255,255,255,0.06);
-          border-color: rgba(129,140,248,0.6);
-          box-shadow: 0 0 0 2px rgba(99,102,241,0.35);
+          background: var(--bg-input-hover);
+          border-color: var(--border-focus);
+          box-shadow: 0 0 0 2px var(--selection-bg);
         }
       `}</style>
     </div>,

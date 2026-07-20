@@ -199,7 +199,7 @@ function BehaviorChannel({
                 <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: meta.soft }}>
                   <KIcon size={11} style={{ color: meta.accent }} />
                 </span>
-                <span className="text-[11px] font-semibold shrink-0" style={{ color: meta.accent }}>{it.kindLabel}</span>
+                <span className="text-[11px] font-semibold shrink-0" style={{ color: meta.text }}>{it.kindLabel}</span>
                 <span className="text-[11px] text-token-muted font-mono truncate">{it.target}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">

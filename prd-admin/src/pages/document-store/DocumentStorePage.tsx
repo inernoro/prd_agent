@@ -311,7 +311,7 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
               title={o.hint}
               className={`shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors ${active ? '' : 'hover-bg-soft'}`}
               style={active
-                ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
+                ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
                 : { color: 'var(--text-muted)' }}
             >
               {o.label}

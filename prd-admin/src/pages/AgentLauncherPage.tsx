@@ -404,7 +404,7 @@ interface SectionHeaderProps {
   accent?: string;
 }
 
-function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--accent-gold)' }: SectionHeaderProps) {
+function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--section-label-text)' }: SectionHeaderProps) {
   return (
     <div className="mb-4 flex items-end justify-between gap-4">
       <div className="min-w-0">

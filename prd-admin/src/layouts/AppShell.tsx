@@ -84,7 +84,6 @@ import { NotificationSubscriptionsPanel } from '@/components/notifications/Notif
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
-import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
@@ -745,7 +744,6 @@ export default function AppShell() {
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
-      <CommandPalette />
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!suppressFloatingDock && !isMobile && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);

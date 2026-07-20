@@ -95,7 +95,7 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary,#fff)' }}>教程中心</span>
-          <span className="text-[11px] font-bold" style={{ color: tier.tassel }}>Lv.{level}</span>
+          <span className="text-[11px] font-bold" style={{ color: 'var(--text-secondary)' }}>Lv.{level}</span>
         </div>
         <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
           {levelName} · 经验 {xp}{total > 0 ? ` · ${learned}/${total} 套` : ''}

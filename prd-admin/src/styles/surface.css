@@ -226,10 +226,71 @@
   border-color: var(--selection-border);
 }
 
+.agent-switcher-card-icon {
+  color: var(--item-accent, var(--accent-primary));
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+.surface-option[data-active="true"] .agent-switcher-card-icon {
+  color: var(--selection-text);
+  background: var(--selection-icon-bg);
+  border-color: var(--selection-border);
+}
+
 .surface-kbd {
   color: var(--text-muted);
   background: var(--nested-block-bg);
   border: 1px solid var(--nested-block-border);
+}
+
+/* 共享按钮契约：明暗差异全部由 tokens.css 提供。 */
+.button-primary {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-fg);
+  box-shadow: var(--button-primary-shadow);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--button-primary-bg-hover);
+}
+
+.button-secondary {
+  background: var(--button-secondary-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--button-secondary-border);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--button-secondary-bg-hover);
+  border-color: var(--border-hover);
+}
+
+.button-danger {
+  background: var(--button-danger-bg);
+  color: var(--button-danger-fg);
+  border: 1px solid var(--button-danger-border);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--button-danger-bg-hover);
+}
+
+.button-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.button-ghost:hover:not(:disabled) {
+  background: var(--button-ghost-bg-hover);
+  color: var(--text-primary);
+}
+
+.button-primary:active:not(:disabled),
+.button-secondary:active:not(:disabled),
+.button-danger:active:not(:disabled),
+.button-ghost:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .viz-sticky-surface {

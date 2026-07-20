@@ -536,9 +536,9 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
               <span
                 className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                 style={{
-                  background: 'rgba(59,130,246,0.2)',
-                  color: '#93c5fd',
-                  border: '1px solid rgba(59,130,246,0.45)',
+                  background: 'var(--selection-icon-bg)',
+                  color: 'var(--selection-text)',
+                  border: '1px solid var(--selection-border)',
                 }}
                 title="定位：私人助理"
               >

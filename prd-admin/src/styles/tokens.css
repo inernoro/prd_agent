@@ -175,6 +175,21 @@
   --selection-border: rgba(129, 140, 248, 0.38);
   --selection-text: #c7d2fe;
 
+  /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
+  --button-primary-bg: #4f46e5;
+  --button-primary-bg-hover: #4338ca;
+  --button-primary-fg: #ffffff;
+  --button-primary-shadow: 0 4px 16px -4px rgba(79, 70, 229, 0.42);
+  --button-secondary-bg: rgba(255, 255, 255, 0.05);
+  --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
+  --button-secondary-border: rgba(255, 255, 255, 0.10);
+  --button-danger-bg: rgba(239, 68, 68, 0.10);
+  --button-danger-bg-hover: rgba(239, 68, 68, 0.15);
+  --button-danger-border: rgba(239, 68, 68, 0.25);
+  --button-danger-fg: #fca5a5;
+  --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
+  --section-label-text: #a5b4fc;
+
   /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
   --viz-sticky-bg: rgba(24, 24, 30, 0.90);
   --viz-grid: rgba(247, 247, 251, 0.10);
@@ -341,6 +356,20 @@
   --selection-icon-bg: rgba(99, 102, 241, 0.14);
   --selection-border: rgba(99, 102, 241, 0.34);
   --selection-text: #4338ca;
+
+  --button-primary-bg: #CC785C;
+  --button-primary-bg-hover: #B8684C;
+  --button-primary-fg: #241915;
+  --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
+  --button-secondary-bg: var(--bg-card);
+  --button-secondary-bg-hover: var(--bg-card-hover);
+  --button-secondary-border: var(--hairline);
+  --button-danger-bg: rgba(220, 38, 38, 0.06);
+  --button-danger-bg-hover: rgba(220, 38, 38, 0.10);
+  --button-danger-border: rgba(220, 38, 38, 0.30);
+  --button-danger-fg: #b91c1c;
+  --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
+  --section-label-text: #4338ca;
 
   --viz-sticky-bg: rgba(248, 245, 239, 0.92);
   --viz-grid: rgba(15, 23, 42, 0.12);
