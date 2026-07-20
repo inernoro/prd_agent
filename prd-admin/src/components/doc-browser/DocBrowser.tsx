@@ -4064,7 +4064,10 @@ export function DocBrowser({
 
       {/* 库内唯一「新增」入口：右下角竖排 FAB 菜单（有任一写回调才渲染；只读调用方自动无 FAB）。
           上传/导入类动作归入「上传与导入」分组，点分组展开子项、再点收起（2026-07-12 用户确认）。 */}
-      {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting) && (
+      {(onCreateDocument || onUploadAudio || onUploadFile || onOpenVideoParser || onCreateFolder || onImportFromHosting)
+        && !(isMobile && selectedEntryData
+          && (selectedEntryData.contentType ?? '').toLowerCase().startsWith('audio/')
+          && transcriptNoteMd) && (
         <CreatePaletteFab
           onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
