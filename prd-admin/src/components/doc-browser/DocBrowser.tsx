@@ -3868,6 +3868,9 @@ export function DocBrowser({
                     entry={selectedEntryData}
                     preview={preview}
                     transcriptNoteMd={transcriptNoteMd}
+                    onRestyleTranscribe={onRestyleTranscribe && selectedEntryData
+                      ? () => onRestyleTranscribe(selectedEntryData.id)
+                      : undefined}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">

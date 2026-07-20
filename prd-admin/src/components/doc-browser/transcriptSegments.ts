@@ -13,6 +13,13 @@ export type TranscriptSegment = {
   text: string;
 };
 
+export type SummaryModule = {
+  /** 稳定的展示标题；没有 Markdown 标题时按内容顺序生成。 */
+  title: string;
+  /** 保留模块内 Markdown，交互播放器可复用知识库正文渲染。 */
+  markdown: string;
+};
+
 const TS_LINE_RE = /^\*\*\[(\d{1,2}(?::\d{2}){1,2})\s*-\s*(\d{1,2}(?::\d{2}){1,2})\]\*\*\s*(.+)$/;
 
 function toSeconds(t: string): number {
@@ -77,4 +84,71 @@ export function activeSegmentIndex(segments: TranscriptSegment[], currentSec: nu
     else break;
   }
   return active;
+}
+
+/**
+ * 无时间戳转录的可用性兜底：按句子文字量把音频时长等比例分配。
+ * 这不是 ASR 对齐结果，调用方必须明确展示「智能估算」，禁止冒充精准时间戳。
+ */
+export function estimateTranscriptSegments(
+  segments: TranscriptSegment[],
+  durationSec: number,
+): TranscriptSegment[] {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
+  const source = segments.map(s => s.text.trim()).filter(Boolean).join('\n');
+  if (!source) return [];
+
+  const sentences = (source.match(/[^。！？!?；;\n]+[。！？!?；;]?/g) ?? [source])
+    .map(text => text.trim())
+    .filter(Boolean);
+  const weights = sentences.map(text => Math.max(1, Array.from(text).length));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let cursor = 0;
+  return sentences.map((text, index) => {
+    const start = cursor;
+    cursor = index === sentences.length - 1
+      ? durationSec
+      : cursor + durationSec * (weights[index] / totalWeight);
+    return { start, end: cursor, text };
+  });
+}
+
+/** 把整理结果拆成可随时间轴高亮的语义模块，不硬编码任何整理方式或标题映射。 */
+export function parseSummaryModules(md: string): SummaryModule[] {
+  if (!md.trim()) return [];
+  const blocks = md.trim().split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
+  const modules: SummaryModule[] = [];
+  let pendingTitle: string | null = null;
+
+  blocks.forEach((block) => {
+    const heading = /^(#{1,6})\s+(.+?)(?:\n([\s\S]*))?$/.exec(block);
+    if (heading) {
+      const body = heading[3]?.trim();
+      if (body) modules.push({ title: heading[2].trim(), markdown: body });
+      else pendingTitle = heading[2].trim();
+      return;
+    }
+    const fallbackTitle = block
+      .replace(/^[-*+]\s+/gm, '')
+      .replace(/^\d+[.)]\s+/gm, '')
+      .replace(/[*_`>#]/g, '')
+      .replace(/\[|\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    modules.push({
+      title: (pendingTitle ?? fallbackTitle.slice(0, 18)) || `第 ${modules.length + 1} 段`,
+      markdown: block,
+    });
+    pendingTitle = null;
+  });
+
+  if (pendingTitle) modules.push({ title: pendingTitle, markdown: '暂无内容' });
+  return modules;
+}
+
+/** 整理结果没有逐项时间戳时，按模块顺序映射到播放进度。 */
+export function activeSummaryModuleIndex(moduleCount: number, currentSec: number, durationSec: number): number {
+  if (moduleCount <= 1 || durationSec <= 0) return 0;
+  const ratio = Math.min(0.999999, Math.max(0, currentSec / durationSec));
+  return Math.floor(ratio * moduleCount);
 }

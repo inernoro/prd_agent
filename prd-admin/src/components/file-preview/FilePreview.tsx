@@ -27,11 +27,13 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscribe }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
+  /** 打开既有的「换个整理方式」流程；交互播放器不在前端伪造新摘要。 */
+  onRestyleTranscribe?: () => void;
 }) {
   if (!entry) {
     return (
@@ -93,7 +95,15 @@ export function FilePreview({ entry, preview, transcriptNoteMd }: {
       <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-2' : 'justify-center py-12'}`}>
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {transcriptNoteMd
-          ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} documentMode />
+          ? (
+            <TranscriptKaraoke
+              src={fileUrl}
+              noteMd={transcriptNoteMd}
+              documentMode
+              styleKey={entry.metadata?.transcribe_style_key}
+              onRestyle={onRestyleTranscribe}
+            />
+          )
           : <AudioWavePlayer src={fileUrl} />}
         {transcriptSummary && (
           <section

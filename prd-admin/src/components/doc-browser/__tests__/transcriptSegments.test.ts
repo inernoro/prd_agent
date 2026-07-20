@@ -4,6 +4,9 @@ import {
   hasUsableTimestamps,
   activeSegmentIndex,
   extractTranscriptSummary,
+  estimateTranscriptSegments,
+  parseSummaryModules,
+  activeSummaryModuleIndex,
 } from '../transcriptSegments';
 
 /**
@@ -102,5 +105,45 @@ describe('extractTranscriptSummary', () => {
 
   it('没有摘要小节时返回空字符串', () => {
     expect(extractTranscriptSummary('## 转录全文\n\n只有原文。')).toBe('');
+  });
+});
+
+describe('estimateTranscriptSegments', () => {
+  it('按句子文字量分配完整音频时长，并保持连续', () => {
+    const estimated = estimateTranscriptSegments(
+      [{ start: -1, end: -1, text: '短句。这里是一句更长的话。最后一句。' }],
+      30,
+    );
+    expect(estimated).toHaveLength(3);
+    expect(estimated[0].start).toBe(0);
+    expect(estimated[1].start).toBe(estimated[0].end);
+    expect(estimated[2].end).toBe(30);
+    expect(estimated[1].end - estimated[1].start).toBeGreaterThan(estimated[0].end);
+  });
+
+  it('时长未知时不生成伪时间轴', () => {
+    expect(estimateTranscriptSegments(parseTranscriptSegments(PLAIN_NOTE), 0)).toEqual([]);
+  });
+});
+
+describe('parseSummaryModules', () => {
+  it('按 Markdown 标题和自然段拆分，不绑定具体整理方式', () => {
+    const modules = parseSummaryModules('## 结论\n\n已确认上线。\n\n## 待办\n- [ ] 补测试');
+    expect(modules).toEqual([
+      { title: '结论', markdown: '已确认上线。' },
+      { title: '待办', markdown: '- [ ] 补测试' },
+    ]);
+  });
+
+  it('没有标题时仍可按自然段形成顺序模块', () => {
+    expect(parseSummaryModules('一段概述。\n\n- 要点一\n- 要点二')).toHaveLength(2);
+  });
+});
+
+describe('activeSummaryModuleIndex', () => {
+  it('按播放进度映射到对应模块并钳制边界', () => {
+    expect(activeSummaryModuleIndex(4, 0, 100)).toBe(0);
+    expect(activeSummaryModuleIndex(4, 51, 100)).toBe(2);
+    expect(activeSummaryModuleIndex(4, 100, 100)).toBe(3);
   });
 });

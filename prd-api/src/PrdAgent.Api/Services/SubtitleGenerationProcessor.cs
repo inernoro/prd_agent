@@ -235,10 +235,14 @@ public class SubtitleGenerationProcessor
             {
                 ["transcribe_entry_id"] = entry.Id,
                 ["generated_kind"] = "transcribe",
+                ["transcribe_style_key"] = TranscribeStyleRegistry.Find(run.TemplateKey)?.Key
+                    ?? TranscribeStyleRegistry.DefaultKey,
             })
             : Builders<DocumentEntry>.Update
                 .Set(e => e.Metadata["transcribe_entry_id"], entry.Id)
-                .Set(e => e.Metadata["generated_kind"], "transcribe");
+                .Set(e => e.Metadata["generated_kind"], "transcribe")
+                .Set(e => e.Metadata["transcribe_style_key"],
+                    TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey);
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
             metaUpdate,
@@ -301,6 +305,20 @@ public class SubtitleGenerationProcessor
             run.UserId,
             db,
             preserveFileIdentity: !string.IsNullOrEmpty(noteEntry.AttachmentId));
+
+        // 播放器页签必须展示这份摘要真实使用的后端整理方式，不能在前端猜测。
+        // 旧条目 Metadata 可能为 null，沿用转录写入时的兼容策略。
+        var styleKey = TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey;
+        var styleMetaUpdate = noteEntry.Metadata == null
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string>
+            {
+                ["transcribe_style_key"] = styleKey,
+            })
+            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], styleKey);
+        await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == noteEntry.Id,
+            styleMetaUpdate,
+            cancellationToken: CancellationToken.None);
 
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,

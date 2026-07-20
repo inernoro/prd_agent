@@ -19,6 +19,10 @@ interface AudioWavePlayerProps {
   src: string;
   /** 字幕 / 时间戳跟随高亮的回调（转录跟读滚轮使用） */
   onTimeUpdate?: (currentSec: number) => void;
+  /** 音频元数据就绪后的总时长；无逐句时间戳时用于明确标注的顺序估算。 */
+  onDurationChange?: (durationSec: number) => void;
+  /** 播放状态同步给交互式播放器，用于状态文案与无障碍反馈。 */
+  onPlaybackChange?: (playing: boolean) => void;
   /** 注册跳播函数：父组件拿到 seek(sec) 后可实现「点歌词跳播」；跳播后若暂停会自动继续播 */
   registerSeek?: (seek: (sec: number) => void) => void;
   className?: string;
@@ -56,11 +60,22 @@ function seededBars(src: string, n: number): number[] {
 
 const BAR_COUNT = 48;
 
-export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '' }: AudioWavePlayerProps) {
+export function AudioWavePlayer({
+  src,
+  onTimeUpdate,
+  onDurationChange,
+  onPlaybackChange,
+  registerSeek,
+  className = '',
+}: AudioWavePlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
   const onTimeUpdateRef = useRef(onTimeUpdate);
   useEffect(() => { onTimeUpdateRef.current = onTimeUpdate; }, [onTimeUpdate]);
+  const onDurationChangeRef = useRef(onDurationChange);
+  useEffect(() => { onDurationChangeRef.current = onDurationChange; }, [onDurationChange]);
+  const onPlaybackChangeRef = useRef(onPlaybackChange);
+  useEffect(() => { onPlaybackChangeRef.current = onPlaybackChange; }, [onPlaybackChange]);
   const registerSeekRef = useRef(registerSeek);
   useEffect(() => { registerSeekRef.current = registerSeek; }, [registerSeek]);
 
@@ -85,6 +100,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
     const syncDuration = () => {
       if (Number.isFinite(audio.duration) && audio.duration > 0) {
         setDuration(audio.duration);
+        onDurationChangeRef.current?.(audio.duration);
         if (probingDuration) {
           probingDuration = false;
           audio.currentTime = 0;
@@ -108,9 +124,18 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
       setCurrentTime(audio.currentTime);
       onTimeUpdateRef.current?.(audio.currentTime);
     };
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    const onEnded = () => setPlaying(false);
+    const onPlay = () => {
+      setPlaying(true);
+      onPlaybackChangeRef.current?.(true);
+    };
+    const onPause = () => {
+      setPlaying(false);
+      onPlaybackChangeRef.current?.(false);
+    };
+    const onEnded = () => {
+      setPlaying(false);
+      onPlaybackChangeRef.current?.(false);
+    };
     const onError = () => {
       console.warn('[AudioWavePlayer] audio 加载失败:', src);
       setError('当前浏览器无法播放这段录音');
@@ -212,7 +237,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
         <button
           onClick={togglePlay}
           disabled={!ready}
-          className="flex h-9 w-9 items-center justify-center rounded-full cursor-pointer transition-all disabled:cursor-not-allowed"
+          className="flex h-11 w-11 items-center justify-center rounded-full cursor-pointer transition-all motion-reduce:transition-none disabled:cursor-not-allowed"
           style={{
             background: ready
               ? 'linear-gradient(135deg, rgba(168,85,247,0.95), rgba(216,180,254,0.95))'
@@ -222,7 +247,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
           }}
           title={playing ? '暂停' : '播放'}
         >
-          {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" style={{ marginLeft: 1 }} />}
+          {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" style={{ marginLeft: 1 }} />}
         </button>
 
         <span className="text-[11px] font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
@@ -239,7 +264,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
         <button
           onClick={() => setRateIdx((i) => (i + 1) % PLAYBACK_RATES.length)}
           disabled={!ready}
-          className="text-[10px] px-2 py-1 rounded-[6px] cursor-pointer transition-all"
+          className="min-h-11 min-w-11 cursor-pointer rounded-[8px] px-2 py-1 text-[11px] transition-all motion-reduce:transition-none"
           style={{
             background: 'rgba(168,85,247,0.1)',
             color: 'rgba(216,180,254,0.95)',

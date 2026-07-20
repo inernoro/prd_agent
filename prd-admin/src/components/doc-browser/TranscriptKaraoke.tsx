@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioLines } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
+import { InteractiveTranscriptDialog } from '@/components/doc-browser/InteractiveTranscriptDialog';
 import {
   parseTranscriptSegments,
   hasUsableTimestamps,
@@ -19,16 +21,22 @@ export function TranscriptKaraoke({
   src,
   noteMd,
   documentMode = false,
+  styleKey,
+  onRestyle,
 }: {
   src: string;
   noteMd: string;
   /** 同一文档模式：原文随页面自然展开，不制造内层滚动，也不自动挪动页面位置。 */
   documentMode?: boolean;
+  /** 当前整理方式来自音频 entry metadata；旧数据为空时按后端默认方式展示。 */
+  styleKey?: string;
+  onRestyle?: () => void;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
   const [activeIdx, setActiveIdx] = useState(0);
+  const [interactiveOpen, setInteractiveOpen] = useState(false);
   const seekRef = useRef<((sec: number) => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -55,15 +63,36 @@ export function TranscriptKaraoke({
   return (
     <div className="flex w-full flex-col items-center gap-4">
       {documentMode && (
-        <div className="w-full max-w-[760px]">
-          <p className="mb-2 text-[12px] font-semibold text-token-muted">录音</p>
+        <div className="flex w-full max-w-[760px] flex-wrap items-center justify-between gap-2">
+          <p className="text-[12px] font-semibold text-token-muted">录音</p>
+          <div className="flex items-center gap-1 rounded-[11px] p-1" style={{ background: 'var(--bg-nested)' }}>
+            <span
+              className="flex min-h-11 items-center rounded-[8px] px-3 text-[11px] font-semibold text-token-primary"
+              style={{ background: 'var(--bg-elevated)' }}
+            >
+              普通播放
+            </span>
+            <button
+              onClick={() => setInteractiveOpen(true)}
+              className="flex min-h-11 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+            >
+              <AudioLines size={14} />
+              交互式播放
+              <span className="rounded-full px-1.5 py-0.5 text-[9px]" style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(147,197,253,0.95)' }}>
+                测试版
+              </span>
+            </button>
+          </div>
         </div>
       )}
-      <AudioWavePlayer
-        src={src}
-        onTimeUpdate={onTimeUpdate}
-        registerSeek={(seek) => { seekRef.current = seek; }}
-      />
+      {/* 打开交互式播放器时卸载普通播放器，保证同一时刻只有一个音频实例。 */}
+      {!interactiveOpen && (
+        <AudioWavePlayer
+          src={src}
+          onTimeUpdate={onTimeUpdate}
+          registerSeek={(seek) => { seekRef.current = seek; }}
+        />
+      )}
 
       {documentMode && (
         <div className="mt-2 w-full max-w-[760px]">
@@ -100,7 +129,7 @@ export function TranscriptKaraoke({
                 key={i}
                 ref={(el) => { lineRefs.current[i] = el; }}
                 onClick={() => { if (synced && s.start >= 0) seekRef.current?.(s.start); }}
-                className={`w-full rounded-[10px] px-3 py-1.5 leading-relaxed transition-all duration-300 ${documentMode ? 'text-left' : 'text-center'} ${synced ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`min-h-11 w-full rounded-[10px] px-3 py-1.5 leading-relaxed transition-all duration-300 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${synced ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
                   fontSize: active ? 15 : 13,
                   fontWeight: active ? 600 : 400,
@@ -123,8 +152,17 @@ export function TranscriptKaraoke({
 
       {!synced && (
         <p className="text-[11px] text-token-muted">
-          本次转录没有逐句时间戳（转写模型不支持对齐），以上为全文，无法跟随播放高亮
+          本次转录没有逐句时间戳；普通播放展示全文，交互式播放可使用明确标注的智能估算高亮
         </p>
+      )}
+      {interactiveOpen && (
+        <InteractiveTranscriptDialog
+          src={src}
+          noteMd={noteMd}
+          styleKey={styleKey}
+          onRestyle={onRestyle}
+          onClose={() => setInteractiveOpen(false)}
+        />
       )}
     </div>
   );
