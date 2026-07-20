@@ -50,6 +50,18 @@ export function parseTranscriptSegments(md: string): TranscriptSegment[] {
   return timed.length > 0 ? timed : plain;
 }
 
+/** 提取「摘要」与「转录全文」之间的整理结果，供音频原文页原地展示。 */
+export function extractTranscriptSummary(md: string): string {
+  if (!md) return '';
+  const summaryMarker = '## 摘要';
+  const transcriptMarker = '## 转录全文';
+  const summaryIdx = md.indexOf(summaryMarker);
+  if (summaryIdx < 0) return '';
+  const start = summaryIdx + summaryMarker.length;
+  const transcriptIdx = md.indexOf(transcriptMarker, start);
+  return md.slice(start, transcriptIdx >= 0 ? transcriptIdx : undefined).trim();
+}
+
 /** 是否具备可用于播放跟随的时间戳（至少两句、且时间在涨） */
 export function hasUsableTimestamps(segments: TranscriptSegment[]): boolean {
   const timed = segments.filter(s => s.start >= 0);

@@ -15,7 +15,16 @@ import {
  * chat-audio 转写路径无时间戳 → 退化为静态全文（不假装同步，见 no-rootless-tree）。
  * 用户手动滚动歌词区后，暂停自动跟随 3 秒再恢复（不跟用户抢滚动条）。
  */
-export function TranscriptKaraoke({ src, noteMd }: { src: string; noteMd: string }) {
+export function TranscriptKaraoke({
+  src,
+  noteMd,
+  documentMode = false,
+}: {
+  src: string;
+  noteMd: string;
+  /** 同一文档模式：原文随页面自然展开，不制造内层滚动，也不自动挪动页面位置。 */
+  documentMode?: boolean;
+}) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
@@ -34,10 +43,10 @@ export function TranscriptKaraoke({ src, noteMd }: { src: string; noteMd: string
 
   // 当前句滚到滚轮中心
   useEffect(() => {
-    if (!synced) return;
+    if (!synced || documentMode) return;
     if (Date.now() < manualUntilRef.current) return;
     lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeIdx, synced]);
+  }, [activeIdx, synced, documentMode]);
 
   const markManualScroll = () => { manualUntilRef.current = Date.now() + 3000; };
 
@@ -45,32 +54,44 @@ export function TranscriptKaraoke({ src, noteMd }: { src: string; noteMd: string
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
+      {documentMode && (
+        <div className="w-full max-w-[760px]">
+          <p className="mb-2 text-[12px] font-semibold text-token-muted">录音</p>
+        </div>
+      )}
       <AudioWavePlayer
         src={src}
         onTimeUpdate={onTimeUpdate}
         registerSeek={(seek) => { seekRef.current = seek; }}
       />
 
-      {/* 歌词滚轮：上下渐隐蒙版 + 当前句居中放大 */}
+      {documentMode && (
+        <div className="mt-2 w-full max-w-[760px]">
+          <p className="text-[12px] font-semibold text-token-muted">转录原文</p>
+        </div>
+      )}
+      {/* 歌词滚轮：普通模式为上下渐隐滚轮；同一文档模式随外层页面自然展开。 */}
       <div
         ref={listRef}
         onWheel={markManualScroll}
         onTouchMove={markManualScroll}
-        className="w-[480px] max-w-[92%] overflow-y-auto"
+        className={documentMode ? 'w-full max-w-[760px]' : 'w-[480px] max-w-[92%] overflow-y-auto'}
         style={{
-          height: synced ? 240 : 'auto',
-          maxHeight: synced ? 240 : 320,
-          overscrollBehavior: 'contain',
-          WebkitMaskImage: synced
+          height: !documentMode && synced ? 240 : 'auto',
+          maxHeight: documentMode ? undefined : synced ? 240 : 320,
+          overscrollBehavior: documentMode ? undefined : 'contain',
+          WebkitMaskImage: !documentMode && synced
             ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
             : undefined,
-          maskImage: synced
+          maskImage: !documentMode && synced
             ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
             : undefined,
         }}
       >
         {/* 首末句也能滚到中心：上下各留半屏 padding */}
-        <div className="flex flex-col items-center gap-1" style={synced ? { padding: '104px 8px' } : { padding: '4px 8px' }}>
+        <div
+          className="flex flex-col items-center gap-1"
+          style={!documentMode && synced ? { padding: '104px 8px' } : { padding: '4px 0' }}>
           {segments.map((s, i) => {
             const active = synced && i === activeIdx;
             const dist = Math.abs(i - activeIdx);
@@ -79,7 +100,7 @@ export function TranscriptKaraoke({ src, noteMd }: { src: string; noteMd: string
                 key={i}
                 ref={(el) => { lineRefs.current[i] = el; }}
                 onClick={() => { if (synced && s.start >= 0) seekRef.current?.(s.start); }}
-                className={`w-full rounded-[10px] px-3 py-1.5 text-center leading-relaxed transition-all duration-300 ${synced ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`w-full rounded-[10px] px-3 py-1.5 leading-relaxed transition-all duration-300 ${documentMode ? 'text-left' : 'text-center'} ${synced ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
                   fontSize: active ? 15 : 13,
                   fontWeight: active ? 600 : 400,

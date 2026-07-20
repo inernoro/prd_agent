@@ -663,12 +663,14 @@ let transcribeStylesCache: { key: string; label: string; description: string }[]
  * - 已转录 → 历史产物 chips（转录笔记 / 字幕，点击跳转打开）+「换个整理方式」。
  */
 function TranscribeHeroCard({
+  currentEntryId,
   noteEntryId,
   subtitleEntryId,
   onStart,
   onOpenNote,
   onRestyle,
 }: {
+  currentEntryId: string;
   noteEntryId?: string;
   subtitleEntryId?: string;
   /** 发起转录；styleKey 为空走默认智能摘要 */
@@ -677,6 +679,7 @@ function TranscribeHeroCard({
   /** 换个整理方式（免重跑转录，打开整理面板） */
   onRestyle?: () => void;
 }) {
+  const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
   const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>(transcribeStylesCache ?? []);
   useEffect(() => {
     // 只有能发起转录时才需要风格列表（分享只读视图不拉）
@@ -702,10 +705,10 @@ function TranscribeHeroCard({
           </div>
           <div className="min-w-0">
             <p className="text-[13px] font-semibold text-token-primary">
-              {noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
+              {inPlace ? '录音、原文与整理结果已保存在本页' : noteEntryId ? '转录笔记已生成' : '转录并生成摘要'}
             </p>
             <p className="truncate text-[11px] text-token-muted">
-              {noteEntryId ? '点下方产物直达；也可以换个方式重新整理' : 'AI 将转录这段音频并按所选方式整理'}
+              {inPlace ? '文档位置与标题保持不变，可随时播放或重新整理' : noteEntryId ? '点下方产物直达；也可以换个方式重新整理' : 'AI 将转录这段音频并按所选方式整理'}
             </p>
           </div>
         </div>
@@ -743,7 +746,7 @@ function TranscribeHeroCard({
       {/* 已转录：历史产物 chips + 换个整理方式 */}
       {(noteEntryId || subtitleEntryId) && (
         <div className="flex flex-wrap items-center gap-1.5">
-          {noteEntryId && (
+          {noteEntryId && !inPlace && (
             <button
               onClick={() => onOpenNote(noteEntryId)}
               className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
@@ -2783,12 +2786,16 @@ export function DocBrowser({
     : undefined;
   useEffect(() => {
     if (!audioNoteId) { setTranscriptNoteMd(null); return; }
+    if (audioNoteId === selectedEntryData?.id) {
+      setTranscriptNoteMd(preview?.text ?? null);
+      return;
+    }
     let stale = false;
     loadContent(audioNoteId)
       .then((p) => { if (!stale) setTranscriptNoteMd(p?.text ?? null); })
       .catch(() => { if (!stale) setTranscriptNoteMd(null); });
     return () => { stale = true; };
-  }, [audioNoteId, loadContent]);
+  }, [audioNoteId, loadContent, preview?.text, selectedEntryData?.id]);
 
   // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
   useEffect(() => {
@@ -3784,6 +3791,7 @@ export function DocBrowser({
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
                   && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
                   <TranscribeHeroCard
+                    currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}

@@ -3,6 +3,7 @@ import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
@@ -85,14 +86,23 @@ export function FilePreview({ entry, preview, transcriptNoteMd }: {
   // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
   const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
   if ((kind === 'audio' || isAudioEntry) && fileUrl) {
+    const transcriptSummary = transcriptNoteMd ? extractTranscriptSummary(transcriptNoteMd) : '';
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-6' : 'justify-center py-12'}`}>
+      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-2' : 'justify-center py-12'}`}>
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {transcriptNoteMd
-          ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} />
+          ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} documentMode />
           : <AudioWavePlayer src={fileUrl} />}
+        {transcriptSummary && (
+          <section
+            className="w-full max-w-[760px] rounded-[14px] p-4"
+            style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+            <p className="mb-3 text-[12px] font-semibold text-token-muted">整理结果</p>
+            <MarkdownViewer content={transcriptSummary} />
+          </section>
+        )}
       </div>
     );
   }

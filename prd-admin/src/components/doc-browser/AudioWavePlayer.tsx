@@ -2,10 +2,9 @@
  * AudioWavePlayer — 自定义音频播放器，替换浏览器原生 <audio controls>
  *
  * 设计决策（2026-05-08 第二轮）：
- *   - 用 MediaElement 模式（套 HTMLAudioElement）而不是 WebAudio fetch+decode
- *     原因：CDN 没设 Access-Control-Allow-Origin，跨域 fetch 永远失败
- *     audio src 跨域加载浏览器宽容（不需 CORS），永远能播
- *   - 不主动渲染波形（没有 peaks 就显示进度条），等 CDN 配 CORS 那天再升级波形
+ *   - 直接驱动 HTMLAudioElement，不再让 WaveSurfer 二次 fetch / decode 跨域文件
+ *   - 声纹使用确定性占位条，播放进度来自原生 audio timeupdate
+ *   - 对 MediaRecorder 生成、缺少 duration 的 WebM 做时长探测兜底
  *   - onTimeUpdate 用 ref 隔离，避免父组件重渲染引发 useEffect 重建
  *
  * 行为：
@@ -14,8 +13,7 @@
  *   - 失败：自动 fallback 浏览器原生 <audio controls>
  */
 import { useEffect, useRef, useState } from 'react';
-import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause } from 'lucide-react';
+import { Download, Play, Pause } from 'lucide-react';
 
 interface AudioWavePlayerProps {
   src: string;
@@ -59,8 +57,7 @@ function seededBars(src: string, n: number): number[] {
 const BAR_COUNT = 48;
 
 export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '' }: AudioWavePlayerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
   const onTimeUpdateRef = useRef(onTimeUpdate);
   useEffect(() => { onTimeUpdateRef.current = onTimeUpdate; }, [onTimeUpdate]);
@@ -73,86 +70,101 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
   const [duration, setDuration] = useState(0);
   const [rateIdx, setRateIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  // 是否解码出真实波形（同域音频）；跨域拿不到 PCM → 渲染声纹条兜底
-  const [decoded, setDecoded] = useState(false);
 
-  // useEffect 仅依赖 src — 避免 onTimeUpdate 引用变化导致 ws 反复销毁重建
+  // useEffect 仅依赖 src — 避免回调引用变化导致播放器反复销毁重建
   useEffect(() => {
-    if (!containerRef.current) return;
     setReady(false);
     setError(null);
-    setDecoded(false);
-
-    // MediaElement 模式：让 wavesurfer 套在 HTMLAudioElement 上，不走 fetch+decode
-    // 跨域音频用 audio 元素加载浏览器宽容（不需 CORS），核心目标是"永远能播"
     const audio = new Audio();
+    audioRef.current = audio;
     audio.src = src;
     audio.preload = 'metadata';
+    audio.setAttribute('playsinline', '');
 
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      height: 56,
-      waveColor: 'rgba(168,85,247,0.35)',
-      progressColor: 'rgba(216,180,254,0.95)',
-      cursorColor: 'rgba(216,180,254,0.8)',
-      cursorWidth: 2,
-      barWidth: 2,
-      barGap: 2,
-      barRadius: 1,
-      normalize: true,
-      media: audio, // ← 关键：套 audio 元素，避开 fetch CORS
-    });
-    wsRef.current = ws;
+    let probingDuration = false;
+    const syncDuration = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+        if (probingDuration) {
+          probingDuration = false;
+          audio.currentTime = 0;
+        }
+      } else if (audio.duration === Infinity && !probingDuration) {
+        // MediaRecorder 的 WebM 分片常没有 duration/cues。跳到极远位置可让 Chromium/WebKit
+        // 扫到文件尾并触发 durationchange，之后恢复到 0；不会真正开始播放。
+        probingDuration = true;
+        try {
+          audio.currentTime = Number.MAX_SAFE_INTEGER;
+        } catch {
+          probingDuration = false;
+        }
+      }
+    };
+    const markReady = () => {
+      setReady(true);
+      syncDuration();
+    };
+    const updateTime = () => {
+      setCurrentTime(audio.currentTime);
+      onTimeUpdateRef.current?.(audio.currentTime);
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onEnded = () => setPlaying(false);
+    const onError = () => {
+      console.warn('[AudioWavePlayer] audio 加载失败:', src);
+      setError('当前浏览器无法播放这段录音');
+    };
+    audio.addEventListener('loadedmetadata', markReady);
+    audio.addEventListener('canplay', markReady);
+    audio.addEventListener('durationchange', syncDuration);
+    audio.addEventListener('timeupdate', updateTime);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
-    ws.on('ready', () => {
-      setReady(true);
-      setDuration(ws.getDuration());
-    });
-    // 只有真实解码出 PCM（同域/CORS 通）才有波形；否则声纹条兜底
-    ws.on('decode', () => setDecoded(true));
-    // metadata 加载完也算 ready（即使没解码出 PCM，时长能拿到就够用）
-    audio.addEventListener('loadedmetadata', () => {
-      setReady(true);
-      setDuration(audio.duration || 0);
-    });
-    ws.on('timeupdate', (t) => {
-      setCurrentTime(t);
-      onTimeUpdateRef.current?.(t);
-    });
-    ws.on('play', () => setPlaying(true));
-    ws.on('pause', () => setPlaying(false));
-    ws.on('finish', () => setPlaying(false));
     // 点歌词跳播：seek 到目标秒；暂停态下自动继续播（音乐 App 心智）
     registerSeekRef.current?.((sec) => {
-      ws.setTime(sec);
-      if (!ws.isPlaying()) void ws.play();
+      audio.currentTime = sec;
+      if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
     });
-    audio.addEventListener('error', () => {
-      // audio 元素本身加载失败 → 完全 fallback 到原生
-      console.warn('[AudioWavePlayer] audio 加载失败，回退原生:', src);
-      setError('audio load failed');
-    });
+    audio.load();
 
     return () => {
-      ws.destroy();
-      wsRef.current = null;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      audioRef.current = null;
     };
   }, [src]);
 
-  // 切换倍速时同步到 wavesurfer
+  // 切换倍速时同步到原生播放器
   useEffect(() => {
-    wsRef.current?.setPlaybackRate(PLAYBACK_RATES[rateIdx], true);
+    if (audioRef.current) audioRef.current.playbackRate = PLAYBACK_RATES[rateIdx];
   }, [rateIdx]);
 
   const togglePlay = () => {
-    wsRef.current?.playPause();
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
+    else audio.pause();
   };
 
-  // 加载失败 → 静默回退到浏览器原生 audio
+  // 加载失败时给出明确说明与可恢复的下载路径，避免一个无反应的播放按钮。
   if (error) {
     return (
-      <div className={`flex flex-col items-center gap-2 ${className}`}>
-        <audio src={src} controls className="block mx-auto w-[420px] max-w-[90%]" />
+      <div
+        className={`flex w-[480px] max-w-[92%] flex-col items-center gap-3 rounded-[14px] p-4 ${className}`}
+        style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)' }}>
+        <p className="text-[12px] text-token-secondary">{error}</p>
+        <a
+          href={src}
+          download
+          className="flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-[12px] font-semibold"
+          style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+          <Download size={13} /> 下载原录音
+        </a>
       </div>
     );
   }
@@ -165,38 +177,34 @@ export function AudioWavePlayer({ src, onTimeUpdate, registerSeek, className = '
         border: '1px solid rgba(168,85,247,0.18)',
       }}
     >
-      {/* 可视区：同域音频解码出真实波形走 wavesurfer；跨域拿不到 PCM 时渲染
-          语音消息式声纹条（确定性伪随机 + 播放进度着色 + 点按跳播），不再留白 */}
+      {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
       <div className="relative mb-3">
-        <div ref={containerRef} className="w-full" style={decoded ? undefined : { height: 0, overflow: 'hidden' }} />
-        {!decoded && (
-          <div
-            className="flex h-[56px] w-full items-end gap-[2px]"
-            style={{ cursor: ready ? 'pointer' : 'default', alignItems: 'center' }}
-            onClick={(e) => {
-              if (!ready || duration <= 0) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-              wsRef.current?.setTime(ratio * duration);
-            }}
-            title={ready ? '点击跳到对应位置' : undefined}
-          >
-            {seededBars(src, BAR_COUNT).map((h, i) => {
-              const played = ready && duration > 0 && i / BAR_COUNT <= currentTime / duration;
-              return (
-                <span
-                  key={i}
-                  className="min-w-0 flex-1 rounded-full transition-colors duration-150"
-                  style={{
-                    height: `${Math.round(h * 100)}%`,
-                    background: played ? 'rgba(216,180,254,0.95)' : 'rgba(168,85,247,0.30)',
-                    ...(ready ? {} : { animation: `wave-pulse 1.2s ease-in-out ${(i % 8) * 0.12}s infinite` }),
-                  }}
-                />
-              );
-            })}
-          </div>
-        )}
+        <div
+          className="flex h-[56px] w-full items-end gap-[2px]"
+          style={{ cursor: ready && duration > 0 ? 'pointer' : 'default', alignItems: 'center' }}
+          onClick={(e) => {
+            if (!ready || duration <= 0 || !audioRef.current) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+            audioRef.current.currentTime = ratio * duration;
+          }}
+          title={ready && duration > 0 ? '点击跳到对应位置' : undefined}
+        >
+          {seededBars(src, BAR_COUNT).map((h, i) => {
+            const played = ready && duration > 0 && i / BAR_COUNT <= currentTime / duration;
+            return (
+              <span
+                key={i}
+                className="min-w-0 flex-1 rounded-full transition-colors duration-150"
+                style={{
+                  height: `${Math.round(h * 100)}%`,
+                  background: played ? 'rgba(216,180,254,0.95)' : 'rgba(168,85,247,0.30)',
+                  ...(ready ? {} : { animation: `wave-pulse 1.2s ease-in-out ${(i % 8) * 0.12}s infinite` }),
+                }}
+              />
+            );
+          })}
+        </div>
       </div>
 
       {/* 控制条 */}

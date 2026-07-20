@@ -295,6 +295,7 @@ export function TranscribeFlowDrawer({
   );
 
   const running = status === 'uploading' || status === 'running';
+  const inPlace = !!entryId && outputEntryId === entryId;
 
   // ── 流式贴底滚动（业界标准 stick-to-bottom：贴底才自动滚，上滑即打断，回到底部恢复） ──
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -397,7 +398,7 @@ export function TranscribeFlowDrawer({
       )}
 
       {/* 完成后的产物直达 */}
-      {status === 'done' && outputEntryId && (
+      {status === 'done' && outputEntryId && !inPlace && (
         <button
           onClick={() => {
             onOpenEntry?.(outputEntryId);
@@ -413,6 +414,20 @@ export function TranscribeFlowDrawer({
           </span>
           <ChevronRight size={15} style={{ color: 'rgba(74,222,128,0.95)' }} />
         </button>
+      )}
+
+      {status === 'done' && inPlace && (
+        <div
+          className="rounded-[12px] px-4 py-3"
+          style={{
+            background: 'rgba(34,197,94,0.08)',
+            border: '1px solid rgba(34,197,94,0.2)',
+          }}>
+          <p className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+            已保存到当前录音文档
+          </p>
+          <p className="mt-1 text-[11px] text-token-muted">录音、转录原文和整理结果都在本页，标题与目录位置没有改变。</p>
+        </div>
       )}
 
       {/* 换个整理方式：默认智能摘要已生成，这里可换预设风格或自定义要求重新整理（不重跑转录） */}
@@ -467,7 +482,7 @@ export function TranscribeFlowDrawer({
       )}
 
       {/* 归档到文件夹：默认跟随源音频位置，可现在归档到指定文件夹 */}
-      {status === 'done' && outputEntryId && onMoveNote && (folders?.length ?? 0) > 0 && (
+      {status === 'done' && outputEntryId && !inPlace && onMoveNote && (folders?.length ?? 0) > 0 && (
         <div className="surface-inset rounded-[12px] p-3.5">
           <p className="mb-1 text-[12px] font-semibold text-token-primary">归档到文件夹</p>
           <p className="mb-2 text-[11px] text-token-muted">默认跟随源音频所在位置，选择后立即移动转录笔记。</p>
@@ -518,7 +533,7 @@ export function TranscribeFlowDrawer({
                 </button>
               ))}
             </div>
-            {outputEntryId && onEditNote && (
+            {outputEntryId && onEditNote && !inPlace && (
               <button
                 onClick={() => { onEditNote(outputEntryId); onClose(); }}
                 className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors hover:bg-white/8"
@@ -598,24 +613,24 @@ export function TranscribeFlowDrawer({
       transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <motion.div
-        className={`surface-popover flex flex-col ${isMobile ? 'w-full rounded-t-[18px]' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
-        style={isMobile ? { maxHeight: '86vh', paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
+        className={`surface-popover flex flex-col ${isMobile ? 'w-full' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
+        style={isMobile ? {
+          height: '100dvh',
+          maxHeight: '100dvh',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          background: 'var(--bg-primary)',
+        } : undefined}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
         exit={isMobile ? { y: '100%' } : { x: '100%' }}
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
         onClick={(e) => e.stopPropagation()}>
-        {isMobile && (
-          <div className="flex justify-center pt-2.5">
-            <div className="h-1 w-9 rounded-full bg-white/15" />
-          </div>
-        )}
         <div className={`shrink-0 ${isMobile ? 'px-4 py-3' : 'surface-panel-header px-5 py-4'}`}>{header}</div>
         <div className="relative flex-1" style={{ minHeight: 0 }}>
           <div
             ref={scrollRef}
             onScroll={handleBodyScroll}
-            className={`h-full space-y-4 ${isMobile ? 'px-4 pb-2' : 'px-5 py-5'}`}
+            className={`h-full space-y-4 ${isMobile ? 'px-4 pb-5' : 'px-5 py-5'}`}
             style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {body}
           </div>
@@ -633,11 +648,13 @@ export function TranscribeFlowDrawer({
             </button>
           )}
         </div>
-        <div
-          className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 pt-4 pb-5'}`}
-          style={{ borderTop: '1px solid var(--border-faint)' }}>
-          {footer}
-        </div>
+        {!isMobile && (
+          <div
+            className="shrink-0 px-5 pb-5 pt-4"
+            style={{ borderTop: '1px solid var(--border-faint)' }}>
+            {footer}
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

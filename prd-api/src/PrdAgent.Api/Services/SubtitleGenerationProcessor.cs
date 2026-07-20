@@ -149,8 +149,8 @@ public class SubtitleGenerationProcessor
     }
 
     /// <summary>
-    /// 录音转录全链路（kind = transcribe）：ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新 entry。
-    /// 与字幕生成共用 ASR 三路分发；差异在产物：字幕是逐句时间轴，转录笔记是摘要在上、全文在下。
+    /// 录音转录全链路（kind = transcribe）：ASR 转录 + AI 摘要 → 原地写回源音频 entry。
+    /// 音频附件、转录全文与整理结果共用同一个知识库文档，条目 Id / 标题 / 目录位置保持不变。
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
@@ -220,58 +220,39 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
 
-        // 3) 落库：摘要 + 转录全文 → 新 entry
+        // 3) 落库：摘要 + 转录全文原地写回源音频 entry。
+        // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
         var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
-        var parsed = await _documentService.ParseAsync(noteMd);
-        parsed.Title = BuildTranscriptTitle(entry.Title);
-        await _documentService.SaveAsync(parsed);
+        await _applyService.SaveContentAsync(
+            entry, noteMd, run.UserId, db, preserveFileIdentity: true);
 
-        var newEntry = new DocumentEntry
-        {
-            StoreId = entry.StoreId,
-            ParentId = entry.ParentId,
-            Title = BuildTranscriptTitle(entry.Title),
-            Summary = string.IsNullOrWhiteSpace(summary)
-                ? (transcriptPlain.Length > 200 ? transcriptPlain[..200] : transcriptPlain)
-                : (summary.Length > 200 ? summary[..200] : summary),
-            SourceType = DocumentSourceType.Upload,
-            ContentType = "text/markdown",
-            FileSize = Encoding.UTF8.GetByteCount(noteMd),
-            DocumentId = parsed.Id,
-            CreatedBy = run.UserId,
-            ContentIndex = noteMd.Length > 2000 ? noteMd[..2000] : noteMd,
-            LastChangedAt = DateTime.UtcNow,
-            Metadata = new Dictionary<string, string>
-            {
-                ["generated_kind"] = "transcribe",
-                ["source_entry_id"] = entry.Id,
-            },
-        };
-        await db.DocumentEntries.InsertOneAsync(newEntry);
-
-        await db.DocumentStores.UpdateOneAsync(
-            s => s.Id == entry.StoreId,
-            Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, 1)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-
-        // 源音频 entry 标记「已生成转录笔记」，前端据此展示直达入口而非重复发起。
+        // 源音频 entry 标记「转录已写入本页」；值就是自身 Id，兼容旧前端读取同一 metadata key。
         // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
         // Metadata，整字典回写会用加载时的旧快照覆盖掉对方刚写入的键（Codex P2 lost-update）。
         // 旧数据 Metadata 可能是 BSON null（dotted $set 会失败），此时整字典写入无并发丢失风险。
         var metaUpdate = entry.Metadata == null
-            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string> { ["transcribe_entry_id"] = newEntry.Id })
-            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_entry_id"], newEntry.Id);
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string>
+            {
+                ["transcribe_entry_id"] = entry.Id,
+                ["generated_kind"] = "transcribe",
+            })
+            : Builders<DocumentEntry>.Update
+                .Set(e => e.Metadata["transcribe_entry_id"], entry.Id)
+                .Set(e => e.Metadata["generated_kind"], "transcribe");
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
             metaUpdate,
             cancellationToken: CancellationToken.None);
 
+        await db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
             Builders<DocumentStoreAgentRun>.Update
-                .Set(r => r.OutputEntryId, newEntry.Id)
+                .Set(r => r.OutputEntryId, entry.Id)
                 .Set(r => r.GeneratedText, summary)
                 // 存转录纯文本：「换个整理方式」免重跑 ASR 的一级数据源（超长截断防 run 文档膨胀）
                 .Set(r => r.TranscriptText, transcriptPlain.Length > 60000 ? transcriptPlain[..60000] : transcriptPlain)
@@ -279,8 +260,8 @@ public class SubtitleGenerationProcessor
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
-            "[doc-store-agent] Transcript note generated for {EntryId} → {NewEntryId}, transcript={TLen} chars summary={SLen} chars",
-            entry.Id, newEntry.Id, transcriptPlain.Length, summary.Length);
+            "[doc-store-agent] Transcript written in place for {EntryId}, transcript={TLen} chars summary={SLen} chars",
+            entry.Id, transcriptPlain.Length, summary.Length);
     }
 
     /// <summary>
@@ -314,7 +295,12 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
         var newNoteMd = TranscribeNoteText.ReplaceSummarySection(noteMd, summary);
-        await _applyService.SaveContentAsync(noteEntry, newNoteMd, run.UserId, db);
+        await _applyService.SaveContentAsync(
+            noteEntry,
+            newNoteMd,
+            run.UserId,
+            db,
+            preserveFileIdentity: !string.IsNullOrEmpty(noteEntry.AttachmentId));
 
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
@@ -390,13 +376,6 @@ public class SubtitleGenerationProcessor
             }
         }
         return sb.ToString().Trim();
-    }
-
-    private static string BuildTranscriptTitle(string srcTitle)
-    {
-        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
-        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
-        return $"{baseName}-转录笔记.md";
     }
 
     // ──────────────────────────────────────────────────────

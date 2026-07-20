@@ -3,6 +3,7 @@ import {
   parseTranscriptSegments,
   hasUsableTimestamps,
   activeSegmentIndex,
+  extractTranscriptSummary,
 } from '../transcriptSegments';
 
 /**
@@ -91,5 +92,15 @@ describe('activeSegmentIndex', () => {
   });
   it('超过末句 → 末句', () => {
     expect(activeSegmentIndex(segs, 999)).toBe(2);
+  });
+});
+
+describe('extractTranscriptSummary', () => {
+  it('只提取整理结果，不混入标题与转录原文', () => {
+    expect(extractTranscriptSummary(TIMED_NOTE)).toBe('本周主要讨论三件事。');
+  });
+
+  it('没有摘要小节时返回空字符串', () => {
+    expect(extractTranscriptSummary('## 转录全文\n\n只有原文。')).toBe('');
   });
 });

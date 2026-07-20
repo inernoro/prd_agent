@@ -6,6 +6,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { vaultStartSession, vaultAppendChunk, vaultDeleteSession } from './recordingVault';
+import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 
 /**
  * 录音转笔记的「现场录音」面板：打开即请求麦克风并开始录音（MediaRecorder），
@@ -37,20 +38,6 @@ type RecState = 'requesting' | 'recording' | 'paused' | 'unavailable';
 
 /** 后端单文件上限 20MB；录到接近上限时自动收尾，避免上传被拒 */
 const MAX_BYTES = 19 * 1024 * 1024;
-
-const MIME_CANDIDATES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4',
-  'audio/ogg;codecs=opus',
-];
-
-function extForMime(mime: string): string {
-  if (mime.includes('webm')) return '.webm';
-  if (mime.includes('mp4')) return '.m4a';
-  if (mime.includes('ogg')) return '.ogg';
-  return '.webm';
-}
 
 function buildFileName(ext: string): string {
   const d = new Date();
@@ -129,7 +116,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
         if (disposed) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
 
-        const mime = MIME_CANDIDATES.find(c => MediaRecorder.isTypeSupported(c)) ?? '';
+        const mime = selectRecordingMimeType((candidate) => MediaRecorder.isTypeSupported(candidate));
         mimeRef.current = mime || 'audio/webm';
         const rec = new MediaRecorder(stream, {
           ...(mime ? { mimeType: mime } : {}),
@@ -154,7 +141,7 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
             const baseMime = (rec.mimeType || mimeRef.current).split(';')[0] || 'audio/webm';
             const blob = new Blob(chunksRef.current, { type: baseMime });
-            const file = new File([blob], buildFileName(extForMime(baseMime)), { type: baseMime });
+            const file = new File([blob], buildFileName(recordingExtension(baseMime)), { type: baseMime });
             onCompleteRef.current(file, vaultIdRef.current);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
@@ -367,18 +354,18 @@ export function RecordAudioSheet({ storeId, onClose, onComplete, onPickFile }: R
       transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) stopRecorder('discard'); }}>
       <motion.div
-        className={`surface-popover flex flex-col ${isMobile ? 'w-full rounded-t-[18px]' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
-        style={isMobile ? { maxHeight: '86vh', paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
+        className={`surface-popover flex flex-col ${isMobile ? 'w-full' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
+        style={isMobile ? {
+          height: '100dvh',
+          maxHeight: '100dvh',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          background: 'var(--bg-primary)',
+        } : undefined}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
         exit={isMobile ? { y: '100%' } : { x: '100%' }}
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
         onClick={(e) => e.stopPropagation()}>
-        {isMobile && (
-          <div className="flex justify-center pt-2.5">
-            <div className="h-1 w-9 rounded-full bg-white/15" />
-          </div>
-        )}
         <div className={`shrink-0 ${isMobile ? 'px-4 py-3' : 'surface-panel-header px-5 py-4'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">

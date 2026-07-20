@@ -2137,7 +2137,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setSelectedEntryId(noteId);
               setAutoEditEntryId(noteId);
             }}
-            onDone={() => {
+            onDone={(entryId) => {
+              // 转录结果原地写回源音频：始终停留在同一个文档，不跳到新建笔记。
+              setSelectedEntryId(entryId);
               void loadEntries();
               setTimeout(() => { void loadEntries(); }, 1500);
             }}
