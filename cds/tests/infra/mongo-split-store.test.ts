@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord } from '../../src/types.js';
 
@@ -90,6 +90,29 @@ class FakeSplitHandle implements ISplitMongoHandle {
   activityLogsCollection() { return this.activityLogs; }
   async close(): Promise<void> {}
   async ping(): Promise<boolean> { return true; }
+}
+
+function makeRun(id: string, branchId: string, updatedAt = '2026-07-21T00:00:01.000Z'): DeploymentRun {
+  return {
+    id,
+    projectId: 'prd-agent',
+    branchId,
+    trigger: 'webhook',
+    status: 'building',
+    phase: 'build',
+    seq: 1,
+    firstEventSeq: 1,
+    startedAt: '2026-07-21T00:00:00.000Z',
+    updatedAt,
+    events: [{
+      seq: 1,
+      at: updatedAt,
+      phase: 'build',
+      level: 'info',
+      status: 'building',
+      message: 'building',
+    }],
+  };
 }
 
 function makeDelivery(id: string, receivedAt: string): GithubWebhookDelivery {
@@ -567,6 +590,170 @@ describe('MongoSplitStateBackingStore', () => {
     expect(deletes).toHaveLength(1);
     expect(deletes[0].deleteOne!.filter._id).toContain('prd-agent:1');
     expect(handle.activityLogs.docs.size).toBe(2);
+  });
+
+  it('hint-scoped save clones and diffs only the hinted entity, leaving other collections untouched', async () => {
+    // 回归 2026-07-21 增量快照重构：save 带 (kind, id) hint 时，takeSnapshot
+    // 只克隆被点名的实体（不再 structuredClone 整个 state），persist 只对该
+    // kind 做 diff/写库——其余 collection 零 stringify、零 bulkWrite。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+      b: { id: 'b', projectId: 'prd-agent', branch: 'b', worktreePath: '/b', services: {}, status: 'idle', createdAt: 't' },
+    };
+    state.deploymentRuns = { 'dr-1': makeRun('dr-1', 'a') };
+    store.save(state);
+    await store.flush();
+
+    handle.global.replaceWrites = [];
+    handle.projects.bulkWrites = [];
+    handle.branches.bulkWrites = [];
+    handle.deploymentRuns.bulkWrites = [];
+
+    const next = structuredClone(state);
+    next.branches.a.status = 'building';
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    store.save(next, [{ kind: 'branches', id: 'a' }]);
+    await store.flush();
+    const cloneArgs = cloneSpy.mock.calls.map((call) => call[0]);
+    cloneSpy.mockRestore();
+
+    // 部分快照只克隆被点名的那一个实体，不克隆整个 state。
+    expect(cloneArgs).toHaveLength(1);
+    expect(cloneArgs[0]).toBe(next.branches.a);
+
+    // 只有 branches collection 收到一次 bulkWrite，且只 upsert 分支 a；
+    // 未变化的分支 b 因序列化缓存命中被跳过（准确说：根本没进候选集）。
+    expect(handle.global.replaceWrites).toHaveLength(0);
+    expect(handle.projects.bulkWrites).toHaveLength(0);
+    expect(handle.deploymentRuns.bulkWrites).toHaveLength(0);
+    expect(handle.branches.bulkWrites).toHaveLength(1);
+    const ops = handle.branches.bulkWrites[0] as Array<{ replaceOne?: { filter: { _id: string } } }>;
+    expect(ops).toHaveLength(1);
+    expect(ops[0].replaceOne!.filter._id).toBe('a');
+    expect(handle.branches.docs.get('a')?.doc.status).toBe('building');
+    expect(handle.branches.docs.get('b')?.doc.status).toBe('idle');
+  });
+
+  it('id-scoped hint still deletes pruned entities of the same kind via the id set', async () => {
+    // 删除检测只依赖「该 kind 当前完整 id 集 vs 序列化缓存 key 集」，
+    // 所以 addDeploymentRun 的 prune（删旧 run）哪怕 hint 只点名新 run 也能落库。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    state.deploymentRuns = {
+      'dr-old': makeRun('dr-old', 'a'),
+      'dr-new': makeRun('dr-new', 'a'),
+    };
+    store.save(state);
+    await store.flush();
+
+    handle.deploymentRuns.bulkWrites = [];
+
+    const next = structuredClone(state);
+    delete next.deploymentRuns!['dr-old'];
+    next.deploymentRuns!['dr-new'].updatedAt = '2026-07-21T00:00:02.000Z';
+    store.save(next, [{ kind: 'deploymentRuns', id: 'dr-new' }]);
+    await store.flush();
+
+    expect(handle.deploymentRuns.bulkWrites).toHaveLength(1);
+    const ops = handle.deploymentRuns.bulkWrites[0] as Array<{
+      replaceOne?: { filter: { _id: string } };
+      deleteOne?: { filter: { _id: string } };
+    }>;
+    expect(ops.filter((op) => op.replaceOne).map((op) => op.replaceOne!.filter._id)).toEqual(['dr-new']);
+    expect(ops.filter((op) => op.deleteOne).map((op) => op.deleteOne!.filter._id)).toEqual(['dr-old']);
+    expect(handle.deploymentRuns.docs.has('dr-old')).toBe(false);
+  });
+
+  it('serialization cache hit: unchanged resave issues zero writes and no post-persist state clone', async () => {
+    // 回归 2026-07-21：diff 只 stringify 当前侧与缓存字符串比较——不再保留
+    // persistedCache 整份 state，也就没有旧 drainWrites 尾部的第二次
+    // structuredClone(snapshot)。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+      b: { id: 'b', projectId: 'prd-agent', branch: 'b', worktreePath: '/b', services: {}, status: 'idle', createdAt: 't' },
+    };
+    state.deploymentRuns = { 'dr-1': makeRun('dr-1', 'a') };
+    store.save(state);
+    await store.flush();
+
+    handle.global.replaceWrites = [];
+    handle.projects.bulkWrites = [];
+    handle.branches.bulkWrites = [];
+    handle.deploymentRuns.bulkWrites = [];
+
+    const again = structuredClone(state);
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+    store.save(again); // 无 hint → 全量快照路径
+    await store.flush();
+    const cloneArgs = cloneSpy.mock.calls.map((call) => call[0]);
+    const stringifyCalls = stringifySpy.mock.calls.length;
+    cloneSpy.mockRestore();
+    stringifySpy.mockRestore();
+
+    // 全部 collection 零写入：每个实体只 stringify 当前侧即命中缓存。
+    expect(handle.global.replaceWrites).toHaveLength(0);
+    expect(handle.projects.bulkWrites).toHaveLength(0);
+    expect(handle.branches.bulkWrites).toHaveLength(0);
+    expect(handle.deploymentRuns.bulkWrites).toHaveLength(0);
+
+    // takeSnapshot 克隆一次 live state；persist 完成后没有第二次全量克隆。
+    expect(cloneArgs).toHaveLength(1);
+    expect(cloneArgs[0]).toBe(again);
+    // 单侧 stringify：4 个实体（1 project + 2 branches + 1 run）+ global rest
+    // 的 compact 字节检查与 diff 各 1 次 ≈ 6。旧实现双侧 stringify 至少 2 倍。
+    expect(stringifyCalls).toBeLessThanOrEqual(8);
+  });
+
+  it('recovers dropped changes with a full resync after a failed partial write', async () => {
+    // 失败的 pending 会被消费丢弃；needFullResync 保证下一次 save（哪怕 hint
+    // 只点名别的 kind）退化为全量快照，把丢失的变更重新 diff 回库。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    store.save(state);
+    await store.flush();
+
+    const next = structuredClone(state);
+    next.branches.a.status = 'building';
+    handle.branches.failNextBulkWrite = new Error('partial write boom');
+    store.save(next, [{ kind: 'branches', id: 'a' }]);
+    await expect(store.flush()).rejects.toThrow('partial write boom');
+    expect(handle.branches.docs.get('a')?.doc.status).toBe('idle');
+
+    const after = structuredClone(next);
+    after.projects[0].name = 'PRD Agent Renamed';
+    store.save(after, [{ kind: 'projects', id: 'prd-agent' }]);
+    await store.flush();
+
+    expect(handle.projects.docs.get('prd-agent')?.doc.name).toBe('PRD Agent Renamed');
+    // 关键断言：上一轮丢失的分支状态变更由全量重同步补写回库。
+    expect(handle.branches.docs.get('a')?.doc.status).toBe('building');
   });
 
   it('seedIfEmpty writes the split log collections and refuses to seed when any of them has data', async () => {
