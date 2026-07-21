@@ -1784,6 +1784,43 @@ public class DocumentStoreController : ControllerBase
         if (audioBytes.LongLength != session.UploadedBytes || audioBytes.LongLength > MaxUploadBytes)
             return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片大小校验失败"));
 
+        // 原子认领：把会话从 Uploading 翻到 Completing，只有一个并发 /complete 能成功。
+        // 上面的分片读取/校验都是只读操作，认领放在唯一有副作用的“创建条目”之前，
+        // 保证两个并发请求不会各自 CreateUploadedDocumentEntryAsync 造成重复条目 + 文档数双计。
+        var claimed = await _db.DocumentRecordingUploadSessions.FindOneAndUpdateAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.Id, sessionId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.UserId, userId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.Status, DocumentRecordingUploadStatus.Uploading)),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Completing)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            cancellationToken: CancellationToken.None);
+        if (claimed == null)
+        {
+            // 没抢到：说明并发的另一个请求已经在完成或已完成。回读最新状态决定响应，
+            // 绝不重复创建条目。
+            var fresh = await _db.DocumentRecordingUploadSessions
+                .Find(s => s.Id == sessionId && s.UserId == userId)
+                .FirstOrDefaultAsync();
+            if (fresh != null
+                && fresh.Status == DocumentRecordingUploadStatus.Completed
+                && !string.IsNullOrWhiteSpace(fresh.EntryId))
+            {
+                var reusedEntry = await _db.DocumentEntries.Find(e => e.Id == fresh.EntryId).FirstOrDefaultAsync();
+                if (reusedEntry != null)
+                    return Ok(ApiResponse<object>.Ok(new { entry = reusedEntry, sessionId, reused = true }));
+            }
+            if (fresh != null && fresh.Status == DocumentRecordingUploadStatus.Completing)
+                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音正在完成，请稍候"));
+            return StatusCode(StatusCodes.Status410Gone,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
+        }
+
         var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
         var stored = await CreateUploadedDocumentEntryAsync(
             store, actorId, actorName, avatarFileName,
@@ -1821,7 +1858,10 @@ public class DocumentStoreController : ControllerBase
             .FirstOrDefaultAsync();
         if (session == null)
             return Ok(ApiResponse<object>.Ok(new { deleted = false }));
-        if (session.Status == DocumentRecordingUploadStatus.Completed)
+        // Completed 与 Completing（正在创建条目）都不可取消：否则并发 cancel 会把
+        // 正在完成的会话连同分片删掉，或让“已完成”被误删。
+        if (session.Status == DocumentRecordingUploadStatus.Completed
+            || session.Status == DocumentRecordingUploadStatus.Completing)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已完成的录音不能取消上传"));
 
         await _db.DocumentRecordingUploadChunks.DeleteManyAsync(

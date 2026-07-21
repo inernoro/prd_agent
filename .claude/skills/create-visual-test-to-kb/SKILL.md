@@ -52,6 +52,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 5. **证据文件不进代码库**:截图、录屏、临时 HTML、manifest、报告草稿等验收产物必须写到 `/tmp`、系统临时目录、对象存储或知识库,**禁止落到 git 仓库目录内**。默认配置已把 `screenshot.outDir` 与 `report.localOutDir` 指向 `/tmp`;`harness.mjs` 和 `archive_report.py` 会拒绝仓库内截图路径。归档前必须看一眼 `git status --short`,发现 `*.png/*.jpg/*.jpeg/*.webp/*.gif/*.mp4/*.webm` 或 `doc/acceptance/`、`acceptance-*`、`peer-sync-effect-*.html` 这类验收产物在仓库内,先移到 `/tmp` 或删除,不得提交。
 6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
 7. **问题可定位**:凡报告写 P0/P1/P2 视觉问题,读者必须能从图里 3 秒定位。缺陷行要写清`位置 + 阻挡物/异常物 + 被影响对象 + 用户影响`,证据图必须有红/橙框或圈和短标签。只写"遮挡""异常""看这里"不合格。
+8. **移动端是独立硬门禁**:存在用户可见 Web 页面的 L1 至少 1 张、L2 至少 2 张真实触控移动端证据。必须使用独立 `isMobile:true,hasTouch:true` context，从登录或首页点击进入；桌面 context 仅缩窄视口不算。完整规则见 `doc/rule.acceptance.map-enterprise.md` §11.2、`reference/standard-v2.md` §5.0 和 `doc/rule.frontend.mobile-visual-check-matrix.md`。
 
 ## 复杂验收前置（每日/PR/commit/未发布分支/缺陷复测/视觉回归/发布前必用）
 
@@ -259,10 +260,11 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 ## 工作流(四步)
 
 1. **定标准与档位 + 选模板**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3);按上表「自动选模板」决定 zz-report.md / report-template.md(歧义才问用户)。
-2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/login/gotoByClick/click/type/setTheme/shot`。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。结束 `writeManifest(outDir, {verdict,target,themeSupport,timing})`。
+2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/createMobileContext/login/gotoByClick/click/type/setTheme/shot`。桌面流程用 `launch`;移动端流程在同一 browser 内用 `createMobileContext(browser,cfg)` 新建真实触控 context，并重新登录、从首页点击入口。L1 至少 1 张移动端证据，L2 至少 2 张且分别证明入口/操作与结果/状态。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。结束 `writeManifest(outDir, {verdict,target,themeSupport,timing})`。
    - **v1.0 自动捕获(默认开,零配置)**:`launch()` 已默认挂 `attachAutoCapture`——取证全程自动收集 console.error / 同源 4xx-5xx / 未捕获异常(标准 §5.3),P0 级(未捕获异常 + 5xx)自动折叠进截图 warnings → 准入直接拒收。这是"人眼扫静态图永远漏"的维度,机器替你盯。
    - **v1.0 双主题**:先 `detectThemeSupport(page,cfg)` 探测本页是否真支持 light(标准 §5.4);`supportsLight=true` 才双主题各一张,dark-only 页单图 + 注明不计 fail。别交两张一模一样的暗图。
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
+   - **v2.14 移动端元数据**:`shot()` 自动记录 `viewport`、`touchPoints`、`isMobile`;归档脚本只把宽度不大于 480、触控点不少于 1 且 `isMobile=true` 的截图计为真实移动端证据。报告必须有「移动端验收」章节，写清视口、路径、触控、滚动、溢出、遮挡/裁切和结果。
    - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-agent.acceptance-skill.md`)。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。

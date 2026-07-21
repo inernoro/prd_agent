@@ -4,7 +4,8 @@
  * Covers:
  *   1) sign → list → revoke happy path
  *   2) auth with project-key permits project-scoped routes for its own project
- *   3) auth with project-key rejects another project's routes with 403
+ *   3) project list discovery is isolated to the key's own project
+ *   4) auth with project-key rejects another project's routes with 403
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -198,6 +199,31 @@ describe('Agent Keys (project-scoped)', () => {
     // assertProjectAccess helper: direct unit check too.
     const allow = assertProjectAccess({ cdsProjectKey: match! }, 'default');
     expect(allow).toBeNull();
+  });
+
+  it('project-key only discovers its bound project in the project list', async () => {
+    const signRes = await request(server, 'POST', '/api/projects/default/agent-keys', {});
+    expect(signRes.status).toBe(201);
+    const plaintext = signRes.body.plaintext as string;
+
+    const scopedList = await request(
+      server,
+      'GET',
+      '/api/projects',
+      undefined,
+      { 'X-AI-Access-Key': plaintext },
+    );
+    expect(scopedList.status).toBe(200);
+    expect(scopedList.body.total).toBe(1);
+    expect(scopedList.body.projects.map((project: Project) => project.id)).toEqual(['default']);
+
+    const unscopedList = await request(server, 'GET', '/api/projects');
+    expect(unscopedList.status).toBe(200);
+    expect(unscopedList.body.total).toBe(2);
+    expect(unscopedList.body.projects.map((project: Project) => project.id).sort()).toEqual([
+      'alt-proj-id',
+      'default',
+    ]);
   });
 
   it('project-key is refused on a different project (403 project_mismatch)', async () => {
