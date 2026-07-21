@@ -11,10 +11,11 @@
 //   1. 登录后用 gotoByClick(可见文本) 点击导航进入 app 内页，禁止 page.goto 直达内页
 //      （goto 只许用于登录页 + 外部分享/深链）。点不到入口 = 记一条 P1 缺陷。
 //   2. 每个关键步骤 shot(...)，caption 写"这张证明了什么"。
-//   3. 跨用户前置（造数据/造分享链等）走 API，不在浏览器里硬凑。
+//   3. L1/L2 新建真实触控移动端 context，重新登录并从首页点击入口；桌面缩窄不算移动端。
+//   4. 跨用户前置（造数据/造分享链等）走 API，不在浏览器里硬凑。
 
 import {
-  loadConfig, launch, login, gotoByClick, click, type, setTheme, shot, writeManifest,
+  loadConfig, launch, createMobileContext, login, gotoByClick, click, type, setTheme, shot, writeManifest,
 } from './harness.mjs';
 
 const CFG_PATH = new URL('../acceptance.config.json', import.meta.url).pathname;
@@ -27,14 +28,14 @@ const { browser, page } = await launch(cfg);
 try {
   // === 1. 登录（表单，不注入 token）===
   await login(page, BASE, cfg);
-  await shot(page, OUT, '01-after-login', '登录后落地首页');
+  await shot(page, OUT, '01-after-login', '登录后落地首页', { overview: true });
 
   // === 2. 点击导航进入目标页（核心：模拟人类，非地址栏直达）===
   const nav = await gotoByClick(page, '知识库');     // 改成你的目标菜单文本
   if (!nav.found) {
     console.log('!! 缺陷 P1：从导航点不到目标入口（未进菜单?）—— 这是 goto 直达测不出的真问题');
   }
-  await shot(page, OUT, '02-target-page', '经侧边栏点击进入目标页（非地址栏直达），验证入口在导航里');
+  await shot(page, OUT, '02-target-page', '经侧边栏点击进入目标页（非地址栏直达），验证入口在导航里', { overview: true });
 
   // === 3. 执行核心操作（按你的功能改）===
   // const r = await click(page, '某按钮');
@@ -46,7 +47,28 @@ try {
   // await shot(page, OUT, '04-light', '亮色主题核查');
   // await setTheme(page, 'dark', cfg);
 
-  // === 5. 写清单（必做，archive 脚本要读）===
+  // === 5. 独立移动端路径（L1 至少 1 张；L2 至少 2 张：入口/操作 + 结果/状态）===
+  const mobile = await createMobileContext(browser, cfg, { mobilePathId: 'mobile-primary' });
+  try {
+    await login(mobile.page, BASE, cfg);
+    await shot(mobile.page, OUT, '03-mobile-home', '真实触控移动端登录后首页，验证导航入口可见且无横向溢出', {
+      overview: true,
+      mobileStage: 'entry',
+    });
+    const mobileNav = await gotoByClick(mobile.page, '知识库');
+    if (!mobileNav.found) {
+      console.log('!! 缺陷 P1：移动端从导航点不到目标入口');
+    }
+    // 真实验收必须在此执行本功能核心触控动作，再截结果态；不能用两个静态视图凑 L2。
+    await shot(mobile.page, OUT, '04-mobile-result', '真实触控移动端从首页进入目标页，验证结果状态、滚动和固定元素无遮挡', {
+      overview: true,
+      mobileStage: 'result',
+    });
+  } finally {
+    await mobile.ctx.close();
+  }
+
+  // === 6. 写清单（必做，archive 脚本要读）===
   writeManifest(OUT);
   console.log('取证完成 ->', OUT);
 } finally {

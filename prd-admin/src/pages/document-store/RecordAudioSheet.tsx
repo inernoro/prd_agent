@@ -9,6 +9,7 @@ import {
   appendRecordingUploadChunk,
   cancelRecordingUpload,
   completeRecordingUpload,
+  getRecordingUpload,
   listDocumentStoresWithPreview,
   startRecordingUpload,
 } from '@/services';
@@ -260,7 +261,18 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
-              const completed = await completeRecordingUpload(sessionId).catch(() => null);
+              let completed = await completeRecordingUpload(sessionId).catch(() => null);
+              // 弱网下 /complete 的响应可能丢失，而服务端其实已创建条目。直接回退整文件
+              // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
+              // 会话会返回同一条目（reused），不会重复创建。
+              for (let attempt = 0; !completed?.success && attempt < 4; attempt++) {
+                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+                const status = await getRecordingUpload(sessionId).catch(() => null);
+                // 会话已被取消/清理：服务端不存在也不会创建条目，走整文件兜底。
+                if (status?.success && status.data.status === 'cancelled') break;
+                // uploading / completing / completed 均可安全重试（幂等），completed 直接回条目。
+                completed = await completeRecordingUpload(sessionId).catch(() => null);
+              }
               if (completed?.success) {
                 onUploadedRef.current(completed.data.entry, vaultIdRef.current, targetStoreIdRef.current || storeId);
                 onClose();

@@ -10,7 +10,8 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium } = require(PW);
+const { chromium, devices } = require(PW);
+const pageEnvironments = new WeakMap();
 
 export function loadConfig(path) {
   return JSON.parse(require('fs').readFileSync(path, 'utf8'));
@@ -48,10 +49,47 @@ export async function launch(cfg, opts = {}) {
   }
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
+  pageEnvironments.set(page, {
+    configuredMobile: Boolean(opts.isMobile),
+    deviceName: opts.isMobile ? (opts.deviceName || 'custom-mobile') : 'desktop',
+    mobilePathId: opts.mobilePathId || null,
+  });
   // v1.0（issue #605 二.2 / 楼上一致共识）：默认挂上 console/network/pageerror 自动捕获——
   // 这是"人眼扫静态图永远漏的维度"，最该让机器补。driver 无需手动开，launch 即装。
   attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { browser, ctx, page };
+}
+
+// 创建独立真实移动端 context。不能用桌面 page.setViewportSize() 代替：后者没有触控能力，
+// 也不会提供移动设备 UA / deviceScaleFactor / isMobile 语义。调用方应在本 context 内重新登录，
+// 从首页点击导航进入目标功能，形成独立移动端用户路径。
+export async function createMobileContext(browser, cfg, opts = {}) {
+  const session = _captureSession;
+  const deviceName = opts.deviceName || 'iPhone 13';
+  const profile = devices[deviceName];
+  if (!profile) throw new Error(`未知 Playwright 移动设备：${deviceName}`);
+  const viewport = opts.viewport || profile.viewport || { width: 390, height: 844 };
+  const ctxOpts = {
+    ...profile,
+    viewport,
+    isMobile: true,
+    hasTouch: true,
+    ignoreHTTPSErrors: true,
+  };
+  const videoDir = opts.recordVideoDir;
+  if (videoDir) {
+    require('fs').mkdirSync(videoDir, { recursive: true });
+    ctxOpts.recordVideo = { dir: videoDir, size: { width: viewport.width, height: viewport.height } };
+  }
+  const ctx = await browser.newContext(ctxOpts);
+  const page = await ctx.newPage();
+  pageEnvironments.set(page, {
+    configuredMobile: true,
+    deviceName,
+    mobilePathId: opts.mobilePathId || 'mobile-primary',
+  });
+  attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
+  return { ctx, page };
 }
 
 // 登录（走表单，不注入 token）。返回登录后 URL。
@@ -421,6 +459,7 @@ async function validateShot(page, path, expectText) {
           if (seen.has(el)) continue; seen.add(el);
           const r = el.getBoundingClientRect();
           if (r.width < 60 || r.height < 60) continue;     // 跳过隐藏/极小
+          if (r.bottom <= 0 || r.top >= vh) continue;      // 跳过完全位于当前视口外的普通流式内容
           // 该容器或其子层是否提供了内部滚动？(cap 高度 + overflow 滚动 = 正确做法)
           const st = getComputedStyle(el);
           const selfScroll = /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4;
@@ -453,7 +492,15 @@ async function validateShot(page, path, expectText) {
  *   - customLoaderSelectors: 项目特有的 loader 选择器
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
-  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [], overview = false } = opts;
+  const {
+    fullPage = false,
+    expectText,
+    skipReady = false,
+    customLoaderSelectors = [],
+    overview = false,
+    mobilePathId,
+    mobileStage,
+  } = opts;
   assertOutsideRepo(outDir, '截图输出目录');
   require('fs').mkdirSync(outDir, { recursive: true });
   const path = `${outDir}/${name}.png`;
@@ -491,7 +538,29 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     console.log(`  ⚠ ${name} 未画框/圈：指向性证据必须标注(stepClick/stepShot(highlight)/box)，整体图请传 {overview:true}`);
   }
 
-  const rec = { name, caption, path, annotated, overview, warnings: warnings.length ? warnings : undefined };
+  const viewport = page.viewportSize();
+  const touchPoints = await page.evaluate(() => Number(navigator.maxTouchPoints || 0)).catch(() => 0);
+  const environment = pageEnvironments.get(page) || {};
+  const isMobile = Boolean(
+    environment.configuredMobile
+    && viewport
+    && viewport.width <= 480
+    && touchPoints >= 1,
+  );
+  const rec = {
+    name,
+    caption,
+    path,
+    annotated,
+    overview,
+    viewport,
+    touchPoints,
+    isMobile,
+    deviceName: environment.deviceName || null,
+    mobilePathId: mobilePathId || environment.mobilePathId || null,
+    mobileStage: mobileStage || null,
+    warnings: warnings.length ? warnings : undefined,
+  };
   shots.push(rec);
   if (warnings.length > 0) {
     console.log(`  ⚠ 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
