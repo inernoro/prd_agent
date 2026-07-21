@@ -1,6 +1,6 @@
 # CDS 自更新极速版（预构建产物） · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-06-27 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-07-20 | **状态**：已接线（灰度开关默认开，待生产观察窗口）
 
 ## 总览
 
@@ -16,36 +16,27 @@
 | CI 预构建 | `.github/workflows/cds-prebuilt.yml` + `cds/Dockerfile.dist` | **完成 + CI run 已 success**。push 改 `cds/**` → 编译（tsc 门 + esbuild 后端 + vite 前端）→ ghcr `cds-dist:sha-<40hex>` |
 | 决策纯函数 | `cds/src/services/cds-prebuilt.ts` | **完成 + 10 单测**。`computeCdsPrebuiltImageRef`（与 CI 同公式）/ `parseCdsPrebuiltManifest` / `shouldTryCdsPrebuilt`（灰度开关） |
 | 运行层拉取 | `cds/src/services/cds-prebuilt-runtime.ts` | **完成 + 8 单测**。`fetchCdsPrebuilt`：docker pull/create/cp 解出 `/dist` `/web-dist` 到 staging + 校验 manifest；失败 `ok:false` 供回退 |
+| orchestrator 接线 | `cds/src/routes/branches.ts` 的 `tryApplyCdsPrebuiltForSelfUpdate` | **已接线**。`!forceMode` 时先判 `shouldTryCdsPrebuilt` → `fetchCdsPrebuilt` → `validateWebDistCandidate` 校验入口 HTML/JS/CSS 真实存在 → `replaceDirectoriesAtomically` 原子替换 `dist` 与 `web/dist` → 写 `.build-sha` 标记；命中后额外跑一次 `nginx-render` 用预构建 dist 重渲染模板。命中失败或 `applied=false` 时**原地 fall through 到本机现编路径**（`if (!prebuiltApplied) { ... }`），行为零回归 |
 
-## 待补：orchestrator 接线（open，需真实环境灰度）
+**⚠ 与本文档 v1.0 描述不同的地方（2026-07-20 核对代码后更正）**：灰度开关 `CDS_SELFUPDATE_PREBUILT` 的默认值是**开**，不是"默认 off"——`selfUpdatePrebuiltEnabled()` 只在值命中 `0/false/off/no` 时才关闭，未设置该变量时视为启用。生产环境如需继续走本机现编，必须显式设置 `CDS_SELFUPDATE_PREBUILT=0`。
 
-`cds/src/routes/branches.ts` 的 self-update handler（约 18091 起）接入预构建快路径。**精确接线点**：
+## 近期相关补丁（同一 self-update 路径，2026-07-20 落地）
 
-1. **入口判定**（在 `validate`（约 18136）之前）：
-   - 读灰度开关 `CDS_SELFUPDATE_PREBUILT`（默认 off）+ `!forceMode`（force 语义是「我要看真重启」，跳过快路径）。
-   - `decision = shouldTryCdsPrebuilt({ enabled, repoFullName, sha: <newHead 完整 40 SHA> })`。注意 `newHead` 需是**完整 40 位** SHA（现有变量多为短 SHA，需 `git rev-parse HEAD` 取全 SHA，或复用 worktree.ts 的 afterFull 思路）。
-   - `decision.use` → `fetchCdsPrebuilt(deps, decision.imageRef, fullSha, '<cds>/.cds/prebuilt-staging')`。
-2. **成功**：把 staging 的 `distDir` 内容灌进现有管线的 `dist.next`（现有原子替换 18255 直接消费），web 用 staging 的 `webDistDir` **原子替换** `web/dist`（替代 `runInProcessWebBuild` 18306 的 vite）。
-   - **跳过** `validate`（18136-18203，产物已被 CI tsc 门校验过）与 `build-backend` esbuild（18218-18253）。
-   - **复用** 原子 swap（18255）+ nginx-render（18290）+ drain/record/restart（18334-18369）不变。
-   - record 的 self-update 记 `updateMode: 'prebuilt'`，前端历史可标「极速版」。
-3. **失败 / 开关 off**：什么都不做，**落到现有本机现编路径**——行为零变化（这是安全底线）。
+以下三个改动都改的是 `tryApplyCdsPrebuiltForSelfUpdate` / self-update handler 同一条路径，记录于此避免散在 commit message 里：
 
-实现建议：把「灌 dist.next + 原子 swap + 重启」抽成一个共享 helper，prebuilt 与现编两路都调，避免在巨型 handler 里改控制流出错。或写成自包含的 flag-gated 块：成功则自己做完 swap+restart 并 return，否则 fall through（现有路径 100% 不动，flag-off 可证零回归）。
+- **原子切换保留上一代 web 资源**（`replaceDirectoriesAtomically` 新增 `previousPath` 参数）：切换 `web/dist` 时把旧产物移到 `web/dist.previous` 而不是直接删除，修复自更新后已打开的浏览器标签页请求到新 `index.html` 但旧懒加载 chunk 已被删除导致的黑屏（跨代不一致）。同时 `validateWebDistCandidate` 会真实解析候选 `index.html` 的 `src`/`href`，逐个校验入口资源存在且非空，不再只查 `index.html` 是否存在。
+- **生产更新防护（乐观锁 + 精确 SHA 重启）**：共享控制面的非快进更新（版本回退 / 跳跃）现在要求显式 `intent`（`release`/`rollback`）+ `expectedFromSha` 乐观锁 + `reason` 审计原因；同 SHA 与快进更新保持旧客户端兼容路径。新增不拉代码、不切分支、仅按精确 SHA 重启当前工作区的接口和 `cdscli` 命令。另修复 `cdscli` 收到 self-update SSE `error` 事件后仍返回成功退出码的问题。
+- **渐进式 Agent 操作者身份**：新增 `agent-operation-context.ts` + `actor-resolver.ts`，采集调用方 Agent session，贯通请求 ID、操作 ID 与服务端事件日志，self-update / 精确 SHA 重启的结果会带上这三个标识供复盘关联；旧版不带身份信息的客户端调用保持兼容（身份字段全部可选）。
 
-### 为什么没在 PR #940 内接线
+## 尚未验证（open）
 
-self-update 是**会把 CDS 自己弄死的高危路径**（代码里有 "bootstrap trap" 注释：编坏了连自己 API 都救不回）。
-本沙箱**无法端到端真测** docker pull → cp 解出 → 原子替换 → 重启这一串（CLAUDE §8.1 自测优先）。
-故只落地可单测的三层（已验证），接线留给有真实 CDS 实例可灰度的环境：
-
-- 接线后先 `export CDS_SELFUPDATE_PREBUILT=1`，对一个**非生产** CDS 自更新一次，确认「拉产物 → 替换 → 重启 → 起来」全程通；
-- 再确认「故意删掉该 SHA 的 ghcr 镜像 → 自更新自动回退本机现编」；
-- 两条都过，才在生产开启开关。
+- 生产环境尚未确认「命中 ghcr 镜像 → 拉取 → 原子替换 → 重启 → 起来」与「镜像缺失 → 自动回退本机现编」两条路径的真实灰度表现——本仓库沙箱无法端到端起 Docker 验证（CLAUDE §8.1）。
+- `updateMode: 'prebuilt'` 已在 `types.ts` 声明并在 handler 中赋值，前端历史列表是否已按此值展示「极速版」标签待核对 UI 侧。
 
 ## 相关
 
 - `cds/src/services/cds-prebuilt.ts` / `cds-prebuilt-runtime.ts` —— 决策 + 拉取（已测）
 - `.github/workflows/cds-prebuilt.yml` / `cds/Dockerfile.dist` —— CI 产物（已绿）
 - `doc/debt.cds.ci-prebuilt.md` —— 项目分支极速版（同族：编译卸到 CI）
-- `cds/src/routes/branches.ts` self-update handler —— 待接线点
+- `cds/src/routes/branches.ts` 的 `tryApplyCdsPrebuiltForSelfUpdate` / `replaceDirectoriesAtomically` / `validateWebDistCandidate` —— 已接线的 self-update 快路径
+- `cds/src/services/self-update-checkout.ts` / `agent-operation-context.ts` / `actor-resolver.ts` —— 生产更新防护与操作者身份采集
