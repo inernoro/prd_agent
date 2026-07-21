@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { normalizeThemeConfig } from '../themeApplier';
 import { THEME_ACCEPTANCE_TARGETS } from '../themeAcceptanceTargets';
+import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import { buildStaticAgents } from '@/lib/homeLauncherItems';
 import {
   ACCENT_STYLES,
   DEFAULT_THEME_CONFIG,
@@ -30,6 +32,8 @@ const WEEKLY_POSTER_PATH = path.resolve(TEST_DIR, '../../pages/weekly-poster/Pos
 const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-debt-report.mjs');
 const REPORT_COLORS_PATH = path.resolve(TEST_DIR, '../../pages/report-agent/hooks/lightModeColors.ts');
 const REPORT_AGENT_DIR = path.resolve(TEST_DIR, '../../pages/report-agent');
+const CHANGELOG_DYNAMIC_PATH = path.resolve(TEST_DIR, '../../pages/changelog/changelog-dynamic.css');
+const DOC_BROWSER_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/DocBrowser.tsx');
 
 function readSourceTree(directory: string): string {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -53,6 +57,54 @@ function contrastRatio(foreground: string, background: string): number {
   const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
   const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
   return (light + 0.05) / (dark + 0.05);
+}
+
+interface RgbaColor { r: number; g: number; b: number; a: number }
+
+function parseCssColor(value: string): RgbaColor {
+  const normalized = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(normalized)) {
+    return {
+      r: Number.parseInt(normalized.slice(1, 3), 16),
+      g: Number.parseInt(normalized.slice(3, 5), 16),
+      b: Number.parseInt(normalized.slice(5, 7), 16),
+      a: 1,
+    };
+  }
+  const match = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (!match) throw new Error(`不支持的颜色格式: ${value}`);
+  const channels = match[1].split(',').map((part) => Number.parseFloat(part.trim()));
+  return { r: channels[0], g: channels[1], b: channels[2], a: channels[3] ?? 1 };
+}
+
+function composite(foreground: RgbaColor, background: RgbaColor): RgbaColor {
+  const alpha = foreground.a + background.a * (1 - foreground.a);
+  return {
+    r: (foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha,
+    g: (foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha,
+    b: (foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha,
+    a: alpha,
+  };
+}
+
+function colorToHex(color: RgbaColor): string {
+  return `#${[color.r, color.g, color.b]
+    .map((channel) => Math.round(channel).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+function tokenValue(block: string, name: string): string {
+  const match = block.match(new RegExp(`--${name}:\\s*([^;]+);`));
+  if (!match) throw new Error(`缺少主题 token: --${name}`);
+  return match[1].trim();
+}
+
+function contrastOnLayer(block: string, foregroundName: string, layerName?: string): number {
+  const base = parseCssColor(tokenValue(block, 'bg-base'));
+  const card = composite(parseCssColor(tokenValue(block, 'bg-card')), base);
+  const layer = layerName ? composite(parseCssColor(tokenValue(block, layerName)), card) : card;
+  const foreground = composite(parseCssColor(tokenValue(block, foregroundName)), layer);
+  return contrastRatio(colorToHex(foreground), colorToHex(layer));
 }
 
 describe('主题系统契约', () => {
@@ -106,9 +158,13 @@ describe('主题系统契约', () => {
 
     expect(tokens).toContain('[data-material="solid"]');
     expect(lightBlock).toContain('--bg-base:');
-    expect(darkBlock.match(artworkTokenPattern)).toHaveLength(23);
-    expect(lightBlock.match(artworkTokenPattern)).toHaveLength(23);
-    expect(lightBlock.match(/agent-card-art\/[a-z-]+-light\.webp/g)).toHaveLength(23);
+    const expectedArtworkCount = new Set([
+      ...BUILTIN_TOOLS.map((item) => item.agentKey),
+      ...buildStaticAgents().map((item) => item.agentKey),
+    ]).size;
+    expect(darkBlock.match(artworkTokenPattern)).toHaveLength(expectedArtworkCount);
+    expect(lightBlock.match(artworkTokenPattern)).toHaveLength(expectedArtworkCount);
+    expect(lightBlock.match(/agent-card-art\/[a-z-]+-light\.webp/g)).toHaveLength(expectedArtworkCount);
     expect(lightBlock).toContain('--media-art-filter:');
     expect(lightBlock).toContain('--media-art-wash: linear-gradient(135deg, transparent, transparent)');
     expect(lightBlock).toContain('--text-on-media:');
@@ -116,6 +172,34 @@ describe('主题系统契约', () => {
     expect(lightBlock).not.toMatch(/#fff(?:fff)?\b/i);
     expect(lightBlock).not.toContain('rgba(255, 255, 255');
     expect(lightBlock).not.toContain('!important');
+  });
+
+  it('正文与选择态文字在明暗卡片表面均满足 WCAG AA', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const blocks = [
+      tokens.slice(0, tokens.indexOf('[data-theme="light"]')),
+      tokens.slice(tokens.indexOf('[data-theme="light"]'), tokens.indexOf('/* 固定暗色可视化表面')),
+    ];
+
+    for (const block of blocks) {
+      expect(contrastOnLayer(block, 'text-primary')).toBeGreaterThanOrEqual(4.5);
+      expect(contrastOnLayer(block, 'text-secondary')).toBeGreaterThanOrEqual(4.5);
+      expect(contrastOnLayer(block, 'text-muted')).toBeGreaterThanOrEqual(4.5);
+      expect(contrastOnLayer(block, 'selection-text', 'selection-bg')).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('更新中心和文档目录只消费共享阴影与选择态契约', () => {
+    const changelog = fs.readFileSync(CHANGELOG_DYNAMIC_PATH, 'utf8');
+    const docBrowser = fs.readFileSync(DOC_BROWSER_PATH, 'utf8');
+
+    expect(changelog).toContain('var(--shadow-floating-badge)');
+    expect(changelog).toContain('var(--shadow-floating-badge-hot)');
+    expect(changelog).not.toMatch(/box-shadow:\s*0\s+\d+px\s+\d+px\s+rgba/);
+    expect(docBrowser).toContain("'var(--selection-bg)'");
+    expect(docBrowser).toContain("'var(--selection-text)'");
+    expect(docBrowser).toContain("'var(--selection-checkbox-bg)'");
+    expect(docBrowser).not.toContain("'rgba(18,18,24,0.96)'");
   });
 
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
@@ -291,7 +375,10 @@ describe('主题系统契约', () => {
     expect(packageJson.scripts.build).toBe('tsc && vite build');
     expect(dockerfile).toContain('pnpm run build');
     expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
-    expect(lightArtwork).toHaveLength(23);
+    expect(lightArtwork).toHaveLength(new Set([
+      ...BUILTIN_TOOLS.map((item) => item.agentKey),
+      ...buildStaticAgents().map((item) => item.agentKey),
+    ]).size);
   });
 
   it('移动端兼容提示复用跨主题语义色与固定暗色表面契约', () => {

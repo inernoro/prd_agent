@@ -185,6 +185,18 @@
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
+  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent.webp');
+  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi.webp');
+  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent.webp');
+  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares.webp');
+  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center.webp');
+  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester.webp');
+  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent.webp');
+  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser.webp');
+  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer.webp');
+  --agent-card-artwork-translator: url('../assets/agent-card-art/translator.webp');
+  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer.webp');
+  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst.webp');
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
@@ -225,6 +237,8 @@
   --selection-icon-bg: rgba(129, 140, 248, 0.22);
   --selection-border: rgba(129, 140, 248, 0.38);
   --selection-text: #c7d2fe;
+  --selection-checkbox-bg: rgba(20, 20, 24, 0.92);
+  --selection-checkbox-ring: rgba(20, 20, 24, 0.72);
 
   /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
   --button-primary-bg: #4f46e5;
@@ -258,6 +272,10 @@
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
   --shadow-card-sm: 0 2px 6px rgba(0, 0, 0, 0.20);
   --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-floating-badge: 0 2px 8px rgba(0, 0, 0, 0.38);
+  --shadow-floating-badge-hot: 0 2px 8px rgba(244, 63, 94, 0.40);
+  --shadow-hot-rank-1: 0 0 14px color-mix(in srgb, currentColor 22%, transparent);
+  --shadow-hot-rank-2: 0 0 10px color-mix(in srgb, currentColor 14%, transparent);
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
@@ -427,6 +445,8 @@
   --selection-icon-bg: rgba(99, 102, 241, 0.14);
   --selection-border: rgba(99, 102, 241, 0.34);
   --selection-text: #4338ca;
+  --selection-checkbox-bg: var(--bg-card);
+  --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
   --button-primary-bg: #CC785C;
   --button-primary-bg-hover: #B8684C;
@@ -472,6 +492,18 @@
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');
+  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent-light.webp');
+  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi-light.webp');
+  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent-light.webp');
+  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares-light.webp');
+  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center-light.webp');
+  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester-light.webp');
+  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent-light.webp');
+  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser-light.webp');
+  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer-light.webp');
+  --agent-card-artwork-translator: url('../assets/agent-card-art/translator-light.webp');
+  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer-light.webp');
+  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst-light.webp');
   --media-card-base: #E6E0D7;
   --media-card-panel: rgba(241, 236, 228, 0.94);
   --media-card-panel-strong: rgba(245, 241, 234, 0.98);
@@ -529,6 +561,10 @@
   --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05);
   --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05);          /* 微 elevation,卡片/segment thumb */
   --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10);  /* segmented control 选中态 */
+  --shadow-floating-badge: 0 1px 3px rgba(89, 65, 50, 0.12), 0 0 0 1px rgba(248, 245, 239, 0.82);
+  --shadow-floating-badge-hot: 0 2px 5px rgba(190, 24, 93, 0.18), 0 0 0 1px rgba(248, 245, 239, 0.70);
+  --shadow-hot-rank-1: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+  --shadow-hot-rank-2: 0 0 0 1px color-mix(in srgb, currentColor 12%, transparent);
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18);

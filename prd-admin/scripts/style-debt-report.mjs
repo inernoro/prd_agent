@@ -27,6 +27,16 @@ const PATTERNS = {
     regex: /linear-gradient|radial-gradient|boxShadow|box-shadow|backdrop-filter|drop-shadow|filter:/g,
     weight: 2,
   },
+  literalShadow: {
+    label: 'literal shadow',
+    regex: /\b(?:boxShadow|box-shadow)\s*:\s*['"`]?(?!var\()[^\n;]{0,120}(?:rgba?\(|#[0-9a-fA-F]{3,8}\b)/g,
+    weight: 2,
+  },
+  lowContrastText: {
+    label: 'low contrast text',
+    regex: /text-(?:white|black)\/(?:[1-3]\d|40)\b|color\s*:\s*['"`]?rgba\([^)]*,\s*0\.(?:[0-3]\d?|40)\)/gi,
+    weight: 3,
+  },
   themeRisk: {
     label: 'theme contract risk',
     regex: /text-white(?:\/\d+)?\b|bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]|var\(--text-primary,\s*#fff\)/gi,
@@ -145,7 +155,9 @@ function analyzeFile(projectRoot, filePath) {
     counts.inlineStyle * PATTERNS.inlineStyle.weight +
     counts.hardColor * PATTERNS.hardColor.weight +
     counts.arbitraryTailwind * PATTERNS.arbitraryTailwind.weight +
-    counts.heavyEffect * PATTERNS.heavyEffect.weight;
+    counts.heavyEffect * PATTERNS.heavyEffect.weight +
+    counts.literalShadow * PATTERNS.literalShadow.weight +
+    counts.lowContrastText * PATTERNS.lowContrastText.weight;
 
   return {
     path: relativePath,
@@ -225,6 +237,8 @@ function printHuman(report) {
   console.log(`Hard-coded color: ${report.totals.hardColor}`);
   console.log(`Arbitrary Tailwind: ${report.totals.arbitraryTailwind}`);
   console.log(`Heavy visual effect: ${report.totals.heavyEffect}`);
+  console.log(`Literal shadow: ${report.totals.literalShadow}`);
+  console.log(`Low contrast text risk: ${report.totals.lowContrastText}`);
   console.log(`Theme contract risk: ${report.totals.themeRisk}`);
   console.log(`Fixed theme surface: ${report.totals.fixedThemeSurface}`);
   console.log(`Fixed theme text: ${report.totals.fixedThemeText}`);
@@ -238,6 +252,8 @@ function printHuman(report) {
     { key: 'hardColor', label: 'color' },
     { key: 'arbitraryTailwind', label: 'tw' },
     { key: 'heavyEffect', label: 'fx' },
+    { key: 'literalShadow', label: 'shadow' },
+    { key: 'lowContrastText', label: 'contrast' },
     { key: 'themeRisk', label: 'theme' },
     { key: 'undeclaredThemeRisk', label: 'undeclared' },
     { key: 'declaredDarkScope', label: 'dark-scope' },
@@ -256,6 +272,7 @@ function printHuman(report) {
   console.log('- Keep semantic status colors, but route repeated palettes through tokens.');
   console.log('- Treat experience pages as explicit exceptions instead of letting their visual language leak into admin pages.');
   console.log('- Migrate theme contract risks: fixed dark scopes, low-opacity white text, and mixed fixed/adaptive colors.');
+  console.log('- Replace literal component shadows with shared elevation tokens and inspect low-contrast text risks in both themes.');
 }
 
 const report = summarize(resolveProjectRoot());

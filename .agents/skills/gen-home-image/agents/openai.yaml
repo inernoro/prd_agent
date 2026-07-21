@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成首页主题图片"
+  short_description: "扫描并补齐百宝箱明暗主题图片，验证后安全发布环境"
+  default_prompt: "使用 $gen-home-image 扫描并补齐百宝箱明暗主题图片，完成自动验收与安全发布。"

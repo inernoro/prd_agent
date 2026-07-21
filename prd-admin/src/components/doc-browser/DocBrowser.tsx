@@ -1392,7 +1392,7 @@ function TreeNode({
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
             : (isSelected && !isFolder
-                ? 'var(--accent-soft, rgba(99,102,241,0.10))'
+                ? 'var(--selection-bg)'
                 : undefined),
           outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
           // 排序放置指示线：目标行顶/底一条 2px 主题色插入线（Notion/语雀式拖拽换位反馈）
@@ -1400,7 +1400,7 @@ function TreeNode({
             ? 'inset 0 2px 0 0 var(--accent-primary, #818cf8)'
             : reorderHint === 'after'
               ? 'inset 0 -2px 0 0 var(--accent-primary, #818cf8)'
-              : undefined,
+              : (isSelected && !isFolder ? 'inset 0 0 0 1px var(--selection-border)' : undefined),
           // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
@@ -1428,14 +1428,14 @@ function TreeNode({
               style={{
                 width: 15, height: 15, borderRadius: 4,
                 border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'rgba(18,18,24,0.96)',
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
                 ...(!reserveSelectSpace
                   ? {
                       left: `${10 + depth * 14}px`,
                       top: '50%',
                       transform: 'translateY(-50%)',
                       zIndex: 2,
-                      boxShadow: '0 0 0 2px rgba(18,18,24,0.72)',
+                      boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
                     }
                   : {}),
               }}
@@ -1474,7 +1474,7 @@ function TreeNode({
           ) : (
           <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
             style={{
-              color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
+              color: isFolder ? 'var(--text-muted)' : (isSelected ? 'var(--selection-text)' : 'var(--text-primary)'),
               fontWeight: isFolder ? 600 : (isSelected ? 700 : 600),
               fontSize: isFolder ? '10.5px' : '13px',
               letterSpacing: isFolder ? '0.06em' : '-0.01em',

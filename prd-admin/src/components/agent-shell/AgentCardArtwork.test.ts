@@ -13,24 +13,23 @@ import {
 } from './AgentCardArtwork';
 
 describe('AgentCardArtwork', () => {
-  it('为全部内置智能体提供职责化背景', () => {
-    const builtinAgents = [
-      ...BUILTIN_TOOLS.filter((item) => item.kind === 'agent'),
-      ...buildStaticAgents(),
-    ];
+  const builtinAgents = Array.from(
+    new Map([...BUILTIN_TOOLS, ...buildStaticAgents()].map((item) => [item.agentKey, item])).values(),
+  );
+
+  it('为全部内置百宝箱条目提供职责化背景', () => {
     const missingArtwork = builtinAgents
       .filter((item) => !hasAgentCardArtwork(item.agentKey))
       .map((item) => item.agentKey);
 
-    expect(builtinAgents).toHaveLength(23);
+    expect(builtinAgents).toHaveLength(new Set([
+      ...BUILTIN_TOOLS.map((item) => item.agentKey),
+      ...buildStaticAgents().map((item) => item.agentKey),
+    ]).size);
     expect(missingArtwork).toEqual([]);
   });
 
-  it('为全部内置智能体提供直接任务说明', () => {
-    const builtinAgents = [
-      ...BUILTIN_TOOLS.filter((item) => item.kind === 'agent'),
-      ...buildStaticAgents(),
-    ];
+  it('为全部内置百宝箱条目提供直接任务说明', () => {
     const missingTasks = builtinAgents
       .filter((item) => !getAgentCardTask(item.agentKey))
       .map((item) => item.agentKey);
@@ -38,15 +37,11 @@ describe('AgentCardArtwork', () => {
     expect(missingTasks).toEqual([]);
   });
 
-  it('为每个智能体提供唯一的主题素材 token', () => {
-    const builtinAgents = [
-      ...BUILTIN_TOOLS.filter((item) => item.kind === 'agent'),
-      ...buildStaticAgents(),
-    ];
+  it('为每个内置百宝箱条目提供唯一的主题素材 token', () => {
     const artworkTokens = builtinAgents.map((item) => getAgentCardArtworkToken(item.agentKey));
 
     expect(artworkTokens.every(Boolean)).toBe(true);
-    expect(new Set(artworkTokens).size).toBe(23);
+    expect(new Set(artworkTokens).size).toBe(builtinAgents.length);
     expect(getAgentCardArtworkToken('visual-agent')).toBe('--agent-card-artwork-visual-agent');
   });
 
