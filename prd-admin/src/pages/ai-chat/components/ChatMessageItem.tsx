@@ -5,6 +5,7 @@ import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentProm
 import { inlineMarksToTokens } from '@/lib/chipTokenText';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import { copyToClipboard } from '@/lib/clipboard';
+import { resolveVisualResultModelLabel } from '../visualAgentModelOptions';
 
 // ── Types (mirrored from parent to avoid circular deps) ──────────────
 
@@ -33,7 +34,9 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
-  /** 后端实际调度使用的模型（来自 SSE runStart / imageDone 的 modelId），优先于 modelPool 展示 */
+  /** 视觉创作选择的稳定逻辑模型公开 ID。 */
+  logicalModelPublicId?: string;
+  /** 后端实际调度使用的上游模型，仅用于诊断元数据。 */
   actualModel?: string;
   /** 后端实际命中的模型池名 */
   actualModelPool?: string;
@@ -355,15 +358,13 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     }
 
     // ── 服务端权威覆盖 ──
-    // 展示名优先用"实际命中的模型池名"，与"用户期望 / 底部选择器"口径一致（修复三处不一致）；
-    // 真实 modelId 单独留作核对（不同时以淡色后缀露出，自暴露"选 A 给 B"）。
+    // 视觉创作只面向稳定逻辑模型，不把 Provider / Offering / 上游 modelId 泄漏为主展示。
+    // 旧任务没有逻辑模型元数据时，才回退实际模型池或上游模型。
     const meta = parseGenDone(m.content);
-    const realModel = String(meta?.actualModel ?? '').trim();
-    if (meta?.actualModelPool) {
-      msgModel = String(meta.actualModelPool).trim();
-    } else if (realModel) {
-      msgModel = realModel;
-    }
+    msgModel = resolveVisualResultModelLabel(meta, msgModel);
+    const realModel = meta?.logicalModelPublicId
+      ? ''
+      : String(meta?.actualModel ?? '').trim();
 
     // 尺寸：自适应 > 后端真实出图尺寸 > 用户请求尺寸 > 默认
     // 修复"请求 1:1 但模型实际返回 16:9"导致徽标显示错误：以 effectiveSize 为准
@@ -376,10 +377,6 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       } else if (originalUserMsg && !msgSize) {
         msgSize = '1024x1024';
       }
-    }
-
-    if (!msgModel && meta?.modelPool) {
-      msgModel = meta.modelPool;
     }
 
     return (

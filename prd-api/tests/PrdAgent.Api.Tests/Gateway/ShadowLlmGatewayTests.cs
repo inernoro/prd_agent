@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
@@ -11,7 +12,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
 /// 影子网关单测（纯函数级，无 Mongo / 无 HTTP）：
-/// ① caller 永远拿 inproc 权威结果；② 比对记录逐字段正确（含 critical/warning 分级）；
+/// ① 普通旧请求拿 inproc 权威、逻辑模型拿 http 权威；② 比对记录逐字段正确（含 critical/warning 分级）；
 /// ③ http 影子抛异常不影响 caller，且记 HttpOk=false；④ 默认 resolve-only 不触发 http send（不 2x 打模型）。
 /// 不打 Integration/Manual trait → CI 默认 dotnet test 真跑。
 /// </summary>
@@ -194,6 +195,179 @@ public class ShadowLlmGatewayTests
     }
 
     [Fact]
+    public async Task LogicalModel_ResolveAndRaw_AreHttpAuthoritativeWithoutAllowlist()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools =
+            [
+                new AvailableModelPool
+                {
+                    Id = "logical-1",
+                    Code = "image2",
+                    ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { ModelId = "image2", PlatformId = "logical-model" }],
+                },
+            ],
+            RawContent = "legacy-raw",
+        };
+        var http = new FakeGateway(LogicalRes("image2", "upstream-image-2")) { RawContent = "gateway-raw" };
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance);
+
+        var resolved = await shadow.ResolveModelAsync(
+            "demo.app::generation", "generation", expectedModel: "image2");
+        resolved.LogicalModelPublicId.ShouldBe("image2");
+        resolved.OfferingId.ShouldBe("offering-1");
+        inproc.ResolveCount.ShouldBe(0, "逻辑模型不得再由 MAP 旧解析器解释同名 key");
+        http.ResolveCount.ShouldBe(1);
+
+        var raw = await shadow.SendRawWithResolutionAsync(RawReq(), resolved);
+        raw.Content.ShouldBe("gateway-raw");
+        http.RawCount.ShouldBe(1, "逻辑模型 raw 必须进入独立 Gateway");
+        inproc.RawCount.ShouldBe(0, "逻辑模型 raw 不得落回 MAP 进程内发送");
+    }
+
+    [Fact]
+    public async Task LogicalModel_HttpResolveFailure_FailsClosedWithoutLegacyFallback()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools =
+            [
+                new AvailableModelPool
+                {
+                    Id = "logical-1",
+                    Code = "image2",
+                    ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { ModelId = "image2", PlatformId = "logical-model" }],
+                },
+            ],
+        };
+        var http = new FakeGateway(LogicalRes("image2", "upstream-image-2")) { ThrowOnResolve = true };
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance);
+
+        var resolved = await shadow.ResolveModelAsync(
+            "demo.app::generation", "generation", expectedModel: "image2");
+
+        resolved.Success.ShouldBeFalse();
+        resolved.ErrorMessage.ShouldContain("拒绝退回旧模型池");
+        inproc.ResolveCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task RequiredLogicalModel_DoesNotDependOnInprocCatalogAndNeverFallsBack()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools = [],
+            RawContent = "legacy-raw",
+        };
+        var http = new FakeGateway(LogicalRes("nanobanana-2", "upstream-nano"))
+        {
+            RawContent = "gateway-raw",
+        };
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance);
+
+        var resolved = await shadow.ResolveRequiredLogicalModelAsync(
+            "demo.app::generation", "generation", "nanobanana-2");
+
+        resolved.Success.ShouldBeTrue();
+        resolved.LogicalModelPublicId.ShouldBe("nanobanana-2");
+        inproc.ResolveCount.ShouldBe(0, "显式逻辑模型不得依赖 MAP 目录反推");
+        http.ResolveCount.ShouldBe(1);
+
+        var raw = await shadow.SendRawWithResolutionAsync(RawReq(), resolved);
+        raw.Content.ShouldBe("gateway-raw");
+        http.RawCount.ShouldBe(1);
+        inproc.RawCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task LogicalModelRunContext_ForcesHttpAcrossResolveSendStreamAndRaw()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools = [],
+            Content = "legacy-content",
+            RawContent = "legacy-raw",
+        };
+        var http = new FakeGateway(LogicalRes("image2", "upstream-image-2"))
+        {
+            Content = "gateway-content",
+            RawContent = "gateway-raw",
+        };
+        var contextAccessor = new LLMRequestContextAccessor();
+        var shadow = new ShadowLlmGateway(
+            inproc,
+            http,
+            NullLogger<ShadowLlmGateway>.Instance,
+            ctx: contextAccessor);
+
+        using var scope = contextAccessor.BeginScope(LogicalContext("image2"));
+
+        var resolved = await shadow.ResolveModelAsync(
+            "demo.app::generation", "generation", expectedModel: "legacy-model");
+        resolved.LogicalModelPublicId.ShouldBe("image2");
+
+        var sent = await shadow.SendAsync(Req());
+        sent.Content.ShouldBe("gateway-content");
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in shadow.StreamAsync(Req()))
+            chunks.Add(chunk);
+        chunks.ShouldNotBeEmpty();
+
+        var raw = await shadow.SendRawWithResolutionAsync(RawReq(), Res("legacy-model", "openai", "openai"));
+        raw.Content.ShouldBe("gateway-raw");
+
+        inproc.ResolveCount.ShouldBe(0, "Run 已声明逻辑模型时不得查询旧解析器");
+        inproc.SendCount.ShouldBe(0, "Run 已声明逻辑模型时不得走旧非流式发送");
+        inproc.StreamCount.ShouldBe(0, "Run 已声明逻辑模型时不得走旧流式发送");
+        inproc.RawCount.ShouldBe(0, "Run 已声明逻辑模型时不得走旧 raw 发送");
+        http.ResolveCount.ShouldBe(2, "resolve 与错误的旧 raw resolution 应各做一次独立 Gateway 权威解析");
+        http.SendCount.ShouldBe(1);
+        http.StreamCount.ShouldBe(1);
+        http.RawCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LogicalModelRunContext_WithoutPublicId_FailsClosed()
+    {
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"));
+        var http = new FakeGateway(LogicalRes("image2", "upstream-image-2"));
+        var contextAccessor = new LLMRequestContextAccessor();
+        var shadow = new ShadowLlmGateway(
+            inproc,
+            http,
+            NullLogger<ShadowLlmGateway>.Instance,
+            ctx: contextAccessor);
+
+        using var scope = contextAccessor.BeginScope(LogicalContext(null));
+
+        var resolved = await shadow.ResolveModelAsync("demo.app::generation", "generation");
+        var sent = await shadow.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = "demo.app::generation",
+            ModelType = "generation",
+        });
+        var raw = await shadow.SendRawWithResolutionAsync(
+            RawReq(),
+            Res("legacy-model", "openai", "openai"));
+
+        resolved.Success.ShouldBeFalse();
+        sent.Success.ShouldBeFalse();
+        sent.ErrorCode.ShouldBe("LOGICAL_MODEL_ID_REQUIRED");
+        raw.Success.ShouldBeFalse();
+        raw.ErrorCode.ShouldBe("LOGICAL_MODEL_ID_REQUIRED");
+        inproc.ResolveCount.ShouldBe(0);
+        inproc.SendCount.ShouldBe(0);
+        inproc.RawCount.ShouldBe(0);
+        http.ResolveCount.ShouldBe(0);
+        http.SendCount.ShouldBe(0);
+        http.RawCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Raw_FullSample_WritesRawComparison()
     {
         var inproc = new FakeGateway(Res("m1", "openai", "openai")) { RawContent = "raw-inproc" };
@@ -323,8 +497,36 @@ public class ShadowLlmGatewayTests
         ActualPlatformId = "plat-1", ResolutionType = "DedicatedPool",
     };
 
+    private static GatewayModelResolution LogicalRes(string publicId, string actualModel) => new()
+    {
+        Success = true,
+        ResolutionType = "LogicalModel",
+        ExpectedModel = publicId,
+        LogicalModelId = "logical-1",
+        LogicalModelPublicId = publicId,
+        OfferingId = "offering-1",
+        OfferingTargetKind = "model",
+        ActualModel = actualModel,
+        ActualPlatformId = "platform-1",
+        ActualPlatformName = "Gateway Provider",
+        Protocol = "openai",
+        PlatformType = "openai",
+    };
+
     private static GatewayRequest Req() => new() { AppCallerCode = "demo.app::chat", ModelType = "chat" };
     private static GatewayRawRequest RawReq() => new() { AppCallerCode = "demo.app::generation", ModelType = "generation" };
+
+    private static LlmRequestContext LogicalContext(string? publicId) => new(
+        RequestId: "logical-run-1",
+        GroupId: null,
+        SessionId: null,
+        UserId: "user-1",
+        ViewRole: "ADMIN",
+        DocumentChars: null,
+        DocumentHash: null,
+        SystemPromptRedacted: "[TEST]",
+        ModelResolutionType: ModelResolutionType.LogicalModel,
+        LogicalModelPublicId: publicId);
 
     private sealed class CapturingWriter : ILlmShadowComparisonWriter
     {
@@ -357,7 +559,9 @@ public class ShadowLlmGatewayTests
         public bool ThrowOnRaw { get; init; }
         public string Content { get; init; } = "inproc-content";
         public string RawContent { get; init; } = "raw";
+        public List<AvailableModelPool> AvailablePools { get; init; } = [new() { Id = "pool-1" }];
         public int SendCount;
+        public int StreamCount;
         public int RawCount;
         public int ResolveCount;
 
@@ -371,6 +575,7 @@ public class ShadowLlmGatewayTests
         public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
             GatewayRequest request, [EnumeratorCancellation] CancellationToken ct = default)
         {
+            Interlocked.Increment(ref StreamCount);
             await Task.Yield();
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Start, Resolution = _res, Seq = 1 };
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Text, Content = "hi", Seq = 2 };
@@ -402,7 +607,7 @@ public class ShadowLlmGatewayTests
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
             string appCallerCode, string modelType, CancellationToken ct = default)
-            => Task.FromResult(new List<AvailableModelPool> { new() { Id = "pool-1" } });
+            => Task.FromResult(AvailablePools);
 
         public ILLMClient CreateClient(
             string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2,

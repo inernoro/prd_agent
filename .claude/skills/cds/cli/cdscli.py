@@ -44,10 +44,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.9.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.10.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
+_AGENT_SESSION_ID: str = os.environ.get("CDS_AGENT_SESSION_ID", "").strip() or f"cdscli_{secrets.token_hex(8)}"
 _GENERIC_WORKSPACE_SLUGS = {
     "workspace",
     "cursor-workspace",
@@ -186,12 +187,39 @@ def _cds_base() -> str:
     return host.rstrip("/")
 
 
+def _safe_identity_env(*names: str, max_length: int) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if not value:
+            continue
+        if len(value) > max_length or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            return ""
+        return value
+    return ""
+
+
+def _agent_identity_headers() -> dict[str, str]:
+    headers = {"X-CDS-Agent-Session-Id": _AGENT_SESSION_ID}
+    candidates = (
+        ("X-Codex-Thread-Id", ("CODEX_THREAD_ID", "CODEX_SESSION_ID"), 128),
+        ("X-Codex-Turn-Id", ("CODEX_TURN_ID",), 128),
+        ("X-CDS-Skill-Name", ("CDS_SKILL_NAME", "CODEX_SKILL_NAME"), 80),
+        ("X-CDS-Skill-Version", ("CDS_SKILL_VERSION", "CODEX_SKILL_VERSION"), 40),
+        ("X-CDS-Operation-Reason", ("CDS_OPERATION_REASON", "CODEX_OPERATION_REASON"), 300),
+    )
+    for header, env_names, max_length in candidates:
+        value = _safe_identity_env(*env_names, max_length=max_length)
+        if value:
+            headers[header] = value
+    return headers
+
+
 def _auth_headers() -> dict[str, str]:
     # Cloudflare bans the default `Python-urllib/3.x` UA with error 1010
     # (browser_signature_banned). Present a curl-like UA so CF lets us
     # through — this is exactly the kind of platform-edge-case the CLI
     # centralizes so every caller benefits from the fix.
-    h: dict[str, str] = {"User-Agent": "curl/8.5.0"}
+    h: dict[str, str] = {"User-Agent": "curl/8.5.0", **_agent_identity_headers()}
     pk = os.environ.get("CDS_PROJECT_KEY", "").strip()
     if pk:
         h["X-AI-Access-Key"] = pk
@@ -2709,16 +2737,23 @@ def cmd_self_branches(args: argparse.Namespace) -> None:
     ok(body)
 
 
-def cmd_self_update(args: argparse.Namespace) -> None:
-    """SSE 流 → 把每个 event 打印出来（聚合成列表），等待 CDS 重启后回读。"""
-    payload = {"branch": args.branch} if args.branch else {}
-    url = _cds_base() + "/api/self-update"
+def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note: str) -> None:
+    """执行 CDS 自身 SSE 动作，并把 error 事件转换为非零退出码。"""
+    url = _cds_base() + path
     headers = {"Content-Type": "application/json", **_auth_headers()}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, method="POST", data=data, headers=headers)
     events: list[dict[str, Any]] = []
+    terminal_error: dict[str, Any] | None = None
+    correlation: dict[str, str] = {"agentSessionId": _AGENT_SESSION_ID}
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            request_id = resp.headers.get("X-CDS-Request-Id")
+            operation_id = resp.headers.get("X-CDS-Operation-Id")
+            if request_id:
+                correlation["requestId"] = request_id
+            if operation_id:
+                correlation["operationId"] = operation_id
             cur_event = None
             for line_bytes in resp:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
@@ -2732,14 +2767,29 @@ def cmd_self_update(args: argparse.Namespace) -> None:
                     if cur_event:
                         parsed["_event"] = cur_event
                     events.append(parsed)
+                    if cur_event == "error":
+                        terminal_error = parsed
                     if cur_event in ("done", "error"):
                         break
     except urllib.error.HTTPError as e:
-        die(f"self-update HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}", code=2)
+        request_id = e.headers.get("X-CDS-Request-Id") if e.headers else None
+        operation_id = e.headers.get("X-CDS-Operation-Id") if e.headers else None
+        if request_id:
+            correlation["requestId"] = request_id
+        if operation_id:
+            correlation["operationId"] = operation_id
+        die(
+            f"{path} HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}",
+            code=2,
+            extra=correlation,
+        )
     except (urllib.error.URLError, TimeoutError) as e:
         # 连接断开是正常的，CDS 重启时流会被 kill
         pass
-    if not args.no_wait:
+    if terminal_error is not None:
+        message = str(terminal_error.get("message") or terminal_error.get("code") or f"{path} 被服务端拒绝")
+        die(message, code=2, extra={"events": events, **correlation})
+    if not no_wait:
         # Poll healthz until CDS is back (max 60s)
         for _ in range(12):
             time.sleep(5)
@@ -2752,7 +2802,34 @@ def cmd_self_update(args: argparse.Namespace) -> None:
                 break
         else:
             die("CDS 未能在 60s 内恢复", code=3, extra={"events": events})
-    ok({"events": events, "restarted": not args.no_wait}, note="self-update 完成")
+    ok({"events": events, "restarted": not no_wait, **correlation}, note=note)
+
+
+def cmd_self_update(args: argparse.Namespace) -> None:
+    """更新 CDS 代码后重启；非快进切换必须提供显式发布或回滚意图。"""
+    payload = {"branch": args.branch} if args.branch else {}
+    if args.transition_intent:
+        payload["transitionIntent"] = args.transition_intent
+    if args.expected_from_sha:
+        payload["expectedFromSha"] = args.expected_from_sha
+    if args.reason:
+        payload["transitionReason"] = args.reason
+    _run_self_action(
+        "/api/self-update",
+        payload,
+        no_wait=args.no_wait,
+        note="self-update 完成",
+    )
+
+
+def cmd_self_restart(args: argparse.Namespace) -> None:
+    """只重启当前精确 SHA，不 fetch、checkout、pull 或 reset。"""
+    _run_self_action(
+        "/api/self-restart",
+        {},
+        no_wait=args.no_wait,
+        note="当前精确版本重启完成",
+    )
 
 
 def cmd_global_key_list(args: argparse.Namespace) -> None:
@@ -8042,8 +8119,24 @@ def _build_parser() -> argparse.ArgumentParser:
     slf = sub.add_parser("self", help="CDS 自身").add_subparsers(dest="sub", required=True)
     slf.add_parser("branches").set_defaults(func=cmd_self_branches)
     su = slf.add_parser("update"); su.add_argument("--branch")
+    su.add_argument(
+        "--transition-intent",
+        choices=("release", "rollback"),
+        help="仅非快进控制面切换使用；普通更新和重启不要传",
+    )
+    su.add_argument(
+        "--expected-from-sha",
+        help="非快进切换的当前 CDS SHA 乐观锁，先从 /api/self-status 获取",
+    )
+    su.add_argument(
+        "--reason",
+        help="非快进 release/rollback 的审计原因（8-300 字符）",
+    )
     su.add_argument("--no-wait", action="store_true", help="不等 CDS 重启")
     su.set_defaults(func=cmd_self_update)
+    sr = slf.add_parser("restart", help="只重启当前精确 SHA，不拉取或切换代码")
+    sr.add_argument("--no-wait", action="store_true", help="不等 CDS 重启")
+    sr.set_defaults(func=cmd_self_restart)
 
     gk = sub.add_parser("global-key", help="全局通行证").add_subparsers(dest="sub", required=True)
     gk.add_parser("list").set_defaults(func=cmd_global_key_list)

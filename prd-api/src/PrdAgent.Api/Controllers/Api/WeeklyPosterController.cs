@@ -851,7 +851,9 @@ public sealed class WeeklyPosterController : ControllerBase
             .Find(x => x.WeeklyPosterId == id
                 && x.OwnerAdminId == this.GetRequiredUserId()
                 && x.DeploymentSlug == deploymentSlug
-                && (x.Status == ImageGenRunStatus.Queued || x.Status == ImageGenRunStatus.Running))
+                && (x.Status == ImageGenRunStatus.ScopedQueued
+                    || x.Status == ImageGenRunStatus.Queued
+                    || x.Status == ImageGenRunStatus.Running))
             .SortByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
         if (running != null)
@@ -869,7 +871,7 @@ public sealed class WeeklyPosterController : ControllerBase
         var run = new ImageGenRun
         {
             OwnerAdminId = userId,
-            Status = ImageGenRunStatus.Queued,
+            Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
             Size = "1024x1024",
             ResponseFormat = "url",

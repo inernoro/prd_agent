@@ -2,6 +2,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Security.Cryptography;
+using System.Text;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -81,6 +83,16 @@ public class ModelResolver : IModelResolver
             appCaller = await _db.LLMAppCallers
                 .Find(a => a.AppCode == appCallerCode)
                 .FirstOrDefaultAsync(ct);
+        }
+
+        // 显式模型选择以逻辑模型为第一解析层。逻辑模型命中后，其多个 Offering 才是
+        // Provider/Endpoint/协议/凭据的候选；appCaller 的模型池不再限制用户选中的模型。
+        // 未命中逻辑模型时继续走旧池解析，作为无迁移、可回滚的兼容路径。
+        if (string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId))
+        {
+            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct);
+            if (logical is not null)
+                return logical;
         }
 
         if (gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired)
@@ -553,8 +565,16 @@ public class ModelResolver : IModelResolver
         CancellationToken ct = default)
     {
         var result = new List<AvailableModelPool>();
-
         var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
+        if (gatewayRegistry.TrafficRejected)
+            return result;
+
+        // 有逻辑模型目录时，它就是应用侧模型列表的权威来源。每个逻辑模型只暴露一个稳定 PublicId，
+        // Provider/Endpoint/Offering 不泄漏到应用选择器；没有目录数据才回退旧模型池列表。
+        var logicalModels = await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct);
+        if (logicalModels.Count > 0)
+            return logicalModels;
+
         foreach (var group in gatewayRegistry.Groups)
         {
             result.Add(await MapToAvailablePoolAsync(group, "GatewayRegistryPool", true, false, ct));
@@ -610,6 +630,22 @@ public class ModelResolver : IModelResolver
     /// <inheritdoc />
     public async Task RecordSuccessAsync(ModelResolutionResult resolution, CancellationToken ct = default)
     {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        {
+            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            var filter = Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            var update = Builders<GatewayModelOffering>.Update
+                .Inc(x => x.ConsecutiveSuccesses, 1)
+                .Set(x => x.ConsecutiveFailures, 0)
+                .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
+                .Set(x => x.LastSuccessAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
             string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
             string.IsNullOrWhiteSpace(resolution.ActualModel))
@@ -643,6 +679,28 @@ public class ModelResolver : IModelResolver
     /// <inheritdoc />
     public async Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
     {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        {
+            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            var filter = Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            var current = await offerings.Find(filter).FirstOrDefaultAsync(ct);
+            if (current is null) return;
+            var failures = current.ConsecutiveFailures + 1;
+            var status = failures >= 5 ? ModelHealthStatus.Unavailable
+                : failures >= 3 ? ModelHealthStatus.Degraded
+                : ModelHealthStatus.Healthy;
+            var update = Builders<GatewayModelOffering>.Update
+                .Inc(x => x.ConsecutiveFailures, 1)
+                .Set(x => x.ConsecutiveSuccesses, 0)
+                .Set(x => x.HealthStatus, status)
+                .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
             string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
             string.IsNullOrWhiteSpace(resolution.ActualModel))
@@ -690,6 +748,236 @@ public class ModelResolver : IModelResolver
     }
 
     #region Private Methods
+
+    private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
+        string appCallerCode,
+        string modelType,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null)
+            return [];
+        var logicalCollection = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var offeringCollection = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var logicalModels = await logicalCollection.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
+            .SortBy(x => x.DisplayOrder)
+            .ThenBy(x => x.Name)
+            .ToListAsync(ct);
+        if (logicalModels.Count == 0)
+            return [];
+        var ids = logicalModels.Select(x => x.Id).ToList();
+        var offerings = await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.In(x => x.LogicalModelId, ids),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+            .ToListAsync(ct);
+        var availableIds = offerings.Select(x => x.LogicalModelId).ToHashSet(StringComparer.Ordinal);
+        return logicalModels
+            .Where(x => availableIds.Contains(x.Id)
+                && (x.AllowedAppCallerCodes.Count == 0 || x.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase)))
+            .Select(x => new AvailableModelPool
+            {
+                Id = x.Id,
+                Name = x.Name,
+                Code = x.PublicId,
+                Priority = x.DisplayOrder,
+                ResolutionType = "LogicalModel",
+                IsDedicated = x.AllowedAppCallerCodes.Count > 0,
+                IsDefault = false,
+                Models =
+                [
+                    new PoolModelInfo
+                    {
+                        ModelId = x.PublicId,
+                        PlatformId = "logical-model",
+                        PlatformName = "LLM Gateway",
+                        Priority = 1,
+                        HealthStatus = "Healthy",
+                        HealthScore = 100,
+                    }
+                ],
+            }).ToList();
+    }
+
+    private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null || string.IsNullOrWhiteSpace(expectedModel))
+            return null;
+
+        var key = expectedModel.Trim();
+        var normalized = key.ToLowerInvariant();
+        var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
+                Builders<GatewayLogicalModel>.Filter.Or(
+                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicIdNormalized, normalized),
+                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key))))
+            .FirstOrDefaultAsync(ct);
+        if (logical is null)
+            return null;
+
+        if (logical.AllowedAppCallerCodes.Count > 0
+            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        {
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"逻辑模型未授权给当前 appCaller: model={logical.PublicId}, appCaller={appCallerCode}");
+        }
+
+        var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var available = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.LogicalModelId, logical.Id),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+            .ToListAsync(ct);
+
+        var ordered = OrderLogicalOfferings(logical, available);
+        var resolved = new List<ModelResolutionResult>();
+        foreach (var offering in ordered)
+        {
+            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, expectedModel, ct);
+            if (candidate is not null)
+                resolved.Add(candidate);
+        }
+
+        if (resolved.Count == 0)
+        {
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"逻辑模型没有可用上游 Offering: {logical.PublicId}");
+        }
+
+        var selected = resolved[0];
+        if (resolved.Count > 1)
+            selected.RetryCandidates = resolved.Skip(1).ToList();
+        return selected;
+    }
+
+    private List<GatewayModelOffering> OrderLogicalOfferings(
+        GatewayLogicalModel logical,
+        List<GatewayModelOffering> offerings)
+    {
+        var ordered = offerings
+            .OrderBy(x => x.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
+            .ThenBy(x => x.Priority)
+            .ThenBy(x => x.Id, StringComparer.Ordinal)
+            .ToList();
+        if (!string.Equals(logical.RoutingStrategy, "weighted", StringComparison.OrdinalIgnoreCase)
+            || ordered.Count < 2)
+            return ordered;
+
+        var seedText = $"{_requestContext?.Current?.RequestId ?? Guid.NewGuid().ToString("N")}::{logical.Id}";
+        var seed = BitConverter.ToUInt32(SHA256.HashData(Encoding.UTF8.GetBytes(seedText)), 0);
+        var totalWeight = ordered.Sum(x => Math.Max(1, x.Weight));
+        var cursor = (int)(seed % (uint)totalWeight);
+        var firstIndex = 0;
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            cursor -= Math.Max(1, ordered[i].Weight);
+            if (cursor < 0)
+            {
+                firstIndex = i;
+                break;
+            }
+        }
+        return ordered.Skip(firstIndex).Concat(ordered.Take(firstIndex)).ToList();
+    }
+
+    private async Task<ModelResolutionResult?> TryBuildLogicalOfferingResolutionAsync(
+        GatewayLogicalModel logical,
+        GatewayModelOffering offering,
+        string expectedModel,
+        CancellationToken ct)
+    {
+        var capabilities = logical.Capabilities.Select(type => new LLMModelCapability
+        {
+            Type = type,
+            Source = "logical-model",
+            Value = true,
+            UpdatedAt = logical.UpdatedAt
+        }).ToList();
+        var item = new ModelGroupItem
+        {
+            ModelId = offering.UpstreamModelId ?? string.Empty,
+            Priority = offering.Priority,
+            Protocol = offering.Protocol,
+            HealthStatus = offering.HealthStatus,
+            ConsecutiveFailures = offering.ConsecutiveFailures,
+            ConsecutiveSuccesses = offering.ConsecutiveSuccesses,
+            Capabilities = capabilities
+        };
+        var logicalGroup = new ModelGroup
+        {
+            Id = logical.Id,
+            Name = logical.Name,
+            Code = logical.PublicId,
+            ModelType = logical.ModelType,
+            Priority = logical.DisplayOrder
+        };
+
+        if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+        {
+            var exchange = await FindGatewayOwnedExchangeAsync(
+                Builders<ModelExchange>.Filter.And(
+                    Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId),
+                    Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)), ct);
+            if (exchange is null) return null;
+            item.PlatformId = exchange.Id;
+            if (string.IsNullOrWhiteSpace(item.ModelId))
+                item.ModelId = exchange.ModelAlias;
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
+            return ModelResolutionResult.FromExchangePool(
+                "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,
+                logical.Id, logical.PublicId, offering.Id, "exchange",
+                offering.MaxConcurrency, offering.RateLimitPerMinute, offering.EndpointPath);
+        }
+
+        var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
+        var model = await modelCollection.Find(Builders<LLMModel>.Filter.And(
+                Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+                Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId),
+                Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)))
+            .FirstOrDefaultAsync(ct);
+        if (model is null || string.IsNullOrWhiteSpace(model.PlatformId)) return null;
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(model.PlatformId, true, ct, allowMapFallback: false);
+        if (platform is null) return null;
+
+        item.PlatformId = platform.Id;
+        if (string.IsNullOrWhiteSpace(item.ModelId))
+            item.ModelId = model.ModelName;
+        if (string.IsNullOrWhiteSpace(item.Protocol))
+            item.Protocol = model.Protocol;
+        var endpointPlatform = new LLMPlatform
+        {
+            Id = platform.Id,
+            Name = platform.Name,
+            PlatformType = platform.PlatformType,
+            ProviderId = platform.ProviderId,
+            ApiUrl = model.ApiUrl ?? platform.ApiUrl,
+            ApiKeyEncrypted = platform.ApiKeyEncrypted,
+            Enabled = platform.Enabled,
+            MaxConcurrency = platform.MaxConcurrency,
+            Remark = platform.Remark,
+            CreatedAt = platform.CreatedAt,
+            UpdatedAt = platform.UpdatedAt
+        };
+        var encryptedKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
+            ? platform.ApiKeyEncrypted
+            : model.ApiKeyEncrypted;
+        var apiKeyValue = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
+        return ModelResolutionResult.FromPool(
+            "LogicalModel", expectedModel, item, logicalGroup, endpointPlatform, apiKeyValue, model,
+            logical.Id, logical.PublicId, offering.Id, "model", offering.MaxConcurrency,
+            offering.RateLimitPerMinute, offering.EndpointPath);
+    }
 
     /// <summary>
     /// 按模型池条目查找对应的 Exchange。支持两种 PlatformId:

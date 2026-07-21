@@ -167,7 +167,12 @@ export function ExchangeTestPanel({
     }
     if (!showVisual) {
       return JSON.stringify(
-        { messages: [{ role: 'user', content: 'Hello, how are you?' }], model: 'gpt-4o', max_tokens: 100 },
+        {
+          messages: [{ role: 'user', content: 'Hello, how are you?' }],
+          model: 'gpt-5.6-terra',
+          max_completion_tokens: 100,
+          reasoning_effort: 'none',
+        },
         null, 2
       );
     }

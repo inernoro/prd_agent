@@ -208,6 +208,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
 // 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。生产必须显式配置；
@@ -234,12 +235,23 @@ var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSam
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
+// 逻辑模型属于独立 Gateway 配置域。默认即使 MAP 仍处于 inproc 迁移期，也装配统一路由器，
+// 让显式逻辑模型请求由 ShadowLlmGateway 强制转交 llmgw-serve；普通旧模型仍保持 inproc。
+// 紧急回滚可显式设置 false，但不得用旧模型池静默解释逻辑模型同名 key。
+var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true;
+
+// 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
+// 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 }
-else if (isShadow || httpAllowlist.Count > 0)
+else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
 {
     // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
     // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
@@ -254,14 +266,9 @@ else if (isShadow || httpAllowlist.Count > 0)
                 sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
                 sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
+                concurrencyCoordinator: sp.GetService<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>(),
                 configuration: sp.GetRequiredService<IConfiguration>()),
-            http: new PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient(
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<IAssetStorage>(),
-                sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()),
+            http: sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(),
             logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
             writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
             fullSamplePercent: shadowSamplePercent,

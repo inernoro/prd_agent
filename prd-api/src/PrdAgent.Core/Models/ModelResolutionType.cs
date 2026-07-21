@@ -23,5 +23,30 @@ public enum ModelResolutionType
     /// <summary>
     /// 传统配置（IsMain/IsVision/IsImageGen/IsIntent 标记）
     /// </summary>
-    Legacy = 3
+    Legacy = 3,
+
+    /// <summary>
+    /// 租户逻辑模型；真实 Provider、Endpoint 与 Offering 对调用应用隐藏。
+    /// </summary>
+    LogicalModel = 4
+}
+
+public static class ModelResolutionTypeMapper
+{
+    public static ModelResolutionType? Parse(string? resolutionType)
+    {
+        if (string.IsNullOrWhiteSpace(resolutionType))
+            return null;
+
+        return resolutionType switch
+        {
+            "GatewayRegistryPool" => ModelResolutionType.DedicatedPool,
+            "DedicatedPool" => ModelResolutionType.DedicatedPool,
+            "DefaultPool" => ModelResolutionType.DefaultPool,
+            "DirectModel" => ModelResolutionType.DirectModel,
+            "Legacy" => ModelResolutionType.Legacy,
+            "LogicalModel" => ModelResolutionType.LogicalModel,
+            _ => null
+        };
+    }
 }

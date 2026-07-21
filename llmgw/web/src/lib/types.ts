@@ -47,6 +47,10 @@ export type LlmLogListItem = {
   releaseCommit?: string | null;
   provider: string;
   model: string;
+  logicalModelId?: string | null;
+  logicalModelPublicId?: string | null;
+  offeringId?: string | null;
+  offeringTargetKind?: string | null;
   platformId?: string | null;
   platformName?: string | null;
   groupId?: string | null;
@@ -119,6 +123,10 @@ export type LlmLogDetail = {
   ingressProtocol?: string | null;
   provider: string;
   model: string;
+  logicalModelId?: string | null;
+  logicalModelPublicId?: string | null;
+  offeringId?: string | null;
+  offeringTargetKind?: string | null;
   requestBodyRedacted?: string | null;
   systemPromptText?: string | null;
   promptPolicyId?: string | null;
@@ -177,6 +185,10 @@ export type LlmLogDetail = {
 };
 
 export type RouterTrace = {
+  logicalModelId?: string | null;
+  logicalModelPublicId?: string | null;
+  offeringId?: string | null;
+  offeringTargetKind?: string | null;
   mode?: string | null;
   requestedModel?: string | null;
   actualModel?: string | null;
@@ -632,6 +644,67 @@ export type CreateModelResult = {
   poolsCreated: number;
   modelsAppended: number;
 };
+
+export type ModelOfferingItem = {
+  id: string;
+  logicalModelId: string;
+  targetKind: 'model' | 'exchange';
+  targetId: string;
+  targetName: string;
+  providerName?: string | null;
+  upstreamModelId?: string | null;
+  protocol?: string | null;
+  endpointPath?: string | null;
+  priority: number;
+  weight: number;
+  enabled: boolean;
+  healthStatus: number;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  maxConcurrency?: number | null;
+  rateLimitPerMinute?: number | null;
+  notes?: string | null;
+};
+export type LogicalModelItem = {
+  id: string;
+  publicId: string;
+  name: string;
+  modelType: string;
+  capabilities: string[];
+  allowedAppCallerCodes: string[];
+  routingStrategy: 'priority' | 'weighted';
+  enabled: boolean;
+  displayOrder: number;
+  description?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  offerings: ModelOfferingItem[];
+};
+export type LogicalModelsData = { items: LogicalModelItem[]; total: number };
+export type CreateLogicalModelRequest = {
+  publicId: string;
+  name: string;
+  modelType: string;
+  capabilities: string[];
+  allowedAppCallerCodes: string[];
+  routingStrategy: 'priority' | 'weighted';
+  displayOrder?: number;
+  description?: string;
+};
+export type UpdateLogicalModelRequest = Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>;
+export type CreateModelOfferingRequest = {
+  targetKind: 'model' | 'exchange';
+  targetId: string;
+  upstreamModelId?: string;
+  protocol?: string;
+  endpointPath?: string;
+  priority?: number;
+  weight?: number;
+  maxConcurrency?: number;
+  rateLimitPerMinute?: number;
+  notes?: string;
+};
+export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId'>;
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {

@@ -1634,16 +1634,19 @@ public class ImageMasterController : ControllerBase
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
-                Status = ImageGenRunStatus.Queued,
+                Status = ImageGenRunStatus.ScopedQueued,
                 DeploymentSlug = DeploymentScope.Current,
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,
-                // ⚠ 用户显式选择优先：前端 picker 发来的 (platformId, modelId) 已是用户可见的可用模型。
-                // 提前标 ModelResolutionType=DirectModel，使 Worker 的 ResolveModelGroupAsync 走早返回分支，
-                // 避免 scheduler 把用户选择覆盖成"第一个池的第一个模型"（gpt-image-2-all）。
-                // 这是所有 Round 修复的最终落脚点：Controller 层直接尊重用户选择。
-                ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+                LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                    ? modelId
+                    : null,
+                // 用户显式选择优先。逻辑模型只携带稳定 PublicId，真实上游由 Gateway 决定；
+                // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
+                ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                    ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
+                    : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,
@@ -2934,7 +2937,9 @@ public class ImageMasterController : ControllerBase
                     needUpdate = true;
                 }
                 // Run 还在运行，但超时（超过 10 分钟认为卡住）
-                else if (run.Status == ImageGenRunStatus.Running || run.Status == ImageGenRunStatus.Queued)
+                else if (run.Status == ImageGenRunStatus.Running
+                         || run.Status == ImageGenRunStatus.Queued
+                         || run.Status == ImageGenRunStatus.ScopedQueued)
                 {
                     var elapsed = now - run.CreatedAt;
                     if (elapsed > TimeSpan.FromMinutes(10))

@@ -107,6 +107,7 @@ services:
       # 跨进程 LLM 网关开关：生产必须显式设置。http 让 MAP 调用经 HttpLlmGatewayClient
       # 打到 llmgw-serve；inproc 只允许破玻璃回滚脚本显式设置，禁止漏配静默回退。
       - LlmGateway__Mode=${LLMGW_MODE}
+      - LlmGateway__LogicalModelsRequireHttp=${LLMGW_LOGICAL_MODELS_REQUIRE_HTTP:-true}
       - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
       - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
       - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}

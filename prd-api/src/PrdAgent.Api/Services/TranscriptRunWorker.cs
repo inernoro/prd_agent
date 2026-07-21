@@ -301,13 +301,14 @@ public class TranscriptRunWorker : BackgroundService
         // 构建 OpenAI 格式的 chat 请求体
         var requestBody = new JsonObject
         {
-            ["model"] = "gpt-4",
+            ["model"] = "gpt-5.6-terra",
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
                 new JsonObject { ["role"] = "user", ["content"] = $"以下是需要整理的转写文本：\n\n{transcriptText}" }
             },
-            ["max_tokens"] = 4096
+            ["max_completion_tokens"] = 4096,
+            ["reasoning_effort"] = "none"
         };
 
         var request = new GatewayRequest

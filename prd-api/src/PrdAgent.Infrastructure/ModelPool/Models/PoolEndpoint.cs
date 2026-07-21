@@ -12,7 +12,7 @@ public class PoolEndpoint
     public string EndpointId { get; set; } = string.Empty;
 
     /// <summary>
-    /// 模型名称（如 gpt-4o, claude-3-opus）
+    /// 模型名称（如 gpt-5.6-terra, claude-3-opus）
     /// </summary>
     public string ModelId { get; set; } = string.Empty;
 

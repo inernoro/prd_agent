@@ -84,6 +84,10 @@ public sealed class LlmLogListItem
     public string? ReleaseCommit { get; set; }
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
+    public string? LogicalModelId { get; set; }
+    public string? LogicalModelPublicId { get; set; }
+    public string? OfferingId { get; set; }
+    public string? OfferingTargetKind { get; set; }
     public string? PlatformId { get; set; }
     public string? PlatformName { get; set; }
     public string? GroupId { get; set; }
@@ -165,6 +169,10 @@ public sealed class LlmLogDetail
     public string? IngressProtocol { get; set; }
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
+    public string? LogicalModelId { get; set; }
+    public string? LogicalModelPublicId { get; set; }
+    public string? OfferingId { get; set; }
+    public string? OfferingTargetKind { get; set; }
     public string? RequestBodyRedacted { get; set; }
     public string? SystemPromptText { get; set; }
     public string? PromptPolicyId { get; set; }
@@ -224,6 +232,10 @@ public sealed class LlmLogDetail
 
 public sealed class RouterTraceDto
 {
+    public string? LogicalModelId { get; set; }
+    public string? LogicalModelPublicId { get; set; }
+    public string? OfferingId { get; set; }
+    public string? OfferingTargetKind { get; set; }
     public string? Mode { get; set; }
     public string? RequestedModel { get; set; }
     public string? ActualModel { get; set; }
@@ -918,6 +930,90 @@ public sealed class CreateModelResult
     public int PoolTypesCreated { get; set; }
     public int PoolsCreated { get; set; }
     public int ModelsAppended { get; set; }
+}
+
+// ── 逻辑模型与上游 Offering ──
+public sealed class LogicalModelsData { public List<LogicalModelItem> Items { get; set; } = new(); public long Total { get; set; } }
+public sealed class LogicalModelItem
+{
+    public string Id { get; set; } = "";
+    public string PublicId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public List<string> Capabilities { get; set; } = new();
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string RoutingStrategy { get; set; } = "priority";
+    public bool Enabled { get; set; }
+    public int DisplayOrder { get; set; }
+    public string? Description { get; set; }
+    public string? CreatedAt { get; set; }
+    public string? UpdatedAt { get; set; }
+    public List<ModelOfferingItem> Offerings { get; set; } = new();
+}
+public sealed class ModelOfferingItem
+{
+    public string Id { get; set; } = "";
+    public string LogicalModelId { get; set; } = "";
+    public string TargetKind { get; set; } = "model";
+    public string TargetId { get; set; } = "";
+    public string TargetName { get; set; } = "";
+    public string? ProviderName { get; set; }
+    public string? UpstreamModelId { get; set; }
+    public string? Protocol { get; set; }
+    public string? EndpointPath { get; set; }
+    public int Priority { get; set; }
+    public int Weight { get; set; }
+    public bool Enabled { get; set; }
+    public int HealthStatus { get; set; }
+    public int ConsecutiveFailures { get; set; }
+    public int ConsecutiveSuccesses { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
+}
+public sealed class CreateLogicalModelRequest
+{
+    public string? PublicId { get; set; }
+    public string? Name { get; set; }
+    public string? ModelType { get; set; }
+    public List<string> Capabilities { get; set; } = new();
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string? RoutingStrategy { get; set; }
+    public int? DisplayOrder { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class UpdateLogicalModelRequest
+{
+    public string? Name { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public List<string>? AllowedAppCallerCodes { get; set; }
+    public string? RoutingStrategy { get; set; }
+    public int? DisplayOrder { get; set; }
+    public string? Description { get; set; }
+}
+public sealed class CreateModelOfferingRequest
+{
+    public string? TargetKind { get; set; }
+    public string? TargetId { get; set; }
+    public string? UpstreamModelId { get; set; }
+    public string? Protocol { get; set; }
+    public string? EndpointPath { get; set; }
+    public int? Priority { get; set; }
+    public int? Weight { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
+}
+public sealed class UpdateModelOfferingRequest
+{
+    public string? UpstreamModelId { get; set; }
+    public string? Protocol { get; set; }
+    public string? EndpointPath { get; set; }
+    public int? Priority { get; set; }
+    public int? Weight { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public int? RateLimitPerMinute { get; set; }
+    public string? Notes { get; set; }
 }
 public sealed class ModelCapabilityItem { public string Type { get; set; } = ""; public string Source { get; set; } = ""; public bool Value { get; set; } }
 public sealed class ParameterCapabilitiesMetaData

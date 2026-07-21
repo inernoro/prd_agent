@@ -156,7 +156,7 @@ export type CreateImageGenRunResponse = {
 
 export type CreateImageGenRunContract = (args: { input: CreateImageGenRunInput; idempotencyKey?: string }) => Promise<ApiResponse<CreateImageGenRunResponse>>;
 
-export type ImageGenRunStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled' | (string & {});
+export type ImageGenRunStatus = 'ScopedQueued' | 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled' | (string & {});
 
 export type ImageGenRunDto = {
   id: string;

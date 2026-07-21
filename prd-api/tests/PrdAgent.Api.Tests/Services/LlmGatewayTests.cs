@@ -1604,6 +1604,48 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ActualModel = "gpt-5.6-terra",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.com",
+            ApiKey = "sk-test-key"
+        };
+        var http = new SequenceHttpClientFactory();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.System.HealthProbe.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["max_tokens"] = 8,
+                ["stream"] = false
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://api.openai.com/v1/chat/completions", Assert.Single(http.RequestUris));
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-5.6-terra", (string?)body["model"]);
+        Assert.Equal("none", (string?)body["reasoning_effort"]);
+        Assert.Equal(8, (int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenOpenRouter_ShouldPrefixAppAttributionTitle()
     {
         var resolution = new GatewayModelResolution
@@ -1639,6 +1681,122 @@ public class LlmGatewayTests
         Assert.Equal("https://prd-agent.miduo.org", Assert.Single(headers["HTTP-Referer"]));
         Assert.Equal("G-product-agent.marketing-consult::chat", Assert.Single(headers["X-OpenRouter-Title"]));
         Assert.False(headers.ContainsKey("X-Title"));
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
+    {
+        var googleCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-google",
+            OfferingTargetKind = "model",
+            ActualModel = "gemini-2.5-flash-image",
+            ActualPlatformId = "google-platform",
+            ActualPlatformName = "Google",
+            PlatformType = "google",
+            Protocol = "google",
+            ApiUrl = "https://generativelanguage.googleapis.com",
+            ApiKey = "google-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openai",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-2",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.example.com/v1",
+            ApiKey = "openai-key",
+            RetryCandidates = [googleCandidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model or endpoint not supported by this provider\"}}"),
+            (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "images/generations",
+            RequestBody = new JsonObject
+            {
+                ["prompt"] = "draw a clean icon",
+                ["n"] = 1,
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a clean icon",
+                Count = 1,
+                Size = "1024x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("offering-google", response.Resolution?.OfferingId);
+        Assert.Equal(2, http.RequestUris.Count);
+        Assert.Contains("images/generations", http.RequestUris[0]);
+        Assert.Contains("gemini-2.5-flash-image:generateContent", http.RequestUris[1]);
+        Assert.Contains("\"prompt\":\"draw a clean icon\"", http.RequestBodies[0]);
+        Assert.Contains("\"contents\"", http.RequestBodies[1]);
+        Assert.Contains("\"generationConfig\"", http.RequestBodies[1]);
+        Assert.DoesNotContain("\"prompt\":", http.RequestBodies[1]);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
+    {
+        var legacyResolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ExpectedModel = "nanobanana-2",
+            ActualModel = "openai/gpt-image-2",
+            ActualPlatformId = "legacy-platform",
+            ActualPlatformName = "Legacy Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://legacy.example.com/v1",
+            ApiKey = "legacy-key",
+            ModelGroupId = "legacy-pool",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/wrong.png\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "nanobanana-2",
+            RequiredLogicalModelPublicId = "nanobanana-2",
+            RequestBody = new JsonObject { ["prompt"] = "draw a yellow circle" },
+        }, legacyResolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("LOGICAL_MODEL_RESOLUTION_MISMATCH", response.ErrorCode);
+        Assert.Equal(409, response.StatusCode);
+        Assert.Empty(http.RequestBodies);
     }
 
     [Fact]
@@ -1768,6 +1926,52 @@ public class LlmGatewayTests
         Assert.Equal("https://provider.example.com/v1/messages", uri);
         var body = Assert.Single(http.RequestBodies);
         Assert.Contains("\"model\":\"claude-opus-via-compatible-platform\"", body);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenOfferingDefinesEndpointPath_ShouldOverrideProtocolDefault()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-chat",
+            LogicalModelPublicId = "chat-pro",
+            OfferingId = "offering-compatible",
+            OfferingTargetKind = "model",
+            OfferingEndpointPath = "/api/v2/inference",
+            ActualModel = "upstream-chat-pro",
+            ActualPlatformId = "compatible-platform",
+            ActualPlatformName = "Compatible Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-test",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            EndpointPath = "/chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://provider.example.com/api/v2/inference", Assert.Single(http.RequestUris));
+        Assert.Equal("offering-compatible", response.Resolution?.OfferingId);
     }
 
     [Fact]
@@ -2196,6 +2400,75 @@ public class LlmGatewayTests
 
     #region Helper Methods
 
+    [Fact]
+    public async Task SendAsync_Gpt56ChatCompletions_NormalizesLegacyParameters()
+    {
+        var http = new SequenceHttpClientFactory();
+        var gateway = CreateGatewayForModel("gpt-5.6-sol", http);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["max_tokens"] = 128,
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "lookup" }
+                    }
+                }
+            }
+        });
+
+        Assert.True(response.Success);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-5.6-sol", (string?)body["model"]);
+        Assert.Equal("none", (string?)body["reasoning_effort"]);
+        Assert.Equal(128, (int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+    }
+
+    [Fact]
+    public async Task SendAsync_Gpt56ToolsWithReasoning_FailsBeforeHttp()
+    {
+        var http = new SequenceHttpClientFactory();
+        var gateway = CreateGatewayForModel("gpt-5.6-terra", http);
+
+        var response = await gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                },
+                ["reasoning_effort"] = "low",
+                ["tools"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = "lookup" }
+                    }
+                }
+            }
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("GPT56_TOOLS_REQUIRE_REASONING_NONE", response.ErrorCode);
+        Assert.Empty(http.RequestBodies);
+    }
+
     private static LlmGateway CreateCapabilityGateGateway(string modelType, params LLMModelCapability[] capabilities)
     {
         var resolver = new InMemoryModelResolver()
@@ -2229,6 +2502,40 @@ public class LlmGatewayTests
             });
 
         return new LlmGateway(resolver, new TestHttpClientFactory(), new TestLogger<LlmGateway>());
+    }
+
+    private static LlmGateway CreateGatewayForModel(string modelId, IHttpClientFactory httpClientFactory)
+    {
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(new LLMPlatform
+            {
+                Id = "openai-platform",
+                Name = "OpenAI",
+                PlatformType = "openai",
+                ApiUrl = "https://api.openai.com",
+                Enabled = true
+            }, "sk-test-key")
+            .WithModelGroup(new ModelGroup
+            {
+                Id = "gpt-5-6-pool",
+                Name = "GPT-5.6 Pool",
+                Code = "gpt-5-6-pool",
+                ModelType = ModelTypes.Chat,
+                IsDefaultForType = true,
+                Priority = 0,
+                Models = new List<ModelGroupItem>
+                {
+                    new()
+                    {
+                        PlatformId = "openai-platform",
+                        ModelId = modelId,
+                        Priority = 0,
+                        HealthStatus = ModelHealthStatus.Healthy
+                    }
+                }
+            });
+
+        return new LlmGateway(resolver, httpClientFactory, new TestLogger<LlmGateway>());
     }
 
     private static LlmGateway CreateTestGateway()
