@@ -480,6 +480,9 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   //      只 stringify 当前侧再与缓存字符串比较；persistedCache 整份 state 的
   //      第二次 structuredClone（旧 drainWrites 尾部）随之删除。
   private dirtyState: CdsState | null = null;
+  // 最近一次 save/forceFullSave 传入的 live state 引用(与 dirtyState 不同,
+  // takeSnapshot 后不清空)。写失败恢复路径用它就地重建全量快照,见 drainWrites catch。
+  private liveStateRef: CdsState | null = null;
   private dirtyGeneration = 0;
   private dirtyAll = false;
   private dirtyKinds = new Set<StateDirtyKind>();
@@ -695,6 +698,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     this.cache = state;
     // 记最新 live 引用 + 逻辑代次；本 tick 内多次 save 只在末尾克隆一次。
     this.dirtyState = state;
+    this.liveStateRef = state;
     this.dirtyGeneration = ++this.writeGeneration;
     if (!hints || hints.length === 0) {
       // 无 hint = 调用方没有（或无法）声明改动范围 → 本 tick 退化为全量快照。
@@ -1022,6 +1026,21 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         // 序列化缓存只在写成功后更新、仍反映 DB 真实内容，下一次 takeSnapshot
         // 强制全量即可把丢失的变更重新 diff 回来。
         this.needFullResync = true;
+        // Codex P1(PR #1213)：写失败期间若已有下一笔 partial 排队，finally 会
+        // 立即把它以 partial 落库 → persistedGeneration 越过失败代次，flush()
+        // 谎报成功而失败变更仍缺失，要等下一次无关 save 才被全量对账补回。
+        // 修复：把排队中的 partial 就地升级为全量快照 —— live state 包含全部
+        // 业务变更，序列化缓存仍反映 DB 真相，全量 diff 会把被丢弃的变更一并
+        // 找回（排队中的本就是 full 则它自身即对账，两种情况都消费 needFullResync）。
+        const queued = this.pendingWrite;
+        if (queued && !queued.full && this.liveStateRef) {
+          const snapshot = structuredClone(this.liveStateRef);
+          this.cache = snapshot;
+          this.pendingWrite = { generation: queued.generation, full: snapshot };
+          this.needFullResync = false;
+        } else if (queued?.full) {
+          this.needFullResync = false;
+        }
         this.rejectFlushWaiters(err);
       } finally {
         this.writeInFlight = false;
@@ -1047,6 +1066,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   async forceFullSave(state: CdsState): Promise<void> {
     // 全量写覆盖任何挂起的增量快照，避免 takeSnapshot 再做一次冗余落盘。
+    this.liveStateRef = state;
     this.dirtyState = null;
     this.dirtyAll = false;
     this.dirtyKinds = new Set();

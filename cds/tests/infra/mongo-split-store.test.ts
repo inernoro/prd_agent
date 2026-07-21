@@ -352,6 +352,50 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.global.replaceWrites).toHaveLength(1);
   });
 
+  it('upgrades a queued partial to full when the in-flight write fails (Codex P1, PR #1213)', async () => {
+    // 场景:partial A 在写库途中失败,期间又有 partial B 排队。旧行为:finally
+    // 立即把 B 以 partial 落库 → persistedGeneration 越过失败代次,flush() 谎报
+    // 成功,而 A 的变更缺失,要等下一次无关 save 才被全量对账补回。修复后:B 在
+    // catch 里被就地升级为全量快照,落库即找回 A 丢失的变更,无需第三次 save。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    store.save(state);
+    await store.flush();
+
+    // 让 A 的 branches 写挂在 gate 上,放行后抛错。
+    let release: () => void = () => undefined;
+    handle.branches.bulkWriteGate = new Promise<void>((resolve) => { release = resolve; });
+    handle.branches.failNextBulkWrite = new Error('in-flight write boom');
+
+    const a = structuredClone(state);
+    a.branches.a.status = 'building';
+    store.save(a, [{ kind: 'branches', id: 'a' }]);
+    const flushA = store.flush();
+    flushA.catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve)); // A 入写管线,挂在 gate
+
+    // A 在途期间,B(只点名 projects)排队为 partial。
+    const b = structuredClone(a);
+    b.projects[0].name = 'PRD Agent Renamed';
+    store.save(b, [{ kind: 'projects', id: 'prd-agent' }]);
+    await new Promise((resolve) => setImmediate(resolve)); // B 的 takeSnapshot 入队
+
+    release(); // A 写失败 → catch 应把排队中的 B 升级为全量
+    await expect(flushA).rejects.toThrow('in-flight write boom');
+    await store.flush(); // 等 B(已升级全量)落库
+
+    // 关键断言:A 丢失的分支状态由 B 的全量落库直接找回,不需要任何后续 save。
+    expect(handle.branches.docs.get('a')?.doc.status).toBe('building');
+    expect(handle.projects.docs.get('prd-agent')?.doc.name).toBe('PRD Agent Renamed');
+  });
+
   it('does not leave flush hanging when a write fails before flush is awaited', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

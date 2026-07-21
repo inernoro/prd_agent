@@ -1,1 +1,0 @@
-| fix | cds | CDS 系统设置的「用户管理 / 用户痕迹」tab 按运行时认证模式门控:auth-local 路由仅在 authMode=github 时挂载,basic/disabled 模式下无条件调用 /api/auth/users、/api/auth/activity 会直接 404,现按 /api/auth/public-status 探测的 mode 隐藏这两个 tab 并回退默认 tab |
