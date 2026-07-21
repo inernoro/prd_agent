@@ -3,6 +3,19 @@ export interface DocumentStoreDeepLink {
   entryId: string | null;
 }
 
+export const QUICK_RECORD_QUERY_PARAM = 'quickRecord';
+
+export function hasQuickRecordRequest(search: string): boolean {
+  return new URLSearchParams(search).get(QUICK_RECORD_QUERY_PARAM) === '1';
+}
+
+export function withoutQuickRecordRequest(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete(QUICK_RECORD_QUERY_PARAM);
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 export function parseDocumentStoreDeepLink(search: string): DocumentStoreDeepLink {
   const params = new URLSearchParams(search);
   const storeId = params.get('store');

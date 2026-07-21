@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutOrphanedDocumentStoreEntry,
+  withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
 
 describe('documentStoreDeepLink', () => {
@@ -28,5 +30,11 @@ describe('documentStoreDeepLink', () => {
     expect(withoutOrphanedDocumentStoreEntry('?entry=entry-2&tab=mine')).toBe('?tab=mine');
     expect(withoutOrphanedDocumentStoreEntry('?store=store-1&entry=entry-2'))
       .toBe('?store=store-1&entry=entry-2');
+  });
+
+  it('consumes the quick recording intent without dropping unrelated deep-link state', () => {
+    expect(hasQuickRecordRequest('?quickRecord=1')).toBe(true);
+    expect(hasQuickRecordRequest('?quickRecord=0')).toBe(false);
+    expect(withoutQuickRecordRequest('?quickRecord=1&tab=mine')).toBe('?tab=mine');
   });
 });

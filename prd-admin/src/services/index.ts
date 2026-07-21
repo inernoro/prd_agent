@@ -1941,6 +1941,7 @@ export type {
 // ── Document Store 文档空间 ──
 export {
   createDocumentStoreReal as createDocumentStore,
+  getOrCreateQuickCaptureStore,
   listDocumentStoresReal as listDocumentStores,
   getDocumentStoreReal as getDocumentStore,
   updateDocumentStoreReal as updateDocumentStore,
@@ -1951,6 +1952,10 @@ export {
   deleteDocumentEntryReal as deleteDocumentEntry,
   uploadDocumentFile,
   uploadDocumentFileWithProgress,
+  startRecordingUpload,
+  appendRecordingUploadChunk,
+  completeRecordingUpload,
+  cancelRecordingUpload,
   replaceDocumentFile,
   getDocumentContent,
   addSubscription,
@@ -1976,6 +1981,7 @@ export {
   transcribeEntry,
   listTranscribeStyles,
   restyleTranscribeRun,
+  updateTranscribeTranscript,
   // 批次 C：浏览事件埋点
   logEntryView,
   leaveEntryView,

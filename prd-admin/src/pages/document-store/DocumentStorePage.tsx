@@ -70,10 +70,18 @@ import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
 import {
+  hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutOrphanedDocumentStoreEntry,
+  withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
+import {
+  consumeDetailInitialAction,
+  detailInitialActionForStore,
+  type DetailInitialActionRequest,
+  type DocumentStoreDetailAction,
+} from './detailInitialAction';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
@@ -115,6 +123,7 @@ import {
   getStoresAnalyticsSummary,
   getUserPreferences,
   getAgentRun,
+  getOrCreateQuickCaptureStore,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -855,7 +864,7 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel, initialEntryId, initialAction, onInitialActionConsumed }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
@@ -863,7 +872,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 当前深链指定的文档；首次进入及浏览器前进/后退时均需同步 */
   initialEntryId?: string;
   /** 进入时自动触发的新增动作（外层知识库列表「+」选库后带入；挂载时消费一次） */
-  initialAction?: 'doc' | 'record' | 'upload' | 'video';
+  initialAction?: DetailInitialActionRequest;
+  /** 自动动作是真正的一次性意图：开始执行即通知父层清除，不能跟着下一次知识库挂载重放。 */
+  onInitialActionConsumed: (requestId: number) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -959,6 +970,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     vaultSessionId?: string;
     style?: import('@/services/real/documentStore').TranscribeStyleParams;
     restyleRun?: { runId: string; outputEntryId: string };
+    storeId?: string;
+    /** 本次入口新建的录音，允许用户明确取消并删除；已有条目转录不显示删除。 */
+    isNewRecording?: boolean;
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
@@ -992,7 +1006,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (ok) {
         const file = await vaultLoadSessionFile(latest.id);
         if (file) {
-          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id });
+          setTranscribeFlow({ file, title: file.name, vaultSessionId: latest.id, isNewRecording: true });
           transcribeFlowOpenRef.current = true;
         }
         // 本库更老的滞留会话一并清理，只恢复最新一段（避免弹窗轰炸）
@@ -1042,6 +1056,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const replaceInputRef = useRef<HTMLInputElement>(null);
   // 上传录音转笔记：独立 audio input（选中即进入转录全链路卡）
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const audioUploadStoreRef = useRef(storeId);
   // tag 颜色保存的 single-flight 队列：
   // 不只是防 rollback race，还要保证"老请求成功后到达"不会覆盖新意图。
   // 实现：当前在飞 = inFlight=true；新意图来了写 pending；当前结束后若 pending 非空则继续发，
@@ -1426,15 +1441,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, []);
 
   // 外层列表「+」选库进入后自动触发对应新增动作（消费一次；与库内 FAB 出一样的结果）
-  const initialActionConsumedRef = useRef(false);
+  const initialActionConsumedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!initialAction || initialActionConsumedRef.current || !store || loading) return;
-    initialActionConsumedRef.current = true;
-    if (initialAction === 'doc') void handleCreateDocument();
-    else if (initialAction === 'record') setShowRecorder(true);
-    else if (initialAction === 'upload') fileInputRef.current?.click();
-    else if (initialAction === 'video') handleOpenVideoParser();
-  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser]);
+    if (!initialAction || initialActionConsumedRef.current === initialAction.id || !store || loading) return;
+    initialActionConsumedRef.current = initialAction.id;
+    onInitialActionConsumed(initialAction.id);
+    if (initialAction.action === 'doc') void handleCreateDocument();
+    else if (initialAction.action === 'record') setShowRecorder(true);
+    else if (initialAction.action === 'upload') fileInputRef.current?.click();
+    else if (initialAction.action === 'video') handleOpenVideoParser();
+  }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser, onInitialActionConsumed]);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
@@ -1631,7 +1647,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         onChange={e => {
           const f = e.target.files?.[0];
           if (f) {
-            setTranscribeFlow({ file: f, title: f.name });
+            setTranscribeFlow({ file: f, title: f.name, storeId: audioUploadStoreRef.current, isNewRecording: true });
             transcribeFlowOpenRef.current = true;
           }
           e.target.value = '';
@@ -1975,6 +1991,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             });
           }}
           onUploadAudio={() => setShowRecorder(true)}
+          onQuickRecord={() => navigate('/document-store?quickRecord=1')}
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
@@ -2089,39 +2106,57 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         {showRecorder && (
           <RecordAudioSheet
             storeId={storeId}
+            storeName={store.name}
             onClose={() => setShowRecorder(false)}
-            onComplete={(file, vaultSessionId) => {
+            onComplete={(file, vaultSessionId, targetStoreId) => {
               setShowRecorder(false);
-              setTranscribeFlow({ file, title: file.name, vaultSessionId });
+              setTranscribeFlow({ file, title: file.name, vaultSessionId, storeId: targetStoreId || storeId, isNewRecording: true });
               transcribeFlowOpenRef.current = true;
             }}
-            onPickFile={() => {
+            onUploaded={(entry, vaultSessionId, targetStoreId) => {
+              const destination = targetStoreId || storeId;
               setShowRecorder(false);
+              if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
+              void vaultDeleteSession(vaultSessionId);
+              setTranscribeFlow({
+                entryId: entry.id,
+                title: entry.title,
+                vaultSessionId,
+                storeId: destination,
+                isNewRecording: true,
+              });
+              transcribeFlowOpenRef.current = true;
+            }}
+            onPickFile={(targetStoreId) => {
+              setShowRecorder(false);
+              audioUploadStoreRef.current = targetStoreId || storeId;
               audioInputRef.current?.click();
             }}
           />
         )}
       </AnimatePresence>
 
-      {/* 录音转录全链路（Notion 式）：上传音频 → 转录 → AI 摘要 → 转录笔记 */}
+      {/* 录音转录全链路：上传音频 → 可编辑原文 → 默认保存；整理仅在用户主动选择后执行 */}
       <AnimatePresence>
         {transcribeFlow && (
           <TranscribeFlowDrawer
-            storeId={storeId}
+            storeId={transcribeFlow.storeId || storeId}
             file={transcribeFlow.file}
             entryId={transcribeFlow.entryId}
             entryTitle={transcribeFlow.title}
             initialStyle={transcribeFlow.style}
             restyleRun={transcribeFlow.restyleRun}
-            folders={entries.filter(e => e.isFolder).map(f => ({ id: f.id, title: f.title }))}
-            onMoveNote={async (noteId, folderId) => {
+            folders={(transcribeFlow.storeId || storeId) === storeId
+              ? entries.filter(e => e.isFolder).map(f => ({ id: f.id, title: f.title }))
+              : undefined}
+            onMoveNote={(transcribeFlow.storeId || storeId) === storeId ? async (noteId, folderId) => {
               const res = await moveDocumentEntry(noteId, folderId);
               if (!res.success) {
                 toast.error('归档失败', res.error?.message);
                 throw new Error(res.error?.message ?? 'move failed');
               }
               setEntries(prev => prev.map(e => e.id === noteId ? { ...e, parentId: folderId ?? undefined } : e));
-            }}
+            } : undefined}
             onClose={() => {
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;
@@ -2129,7 +2164,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
             }}
             onEntryCreated={(entry) => {
-              setEntries(prev => [entry, ...prev]);
+              if ((transcribeFlow.storeId || storeId) === storeId) setEntries(prev => [entry, ...prev]);
               // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
               if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
             }}
@@ -2137,9 +2172,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setSelectedEntryId(noteId);
               setAutoEditEntryId(noteId);
             }}
-            onDone={() => {
-              void loadEntries();
-              setTimeout(() => { void loadEntries(); }, 1500);
+            onDone={(entryId) => {
+              // 转录结果原地写回源音频：始终停留在同一个文档，不跳到新建笔记。
+              const targetStoreId = transcribeFlow.storeId || storeId;
+              if (targetStoreId === storeId) {
+                setSelectedEntryId(entryId);
+                void loadEntries();
+                setTimeout(() => { void loadEntries(); }, 1500);
+              } else {
+                navigate({ pathname: '/document-store', search: withDocumentStoreEntry('', targetStoreId, entryId) });
+              }
             }}
             onOpenEntry={(id) => setSelectedEntryId(id)}
             onRunTracking={(rid) => {
@@ -2147,6 +2189,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
               if (rid && !transcribeFlowOpenRef.current) setBgTranscribeRunId(rid);
             }}
+            onDiscardEntry={transcribeFlow.isNewRecording ? async (entryId) => {
+              const res = await deleteDocumentEntry(entryId);
+              if (!res.success) throw new Error(res.error?.message ?? '取消失败');
+              if ((transcribeFlow.storeId || storeId) === storeId) {
+                setEntries(prev => prev.filter(entry => entry.id !== entryId));
+              }
+              toast.success('已取消本次录音');
+            } : undefined}
           />
         )}
       </AnimatePresence>
@@ -2521,8 +2571,13 @@ export function DocumentStorePage() {
     return initialDeepLinkRef.current.storeId ? initialDeepLinkRef.current.entryId : null;
   });
   // 外层「+」FAB：动作先选库，选中后进库自动触发同款动作（与库内 FAB 出一样的结果）
-  const [storePickerAction, setStorePickerAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
-  const [detailInitialAction, setDetailInitialAction] = useState<'doc' | 'record' | 'upload' | 'video' | null>(null);
+  const [storePickerAction, setStorePickerAction] = useState<DocumentStoreDetailAction | null>(null);
+  const [detailInitialAction, setDetailInitialAction] = useState<DetailInitialActionRequest | null>(null);
+  const detailInitialActionSequenceRef = useRef(0);
+  const [quickCaptureResolving, setQuickCaptureResolving] = useState(
+    () => hasQuickRecordRequest(location.search),
+  );
+  const quickCaptureRequestInFlightRef = useRef(false);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -2557,6 +2612,52 @@ export function DocumentStorePage() {
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, location.hash, location.pathname, navigate]);
+
+  // 右下角悬浮「+」双击快捷录音：服务端幂等找到或创建快捷知识库，进入后复用详情页同一录音状态机。
+  // quickRecord 是一次性意图，消费后从 URL 删除，避免刷新页面再次自动打开麦克风。
+  useEffect(() => {
+    if (!hasQuickRecordRequest(location.search)) {
+      setQuickCaptureResolving(false);
+      return;
+    }
+    if (quickCaptureRequestInFlightRef.current) return;
+    quickCaptureRequestInFlightRef.current = true;
+    setQuickCaptureResolving(true);
+    let alive = true;
+
+    void getOrCreateQuickCaptureStore()
+      .then((res) => {
+        if (!alive) return;
+        if (!res.success) {
+          toast.error('快捷录音启动失败', res.error?.message ?? '无法准备快捷知识库');
+          navigate({
+            pathname: location.pathname,
+            search: withoutQuickRecordRequest(location.search),
+            hash: location.hash,
+          }, { replace: true });
+          return;
+        }
+
+        setPendingEntryId(null);
+        setDetailInitialAction({
+          id: ++detailInitialActionSequenceRef.current,
+          storeId: res.data.id,
+          action: 'record',
+        });
+        setSelectedStoreId(res.data.id);
+        navigate({
+          pathname: location.pathname,
+          search: withDocumentStoreEntry(withoutQuickRecordRequest(location.search), res.data.id, null),
+          hash: location.hash,
+        }, { replace: true });
+      })
+      .finally(() => {
+        if (alive) setQuickCaptureResolving(false);
+        quickCaptureRequestInFlightRef.current = false;
+      });
+
+    return () => { alive = false; };
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   // 同一知识库内若 URL 的 entry 发生变化，需要单独恢复选中文档。
   useEffect(() => {
@@ -2910,12 +3011,33 @@ export function DocumentStorePage() {
   }, [tagStats, tagQuery]);
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
+  if (quickCaptureResolving) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center px-6" style={{ background: 'var(--bg-primary)' }}>
+        <div className="flex max-w-[320px] flex-col items-center text-center">
+          <div
+            className="mb-5 flex h-16 w-16 items-center justify-center rounded-[20px]"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+            <MapSpinner size={24} />
+          </div>
+          <p className="text-[16px] font-semibold text-token-primary">正在打开快捷录音</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
+            正在准备你的快捷知识库，完成后会自动开始录音
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (selectedStoreId) {
     return <StoreDetailView
       storeId={selectedStoreId}
       key={selectedStoreId}
       initialEntryId={pendingEntryId ?? undefined}
-      initialAction={detailInitialAction ?? undefined}
+      initialAction={detailInitialActionForStore(detailInitialAction, selectedStoreId)}
+      onInitialActionConsumed={(requestId) => {
+        setDetailInitialAction(current => consumeDetailInitialAction(current, requestId));
+      }}
       onBack={() => {
         setSelectedStoreId(null);
         setPendingEntryId(null);
@@ -3907,6 +4029,7 @@ export function DocumentStorePage() {
       {/* 外层「+」FAB：与库内 FAB 同款动作、出一样的结果，只多一步"归属到哪个知识库"。
           新建知识库也归入同一入口（与工具栏按钮同源 setShowCreate，不再是两套按钮）。 */}
       <CreatePaletteFab
+        onDoubleActivation={() => navigate('/document-store?quickRecord=1')}
         actions={[
           {
             key: 'store', label: '新建知识库', icon: Library, hue: 'rgba(234,179,8,0.92)',
@@ -3938,7 +4061,11 @@ export function DocumentStorePage() {
           scope={tab === 'team' ? 'team' : 'mine'}
           teamId={tab === 'team' ? teamScope.teamId : null}
           onPick={(storeId) => {
-            setDetailInitialAction(storePickerAction);
+            setDetailInitialAction({
+              id: ++detailInitialActionSequenceRef.current,
+              storeId,
+              action: storePickerAction,
+            });
             setStorePickerAction(null);
             setSelectedStoreId(storeId);
           }}

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using PrdAgent.Api.Services;
 using Shouldly;
 using Xunit;
@@ -6,6 +7,24 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class AsrAudioRoutePolicyTests
 {
+    [Fact]
+    public void ConfigureFfmpegArguments_ShouldPadShortClipsWithoutTruncatingLongAudio()
+    {
+        var startInfo = new ProcessStartInfo();
+
+        AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
+            startInfo.ArgumentList,
+            "/tmp/source.m4a",
+            "/tmp/normalized.wav");
+
+        startInfo.ArgumentList.ShouldContain("-af");
+        startInfo.ArgumentList.ShouldContain("apad=whole_dur=15");
+        startInfo.ArgumentList.ShouldNotContain("-t");
+        startInfo.ArgumentList.ShouldNotContain("-shortest");
+        startInfo.ArgumentList[^1].ShouldBe("/tmp/normalized.wav");
+        AsrAudioNormalizationPolicy.MinimumDurationSeconds.ShouldBe(15);
+    }
+
     [Theory]
     [InlineData("openai/gpt-4o-audio-preview", "openai-compatible", "google", true)]
     [InlineData("google/gemini-audio", "openrouter", "gemini", true)]

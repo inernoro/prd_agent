@@ -3,7 +3,9 @@ import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
+import { listTranscribeStyles } from '@/services';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
@@ -26,11 +28,15 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscribe, onSaveTranscriptNote }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
+  /** 打开既有的「换个整理方式」流程；交互播放器不在前端伪造新摘要。 */
+  onRestyleTranscribe?: () => void;
+  /** 保存用户在原文句子上的直接校对。 */
+  onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
   if (!entry) {
     return (
@@ -88,11 +94,17 @@ export function FilePreview({ entry, preview, transcriptNoteMd }: {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-6' : 'justify-center py-12'}`}>
+      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-2' : 'justify-center py-12'}`}>
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
-        {transcriptNoteMd
-          ? <TranscriptKaraoke src={fileUrl} noteMd={transcriptNoteMd} />
-          : <AudioWavePlayer src={fileUrl} />}
+        {transcriptNoteMd ? (
+          <AudioDocumentPreview
+            src={fileUrl}
+            noteMd={transcriptNoteMd}
+            styleKey={entry.metadata?.transcribe_style_key}
+            onRestyle={onRestyleTranscribe}
+            onSaveNote={onSaveTranscriptNote}
+          />
+        ) : <AudioWavePlayer src={fileUrl} />}
       </div>
     );
   }
@@ -274,4 +286,65 @@ export function FilePreview({ entry, preview, transcriptNoteMd }: {
   );
 }
 
+function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: {
+  src: string;
+  noteMd: string;
+  styleKey?: string;
+  onRestyle?: () => void;
+  onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
+}) {
+  const summary = extractTranscriptSummary(noteMd);
+  const [tab, setTab] = useState<'raw' | 'organized'>('raw');
+  const [styleLabel, setStyleLabel] = useState('整理结果');
+
+  useEffect(() => {
+    if (!styleKey) return;
+    void listTranscribeStyles().then((res) => {
+      if (!res.success) return;
+      setStyleLabel(res.data.items.find(item => item.key === styleKey)?.label || '整理结果');
+    });
+  }, [styleKey]);
+
+  return (
+    <div className="flex w-full flex-col items-center gap-4">
+      <div className="flex min-h-11 w-full max-w-[760px] items-center gap-1 rounded-[11px] p-1" style={{ background: 'var(--bg-nested)' }}>
+        <button
+          type="button"
+          onClick={() => setTab('raw')}
+          className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
+          style={tab === 'raw' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
+          原文
+        </button>
+        {summary && (
+          <button
+            type="button"
+            onClick={() => setTab('organized')}
+            className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
+            style={tab === 'organized' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
+            {styleLabel}
+          </button>
+        )}
+      </div>
+      {tab === 'organized' && summary ? (
+        <>
+          <AudioWavePlayer src={src} />
+          <section className="w-full max-w-[760px] rounded-[14px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+            <MarkdownViewer content={summary} />
+          </section>
+        </>
+      ) : (
+        <TranscriptKaraoke
+          src={src}
+          noteMd={noteMd}
+          documentMode
+          styleKey={styleKey}
+          onRestyle={onRestyle}
+          onSaveNote={onSaveNote}
+        />
+      )}
+    </div>
+  );
+}
+
 export default FilePreview;
+import { useEffect, useState } from 'react';

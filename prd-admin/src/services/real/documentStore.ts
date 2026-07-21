@@ -19,6 +19,17 @@ export const createDocumentStoreReal: CreateDocumentStoreContract = async (input
   });
 };
 
+/**
+ * 获取当前用户唯一的快捷知识库。服务端按用户稳定身份原子 find-or-create，
+ * 不按名称匹配，因此用户重命名后仍会回到同一个库。
+ */
+export async function getOrCreateQuickCaptureStore() {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStore>(
+    api.documentStore.stores.quickCapture(),
+    { method: 'POST' },
+  );
+}
+
 export const listDocumentStoresReal: ListDocumentStoresContract = async (page = 1, pageSize = 20) => {
   return await apiRequest(`${api.documentStore.stores.list()}?page=${page}&pageSize=${pageSize}`, {
     method: 'GET',
@@ -115,7 +126,7 @@ export const deleteDocumentEntryReal: DeleteDocumentEntryContract = async (entry
 
 /**
  * 上传文件到文档空间（multipart/form-data）。
- * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
 export async function uploadDocumentFile(storeId: string, file: File): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;
@@ -192,9 +203,73 @@ export async function uploadDocumentFileWithProgress(
   });
 }
 
+export type RecordingUploadSession = {
+  sessionId: string;
+  nextChunkIndex: number;
+  uploadedBytes: number;
+  expiresAt: string;
+};
+
+/** 建立录音实时保护会话；后续分片必须按 index 顺序上传。 */
+export async function startRecordingUpload(storeId: string, fileName: string, mimeType: string) {
+  return await apiRequest<RecordingUploadSession>(
+    api.documentStore.entries.recordingUploadStart(storeId),
+    { method: 'POST', body: { fileName, mimeType } },
+  );
+}
+
+/** 上传单个二进制录音分片。FormData/JSON 都会改变原字节，因此直接 fetch。 */
+export async function appendRecordingUploadChunk(sessionId: string, index: number, chunk: Blob) {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const res = await fetch(api.documentStore.entries.recordingUploadChunk(sessionId, index), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: chunk,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: text || `HTTP ${res.status}` } } as import('@/types/api').ApiResponse<{
+      accepted: boolean;
+      duplicate: boolean;
+      nextChunkIndex: number;
+      uploadedBytes: number;
+    }>;
+  }
+  return await res.json() as import('@/types/api').ApiResponse<{
+    accepted: boolean;
+    duplicate: boolean;
+    nextChunkIndex: number;
+    uploadedBytes: number;
+  }>;
+}
+
+/** 合并已确认分片并创建正常音频条目。重复调用会返回同一条目。 */
+export async function completeRecordingUpload(sessionId: string) {
+  return await apiRequest<{
+    entry: import('@/services/contracts/documentStore').DocumentEntry;
+    attachmentId: string;
+    documentId?: string;
+    fileUrl: string;
+    sessionId: string;
+    reused: boolean;
+  }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
+}
+
+/** 用户主动放弃时清理服务端临时录音分片。 */
+export async function cancelRecordingUpload(sessionId: string) {
+  return await apiRequest<{ deleted: boolean }>(
+    api.documentStore.entries.recordingUploadStatus(sessionId),
+    { method: 'DELETE' },
+  );
+}
+
 /**
  * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
- * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。
  */
 export async function replaceDocumentFile(entryId: string, file: File): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;
@@ -593,7 +668,7 @@ export type TranscribeStyleParams = {
   customPrompt?: string;
 };
 
-/** 发起录音转录全链路任务（ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新文档） */
+/** 发起录音转录。默认只保存 ASR 原文；显式传 styleKey 时才继续生成对应整理结果。 */
 export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(
     api.documentStore.entries.transcribe(entryId),
@@ -614,6 +689,14 @@ export async function restyleTranscribeRun(runId: string, style: TranscribeStyle
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(
     api.documentStore.stores.transcribeRestyle(runId),
     { method: 'POST', body: style },
+  );
+}
+
+/** 保存用户校对后的转录原文，并更新同一录音文档的「转录全文」小节 */
+export async function updateTranscribeTranscript(runId: string, transcriptText: string) {
+  return await apiRequest<{ updated: boolean; transcriptText: string }>(
+    api.documentStore.stores.transcribeTranscript(runId),
+    { method: 'PUT', body: { transcriptText } },
   );
 }
 

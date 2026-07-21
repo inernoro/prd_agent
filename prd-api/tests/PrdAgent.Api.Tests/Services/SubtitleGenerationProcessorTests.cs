@@ -36,11 +36,10 @@ public class SubtitleGenerationProcessorTests
                 StatusCode = 200,
                 Content = """
                           {
-                            "result": {
-                              "utterances": [
-                                { "start_time": 1000, "end_time": 2500, "text": "第一句字幕" }
-                              ]
-                            }
+                            "text": "第一句字幕",
+                            "segments": [
+                              { "start": 1.0, "end": 2.5, "text": "第一句字幕" }
+                            ]
                           }
                           """
             });
@@ -105,4 +104,66 @@ public class SubtitleGenerationProcessorTests
         segments[0].EndSec.ShouldBe(2.5);
         segments[0].Text.ShouldBe("第一句字幕");
     }
+
+    [Fact]
+    public async Task DoubaoAsyncAsr_EmptyNormalizedResponse_ShouldKeepSpecificFailure()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"text\":\"\",\"segments\":[]}",
+            });
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaDoubaoAsyncJsonAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[] { BuildRun(), new byte[] { 1, 2, 3 }, BuildDoubaoResolution() })!;
+
+        var exception = await Should.ThrowAsync<SubtitleAsrException>(() => task);
+        exception.Message.ShouldContain("豆包异步 ASR 返回为空");
+        exception.Diagnostic["responseSnippet"].ShouldBe("{\"text\":\"\",\"segments\":[]}");
+    }
+
+    private static SubtitleGenerationProcessor BuildProcessor(ILlmGateway gateway)
+        => new(
+            modelResolver: Mock.Of<IModelResolver>(),
+            llmGateway: gateway,
+            documentService: Mock.Of<IDocumentService>(),
+            httpClientFactory: Mock.Of<IHttpClientFactory>(),
+            llmCtx: new LLMRequestContextAccessor(),
+            applyService: null!,
+            logger: NullLogger<SubtitleGenerationProcessor>.Instance);
+
+    private static ModelResolutionResult BuildDoubaoResolution()
+        => new()
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ActualModel = "doubao-asr-bigmodel",
+            ActualPlatformId = "exchange-doubao-asr",
+            ActualPlatformName = "Exchange:Doubao ASR",
+            PlatformType = "exchange",
+            IsExchange = true,
+            ExchangeName = "Doubao ASR",
+            ExchangeTransformerType = "doubao-asr",
+            ApiUrl = "https://example.test/asr",
+            ApiKey = "test-key",
+        };
+
+    private static DocumentStoreAgentRun BuildRun()
+        => new()
+        {
+            Id = "run-1",
+            UserId = "user-1",
+            SourceEntryId = "entry-1",
+        };
 }
