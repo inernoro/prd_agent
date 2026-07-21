@@ -1855,6 +1855,10 @@ export function BranchListPage(): JSX.Element {
 
   useEffect(() => {
     if (!projectId || !noticeProject) return;
+    // 项目元信息走了 fallback(project 404/暂不可读)时不发站内信:此时 projectId
+    // 可能指向已删除的项目,发出去的通知会携带死链接,用户点开即 404
+    // (2026-07-21 用户实例:通知里的项目 id 已被删除重建)。
+    if (state.status === 'ok' && state.projectWarning) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1875,6 +1879,8 @@ export function BranchListPage(): JSX.Element {
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
+    // 同上:项目元信息 fallback 时不发,避免为已不可解析的项目新造死链通知。
+    if (state.projectWarning) return;
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
       detail: {
         id: `branch:${projectId}:schema-init`,
