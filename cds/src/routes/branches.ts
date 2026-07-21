@@ -3140,6 +3140,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -3929,6 +3933,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -4317,6 +4325,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -13784,6 +13796,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -20666,6 +20682,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
