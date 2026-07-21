@@ -330,7 +330,10 @@ function startStaleDeployDispatchReconciler(
           const cached = runtimeDiffCache.get(cacheKey);
           if (cached !== undefined) return cached;
           try {
-            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null || true`, {
+            // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
+            // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
+            // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
+            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
               encoding: 'utf-8',
             }).trim();
             const result = out
