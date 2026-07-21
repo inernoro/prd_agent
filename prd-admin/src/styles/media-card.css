@@ -1,0 +1,51 @@
+/*
+ * 智能体图片卡渲染契约。
+ *
+ * 明暗主题的差异只允许写进 tokens.css；首页、百宝箱与移动端统一复用
+ * AgentCardArtwork，不再各自维护图片亮度、色彩、遮罩和阴影分支。
+ */
+.agent-card-artwork-image {
+  filter: var(--media-art-filter);
+  opacity: var(--media-art-opacity);
+  transition: filter 260ms ease, opacity 260ms ease, transform 500ms ease;
+}
+
+.group:hover .agent-card-artwork-image {
+  opacity: var(--media-art-opacity-hover);
+  transform: scale(1.015);
+}
+
+.agent-card-artwork-tint {
+  background: linear-gradient(
+    128deg,
+    color-mix(in srgb, var(--agent-card-tint) 88%, transparent) 0%,
+    transparent 72%
+  );
+  mix-blend-mode: var(--media-art-tint-blend);
+  opacity: var(--media-art-tint-opacity);
+  transition: opacity 220ms ease;
+}
+
+.group:hover .agent-card-artwork-tint {
+  opacity: var(--media-art-tint-opacity-hover);
+}
+
+.agent-card-artwork-wash {
+  background: var(--media-art-wash);
+  mix-blend-mode: var(--media-art-wash-blend);
+}
+
+.agent-card-artwork-overlay {
+  background: var(--media-card-overlay);
+}
+
+.agent-card-artwork[data-compact='true'] .agent-card-artwork-overlay {
+  background: var(--media-card-overlay-compact);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-card-artwork-image,
+  .agent-card-artwork-tint {
+    transition: none;
+  }
+}

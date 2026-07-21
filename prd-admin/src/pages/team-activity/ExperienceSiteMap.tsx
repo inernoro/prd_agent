@@ -63,13 +63,13 @@ export function ExperienceSiteMap({
         <Header headerExtra={headerExtra} />
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
-          <span className="text-sm text-emerald-300/85">当前窗口没有可铺设的站点路径</span>
-          <span className="text-[12px] text-white/40">尚无足够请求构建路由树。可换时间范围，或</span>
+          <span className="text-sm text-semantic-success">当前窗口没有可铺设的站点路径</span>
+          <span className="text-[12px] text-token-muted">尚无足够请求构建路由树。可换时间范围，或</span>
           {onSwitchHeatmap ? (
             <button
               type="button"
               onClick={onSwitchHeatmap}
-              className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 bg-white/[0.03] text-[11px] text-white/55 hover:text-white/85 hover:border-white/25 transition-colors cursor-pointer"
+              className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-token-subtle bg-token-nested text-[11px] text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
             >
               切回体验全景热力图
             </button>
@@ -92,17 +92,17 @@ export function ExperienceSiteMap({
                 {/* 模块节点 */}
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: m.painCount > 0 ? ERR : 'rgba(94,234,212,0.7)' }} />
-                  <span className="text-[12.5px] font-semibold text-white/80">{m.group.label}</span>
+                  <span className="text-[12.5px] font-semibold text-token-primary">{m.group.label}</span>
                   {m.painCount > 0 ? (
                     <span className="text-[10.5px] px-1.5 py-px rounded-full" style={{ background: 'rgba(248,113,122,0.12)', color: ERR }}>
                       {m.painCount} 处告警
                     </span>
                   ) : (
-                    <span className="text-[10.5px] text-white/30">{m.leaves.length} 个端点 · 健康</span>
+                    <span className="text-[10.5px] text-token-muted">{m.leaves.length} 个端点 · 健康</span>
                   )}
                 </div>
                 {/* 端点叶子（缩进 + 左侧连接竖线） */}
-                <div className="flex flex-col gap-1 pl-3 ml-[3px]" style={{ borderLeft: '1px solid rgba(255,255,255,0.07)' }}>
+                <div className="flex flex-col gap-1 pl-3 ml-[3px]" style={{ borderLeft: '1px solid var(--border-subtle)' }}>
                   {m.leaves.map((l) => {
                     const isPain = l.status === 'error' || l.status === 'slow';
                     const color = l.status === 'error' ? ERR : l.status === 'slow' ? SLOW : 'rgba(94,234,212,0.55)';
@@ -133,19 +133,19 @@ export function ExperienceSiteMap({
                         ) : (
                           <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
                         )}
-                        <span className="text-[11.5px] truncate min-w-0 sm:max-w-[220px]" style={{ color: isPain ? 'rgba(255,255,255,0.85)' : 'rgba(236,236,239,0.5)' }}>
+                        <span className="text-[11.5px] truncate min-w-0 sm:max-w-[220px]" style={{ color: isPain ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                           {l.label}
                         </span>
-                        <span className="hidden sm:inline text-[10px] font-mono text-white/30 truncate sm:max-w-[200px]">
+                        <span className="hidden sm:inline text-[10px] font-mono text-token-muted truncate sm:max-w-[200px]">
                           {l.target}
                         </span>
                         {isPain ? (
                           <span className="ml-auto text-[10.5px] tabular-nums shrink-0" style={{ color }}>
                             {l.metric}
-                            {clickable ? <span className="ml-1.5 text-white/40 opacity-0 group-hover/site:opacity-100 transition-opacity">下钻</span> : null}
+                            {clickable ? <span className="ml-1.5 text-token-muted opacity-0 group-hover/site:opacity-100 transition-opacity">下钻</span> : null}
                           </span>
                         ) : (
-                          <span className="ml-auto text-[10px] text-white/25 tabular-nums shrink-0">{l.value} 次</span>
+                          <span className="ml-auto text-[10px] text-token-muted tabular-nums shrink-0">{l.value} 次</span>
                         )}
                       </button>
                     );
@@ -164,10 +164,10 @@ export function ExperienceSiteMap({
 function Header({ headerExtra }: { headerExtra?: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0">
-      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+      <span className="text-[13px] font-semibold text-token-primary inline-flex items-center gap-2.5 min-w-0 flex-wrap">
         <span className="whitespace-nowrap">路由站点地图</span>
-        <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
-          <Network size={12} className="text-cyan-300/70" />
+        <span className="hidden sm:inline-flex text-[11px] text-token-muted font-normal items-center gap-1.5 whitespace-nowrap">
+          <Network size={12} className="text-semantic-cyan" />
           按模块铺开路由树 · 点痛点节点下钻
         </span>
       </span>

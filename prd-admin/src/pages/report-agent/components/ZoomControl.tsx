@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useDataTheme } from '../hooks/useDataTheme';
 
 export type ZoomLevel = 'normal' | 'large' | 'extra';
 
@@ -21,8 +20,6 @@ export interface ZoomControlProps {
 }
 
 export function ZoomControl({ value, onChange }: ZoomControlProps) {
-  const dataTheme = useDataTheme();
-  const isLight = dataTheme === 'light';
   const handleClick = useCallback(
     (next: ZoomLevel) => {
       if (next !== value) onChange(next);
@@ -47,12 +44,8 @@ export function ZoomControl({ value, onChange }: ZoomControlProps) {
             onClick={() => handleClick(opt.value)}
             className="px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all duration-150 whitespace-nowrap"
             style={{
-              background: selected
-                ? (isLight ? 'var(--accent-claude-soft)' : 'rgba(59,130,246,.15)')
-                : 'transparent',
-              color: selected
-                ? (isLight ? 'var(--accent-claude)' : 'rgba(59,130,246,.95)')
-                : 'var(--text-secondary)',
+              background: selected ? 'var(--report-accent-soft)' : 'transparent',
+              color: selected ? 'var(--report-accent)' : 'var(--text-secondary)',
             }}
           >
             {opt.label}

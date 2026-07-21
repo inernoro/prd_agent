@@ -111,7 +111,7 @@ export function getAccent(icon: string): Accent {
 export function glassTileStyle(accent?: Accent): CSSProperties {
   const tint = accent ? `radial-gradient(150px 100px at 12% 0%, ${accent.faint} 0%, transparent 100%), ` : '';
   return {
-    background: `${tint}rgba(255,255,255,0.05)`,
-    border: '1px solid rgba(255,255,255,0.09)',
+    background: `${tint}var(--launcher-tile-bg)`,
+    border: '1px solid var(--launcher-tile-border)',
   };
 }

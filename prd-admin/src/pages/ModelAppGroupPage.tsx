@@ -72,9 +72,9 @@ import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTyp
 // 所有消费方统一从 MODEL_TYPE_DEFINITIONS 读取，禁止各处硬编码
 
 const HEALTH_STATUS_MAP = {
-  Healthy: { label: '健康', color: 'rgba(34,197,94,0.95)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
-  Degraded: { label: '降权', color: 'rgba(251,191,36,0.95)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.28)' },
-  Unavailable: { label: '不可用', color: 'rgba(239,68,68,0.95)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
+  Healthy: { label: '健康', color: 'var(--semantic-success-text)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
+  Degraded: { label: '降权', color: 'var(--semantic-warning-text)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.28)' },
+  Unavailable: { label: '不可用', color: 'var(--semantic-danger-text)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
 };
 
 export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (actions: React.ReactNode) => void }) {
@@ -1170,7 +1170,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                           label: '专属模型池',
                           icon: Layers,
                           bg: 'rgba(59, 130, 246, 0.18)',
-                          color: 'rgba(59, 130, 246, 0.95)',
+                          color: 'var(--semantic-info-text)',
                           border: 'rgba(59, 130, 246, 0.4)',
                         }
                         : isLegacySingle
@@ -1178,23 +1178,23 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                             label: '直连单模型',
                             icon: Zap,
                             bg: 'rgba(148, 163, 184, 0.18)',
-                            color: 'rgba(148, 163, 184, 0.95)',
+                            color: 'var(--semantic-neutral-text)',
                             border: 'rgba(148, 163, 184, 0.35)',
                           }
                           : {
                             label: resolvedModel ? '默认模型池' : '默认未配置',
                             icon: Layers,
                             bg: resolvedModel ? 'rgba(148, 163, 184, 0.16)' : 'rgba(251, 191, 36, 0.18)',
-                            color: resolvedModel ? 'rgba(148, 163, 184, 0.95)' : 'rgba(251, 191, 36, 0.95)',
+                            color: resolvedModel ? 'var(--semantic-neutral-text)' : 'var(--semantic-warning-text)',
                             border: resolvedModel ? 'rgba(148, 163, 184, 0.3)' : 'rgba(251, 191, 36, 0.35)',
                           };
                       const ModeBadgeIcon = modeBadge.icon;
                       const FeatureIcon = isLegacySingle ? Zap : ModelTypeIcon;
                       const featureAccent = isLegacySingle
-                        ? 'rgba(148, 163, 184, 0.95)'
+                        ? 'var(--semantic-neutral-text)'
                         : isDefaultPool
-                          ? (resolvedModel ? 'rgba(148, 163, 184, 0.95)' : 'rgba(251, 191, 36, 0.95)')
-                          : 'rgba(59, 130, 246, 0.9)';
+                          ? (resolvedModel ? 'var(--semantic-neutral-text)' : 'var(--semantic-warning-text)')
+                          : 'var(--semantic-info-text)';
 
                       return (
                         <div key={idx} className="p-4">

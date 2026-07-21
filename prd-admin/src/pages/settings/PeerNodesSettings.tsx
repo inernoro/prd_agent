@@ -55,10 +55,10 @@ function fmtRelative(s?: string | null) {
 function StatusDot({ status }: { status: PeerNode['status'] }) {
   const colorVar =
     status === 'connected'
-      ? 'rgba(34,197,94,0.95)'
+      ? 'var(--semantic-success-text)'
       : status === 'error'
-        ? 'rgba(239,68,68,0.95)'
-        : 'rgba(245,158,11,0.95)';
+        ? 'var(--semantic-danger-text)'
+        : 'var(--semantic-warning-text)';
   const label = status === 'connected' ? '已连接' : status === 'error' ? '通信异常' : '待握手';
   return (
     <span
@@ -66,10 +66,10 @@ function StatusDot({ status }: { status: PeerNode['status'] }) {
       style={{
         background:
           status === 'connected'
-            ? 'rgba(34,197,94,0.10)'
+            ? 'var(--status-done-soft, rgba(34,197,94,0.10))'
             : status === 'error'
-              ? 'rgba(239,68,68,0.10)'
-              : 'rgba(245,158,11,0.10)',
+              ? 'var(--button-danger-bg)'
+              : 'var(--status-going-soft, rgba(245,158,11,0.10))',
         color: colorVar,
       }}
     >
@@ -92,12 +92,7 @@ function CopyChip({ value, label }: { value: string; label: string }) {
           /* ignore */
         }
       }}
-      className="group inline-flex items-center gap-1.5 max-w-full text-left rounded-md px-2 py-1 transition-colors"
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        color: 'var(--text-primary)',
-      }}
+      className="surface-action group inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-token-primary transition-colors"
       title={`点击复制 ${label}`}
     >
       <span className="text-[10px] font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>
@@ -107,7 +102,7 @@ function CopyChip({ value, label }: { value: string; label: string }) {
         {value || '—'}
       </code>
       {copied ? (
-        <Check size={11} style={{ color: 'rgba(34,197,94,0.95)' }} className="shrink-0" />
+        <Check size={11} style={{ color: 'var(--semantic-success-text)' }} className="shrink-0" />
       ) : (
         <Copy size={11} className="shrink-0 opacity-40 group-hover:opacity-90 transition-opacity" style={{ color: 'var(--text-muted)' }} />
       )}
@@ -375,40 +370,22 @@ export function PeerNodesSettings() {
 
   return (
     <div
-      className="h-full min-h-0 overflow-y-auto pb-8"
-      style={{
-        overscrollBehavior: 'contain',
-        background:
-          'linear-gradient(180deg, rgba(22,27,36,0.98) 0%, rgba(18,22,30,0.98) 100%)',
-      }}
+      className="flex h-full min-h-0 flex-col overflow-y-auto pb-8"
+      style={{ overscrollBehavior: 'contain' }}
     >
       <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-3 sm:px-4">
       {/* ── 本节点身份卡（hero） ── */}
-      <section
-        className="relative overflow-hidden rounded-xl p-4"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(34,42,55,0.88) 0%, rgba(27,34,46,0.82) 100%)',
-          border: '1px solid rgba(148,163,184,0.14)',
-          boxShadow: '0 12px 28px rgba(2,6,23,0.22)',
-        }}
-      >
+      <section className="surface-raised relative overflow-hidden rounded-xl p-4">
         <div className="flex items-start gap-4 flex-wrap">
-          <div
-            className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
-            style={{ background: 'rgba(51,65,85,0.72)', border: '1px solid rgba(148,163,184,0.16)' }}
-          >
-            <Server size={20} style={{ color: 'rgba(191,219,254,0.92)' }} />
+          <div className="surface-inset flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
+            <Server size={20} style={{ color: 'var(--semantic-info-text)' }} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 本节点
               </span>
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-              >
+              <span className="surface-action rounded px-1.5 py-0.5 text-[10px] text-token-muted">
                 {nodes.length} 个对端已配对
               </span>
             </div>
@@ -425,21 +402,11 @@ export function PeerNodesSettings() {
       </section>
 
       {/* ── 添加对端 ── */}
-      <section
-        className="rounded-xl p-4"
-        style={{
-          background: 'rgba(31,39,52,0.78)',
-          border: '1px solid rgba(148,163,184,0.14)',
-          boxShadow: '0 8px 20px rgba(2,6,23,0.14)',
-        }}
-      >
+      <section className="surface rounded-xl p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3 min-w-0">
-            <div
-              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(51,65,85,0.70)', border: '1px solid rgba(148,163,184,0.16)' }}
-            >
-              <Plus size={16} style={{ color: 'rgba(203,213,225,0.95)' }} />
+            <div className="surface-inset flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+              <Plus size={16} style={{ color: 'var(--text-secondary)' }} />
             </div>
             <div className="min-w-0">
               <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -457,22 +424,12 @@ export function PeerNodesSettings() {
       </section>
 
       {showAdd && (
-        <section
-          className="rounded-xl p-5 space-y-4"
-          style={{
-            background: 'rgba(32,38,50,0.96)',
-            border: '1px solid rgba(148,163,184,0.16)',
-            boxShadow: '0 18px 42px rgba(2,6,23,0.22)',
-          }}
-        >
+        <section className="surface-raised space-y-4 rounded-xl p-5">
           <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
             添加对端
           </div>
 
-          <div
-            className="rounded-lg p-3 space-y-2"
-            style={{ background: 'rgba(24,31,42,0.78)', border: '1px solid rgba(148,163,184,0.14)' }}
-          >
+          <div className="surface-inset space-y-2 rounded-lg p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                 我的连接串
@@ -485,10 +442,7 @@ export function PeerNodesSettings() {
             </div>
             {selfConnectText ? (
               <>
-                <code
-                  className="block text-[11px] font-mono break-all px-2 py-2 rounded max-h-20 overflow-y-auto"
-                  style={{ background: 'rgba(11,18,32,0.72)', color: 'var(--text-primary)' }}
-                >
+                <code className="prd-field block max-h-20 overflow-y-auto rounded px-2 py-2 font-mono text-[11px] text-token-primary break-all">
                   {selfConnectText}
                 </code>
                 <div className="flex items-center justify-end gap-2">
@@ -503,10 +457,7 @@ export function PeerNodesSettings() {
                 </div>
               </>
             ) : (
-              <div
-                className="flex items-center justify-between gap-3 flex-wrap rounded-md px-3 py-2"
-                style={{ background: 'rgba(36,45,59,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}
-              >
+              <div className="surface-row flex flex-wrap items-center justify-between gap-3 rounded-md px-3 py-2">
                 <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                   连接串 3 天内有效，使用一次后立即失效。
                 </span>
@@ -523,12 +474,7 @@ export function PeerNodesSettings() {
               对端连接串
             </span>
             <textarea
-              className="w-full min-h-[92px] resize-y rounded-lg px-3 py-2 text-[12px] font-mono outline-none"
-              style={{
-                background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                border: '1px solid rgba(148,163,184,0.20)',
-                color: 'var(--text-primary)',
-              }}
+              className="prd-field min-h-[92px] w-full resize-y rounded-lg px-3 py-2 font-mono text-[12px] text-token-primary outline-none"
               placeholder="粘贴对端生成的 peer-connect:v1:..."
               value={peerConnectText}
               onChange={(e) => handlePeerConnectTextChange(e.target.value)}
@@ -541,7 +487,7 @@ export function PeerNodesSettings() {
               style={{
                 background: parsedPeer ? 'rgba(34,197,94,0.07)' : 'rgba(239,68,68,0.08)',
                 border: `1px solid ${parsedPeer ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.20)'}`,
-                color: parsedPeer ? 'rgba(134,239,172,0.95)' : 'rgba(252,165,165,0.95)',
+                color: parsedPeer ? 'var(--semantic-success-text)' : 'var(--semantic-danger-text)',
               }}
             >
               {parsedPeer ? <CheckCircle2 size={14} className="shrink-0 mt-0.5" /> : <AlertCircle size={14} className="shrink-0 mt-0.5" />}
@@ -559,12 +505,7 @@ export function PeerNodesSettings() {
                 我方称呼对端（可选）
               </span>
               <input
-                className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
-                style={{
-                  background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                  border: '1px solid rgba(148,163,184,0.20)',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field w-full rounded-lg px-3 py-2 text-[13px] text-token-primary outline-none"
                 placeholder="如：正式环境"
                 value={addName}
                 onChange={(e) => setAddName(e.target.value)}
@@ -575,12 +516,7 @@ export function PeerNodesSettings() {
                 对端称呼本节点（可选）
               </span>
               <input
-                className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
-                style={{
-                  background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                  border: '1px solid rgba(148,163,184,0.20)',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field w-full rounded-lg px-3 py-2 text-[13px] text-token-primary outline-none"
                 placeholder="如：测试环境"
                 value={addSelfName}
                 onChange={(e) => setAddSelfName(e.target.value)}
@@ -593,7 +529,7 @@ export function PeerNodesSettings() {
               style={{
                 background: 'rgba(239,68,68,0.08)',
                 border: '1px solid rgba(239,68,68,0.20)',
-                color: 'rgba(252,165,165,0.95)',
+                color: 'var(--semantic-danger-text)',
               }}
             >
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
@@ -606,13 +542,13 @@ export function PeerNodesSettings() {
               style={{
                 background: 'rgba(59,130,246,0.06)',
                 border: '1px solid rgba(59,130,246,0.18)',
-                color: 'rgba(147,197,253,0.95)',
+                color: 'var(--semantic-info-text)',
               }}
             >
               <MapSpinner size={12} />
               <span className="min-w-0 flex-1">
                 {addProgress.stage}{' '}
-                <span style={{ color: 'rgba(147,197,253,0.6)' }}>
+                <span className="text-token-muted">
                   · 已用 {Math.round((Date.now() - addProgress.startedAt) / 1000)}s
                 </span>
               </span>
@@ -651,17 +587,8 @@ export function PeerNodesSettings() {
         {loading ? (
           <MapSectionLoader text="正在加载对端节点…" />
         ) : nodes.length === 0 ? (
-          <div
-            className="rounded-xl p-10 text-center"
-            style={{
-              background: 'var(--bg-card, rgba(255,255,255,0.02))',
-              border: '1px dashed rgba(255,255,255,0.10)',
-            }}
-          >
-            <div
-              className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
-              style={{ background: 'rgba(255,255,255,0.04)' }}
-            >
+          <div className="surface-inset rounded-xl border-dashed p-10 text-center">
+            <div className="surface-action mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl">
               <Globe size={22} style={{ color: 'var(--text-muted)' }} />
             </div>
             <div className="text-[13px] mb-1" style={{ color: 'var(--text-primary)' }}>
@@ -678,11 +605,7 @@ export function PeerNodesSettings() {
             {nodes.map((n) => (
               <article
                 key={n.id}
-                className="rounded-xl p-3.5 transition-colors"
-                style={{
-                  background: 'var(--bg-card, rgba(255,255,255,0.03))',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
+                className="surface-row rounded-xl p-3.5 transition-colors"
               >
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -694,20 +617,20 @@ export function PeerNodesSettings() {
                             ? 'rgba(34,197,94,0.10)'
                             : n.status === 'error'
                               ? 'rgba(239,68,68,0.10)'
-                              : 'rgba(255,255,255,0.04)',
+                              : 'var(--nested-block-bg)',
                         border: `1px solid ${
                           n.status === 'connected'
                             ? 'rgba(34,197,94,0.20)'
                             : n.status === 'error'
                               ? 'rgba(239,68,68,0.20)'
-                              : 'rgba(255,255,255,0.08)'
+                              : 'var(--border-subtle)'
                         }`,
                       }}
                     >
                       {n.status === 'connected' ? (
-                        <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
+                        <CheckCircle2 size={16} style={{ color: 'var(--semantic-success-text)' }} />
                       ) : n.status === 'error' ? (
-                        <AlertCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
+                        <AlertCircle size={16} style={{ color: 'var(--semantic-danger-text)' }} />
                       ) : (
                         <Globe size={16} style={{ color: 'var(--text-muted)' }} />
                       )}
@@ -730,7 +653,7 @@ export function PeerNodesSettings() {
                       <div className="flex items-center gap-2 mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         <span>最近通信 {fmtRelative(n.lastContactAt)}</span>
                         {testProgress?.id === n.id && (
-                          <span style={{ color: 'rgba(147,197,253,0.95)' }}>
+                          <span style={{ color: 'var(--semantic-info-text)' }}>
                             · 测试中 {Math.round((Date.now() - testProgress.startedAt) / 1000)}s…
                           </span>
                         )}
@@ -741,7 +664,7 @@ export function PeerNodesSettings() {
                           style={{
                             background: 'rgba(239,68,68,0.06)',
                             border: '1px solid rgba(239,68,68,0.16)',
-                            color: 'rgba(252,165,165,0.95)',
+                            color: 'var(--semantic-danger-text)',
                           }}
                         >
                           <AlertCircle size={11} className="shrink-0 mt-0.5" />

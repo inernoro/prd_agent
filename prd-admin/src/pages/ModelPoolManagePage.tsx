@@ -56,9 +56,9 @@ const STRATEGY_OPTIONS = [
 // MODEL_TYPES 已迁移到 appCallerUtils.ts 的 MODEL_TYPE_DEFINITIONS
 
 const HEALTH_STATUS_MAP = {
-  Healthy: { label: '健康', color: 'rgba(34,197,94,0.95)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
-  Degraded: { label: '降权', color: 'rgba(251,191,36,0.95)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.28)' },
-  Unavailable: { label: '不可用', color: 'rgba(239,68,68,0.95)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
+  Healthy: { label: '健康', color: 'var(--semantic-success-text)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
+  Degraded: { label: '降权', color: 'var(--semantic-warning-text)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.28)' },
+  Unavailable: { label: '不可用', color: 'var(--semantic-danger-text)', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.28)' },
 };
 
 function keyOfModel(m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) {

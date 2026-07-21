@@ -72,6 +72,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import type { ToolboxDisplayMode } from '../toolboxDisplayMode';
 
 interface ToolCardProps {
   item: ToolboxItem;
@@ -82,6 +83,7 @@ interface ToolCardProps {
    *   用户必须在详情里显式点【创建副本】才会生成 Fork；平时只是"使用别人公开的原件"。
    */
   source?: 'mine' | 'marketplace';
+  displayMode?: ToolboxDisplayMode;
 }
 
 // 图标组件映射
@@ -111,7 +113,7 @@ function getIconComponent(iconName: string): LucideIcon {
  * 全部行为保留：NEW/施工中/已公开徽章、编辑/公开/删除浮条、创建副本、收藏、标签过滤。
  * 封面/视频资产仍在 CDN 与 homepageAssetsStore 中，详情页可继续使用。
  */
-export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
+export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: ToolCardProps) {
   const {
     selectItem,
     toggleFavorite,
@@ -131,6 +133,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const accent = getAccent(item.icon);
   const IconComponent = getIconComponent(item.icon);
   const hasArtwork = hasAgentCardArtwork(item.agentKey);
+  const isCompact = displayMode === 'compact';
+  const visibleTagCount = isCompact ? 2 : displayMode === 'showcase' ? 4 : 3;
   const isPaAgent = item.agentKey === 'pa-agent';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
@@ -306,6 +310,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     <>
       <div
         role="button"
+        data-display-mode={displayMode}
+        data-has-artwork={hasArtwork}
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={(e) => {
@@ -317,19 +323,18 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             handleClick();
           }
         }}
-        className="group relative w-full h-full overflow-hidden text-left rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col gap-3 p-4"
+        className="toolbox-tool-card group relative w-full h-full overflow-hidden text-left cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col"
         style={{
           ...glassTileStyle(accent),
-          minHeight: hasArtwork ? 258 : undefined,
           background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
           border: hasArtwork ? 'none' : glassTileStyle(accent).border,
         }}
       >
-        <AgentCardArtwork agentKey={item.agentKey} />
+        <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} compact={isCompact} />
         {hasArtwork && (
           <div
             aria-hidden
-            className="absolute inset-x-0 bottom-0 h-[30%] pointer-events-none"
+            className="toolbox-tool-card-media-panel absolute inset-x-0 bottom-0 pointer-events-none"
             style={{
               background: 'var(--media-card-panel-translucent)',
               backdropFilter: 'blur(12px)',
@@ -350,7 +355,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         <div className="relative z-10 flex items-start justify-between gap-2">
           {hasArtwork ? (
             <div
-              className="max-w-[60%] text-[21px] font-semibold leading-[1.2] tracking-[-0.02em]"
+              className="toolbox-tool-card-title max-w-[60%] font-semibold leading-[1.2] tracking-[-0.02em]"
               style={{ color: 'var(--text-on-media)' }}
             >
               {item.name}
@@ -365,7 +370,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           )}
 
           <div className="flex flex-col items-end gap-2 shrink-0">
-            {hasArtwork && <AgentCardTask agentKey={item.agentKey} />}
+            {hasArtwork && (
+              <AgentCardTask agentKey={item.agentKey} compact={isCompact} dense={isCompact} />
+            )}
             <div className="flex items-center gap-1">
             {/* NEW 徽章 — 别人 7 天内发布的公开条目 */}
             {isNewByOthers && (
@@ -484,7 +491,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
           <div className={`relative z-10 flex flex-wrap gap-1 ${hasArtwork ? 'mt-auto' : ''}`}>
-            {item.tags.slice(0, 3).map((tag) => {
+            {item.tags.slice(0, visibleTagCount).map((tag) => {
               const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
                 <button
@@ -505,9 +512,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 </button>
               );
             })}
-            {item.tags.length > 3 && (
+            {item.tags.length > visibleTagCount && (
               <span className="text-token-muted-faint text-[10px] px-0.5 font-medium">
-                +{item.tags.length - 3}
+                +{item.tags.length - visibleTagCount}
               </span>
             )}
           </div>
@@ -529,9 +536,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               <span
                 className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                 style={{
-                  background: 'rgba(59,130,246,0.2)',
-                  color: '#93c5fd',
-                  border: '1px solid rgba(59,130,246,0.45)',
+                  background: 'var(--selection-icon-bg)',
+                  color: 'var(--selection-text)',
+                  border: '1px solid var(--selection-border)',
                 }}
                 title="定位：私人助理"
               >

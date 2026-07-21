@@ -1,0 +1,106 @@
+/* 首页视觉层：只负责工作台门面的色彩与交互，不改变页面信息结构。 */
+.home-launcher-color-field {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 390px;
+  pointer-events: none;
+  background: var(--home-ambient-background);
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.72) 54%, transparent 100%);
+  opacity: var(--home-ambient-opacity);
+}
+
+.home-launcher-eyebrow {
+  background: var(--home-eyebrow-bg);
+  border: 1px solid var(--home-eyebrow-border);
+  color: var(--home-eyebrow-text);
+}
+
+.home-launcher-title {
+  color: var(--text-primary);
+  text-shadow: var(--home-title-shadow);
+}
+
+.home-launcher-display-name {
+  color: var(--text-primary);
+  background: var(--home-name-background);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: var(--home-name-fill);
+}
+
+.home-launcher-subtitle {
+  color: var(--home-subtitle-text);
+  text-shadow: var(--home-subtitle-shadow);
+}
+
+.home-launcher-search {
+  background: color-mix(in srgb, var(--bg-input) 88%, transparent);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.home-launcher-search:hover {
+  border-color: var(--border-default);
+}
+
+.home-launcher-search:focus {
+  background: var(--bg-input);
+  border-color: rgba(99, 102, 241, 0.58);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.home-launcher-quick-link {
+  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-launcher-quick-link:hover {
+  background: var(--bg-card);
+  border-color: var(--border-default);
+}
+
+.home-learning-center {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(139, 92, 246, 0.16), transparent 48%),
+    color-mix(in srgb, var(--bg-card) 76%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-learning-center:hover {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(139, 92, 246, 0.22), transparent 52%),
+    var(--bg-card);
+  border-color: rgba(139, 92, 246, 0.38);
+}
+
+.home-launcher-recent {
+  background: color-mix(in srgb, var(--launcher-tile-bg) 74%, transparent);
+  border: 1px solid var(--launcher-tile-border);
+}
+
+.home-launcher-recent-more {
+  border: 1px dashed var(--border-default);
+  color: var(--text-muted);
+}
+
+.home-launcher-recent-more:hover {
+  border-color: rgba(99, 102, 241, 0.54);
+  color: var(--text-primary);
+}
+
+.home-launcher-section-count {
+  background: var(--nested-block-bg);
+  color: var(--text-muted);
+}
+
+@media (max-width: 767px) {
+  .home-launcher-color-field { height: 300px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-launcher-search,
+  .home-launcher-quick-link,
+  .home-launcher-recent { transition: none; }
+}

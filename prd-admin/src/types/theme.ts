@@ -78,43 +78,6 @@ export const MATERIAL_OPTIONS: Array<{
 ];
 
 /**
- * 内嵌 div 块样式配置（用于页面内的子容器）
- * 基于主题配置动态计算
- */
-export const NESTED_BLOCK_STYLES = {
-  /** 内嵌块背景透明度 */
-  bgAlpha: {
-    solid: 0.07,
-    default: 0.04,
-    translucent: 0.03,
-  },
-  /** 内嵌块边框透明度 */
-  borderAlpha: {
-    solid: 0.12,
-    default: 0.09,
-    translucent: 0.06,
-  },
-  /** 列表项背景透明度 */
-  listItemBgAlpha: {
-    solid: 0.08,
-    default: 0.05,
-    translucent: 0.035,
-  },
-  /** 列表项边框透明度 */
-  listItemBorderAlpha: {
-    solid: 0.12,
-    default: 0.09,
-    translucent: 0.06,
-  },
-  /** hover 状态背景透明度 */
-  hoverBgAlpha: {
-    solid: 0.14,
-    default: 0.09,
-    translucent: 0.06,
-  },
-} as const;
-
-/**
  * 强调色样式配置（用于不同状态的色块）
  */
 export const ACCENT_STYLES = {
@@ -150,78 +113,6 @@ export const ACCENT_STYLES = {
   },
 } as const;
 
-/**
- * 色深配置映射
- */
-export const COLOR_DEPTH_MAP: Record<
-  ColorDepthLevel,
-  {
-    bgBase: string;
-    bgElevated: string;
-    bgCard: string;
-    /** 玻璃效果亮度倍数（影响玻璃的白色透明度） */
-    glassBrightness: number;
-    label: string;
-  }
-> = {
-  darker: {
-    bgBase: '#0d0d11',
-    bgElevated: '#151519',
-    bgCard: 'rgba(255, 255, 255, 0.05)',
-    glassBrightness: 0.7, // 深色：玻璃更暗
-    label: '深色',
-  },
-  default: {
-    bgBase: '#141418',
-    bgElevated: '#1e1e24',
-    bgCard: 'rgba(255, 255, 255, 0.08)',
-    glassBrightness: 1.0, // 默认
-    label: '默认',
-  },
-  lighter: {
-    bgBase: '#1b1b20',
-    bgElevated: '#262630',
-    bgCard: 'rgba(255, 255, 255, 0.10)',
-    glassBrightness: 1.4, // 浅色：玻璃更亮
-    label: '浅色',
-  },
-};
-
-/**
- * 透明度配置映射
- */
-export const OPACITY_MAP: Record<
-  OpacityLevel,
-  {
-    glassStart: number;
-    glassEnd: number;
-    border: number;
-    label: string;
-  }
-> = {
-  solid: {
-    glassStart: 0.14,
-    glassEnd: 0.08,
-    border: 0.22,
-    label: '不透明',
-  },
-  default: {
-    glassStart: 0.10,
-    glassEnd: 0.05,
-    border: 0.18,
-    label: '默认',
-  },
-  translucent: {
-    glassStart: 0.06,
-    glassEnd: 0.025,
-    border: 0.14,
-    label: '半透明',
-  },
-};
-
-/**
- * 侧边栏玻璃效果选项
- */
 /**
  * 性能模式选项
  */

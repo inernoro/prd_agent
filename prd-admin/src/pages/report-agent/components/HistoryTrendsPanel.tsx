@@ -434,7 +434,7 @@ function MetricCard({ icon, label, value, color, bg }: {
       className="rounded-xl px-5 py-4 transition-all duration-200 hover:translate-y-[-1px]"
       style={{
         // 浅色:纯白卡 + 仅左侧细色条暗示主题(避免大色块);暗色保留 glass 渐变
-        background: isLight ? '#FFFFFF' : `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
+        background: isLight ? 'var(--bg-card)' : `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
         backdropFilter: isLight ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',

@@ -569,7 +569,7 @@ export function TemplateManager() {
                 key={tpl.id}
                 className="group rounded-xl transition-all duration-200 hover:translate-y-[-1px]"
                 style={{
-                  background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                  background: isLight ? 'var(--bg-card)' : 'var(--surface-glass)',
                   backdropFilter: isLight ? undefined : 'blur(12px)',
                   WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
                   border: isMyDefault

@@ -534,7 +534,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
             style={{
               background: `hsla(${meta.accentHue}, 60%, 55%, 0.1)`,
-              color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
+              color: `hsla(${meta.accentHue}, 60%, var(--workflow-accent-text-lightness), 0.9)`,
               border: `1px solid hsla(${meta.accentHue}, 60%, 55%, 0.15)`,
             }}
           >
@@ -719,7 +719,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                           className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
                           style={{
                             background: `hsla(${meta.accentHue}, 60%, 55%, 0.12)`,
-                            color: `hsla(${meta.accentHue}, 60%, 65%, 0.95)`,
+                            color: `hsla(${meta.accentHue}, 60%, var(--workflow-accent-text-lightness), 0.95)`,
                           }}
                         >
                           <Icon className="w-4.5 h-4.5" />
@@ -741,7 +741,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                               className="surface-row mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-[6px] font-medium transition-all"
                               style={{
                                 background: `hsla(${meta.accentHue}, 60%, 55%, 0.08)`,
-                                color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
+                                color: `hsla(${meta.accentHue}, 60%, var(--workflow-accent-text-lightness), 0.9)`,
                                 border: `1px solid hsla(${meta.accentHue}, 60%, 55%, 0.15)`,
                               }}
                             >

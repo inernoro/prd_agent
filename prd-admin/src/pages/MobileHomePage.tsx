@@ -43,6 +43,7 @@ import {
 import { AppStoreGrid, AppStoreAppIcon, AppStorePillLabel } from '@/components/mobile/appStore';
 import { AS_COLOR, AS_TYPE, AS_SPACE, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { transitionThemeMode } from '@/lib/themeTransition';
 
 /* ───────────── 常用应用宫格（iOS 双色渐变——平色显廉价,渐变才是 iOS icon 质感） ───────────── */
 
@@ -71,7 +72,7 @@ export default function MobileHomePage() {
   const navigate = useNavigate();
   const data = useMobileHomeData();
   const themeMode = useMobileThemeStore((st) => st.mode);
-  const toggleTheme = useMobileThemeStore((st) => st.toggle);
+  const setThemeMode = useMobileThemeStore((st) => st.setMode);
   const isDark = themeMode === 'dark';
   const C = useAppStoreColors();
 
@@ -131,7 +132,12 @@ export default function MobileHomePage() {
           const themeToggle = (
             <button
               type="button"
-              onClick={toggleTheme}
+              onClick={(event) => transitionThemeMode({
+                mode: isDark ? 'light' : 'dark',
+                pathname: window.location.pathname,
+                origin: event,
+                commit: setThemeMode,
+              })}
               aria-label={isDark ? '切换到浅色' : '切换到暗色'}
               className="flex items-center justify-center active:opacity-60 transition-opacity"
               style={{
@@ -319,6 +325,7 @@ export default function MobileHomePage() {
               {agentChips.map((t) => {
                 const Icon = iconFor(t.icon);
                 const hasArtwork = hasAgentCardArtwork(t.agentKey);
+                const agentAccent = accentFor(t.agentKey);
                 return (
                   <button
                     key={t.id}
@@ -338,7 +345,7 @@ export default function MobileHomePage() {
                   >
                     {hasArtwork ? (
                       <>
-                        <AgentCardArtwork agentKey={t.agentKey} compact />
+                        <AgentCardArtwork agentKey={t.agentKey} compact tint={agentAccent.from} />
                         <span className="relative z-10 flex w-full items-start justify-between gap-2">
                           <span
                             className="line-clamp-2"
@@ -367,7 +374,7 @@ export default function MobileHomePage() {
                       </>
                     ) : (
                       <>
-                        <AppStoreAppIcon Icon={Icon} accent={accentFor(t.agentKey)} size={36} />
+                        <AppStoreAppIcon Icon={Icon} accent={agentAccent} size={36} />
                         <span className="whitespace-nowrap" style={{ ...AS_TYPE.itemSubtitle, fontWeight: 600, color: C.label }}>
                           {t.name}
                         </span>

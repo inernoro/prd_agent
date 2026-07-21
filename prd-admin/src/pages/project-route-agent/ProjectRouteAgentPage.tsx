@@ -42,14 +42,14 @@ export function ProjectRouteAgentPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 border-b border-white/10 bg-white/3 px-6 py-4">
+      <header className="shrink-0 border-b border-token-subtle bg-token-nested px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center">
-            <Route className="w-5 h-5 text-sky-400" />
+            <Route className="w-5 h-5 text-semantic-info" />
           </div>
           <div className="flex-1">
-            <h1 className="text-xl font-semibold text-white">项目路由智能体</h1>
-            <p className="text-xs text-white/50 mt-0.5">
+            <h1 className="text-xl font-semibold text-token-primary">项目路由智能体</h1>
+            <p className="text-xs text-token-muted mt-0.5">
               上传方案 md，AI 自动识别涉及的应用 / 业务模块，对照公共站点说明定位仓库 routemap 中的项目路径。
             </p>
           </div>
@@ -81,11 +81,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-1.5 rounded-md text-sm transition-colors ${
-        active
-          ? 'bg-sky-500/15 text-sky-200 border border-sky-500/30'
-          : 'text-white/50 hover:text-white/80 hover:bg-white/5 border border-transparent'
-      }`}
+      className="surface-option rounded-md border border-transparent px-4 py-1.5 text-sm"
+      data-active={active}
     >
       {children}
     </button>
@@ -127,7 +124,6 @@ function AnalyzeView() {
     void refreshRecent({ autoSelectTop: true });
     void refreshSiteSpec();
     void refreshGhStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // refreshRecent 兼具两个职责：拉列表 + （可选）把最新一条回灌到右侧分析视图。
@@ -303,46 +299,46 @@ function AnalyzeView() {
     <div className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-[420px_minmax(0,1fr)] gap-6">
       {/* 左侧：上传 + 历史 */}
       <aside className="flex flex-col gap-4">
-        <section className="bg-white/3 border border-white/10 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <Upload className="w-4 h-4 text-sky-400" /> 上传方案
+        <section className="bg-token-nested border border-token-subtle rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-token-primary mb-4 flex items-center gap-2">
+            <Upload className="w-4 h-4 text-semantic-info" /> 上传方案
           </h2>
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-white/60 mb-1.5">方案标题</label>
+              <label className="block text-xs font-medium text-token-secondary mb-1.5">方案标题</label>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="如：用户中心改版 v2"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-sky-500/50"
+                className="w-full bg-token-nested border border-token-subtle rounded-lg px-3 py-2 text-sm text-token-primary placeholder:text-token-muted focus:outline-none focus:border-sky-500/50"
                 disabled={isBusy}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-white/60 mb-1.5">方案文件 (.md)</label>
+              <label className="block text-xs font-medium text-token-secondary mb-1.5">方案文件 (.md)</label>
               {file ? (
-                <div className="flex items-center gap-2 bg-white/5 border border-sky-500/30 rounded-lg px-3 py-2">
-                  <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+                <div className="flex items-center gap-2 bg-token-nested border border-sky-500/30 rounded-lg px-3 py-2">
+                  <FileText className="w-4 h-4 text-semantic-info shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-white truncate">{file.name}</p>
-                    <p className="text-[10px] text-white/40">{(file.size / 1024).toFixed(1)} KB</p>
+                    <p className="text-xs text-token-primary truncate">{file.name}</p>
+                    <p className="text-[10px] text-token-muted">{(file.size / 1024).toFixed(1)} KB</p>
                   </div>
                   {!isBusy && (
-                    <button onClick={() => setFile(null)} className="text-white/40 hover:text-white/70">
+                    <button onClick={() => setFile(null)} className="text-token-muted hover-text-primary">
                       <X className="w-4 h-4" />
                     </button>
                   )}
                 </div>
               ) : (
                 <div
-                  className="border-2 border-dashed border-white/10 rounded-lg p-5 text-center hover:border-sky-500/40 hover:bg-white/3 transition-colors cursor-pointer"
+                  className="border-2 border-dashed border-token-subtle rounded-lg p-5 text-center hover:border-sky-500/40 hover-bg-soft transition-colors cursor-pointer"
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={handleDrop}
                 >
-                  <Upload className="w-6 h-6 text-white/30 mx-auto mb-2" />
-                  <p className="text-xs text-white/50">拖拽 .md 到此处，或点击选择</p>
+                  <Upload className="w-6 h-6 text-token-muted mx-auto mb-2" />
+                  <p className="text-xs text-token-muted">拖拽 .md 到此处，或点击选择</p>
                 </div>
               )}
               <input
@@ -355,10 +351,10 @@ function AnalyzeView() {
             </div>
 
             {siteSpecLoading ? (
-              <p className="text-[11px] text-white/40">正在读取公共站点说明…</p>
+              <p className="text-[11px] text-token-muted">正在读取公共站点说明…</p>
             ) : siteSpec && siteSpec.markdownContent?.trim() ? (
-              <p className="text-[11px] text-white/40">
-                公共站点说明：<span className="text-white/70">{siteSpec.title}</span>（{(siteSpec.markdownContent?.length ?? 0).toLocaleString()} 字符）
+              <p className="text-[11px] text-token-muted">
+                公共站点说明：<span className="text-token-secondary">{siteSpec.title}</span>（{(siteSpec.markdownContent?.length ?? 0).toLocaleString()} 字符）
               </p>
             ) : (
               <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
@@ -373,15 +369,15 @@ function AnalyzeView() {
 
             {error && (
               <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <p className="text-xs text-red-300">{error}</p>
+                <AlertCircle className="w-4 h-4 text-semantic-danger shrink-0" />
+                <p className="text-xs text-semantic-danger">{error}</p>
               </div>
             )}
 
             <button
               onClick={handleSubmit}
               disabled={isBusy || !file || !title.trim() || !siteSpec || !siteSpec.markdownContent?.trim()}
-              className="w-full bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg py-2.5 text-sm font-medium text-white transition-colors flex items-center justify-center gap-2"
+              className="button-primary flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isBusy ? (
                 <>
@@ -396,38 +392,38 @@ function AnalyzeView() {
           </div>
         </section>
 
-        <section className="bg-white/3 border border-white/10 rounded-xl p-5">
+        <section className="bg-token-nested border border-token-subtle rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-              <History className="w-4 h-4 text-white/40" />我的最近方案
+            <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2">
+              <History className="w-4 h-4 text-token-muted" />我的最近方案
             </h2>
             <button
               onClick={() => { void refreshRecent(); }}
-              className="text-[10px] text-white/40 hover:text-white/70 transition-colors"
+              className="text-[10px] text-token-muted hover-text-primary transition-colors"
               title="刷新列表"
             >
               <RefreshCw className="w-3 h-3" />
             </button>
           </div>
           {recentLoading ? (
-            <div className="flex items-center gap-2 text-xs text-white/40">
+            <div className="flex items-center gap-2 text-xs text-token-muted">
               <Loader2 className="w-3 h-3 animate-spin" /> 加载最近方案中…
             </div>
           ) : recentError ? (
             <div className="bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2 space-y-1">
-              <p className="text-xs text-red-300 flex items-center gap-1.5">
+              <p className="text-xs text-semantic-danger flex items-center gap-1.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" /> 加载最近方案失败
               </p>
-              <p className="text-[10px] text-red-300/70 break-all">{recentError}</p>
+              <p className="text-[10px] text-semantic-danger break-all">{recentError}</p>
               <button
                 onClick={() => { void refreshRecent(); }}
-                className="text-[10px] text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+                className="text-[10px] text-semantic-info hover-text-primary underline-offset-2 hover:underline"
               >
                 重新加载
               </button>
             </div>
           ) : recent.length === 0 ? (
-            <p className="text-xs text-white/40">还没有提交过方案。</p>
+            <p className="text-xs text-token-muted">还没有提交过方案。</p>
           ) : (
             <ul className="space-y-1.5">
               {recent.map((p) => {
@@ -437,7 +433,7 @@ function AnalyzeView() {
                 const projectCount = (p.resolutions ?? []).reduce((s, r) => s + (r.projectPaths?.length ?? 0), 0);
                 return (
                   <li key={p.id}>
-                    <div className={`group rounded-md transition-colors ${isActive ? 'bg-sky-500/10 border border-sky-500/30' : 'hover:bg-white/5 border border-transparent'}`}>
+                    <div className={`group rounded-md transition-colors ${isActive ? 'bg-sky-500/10 border border-sky-500/30' : 'hover-bg-soft border border-transparent'}`}>
                       <div className="relative">
                         <button
                           onClick={() => {
@@ -455,12 +451,12 @@ function AnalyzeView() {
                           className="w-full text-left px-3 py-2 pr-8"
                         >
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-white truncate flex-1">{p.title}</span>
+                            <span className="text-xs text-token-primary truncate flex-1">{p.title}</span>
                             <StatusBadge status={p.status} />
                           </div>
-                          <p className="text-[10px] text-white/40 mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
+                          <p className="text-[10px] text-token-muted mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
                           {(repoCount > 0 || moduleCount > 0 || projectCount > 0) && (
-                            <div className="flex items-center gap-2 mt-1 text-[10px] text-white/40">
+                            <div className="flex items-center gap-2 mt-1 text-[10px] text-token-muted">
                               {moduleCount > 0 && <span>{moduleCount} 模块</span>}
                               {repoCount > 0 && <span>· {repoCount} 仓库</span>}
                               {projectCount > 0 && <span>· {projectCount} 路径</span>}
@@ -470,7 +466,7 @@ function AnalyzeView() {
                         {/* 删除按钮始终常驻显示，任何状态的方案都可删 */}
                         <button
                           onClick={(e) => { e.stopPropagation(); void handleDeletePlan(p); }}
-                          className="absolute top-2 right-2 p-1 rounded text-white/50 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                          className="absolute top-2 right-2 p-1 rounded text-token-muted text-semantic-danger hover:bg-red-500/10 transition-colors"
                           title="删除此方案"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -481,7 +477,7 @@ function AnalyzeView() {
                           <button
                             onClick={(e) => { e.stopPropagation(); startAnalysis(p.id); }}
                             disabled={isBusy}
-                            className="inline-flex items-center gap-1 text-[10px] text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 disabled:opacity-50 border border-sky-500/30 px-2 py-0.5 rounded-md transition-colors"
+                            className="inline-flex items-center gap-1 text-[10px] text-semantic-info bg-sky-500/15 hover:bg-sky-500/25 disabled:opacity-50 border border-sky-500/30 px-2 py-0.5 rounded-md transition-colors"
                             title="忽略已存结果，重新分析一次"
                           >
                             <RefreshCw className="w-3 h-3" /> 重新分析
@@ -499,17 +495,17 @@ function AnalyzeView() {
 
       {/* 右侧：分析结果三栏漏斗 */}
       <section className="flex flex-col gap-4">
-        <div className="bg-white/3 border border-white/10 rounded-xl p-5">
+        <div className="bg-token-nested border border-token-subtle rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-300" />
               当前分析 {plan ? `· ${plan.title}` : ''}
             </h2>
             {model && (
-              <span className="text-[11px] text-white/40 font-mono">● {model}{platform ? ` · ${platform}` : ''}</span>
+              <span className="text-[11px] text-token-muted font-mono">● {model}{platform ? ` · ${platform}` : ''}</span>
             )}
           </div>
-          <p className="text-xs text-white/60 mb-2">{sse.phaseMessage || (plan ? '已读取历史结果' : '尚未发起分析')}</p>
+          <p className="text-xs text-token-secondary mb-2">{sse.phaseMessage || (plan ? '已读取历史结果' : '尚未发起分析')}</p>
 
           {plan && plan.status === 'Done' && sse.phase === 'idle' && (
             <div className="flex items-center gap-2 bg-amber-500/8 border border-amber-500/20 rounded-md px-3 py-1.5 mb-2">
@@ -530,28 +526,28 @@ function AnalyzeView() {
 
           {sse.phase === 'error' && (
             <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-              <p className="text-xs text-red-300">{sse.phaseMessage}</p>
+              <AlertCircle className="w-4 h-4 text-semantic-danger shrink-0" />
+              <p className="text-xs text-semantic-danger">{sse.phaseMessage}</p>
             </div>
           )}
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           {/* 1) 应用 + 模块 */}
-          <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
-            <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3">① 应用 / 业务模块</h3>
+          <div className="bg-token-nested border border-token-subtle rounded-xl p-4 min-h-[200px]">
+            <h3 className="text-xs font-semibold text-token-secondary uppercase tracking-wide mb-3">① 应用 / 业务模块</h3>
             <PillList label="应用" items={apps} color="sky" />
             <div className="h-3" />
             <PillList label="业务模块" items={modules} color="emerald" />
           </div>
 
           {/* 2) 当前方案关联仓库地址 */}
-          <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
-            <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <div className="bg-token-nested border border-token-subtle rounded-xl p-4 min-h-[200px]">
+            <h3 className="text-xs font-semibold text-token-secondary uppercase tracking-wide mb-3 flex items-center gap-1.5">
               <GitBranch className="w-3.5 h-3.5" /> ② 当前方案关联仓库地址
             </h3>
             {extractedRepos.length === 0 && repos.length === 0 ? (
-              <p className="text-xs text-white/30">分析时显示 AI 从公共说明里抽出的仓库 + 克隆状态</p>
+              <p className="text-xs text-token-muted">分析时显示 AI 从公共说明里抽出的仓库 + 克隆状态</p>
             ) : (
               <ul className="space-y-2">
                 {(repos.length > 0 ? repos.map((r) => ({
@@ -584,12 +580,12 @@ function AnalyzeView() {
           </div>
 
           {/* 3) 仓库 × 关联项目路径 */}
-          <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
-            <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <div className="bg-token-nested border border-token-subtle rounded-xl p-4 min-h-[200px]">
+            <h3 className="text-xs font-semibold text-token-secondary uppercase tracking-wide mb-3 flex items-center gap-1.5">
               <FolderTree className="w-3.5 h-3.5" /> ③ 仓库 × 关联项目路径
             </h3>
             {resolutions.length === 0 ? (
-              <p className="text-xs text-white/30">分析完成后按仓库展示命中的项目路径 + 第三方仓库</p>
+              <p className="text-xs text-token-muted">分析完成后按仓库展示命中的项目路径 + 第三方仓库</p>
             ) : (
               <ul className="space-y-3">
                 {resolutions.map((r) => (
@@ -629,9 +625,9 @@ function GitHubStatusCard({
   if (status.connected) {
     return (
       <div className="flex items-center gap-2 bg-emerald-500/8 border border-emerald-500/20 rounded-md px-3 py-2">
-        <Github className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+        <Github className="w-3.5 h-3.5 text-semantic-success shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] text-emerald-200">
+          <p className="text-[11px] text-semantic-success">
             已用 GitHub 账号 <span className="font-medium">{status.githubLogin ?? '已授权'}</span> 授权（私有 / 组织仓库 routemap 可拉）
           </p>
         </div>
@@ -642,7 +638,7 @@ function GitHubStatusCard({
             const res = await disconnectProjectRouteGitHub();
             if (res.success) onRefresh();
           }}
-          className="text-[11px] text-emerald-300/80 hover:text-emerald-200 hover:underline shrink-0"
+          className="text-[11px] text-semantic-success hover-text-primary hover:underline shrink-0"
         >
           断开授权
         </button>
@@ -651,9 +647,9 @@ function GitHubStatusCard({
   }
   if (!status.oauthConfigured) {
     return (
-      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-md px-3 py-2">
-        <Github className="w-3.5 h-3.5 text-white/40 shrink-0" />
-        <p className="text-[11px] text-white/50">
+      <div className="flex items-center gap-2 bg-token-nested border border-token-subtle rounded-md px-3 py-2">
+        <Github className="w-3.5 h-3.5 text-token-muted shrink-0" />
+        <p className="text-[11px] text-token-muted">
           后端未配置 GitHub OAuth ClientId/Secret，无法授权 —— 仅可拉公共仓库。
         </p>
       </div>
@@ -766,21 +762,18 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   }
 
   const modal = (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
-    >
+    <div className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center" onClick={onClose}>
       <div
-        className="relative rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl"
+        className="surface-tone-dark relative rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl"
+        data-surface-tone="dark"
         style={{ width: '480px', maxWidth: '94vw', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-token-subtle shrink-0">
+          <h3 className="text-sm font-semibold text-token-primary flex items-center gap-2">
             <Github className="w-4 h-4" /> 授权 GitHub（项目路由智能体）
           </h3>
-          <button onClick={onClose} className="text-white/40 hover:text-white/80">
+          <button onClick={onClose} className="text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -790,29 +783,29 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: 'calc(90vh - 60px)' }}
         >
           {(phase === 'starting' || phase === 'idle') && (
-            <div className="flex items-center justify-center py-10 text-white/60 text-sm">
+            <div className="flex items-center justify-center py-10 text-token-secondary text-sm">
               <Loader2 className="w-4 h-4 animate-spin mr-2" /> 正在发起授权…
             </div>
           )}
 
           {phase === 'waiting' && data && (
             <div className="space-y-4">
-              <p className="text-xs text-white/70 leading-relaxed">
+              <p className="text-xs text-token-secondary leading-relaxed">
                 1. 点击下方按钮跳转 GitHub 授权页（新窗口）<br />
                 2. GitHub 会要求你输入下面这个验证码<br />
                 3. 授权完成后本页面会自动检测，无需手动回来
               </p>
 
-              <div className="bg-black/40 border border-white/10 rounded-lg p-4 text-center">
-                <p className="text-[10px] text-white/50 mb-1.5 uppercase tracking-wider">用户验证码</p>
-                <p className="text-[28px] font-mono text-emerald-200 tracking-[0.3em] select-all">
+              <div className="bg-token-nested border border-token-subtle rounded-lg p-4 text-center">
+                <p className="text-[10px] text-token-muted mb-1.5 uppercase tracking-wider">用户验证码</p>
+                <p className="text-[28px] font-mono text-semantic-success tracking-[0.3em] select-all">
                   {data.userCode}
                 </p>
                 <button
                   onClick={copyCode}
-                  className="mt-2 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white/90"
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] text-token-secondary hover-text-primary"
                 >
-                  {copied ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                  {copied ? <Check className="w-3 h-3 text-semantic-success" /> : <Copy className="w-3 h-3" />}
                   {copied ? '已复制' : '复制验证码'}
                 </button>
               </div>
@@ -821,25 +814,25 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
                 href={data.verificationUriComplete || data.verificationUri}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block w-full text-center bg-sky-600 hover:bg-sky-500 rounded-lg py-2.5 text-sm font-medium text-white transition-colors"
+                className="button-primary block w-full rounded-lg py-2.5 text-center text-sm font-medium"
               >
                 打开 GitHub 输入验证码 →
               </a>
 
-              <div className="flex items-center justify-center gap-2 text-[11px] text-white/40">
+              <div className="flex items-center justify-center gap-2 text-[11px] text-token-muted">
                 <Loader2 className="w-3 h-3 animate-spin" /> 等待 GitHub 那边完成授权…
               </div>
 
-              <p className="text-[10px] text-white/30 text-center">
+              <p className="text-[10px] text-token-muted text-center">
                 验证码 {Math.floor(data.expiresInSeconds / 60)} 分钟内有效
               </p>
             </div>
           )}
 
           {phase === 'success' && (
-            <div className="flex flex-col items-center justify-center py-8 text-emerald-200">
+            <div className="flex flex-col items-center justify-center py-8 text-semantic-success">
               <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
-                <Check className="w-6 h-6 text-emerald-300" />
+                <Check className="w-6 h-6 text-semantic-success" />
               </div>
               <p className="text-sm">授权成功，正在返回…</p>
             </div>
@@ -851,7 +844,7 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
               <p className="text-sm text-amber-200">验证码已过期</p>
               <button
                 onClick={start}
-                className="text-xs text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+                className="text-xs text-semantic-info hover-text-primary underline-offset-2 hover:underline"
               >
                 重新获取
               </button>
@@ -860,11 +853,11 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
           {phase === 'denied' && (
             <div className="text-center py-6 space-y-3">
-              <AlertCircle className="w-8 h-8 text-red-300 mx-auto" />
-              <p className="text-sm text-red-200">用户拒绝了授权</p>
+              <AlertCircle className="w-8 h-8 text-semantic-danger mx-auto" />
+              <p className="text-sm text-semantic-danger">用户拒绝了授权</p>
               <button
                 onClick={onClose}
-                className="text-xs text-white/60 hover:text-white/90 underline-offset-2 hover:underline"
+                className="text-xs text-token-secondary hover-text-primary underline-offset-2 hover:underline"
               >
                 关闭
               </button>
@@ -873,11 +866,11 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
           {phase === 'error' && (
             <div className="text-center py-6 space-y-3">
-              <AlertCircle className="w-8 h-8 text-red-300 mx-auto" />
-              <p className="text-sm text-red-200">{errorMsg ?? '授权过程出错'}</p>
+              <AlertCircle className="w-8 h-8 text-semantic-danger mx-auto" />
+              <p className="text-sm text-semantic-danger">{errorMsg ?? '授权过程出错'}</p>
               <button
                 onClick={start}
-                className="text-xs text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+                className="text-xs text-semantic-info hover-text-primary underline-offset-2 hover:underline"
               >
                 重试
               </button>
@@ -893,13 +886,13 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
 function PillList({ label, items, color }: { label: string; items: string[]; color: 'sky' | 'emerald' }) {
   const cls = color === 'sky'
-    ? 'bg-sky-500/15 border-sky-500/30 text-sky-200'
-    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200';
+    ? 'bg-sky-500/15 border-sky-500/30 text-semantic-info'
+    : 'bg-emerald-500/15 border-emerald-500/30 text-semantic-success';
   return (
     <div>
-      <p className="text-[11px] text-white/50 mb-1.5">{label}</p>
+      <p className="text-[11px] text-token-muted mb-1.5">{label}</p>
       {items.length === 0 ? (
-        <p className="text-xs text-white/30">—</p>
+        <p className="text-xs text-token-muted">—</p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {items.map((s, i) => (
@@ -913,10 +906,10 @@ function PillList({ label, items, color }: { label: string; items: string[]; col
 
 function StatusBadge({ status }: { status: string }) {
   const m: Record<string, { label: string; cls: string }> = {
-    Done: { label: '已完成', cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30' },
-    Running: { label: '分析中', cls: 'bg-sky-500/15 text-sky-200 border-sky-500/30' },
-    Queued: { label: '排队中', cls: 'bg-white/8 text-white/60 border-white/15' },
-    Error: { label: '出错', cls: 'bg-red-500/15 text-red-200 border-red-500/30' },
+    Done: { label: '已完成', cls: 'bg-emerald-500/15 text-semantic-success border-emerald-500/30' },
+    Running: { label: '分析中', cls: 'bg-sky-500/15 text-semantic-info border-sky-500/30' },
+    Queued: { label: '排队中', cls: 'bg-token-nested text-token-secondary border-token-subtle' },
+    Error: { label: '出错', cls: 'bg-red-500/15 text-semantic-danger border-red-500/30' },
   };
   const info = m[status] ?? m.Queued;
   return <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${info.cls}`}>{info.label}</span>;
@@ -924,10 +917,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function RepoBadge({ status }: { status: RepoLiveStatus['status'] }) {
   const m: Record<string, { label: string; cls: string }> = {
-    cloning: { label: '克隆中', cls: 'bg-sky-500/15 text-sky-200 border-sky-500/30' },
-    ok: { label: '已就绪', cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30' },
+    cloning: { label: '克隆中', cls: 'bg-sky-500/15 text-semantic-info border-sky-500/30' },
+    ok: { label: '已就绪', cls: 'bg-emerald-500/15 text-semantic-success border-emerald-500/30' },
     missing: { label: '无 routemap', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
-    error: { label: '失败', cls: 'bg-red-500/15 text-red-200 border-red-500/30' },
+    error: { label: '失败', cls: 'bg-red-500/15 text-semantic-danger border-red-500/30' },
   };
   const info = m[status] ?? m.cloning;
   return <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${info.cls}`}>{info.label}</span>;
@@ -950,35 +943,35 @@ function RepoCard({ r }: {
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="bg-white/3 rounded-md p-2 border border-white/5">
+    <li className="bg-token-nested rounded-md p-2 border border-token-subtle">
       <div className="flex items-center gap-2">
-        <button onClick={() => setOpen(!open)} className="text-white/40 hover:text-white/70 shrink-0">
+        <button onClick={() => setOpen(!open)} className="text-token-muted hover-text-primary shrink-0">
           {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
-        <span className="text-xs text-white truncate flex-1">{r.appName}</span>
+        <span className="text-xs text-token-primary truncate flex-1">{r.appName}</span>
         <RepoBadge status={r.status} />
       </div>
-      <p className="text-[10px] text-white/40 break-all mt-0.5">
-        <a href={r.repoUrl} target="_blank" rel="noopener noreferrer" className="hover:text-sky-300">
+      <p className="text-[10px] text-token-muted break-all mt-0.5">
+        <a href={r.repoUrl} target="_blank" rel="noopener noreferrer" className="hover-text-primary">
           {r.repoUrl}
         </a>
-        <span className="text-white/30"> · {r.branch}</span>
+        <span className="text-token-muted"> · {r.branch}</span>
       </p>
       {!open && r.reasoning && (
-        <p className="text-[10px] text-sky-200/70 mt-1 line-clamp-2">AI: {r.reasoning}</p>
+        <p className="text-[10px] text-semantic-info mt-1 line-clamp-2">AI: {r.reasoning}</p>
       )}
       {r.message && (
         <p className="text-[10px] text-amber-200/70 mt-1 break-all">{r.message}</p>
       )}
       {!open && r.foundLocations && r.foundLocations.length > 0 && (
-        <p className="text-[10px] text-emerald-200/70 mt-1">{r.foundLocations.length} 个 routemap 子目录</p>
+        <p className="text-[10px] text-semantic-success mt-1">{r.foundLocations.length} 个 routemap 子目录</p>
       )}
       {r.fileCount != null && !open && (
-        <p className="text-[10px] text-white/40 mt-1">{r.fileCount} 个 routemap 文件</p>
+        <p className="text-[10px] text-token-muted mt-1">{r.fileCount} 个 routemap 文件</p>
       )}
 
       {open && (
-        <div className="mt-2 pt-2 border-t border-white/5 space-y-2 text-[11px]">
+        <div className="mt-2 pt-2 border-t border-token-subtle space-y-2 text-[11px]">
           <DetailRow label="routemapPath" value={r.routemapPath} mono />
           {r.reasoning && (
             <DetailRow label="AI 选中理由" value={r.reasoning} preserveWhitespace />
@@ -988,10 +981,10 @@ function RepoCard({ r }: {
           )}
           {r.foundLocations && r.foundLocations.length > 0 && (
             <div>
-              <p className="text-white/40 mb-1">routemap 子目录（{r.foundLocations.length}）</p>
+              <p className="text-token-muted mb-1">routemap 子目录（{r.foundLocations.length}）</p>
               <ul className="space-y-0.5 max-h-32 overflow-y-auto">
                 {r.foundLocations.map((loc, idx) => (
-                  <li key={idx} className="text-emerald-200/90 font-mono text-[11px] break-all">{loc}/</li>
+                  <li key={idx} className="text-semantic-success font-mono text-[11px] break-all">{loc}/</li>
                 ))}
               </ul>
             </div>
@@ -1009,38 +1002,38 @@ function RepoCard({ r }: {
 function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolution; ghConnected: boolean; onOpenAuth?: () => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="bg-white/3 rounded-md p-2.5 border border-white/5">
+    <li className="bg-token-nested rounded-md p-2.5 border border-token-subtle">
       <div className="flex items-center gap-2">
-        <button onClick={() => setOpen(!open)} className="text-white/40 hover:text-white/70 shrink-0">
+        <button onClick={() => setOpen(!open)} className="text-token-muted hover-text-primary shrink-0">
           {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
-        <span className="text-xs text-white truncate flex-1">{r.repoAppName || r.repoUrl}</span>
+        <span className="text-xs text-token-primary truncate flex-1">{r.repoAppName || r.repoUrl}</span>
         <ResolutionBadge status={r.status} />
       </div>
       {r.repoUrl && r.repoUrl !== r.repoAppName && (
-        <p className="text-[10px] text-white/40 break-all mt-0.5">{r.repoUrl}</p>
+        <p className="text-[10px] text-token-muted break-all mt-0.5">{r.repoUrl}</p>
       )}
       {r.matchedAppsOrModules.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {r.matchedAppsOrModules.map((m, j) => (
-            <span key={j} className="px-1.5 py-0.5 rounded-md text-[10px] bg-sky-500/15 border border-sky-500/30 text-sky-200">{m}</span>
+            <span key={j} className="px-1.5 py-0.5 rounded-md text-[10px] bg-sky-500/15 border border-sky-500/30 text-semantic-info">{m}</span>
           ))}
         </div>
       )}
       {r.projectPaths.length > 0 && (
         <ul className="mt-1.5 space-y-0.5">
           {r.projectPaths.map((p, j) => (
-            <li key={j} className="text-[11px] text-emerald-200/90 font-mono break-all">{p}</li>
+            <li key={j} className="text-[11px] text-semantic-success font-mono break-all">{p}</li>
           ))}
         </ul>
       )}
       {r.linkedThirdPartyRepos.length > 0 && (
         <div className="mt-2 bg-emerald-500/5 border border-emerald-500/15 rounded p-1.5">
-          <p className="text-[10px] text-emerald-300/80 mb-1">关联第三方仓库（{r.linkedThirdPartyRepos.length}）</p>
+          <p className="text-[10px] text-semantic-success mb-1">关联第三方仓库（{r.linkedThirdPartyRepos.length}）</p>
           <ul className="space-y-0.5">
             {r.linkedThirdPartyRepos.map((url, j) => (
               <li key={j} className="text-[11px]">
-                <a href={url} target="_blank" rel="noopener noreferrer" className="text-emerald-200/90 font-mono break-all hover:text-emerald-100 hover:underline">
+                <a href={url} target="_blank" rel="noopener noreferrer" className="text-semantic-success font-mono break-all hover-text-primary hover:underline">
                   {url}
                 </a>
               </li>
@@ -1049,7 +1042,7 @@ function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolut
         </div>
       )}
       {r.reasoning && (
-        <p className="text-[10px] text-white/40 mt-1.5 break-all">{r.reasoning}</p>
+        <p className="text-[10px] text-token-muted mt-1.5 break-all">{r.reasoning}</p>
       )}
       {r.status === 'CloneFailed' && !ghConnected && onOpenAuth && (
         <button
@@ -1061,15 +1054,15 @@ function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolut
       )}
 
       {open && r.routemapFiles.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-white/5 space-y-2">
-          <p className="text-[11px] text-white/60">routemap *.md 文件全文（{r.routemapFiles.length}）</p>
+        <div className="mt-2 pt-2 border-t border-token-subtle space-y-2">
+          <p className="text-[11px] text-token-secondary">routemap *.md 文件全文（{r.routemapFiles.length}）</p>
           {r.routemapFiles.map((f, idx) => (
-            <details key={idx} className="bg-black/20 border border-white/5 rounded">
-              <summary className="px-2 py-1 cursor-pointer text-[11px] text-emerald-200/90 font-mono">
-                {f.path} <span className="text-white/30">· {(f.sizeBytes / 1024).toFixed(1)} KB</span>
+            <details key={idx} className="bg-token-nested border border-token-subtle rounded">
+              <summary className="px-2 py-1 cursor-pointer text-[11px] text-semantic-success font-mono">
+                {f.path} <span className="text-token-muted">· {(f.sizeBytes / 1024).toFixed(1)} KB</span>
               </summary>
               <pre
-                className="px-2 py-1.5 text-[11px] text-white/80 font-mono whitespace-pre-wrap break-all"
+                className="px-2 py-1.5 text-[11px] text-token-secondary font-mono whitespace-pre-wrap break-all"
                 style={{ maxHeight: '320px', overflowY: 'auto' }}
               >
                 {f.content || '(空 / 无法读取)'}
@@ -1079,7 +1072,7 @@ function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolut
         </div>
       )}
       {open && r.routemapFiles.length === 0 && (
-        <p className="text-[10px] text-white/40 mt-2 pt-2 border-t border-white/5">该仓库未命中任何 routemap *.md 文件。</p>
+        <p className="text-[10px] text-token-muted mt-2 pt-2 border-t border-token-subtle">该仓库未命中任何 routemap *.md 文件。</p>
       )}
     </li>
   );
@@ -1094,9 +1087,9 @@ function DetailRow({ label, value, mono, preserveWhitespace }: {
 }) {
   return (
     <div>
-      <p className="text-white/40 mb-0.5">{label}</p>
+      <p className="text-token-muted mb-0.5">{label}</p>
       <p
-        className={`text-white/80 break-all ${mono ? 'font-mono' : ''}`}
+        className={`text-token-secondary break-all ${mono ? 'font-mono' : ''}`}
         style={preserveWhitespace ? { whiteSpace: 'pre-wrap' } : undefined}
       >
         {value}
@@ -1107,10 +1100,10 @@ function DetailRow({ label, value, mono, preserveWhitespace }: {
 
 function ResolutionBadge({ status }: { status: ProjectRouteResolution['status'] }) {
   const m: Record<string, { label: string; cls: string }> = {
-    Hit: { label: '命中', cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30' },
-    NotFound: { label: '无路径', cls: 'bg-white/8 text-white/60 border-white/15' },
+    Hit: { label: '命中', cls: 'bg-emerald-500/15 text-semantic-success border-emerald-500/30' },
+    NotFound: { label: '无路径', cls: 'bg-token-nested text-token-secondary border-token-subtle' },
     Ambiguous: { label: '多候选', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
-    CloneFailed: { label: '克隆失败', cls: 'bg-red-500/15 text-red-200 border-red-500/30' },
+    CloneFailed: { label: '克隆失败', cls: 'bg-red-500/15 text-semantic-danger border-red-500/30' },
     NoRoutemap: { label: '无 routemap', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
   };
   const info = m[status] ?? m.NotFound;
@@ -1244,7 +1237,7 @@ function AdminView() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto px-6 py-10 text-center text-white/50 text-sm">
+      <div className="max-w-5xl mx-auto px-6 py-10 text-center text-token-muted text-sm">
         加载中…
       </div>
     );
@@ -1252,23 +1245,23 @@ function AdminView() {
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-      <section className="bg-white/3 border border-white/10 rounded-xl p-5">
+      <section className="bg-token-nested border border-token-subtle rounded-xl p-5">
         <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-          <h2 className="text-sm font-semibold text-white">公共站点说明</h2>
+          <h2 className="text-sm font-semibold text-token-primary">公共站点说明</h2>
           {lastUpdatedAt && (
             <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-[11px] text-white/40 inline-flex items-center gap-1.5">
+              <p className="text-[11px] text-token-muted inline-flex items-center gap-1.5">
                 <History className="w-3 h-3" />
                 最近由
-                <span className="text-white/70 font-mono">{lastUpdatedBy ?? '—'}</span>
+                <span className="text-token-secondary font-mono">{lastUpdatedBy ?? '—'}</span>
                 于
-                <span className="text-white/70">{new Date(lastUpdatedAt).toLocaleString()}</span>
+                <span className="text-token-secondary">{new Date(lastUpdatedAt).toLocaleString()}</span>
                 更新
               </p>
               <button
                 onClick={() => { void load(); }}
                 disabled={loading || saving}
-                className="text-[11px] text-sky-300/70 hover:text-sky-200 disabled:opacity-50 inline-flex items-center gap-1"
+                className="text-[11px] text-semantic-info hover-text-primary disabled:opacity-50 inline-flex items-center gap-1"
                 title="拉取最新公共站点说明（若有未保存的本地草稿会先弹确认）"
               >
                 <RefreshCw className="w-3 h-3" />
@@ -1282,30 +1275,30 @@ function AdminView() {
         </p>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-white/60 mb-1.5">标题</label>
+            <label className="block text-xs font-medium text-token-secondary mb-1.5">标题</label>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="如：米多公共站点说明 v1"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full bg-token-nested border border-token-subtle rounded-lg px-3 py-2 text-sm text-token-primary"
             />
           </div>
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-medium text-white/60">Markdown 内容（背景知识 / 应用列表 / 业务说明）</label>
+              <label className="block text-xs font-medium text-token-secondary">Markdown 内容（背景知识 / 应用列表 / 业务说明）</label>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="inline-flex items-center gap-1.5 text-xs text-sky-300 hover:text-sky-200 border border-sky-500/30 hover:border-sky-500/50 disabled:opacity-50 px-2.5 py-1 rounded-md transition-colors"
+                  className="inline-flex items-center gap-1.5 text-xs text-semantic-info hover-text-primary border border-sky-500/30 hover:border-sky-500/50 disabled:opacity-50 px-2.5 py-1 rounded-md transition-colors"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   {uploading ? '读取中…' : '上传 .md 文件'}
                 </button>
                 {markdown && (
-                  <span className="text-[11px] text-white/40">{markdown.length.toLocaleString()} 字符</span>
+                  <span className="text-[11px] text-token-muted">{markdown.length.toLocaleString()} 字符</span>
                 )}
               </div>
             </div>
@@ -1328,38 +1321,38 @@ function AdminView() {
               onDrop={handleSiteMdDrop}
               rows={12}
               placeholder="把 .md 文件拖到这里、点上面的「上传 .md 文件」按钮，或直接粘贴整段（例如 doc/ 下的 codebase-snapshot）"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-sky-500/40"
+              className="w-full bg-token-nested border border-token-subtle rounded-lg px-3 py-2 text-xs text-token-primary font-mono focus:outline-none focus:border-sky-500/40"
             />
           </div>
         </div>
       </section>
 
-      <section className="bg-white/3 border border-white/10 rounded-xl p-5">
-        <h2 className="text-sm font-semibold text-white mb-2">仓库地址登记方式</h2>
-        <p className="text-xs text-white/60 leading-relaxed">
+      <section className="bg-token-nested border border-token-subtle rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-token-primary mb-2">仓库地址登记方式</h2>
+        <p className="text-xs text-token-secondary leading-relaxed">
           V2 不再单独维护「仓库登记表」。分析方案时，AI 会从上方 Markdown 内容里读取所有出现的 git URL，
           再结合方案上下文挑出真正需要克隆的仓库。所以请在上方 Markdown 里**明确写出**每个应用对应的仓库地址，例如：
         </p>
-        <pre className="mt-2 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-[11px] text-emerald-200/90 font-mono leading-relaxed overflow-x-auto">
+        <pre className="mt-2 bg-token-nested border border-token-subtle rounded-md px-3 py-2 text-[11px] text-semantic-success font-mono leading-relaxed overflow-x-auto">
 {`## 仓库索引
 
 - 米多 PRD 智能体: https://github.com/inernoro/prd_agent.git (branch: main, routemap: routemap)
 - 视觉创作: https://github.com/inernoro/openvisual.git
 - 缺陷管理: https://github.com/example/defect-agent.git`}
         </pre>
-        <p className="text-xs text-white/40 mt-2">
-          AI 会优先在 markdown 里找类似上面的 URL 列表。分支 / routemapPath 可选，省略时默认为 <code className="text-white/60">main</code> / <code className="text-white/60">routemap</code>。
+        <p className="text-xs text-token-muted mt-2">
+          AI 会优先在 markdown 里找类似上面的 URL 列表。分支 / routemapPath 可选，省略时默认为 <code className="text-token-secondary">main</code> / <code className="text-token-secondary">routemap</code>。
         </p>
       </section>
 
       {error && (
         <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-          <p className="text-xs text-red-300">{error}</p>
+          <AlertCircle className="w-4 h-4 text-semantic-danger shrink-0" />
+          <p className="text-xs text-semantic-danger">{error}</p>
         </div>
       )}
       {okMsg && (
-        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 text-xs text-emerald-200">
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 text-xs text-semantic-success">
           {okMsg}
         </div>
       )}
@@ -1368,7 +1361,7 @@ function AdminView() {
         <button
           onClick={save}
           disabled={saving}
-          className="bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg px-5 py-2 text-sm font-medium text-white transition-colors"
+          className="button-primary rounded-lg px-5 py-2 text-sm font-medium disabled:opacity-50"
         >
           {saving ? '保存中…' : '保存公共站点说明'}
         </button>

@@ -1,5 +1,30 @@
 * { box-sizing: border-box; }
 
+/* CDS 同款主题水波：快照期间冻结普通 CSS transition，避免新旧主题在截图时串色。 */
+.theme-transition-snapshotting,
+.theme-transition-snapshotting *,
+.theme-transition-snapshotting *::before,
+.theme-transition-snapshotting *::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 9999; }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01ms;
+  }
+}
+
 /* ── Glass 组件类（与 prd-desktop 对齐） ── */
 .ui-glass-panel {
   background: var(--glass-bg);
@@ -177,6 +202,15 @@ select optgroup {
 .text-token-success { color: var(--status-done, var(--canvas-state-completed)); }
 .text-token-warning { color: var(--status-going, var(--canvas-state-paused)); }
 .text-token-error { color: var(--status-error, var(--canvas-state-failed)); }
+.text-semantic-success { color: var(--semantic-success-text); }
+.text-semantic-warning { color: var(--semantic-warning-text); }
+.text-semantic-danger { color: var(--semantic-danger-text); }
+.text-semantic-info { color: var(--semantic-info-text); }
+.text-semantic-cyan { color: var(--semantic-cyan-text); }
+.text-semantic-purple { color: var(--semantic-purple-text); }
+.hover-text-primary:hover { color: var(--text-primary); }
+.hover-text-semantic-cyan:hover { color: var(--semantic-cyan-text); }
+.hover-border-token:hover { border-color: var(--border-hover); }
 .bg-token-nested { background: var(--nested-block-bg); }
 .bg-token-card { background: var(--bg-card); }
 .border-token-subtle { border-color: var(--border-subtle); }
@@ -243,8 +277,8 @@ select optgroup {
 
 /* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
 .nav-item-hover:hover {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-color: rgba(255, 255, 255, 0.06) !important;
+  background: var(--launcher-control-bg) !important;
+  border-color: var(--launcher-control-border) !important;
 }
 
 /* react-syntax-highlighter (Prism) 代码块 token span 防类名碰撞。

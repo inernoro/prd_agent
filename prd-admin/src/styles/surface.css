@@ -200,6 +200,107 @@
   border-top: 1px solid var(--nested-block-border);
 }
 
+/* 选择项契约：鼠标悬浮先走中性表面，当前项/键盘游标才使用品牌靛蓝。 */
+.surface-option {
+  color: var(--text-primary);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.surface-option:hover {
+  background: var(--bg-card-hover);
+}
+
+.surface-option[data-active="true"] {
+  background: var(--selection-bg);
+}
+
+.surface-option-icon {
+  color: var(--text-secondary);
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+.surface-option[data-active="true"] .surface-option-icon {
+  color: var(--selection-text);
+  background: var(--selection-icon-bg);
+  border-color: var(--selection-border);
+}
+
+.agent-switcher-card-icon {
+  color: var(--item-accent, var(--accent-primary));
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+.surface-option[data-active="true"] .agent-switcher-card-icon {
+  color: var(--selection-text);
+  background: var(--selection-icon-bg);
+  border-color: var(--selection-border);
+}
+
+.surface-kbd {
+  color: var(--text-muted);
+  background: var(--nested-block-bg);
+  border: 1px solid var(--nested-block-border);
+}
+
+/* 共享按钮契约：明暗差异全部由 tokens.css 提供。 */
+.button-primary {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-fg);
+  box-shadow: var(--button-primary-shadow);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--button-primary-bg-hover);
+}
+
+.button-secondary {
+  background: var(--button-secondary-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--button-secondary-border);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--button-secondary-bg-hover);
+  border-color: var(--border-hover);
+}
+
+.button-danger {
+  background: var(--button-danger-bg);
+  color: var(--button-danger-fg);
+  border: 1px solid var(--button-danger-border);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--button-danger-bg-hover);
+}
+
+.button-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.button-ghost:hover:not(:disabled) {
+  background: var(--button-ghost-bg-hover);
+  color: var(--text-primary);
+}
+
+.button-primary:active:not(:disabled),
+.button-secondary:active:not(:disabled),
+.button-danger:active:not(:disabled),
+.button-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.viz-sticky-surface {
+  color: var(--text-secondary);
+  background: var(--viz-sticky-bg);
+  border-color: var(--border-faint);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 .surface-tab {
   color: var(--text-muted);
   border-bottom: 2px solid transparent;
@@ -233,7 +334,7 @@
 }
 
 .surface-action-danger {
-  color: var(--status-error, var(--canvas-state-failed));
+  color: var(--semantic-danger-text);
 }
 
 .surface-action-primary {
@@ -642,6 +743,123 @@
   font-weight: 600;
 }
 
+.toolbox-display-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: var(--nested-block-bg);
+}
+
+.toolbox-display-option {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.toolbox-display-option:hover {
+  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+}
+
+.toolbox-display-option[data-active="true"] {
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-card-sm);
+}
+
+.toolbox-card-grid {
+  display: grid;
+  align-items: stretch;
+}
+
+.toolbox-card-grid[data-display-mode="compact"] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+
+.toolbox-card-grid[data-display-mode="standard"] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+.toolbox-card-grid[data-display-mode="showcase"] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
+}
+
+.toolbox-tool-card {
+  min-height: 190px;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+}
+
+.toolbox-tool-card[data-has-artwork="true"] {
+  min-height: 258px;
+}
+
+.toolbox-tool-card[data-display-mode="compact"] {
+  min-height: 150px;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.toolbox-tool-card[data-display-mode="compact"][data-has-artwork="true"] {
+  min-height: 176px;
+}
+
+.toolbox-tool-card[data-display-mode="showcase"] {
+  min-height: 238px;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 18px;
+}
+
+.toolbox-tool-card[data-display-mode="showcase"][data-has-artwork="true"] {
+  min-height: 310px;
+}
+
+.toolbox-tool-card-media-panel {
+  height: 30%;
+}
+
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-tool-card-media-panel {
+  height: 43%;
+}
+
+.toolbox-tool-card[data-display-mode="showcase"] .toolbox-tool-card-media-panel {
+  height: 27%;
+}
+
+.toolbox-tool-card-title {
+  font-size: 21px;
+}
+
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-tool-card-title {
+  max-width: 56%;
+  font-size: 16px;
+}
+
+.toolbox-tool-card[data-display-mode="showcase"] .toolbox-tool-card-title {
+  font-size: 24px;
+}
+
 @media (max-width: 720px) {
   .toolbox-filter-content {
     align-items: stretch;
@@ -650,6 +868,17 @@
 
   .toolbox-search-cluster {
     justify-content: space-between;
+  }
+}
+
+@media (max-width: 1120px) {
+  .toolbox-display-option span {
+    display: none;
+  }
+
+  .toolbox-display-option {
+    width: 26px;
+    padding: 0;
   }
 }
 
@@ -966,26 +1195,26 @@
   padding: 0 16px;
   font-size: 11px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-muted);
 }
 
 .marketplace-compat-label {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   margin-right: 2px;
 }
 
 .marketplace-compat-agent {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .marketplace-compat-agent-muted {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .marketplace-compat-dot {
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--border-hover);
 }
 
 .marketplace-filter-content {
