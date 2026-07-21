@@ -55,6 +55,7 @@ import {
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { canQuickStartBranch } from '@/lib/branch-quick-actions';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
@@ -541,7 +542,7 @@ type SlowHttpState =
   | { status: 'ok'; data: PerfOverviewResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -2436,6 +2437,20 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  const restartBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
+    setAction(branch.id, createAction('restart', '正在启动'));
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/restart`, { method: 'POST' });
+      setAction(branch.id, null);
+      setToast(`${branch.branch} 已开始启动`);
+      await refresh(false);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'restart', message, 'error'));
+      setToast(message);
+    }
+  }, [refresh, setAction]);
+
   const patchBranch = useCallback(async (
     branch: BranchSummary,
     body: Partial<Pick<BranchSummary, 'isFavorite' | 'isColorMarked' | 'tags'>>,
@@ -2681,13 +2696,13 @@ export function BranchListPage(): JSX.Element {
   // 跳过重渲染），实际实现每次渲染写进 ref，调用时读最新值，规避 stale closure。
   const cardCallbacksRef = useRef({
     openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
-    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    pullBranch, stopBranch, restartBranch, forceRebuildBranch, patchBranch, resetBranch,
     deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
     setReleaseBranchId,
   });
   cardCallbacksRef.current = {
     openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
-    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    pullBranch, stopBranch, restartBranch, forceRebuildBranch, patchBranch, resetBranch,
     deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
     setReleaseBranchId,
   };
@@ -2699,6 +2714,7 @@ export function BranchListPage(): JSX.Element {
     onResourcePanel: (branch: BranchSummary, resource: BranchResource) => cardCallbacksRef.current.openBranchResourcePanel(branch, resource),
     onPull: (branch: BranchSummary) => void cardCallbacksRef.current.pullBranch(branch),
     onStop: (branch: BranchSummary) => void cardCallbacksRef.current.stopBranch(branch),
+    onRestart: (branch: BranchSummary) => void cardCallbacksRef.current.restartBranch(branch),
     onForceRebuild: (branch: BranchSummary) => void cardCallbacksRef.current.forceRebuildBranch(branch),
     onToggleFavorite: (branch: BranchSummary) => void cardCallbacksRef.current.patchBranch(branch, { isFavorite: !branch.isFavorite }),
     onToggleDebug: (branch: BranchSummary) => void cardCallbacksRef.current.patchBranch(branch, { isColorMarked: !branch.isColorMarked }),
@@ -4698,6 +4714,7 @@ interface BranchCardHandlers {
   onResourcePanel: (branch: BranchSummary, resource: BranchResource) => void;
   onPull: (branch: BranchSummary) => void;
   onStop: (branch: BranchSummary) => void;
+  onRestart: (branch: BranchSummary) => void;
   onForceRebuild: (branch: BranchSummary) => void;
   onToggleFavorite: (branch: BranchSummary) => void;
   onToggleDebug: (branch: BranchSummary) => void;
@@ -4759,6 +4776,7 @@ const BranchCard = memo(function BranchCard({
   const onResourcePanel = (resource: BranchResource) => handlers.onResourcePanel(branch, resource);
   const onPull = () => handlers.onPull(branch);
   const onStop = () => handlers.onStop(branch);
+  const onRestart = () => handlers.onRestart(branch);
   const onForceRebuild = () => handlers.onForceRebuild(branch);
   const onToggleFavorite = () => handlers.onToggleFavorite(branch);
   const onToggleDebug = () => handlers.onToggleDebug(branch);
@@ -4809,6 +4827,7 @@ const BranchCard = memo(function BranchCard({
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
+  const quickStartAvailable = canQuickStartBranch(branch);
   const busySince = isInterim ? branchBusySince(branch, action) : undefined;
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
@@ -5893,14 +5912,12 @@ const BranchCard = memo(function BranchCard({
           {commitHistoryPanel}
         </div>
         {/*
-          重设计(2026-06-11 用户主诉求):
+          重设计(2026-07-22 用户主诉求):
             - running 态:预览 + 发布合并成一个 split button。主按钮预览,
               下拉菜单包含发布,避免右下角两个强按钮互相抢焦点。
             - 中间态:loading 旋转图标(non-clickable)
-            - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
-              设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
-              到当前服务状态/日志 → 确认后再点",直接卡片右下点 Play 容易误操作。
-              卡片淡化暗示"这个分支没在跑",用户主动点开抽屉就能恢复。
+            - 真正已停止的分支:右下角直接显示「一键启动」,复用轻量 restart,
+              不拉代码、不重建镜像。首次部署和异常仍需打开详情确认上下文。
         */}
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
@@ -5920,6 +5937,17 @@ const BranchCard = memo(function BranchCard({
           ) : isInterim ? (
             <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
               <Loader2 className="animate-spin" />
+            </Button>
+          ) : quickStartAvailable ? (
+            <Button
+              size="sm"
+              disabled={busy}
+              title="启动已停止的容器，不拉取代码、不重建镜像"
+              aria-label={`一键启动 ${branch.branch}`}
+              onClick={onRestart}
+            >
+              <Play />
+              一键启动
             </Button>
           ) : null}
         </div>

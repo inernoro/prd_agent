@@ -959,6 +959,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
     [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^GET \/reports\/(.+)\/download$/, '下载验收报告压缩包'],
     [/^POST \/reports\/(.+)\/share$/, '生成报告分享链接'],
     [/^DELETE \/reports\/(.+)\/share$/, '撤销报告分享链接'],
     [/^POST \/reports\/(.+)\/push-to-pr$/, '验收回写 PR'],

@@ -1285,6 +1285,7 @@ export const api = {
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
       rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
+      importCdsReports: () => '/api/document-store/import-cds-reports',
       // 公开访问端点
       publicList: () => '/api/document-store/public/stores',
       publicDetail: (storeId: string) => `/api/document-store/public/stores/${storeId}`,

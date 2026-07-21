@@ -30,6 +30,30 @@ export async function getOrCreateQuickCaptureStore() {
   );
 }
 
+export interface CdsReportImportResult {
+  total: number;
+  imported: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  storeId: string;
+  storeName: string;
+  cdsBaseUrl: string;
+  messages: string[];
+}
+
+/** 由 MAP 当前登录用户触发，把指定 CDS 验收报告保存进自己的镜像知识库。 */
+export async function importCdsAcceptanceReport(input: {
+  reportId: string;
+  projectId?: string;
+  sourceBaseUrl: string;
+}) {
+  return await apiRequest<CdsReportImportResult>(api.documentStore.stores.importCdsReports(), {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export const listDocumentStoresReal: ListDocumentStoresContract = async (page = 1, pageSize = 20) => {
   return await apiRequest(`${api.documentStore.stores.list()}?page=${page}&pageSize=${pageSize}`, {
     method: 'GET',

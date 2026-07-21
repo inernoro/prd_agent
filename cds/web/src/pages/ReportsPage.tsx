@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, FileCode2, FileText, FolderOpen,
-  GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Pencil, Plus, RefreshCw, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
+  ArrowLeft, ArrowUpDown, Boxes, CalendarDays, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, Database, Download, FileCode2, FileText, FolderOpen,
+  GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { marked } from 'marked';
@@ -29,18 +30,22 @@ import {
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
+  listKnowledgeBaseConnections,
   listReportFolders,
   pushReportToPr,
   listReports,
   moveReportToFolder,
   renameReportFolder,
+  reportDownloadUrl,
   reportRawUrl,
   type AcceptanceReport,
+  type KnowledgeBaseConnection,
   type ReportFolder,
   type ReportFormat,
 } from '@/lib/api';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { useTheme } from '@/lib/theme';
+import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
 
 interface ProjectLite {
   id: string;
@@ -55,6 +60,8 @@ type ListState =
 
 type ReportSystemView = 'all' | 'none' | 'recent' | 'older' | 'shared' | 'failed';
 type ProjectFilter = 'all' | 'self' | string;
+type ReportGrouping = 'folder' | 'date';
+type ReportSort = 'newest' | 'oldest' | 'title';
 
 // 当前筛选：系统视图 / '<id>' 指定文件夹。
 type FolderFilter = ReportSystemView | string;
@@ -132,6 +139,8 @@ export function ReportsPage(): JSX.Element {
   // 删除确认统一走 Dialog（替代原生 window.confirm，与重命名/分享撤销的风格一致）。
   const [pendingDeleteReport, setPendingDeleteReport] = useState<AcceptanceReport | null>(null);
   const [pendingDeleteFolder, setPendingDeleteFolder] = useState<ReportFolder | null>(null);
+  const [kbConnections, setKbConnections] = useState<KnowledgeBaseConnection[]>([]);
+  const [knowledgeDialogReport, setKnowledgeDialogReport] = useState<AcceptanceReport | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -178,6 +187,14 @@ export function ReportsPage(): JSX.Element {
     apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
       .then((res) => { if (!cancelled) setProjects(res.projects ?? []); })
       .catch(() => { if (!cancelled) setProjects([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    listKnowledgeBaseConnections()
+      .then((connections) => { if (!cancelled) setKbConnections(connections); })
+      .catch(() => { if (!cancelled) setKbConnections([]); });
     return () => { cancelled = true; };
   }, []);
 
@@ -356,6 +373,33 @@ export function ReportsPage(): JSX.Element {
     }
   }, [projectId]);
 
+  const openMapImport = useCallback((report: AcceptanceReport, connection?: KnowledgeBaseConnection) => {
+    const targetConnection = connection
+      ?? kbConnections.find((item) => item.status === 'active' && item.partnerKind === 'map' && item.partnerBaseUrl);
+    if (!targetConnection?.partnerBaseUrl) {
+      setKnowledgeDialogReport(report);
+      return;
+    }
+    try {
+      const targetUrl = buildMapReportImportUrl({
+        mapBaseUrl: targetConnection.partnerBaseUrl,
+        reportId: report.id,
+        projectId: report.projectId,
+        cdsSourceBaseUrl: window.location.origin,
+      });
+      const opened = window.open(targetUrl, '_blank');
+      if (!opened) {
+        setToast('浏览器拦截了新窗口，请允许弹窗后重试');
+        return;
+      }
+      opened.opener = null;
+      setToast(`已交给「${targetConnection.partnerName || targetConnection.name}」保存，MAP 将使用当前登录账号写入我的知识库`);
+    } catch {
+      setToast('MAP 连接地址无效，请到系统设置重新绑定');
+      setKnowledgeDialogReport(report);
+    }
+  }, [kbConnections]);
+
   const handleCreateFolder = useCallback(async (name: string): Promise<boolean> => {
     try {
       const folder = await createReportFolder(name, folderCreateProjectId);
@@ -473,6 +517,8 @@ export function ReportsPage(): JSX.Element {
                       onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
+                      onSync={openMapImport}
+                      onManageConnections={setKnowledgeDialogReport}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
                       onCreateFolder={requestCreateFolder}
@@ -481,7 +527,7 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} />
+                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
                   </>
                 )}
               </div>
@@ -518,6 +564,8 @@ export function ReportsPage(): JSX.Element {
                       onDelete={requestDeleteReport}
                       onMove={handleMove}
                       onCopy={handleCopyLink}
+                      onSync={openMapImport}
+                      onManageConnections={setKnowledgeDialogReport}
                       onProjectFilterSelect={handleProjectFilterChange}
                       onFilterSelect={setActiveFolder}
                       onCreateFolder={requestCreateFolder}
@@ -574,7 +622,111 @@ export function ReportsPage(): JSX.Element {
           setPendingDeleteFolder(null);
         }}
       />
+      <KnowledgeBaseDialog
+        report={knowledgeDialogReport}
+        connections={kbConnections}
+        onOpenChange={(open) => { if (!open) setKnowledgeDialogReport(null); }}
+        onSync={openMapImport}
+        onToast={setToast}
+      />
     </AppShell>
+  );
+}
+
+function KnowledgeBaseDialog({
+  report, connections, onOpenChange, onSync, onToast,
+}: {
+  report: AcceptanceReport | null;
+  connections: KnowledgeBaseConnection[];
+  onOpenChange: (open: boolean) => void;
+  onSync: (report: AcceptanceReport, connection?: KnowledgeBaseConnection) => void;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [pairing, setPairing] = useState<{ pairingCode: string; expiresAt: string } | null>(null);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const activeMaps = connections.filter((item) => item.status === 'active' && item.partnerKind === 'map' && item.partnerBaseUrl);
+
+  useEffect(() => { if (!report) setPairing(null); }, [report]);
+
+  const createPairingCode = useCallback(async () => {
+    setPairingBusy(true);
+    try {
+      const result = await apiRequest<{ pairingCode: string; expiresAt: string }>('/api/peer-sync/admin/pairing-codes', {
+        method: 'POST',
+        body: { displayName: '验收报告知识库适配器' },
+      });
+      setPairing(result);
+    } catch (error) {
+      onToast(error instanceof ApiError ? error.message : '生成开放协议配对码失败');
+    } finally {
+      setPairingBusy(false);
+    }
+  }, [onToast]);
+
+  const copyPairingCode = useCallback(async () => {
+    if (!pairing) return;
+    try {
+      await navigator.clipboard.writeText(pairing.pairingCode);
+      onToast('开放协议配对码已复制');
+    } catch {
+      onToast(pairing.pairingCode);
+    }
+  }, [pairing, onToast]);
+
+  return (
+    <Dialog open={Boolean(report)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>保存到知识库</DialogTitle>
+          <DialogDescription>
+            {report ? `选择「${report.title}」的目标系统。MAP 写入使用 MAP 当前登录账号的权限，CDS 不保存或代用你的 MAP 用户令牌。` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-md border border-[hsl(var(--hairline))] p-3">
+            <div className="flex items-start gap-3">
+              <Database className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">MAP 原生一键同步</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">按报告 ID 精确导入，正文、结论、项目元数据和截图由 MAP 从已授权的 CDS 连接拉取，重复同步按内容哈希增量更新。</p>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {activeMaps.length > 0 ? activeMaps.map((connection) => (
+                <Button key={connection.id} size="sm" onClick={() => { if (report) onSync(report, connection); }}>
+                  <Save />保存到 {connection.partnerName || connection.name}
+                </Button>
+              )) : (
+                <Button asChild size="sm"><a href="/cds-settings#connections"><Network />先绑定 MAP</a></Button>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-[hsl(var(--hairline))] p-3">
+            <div className="flex items-start gap-3">
+              <Network className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">开放知识库协议</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  CDS 按 MAP-KBTP v1 作为只读报告源，支持 MAP 以及实现该协议的适配器。飞书、Notion、Confluence 等平台需由对应适配器完成字段和鉴权转换，CDS 不会伪装成这些平台的原生接口。
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" disabled={pairingBusy} onClick={() => void createPairingCode()}>
+                <Network />{pairingBusy ? '正在生成' : '生成适配器配对码'}
+              </Button>
+              {pairing ? (
+                <Button variant="secondary" size="sm" onClick={() => void copyPairingCode()} title={`有效期至 ${formatTime(pairing.expiresAt)}`}>
+                  <Link2 />复制配对码
+                </Button>
+              ) : null}
+            </div>
+            {pairing ? <div className="mt-2 break-all rounded bg-[hsl(var(--surface-sunken))] px-2 py-1.5 font-mono text-xs">{pairing.pairingCode}</div> : null}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -717,6 +869,56 @@ function ReportFilterMenu({
   );
 }
 
+function ReportArrangeMenu({
+  groupMode, sortMode, onGroupChange, onSortChange,
+}: {
+  groupMode: ReportGrouping;
+  sortMode: ReportSort;
+  onGroupChange: (mode: ReportGrouping) => void;
+  onSortChange: (mode: ReportSort) => void;
+}): JSX.Element {
+  return (
+    <DropdownMenu
+      align="end"
+      width={240}
+      trigger={(
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" aria-label="排序和分组" title="排序和分组">
+          <ArrowUpDown className="h-4 w-4" />
+        </Button>
+      )}
+    >
+      <DropdownLabel>分组方式</DropdownLabel>
+      <DropdownItem onSelect={() => onGroupChange('folder')}>
+        <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">按文件夹</span>
+        {groupMode === 'folder' ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownItem onSelect={() => onGroupChange('date')}>
+        <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">按报告时间</span>
+        {groupMode === 'date' ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownDivider />
+      <DropdownLabel>报告排序</DropdownLabel>
+      <DropdownItem onSelect={() => onSortChange('newest')}>
+        <Clock3 className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">时间从新到旧</span>
+        {sortMode === 'newest' ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownItem onSelect={() => onSortChange('oldest')}>
+        <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">时间从旧到新</span>
+        {sortMode === 'oldest' ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+      <DropdownItem onSelect={() => onSortChange('title')}>
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">标题排序</span>
+        {sortMode === 'title' ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+    </DropdownMenu>
+  );
+}
+
 function EmptyReportsState({ onCreate, filtered, filterMenu }: { onCreate: () => void; filtered: boolean; filterMenu?: JSX.Element }): JSX.Element {
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center gap-4 rounded-md border border-dashed border-border px-6 py-16 text-center">
@@ -784,7 +986,7 @@ function reportTooltip(report: AcceptanceReport, projectName: string | undefined
 
 function ReportList({
   reports, folders, projects, projectCounts, activeProjectFilter, counts, activeFilter, selectedId, searchQuery, searching, onSearchChange,
-  groupByProject, onSelect, onDelete, onMove, onCopy,
+  groupByProject, onSelect, onDelete, onMove, onCopy, onSync, onManageConnections,
   onProjectFilterSelect, onFilterSelect, onCreateFolder, onRenameFolderRequest, onDeleteFolder, showProjectFilter, resizable = true, className,
 }: {
   reports: AcceptanceReport[];
@@ -803,6 +1005,8 @@ function ReportList({
   onDelete: (report: AcceptanceReport) => void;
   onMove: (report: AcceptanceReport, folderId: string | null) => void;
   onCopy: (report: AcceptanceReport) => void;
+  onSync: (report: AcceptanceReport) => void;
+  onManageConnections: (report: AcceptanceReport) => void;
   onProjectFilterSelect: (f: ProjectFilter) => void;
   onFilterSelect: (f: FolderFilter) => void;
   onCreateFolder: () => void;
@@ -814,6 +1018,24 @@ function ReportList({
 }): JSX.Element {
   const [navWidth, setNavWidth] = useState(340);
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => new Set());
+  const [groupMode, setGroupMode] = useState<ReportGrouping>(() => (
+    sessionStorage.getItem('cds-report-grouping') === 'date' ? 'date' : 'folder'
+  ));
+  const [sortMode, setSortMode] = useState<ReportSort>(() => {
+    const saved = sessionStorage.getItem('cds-report-sort');
+    return saved === 'oldest' || saved === 'title' ? saved : 'newest';
+  });
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; report: AcceptanceReport } | null>(null);
+
+  useEffect(() => { sessionStorage.setItem('cds-report-grouping', groupMode); }, [groupMode]);
+  useEffect(() => { sessionStorage.setItem('cds-report-sort', sortMode); }, [sortMode]);
+
+  const sortedReports = useMemo(() => [...reports].sort((a, b) => {
+    if (sortMode === 'title') return a.title.localeCompare(b.title, 'zh-CN');
+    const left = new Date(a.createdAt).getTime();
+    const right = new Date(b.createdAt).getTime();
+    return sortMode === 'oldest' ? left - right : right - left;
+  }), [reports, sortMode]);
 
   const projectName = useMemo(() => {
     const map = new Map<string, string>();
@@ -837,7 +1059,7 @@ function ReportList({
   const reportsByFolder = useMemo(() => {
     const map = new Map<string, AcceptanceReport[]>();
     const root: AcceptanceReport[] = [];
-    for (const report of reports) {
+    for (const report of sortedReports) {
       if (report.folderId && knownFolderIds.has(report.folderId)) {
         const bucket = map.get(report.folderId) ?? [];
         bucket.push(report);
@@ -847,7 +1069,7 @@ function ReportList({
       }
     }
     return { byFolder: map, root };
-  }, [reports, knownFolderIds]);
+  }, [sortedReports, knownFolderIds]);
 
   const folderVisibleReportCount = useMemo(() => {
     const cache = new Map<string, number>();
@@ -875,7 +1097,7 @@ function ReportList({
   }, []);
 
   // 「全部项目」视图按项目分组：分组行与文件夹共用折叠状态集合，键加 `project:` 前缀防撞。
-  const grouping = groupByProject && !searching;
+  const grouping = groupMode === 'folder' && groupByProject && !searching;
   const groupKeys = useMemo(() => {
     if (!grouping) return [] as Array<string | null>;
     const present = new Set<string | null>();
@@ -888,11 +1110,28 @@ function ReportList({
     return ordered;
   }, [grouping, folders, reports, projects]);
 
+  const dateGroups = useMemo(() => {
+    if (groupMode !== 'date' || searching) return [] as Array<{ key: string; reports: AcceptanceReport[] }>;
+    const buckets = new Map<string, AcceptanceReport[]>();
+    for (const report of sortedReports) {
+      const date = new Date(report.createdAt);
+      const key = Number.isNaN(date.getTime())
+        ? '时间未知'
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(report);
+      buckets.set(key, bucket);
+    }
+    return [...buckets.entries()]
+      .sort(([left], [right]) => (sortMode === 'oldest' ? left.localeCompare(right) : right.localeCompare(left)))
+      .map(([key, groupedReports]) => ({ key, reports: groupedReports }));
+  }, [groupMode, searching, sortedReports, sortMode]);
+
   // 顶栏「全部折叠 / 全部展开」：一键作用于当前树里的所有文件夹（分组时含项目分组行）。
   const collapsibleIds = useMemo(() => [
     ...groupKeys.map((key) => `project:${key ?? 'self'}`),
-    ...folders.map((folder) => folder.id),
-  ], [groupKeys, folders]);
+    ...(groupMode === 'folder' ? folders.map((folder) => folder.id) : dateGroups.map((group) => `date:${group.key}`)),
+  ], [groupKeys, folders, groupMode, dateGroups]);
   const allCollapsed = collapsibleIds.length > 0 && collapsibleIds.every((id) => collapsedFolderIds.has(id));
   const toggleAllFolders = useCallback(() => {
     setCollapsedFolderIds(allCollapsed ? new Set() : new Set(collapsibleIds));
@@ -926,6 +1165,11 @@ function ReportList({
         className={`group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
         style={{ paddingLeft: 8 + depth * 16 }}
         onClick={() => onSelect(report)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setContextMenu({ x: event.clientX, y: event.clientY, report });
+        }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
@@ -945,6 +1189,8 @@ function ReportList({
             onDelete={() => onDelete(report)}
             onMove={(folderId) => onMove(report, folderId)}
             onCopy={() => onCopy(report)}
+            onSync={() => onSync(report)}
+            onManageConnections={() => onManageConnections(report)}
           />
         </div>
       </div>
@@ -1021,15 +1267,41 @@ function ReportList({
     return rows;
   };
 
+  const renderDateGroup = (group: { key: string; reports: AcceptanceReport[] }): JSX.Element[] => {
+    const collapseKey = `date:${group.key}`;
+    const collapsed = collapsedFolderIds.has(collapseKey);
+    const rows: JSX.Element[] = [
+      <div key={collapseKey}
+        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+        onClick={() => toggleFolder(collapseKey)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleFolder(collapseKey);
+        }}>
+        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+        <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{group.key}</span>
+        <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{group.reports.length}</span>
+      </div>,
+    ];
+    if (!collapsed) for (const report of group.reports) rows.push(renderReportRow(report, 1));
+    return rows;
+  };
+
   // 搜索时平铺命中项；「全部项目」时按项目分组；其余走文件夹树。
   const treeRows = searching
-    ? reports.map((report) => renderReportRow(report, 0))
-    : grouping
-      ? groupKeys.flatMap((groupId) => renderProjectGroup(groupId))
-      : [
-        ...(foldersByParent.get(null) ?? []).flatMap((folder) => renderFolder(folder, 0)),
-        ...reportsByFolder.root.map((report) => renderReportRow(report, 0)),
-      ];
+    ? sortedReports.map((report) => renderReportRow(report, 0))
+    : groupMode === 'date'
+      ? dateGroups.flatMap(renderDateGroup)
+      : grouping
+        ? groupKeys.flatMap((groupId) => renderProjectGroup(groupId))
+        : [
+          ...(foldersByParent.get(null) ?? []).flatMap((folder) => renderFolder(folder, 0)),
+          ...reportsByFolder.root.map((report) => renderReportRow(report, 0)),
+        ];
 
   return (
     <div className={`relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] lg:flex-none lg:shrink-0 lg:w-[var(--report-nav-width)] ${className ?? ''}`}
@@ -1048,6 +1320,7 @@ function ReportList({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <ReportArrangeMenu groupMode={groupMode} sortMode={sortMode} onGroupChange={setGroupMode} onSortChange={setSortMode} />
           <ReportFilterMenu
             folders={folders}
             counts={counts}
@@ -1108,12 +1381,25 @@ function ReportList({
           onPointerDown={beginResize}
         />
       ) : null}
+      {contextMenu ? (
+        <ReportContextMenu
+          position={contextMenu}
+          folders={folders}
+          onClose={() => setContextMenu(null)}
+          onOpen={() => onSelect(contextMenu.report)}
+          onCopy={() => onCopy(contextMenu.report)}
+          onSync={() => onSync(contextMenu.report)}
+          onManageConnections={() => onManageConnections(contextMenu.report)}
+          onMove={(folderId) => onMove(contextMenu.report, folderId)}
+          onDelete={() => onDelete(contextMenu.report)}
+        />
+      ) : null}
     </div>
   );
 }
 
 function ReportRowActions({
-  report, folders, onOpen, onDelete, onMove, onCopy,
+  report, folders, onOpen, onDelete, onMove, onCopy, onSync, onManageConnections,
 }: {
   report: AcceptanceReport;
   folders: ReportFolder[];
@@ -1121,6 +1407,8 @@ function ReportRowActions({
   onDelete: () => void;
   onMove: (folderId: string | null) => void;
   onCopy: () => void;
+  onSync: () => void;
+  onManageConnections: () => void;
 }): JSX.Element {
   // 移动目标只列与报告同项目作用域的文件夹：跨项目移动会被服务端 400 拒绝，不该出现在菜单里。
   const moveTargets = folders.filter((folder) => (folder.projectId || null) === (report.projectId || null));
@@ -1149,6 +1437,19 @@ function ReportRowActions({
         <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">复制直达链接</span>
       </DropdownItem>
+      <DropdownItem asChild href={reportDownloadUrl(report.id)} download>
+        <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">下载报告压缩包</span>
+      </DropdownItem>
+      <DropdownDivider />
+      <DropdownItem onSelect={onSync}>
+        <Save className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">保存到 MAP 知识库</span>
+      </DropdownItem>
+      <DropdownItem onSelect={onManageConnections}>
+        <Network className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">绑定其他知识库</span>
+      </DropdownItem>
       <DropdownDivider />
       <DropdownLabel>移动到文件夹</DropdownLabel>
       <DropdownItem onSelect={() => onMove(null)} disabled={!report.folderId}>
@@ -1174,6 +1475,76 @@ function ReportRowActions({
         <span className="min-w-0 flex-1 truncate">删除报告</span>
       </DropdownItem>
     </DropdownMenu>
+  );
+}
+
+function ReportContextMenu({
+  position, folders, onClose, onOpen, onCopy, onSync, onManageConnections, onMove, onDelete,
+}: {
+  position: { x: number; y: number; report: AcceptanceReport };
+  folders: ReportFolder[];
+  onClose: () => void;
+  onOpen: () => void;
+  onCopy: () => void;
+  onSync: () => void;
+  onManageConnections: () => void;
+  onMove: (folderId: string | null) => void;
+  onDelete: () => void;
+}): JSX.Element {
+  const report = position.report;
+  const moveTargets = folders.filter((folder) => (folder.projectId || null) === (report.projectId || null));
+  useEffect(() => {
+    const close = () => onClose();
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const run = (action: () => void) => () => { action(); onClose(); };
+  const left = Math.max(8, Math.min(position.x, window.innerWidth - 268));
+  const top = Math.max(8, Math.min(position.y, window.innerHeight - 440));
+  return createPortal(
+    <div
+      className="cds-overlay-anim fixed z-[320] max-h-[min(70vh,520px)] w-[260px] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
+      style={{ left, top }}
+      role="menu"
+      aria-label={`报告操作：${report.title}`}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <DropdownItem onSelect={run(onOpen)}><FileText className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">打开报告</span></DropdownItem>
+      <DropdownItem onSelect={run(onCopy)}><Link2 className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">复制直达链接</span></DropdownItem>
+      <DropdownItem asChild href={reportDownloadUrl(report.id)} download><Download className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">下载报告压缩包</span></DropdownItem>
+      <DropdownDivider />
+      <DropdownItem onSelect={run(onSync)}><Save className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">保存到 MAP 知识库</span></DropdownItem>
+      <DropdownItem onSelect={run(onManageConnections)}><Network className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">绑定其他知识库</span></DropdownItem>
+      <DropdownDivider />
+      <DropdownLabel>移动到文件夹</DropdownLabel>
+      <DropdownItem onSelect={run(() => onMove(null))} disabled={!report.folderId}>
+        <Inbox className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">未归类</span>
+        {!report.folderId ? <Check className="h-4 w-4 text-primary" /> : null}
+      </DropdownItem>
+      {moveTargets.map((folder) => (
+        <DropdownItem key={folder.id} onSelect={run(() => onMove(folder.id))} disabled={report.folderId === folder.id}>
+          <FolderOpen className="h-4 w-4 text-muted-foreground" /><span className="flex-1 truncate">{folder.name}</span>
+          {report.folderId === folder.id ? <Check className="h-4 w-4 text-primary" /> : null}
+        </DropdownItem>
+      ))}
+      <DropdownDivider />
+      <DropdownItem destructive onSelect={run(onDelete)}><Trash2 className="h-4 w-4" /><span className="flex-1 truncate">删除报告</span></DropdownItem>
+    </div>,
+    document.body,
   );
 }
 
@@ -1336,7 +1707,14 @@ function RenameFolderDialog({
  * Markdown fetched, converted with `marked`, injected via srcDoc into the same
  * no-same-origin sandbox. See routes/reports.ts security note.
  */
-function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport | null; onBack?: () => void; onOpenNav?: () => void }): JSX.Element {
+function ReportViewer({
+  report, onBack, onOpenNav, onSync,
+}: {
+  report: AcceptanceReport | null;
+  onBack?: () => void;
+  onOpenNav?: () => void;
+  onSync: (report: AcceptanceReport) => void;
+}): JSX.Element {
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -1409,9 +1787,18 @@ function ReportViewer({ report, onBack, onOpenNav }: { report: AcceptanceReport 
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
           <span className="truncate text-sm font-medium">{report.title}</span>
           <FormatBadge format={report.format} />
+          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title={`报告时间：${formatTime(report.createdAt)}`}>
+            <CalendarDays className="h-3.5 w-3.5" />报告时间 {formatTime(report.createdAt)}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
+          <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
+            <Save className="h-3.5 w-3.5" />保存到 MAP
+          </Button>
+          <Button asChild variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" title="下载正文、元数据和截图压缩包">
+            <a href={reportDownloadUrl(report.id)} download><Download className="h-3.5 w-3.5" />下载 ZIP</a>
+          </Button>
           <ShareControl report={report} />
           <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
           <Button
@@ -1530,12 +1917,12 @@ function PushToPrControl({ report }: { report: AcceptanceReport }): JSX.Element 
     try {
       const r = await pushReportToPr(report.id);
       if (r.commentUrl || r.checkRun) {
-        flash(`已回写 PR #${r.prNumber}${r.warnings.length ? `（${r.warnings.length} 项告警）` : ''}`);
+        flash(`已同步结论到 PR #${r.prNumber}${r.warnings.length ? `（${r.warnings.length} 项告警）` : ''}`);
       } else {
-        flash('回写失败');
+        flash('同步失败');
       }
     } catch (e) {
-      flash(e instanceof ApiError ? e.message : '回写失败');
+      flash(e instanceof ApiError ? e.message : '同步失败');
     } finally { setBusy(false); }
   }, [busy, report.id]);
 
@@ -1548,9 +1935,9 @@ function PushToPrControl({ report }: { report: AcceptanceReport }): JSX.Element 
         className="h-7 gap-1 px-2 text-[11px]"
         disabled={busy}
         onClick={() => void onPush()}
-        title={`把验收结论回写到 PR #${report.prNumber}（PR 评论 + check-run）`}
+        title={`使用 CDS 关联仓库的 GitHub App 权限，把验收结论同步到 PR #${report.prNumber} 的评论和 Check Run`}
       >
-        <GitPullRequest className="h-3.5 w-3.5" />回写 PR #{report.prNumber}
+        <GitPullRequest className="h-3.5 w-3.5" />同步结论到 PR #{report.prNumber}
       </Button>
     </div>
   );
