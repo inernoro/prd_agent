@@ -150,6 +150,21 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         "滚动结论",
     )
 
+    # 规则 §11.2 豁免：桌面原生/内部非页面报告声明「移动端不适用」+ 产品边界，豁免移动端硬门禁。
+    na_body = """
+## 移动端验收
+
+本次为内部非页面变更（CDS 后端证据），无移动 Web 面，移动端不适用。
+"""
+    assert_no_errors(archive._mobile_acceptance_errors("L1", na_body, []))
+    assert_no_errors(archive._mobile_acceptance_errors("L2", na_body, []))
+    # 只写「移动端不适用」但缺产品边界理由，不予豁免（防止用一句话绕过硬门禁）。
+    bare_na_body = "## 移动端验收\n\n移动端不适用。\n"
+    assert_has_error(
+        archive._mobile_acceptance_errors("L1", bare_na_body, []),
+        "真实触控移动端证据",
+    )
+
     html = archive.build_interactive_html("日报", "fail", "# 日报\n\n正文", annotated_manifest)
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")

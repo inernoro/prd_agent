@@ -26,12 +26,28 @@ const settleTimeoutMs = Math.max(5000, parseInt(process.env.VERIFY_OPEN_SETTLE_T
 const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true });
 // CDS 登录态深链的安全回退：匿名分享不适合内部报告时，允许调用方仅通过环境变量
-// 注入 AI access key。密钥不写入 URL、日志或报告，且只发送给目标 CDS host。
-const aiAccessKey = process.env.AI_ACCESS_KEY || '';
+// 注入 CDS access key。密钥不写入 URL、日志或报告。
+// 与 archive_report.py 的 _cds_auth_headers 一致：项目级 CDS_PROJECT_KEY 优先，
+// 否则回退全局 AI_ACCESS_KEY，避免只配了项目级 key 的环境验证时漏带鉴权而 exit 2。
+const cdsAccessKey = (process.env.CDS_PROJECT_KEY || process.env.AI_ACCESS_KEY || '').trim();
 let targetHost = '';
 try { targetHost = new URL(url).host; } catch {}
-if (aiAccessKey && /(^|\.)cds\.miduo\.org$/i.test(targetHost)) {
-  await ctx.setExtraHTTPHeaders({ 'X-AI-Access-Key': aiAccessKey });
+const isCdsHost = (host) => /(^|\.)cds\.miduo\.org$/i.test(host || '');
+// 关键：ctx.setExtraHTTPHeaders 会给 context 内「所有」请求带上 header，
+// 报告页里的外链图片 / iframe / 三方子资源都会被附上密钥，造成密钥泄漏到非 CDS host。
+// 改用 route 逐请求判定：仅当该请求的 host 是目标 CDS host 时才注入密钥头。
+if (cdsAccessKey && isCdsHost(targetHost)) {
+  await ctx.route('**/*', async (route) => {
+    const req = route.request();
+    let reqHost = '';
+    try { reqHost = new URL(req.url()).host; } catch {}
+    if (isCdsHost(reqHost)) {
+      const headers = { ...req.headers(), 'x-ai-access-key': cdsAccessKey };
+      await route.continue({ headers });
+    } else {
+      await route.continue();
+    }
+  });
 }
 const page = await ctx.newPage();
 const attempts = [];
