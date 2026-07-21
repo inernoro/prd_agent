@@ -666,7 +666,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         {resolveSourceLabel(normalized)}
       </span>
     );
-  }, [resolveSourceLabel]);
+  }, [isLight, resolveSourceLabel]);
 
   useEffect(() => {
     if (!reportId) return;
@@ -1569,7 +1569,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                 className="relative rounded-2xl overflow-hidden scroll-mt-3"
                 style={{
                   // 提高卡片与主背景对比：暗色稍微亮一档，浅色保持纯白
-                  background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.035)',
+                  background: isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.035)',
                   border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.16)'}`,
                   boxShadow: isLight
                     ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -10px rgba(15, 23, 42, 0.08)'

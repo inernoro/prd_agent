@@ -573,7 +573,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
   return (
     <div
-      className={`${rootClass} relative overflow-hidden ${embedded ? 'rounded-2xl' : ''}`}
+      className={`${rootClass} relative overflow-hidden text-token-primary ${embedded ? 'rounded-2xl' : ''}`}
       style={{
         // 非嵌入模式：透明，坐在外壳画布上（2026-07-08 用户反馈"背景有一些黑"——
         // 这层不透明近黑底会盖住画布与 aurora，比周围画布更黑一截）。
@@ -646,8 +646,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
             <section ref={pageListRef} className="min-h-0 rounded-2xl p-4 flex flex-col" style={glassCardStyle}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-[12px] font-semibold text-white/74">页面列表</div>
-                  <div className="mt-1 text-[11px] text-white/42">
+                  <div className="text-[12px] font-semibold text-token-secondary">页面列表</div>
+                  <div className="mt-1 text-[11px] text-token-muted">
                     {poster ? `${poster.title || '未命名项目'} · ${pages.length} 页` : '先选择一个项目'}
                   </div>
                 </div>
@@ -655,7 +655,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   type="button"
                   onClick={() => void refreshList(poster?.id)}
                   aria-label="刷新列表"
-                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-white/60 hover:bg-white/10"
+                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
                 >
                   <RefreshCw size={14} className={loadingList ? 'animate-spin' : ''} />
                 </button>
@@ -678,7 +678,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   type="button"
                   onClick={openManualCreator}
                   disabled={createOpen}
-                  className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                  className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-token-primary disabled:opacity-40"
                   style={glassButtonStyle}
                 >
                   <Plus size={14} />
@@ -688,7 +688,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
               <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1">
                 {loadingPoster && !poster ? (
-                  <div className="h-40 flex items-center justify-center text-[12px] text-white/45">
+                  <div className="h-40 flex items-center justify-center text-[12px] text-token-muted">
                     <MapSpinner size={14} />
                     <span className="ml-2">加载项目中</span>
                   </div>
@@ -706,9 +706,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     ))}
                   </div>
                 ) : (
-                  <div className="h-full min-h-[320px] flex items-center justify-center text-center text-[12px] text-white/42">
+                  <div className="h-full min-h-[320px] flex items-center justify-center text-center text-[12px] text-token-muted">
                     <div>
-                      <Sparkles size={28} className="mx-auto mb-3 text-white/30" />
+                      <Sparkles size={28} className="mx-auto mb-3 text-token-muted" />
                       选择海报项目后，这里会展示页面缩略图和状态
                     </div>
                   </div>
@@ -719,7 +719,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 type="button"
                 onClick={handleAddPage}
                 disabled={!poster}
-                className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-token-primary disabled:opacity-40"
                 style={glassButtonStyle}
               >
                 <Plus size={14} />
@@ -736,13 +736,13 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         className="relative flex min-w-[260px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
                         style={glassButtonStyle}
                       >
-                        <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
+                        <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-token-muted">项目</div>
                         <select
                           value={poster?.id ?? ''}
                           onChange={(e) => {
                             if (e.target.value) void selectPoster(e.target.value);
                           }}
-                          className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-white outline-none"
+                          className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-token-primary outline-none"
                         >
                           {!poster && <option value="" style={{ background: '#0b1120' }}>选择海报项目</option>}
                           {posters.map((item) => (
@@ -751,7 +751,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             </option>
                           ))}
                         </select>
-                        <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
+                        <ChevronDown size={14} className="pointer-events-none absolute right-3 text-token-muted" />
                       </div>
 
                       <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
@@ -796,7 +796,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         disabled={!poster || pages.length === 0}
                         className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                         style={{
-                          color: 'rgba(255,255,255,0.82)',
+                          color: 'var(--text-secondary)',
                           background: 'rgba(58,125,255,0.12)',
                           border: '1px solid rgba(78,161,255,0.28)',
                         }}
@@ -822,10 +822,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-[12px] font-semibold text-white/78">
+                      <div className="text-[12px] font-semibold text-token-secondary">
                         当前页：{String(currentPage.order + 1).padStart(2, '0')} · {currentPage.title || '未命名页面'}
                       </div>
-                      <div className="mt-1 text-[11px] text-white/42">
+                      <div className="mt-1 text-[11px] text-token-muted">
                         大画布预览 · {dimensionLabel(batchConfig.orientation)} · {selectedTemplate.label}
                       </div>
                     </div>
@@ -837,7 +837,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           className="w-9 h-8 rounded-lg inline-flex items-center justify-center"
                           style={{
                             background: devicePreview === 'desktop' ? 'rgba(86,119,255,0.22)' : 'transparent',
-                            color: devicePreview === 'desktop' ? '#fff' : 'rgba(255,255,255,0.52)',
+                            color: devicePreview === 'desktop' ? 'var(--text-primary)' : 'var(--text-muted)',
                           }}
                         >
                           <Monitor size={14} />
@@ -848,7 +848,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           className="w-9 h-8 rounded-lg inline-flex items-center justify-center"
                           style={{
                             background: devicePreview === 'mobile' ? 'rgba(86,119,255,0.22)' : 'transparent',
-                            color: devicePreview === 'mobile' ? '#fff' : 'rgba(255,255,255,0.52)',
+                            color: devicePreview === 'mobile' ? 'var(--text-primary)' : 'var(--text-muted)',
                           }}
                         >
                           <Smartphone size={14} />
@@ -859,15 +859,15 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         <button
                           type="button"
                           onClick={() => setPreviewScale((prev) => clamp(prev - 6, 52, 120))}
-                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-white/72 hover:bg-white/10"
+                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
                         >
                           <Minus size={14} />
                         </button>
-                        <span className="w-12 text-center text-[12px] font-medium text-white/82">{previewScale}%</span>
+                        <span className="w-12 text-center text-[12px] font-medium text-token-primary">{previewScale}%</span>
                         <button
                           type="button"
                           onClick={() => setPreviewScale((prev) => clamp(prev + 6, 52, 120))}
-                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-white/72 hover:bg-white/10"
+                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
                         >
                           <Plus size={14} />
                         </button>
@@ -913,7 +913,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             >
                               {page.imageUrl && renderMedia(page.imageUrl, 'absolute inset-0 w-full h-full object-cover')}
                             </div>
-                            <div className="mt-2 text-[11px] font-medium text-white/86 truncate">
+                            <div className="mt-2 text-[11px] font-medium text-token-primary truncate">
                               {String(page.order + 1).padStart(2, '0')} {page.title || '未命名页面'}
                             </div>
                           </button>
@@ -925,14 +925,14 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   <div ref={(node) => { editorPanelRef.current = node; }} className="hidden" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-[13px] font-semibold text-white">编辑当前页</div>
-                        <div className="mt-1 text-[11px] text-white/42">预览和编辑放在同一张主卡里，减少切换。</div>
+                        <div className="text-[13px] font-semibold text-token-primary">编辑当前页</div>
+                        <div className="mt-1 text-[11px] text-token-muted">预览和编辑放在同一张主卡里，减少切换。</div>
                       </div>
                       <button
                         type="button"
                         onClick={() => void regenerateImage()}
                         disabled={!poster || !currentPage}
-                        className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                        className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-token-primary disabled:opacity-40"
                         style={glassButtonStyle}
                       >
                         <Sparkles size={14} />
@@ -953,7 +953,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           className="h-10 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
                           style={{
                             background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
-                            color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.55)',
+                            color: workspaceTab === value ? 'var(--text-primary)' : 'var(--text-muted)',
                           }}
                         >
                           {icon}
@@ -994,7 +994,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           </Field>
                           <Field label="绑定地址">
                             <div className="relative">
-                              <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                              <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                               <input
                                 value={poster.ctaUrl ?? ''}
                                 onChange={(e) => updatePosterFields({ ctaUrl: e.target.value })}
@@ -1075,7 +1075,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             />
                           </Field>
                           <label className="block">
-                            <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                            <span className="block text-[11px] font-medium text-token-muted mb-1.5">色板</span>
                             <input
                               type="color"
                               value={normalizeColor(currentPage.accentColor)}
@@ -1088,8 +1088,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                         <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
                           <div className="flex items-center justify-between">
-                            <div className="text-[12px] font-medium text-white/78">模板与版式</div>
-                            <Palette size={14} className="text-white/40" />
+                            <div className="text-[12px] font-medium text-token-secondary">模板与版式</div>
+                            <Palette size={14} className="text-token-muted" />
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             {selectedTemplate.accentPalette.map((color) => (
@@ -1106,7 +1106,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                               />
                             ))}
                           </div>
-                          <div className="mt-3 text-[11px] text-white/44">
+                          <div className="mt-3 text-[11px] text-token-muted">
                             当前模板：{selectedTemplate.label} · 数据源：{selectedSourceType?.label || '未设置'}
                           </div>
                         </div>
@@ -1134,14 +1134,14 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 <section className="hidden">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-[13px] font-semibold text-white">编辑当前页</div>
-                      <div className="mt-1 text-[11px] text-white/42">这里只保留正文、素材和版式三个核心编辑区。</div>
+                      <div className="text-[13px] font-semibold text-token-primary">编辑当前页</div>
+                      <div className="mt-1 text-[11px] text-token-muted">这里只保留正文、素材和版式三个核心编辑区。</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => void regenerateImage()}
                       disabled={!poster || !currentPage}
-                      className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                      className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-token-primary disabled:opacity-40"
                       style={glassButtonStyle}
                     >
                       <Sparkles size={14} />
@@ -1162,7 +1162,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         className="h-10 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
                         style={{
                           background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
-                          color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.55)',
+                          color: workspaceTab === value ? 'var(--text-primary)' : 'var(--text-muted)',
                         }}
                       >
                         {icon}
@@ -1205,7 +1205,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             </Field>
                             <Field label="绑定地址">
                               <div className="relative">
-                                <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                                <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                                 <input
                                   value={poster.ctaUrl ?? ''}
                                   onChange={(e) => updatePosterFields({ ctaUrl: e.target.value })}
@@ -1286,7 +1286,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                               />
                             </Field>
                             <label className="block">
-                              <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                              <span className="block text-[11px] font-medium text-token-muted mb-1.5">色板</span>
                               <input
                                 type="color"
                                 value={normalizeColor(currentPage.accentColor)}
@@ -1299,8 +1299,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                           <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
                             <div className="flex items-center justify-between">
-                              <div className="text-[12px] font-medium text-white/78">模板与版式</div>
-                              <Palette size={14} className="text-white/40" />
+                              <div className="text-[12px] font-medium text-token-secondary">模板与版式</div>
+                              <Palette size={14} className="text-token-muted" />
                             </div>
                             <div className="mt-3 flex flex-wrap gap-2">
                               {selectedTemplate.accentPalette.map((color) => (
@@ -1317,7 +1317,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                                 />
                               ))}
                             </div>
-                            <div className="mt-3 text-[11px] text-white/44">
+                            <div className="mt-3 text-[11px] text-token-muted">
                               当前模板：{selectedTemplate.label} · 数据源：{selectedSourceType?.label || '未设置'}
                             </div>
                           </div>
@@ -1332,7 +1332,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                       )}
                     </>
                   ) : (
-                    <div className="mt-4 flex-1 min-h-[240px] flex items-center justify-center text-[12px] text-white/38 text-center">
+                    <div className="mt-4 flex-1 min-h-[240px] flex items-center justify-center text-[12px] text-token-muted text-center">
                       选择海报后，这里会展开正文、素材和版式编辑面板。
                     </div>
                   )}
@@ -1369,7 +1369,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 ) : (
                   <section
                     ref={publishPanelRef}
-                    className="min-h-0 rounded-2xl p-4 flex items-center justify-center text-center text-[12px] text-white/38"
+                    className="min-h-0 rounded-2xl p-4 flex items-center justify-center text-center text-[12px] text-token-muted"
                     style={glassCardStyle}
                   >
                     选择或创建海报后，这里会显示编辑与发布操作。
@@ -1382,18 +1382,18 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <section className="rounded-2xl p-4" style={glassCardStyle}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-white">创建引导</div>
-                    <div className="mt-1 text-[11px] text-white/42">支持导入文案生成分页，也支持直接创建空白海报。</div>
+                    <div className="text-[13px] font-semibold text-token-primary">创建引导</div>
+                    <div className="mt-1 text-[11px] text-token-muted">支持导入文案生成分页，也支持直接创建空白海报。</div>
                   </div>
-                  <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-white" style={{ background: 'rgba(96,84,255,0.28)', border: '1px solid rgba(126,112,255,0.38)' }}>
+                  <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-token-primary" style={{ background: 'rgba(96,84,255,0.28)', border: '1px solid rgba(126,112,255,0.38)' }}>
                     1
                   </div>
                 </div>
 
                 <div className="mt-4">
-                  <div className="flex items-center justify-between text-[12px] text-white/70">
+                  <div className="flex items-center justify-between text-[12px] text-token-secondary">
                     <span>生成页数</span>
-                    <span className="inline-flex items-center justify-center min-w-[40px] h-8 rounded-lg px-2 font-semibold text-white" style={glassButtonStyle}>
+                    <span className="inline-flex items-center justify-center min-w-[40px] h-8 rounded-lg px-2 font-semibold text-token-primary" style={glassButtonStyle}>
                       {batchConfig.pageCount}
                     </span>
                   </div>
@@ -1409,7 +1409,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 </div>
 
                 <div className="mt-4">
-                  <div className="text-[12px] text-white/70">选择风格</div>
+                  <div className="text-[12px] text-token-secondary">选择风格</div>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {templates.slice(0, 4).map((template) => {
                       const active = template.key === batchConfig.templateKey;
@@ -1424,8 +1424,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             border: active ? '1px solid rgba(116,149,255,0.28)' : '1px solid rgba(255,255,255,0.08)',
                           }}
                         >
-                          <div className="text-[12px] font-medium text-white">{template.emoji} {template.label}</div>
-                          <div className="mt-1 text-[10px] text-white/42 truncate">{template.description}</div>
+                          <div className="text-[12px] font-medium text-token-primary">{template.emoji} {template.label}</div>
+                          <div className="mt-1 text-[10px] text-token-muted truncate">{template.description}</div>
                         </button>
                       );
                     })}
@@ -1433,7 +1433,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 </div>
 
                 <div className="mt-4">
-                  <div className="text-[12px] text-white/70">画布方向</div>
+                  <div className="text-[12px] text-token-secondary">画布方向</div>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {([
                       ['landscape', '横版'],
@@ -1447,7 +1447,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         style={{
                           background: batchConfig.orientation === value ? 'rgba(88,108,255,0.16)' : 'rgba(255,255,255,0.03)',
                           border: batchConfig.orientation === value ? '1px solid rgba(116,149,255,0.28)' : '1px solid rgba(255,255,255,0.08)',
-                          color: batchConfig.orientation === value ? '#fff' : 'rgba(255,255,255,0.62)',
+                          color: batchConfig.orientation === value ? 'var(--text-primary)' : 'var(--text-secondary)',
                         }}
                       >
                         {label} ({value === 'landscape' ? '1200 × 628' : '1080 × 1350'})
@@ -1457,8 +1457,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 </div>
 
                 <div className="mt-4 rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div className="text-[12px] font-medium text-white/82">当前已支持</div>
-                  <div className="mt-2 space-y-1 text-[11px] text-white/58">
+                  <div className="text-[12px] font-medium text-token-primary">当前已支持</div>
+                  <div className="mt-2 space-y-1 text-[11px] text-token-secondary">
                     <div>1. 导入文案生成分页草稿</div>
                     <div>2. 横版 / 竖版画布切换</div>
                     <div>3. 手动补图、补视频、粘贴截图</div>
@@ -1483,7 +1483,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   <button
                     type="button"
                     onClick={openManualCreator}
-                    className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white/72"
+                    className="flex-1 h-9 rounded-xl text-[12px] font-medium text-token-secondary"
                     style={glassButtonStyle}
                   >
                     空白海报
@@ -1505,10 +1505,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col" style={glassCardStyle}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-white">编辑面板</div>
-                    <div className="mt-1 text-[11px] text-white/42">这里只保留正文、素材和版式三个核心编辑能力。</div>
+                    <div className="text-[13px] font-semibold text-token-primary">编辑面板</div>
+                    <div className="mt-1 text-[11px] text-token-muted">这里只保留正文、素材和版式三个核心编辑能力。</div>
                   </div>
-                  <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-white" style={{ background: 'rgba(56,139,255,0.22)', border: '1px solid rgba(105,159,255,0.26)' }}>
+                  <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-token-primary" style={{ background: 'rgba(56,139,255,0.22)', border: '1px solid rgba(105,159,255,0.26)' }}>
                     2
                   </div>
                 </div>
@@ -1526,7 +1526,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                       className="h-10 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
                       style={{
                         background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
-                        color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.55)',
+                        color: workspaceTab === value ? 'var(--text-primary)' : 'var(--text-muted)',
                       }}
                     >
                       {icon}
@@ -1569,7 +1569,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           </Field>
                           <Field label="绑定地址">
                             <div className="relative">
-                              <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                              <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                               <input
                                 value={poster.ctaUrl ?? ''}
                                 onChange={(e) => updatePosterFields({ ctaUrl: e.target.value })}
@@ -1650,7 +1650,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                             />
                           </Field>
                           <label className="block">
-                            <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                            <span className="block text-[11px] font-medium text-token-muted mb-1.5">色板</span>
                             <input
                               type="color"
                               value={normalizeColor(currentPage.accentColor)}
@@ -1663,8 +1663,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                         <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
                           <div className="flex items-center justify-between">
-                            <div className="text-[12px] font-medium text-white/78">模板与版式</div>
-                            <Palette size={14} className="text-white/40" />
+                            <div className="text-[12px] font-medium text-token-secondary">模板与版式</div>
+                            <Palette size={14} className="text-token-muted" />
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             {selectedTemplate.accentPalette.map((color) => (
@@ -1681,7 +1681,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                               />
                             ))}
                           </div>
-                          <div className="mt-3 text-[11px] text-white/44">
+                          <div className="mt-3 text-[11px] text-token-muted">
                             当前模板：{selectedTemplate.label} · 数据源：{selectedSourceType?.label || '未设置'}
                           </div>
                         </div>
@@ -1696,7 +1696,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     )}
                   </>
                 ) : (
-                  <div className="mt-4 flex-1 min-h-[240px] flex items-center justify-center text-[12px] text-white/38 text-center">
+                  <div className="mt-4 flex-1 min-h-[240px] flex items-center justify-center text-[12px] text-token-muted text-center">
                     选择海报后，这里会展开正文、素材和版式编辑面板
                   </div>
                 )}
@@ -1844,8 +1844,8 @@ function PageListItem({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-[12px] font-medium text-white/88 truncate">{page.title || '未命名页面'}</div>
-              <div className="mt-1 text-[10.5px] text-white/44">{dimensionLabel}</div>
+              <div className="text-[12px] font-medium text-token-primary truncate">{page.title || '未命名页面'}</div>
+              <div className="mt-1 text-[10.5px] text-token-muted">{dimensionLabel}</div>
             </div>
             <span
               className="rounded-full inline-flex shrink-0 items-center justify-center"
@@ -1857,7 +1857,7 @@ function PageListItem({
               {(progress ?? pageQualityState(page)) === 'failed' && <X size={11} strokeWidth={2.5} />}
             </span>
           </div>
-          <div className="mt-2 text-[10.5px] text-white/45 line-clamp-2">
+          <div className="mt-2 text-[10.5px] text-token-muted line-clamp-2">
             {page.body || page.imagePrompt || '等待补充正文和视觉素材'}
           </div>
         </div>
@@ -1911,15 +1911,15 @@ function RightEditPanel({
     <>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[13px] font-semibold text-white">当前页编辑</div>
-          <div className="mt-1 text-[11px] text-white/42">
+          <div className="text-[13px] font-semibold text-token-primary">当前页编辑</div>
+          <div className="mt-1 text-[11px] text-token-muted">
             第 {page.order + 1} / {pagesCount} 页 · {dimensionLabel(orientation)}
           </div>
         </div>
         <button
           type="button"
           onClick={regenerateImage}
-          className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-white/80 hover:bg-white/10"
+          className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-token-secondary hover:bg-white/10"
           style={{ border: '1px solid rgba(255,255,255,0.1)' }}
         >
           <Sparkles size={12} />
@@ -1940,7 +1940,7 @@ function RightEditPanel({
             className="h-9 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
             style={{
               background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
-              color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.58)',
+              color: workspaceTab === value ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
           >
             {icon}
@@ -2046,7 +2046,7 @@ function RightEditPanel({
                 />
               </Field>
               <label className="block">
-                <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                <span className="block text-[11px] font-medium text-token-muted mb-1.5">色板</span>
                 <input
                   type="color"
                   value={normalizeColor(page.accentColor)}
@@ -2057,7 +2057,7 @@ function RightEditPanel({
               </label>
             </div>
             <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <div className="text-[12px] font-medium text-white/78">模板色板</div>
+              <div className="text-[12px] font-medium text-token-secondary">模板色板</div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {selectedTemplate.accentPalette.map((color) => (
                   <button
@@ -2072,7 +2072,7 @@ function RightEditPanel({
                   />
                 ))}
               </div>
-              <div className="mt-3 text-[11px] text-white/44">
+              <div className="mt-3 text-[11px] text-token-muted">
                 {selectedTemplate.label} · {selectedSourceLabel}
               </div>
             </div>
@@ -2087,7 +2087,7 @@ function RightEditPanel({
       </div>
 
       <div className="mt-4 border-t pt-4" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-        <div className="rounded-xl p-3 text-[11px] text-white/58" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="rounded-xl p-3 text-[11px] text-token-secondary" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
           发布到官网首页海报位。其他渠道和高级交互先隐藏，避免误操作。
         </div>
         <textarea
@@ -2102,7 +2102,7 @@ function RightEditPanel({
           <button
             type="button"
             onClick={openPreview}
-            className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] text-white"
+            className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] text-token-primary"
             style={glassButtonStyle}
           >
             <Eye size={14} />
@@ -2149,8 +2149,8 @@ function ToggleRow({
       style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
     >
       <span className="text-left">
-        <span className="block text-[12px] text-white/72">{label}</span>
-        {hint && <span className="mt-0.5 block text-[10px] text-white/40">{hint}</span>}
+        <span className="block text-[12px] text-token-secondary">{label}</span>
+        {hint && <span className="mt-0.5 block text-[10px] text-token-muted">{hint}</span>}
       </span>
       <span
         className="relative inline-flex h-6 w-11 rounded-full transition-all"
@@ -2168,8 +2168,8 @@ function ToggleRow({
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-      <div className="text-[10.5px] text-white/40">{label}</div>
-      <div className="mt-2 text-[13px] font-semibold text-white/84">{value}</div>
+      <div className="text-[10.5px] text-token-muted">{label}</div>
+      <div className="mt-2 text-[13px] font-semibold text-token-primary">{value}</div>
     </div>
   );
 }
@@ -2204,7 +2204,7 @@ function MediaSlotPanel({
         }}
       >
         {url ? renderMedia(url, 'absolute inset-0 w-full h-full object-cover') : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-white/42">
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-token-muted">
             <ImagePlus size={30} />
             <div className="text-[12px] mt-2">{label}未设置</div>
             {hint && <div className="text-[10px] mt-1 px-6 text-center">{hint}</div>}
@@ -2221,8 +2221,8 @@ function MediaSlotPanel({
       </div>
       <div className="p-3 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[12px] font-medium text-white/75">{label}</div>
-          <div className="text-[10.5px] text-white/40 truncate">
+          <div className="text-[12px] font-medium text-token-secondary">{label}</div>
+          <div className="text-[10.5px] text-token-muted truncate">
             {url ? mediaKindLabel(url) : '支持上传图片/视频，也可以直接 Ctrl+V 粘贴截图'}
           </div>
         </div>
@@ -2232,7 +2232,7 @@ function MediaSlotPanel({
               type="button"
               onClick={onGenerate}
               disabled={busy}
-              className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-white/76 disabled:opacity-50 hover:bg-white/10"
+              className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary disabled:opacity-50 hover:bg-white/10"
               style={{ border: '1px solid rgba(255,255,255,0.1)' }}
             >
               <Sparkles size={12} /> AI
@@ -2241,7 +2241,7 @@ function MediaSlotPanel({
           <button
             type="button"
             onClick={onUpload}
-            className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-white/76 hover:bg-white/10"
+            className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary hover:bg-white/10"
             style={{ border: '1px solid rgba(255,255,255,0.1)' }}
           >
             <Upload size={12} /> 上传
@@ -2251,7 +2251,7 @@ function MediaSlotPanel({
               type="button"
               onClick={onClear}
               aria-label={`清空${label}`}
-              className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-white/50 hover:bg-white/10"
+              className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-muted hover:bg-white/10"
             >
               <X size={13} />
             </button>
@@ -2493,7 +2493,8 @@ function CreatePosterModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[9998] flex items-center justify-center"
+      className="surface-tone-dark fixed inset-0 z-[9998] flex items-center justify-center"
+      data-surface-tone="dark"
       style={{ background: 'rgba(3,3,6,0.78)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
       onClick={() => {
         if (!busy) onClose();
@@ -2526,14 +2527,14 @@ function CreatePosterModal({
         <div className="shrink-0 h-14 px-5 border-b flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
           <div>
             <div className="text-[14px] font-semibold text-white">{mode === 'manual' ? '创建空白海报' : '引导创建海报'}</div>
-            <div className="text-[11px] text-white/42">{busy ? phaseLabel || '生成中' : mode === 'manual' ? '直接生成可编辑的空白分页草稿' : '导入文案后生成整套分页与文案草稿'}</div>
+            <div className="text-[11px] text-token-muted">{busy ? phaseLabel || '生成中' : mode === 'manual' ? '直接生成可编辑的空白分页草稿' : '导入文案后生成整套分页与文案草稿'}</div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={busy}
             aria-label="关闭"
-            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-white/65 hover:bg-white/10 disabled:opacity-30"
+            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-token-secondary hover:bg-white/10 disabled:opacity-30"
           >
             <X size={16} />
           </button>
@@ -2580,7 +2581,7 @@ function CreatePosterModal({
                     }}
                   >
                     <div className="text-[13px] font-medium text-white">{template.emoji} {template.label}</div>
-                    <div className="text-[10.5px] text-white/45 mt-1 line-clamp-2">{template.description}</div>
+                    <div className="text-[10.5px] text-token-muted mt-1 line-clamp-2">{template.description}</div>
                   </button>
                 ))}
               </div>
@@ -2612,7 +2613,7 @@ function CreatePosterModal({
 
             <ModalSection title="批量页数">
               <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div className="flex items-center justify-between text-[12px] text-white/72">
+                <div className="flex items-center justify-between text-[12px] text-token-secondary">
                   <span>生成页数</span>
                   <span className="font-semibold text-white">{pageCount} 页</span>
                 </div>
@@ -2645,7 +2646,7 @@ function CreatePosterModal({
                       }}
                     >
                       <div className="text-[12px] font-medium text-white">{source.label}</div>
-                      <div className="text-[10.5px] text-white/45 mt-0.5">{source.description}</div>
+                      <div className="text-[10.5px] text-token-muted mt-0.5">{source.description}</div>
                     </button>
                   ))}
                 </div>
@@ -2656,13 +2657,13 @@ function CreatePosterModal({
                         type="button"
                         onClick={() => textFileInputRef.current?.click()}
                         disabled={busy}
-                        className="h-9 rounded-xl px-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-white/82 disabled:opacity-50"
+                        className="h-9 rounded-xl px-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-token-primary disabled:opacity-50"
                         style={glassButtonStyle}
                       >
                         <Upload size={13} />
                         上传文案文件
                       </button>
-                      {textFileName && <span className="min-w-0 truncate text-[11px] text-white/45">{textFileName}</span>}
+                      {textFileName && <span className="min-w-0 truncate text-[11px] text-token-muted">{textFileName}</span>}
                     </div>
                     <textarea
                       value={freeformContent}
@@ -2703,7 +2704,7 @@ function CreatePosterModal({
                     style={fieldStyle}
                   />
                 </Field>
-                <div className="mt-3 rounded-xl p-3 text-[11px] text-white/54" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="mt-3 rounded-xl p-3 text-[11px] text-token-muted" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
                   会创建 {pageCount} 个可直接编辑的空白页面。创建后可手动填写文案、上传图片或视频，也可以再逐页生成配图。
                 </div>
               </ModalSection>
@@ -2729,8 +2730,8 @@ function CreatePosterModal({
 
           <div className="min-h-0 flex flex-col">
             <div className="shrink-0 px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-              <div className="text-[12px] font-medium text-white/72">{mode === 'manual' ? '创建说明' : '生成进度'}</div>
-              {modelInfo?.model && <div className="text-[10px] font-mono text-white/34">{modelInfo.model}</div>}
+              <div className="text-[12px] font-medium text-token-secondary">{mode === 'manual' ? '创建说明' : '生成进度'}</div>
+              {modelInfo?.model && <div className="text-[10px] font-mono text-token-muted">{modelInfo.model}</div>}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-5">
               {typingText && phase === 'llm' && <TypingPanel text={typingText} />}
@@ -2745,9 +2746,9 @@ function CreatePosterModal({
                   ))}
                 </div>
               ) : (
-                <div className="h-full min-h-[260px] flex items-center justify-center text-center text-[12px] text-white/42">
+                <div className="h-full min-h-[260px] flex items-center justify-center text-center text-[12px] text-token-muted">
                   <div>
-                    <Sparkles size={26} className="mx-auto mb-3 text-white/28" />
+                    <Sparkles size={26} className="mx-auto mb-3 text-token-muted" />
                     {mode === 'manual' ? '空白海报创建完成后，会直接进入编辑工作台。' : '点击生成后，这里会显示 AI 实时输出和页面卡片'}
                   </div>
                 </div>
@@ -2768,7 +2769,7 @@ function GeneratedPageCard({ page, progress }: { page: WeeklyPosterPage; progres
     <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
       <div className="relative" style={{ aspectRatio: '16 / 9', background: page.imageUrl ? '#0a0a12' : `linear-gradient(135deg, ${accent}, #0a0a12)` }}>
         {page.imageUrl && renderMedia(page.imageUrl, 'absolute inset-0 w-full h-full object-cover')}
-        <div className="absolute inset-x-0 bottom-0 p-2 text-[10px] text-white/72" style={{ background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.72))' }}>
+        <div className="absolute inset-x-0 bottom-0 p-2 text-[10px] text-token-secondary" style={{ background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.72))' }}>
           Page {page.order + 1}
         </div>
         {progress === 'generating-image' && (
@@ -2778,8 +2779,8 @@ function GeneratedPageCard({ page, progress }: { page: WeeklyPosterPage; progres
         )}
       </div>
       <div className="p-2.5">
-        <div className="text-[12px] font-medium text-white/86 truncate">{page.title}</div>
-        <div className="text-[10.5px] text-white/48 line-clamp-2 mt-1">{page.body}</div>
+        <div className="text-[12px] font-medium text-token-primary truncate">{page.title}</div>
+        <div className="text-[10.5px] text-token-muted line-clamp-2 mt-1">{page.body}</div>
       </div>
     </div>
   );
@@ -2798,7 +2799,7 @@ function TypingPanel({ text }: { text: string }) {
         wordBreak: 'break-word',
       }}
     >
-      <div className="flex items-center justify-between mb-2 text-[9px] uppercase tracking-[0.12em] text-white/34">
+      <div className="flex items-center justify-between mb-2 text-[9px] uppercase tracking-[0.12em] text-token-muted">
         <span>AI 实时输出</span>
         <span>{text.length} 字</span>
       </div>
@@ -2811,18 +2812,18 @@ function EmptyDesignerState({ loading, onCreate }: { loading: boolean; onCreate:
   return (
     <div className="flex-1 min-h-[360px] flex items-center justify-center p-8 text-center">
       {loading ? (
-        <div className="inline-flex items-center gap-2 text-[13px] text-white/52">
+        <div className="inline-flex items-center gap-2 text-[13px] text-token-muted">
           <MapSpinner size={15} /> 加载海报中
         </div>
       ) : (
         <div>
-          <Sparkles size={30} className="mx-auto mb-3 text-white/30" />
-          <div className="text-[16px] font-semibold text-white/82">还没有选中海报项目</div>
-          <div className="mt-2 text-[12px] text-white/44">可以直接新建一个项目，或者从顶部项目下拉里切换已有海报。</div>
+          <Sparkles size={30} className="mx-auto mb-3 text-token-muted" />
+          <div className="text-[16px] font-semibold text-token-primary">还没有选中海报项目</div>
+          <div className="mt-2 text-[12px] text-token-muted">可以直接新建一个项目，或者从顶部项目下拉里切换已有海报。</div>
           <button
             type="button"
             onClick={onCreate}
-            className="mt-4 h-10 px-4 rounded-xl inline-flex items-center gap-2 text-[13px] font-medium text-white hover:bg-white/15"
+            className="mt-4 h-10 px-4 rounded-xl inline-flex items-center gap-2 text-[13px] font-medium text-token-primary hover-bg-soft"
             style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.18)' }}
           >
             <Plus size={14} /> 新建海报
@@ -2836,7 +2837,7 @@ function EmptyDesignerState({ loading, onCreate }: { loading: boolean; onCreate:
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[11px] font-medium text-white/50 mb-1.5">{label}</span>
+      <span className="block text-[11px] font-medium text-token-muted mb-1.5">{label}</span>
       {children}
     </label>
   );
@@ -2845,7 +2846,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function ModalSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <div className="text-[11px] font-semibold tracking-[0.12em] uppercase text-white/44 mb-2.5">{title}</div>
+      <div className="text-[11px] font-semibold tracking-[0.12em] uppercase text-token-muted mb-2.5">{title}</div>
       {children}
     </section>
   );
@@ -2853,16 +2854,16 @@ function ModalSection({ title, children }: { title: string; children: React.Reac
 
 function SaveIndicator({ status, lastSavedAt }: { status: SaveStatus; lastSavedAt: Date | null }) {
   const content = status === 'saving'
-    ? { icon: <Loader2 size={12} className="animate-spin" />, text: '正在保存', color: 'rgba(255,255,255,0.66)' }
+    ? { icon: <Loader2 size={12} className="animate-spin" />, text: '正在保存', color: 'var(--text-secondary)' }
     : status === 'failed'
-      ? { icon: <X size={12} />, text: '保存失败', color: '#fca5a5' }
+      ? { icon: <X size={12} />, text: '保存失败', color: 'var(--semantic-danger-text)' }
       : status === 'saved'
-        ? { icon: <Check size={12} />, text: lastSavedAt ? `已保存 ${formatTime(lastSavedAt)}` : '已保存', color: '#86efac' }
-        : { icon: <Save size={12} />, text: '未修改', color: 'rgba(255,255,255,0.42)' };
+        ? { icon: <Check size={12} />, text: lastSavedAt ? `已保存 ${formatTime(lastSavedAt)}` : '已保存', color: 'var(--semantic-success-text)' }
+        : { icon: <Save size={12} />, text: '未修改', color: 'var(--text-muted)' };
   return (
     <div
       className="h-9 px-3 rounded-xl inline-flex items-center gap-1.5 text-[11px]"
-      style={{ color: content.color, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+      style={{ color: content.color, background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
     >
       {content.icon}
       {content.text}
@@ -3086,6 +3087,6 @@ const glassCardStyle: React.CSSProperties = {
 };
 
 const glassButtonStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.04)',
+  background: 'var(--nested-block-bg, rgba(255,255,255,0.04))',
   border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
 };

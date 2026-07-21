@@ -74,14 +74,13 @@ function FullscreenTile({ children }: { children: ReactNode }) {
     <div className="relative h-full min-h-0">
       {open ? (
         <div
-          className="h-full min-h-0 flex flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 text-center"
-          style={{ background: 'rgba(255,255,255,0.02)' }}
+          className="surface-inset h-full min-h-0 flex flex-col items-center justify-center gap-2 rounded-2xl text-center"
         >
-          <span className="text-[12px] text-white/35">已在全屏查看</span>
+          <span className="text-[12px] text-token-muted">已在全屏查看</span>
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="text-[11px] text-cyan-200/85 hover:text-cyan-100 underline-offset-2 hover:underline cursor-pointer"
+            className="text-[11px] text-semantic-cyan hover-text-semantic-cyan underline-offset-2 hover:underline cursor-pointer"
           >
             退出全屏
           </button>
@@ -93,7 +92,7 @@ function FullscreenTile({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => setOpen(true)}
             title="全屏查看"
-            className="absolute top-2 right-2 z-20 inline-flex items-center justify-center w-7 h-7 rounded-md text-white/55 hover:text-white/95 border border-white/12 bg-[#16171b]/90 hover:bg-white/10 backdrop-blur-sm shadow-sm transition-colors cursor-pointer"
+            className="surface-popover absolute top-2 right-2 z-20 inline-flex items-center justify-center w-7 h-7 rounded-md text-token-secondary hover-text-primary hover-bg-soft backdrop-blur-sm transition-colors cursor-pointer"
           >
             <Maximize2 size={13} />
           </button>
@@ -102,20 +101,19 @@ function FullscreenTile({ children }: { children: ReactNode }) {
       {open
         ? createPortal(
             <div
-              className="fixed inset-0 z-[110] flex items-center justify-center p-4"
-              style={{ background: 'rgba(0,0,0,0.6)' }}
+              className="surface-backdrop fixed inset-0 z-[110] flex items-center justify-center p-4"
               onClick={() => setOpen(false)}
             >
               <div
-                className="relative flex flex-col rounded-2xl border border-white/12 overflow-hidden"
-                style={{ width: 'min(1200px, 95vw)', height: 'min(86vh, 880px)', background: '#16171b', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
+                className="surface-popover relative flex flex-col rounded-2xl overflow-hidden"
+                style={{ width: 'min(1200px, 95vw)', height: 'min(86vh, 880px)' }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
                   title="退出全屏"
-                  className="absolute top-3 right-3 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md text-white/50 hover:text-white/90 bg-black/30 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
+                  className="absolute top-3 right-3 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle transition-colors cursor-pointer"
                 >
                   <X size={16} />
                 </button>
@@ -498,7 +496,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       type="button"
       onClick={startBrief}
       title="从行为信号读懂用户此刻的处境（点击才分析）"
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-cyan-500/10 text-semantic-cyan border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer whitespace-nowrap shrink-0"
     >
       <ScrollText size={11} />
       AI 用户分析
@@ -507,7 +505,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
   // 端点地图格头部右侧：热力图 ⇄ 站点地图 子切换器（端点地图的两种铺法，共用一格，不单独占格）
   const mapModeSwitcher = (
-    <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+    <div className="inline-flex rounded-lg border border-token-subtle bg-token-nested p-0.5">
       {([
         { key: 'heatmap' as const, label: '热力图', icon: LayoutGrid },
         { key: 'sitemap' as const, label: '站点地图', icon: Network },
@@ -519,7 +517,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
             key={m.key}
             type="button"
             onClick={() => setMapMode(m.key)}
-            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] whitespace-nowrap transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] whitespace-nowrap transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-semantic-cyan' : 'text-token-muted hover-text-primary'}`}
           >
             <MIcon size={11} />
             {m.label}
@@ -639,7 +637,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     return (
       <div className="flex flex-col gap-2 lg:hidden">
         <div className="-mx-1 px-1 flex items-center gap-2 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 shrink-0">
+          <div className="inline-flex rounded-lg border border-token-subtle bg-token-nested p-0.5 shrink-0">
             {mobileViews.map((v) => {
               const VIcon = v.icon;
               return (
@@ -647,7 +645,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   key={v.key}
                   type="button"
                   onClick={v.onClick}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] whitespace-nowrap shrink-0 transition-colors cursor-pointer ${v.active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] whitespace-nowrap shrink-0 transition-colors cursor-pointer ${v.active ? 'bg-cyan-500/15 text-semantic-cyan' : 'text-token-muted hover-text-primary'}`}
                 >
                   <VIcon size={12} />
                   {v.label}
@@ -696,7 +694,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
             {loading && data ? (
               <div
                 className="absolute inset-0 rounded-2xl overflow-hidden flex items-center justify-center"
-                style={{ background: 'rgba(16,17,19,0.35)', backdropFilter: 'blur(0.5px)' }}
+                style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(0.5px)' }}
               >
                 {/* 顶部细横条扫光：持续变化，告知正在重聚合而非卡死 */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden">
@@ -705,7 +703,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                     style={{ background: 'linear-gradient(90deg,transparent,#5eead4,transparent)', animation: 'voc-shimmer-sweep 1.1s ease-in-out infinite' }}
                   />
                 </div>
-                <span className="inline-flex items-center gap-2 px-3 h-[28px] rounded-full text-[12px] text-white/75 border border-white/10" style={{ background: 'rgba(16,17,19,0.8)' }}>
+                <span className="surface-popover inline-flex items-center gap-2 px-3 h-[28px] rounded-full text-[12px] text-token-primary">
                   <MapSpinner size={13} />
                   正在重新聚合数据…
                 </span>
@@ -714,22 +712,22 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
-          <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-2 sm:px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
+          <div className="viz-sticky-surface sticky top-0 z-10 flex items-center gap-3 flex-wrap px-2 sm:px-5 py-2.5 text-[11px] border-b">
             <span className="font-mono tabular-nums">
               {fmtDate(data.windowFrom)} ~ {fmtDate(data.windowTo)}
             </span>
-            {!from ? <span className="text-amber-200/60">「全部」在洞察视图取近 30 天（更早的信号无行动价值）</span> : null}
-            <span className="w-px h-3 bg-white/10" />
+            {!from ? <span className="text-semantic-warning">「全部」在洞察视图取近 30 天（更早的信号无行动价值）</span> : null}
+            <span className="w-px h-3 bg-token-nested" />
             <span>
-              路由信号 <span className="text-white/70 font-mono tabular-nums">{data.behaviorEventCount}</span> 条
+              路由信号 <span className="text-token-primary font-mono tabular-nums">{data.behaviorEventCount}</span> 条
               {data.trackedSince ? `（自 ${fmtDate(data.trackedSince)} 起采集）` : '（采集器刚上线，数据从现在开始累积）'}
             </span>
-            <span className="w-px h-3 bg-white/10" />
+            <span className="w-px h-3 bg-token-nested" />
             <span>报错/等待信号来自 API 请求日志（含历史）</span>
             <button
               type="button"
               onClick={startBrief}
-              className="inline-flex items-center gap-1 px-2 h-[20px] rounded text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2 h-[20px] rounded text-[11px] border bg-cyan-500/10 text-semantic-cyan border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
             >
               <ScrollText size={11} />
               AI 用户分析
@@ -738,7 +736,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               <button
                 type="button"
                 onClick={() => setIncludeIgnored((v) => !v)}
-                className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+                className="ml-auto inline-flex items-center gap-1 text-[11px] text-token-muted hover-text-primary transition-colors cursor-pointer"
               >
                 <IgnoreIcon size={11} />
                 {includeIgnored ? '隐藏已忽略' : `查看已忽略（${data.ignoredCount}）`}
@@ -749,14 +747,14 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
         {error && !data ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <Radar size={36} className="text-white/15" />
-            <div className="text-sm text-white/60">{error}</div>
+            <Radar size={36} className="text-token-muted" />
+            <div className="text-sm text-token-secondary">{error}</div>
           </div>
         ) : !data || data.items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-2 sm:px-5">
-            <Radar size={36} className="text-white/15" />
-            <div className="text-sm text-white/60">当前窗口还没有形成洞察</div>
-            <div className="text-[12px] text-white/35 max-w-md leading-relaxed">
+            <Radar size={36} className="text-token-muted" />
+            <div className="text-sm text-token-secondary">当前窗口还没有形成洞察</div>
+            <div className="text-[12px] text-token-muted max-w-md leading-relaxed">
               洞察由行为信号聚合而来：频繁报错、等待过久（来自 API 日志，历史即可分析）；
               停留过久、秒退放弃、反复横跳（来自路由信号，自采集上线起累积）。
               信号达到阈值（如同一接口失败 5 次以上）才会出现在这里——没有洞察本身就是好消息。
@@ -774,7 +772,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                 <div
                   key={key}
                   data-insight-target={item.target}
-                  className="relative px-2.5 sm:px-5 py-3.5 flex gap-3.5 transition-colors hover:bg-white/[0.02]"
+                  className="relative px-2.5 sm:px-5 py-3.5 flex gap-3.5 transition-colors hover-bg-soft"
                   style={{ opacity: status === 'ignored' ? 0.45 : 1 }}
                 >
                   {/* 左缘严重度色条：扫一眼即可分辨信号类型 */}
@@ -787,38 +785,38 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   </span>
                   <div className="flex-1 min-w-0 flex flex-col gap-1.5">
                     <div className="flex items-center gap-2.5 flex-wrap">
-                      <span className="text-[11px] font-semibold" style={{ color: meta.accent }}>
+                      <span className="text-[11px] font-semibold" style={{ color: meta.text }}>
                         {item.kindLabel}
                       </span>
-                      <span className="text-[13px] text-white/90 font-mono break-all">{item.target}</span>
-                      <span className="text-[11px] text-amber-200/80 font-mono tabular-nums">{item.metric}</span>
+                      <span className="text-[13px] text-token-primary font-mono break-all">{item.target}</span>
+                      <span className="text-[11px] text-semantic-warning font-mono tabular-nums">{item.metric}</span>
                       {status ? (
-                        <span className="px-1.5 py-px rounded text-[10px] font-medium bg-white/[0.06] text-white/55">
+                        <span className="px-1.5 py-px rounded text-[10px] font-medium bg-token-nested text-token-secondary">
                           {STATUS_LABEL[status] ?? status}
                         </span>
                       ) : null}
                       {item.defectTitle ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-rose-200/70">
+                        <span className="inline-flex items-center gap-1 text-[11px] text-semantic-danger">
                           <Bug size={11} />
                           {item.defectTitle}
                         </span>
                       ) : null}
                       {item.requirementNo ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-cyan-200/80">
+                        <span className="inline-flex items-center gap-1 text-[11px] text-semantic-cyan">
                           <ClipboardList size={11} />
                           需求 #{item.requirementNo}
                         </span>
                       ) : null}
                       {typeof item.reboundPct === 'number' ? <ReboundBadge pct={item.reboundPct} /> : null}
-                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/35 font-mono tabular-nums shrink-0">
+                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-token-muted font-mono tabular-nums shrink-0">
                         <Users size={11} />
                         {item.userCount} 人 · {item.eventCount} 次
                       </span>
                     </div>
-                    <div className="text-[12px] text-white/65 leading-relaxed">{item.suggestion}</div>
+                    <div className="text-[12px] text-token-secondary leading-relaxed">{item.suggestion}</div>
                     <div className="flex items-center gap-x-4 gap-y-0.5 flex-wrap">
                       {item.evidence.map((line, i) => (
-                        <span key={i} className="text-[11px] text-white/35">
+                        <span key={i} className="text-[11px] text-token-muted">
                           {line}
                         </span>
                       ))}
@@ -863,20 +861,17 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       {drillTarget
         ? createPortal(
             <div
-              className="fixed inset-0 z-[100] flex justify-end"
-              style={{ background: 'rgba(0,0,0,0.5)' }}
+              className="surface-backdrop fixed inset-0 z-[100] flex justify-end"
               onClick={closeDrill}
             >
               {/* 右侧整高 drawer：从右边缘滑入，桌面 ~440px、手机 min(440px,94vw)，整高。
                   遵守 frontend-modal.md：关键尺寸 inline style + 滚动区由 ExperienceDrill 内部 min-h:0 + overscroll contain。 */}
               <div
-                className="flex flex-col border-l border-white/10"
+                className="surface-popover flex flex-col border-l border-token-subtle"
                 style={{
                   // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
                   width: 'min(560px, 94vw)',
                   height: '100vh',
-                  background: '#16171b',
-                  boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
                   animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)',
                 }}
                 onClick={(e) => e.stopPropagation()}
@@ -905,33 +900,30 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       {briefOpen
         ? createPortal(
             <div
-              className="fixed inset-0 z-[100] flex justify-end"
-              style={{ background: 'rgba(0,0,0,0.5)' }}
+              className="surface-backdrop fixed inset-0 z-[100] flex justify-end"
               onClick={() => {
                 brief.abort();
                 setBriefOpen(false);
               }}
             >
               <div
-                className="flex flex-col border-l border-white/10"
+                className="surface-popover flex flex-col border-l border-token-subtle"
                 style={{
                   // 桌面更宽给诊断/报告留空间（手机仍 94vw）；右上角放大可再全屏
                   width: 'min(560px, 94vw)',
                   height: '100vh',
-                  background: '#16171b',
-                  boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
                   animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)',
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* 头部：标题 + 模型可见（ai-model-visibility）+ 关闭 */}
-                <div className="flex items-center gap-2.5 px-4 pt-4 pb-3 border-b border-white/[0.06] shrink-0">
+                <div className="flex items-center gap-2.5 px-4 pt-4 pb-3 border-b border-token-subtle shrink-0">
                   <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(45,212,191,0.12)' }}>
-                    <ScrollText size={15} className="text-cyan-300/90" />
+                    <ScrollText size={15} className="text-semantic-cyan" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[13px] font-semibold text-white/85">AI 用户分析</div>
-                    <div className="text-[10px] text-white/35 truncate font-mono">
+                    <div className="text-[13px] font-semibold text-token-primary">AI 用户分析</div>
+                    <div className="text-[10px] text-token-muted truncate font-mono">
                       {briefModel ?? '从行为信号读懂用户此刻的处境'}
                     </div>
                   </div>
@@ -942,20 +934,20 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                       setBriefOpen(false);
                     }}
                     title="关闭（ESC）"
-                    className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+                    className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md border border-token-subtle bg-token-nested text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
                   >
                     <X size={14} />
                   </button>
                 </div>
                 {/* 阶段状态行：禁止空白等待——连接/生成期有持续反馈 */}
                 {brief.phase === 'connecting' || brief.phase === 'streaming' ? (
-                  <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] text-white/45 shrink-0">
+                  <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] text-token-muted shrink-0">
                     <MapSpinner size={12} />
                     {brief.phaseMessage || '正在从行为信号中聚合用户画像…'}
                   </div>
                 ) : null}
                 {brief.phase === 'done' && !briefComplete ? (
-                  <div className="px-4 pt-3 text-[11px] text-amber-200/80 shrink-0">
+                  <div className="px-4 pt-3 text-[11px] text-semantic-warning shrink-0">
                     生成被中断（连接断开或超长截断），建议重新生成
                   </div>
                 ) : null}
@@ -965,7 +957,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                     brief.phase === 'done' ? (
                       <MarkdownContent content={brief.typing} variant="reading" />
                     ) : (
-                      <div className="text-[12.5px] leading-relaxed text-white/80">
+                      <div className="text-[12.5px] leading-relaxed text-token-primary">
                         <StreamingText text={brief.typing} streaming mode="blur" />
                       </div>
                     )
@@ -974,8 +966,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   ) : (
                     // 终态空（error / 无 delta 的 done）：别再转 loader 假装在聚合，给明确空/错误态 + 重新生成
                     <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-                      <Radar size={28} className="text-white/20" />
-                      <div className="text-[12.5px] text-white/55">
+                      <Radar size={28} className="text-token-muted" />
+                      <div className="text-[12.5px] text-token-secondary">
                         {brief.phase === 'error' ? (brief.phaseMessage || '生成失败，请重试') : '本次没有生成内容，请重试'}
                       </div>
                       <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
@@ -983,13 +975,13 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   )}
                 </div>
                 {/* 底部操作：重新生成 / 发布到知识库（与原内联面板等价） */}
-                <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-t border-white/[0.06]" style={{ background: 'rgba(0,0,0,0.18)' }}>
+                <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-t border-token-subtle bg-token-nested">
                   {brief.phase === 'done' ? (
                     <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
                   ) : null}
                   {brief.phase === 'done' && briefComplete && brief.typing.trim() ? (
                     publishedTitle ? (
-                      <span className="inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] bg-emerald-500/10 text-emerald-200/80 border border-emerald-500/25">
+                      <span className="inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] bg-emerald-500/10 text-semantic-success border border-emerald-500/25">
                         <CheckCircle2 size={11} />
                         已发布
                       </span>
@@ -1015,8 +1007,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       {fullscreenOpen
         ? createPortal(
             <div
-              className="fixed inset-0 z-[100] flex flex-col"
-              style={{ background: 'rgba(8,9,11,0.92)', backdropFilter: 'blur(3px)' }}
+              className="surface-backdrop fixed inset-0 z-[100] flex flex-col"
               onClick={() => setFullscreenOpen(false)}
             >
               <div
@@ -1067,10 +1058,10 @@ function ReboundBadge({ pct }: { pct: number }) {
   const isDown = pct <= -20;
   const isUp = pct >= 20;
   const style = isDown
-    ? { background: 'rgba(52,211,153,0.12)', color: '#34d399', border: '1px solid rgba(52,211,153,0.3)' }
+    ? { background: 'var(--status-done-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--status-done-border)' }
     : isUp
-      ? { background: 'rgba(248,113,122,0.12)', color: '#f8717a', border: '1px solid rgba(248,113,122,0.3)' }
-      : { background: 'rgba(255,255,255,0.05)', color: 'rgba(236,236,239,0.55)', border: '1px solid rgba(255,255,255,0.1)' };
+      ? { background: 'rgba(248,113,122,0.12)', color: 'var(--semantic-danger-text)', border: '1px solid rgba(248,113,122,0.3)' }
+      : { background: 'var(--nested-block-bg)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' };
   const text = isDown ? `已回落 ${Math.abs(pct)}%` : isUp ? `复发 +${pct}%` : '基本持平';
   return (
     <span className="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium tabular-nums" style={style}>
@@ -1100,8 +1091,8 @@ function ActionButton({
       onClick={onClick}
       className={`inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] border transition-colors cursor-pointer ${
         emphasis
-          ? 'bg-amber-500/15 text-amber-200 border-amber-500/30 hover:bg-amber-500/25'
-          : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/80 hover:border-white/25'
+          ? 'bg-amber-500/15 text-semantic-warning border-amber-500/30 hover:bg-amber-500/25'
+          : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
       }`}
     >
       <Icon size={11} />

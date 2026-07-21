@@ -47,8 +47,7 @@ export function Dialog({
   const themeConfigForGlass = useThemeStore((s) => s.config);
   const glassReduced = reducedMotion || shouldReduceEffects(themeConfigForGlass);
 
-  // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
-  // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
+  // 浅色下走纯白卡片；主题与材质视觉值统一由 tokens.css 提供。
   const panelStyle: React.CSSProperties = isLight
     ? {
         background: 'var(--bg-card)',

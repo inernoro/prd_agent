@@ -1212,7 +1212,7 @@ export default function UsersPage() {
                           {u.miduoSsoSubjectMasked ? (
                             <span
                               className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-[4px]"
-                              style={{ background: 'rgba(34,197,94,0.10)', color: 'rgba(34,197,94,0.92)', border: '1px solid rgba(34,197,94,0.20)' }}
+                              style={{ background: 'rgba(34,197,94,0.10)', color: 'var(--semantic-success-text)', border: '1px solid rgba(34,197,94,0.20)' }}
                               title={u.miduoSsoDisplayNameSnapshot || '已绑定'}
                             >
                               {u.miduoSsoSubjectMasked}
@@ -1225,15 +1225,15 @@ export default function UsersPage() {
                         {/* 状态 */}
                         <td className="py-2 px-2 text-center">
                           {isLockedUser(u) ? (
-                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.9)' }}>
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--semantic-danger-text)' }}>
                               锁定
                             </span>
                           ) : u.status === 'Active' ? (
-                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}>
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--semantic-success-text)' }}>
                               正常
                             </span>
                           ) : (
-                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(156,163,175,0.12)', color: 'rgba(156,163,175,0.9)' }}>
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(156,163,175,0.12)', color: 'var(--semantic-neutral-text)' }}>
                               禁用
                             </span>
                           )}

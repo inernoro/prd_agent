@@ -1,415 +1,305 @@
-/**
- * 主题系统单元测试
- * 验证：CSS 变量计算、主题配置解析、样式映射
- *
- * 运行方式：pnpm -C prd-admin test themeSystem
- */
-
-import { describe, it, expect } from 'vitest';
-import { computeThemeVars } from '../themeComputed';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { normalizeThemeConfig } from '../themeApplier';
+import { THEME_ACCEPTANCE_TARGETS } from '../themeAcceptanceTargets';
 import {
-  DEFAULT_THEME_CONFIG,
-  COLOR_DEPTH_MAP,
-  OPACITY_MAP,
-  NESTED_BLOCK_STYLES,
   ACCENT_STYLES,
+  DEFAULT_THEME_CONFIG,
+  MATERIAL_OPTIONS,
   type ThemeConfig,
-  type ColorDepthLevel,
-  type OpacityLevel,
 } from '@/types/theme';
 
-describe('主题系统单元测试', () => {
-  describe('默认配置验证', () => {
-    it('默认配置应包含所有必需字段', () => {
-      expect(DEFAULT_THEME_CONFIG).toHaveProperty('version');
-      expect(DEFAULT_THEME_CONFIG).toHaveProperty('colorDepth');
-      expect(DEFAULT_THEME_CONFIG).toHaveProperty('opacity');
-      expect(DEFAULT_THEME_CONFIG).toHaveProperty('enableGlow');
-      expect(DEFAULT_THEME_CONFIG).toHaveProperty('sidebarGlass');
-    });
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ADMIN_ROOT = path.resolve(TEST_DIR, '../../..');
+const TOKENS_PATH = path.resolve(TEST_DIR, '../../styles/tokens.css');
+const MOBILE_COMPAT_GATE_PATH = path.resolve(TEST_DIR, '../../components/MobileCompatGate.tsx');
+const AGENT_SWITCHER_PATH = path.resolve(TEST_DIR, '../../components/agent-switcher/AgentSwitcher.tsx');
+const BUTTON_PATH = path.resolve(TEST_DIR, '../../components/design/Button.tsx');
+const DOCUMENT_STORE_PATH = path.resolve(TEST_DIR, '../../pages/document-store/DocumentStorePage.tsx');
+const SURFACE_PATH = path.resolve(TEST_DIR, '../../styles/surface.css');
+const TEAM_ACTIVITY_DIR = path.resolve(TEST_DIR, '../../pages/team-activity');
+const SETTINGS_PAGE_PATH = path.resolve(TEST_DIR, '../../pages/SettingsPage.tsx');
+const PEER_NODES_PATH = path.resolve(TEST_DIR, '../../pages/settings/PeerNodesSettings.tsx');
+const INFRA_SERVICES_PATH = path.resolve(TEST_DIR, '../../pages/infra-services/InfraServicesPage.tsx');
+const EMERGENCE_CARD_PATH = path.resolve(TEST_DIR, '../../pages/emergence/EmergenceTreeCard.tsx');
+const CDS_AGENT_PATH = path.resolve(TEST_DIR, '../../pages/cds-agent/CdsAgentPage.tsx');
+const PROJECT_ROUTE_PATH = path.resolve(TEST_DIR, '../../pages/project-route-agent/ProjectRouteAgentPage.tsx');
+const WEEKLY_POSTER_PATH = path.resolve(TEST_DIR, '../../pages/weekly-poster/PosterDesignerPage.tsx');
+const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-debt-report.mjs');
+const REPORT_COLORS_PATH = path.resolve(TEST_DIR, '../../pages/report-agent/hooks/lightModeColors.ts');
+const REPORT_AGENT_DIR = path.resolve(TEST_DIR, '../../pages/report-agent');
 
-    it('默认配置值应正确', () => {
-      expect(DEFAULT_THEME_CONFIG.version).toBe(1);
-      expect(DEFAULT_THEME_CONFIG.colorDepth).toBe('default');
-      expect(DEFAULT_THEME_CONFIG.opacity).toBe('default');
-      expect(DEFAULT_THEME_CONFIG.enableGlow).toBe(true);
-      expect(DEFAULT_THEME_CONFIG.sidebarGlass).toBe('always');
+function readSourceTree(directory: string): string {
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .flatMap((entry) => {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) return readSourceTree(entryPath);
+      return /\.(?:ts|tsx|css)$/.test(entry.name) ? fs.readFileSync(entryPath, 'utf8') : '';
+    })
+    .join('\n');
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+  const linear = channels.map((channel) => (
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+describe('主题系统契约', () => {
+  it('默认配置只向用户暴露外观和材质的稳定预设', () => {
+    expect(DEFAULT_THEME_CONFIG).toMatchObject({
+      version: 1,
+      colorDepth: 'default',
+      opacity: 'default',
+      enableGlow: true,
+      sidebarGlass: 'always',
+      material: 'solid',
+    });
+    expect(MATERIAL_OPTIONS.map((item) => item.value)).toEqual(['solid', 'glass']);
+  });
+
+  it('存量个性化字段会被归一化，兼容数据不再成为第二份样式来源', () => {
+    const legacyConfig: ThemeConfig = {
+      ...DEFAULT_THEME_CONFIG,
+      colorDepth: 'lighter',
+      opacity: 'translucent',
+      enableGlow: false,
+      sidebarGlass: 'never',
+      material: 'glass',
+    };
+
+    expect(normalizeThemeConfig(legacyConfig)).toMatchObject({
+      colorDepth: 'default',
+      opacity: 'default',
+      enableGlow: true,
+      sidebarGlass: 'always',
+      material: 'glass',
     });
   });
 
-  describe('色深配置映射验证', () => {
-    const colorDepthLevels: ColorDepthLevel[] = ['darker', 'default', 'lighter'];
-
-    for (const level of colorDepthLevels) {
-      it(`色深级别 "${level}" 应包含所有必需字段`, () => {
-        const config = COLOR_DEPTH_MAP[level];
-        expect(config).toHaveProperty('bgBase');
-        expect(config).toHaveProperty('bgElevated');
-        expect(config).toHaveProperty('bgCard');
-        expect(config).toHaveProperty('glassBrightness');
-        expect(config).toHaveProperty('label');
-      });
-
-      it(`色深级别 "${level}" 的背景色应为有效的颜色值`, () => {
-        const config = COLOR_DEPTH_MAP[level];
-        // 检查 hex 颜色格式
-        expect(config.bgBase).toMatch(/^#[0-9a-f]{6}$/i);
-        expect(config.bgElevated).toMatch(/^#[0-9a-f]{6}$/i);
-        // bgCard 是 rgba 格式
-        expect(config.bgCard).toMatch(/^rgba\(/);
-      });
-    }
-
-    it('色深级别应按深到浅排列', () => {
-      // 提取 bgBase 的亮度（简化：使用红色通道）
-      const getBrightness = (hex: string) => parseInt(hex.slice(1, 3), 16);
-
-      const darkerBrightness = getBrightness(COLOR_DEPTH_MAP.darker.bgBase);
-      const defaultBrightness = getBrightness(COLOR_DEPTH_MAP.default.bgBase);
-      const lighterBrightness = getBrightness(COLOR_DEPTH_MAP.lighter.bgBase);
-
-      expect(darkerBrightness).toBeLessThanOrEqual(defaultBrightness);
-      expect(defaultBrightness).toBeLessThanOrEqual(lighterBrightness);
+  it('强调色配置保持统一结构', () => {
+    Object.values(ACCENT_STYLES).forEach((accent) => {
+      expect(accent.bg).toMatch(/^rgba\(/);
+      expect(accent.border).toMatch(/^rgba\(/);
+      expect(accent.text).toMatch(/^rgba\(/);
     });
   });
 
-  describe('透明度配置映射验证', () => {
-    const opacityLevels: OpacityLevel[] = ['solid', 'default', 'translucent'];
+  it('tokens.css 是明暗主题与材质视觉值的唯一契约', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
+    const artworkTokenPattern = /--agent-card-artwork-[^:]+:\s*url\('\.\.\/assets\/agent-card-art\/[^']+\.webp'\);/g;
 
-    for (const level of opacityLevels) {
-      it(`透明度级别 "${level}" 应包含所有必需字段`, () => {
-        const config = OPACITY_MAP[level];
-        expect(config).toHaveProperty('glassStart');
-        expect(config).toHaveProperty('glassEnd');
-        expect(config).toHaveProperty('border');
-        expect(config).toHaveProperty('label');
-      });
-
-      it(`透明度级别 "${level}" 的值应在 0-1 范围内`, () => {
-        const config = OPACITY_MAP[level];
-        expect(config.glassStart).toBeGreaterThanOrEqual(0);
-        expect(config.glassStart).toBeLessThanOrEqual(1);
-        expect(config.glassEnd).toBeGreaterThanOrEqual(0);
-        expect(config.glassEnd).toBeLessThanOrEqual(1);
-        expect(config.border).toBeGreaterThanOrEqual(0);
-        expect(config.border).toBeLessThanOrEqual(1);
-      });
-    }
-
-    it('透明度级别应按不透明到半透明排列', () => {
-      expect(OPACITY_MAP.solid.glassStart).toBeGreaterThan(OPACITY_MAP.default.glassStart);
-      expect(OPACITY_MAP.default.glassStart).toBeGreaterThan(OPACITY_MAP.translucent.glassStart);
-    });
+    expect(tokens).toContain('[data-material="solid"]');
+    expect(lightBlock).toContain('--bg-base:');
+    expect(darkBlock.match(artworkTokenPattern)).toHaveLength(23);
+    expect(lightBlock.match(artworkTokenPattern)).toHaveLength(23);
+    expect(lightBlock.match(/agent-card-art\/[a-z-]+-light\.webp/g)).toHaveLength(23);
+    expect(lightBlock).toContain('--media-art-filter:');
+    expect(lightBlock).toContain('--media-art-wash: linear-gradient(135deg, transparent, transparent)');
+    expect(lightBlock).toContain('--text-on-media:');
+    expect(lightBlock).not.toContain('brightness(1.48)');
+    expect(lightBlock).not.toMatch(/#fff(?:fff)?\b/i);
+    expect(lightBlock).not.toContain('rgba(255, 255, 255');
+    expect(lightBlock).not.toContain('!important');
   });
 
-  describe('内嵌块样式配置验证', () => {
-    const opacityLevels: OpacityLevel[] = ['solid', 'default', 'translucent'];
+  it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
+    const semanticNames = [
+      'success',
+      'warning',
+      'danger',
+      'info',
+      'neutral',
+      'purple',
+      'pink',
+      'orange',
+      'cyan',
+      'indigo',
+    ];
 
-    it('NESTED_BLOCK_STYLES 应包含所有必需的样式类别', () => {
-      expect(NESTED_BLOCK_STYLES).toHaveProperty('bgAlpha');
-      expect(NESTED_BLOCK_STYLES).toHaveProperty('borderAlpha');
-      expect(NESTED_BLOCK_STYLES).toHaveProperty('listItemBgAlpha');
-      expect(NESTED_BLOCK_STYLES).toHaveProperty('listItemBorderAlpha');
-      expect(NESTED_BLOCK_STYLES).toHaveProperty('hoverBgAlpha');
+    semanticNames.forEach((name) => {
+      const match = lightBlock.match(new RegExp(`--semantic-${name}-text:\\s*(#[0-9a-fA-F]{6})`));
+      expect(match?.[1]).toBeTruthy();
+      expect(contrastRatio(match![1], '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
     });
-
-    for (const level of opacityLevels) {
-      it(`透明度级别 "${level}" 应在所有内嵌块样式中定义`, () => {
-        expect(NESTED_BLOCK_STYLES.bgAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.borderAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.listItemBgAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.listItemBorderAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.hoverBgAlpha[level]).toBeDefined();
-      });
-
-      it(`透明度级别 "${level}" 的内嵌块透明度值应在合理范围`, () => {
-        expect(NESTED_BLOCK_STYLES.bgAlpha[level]).toBeGreaterThan(0);
-        expect(NESTED_BLOCK_STYLES.bgAlpha[level]).toBeLessThan(0.5);
-        expect(NESTED_BLOCK_STYLES.borderAlpha[level]).toBeGreaterThan(0);
-        expect(NESTED_BLOCK_STYLES.borderAlpha[level]).toBeLessThan(0.5);
-      });
-    }
+    expect(lightBlock).toContain('--workflow-accent-text-lightness: 36%');
+    const selectionText = lightBlock.match(/--selection-text:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    expect(selectionText).toBeTruthy();
+    expect(contrastRatio(selectionText!, '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
+    const buttonBackground = lightBlock.match(/--button-primary-bg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    const buttonForeground = lightBlock.match(/--button-primary-fg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    expect(buttonBackground).toBeTruthy();
+    expect(buttonForeground).toBeTruthy();
+    expect(contrastRatio(buttonForeground!, buttonBackground!)).toBeGreaterThanOrEqual(4.5);
+    expect(tokens).toContain('.surface-tone-dark');
+    expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
   });
 
-  describe('强调色样式配置验证', () => {
-    const accentColors = ['blue', 'green', 'gold', 'purple', 'red'] as const;
+  it('周报仅保留品牌 token，语义色数值统一归 tokens.css 管理', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const reportColors = fs.readFileSync(REPORT_COLORS_PATH, 'utf8');
+    const reportSources = readSourceTree(REPORT_AGENT_DIR);
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
 
-    for (const color of accentColors) {
-      it(`强调色 "${color}" 应包含所有必需字段`, () => {
-        expect(ACCENT_STYLES[color]).toHaveProperty('bg');
-        expect(ACCENT_STYLES[color]).toHaveProperty('border');
-        expect(ACCENT_STYLES[color]).toHaveProperty('text');
-      });
-
-      it(`强调色 "${color}" 的颜色值应为有效的 rgba 格式`, () => {
-        expect(ACCENT_STYLES[color].bg).toMatch(/^rgba\(/);
-        expect(ACCENT_STYLES[color].border).toMatch(/^rgba\(/);
-        expect(ACCENT_STYLES[color].text).toMatch(/^rgba\(/);
-      });
-    }
+    ['accent', 'status-done', 'status-going', 'status-idle'].forEach((name) => {
+      expect(darkBlock).toContain(`--report-${name}:`);
+      expect(lightBlock).toContain(`--report-${name}:`);
+    });
+    expect(reportColors).toContain('var(--semantic-${token}-text)');
+    expect(reportColors).toContain('var(${prefix})');
+    expect(reportColors).not.toMatch(/rgba\(|#[0-9a-fA-F]{3,8}/);
+    expect(reportColors).not.toContain('if (isLight)');
+    expect(reportSources).not.toMatch(/isLight\s*\?\s*['"]#(?:fff|ffffff)['"]/i);
+    expect(reportSources).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
   });
 
-  describe('CSS 变量计算验证', () => {
-    it('默认配置应生成所有必需的 CSS 变量', () => {
-      const vars = computeThemeVars(DEFAULT_THEME_CONFIG);
+  it('关键自适应入口禁止回退为固定暗色表面或低对比小字', () => {
+    const agentSwitcher = fs.readFileSync(AGENT_SWITCHER_PATH, 'utf8');
+    const button = fs.readFileSync(BUTTON_PATH, 'utf8');
+    const documentStore = fs.readFileSync(DOCUMENT_STORE_PATH, 'utf8');
+    const surface = fs.readFileSync(SURFACE_PATH, 'utf8');
+    const teamActivity = fs.readdirSync(TEAM_ACTIVITY_DIR)
+      .filter((name) => name.endsWith('.tsx'))
+      .map((name) => fs.readFileSync(path.join(TEAM_ACTIVITY_DIR, name), 'utf8'))
+      .join('\n');
 
-      // 背景色变量
-      expect(vars['--bg-base']).toBeDefined();
-      expect(vars['--bg-elevated']).toBeDefined();
-      expect(vars['--bg-card']).toBeDefined();
+    expect(agentSwitcher).toContain('variant="raised"');
+    expect(agentSwitcher).toContain('className="surface-backdrop fixed inset-0');
+    expect(agentSwitcher).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
+    expect(agentSwitcher).not.toMatch(/linear-gradient\([^\n]*(?:22,\s*23,\s*32|16,\s*17,\s*25)/);
+    expect(button).not.toMatch(/LIGHT_STYLES|DARK_STYLES|useDataTheme|\bisLight\b|\bisDark\b/);
+    expect(button).toContain('button-${variant}');
+    expect(documentStore).not.toContain("color: 'rgba(59,130,246,0.95)'");
+    expect(documentStore).toContain("color: 'var(--selection-text)'");
+    expect(surface).toMatch(/\.surface-action-danger\s*\{[^}]*var\(--semantic-danger-text\)/s);
 
-      // 玻璃效果变量
-      expect(vars['--glass-bg-start']).toBeDefined();
-      expect(vars['--glass-bg-end']).toBeDefined();
-      expect(vars['--glass-border']).toBeDefined();
-
-      // 边框变量
-      expect(vars['--border-subtle']).toBeDefined();
-      expect(vars['--border-default']).toBeDefined();
-      expect(vars['--border-hover']).toBeDefined();
-      expect(vars['--border-faint']).toBeDefined();
-
-      // 内嵌块样式变量
-      expect(vars['--nested-block-bg']).toBeDefined();
-      expect(vars['--nested-block-border']).toBeDefined();
-      expect(vars['--list-item-bg']).toBeDefined();
-      expect(vars['--list-item-border']).toBeDefined();
-      expect(vars['--list-item-hover-bg']).toBeDefined();
-
-      // 表格样式变量
-      expect(vars['--table-header-bg']).toBeDefined();
-      expect(vars['--table-row-border']).toBeDefined();
-      expect(vars['--table-row-hover-bg']).toBeDefined();
-    });
-
-    it('CSS 变量值应为有效的 rgba 格式', () => {
-      const vars = computeThemeVars(DEFAULT_THEME_CONFIG);
-
-      // 检查 rgba 格式的变量
-      const rgbaVars = [
-        '--glass-bg-start', '--glass-bg-end', '--glass-border',
-        '--border-subtle', '--border-default', '--border-hover', '--border-faint',
-        '--nested-block-bg', '--nested-block-border',
-        '--list-item-bg', '--list-item-border', '--list-item-hover-bg',
-        '--table-header-bg', '--table-row-border', '--table-row-hover-bg',
-      ] as const;
-
-      for (const varName of rgbaVars) {
-        expect(vars[varName]).toMatch(/^rgba\(.*\)$/);
-      }
-    });
-
-    describe('不同配置组合测试', () => {
-      const colorDepthLevels: ColorDepthLevel[] = ['darker', 'default', 'lighter'];
-      const opacityLevels: OpacityLevel[] = ['solid', 'default', 'translucent'];
-
-      for (const colorDepth of colorDepthLevels) {
-        for (const opacity of opacityLevels) {
-          it(`配置 colorDepth="${colorDepth}" + opacity="${opacity}" 应正确计算`, () => {
-            const config: ThemeConfig = {
-              ...DEFAULT_THEME_CONFIG,
-              colorDepth,
-              opacity,
-            };
-            const vars = computeThemeVars(config);
-
-            // 背景色应匹配色深配置
-            expect(vars['--bg-base']).toBe(COLOR_DEPTH_MAP[colorDepth].bgBase);
-            expect(vars['--bg-elevated']).toBe(COLOR_DEPTH_MAP[colorDepth].bgElevated);
-
-            // 玻璃透明度应基于 opacity × glassBrightness
-            const opacityConfig = OPACITY_MAP[opacity];
-            const brightness = COLOR_DEPTH_MAP[colorDepth].glassBrightness;
-            const expectedGlassStart = (opacityConfig.glassStart * brightness).toFixed(4);
-            expect(vars['--glass-bg-start']).toContain(expectedGlassStart);
-          });
-        }
-      }
-    });
+    expect(teamActivity).not.toContain('tone="dark"');
+    expect(teamActivity).not.toContain('surface-tone-dark');
+    expect(teamActivity).not.toMatch(/text-white\/(?:[1-4]?\d|5[0-5])\b/);
+    expect(teamActivity).not.toMatch(/bg-\[#(?:0c0d0f|16171a|16171b|1a1c20)\]/i);
   });
 
-  describe('内嵌块样式与主题配置联动验证', () => {
-    it('solid 透明度应使用更高的内嵌块透明度值', () => {
-      const config: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'solid' };
-      const vars = computeThemeVars(config);
+  it('设置子页、固定文字与动态文字色都服从自适应表面契约', () => {
+    const peerNodes = fs.readFileSync(PEER_NODES_PATH, 'utf8');
+    const infraServices = fs.readFileSync(INFRA_SERVICES_PATH, 'utf8');
+    const emergenceCard = fs.readFileSync(EMERGENCE_CARD_PATH, 'utf8');
 
-      // 提取 rgba 中的透明度值
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : null;
-      };
+    expect(peerNodes).toContain('className="surface-raised relative overflow-hidden');
+    expect(peerNodes).not.toMatch(/linear-gradient\([^\n]*(?:22,\s*27,\s*36|34,\s*42,\s*55)/);
+    expect(peerNodes).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
 
-      const nestedBgAlpha = extractAlpha(vars['--nested-block-bg']);
-      // 默认色深的 glassBrightness = 1.0，所以透明度值等于原始值
-      expect(nestedBgAlpha).toBe(NESTED_BLOCK_STYLES.bgAlpha.solid);
-    });
+    expect(infraServices).toContain('text-token-primary');
+    expect(infraServices).toContain('className="surface rounded-xl p-5"');
+    expect(infraServices).not.toMatch(/text-white(?:\/\d+)?\b/);
+    expect(infraServices).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255|rgba\(0\s*,\s*0\s*,\s*0/);
 
-    it('translucent 透明度应使用更低的内嵌块透明度值', () => {
-      const config: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'translucent' };
-      const vars = computeThemeVars(config);
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : null;
-      };
-
-      const nestedBgAlpha = extractAlpha(vars['--nested-block-bg']);
-      // 默认色深的 glassBrightness = 1.0，所以透明度值等于原始值
-      expect(nestedBgAlpha).toBe(NESTED_BLOCK_STYLES.bgAlpha.translucent);
-    });
+    expect(emergenceCard).toContain("color: 'var(--text-secondary)'");
+    expect(emergenceCard).toContain("background: 'linear-gradient(180deg, transparent, var(--bg-card-hover))'");
+    expect(emergenceCard).not.toMatch(/color:\s*hsla?\(/);
   });
 
-  describe('色深对玻璃效果的影响验证', () => {
-    it('深色模式应降低玻璃亮度', () => {
-      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'default' };
-      const darkerConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'darker' };
+  it('有意固定暗色的体验页必须显式声明暗色 scope', () => {
+    const cdsAgent = fs.readFileSync(CDS_AGENT_PATH, 'utf8');
 
-      const defaultVars = computeThemeVars(defaultConfig);
-      const darkerVars = computeThemeVars(darkerConfig);
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
-
-      const defaultGlassAlpha = extractAlpha(defaultVars['--glass-bg-start']);
-      const darkerGlassAlpha = extractAlpha(darkerVars['--glass-bg-start']);
-
-      // 深色模式的玻璃应该更暗（透明度更低）
-      expect(darkerGlassAlpha).toBeLessThan(defaultGlassAlpha);
-    });
-
-    it('浅色模式应提高玻璃亮度', () => {
-      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'default' };
-      const lighterConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, colorDepth: 'lighter' };
-
-      const defaultVars = computeThemeVars(defaultConfig);
-      const lighterVars = computeThemeVars(lighterConfig);
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
-
-      const defaultGlassAlpha = extractAlpha(defaultVars['--glass-bg-start']);
-      const lighterGlassAlpha = extractAlpha(lighterVars['--glass-bg-start']);
-
-      // 浅色模式的玻璃应该更亮（透明度更高）
-      expect(lighterGlassAlpha).toBeGreaterThan(defaultGlassAlpha);
-    });
-
-    it('glassBrightness 倍数应按预期工作', () => {
-      expect(COLOR_DEPTH_MAP.darker.glassBrightness).toBeLessThan(1);
-      expect(COLOR_DEPTH_MAP.default.glassBrightness).toBe(1);
-      expect(COLOR_DEPTH_MAP.lighter.glassBrightness).toBeGreaterThan(1);
-    });
+    expect(cdsAgent.match(/surface-tone-dark/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(cdsAgent.match(/data-surface-tone="dark"/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  describe('边框透明度倍数计算验证', () => {
-    it('solid 透明度应增加边框透明度', () => {
-      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'default' };
-      const solidConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'solid' };
+  it('局部暗色 scope 不得豁免整份文件的主题风险', () => {
+    const reportScript = fs.readFileSync(STYLE_DEBT_REPORT_PATH, 'utf8');
 
-      const defaultVars = computeThemeVars(defaultConfig);
-      const solidVars = computeThemeVars(solidConfig);
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
-
-      const defaultBorderAlpha = extractAlpha(defaultVars['--border-default']);
-      const solidBorderAlpha = extractAlpha(solidVars['--border-default']);
-
-      expect(solidBorderAlpha).toBeGreaterThan(defaultBorderAlpha);
-    });
-
-    it('translucent 透明度应减少边框透明度', () => {
-      const defaultConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'default' };
-      const translucentConfig: ThemeConfig = { ...DEFAULT_THEME_CONFIG, opacity: 'translucent' };
-
-      const defaultVars = computeThemeVars(defaultConfig);
-      const translucentVars = computeThemeVars(translucentConfig);
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
-
-      const defaultBorderAlpha = extractAlpha(defaultVars['--border-default']);
-      const translucentBorderAlpha = extractAlpha(translucentVars['--border-default']);
-
-      expect(translucentBorderAlpha).toBeLessThan(defaultBorderAlpha);
-    });
+    expect(reportScript).toContain('FULL_DARK_SURFACE_FILES.has(relativePath)');
+    expect(reportScript).toContain('counts.fixedThemeSurface - counts.declaredDarkScope');
+    expect(reportScript).not.toContain('counts.declaredDarkScope > 0\n    ? counts.dynamicTextColor');
   });
 
-  describe('配置一致性验证', () => {
-    it('所有透明度级别应在所有映射中定义', () => {
-      const levels: OpacityLevel[] = ['solid', 'default', 'translucent'];
+  it('风险扫描外扩发现的普通管理页保持自适应，局部暗色弹窗显式隔离', () => {
+    const projectRoute = fs.readFileSync(PROJECT_ROUTE_PATH, 'utf8');
 
-      for (const level of levels) {
-        // OPACITY_MAP
-        expect(OPACITY_MAP[level]).toBeDefined();
-
-        // NESTED_BLOCK_STYLES
-        expect(NESTED_BLOCK_STYLES.bgAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.borderAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.listItemBgAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.listItemBorderAlpha[level]).toBeDefined();
-        expect(NESTED_BLOCK_STYLES.hoverBgAlpha[level]).toBeDefined();
-      }
-    });
-
-    it('所有色深级别应在 COLOR_DEPTH_MAP 中定义', () => {
-      const levels: ColorDepthLevel[] = ['darker', 'default', 'lighter'];
-
-      for (const level of levels) {
-        expect(COLOR_DEPTH_MAP[level]).toBeDefined();
-      }
-    });
+    expect(projectRoute).toContain('text-token-primary');
+    expect(projectRoute).toContain('className="surface-tone-dark relative rounded-xl');
+    expect(projectRoute).toContain('data-surface-tone="dark"');
+    expect(projectRoute).not.toMatch(/text-white(?:\/\d+)?\b|bg-white\/\d+|border-white\/\d+/);
   });
 
-  describe('GlassCard CSS 变量集成验证', () => {
-    it('计算的玻璃变量应可用于 GlassCard 组件', () => {
-      const vars = computeThemeVars(DEFAULT_THEME_CONFIG);
+  it('周报海报工作台的普通文字随主题切换，固定暗色仅保留在创建弹窗与媒体内容', () => {
+    const weeklyPoster = fs.readFileSync(WEEKLY_POSTER_PATH, 'utf8');
 
-      // GlassCard 使用的关键变量（默认配置：opacity=default, colorDepth=default, glassBrightness=1.0）
-      // OPACITY_MAP.default: glassStart=0.10, glassEnd=0.05, border=0.18
-      expect(vars['--glass-bg-start']).toMatch(/rgba\(255, 255, 255, 0\.10/);
-      expect(vars['--glass-bg-end']).toMatch(/rgba\(255, 255, 255, 0\.05/);
-      expect(vars['--glass-border']).toMatch(/rgba\(255, 255, 255, 0\.18/);
+    expect(weeklyPoster).toContain('className={`${rootClass} relative overflow-hidden text-token-primary');
+    expect(weeklyPoster).toContain('className="surface-tone-dark fixed inset-0');
+    expect(weeklyPoster).toContain("color: 'var(--semantic-success-text)'");
+    expect(weeklyPoster).not.toMatch(/text-white\/\d+/);
+  });
+
+  it('浏览器双主题矩阵覆盖所有设置 tab 与关键交互状态', () => {
+    const settingsPage = fs.readFileSync(SETTINGS_PAGE_PATH, 'utf8');
+    const tabBlock = settingsPage.slice(
+      settingsPage.indexOf('const tabs = useMemo'),
+      settingsPage.indexOf('const tabFromUrl'),
+    );
+    const settingsTabs = Array.from(tabBlock.matchAll(/key:\s*'([^']+)'/g), (match) => match[1]).sort();
+    const coveredSettingsTabs = THEME_ACCEPTANCE_TARGETS
+      .map((target) => new URL(target.path, 'https://theme-acceptance.local'))
+      .filter((url) => url.pathname === '/settings')
+      .map((url) => url.searchParams.get('tab'))
+      .filter((tab): tab is string => Boolean(tab))
+      .sort();
+
+    expect(coveredSettingsTabs).toEqual(settingsTabs);
+    THEME_ACCEPTANCE_TARGETS.forEach((target) => {
+      expect(target.themes).toEqual(['dark', 'light']);
+      expect(target.states.length).toBeGreaterThan(0);
     });
+    expect(THEME_ACCEPTANCE_TARGETS.find((target) => target.id === 'command-palette')?.states)
+      .toContain('keyboard-overlay-open');
+    expect(THEME_ACCEPTANCE_TARGETS.find((target) => target.id === 'emergence')?.states)
+      .toContain('hover-primary-card');
+  });
 
-    it('修改透明度后玻璃变量应正确更新', () => {
-      const solidVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, opacity: 'solid' });
-      const translucentVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, opacity: 'translucent' });
+  it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(ADMIN_ROOT, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    const dockerfile = fs.readFileSync(path.join(ADMIN_ROOT, 'Dockerfile'), 'utf8');
+    const artworkDir = path.join(ADMIN_ROOT, 'src/assets/agent-card-art');
+    const lightArtwork = fs.readdirSync(artworkDir).filter((name) => name.endsWith('-light.webp'));
 
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
+    expect(packageJson.scripts.build).toBe('tsc && vite build');
+    expect(dockerfile).toContain('pnpm run build');
+    expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
+    expect(lightArtwork).toHaveLength(23);
+  });
 
-      const solidAlpha = extractAlpha(solidVars['--glass-bg-start']);
-      const translucentAlpha = extractAlpha(translucentVars['--glass-bg-start']);
+  it('移动端兼容提示复用跨主题语义色与固定暗色表面契约', () => {
+    const gate = fs.readFileSync(MOBILE_COMPAT_GATE_PATH, 'utf8');
 
-      // solid 应有更高的透明度值
-      expect(solidAlpha).toBeGreaterThan(translucentAlpha);
-    });
-
-    it('修改色深后玻璃变量应正确更新', () => {
-      const darkerVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, colorDepth: 'darker' });
-      const lighterVars = computeThemeVars({ ...DEFAULT_THEME_CONFIG, colorDepth: 'lighter' });
-
-      const extractAlpha = (rgba: string) => {
-        const match = rgba.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/);
-        return match ? parseFloat(match[1]) : 0;
-      };
-
-      const darkerAlpha = extractAlpha(darkerVars['--glass-bg-start']);
-      const lighterAlpha = extractAlpha(lighterVars['--glass-bg-start']);
-
-      // 深色模式玻璃更暗，浅色模式玻璃更亮
-      expect(darkerAlpha).toBeLessThan(lighterAlpha);
-    });
+    expect(gate).toContain("color: 'var(--semantic-warning-text)'");
+    expect(gate).toContain('className="surface-tone-dark w-full max-w-md rounded-2xl p-5"');
+    expect(gate).toContain('data-surface-tone="dark"');
+    expect(gate).not.toContain("color: 'rgba(255, 236, 179");
   });
 });

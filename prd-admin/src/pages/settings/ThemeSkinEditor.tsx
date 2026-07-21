@@ -8,6 +8,7 @@
 import { GlassCard } from '@/components/design/GlassCard';
 import { useThemeStore } from '@/stores/themeStore';
 import { useMobileThemeStore, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { transitionThemeMode } from '@/lib/themeTransition';
 import { MATERIAL_OPTIONS, DEFAULT_THEME_CONFIG, type MaterialMode } from '@/types/theme';
 import { Moon, Sun, Square, Save } from 'lucide-react';
 
@@ -54,8 +55,17 @@ export function ThemeSkinEditor() {
               const isActive = appearance === option.value;
               return (
                 <button
+                  type="button"
                   key={option.value}
-                  onClick={() => setAppearance(option.value)}
+                  onClick={(event) => {
+                    if (isActive) return;
+                    transitionThemeMode({
+                      mode: option.value,
+                      pathname: window.location.pathname,
+                      origin: event,
+                      commit: setAppearance,
+                    });
+                  }}
                   className="p-3 rounded-lg transition-all text-left"
                   style={{
                     background: isActive

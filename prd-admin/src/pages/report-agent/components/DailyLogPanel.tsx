@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, type ClipboardEvent 
 import {
   Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar,
   Pencil, Check, X, Flame, Code2, Users, MessageCircle, FileText, TestTube, MoreHorizontal,
-  GitCommit, Sparkles, Plus, Tag,
+  GitCommit, Sparkles, Plus, Tag, Lightbulb,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -265,7 +265,7 @@ export function DailyLogPanel() {
   const hasEditTodoSelected = editSystemTags.includes(DailyLogCategory.Todo);
   const quickInputPlaceholder = hasTodoSelected
     ? '计划做些什么？'
-    : (isToday ? '💬 今天做了什么...' : `💬 ${getDateDisplayLabel(selectedDate)} 做了什么...`);
+    : (isToday ? '今天做了什么...' : `${getDateDisplayLabel(selectedDate)} 做了什么...`);
 
   // ── Data Loading ──
 
@@ -1394,7 +1394,7 @@ export function DailyLogPanel() {
                     );
                   }
 
-                  // 编辑模式：chip 加 mini 默认勾选 + 右上角 ✕（仅自定义）+ draggable
+                  // 编辑模式：chip 加 mini 默认勾选 + 右上角删除按钮（仅自定义）+ draggable
                   if (showTagManager) {
                     return (
                       <div
@@ -1519,7 +1519,7 @@ export function DailyLogPanel() {
                     border: `1px solid ${showTagManager ? 'rgba(16, 185, 129, 0.35)' : 'rgba(148, 163, 184, 0.14)'}`,
                   }}
                   onClick={() => setShowTagManager((v) => !v)}
-                  title={showTagManager ? '退出编辑并保存' : '进入编辑模式：拖动排序、勾默认、加 ✕ 删除'}
+                  title={showTagManager ? '退出编辑并保存' : '进入编辑模式：拖动排序、勾默认、删除自定义标签'}
                 >
                   {showTagManager ? '保存' : '管理标签'}
                 </button>
@@ -1557,7 +1557,7 @@ export function DailyLogPanel() {
               )}
               {showTagManager && (
                 <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                  编辑中：勾选 ☑ = 设为默认；拖动 chip = 调整顺序；双击自定义标签 = 重命名；点 ✕ = 删除（仅自定义）。
+                  编辑中：勾选后设为默认；拖动标签可调整顺序；双击自定义标签可重命名；删除仅适用于自定义标签。
                 </div>
               )}
             </div>
@@ -1643,35 +1643,39 @@ export function DailyLogPanel() {
                 </div>
                 <div className="flex flex-wrap justify-center gap-2">
                   {[
-                    { cat: 'development', text: '写了代码', emoji: '🔨' },
-                    { cat: 'meeting', text: '开了会', emoji: '📋' },
-                    { cat: 'communication', text: '做了沟通', emoji: '💬' },
-                    { cat: 'documentation', text: '写了文档', emoji: '📝' },
-                    { cat: 'testing', text: '跑了测试', emoji: '🧪' },
-                  ].map(({ cat, text, emoji }) => (
-                    <button
-                      key={cat}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-all duration-150 hover:scale-[1.03]"
-                      style={{
-                        background: CATEGORY_CONFIG[cat]?.bg || 'var(--bg-tertiary)',
-                        color: CATEGORY_CONFIG[cat]?.color || 'var(--text-secondary)',
-                        border: `1px solid ${(CATEGORY_CONFIG[cat]?.color || '').replace('0.95', '0.2')}`,
-                      }}
-                      onClick={() => {
-                        setQuickInput(text);
-                        setSelectedSystemTags([cat]);
-                        inputRef.current?.focus();
-                      }}
-                    >
-                      <span>{emoji}</span> {text}
-                    </button>
-                  ))}
+                    { cat: 'development', text: '写了代码' },
+                    { cat: 'meeting', text: '开了会' },
+                    { cat: 'communication', text: '做了沟通' },
+                    { cat: 'documentation', text: '写了文档' },
+                    { cat: 'testing', text: '跑了测试' },
+                  ].map(({ cat, text }) => {
+                    const Icon = CATEGORY_CONFIG[cat]?.icon ?? MoreHorizontal;
+                    return (
+                      <button
+                        key={cat}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-all duration-150 hover:scale-[1.03]"
+                        style={{
+                          background: CATEGORY_CONFIG[cat]?.bg || 'var(--bg-tertiary)',
+                          color: CATEGORY_CONFIG[cat]?.color || 'var(--text-secondary)',
+                          border: `1px solid ${(CATEGORY_CONFIG[cat]?.color || '').replace('0.95', '0.2')}`,
+                        }}
+                        onClick={() => {
+                          setQuickInput(text);
+                          setSelectedSystemTags([cat]);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        <Icon size={13} /> {text}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div
-                  className="text-[11px] px-4 py-2 rounded-lg"
+                  className="text-[11px] px-4 py-2 rounded-lg flex items-center gap-1.5"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  💡 每日记录会在生成周报时被 AI 自动汇总归纳
+                  <Lightbulb size={12} />
+                  每日记录会在生成周报时被 AI 自动汇总归纳
                 </div>
               </div>
             </div>
@@ -2023,8 +2027,9 @@ export function DailyLogPanel() {
 
                       {/* Content */}
                       <div className="flex-1 min-w-0">
-                        <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                          📝 {truncateCommitMsg(commit.message)}
+                        <div className="text-[13px] leading-relaxed flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                          <FileText size={12} style={{ color: 'var(--text-muted)' }} />
+                          {truncateCommitMsg(commit.message)}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <span
@@ -2196,8 +2201,9 @@ export function DailyLogPanel() {
               </div>
               <div className="flex flex-col gap-1.5 mb-3">
                 {unrecordedCommits.slice(0, 3).map((c) => (
-                  <div key={c.id} className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    📝 {truncateCommitMsg(c.message)}
+                  <div key={c.id} className="text-[10px] truncate flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                    <FileText size={10} />
+                    {truncateCommitMsg(c.message)}
                   </div>
                 ))}
                 {unrecordedCommits.length > 3 && (

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { Sparkle, ArrowRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { getTreeVisual, hsla } from './emergenceFingerprint';
@@ -30,6 +30,10 @@ export function EmergenceTreeCard({ tree, onOpen }: Props) {
     days <= 0 ? '今天' : days === 1 ? '昨天' : days < 7 ? `${days} 天前` : new Date(tree.updatedAt).toLocaleDateString();
 
   const progress = Math.min(100, (tree.nodeCount / 20) * 100);
+  const cardStyle = {
+    height: 176,
+    '--emergence-card-accent': hsla(v.hue, 70, 65, 0.9),
+  } as CSSProperties;
 
   return (
     <GlassCard
@@ -37,7 +41,7 @@ export function EmergenceTreeCard({ tree, onOpen }: Props) {
       padding="none"
       overflow="hidden"
       className="group relative flex flex-col overflow-hidden"
-      style={{ height: 176 }}
+      style={cardStyle}
       onClick={() => onOpen(tree.id)}
     >
       {/* 顶部指纹色条（扁平，无动效） */}
@@ -69,14 +73,14 @@ export function EmergenceTreeCard({ tree, onOpen }: Props) {
         <div className="mt-auto pt-3 flex items-center gap-2.5">
           <span
             className="inline-flex items-center gap-1 text-[11px] font-medium tabular-nums"
-            style={{ color: hsla(v.hue, 35, 78, 0.95) }}
+            style={{ color: 'var(--text-secondary)' }}
           >
-            <Sparkle size={11} style={{ color: hsla(v.hue, 70, 65, 0.9) }} />
+            <Sparkle size={11} style={{ color: 'var(--emergence-card-accent)' }} />
             {tree.nodeCount}
           </span>
           <div
             className="flex-1 h-1 rounded-full overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.06)' }}
+            style={{ background: 'var(--nested-block-bg)' }}
           >
             <div
               className="h-full rounded-full"
@@ -97,8 +101,8 @@ export function EmergenceTreeCard({ tree, onOpen }: Props) {
         aria-hidden
         className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 py-1.5 text-[11px] font-semibold opacity-0 transition-opacity duration-200 group-hover:opacity-100"
         style={{
-          background: `linear-gradient(180deg, transparent, ${hsla(v.hue, 60, 18, 0.85)})`,
-          color: hsla(v.hue, 70, 84, 0.95),
+          background: 'linear-gradient(180deg, transparent, var(--bg-card-hover))',
+          color: 'var(--text-primary)',
           pointerEvents: 'none',
         }}
       >

@@ -80,24 +80,24 @@ export function RequirementConvertModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)', padding: '4vh 4vw' }}
+      className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ padding: '4vh 4vw' }}
       onClick={() => !submitting && onClose()}
     >
       <div
-        className="rounded-2xl border border-white/10 bg-[#16171b] flex flex-col w-full"
-        style={{ maxWidth: 580, maxHeight: '88vh', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
+        className="surface-popover rounded-2xl flex flex-col w-full"
+        style={{ maxWidth: 580, maxHeight: '88vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 + stepper */}
-        <div className="px-5 pt-3.5 pb-3 border-b border-white/[0.06] shrink-0">
+        <div className="px-5 pt-3.5 pb-3 border-b border-token-subtle shrink-0">
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(34,211,238,0.15)' }}>
-              <ClipboardList size={15} className="text-cyan-300" />
+              <ClipboardList size={15} className="text-semantic-cyan" />
             </span>
             <div className="flex flex-col">
-              <span className="text-[14px] font-semibold text-white/90">转为产品需求</span>
-              <span className="text-[11px] text-white/40">
+              <span className="text-[14px] font-semibold text-token-primary">转为产品需求</span>
+              <span className="text-[11px] text-token-muted">
                 第 {step + 1} / {STEPS.length} 步：{STEPS[step]}
               </span>
             </div>
@@ -105,7 +105,7 @@ export function RequirementConvertModal({
               type="button"
               onClick={() => !submitting && onClose()}
               title="关闭"
-              className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.06] transition-colors cursor-pointer"
+              className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md text-token-muted hover-text-primary hover-bg-soft transition-colors cursor-pointer"
             >
               <X size={16} />
             </button>
@@ -121,24 +121,24 @@ export function RequirementConvertModal({
                     className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-semibold shrink-0 border transition-colors"
                     style={
                       done
-                        ? { background: 'rgba(34,211,238,0.2)', borderColor: 'rgba(34,211,238,0.5)', color: '#67e8f9' }
+                        ? { background: 'rgba(34,211,238,0.2)', borderColor: 'rgba(34,211,238,0.5)', color: 'var(--semantic-cyan-text)' }
                         : active
-                          ? { background: 'rgba(34,211,238,0.15)', borderColor: '#22d3ee', color: '#a5f3fc' }
-                          : { background: 'transparent', borderColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.35)' }
+                          ? { background: 'rgba(34,211,238,0.15)', borderColor: '#22d3ee', color: 'var(--semantic-cyan-text)' }
+                          : { background: 'transparent', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }
                     }
                   >
                     {done ? <Check size={11} /> : i + 1}
                   </span>
                   <span
                     className="text-[11px] shrink-0 transition-colors"
-                    style={{ color: active ? '#a5f3fc' : done ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.35)' }}
+                    style={{ color: active ? 'var(--semantic-cyan-text)' : done ? 'var(--text-secondary)' : 'var(--text-muted)' }}
                   >
                     {label}
                   </span>
                   {i < STEPS.length - 1 ? (
                     <span
                       className="flex-1 h-px transition-colors"
-                      style={{ background: i < step ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.1)' }}
+                      style={{ background: i < step ? 'rgba(34,211,238,0.4)' : 'var(--border-subtle)' }}
                     />
                   ) : null}
                 </div>
@@ -155,13 +155,13 @@ export function RequirementConvertModal({
           {/* Step 0：选产品 */}
           {step === 0 ? (
             <div className="flex flex-col gap-2">
-              <span className="text-[12px] text-white/55 font-medium">选择落入哪个产品的需求池</span>
+              <span className="text-[12px] text-token-secondary font-medium">选择落入哪个产品的需求池</span>
               {productsLoading ? (
                 <div className="py-6 flex items-center justify-center">
                   <MapSpinner size={16} />
                 </div>
               ) : noProduct ? (
-                <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 text-[12px] text-amber-200/80 leading-relaxed">
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-3 text-[12px] text-semantic-warning leading-relaxed">
                   还没有任何产品。请先在产品管理智能体创建产品，再回来流转需求。
                 </div>
               ) : (
@@ -176,18 +176,18 @@ export function RequirementConvertModal({
                         className={`flex items-center gap-2.5 px-3 h-11 rounded-lg text-left border transition-colors cursor-pointer ${
                           active
                             ? 'bg-cyan-500/12 border-cyan-500/40'
-                            : 'bg-white/[0.03] border-white/10 hover:border-white/25'
+                            : 'bg-token-nested border-token-subtle hover-border-token'
                         }`}
                       >
                         <span
                           className="w-4 h-4 rounded-full shrink-0 border flex items-center justify-center"
-                          style={{ borderColor: active ? '#22d3ee' : 'rgba(255,255,255,0.25)', background: active ? '#22d3ee' : 'transparent' }}
+                          style={{ borderColor: active ? '#22d3ee' : 'var(--border-default)', background: active ? '#22d3ee' : 'transparent' }}
                         >
                           {active ? <Check size={11} className="text-[#0b1416]" /> : null}
                         </span>
-                        <Package size={14} className="shrink-0 text-white/40" />
-                        <span className={`truncate flex-1 text-[13px] ${active ? 'text-cyan-100' : 'text-white/80'}`}>{p.name}</span>
-                        <span className="text-[11px] text-white/30 font-mono shrink-0">{p.productNo}</span>
+                        <Package size={14} className="shrink-0 text-token-muted" />
+                        <span className={`truncate flex-1 text-[13px] ${active ? 'text-semantic-cyan' : 'text-token-primary'}`}>{p.name}</span>
+                        <span className="text-[11px] text-token-muted font-mono shrink-0">{p.productNo}</span>
                       </button>
                     );
                   })}
@@ -200,22 +200,22 @@ export function RequirementConvertModal({
           {step === 1 ? (
             <div className="flex flex-col gap-4">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-white/55 font-medium">需求标题</span>
+                <span className="text-[12px] text-token-secondary font-medium">需求标题</span>
                 <input
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="h-9 px-3 rounded-lg text-[13px] text-white/90 bg-white/[0.04] border border-white/12 focus:border-cyan-400/60 outline-none transition-colors"
+                  className="h-9 px-3 rounded-lg text-[13px] text-token-primary bg-token-nested border border-token-subtle focus:border-cyan-400/60 outline-none transition-colors"
                   placeholder="一句话描述这个需求"
                 />
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-white/55 font-medium">需求描述</span>
+                <span className="text-[12px] text-token-secondary font-medium">需求描述</span>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={9}
-                  className="px-3 py-2.5 rounded-lg text-[12.5px] leading-relaxed text-white/85 font-mono bg-white/[0.04] border border-white/12 focus:border-cyan-400/60 outline-none transition-colors resize-y"
+                  className="px-3 py-2.5 rounded-lg text-[12.5px] leading-relaxed text-token-primary font-mono bg-token-nested border border-token-subtle focus:border-cyan-400/60 outline-none transition-colors resize-y"
                   style={{ minHeight: 180 }}
                   placeholder="背景 / 证据 / 改进建议（已自动预填，可修改）"
                 />
@@ -226,22 +226,22 @@ export function RequirementConvertModal({
           {/* Step 2：确认流转 */}
           {step === 2 ? (
             <div className="flex flex-col gap-3">
-              <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3.5 py-3 flex flex-col gap-2">
+              <div className="rounded-lg border border-token-subtle bg-token-nested px-3.5 py-3 flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-[12px]">
-                  <Package size={13} className="text-cyan-300/80 shrink-0" />
-                  <span className="text-white/50">目标产品</span>
-                  <span className="text-white/85 font-medium">{selectedProduct?.name ?? '—'}</span>
+                  <Package size={13} className="text-semantic-cyan shrink-0" />
+                  <span className="text-token-secondary">目标产品</span>
+                  <span className="text-token-primary font-medium">{selectedProduct?.name ?? '—'}</span>
                   {selectedProduct?.productNo ? (
-                    <span className="text-white/30 font-mono text-[11px]">{selectedProduct.productNo}</span>
+                    <span className="text-token-muted font-mono text-[11px]">{selectedProduct.productNo}</span>
                   ) : null}
                 </div>
                 <div className="flex items-start gap-2 text-[12px]">
-                  <ClipboardList size={13} className="text-cyan-300/80 shrink-0 mt-0.5" />
-                  <span className="text-white/50 shrink-0">需求标题</span>
-                  <span className="text-white/85 break-words">{title.trim() || '—'}</span>
+                  <ClipboardList size={13} className="text-semantic-cyan shrink-0 mt-0.5" />
+                  <span className="text-token-secondary shrink-0">需求标题</span>
+                  <span className="text-token-primary break-words">{title.trim() || '—'}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] px-3.5 py-2.5 text-[12px] text-cyan-100/80 leading-relaxed">
+              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] px-3.5 py-2.5 text-[12px] text-semantic-cyan leading-relaxed">
                 确认后将创建到「{selectedProduct?.name ?? '所选产品'}」的需求池，进入需求池待评审。
               </div>
             </div>
@@ -249,12 +249,12 @@ export function RequirementConvertModal({
         </div>
 
         {/* 底部操作：上一步 / 下一步 / 确认 */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-white/[0.06] shrink-0">
+        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-token-subtle shrink-0">
           <button
             type="button"
             onClick={step === 0 ? () => !submitting && onClose() : goPrev}
             disabled={submitting}
-            className="inline-flex items-center gap-1 px-3 h-9 rounded-lg text-[12px] border bg-white/[0.03] text-white/55 border-white/10 hover:text-white/85 hover:border-white/25 transition-colors cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-3 h-9 rounded-lg text-[12px] border bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token transition-colors cursor-pointer disabled:opacity-50"
           >
             {step === 0 ? '取消' : (<><ChevronLeft size={13} />上一步</>)}
           </button>
@@ -264,7 +264,7 @@ export function RequirementConvertModal({
               disabled={step === 0 ? !canNextFromStep0 : !canNextFromStep1}
               onClick={goNext}
               style={(step === 0 ? !canNextFromStep0 : !canNextFromStep1) ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
-              className="inline-flex items-center gap-1 px-3.5 h-9 rounded-lg text-[12px] border bg-cyan-500/18 text-cyan-100 border-cyan-500/35 hover:bg-cyan-500/28 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-3.5 h-9 rounded-lg text-[12px] border bg-cyan-500/18 text-semantic-cyan border-cyan-500/35 hover:bg-cyan-500/28 transition-colors cursor-pointer"
             >
               下一步
               <ChevronRight size={13} />
@@ -275,7 +275,7 @@ export function RequirementConvertModal({
               disabled={!canConfirm}
               onClick={() => canConfirm && selectedProductId && onConfirm(selectedProductId, { title: title.trim(), description: description.trim() })}
               style={!canConfirm ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
-              className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-lg text-[12px] border bg-cyan-500/20 text-cyan-100 border-cyan-500/40 hover:bg-cyan-500/30 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-lg text-[12px] border bg-cyan-500/20 text-semantic-cyan border-cyan-500/40 hover:bg-cyan-500/30 transition-colors cursor-pointer"
             >
               {submitting ? <MapSpinner size={13} /> : <ClipboardList size={13} />}
               {submitting ? '流转中…' : '确认流转'}

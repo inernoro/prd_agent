@@ -311,7 +311,7 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
               title={o.hint}
               className={`shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors ${active ? '' : 'hover-bg-soft'}`}
               style={active
-                ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
+                ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
                 : { color: 'var(--text-muted)' }}
             >
               {o.label}
@@ -3088,9 +3088,9 @@ export function DocumentStorePage() {
               onClick={() => setShowMobileFilters(true)}
               className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
               style={{
-                background: mobileFilterCount > 0 ? 'rgba(10,132,255,0.16)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${mobileFilterCount > 0 ? 'rgba(10,132,255,0.32)' : 'rgba(255,255,255,0.10)'}`,
-                color: mobileFilterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
+                background: mobileFilterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-input)',
+                border: `1px solid ${mobileFilterCount > 0 ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
+                color: mobileFilterCount > 0 ? 'var(--selection-text)' : 'var(--text-primary)',
               }}
             >
               <SlidersHorizontal size={15} />
@@ -3125,7 +3125,7 @@ export function DocumentStorePage() {
               disabled={tagStats.length === 0}
               className={`h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${tagFilter.length > 0 ? 'hover:brightness-110' : 'hover-bg-soft'}`}
               style={tagFilter.length > 0
-                ? { background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.95)' }
+                ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
                 : { border: '1px solid var(--border-default, rgba(148,163,184,0.24))', color: 'var(--text-muted)' }}
               title={tagStats.length === 0 ? '当前没有可用的标签' : '按标签筛选'}
             >
@@ -3134,7 +3134,7 @@ export function DocumentStorePage() {
               {tagFilter.length > 0 && (
                 <span
                   className="ml-0.5 h-4 min-w-[16px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
-                  style={{ background: 'rgba(59,130,246,0.25)', color: 'rgba(59,130,246,0.95)' }}
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
                 >
                   {tagFilter.length}
                 </span>
@@ -3179,16 +3179,16 @@ export function DocumentStorePage() {
                           setTagFilter(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
                         }}
                         className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
-                        style={{ color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-primary)' }}
+                        style={{ color: active ? 'var(--selection-text)' : 'var(--text-primary)' }}
                       >
                         <span className="flex items-center gap-2 min-w-0">
                           <span
                             className="w-3.5 h-3.5 rounded-[3px] flex items-center justify-center flex-shrink-0"
                             style={active
-                              ? { background: 'rgba(59,130,246,0.95)', border: '1px solid rgba(59,130,246,0.95)' }
-                              : { background: 'transparent', border: '1px solid rgba(255,255,255,0.25)' }}
+                              ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)' }
+                              : { background: 'transparent', border: '1px solid var(--border-subtle)' }}
                           >
-                            {active && <Check size={9} style={{ color: '#fff' }} />}
+                            {active && <Check size={9} style={{ color: 'var(--selection-text)' }} />}
                           </span>
                           <span className="truncate">{tag}</span>
                         </span>
@@ -3227,9 +3227,9 @@ export function DocumentStorePage() {
               onClick={() => setSortOpen(o => !o)}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-all hover:brightness-110"
               style={{
-                background: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.2)',
-                color: 'rgba(59,130,246,0.95)',
+                background: 'var(--selection-bg)',
+                border: '1px solid var(--selection-border)',
+                color: 'var(--selection-text)',
               }}
               title="排序方式"
             >
@@ -3253,7 +3253,7 @@ export function DocumentStorePage() {
                       type="button"
                       onClick={() => { setSortKey(opt.key); setSortOpen(false); }}
                       className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
-                      style={{ color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-primary)' }}
+                      style={{ color: active ? 'var(--selection-text)' : 'var(--text-primary)' }}
                     >
                       <span>{opt.label}</span>
                       {active && <Check size={12} />}
@@ -3360,8 +3360,8 @@ export function DocumentStorePage() {
                       onClick={() => setSortKey(opt.key)}
                       className="h-8 px-3 rounded-full text-[13px] inline-flex items-center gap-1.5"
                       style={active
-                        ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                        : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                        ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }
+                        : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
                     >
                       {active && <Check size={12} />}
                       {opt.label}
@@ -3380,8 +3380,8 @@ export function DocumentStorePage() {
                     onClick={() => setTagFilter([])}
                     className="h-8 px-3 rounded-full text-[13px]"
                     style={tagFilter.length === 0
-                      ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                      : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                      ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }
+                      : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
                   >
                     全部标签
                   </button>
@@ -3396,8 +3396,8 @@ export function DocumentStorePage() {
                         }}
                         className="h-8 px-3 rounded-full text-[13px]"
                         style={active
-                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
-                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                          ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }
+                          : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
                       >
                         {tag} ({count})
                       </button>
