@@ -1503,7 +1503,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
   }
 
-  // GET /api/projects — list all projects.
+  // GET /api/projects — list projects visible to the current caller.
+  // Project-scoped keys must only discover their bound project; browser
+  // sessions, bootstrap keys and unscoped callers retain the full list.
   //
   // Wrapped in try/catch so an unexpected exception inside
   // statsFor (e.g. a malformed branch entry in state.json)
@@ -1513,7 +1515,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // what triggered the failure.
   router.get('/projects', (req, res) => {
     try {
-      const projects = stateService.getProjects();
+      const projectScope = (
+        req as unknown as { cdsProjectKey?: { projectId: string } }
+      ).cdsProjectKey?.projectId;
+      const projects = stateService
+        .getProjects()
+        .filter((project) => !projectScope || project.id === projectScope);
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
