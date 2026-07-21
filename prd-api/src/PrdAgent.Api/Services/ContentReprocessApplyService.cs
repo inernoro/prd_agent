@@ -162,8 +162,13 @@ public class ContentReprocessApplyService
     /// 把一段 markdown 写回指定 entry（资产归一 + 内容寻址共享保护 + 版本快照 + 元数据同步）。
     /// 供转录「换个整理方式」等 Worker 场景复用，与 AI 再加工 replace 同一条写回路径。
     /// </summary>
-    public Task SaveContentAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
-        => SaveContentToEntryAsync(entry, content, actorId, db);
+    public Task SaveContentAsync(
+        DocumentEntry entry,
+        string content,
+        string actorId,
+        MongoDbContext db,
+        bool preserveFileIdentity = false)
+        => SaveContentToEntryAsync(entry, content, actorId, db, preserveFileIdentity);
 
     /// <summary>读取 entry 完整正文（优先 DocumentId 的 RawContent，退回 ContentIndex）。</summary>
     public Task<string> LoadContentAsync(DocumentEntry entry) => LoadEntryContentAsync(entry);
@@ -179,7 +184,12 @@ public class ContentReprocessApplyService
         return entry.ContentIndex ?? string.Empty;
     }
 
-    private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
+    private async Task SaveContentToEntryAsync(
+        DocumentEntry entry,
+        string content,
+        string actorId,
+        MongoDbContext db,
+        bool preserveFileIdentity = false)
     {
         var normalized = await _assetNormalizer.NormalizeAsync(content, null, null, CancellationToken.None);
         content = normalized.Content;
@@ -219,17 +229,24 @@ public class ContentReprocessApplyService
         // 与 UpdateEntryContent 保持一致：把"最近编辑者"更新到当前 actor，
         // 否则团队场景下 audit/活动流会错误归属（Codex P2 十轮）
         // run.UserId 就是发起这次 AI 写回的人（chat endpoint 写入 run 时校验过 GetUserId）。
-        await db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entry.Id,
-            Builders<DocumentEntry>.Update
+        var update = Builders<DocumentEntry>.Update
                 .Set(e => e.DocumentId, parsed.Id)
                 .Set(e => e.Summary, content.Length > 200 ? content[..200] : content)
                 .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
-                .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
-                .Set(e => e.ContentType, "text/markdown")
                 .Set(e => e.LastChangedAt, DateTime.UtcNow)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow)
-                .Set(e => e.UpdatedBy, actorId),
+                .Set(e => e.UpdatedBy, actorId);
+        // 音频/视频转录结果与源文件共用同一个 DocumentEntry：正文写入 DocumentId，
+        // 但 ContentType / FileSize 必须继续描述可播放附件，不能把条目伪装成 Markdown。
+        if (!preserveFileIdentity)
+        {
+            update = update
+                .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
+                .Set(e => e.ContentType, "text/markdown");
+        }
+        await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entry.Id,
+            update,
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(

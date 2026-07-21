@@ -3951,7 +3951,7 @@ export default function CdsAgentPage() {
       setAutoScrollPaused(false);
     };
 	    return (
-	      <div className="h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" style={{ background: '#0F0F10' }}>
+	      <div className="surface-tone-dark h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" data-surface-tone="dark" style={{ background: '#0F0F10' }}>
 	        <div className={`mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 ${rightPanelCollapsed ? "xl:grid-cols-[292px_minmax(0,1fr)]" : "xl:grid-cols-[292px_minmax(0,1fr)_336px]"}`}>
 	          <aside className="min-h-0 overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
 	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
@@ -4469,7 +4469,7 @@ export default function CdsAgentPage() {
   }
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
+    <div className="surface-tone-dark h-full min-h-0 overflow-y-auto px-6 py-5 text-white" data-surface-tone="dark" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
       <div className="mx-auto flex max-w-[1500px] flex-col gap-5">
         <header className="order-1 flex flex-wrap items-center justify-between gap-3">
           <div>

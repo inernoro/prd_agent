@@ -12,6 +12,8 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
  * 桌面端完全不受影响。见 .claude/rules/mobile-first-density.md。
  */
 const GlassCardDepthContext = createContext(0);
+type GlassCardTone = 'adaptive' | 'dark';
+const GlassCardToneContext = createContext<GlassCardTone>('adaptive');
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -52,6 +54,8 @@ export interface GlassCardProps {
   animated?: boolean;
   /** 入场动画延迟（毫秒），用于同一区域多卡片错开 */
   animationDelay?: number;
+  /** 固定暗色可视化表面会自动向嵌套 GlassCard 继承。 */
+  tone?: GlassCardTone;
   /** 是否可被拖拽（HTML5 DnD，已不推荐，新代码用 onPointerDown + useDockDrag） */
   draggable?: boolean;
   /** 拖拽开始回调 */
@@ -83,6 +87,7 @@ export function GlassCard({
   mobileFlush = false,
   animated = false,
   animationDelay = 0,
+  tone = 'adaptive',
   draggable,
   onDragStart,
   onDragEnd,
@@ -98,8 +103,12 @@ export function GlassCard({
 
   // 手机端密度：嵌套卡片(depth>0) 或显式 mobileFlush 的顶层卡，手机端去 chrome 满铺（桌面端零影响）
   const depth = useContext(GlassCardDepthContext);
+  const inheritedTone = useContext(GlassCardToneContext);
+  const effectiveTone = tone === 'dark' || inheritedTone === 'dark' ? 'dark' : 'adaptive';
+  const toneIsLight = effectiveTone === 'dark' ? false : isLight;
   const isMobile = useIsMobile();
   const flush = isMobile && (depth > 0 || mobileFlush);
+  const removeChrome = flush && effectiveTone !== 'dark';
 
   // ── 入场动画：IntersectionObserver + CSS transition ──
   const ref = useRef<HTMLDivElement>(null);
@@ -125,11 +134,11 @@ export function GlassCard({
   const cardStyle = useMemo((): React.CSSProperties => {
     // ── 素色材质 / 性能模式：Obsidian 实底暗色表面 ──
     if (solidSurface) {
-      return buildObsidianStyle(variant, accentHue, glow, isLight, style);
+      return buildObsidianStyle(variant, accentHue, glow, toneIsLight, style);
     }
     // ── 液态玻璃材质 ──
-    return buildGlassStyle(variant, accentHue, glow, isLight, style);
-  }, [variant, accentHue, glow, solidSurface, isLight, style]);
+    return buildGlassStyle(variant, accentHue, glow, toneIsLight, style);
+  }, [variant, accentHue, glow, solidSurface, toneIsLight, style]);
 
   // 入场动画样式
   const animatedStyle: React.CSSProperties = animated && !isPerf
@@ -157,35 +166,39 @@ export function GlassCard({
   // 满铺卡手机端缩小圆角，弱化「卡中卡」框感
   const radiusClass = flush ? 'rounded-[10px]' : 'rounded-[16px]';
   // 满铺卡手机端去掉底色/边框/投影，内容直接坐在页面底色上（手机原生无卡框观感）
-  const finalStyle: React.CSSProperties = flush
+  const finalStyle: React.CSSProperties = removeChrome
     ? { ...animatedStyle, background: 'transparent', border: 'none', boxShadow: 'none' }
     : animatedStyle;
 
   return (
-    <GlassCardDepthContext.Provider value={depth + 1}>
-      <div
-        ref={ref}
-        className={cn(
-          radiusClass,
-          'relative no-focus-ring',
-          !solidSurface && !flush && 'glass-blur-pseudo',
-          !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
-          overflowClass[overflow],
-          paddingClass,
-          interactive && 'cursor-pointer glass-card-interactive',
-          className
-        )}
-        style={finalStyle}
-        onClick={onClick}
-        tabIndex={interactive ? 0 : undefined}
-        draggable={draggable}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        onPointerDown={onPointerDown}
-      >
-        {children}
-      </div>
-    </GlassCardDepthContext.Provider>
+    <GlassCardToneContext.Provider value={effectiveTone}>
+      <GlassCardDepthContext.Provider value={depth + 1}>
+        <div
+          ref={ref}
+          className={cn(
+            radiusClass,
+            'relative no-focus-ring',
+            !solidSurface && !removeChrome && 'glass-blur-pseudo',
+            !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
+            overflowClass[overflow],
+            paddingClass,
+            interactive && 'cursor-pointer glass-card-interactive',
+            effectiveTone === 'dark' && 'surface-tone-dark',
+            className
+          )}
+          data-surface-tone={effectiveTone}
+          style={finalStyle}
+          onClick={onClick}
+          tabIndex={interactive ? 0 : undefined}
+          draggable={draggable}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onPointerDown={onPointerDown}
+        >
+          {children}
+        </div>
+      </GlassCardDepthContext.Provider>
+    </GlassCardToneContext.Provider>
   );
 }
 
@@ -198,7 +211,7 @@ function buildObsidianStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
-  // 背景：使用 CSS 变量（已在 themeComputed 中切换为纯平实底值）。
+  // 背景：使用 CSS 变量（已在 tokens.css 的材质契约中切换为纯平实底值）。
   // 2026-07-16 现代化重做：去掉白色顶部镜面高光——那是「塑料亚克力感」的来源；
   // 素色的层级只靠 细描边 + 底色阶梯 表达（Linear/Vercel 式扁平）。
   // gold / accentHue 变体保留一层极轻的色彩顶部氛围（身份色，不是镜面反光）。

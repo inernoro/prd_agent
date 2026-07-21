@@ -186,14 +186,14 @@ export function ExperienceTrend({
   return (
     <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 0 }}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0 sm:pr-12">
-        <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+        <span className="text-[13px] font-semibold text-token-primary inline-flex items-center gap-2.5 min-w-0 flex-wrap">
           <span className="whitespace-nowrap">趋势爆点曲线</span>
-          <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
-            <TrendingUp size={12} className="text-cyan-300/70" />
+          <span className="hidden sm:inline-flex text-[11px] text-token-muted font-normal items-center gap-1.5 whitespace-nowrap">
+            <TrendingUp size={12} className="text-semantic-cyan" />
             报错/慢请求随时间的波动 · 标出爆发点
           </span>
         </span>
-        <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-wrap">
+        <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-token-secondary flex-wrap">
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
             <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
           </span>
@@ -201,7 +201,7 @@ export function ExperienceTrend({
             <i className="w-2.5 h-2.5 rounded-sm" style={{ background: SLOW }} />慢请求
           </span>
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
-            <span className="w-2 h-2 rounded-full" style={{ background: '#fff', boxShadow: `0 0 5px ${ERR}` }} />爆点
+            <span className="w-2 h-2 rounded-full" style={{ background: 'var(--text-primary)', boxShadow: `0 0 5px ${ERR}` }} />爆点
           </span>
         </div>
       </div>
@@ -210,20 +210,20 @@ export function ExperienceTrend({
         <div className="flex items-center gap-x-5 gap-y-1 flex-wrap px-4 pb-1.5 shrink-0 tabular-nums">
           <span className="inline-flex items-baseline gap-1.5">
             <span className="text-[15px] font-semibold" style={{ color: ERR }}>{summary.errors}</span>
-            <span className="text-[10.5px] text-white/40">报错总数</span>
+            <span className="text-[10.5px] text-token-muted">报错总数</span>
           </span>
           <span className="inline-flex items-baseline gap-1.5">
             <span className="text-[15px] font-semibold" style={{ color: SLOW }}>{summary.slow}</span>
-            <span className="text-[10.5px] text-white/40">慢请求总数</span>
+            <span className="text-[10.5px] text-token-muted">慢请求总数</span>
           </span>
           <span className="inline-flex items-baseline gap-1.5">
-            <span className="text-[15px] font-semibold text-white/85">{summary.bursts}</span>
-            <span className="text-[10.5px] text-white/40">爆发点</span>
+            <span className="text-[15px] font-semibold text-token-primary">{summary.bursts}</span>
+            <span className="text-[10.5px] text-token-muted">爆发点</span>
           </span>
           {summary.peak > 0 ? (
             <span className="inline-flex items-baseline gap-1.5">
-              <span className="text-[15px] font-semibold text-white/85">{summary.peak}</span>
-              <span className="text-[10.5px] text-white/40">单{unit === 'hour' ? '时' : '日'}峰值 · {fmtBucket(summary.peakAt, unit)}</span>
+              <span className="text-[15px] font-semibold text-token-primary">{summary.peak}</span>
+              <span className="text-[10.5px] text-token-muted">单{unit === 'hour' ? '时' : '日'}峰值 · {fmtBucket(summary.peakAt, unit)}</span>
             </span>
           ) : null}
         </div>
@@ -234,13 +234,13 @@ export function ExperienceTrend({
         {!hasData || !series ? (
           <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
             <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
-            <span className="text-sm text-emerald-300/85">当前窗口没有可绘制的趋势数据</span>
-            <span className="text-[12px] text-white/40">报错与慢请求都很少——这是好消息。可换更长时间范围，或</span>
+            <span className="text-sm text-semantic-success">当前窗口没有可绘制的趋势数据</span>
+            <span className="text-[12px] text-token-muted">报错与慢请求都很少——这是好消息。可换更长时间范围，或</span>
             {onSwitchHeatmap ? (
               <button
                 type="button"
                 onClick={onSwitchHeatmap}
-                className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-white/10 bg-white/[0.03] text-[11px] text-white/55 hover:text-white/85 hover:border-white/25 transition-colors cursor-pointer"
+                className="mt-1 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-token-subtle bg-token-nested text-[11px] text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
               >
                 切回体验全景热力图
               </button>
@@ -261,7 +261,7 @@ export function ExperienceTrend({
             {/* 基准网格线（4 等分），低饱和度不抢戏 */}
             {[0.25, 0.5, 0.75, 1].map((f) => {
               const y = PAD_T + series.innerH * (1 - f);
-              return <line key={f} x1={PAD_L} y1={y} x2={VW - PAD_R} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />;
+              return <line key={f} x1={PAD_L} y1={y} x2={VW - PAD_R} y2={y} stroke="var(--viz-grid)" strokeWidth={1} />;
             })}
             {/* 面积（先铺底，后画线） */}
             <path d={toAreaPath(series.slowPts, VH)} fill="url(#voc-trend-slow)" style={{ animation: 'voc-trend-fade .9s ease both', animationDelay: '0.6s' }} />
@@ -274,12 +274,12 @@ export function ExperienceTrend({
             {burstPts.map((p, i) => (
               <g key={`burst-${p.bucketStart}`} style={{ animation: 'voc-trend-pop .5s cubic-bezier(.34,1.56,.64,1) both', animationDelay: `${1.3 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }}>
                 <circle cx={p.x} cy={p.y} r={5.5} fill="none" stroke={p.color} strokeWidth={1.4} style={{ animation: 'voc-trend-ping 1.8s ease-out infinite', animationDelay: `${1.6 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }} />
-                <circle cx={p.x} cy={p.y} r={3} fill="#fff" style={{ filter: `drop-shadow(0 0 5px ${p.color})` }} />
+                <circle cx={p.x} cy={p.y} r={3} fill="var(--text-primary)" style={{ filter: `drop-shadow(0 0 5px ${p.color})` }} />
                 <text
                   x={p.x}
                   y={p.y - 11}
                   textAnchor="middle"
-                  style={{ fill: p.color, fontSize: 11, fontWeight: 700, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.6)', strokeWidth: 2.5 }}
+                  style={{ fill: p.color, fontSize: 11, fontWeight: 700, paintOrder: 'stroke', stroke: 'var(--viz-label-halo)', strokeWidth: 2.5 }}
                 >
                   {`+${p.burstPct}%`}
                 </text>
@@ -292,7 +292,7 @@ export function ExperienceTrend({
               const show = i === 0 || i === n - 1 || i % step === 0;
               if (!show) return null;
               return (
-                <text key={`xl-${i}`} x={p.x} y={VH - 12} textAnchor="middle" style={{ fill: 'rgba(236,236,239,0.35)', fontSize: 9.5 }}>
+                <text key={`xl-${i}`} x={p.x} y={VH - 12} textAnchor="middle" style={{ fill: 'var(--viz-label-muted)', fontSize: 9.5 }}>
                   {fmtBucket(p.bucket.bucketStart, unit)}
                 </text>
               );

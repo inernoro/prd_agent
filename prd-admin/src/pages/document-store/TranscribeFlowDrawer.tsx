@@ -9,14 +9,14 @@ import { useSseStream } from '@/lib/useSseStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { MarkdownViewer } from '@/components/file-preview';
 import { api } from '@/services/api';
-import { transcribeEntry, getAgentRun, uploadDocumentFileWithProgress, listTranscribeStyles, restyleTranscribeRun } from '@/services';
+import { transcribeEntry, getAgentRun, uploadDocumentFileWithProgress, listTranscribeStyles, restyleTranscribeRun, updateTranscribeTranscript } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { deriveTranscribeSteps, type TranscribeStepState } from './transcribeFlowSteps';
+import { parseMeetingContext } from './transcribeStyleContext';
 
 /**
- * 录音转录全链路（Notion 式）：上传音频 → 转录 → 生成摘要 → 保存笔记。
- * 参照 Notion 移动端会议录音流程：一张卡承载全流程，阶段清单逐项点亮，
- * 摘要流式生长（产物即体验），完成后一键打开转录笔记。
+ * 录音转录全链路：上传音频 → 生成可编辑原文 → 保存；整理是用户主动选择的下一步。
+ * 一张卡承载录音、原文校对和可选整理，阶段清单逐项点亮，关闭默认保留结果。
  *
  * 两种进入方式：
  * - 传 file（新上传录音）：卡内先执行上传，再自动发起转录；
@@ -31,7 +31,7 @@ export type TranscribeFlowDrawerProps = {
   /** 已有条目场景：源音/视频 entry */
   entryId?: string;
   entryTitle: string;
-  /** 首次转录的整理方式（音频结果区快捷按钮传入；空 = 智能摘要） */
+  /** 首次转录的整理方式；空 = 只生成原文，不调用整理模型。 */
   initialStyle?: import('@/services/real/documentStore').TranscribeStyleParams;
   /** 「换个整理方式」场景：带已完成的转录 run 直接进入 done 态整理面板（不重跑上传/转录） */
   restyleRun?: { runId: string; outputEntryId: string };
@@ -54,6 +54,8 @@ export type TranscribeFlowDrawerProps = {
    * 否则后台完成的转录笔记要手动刷新才出现（Codex P2）。
    */
   onRunTracking?: (runId: string | null) => void;
+  /** 新录音完成后允许明确取消并删除；普通关闭始终保留。 */
+  onDiscardEntry?: (entryId: string) => Promise<void>;
 };
 
 type StepState = TranscribeStepState;
@@ -73,6 +75,7 @@ export function TranscribeFlowDrawer({
   onDone,
   onOpenEntry,
   onRunTracking,
+  onDiscardEntry,
 }: TranscribeFlowDrawerProps) {
   const isMobile = useIsMobile();
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
@@ -89,8 +92,13 @@ export function TranscribeFlowDrawer({
   const hasStartedRef = useRef(false);
   const initialStyleRef = useRef(initialStyle);
   // 整理方式（完成后可换风格重新整理，免重跑 ASR）。列表来自后端 SSOT，禁止前端硬编码。
-  const [styles, setStyles] = useState<{ key: string; label: string; description: string }[]>([]);
-  const [styleKey, setStyleKey] = useState('general');
+  const [styles, setStyles] = useState<{
+    key: string;
+    label: string;
+    description: string;
+    contextInput?: { label: string; description: string; placeholder: string; example?: string | null } | null;
+  }[]>([]);
+  const [styleKey, setStyleKey] = useState(initialStyle?.styleKey || 'general');
   const [styleContext, setStyleContext] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [restyleSubmitting, setRestyleSubmitting] = useState(false);
@@ -99,17 +107,34 @@ export function TranscribeFlowDrawer({
   const [archivedTo, setArchivedTo] = useState<string | null>(null);
   // 上传进度（大录音文件不再"卡住没反馈"）
   const [uploadPercent, setUploadPercent] = useState(0);
-  // 结果区双页签：整理结果（markdown）/ 转录原文（run.transcriptText，2026-07-13 用户确认交互）
-  const [summaryView, setSummaryView] = useState<'summary' | 'raw'>('summary');
+  const [runningSeconds, setRunningSeconds] = useState(0);
+  // 结果区默认原文；用户主动整理后才出现以所选类型命名的第二个页签。
+  const [summaryView, setSummaryView] = useState<'summary' | 'raw'>(initialStyle?.styleKey ? 'summary' : 'raw');
   const [rawTranscript, setRawTranscript] = useState<string | null>(null);
+  const [rawDraft, setRawDraft] = useState('');
+  const [editingRaw, setEditingRaw] = useState(false);
+  const [savingRaw, setSavingRaw] = useState(false);
+  const [showOrganize, setShowOrganize] = useState(!!restyleRun);
+  const [includeSummary, setIncludeSummary] = useState(!!initialStyle?.styleKey || !!restyleRun);
+  const [discarding, setDiscarding] = useState(false);
   const rawFetchedRef = useRef(false);
+  const completedRunRef = useRef<string | null>(restyleRun?.runId ?? null);
 
   // 完成后取转录原文（run 上带 transcriptText；老 run 没存则显示指引）
   useEffect(() => {
     if (status !== 'done' || !runId || rawFetchedRef.current) return;
     rawFetchedRef.current = true;
     void getAgentRun(runId).then((res) => {
-      if (res.success) setRawTranscript(res.data?.transcriptText ?? '');
+      if (res.success) {
+        const text = res.data?.transcriptText ?? '';
+        setRawTranscript(text);
+        setRawDraft(text);
+        if (res.data?.generatedText) setSummaryText(res.data.generatedText);
+        if (res.data?.templateKey) {
+          setStyleKey(res.data.templateKey);
+          setIncludeSummary(true);
+        }
+      }
     });
   }, [status, runId]);
 
@@ -137,7 +162,10 @@ export function TranscribeFlowDrawer({
         if (d.generatedText) setSummaryText(d.generatedText);
         if (d.outputEntryId) {
           setOutputEntryId(d.outputEntryId);
-          onDone?.(d.outputEntryId);
+          if (!runId || completedRunRef.current !== runId) {
+            completedRunRef.current = runId;
+            onDone?.(d.outputEntryId);
+          }
         }
       },
       error: (data) => {
@@ -146,9 +174,11 @@ export function TranscribeFlowDrawer({
         setErrorMessage(d.message ?? '未知错误');
       },
     },
-    onError: (msg) => {
-      setStatus('failed');
-      setErrorMessage(msg);
+    onError: () => {
+      // 流连接在移动网络切换时可能中断；run 状态由下面的轮询继续确认，
+      // 不能仅凭 SSE 断线把一个实际已完成的任务判成失败。
+      setPhase('正在重新确认任务状态');
+      setErrorMessage(null);
     },
   });
 
@@ -159,11 +189,16 @@ export function TranscribeFlowDrawer({
     const r = res.data;
     if (r.phase) setPhase(r.phase);
     if (r.status === 'done') {
+      setPhase('完成');
       setStatus('done');
+      setErrorMessage(null);
       if (r.generatedText) setSummaryText(r.generatedText);
       if (r.outputEntryId) {
         setOutputEntryId(r.outputEntryId);
-        onDone?.(r.outputEntryId);
+        if (completedRunRef.current !== rid) {
+          completedRunRef.current = rid;
+          onDone?.(r.outputEntryId);
+        }
       }
     } else if (r.status === 'failed') {
       setStatus('failed');
@@ -172,6 +207,15 @@ export function TranscribeFlowDrawer({
       setErrorMessage(diagIdx >= 0 ? fullErr.slice(0, diagIdx) : fullErr);
     }
   }, [onDone]);
+
+  // SSE 是即时体验，轮询是正确性兜底。只要 run 未终态，每 2 秒查询一次；
+  // 即便 done 事件在 Safari 后台切换时丢失，也会在下一轮自动收敛。
+  useEffect(() => {
+    if (!runId || status !== 'running') return;
+    void refreshRun(runId);
+    const timer = window.setInterval(() => { void refreshRun(runId); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [runId, status, refreshRun]);
 
   const startTranscribe = useCallback(async (targetEntryId: string) => {
     setStatus('running');
@@ -273,16 +317,38 @@ export function TranscribeFlowDrawer({
       setSummaryText('');
       setSummaryFailed(false);
       setErrorMessage(null);
+      setIncludeSummary(true);
+      setSummaryView('summary');
+      setShowOrganize(false);
       setStatus('running');
       setPhase('排队中');
       onRunTracking?.(res.data.runId);
       setRunId(res.data.runId); // runId 变化触发 SSE 重订阅
+      void refreshRun(res.data.runId);
     } finally {
       setRestyleSubmitting(false);
     }
-  }, [runId, restyleSubmitting, styleKey, styleContext, customPrompt, abort, onRunTracking]);
+  }, [runId, restyleSubmitting, styleKey, styleContext, customPrompt, abort, onRunTracking, refreshRun]);
 
-  // ── 四步清单的状态推导（纯函数，见 transcribeFlowSteps.ts，单测覆盖） ──
+  const saveRawTranscript = useCallback(async () => {
+    if (!runId || !rawDraft.trim() || savingRaw) return;
+    setSavingRaw(true);
+    setErrorMessage(null);
+    try {
+      const res = await updateTranscribeTranscript(runId, rawDraft);
+      if (!res.success) {
+        setErrorMessage(res.error?.message ?? '保存原文失败');
+        return;
+      }
+      setRawTranscript(res.data.transcriptText);
+      setRawDraft(res.data.transcriptText);
+      setEditingRaw(false);
+    } finally {
+      setSavingRaw(false);
+    }
+  }, [rawDraft, runId, savingRaw]);
+
+  // ── 阶段清单状态推导（默认三步；主动整理时四步，纯函数与单测覆盖） ──
   const steps = useMemo(
     () => deriveTranscribeSteps({
       status,
@@ -290,11 +356,38 @@ export function TranscribeFlowDrawer({
       hasFile: !!file,
       hasEntry: !!entryId,
       summaryFailed,
+      includeSummary,
     }),
-    [status, phase, entryId, file, summaryFailed],
+    [status, phase, entryId, file, summaryFailed, includeSummary],
   );
 
   const running = status === 'uploading' || status === 'running';
+  const inPlace = !!entryId && outputEntryId === entryId;
+  const activeStep = steps.find(step => step.state === 'active');
+  const selectedStyle = styles.find(style => style.key === styleKey);
+  const meetingContextFields = useMemo(
+    () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
+    [selectedStyle?.contextInput, styleContext],
+  );
+  const runningDescription = status === 'uploading'
+    ? '录音正在安全保存，随后只生成可编辑原文'
+    : phase.includes('写入')
+      ? 'AI 整理已经返回，正在把录音、原文和整理结果写入同一文档'
+      : runningSeconds >= 20
+        ? '任务仍在后台执行，系统每 2 秒确认一次状态；关闭面板也不会中断'
+        : (activeStep?.sub || (includeSummary
+          ? '正在按你选择的方式整理，完成后保存到同一录音文档'
+          : '正在把录音转成文字，完成后自动保存'));
+
+  useEffect(() => {
+    if (!running) return;
+    const startedAt = Date.now();
+    setRunningSeconds(0);
+    const timer = window.setInterval(() => {
+      setRunningSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, runId]);
 
   // ── 流式贴底滚动（业界标准 stick-to-bottom：贴底才自动滚，上滑即打断，回到底部恢复） ──
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -321,9 +414,32 @@ export function TranscribeFlowDrawer({
   }, []);
 
   const body = (
-    <>
+    <div className={running ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
+      {running && (
+        <div className="mx-auto flex w-full max-w-[340px] flex-col items-center text-center" aria-live="polite">
+          <motion.div
+            className="mb-4 flex h-20 w-20 items-center justify-center rounded-[24px]"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+            animate={{ borderColor: ['var(--border-faint)', 'rgba(96,165,250,0.55)', 'var(--border-faint)'] }}
+            transition={{ duration: 2.4, repeat: Infinity }}>
+            <MapSpinner size={28} />
+          </motion.div>
+          <p className="text-[18px] font-semibold text-token-primary">
+            {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
+          </p>
+          <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
+            {runningDescription}
+          </p>
+          <p className="mt-3 text-[11px] tabular-nums text-token-muted">
+            已进行 {formatProcessDuration(runningSeconds)}
+          </p>
+        </div>
+      )}
+
       {/* 阶段清单（Notion 式逐项点亮） */}
-      <div className="space-y-2.5">
+      <div
+        className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
+        style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
         {steps.map((s) => (
           <div key={s.key} className="flex items-center gap-2.5">
             <StepIcon state={s.state} />
@@ -350,7 +466,7 @@ export function TranscribeFlowDrawer({
 
       {/* 上传进度条：仅上传阶段显示 */}
       {status === 'uploading' && (
-        <div>
+        <div className="mx-auto w-full max-w-[340px]">
           <div className="mb-1 flex items-center justify-between text-[11px] text-token-muted">
             <span>正在上传录音</span>
             <span className="tabular-nums">{uploadPercent}%</span>
@@ -364,12 +480,12 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 摘要流式生长区（产物即体验：等待期主视觉是摘要本身在长）。
+      {/* 用户主动整理后才展示流式结果；默认转原文不生成摘要。
           完成后不在这里展示——完成态的摘要在下方操作区之后以 markdown 渲染（限高内滚），
           保证「查看/换方式/归档」操作不被长摘要顶出屏幕（2026-07-13 用户反馈按钮太靠下）。 */}
-      {summaryText && status !== 'done' && (
-        <div className="surface-inset rounded-[12px] p-3.5">
-          <p className="mb-2 text-[11px] font-semibold text-token-muted">摘要</p>
+      {includeSummary && summaryText && status !== 'done' && (
+        <div className="surface-inset mx-auto w-full max-w-[380px] rounded-[12px] p-3.5">
+          <p className="mb-2 text-[11px] font-semibold text-token-muted">整理结果</p>
           <div className="text-[13px] leading-relaxed text-token-primary">
             <StreamingText
               text={summaryText}
@@ -397,7 +513,7 @@ export function TranscribeFlowDrawer({
       )}
 
       {/* 完成后的产物直达 */}
-      {status === 'done' && outputEntryId && (
+      {status === 'done' && outputEntryId && !inPlace && (
         <button
           onClick={() => {
             onOpenEntry?.(outputEntryId);
@@ -415,12 +531,45 @@ export function TranscribeFlowDrawer({
         </button>
       )}
 
-      {/* 换个整理方式：默认智能摘要已生成，这里可换预设风格或自定义要求重新整理（不重跑转录） */}
-      {status === 'done' && outputEntryId && styles.length > 0 && (
+      {status === 'done' && inPlace && (
+        <div
+          className="rounded-[12px] px-4 py-3"
+          style={{
+            background: 'rgba(34,197,94,0.08)',
+            border: '1px solid rgba(34,197,94,0.2)',
+          }}>
+          <p className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+            录音和原文已保存
+          </p>
+          <p className="mt-1 text-[11px] text-token-muted">
+            {includeSummary ? '录音、原文和整理结果都在本页，位置没有改变。' : '现在关闭也会保留；需要时再点一键整理。'}
+          </p>
+        </div>
+      )}
+
+      {status === 'done' && outputEntryId && styles.length > 0 && !showOrganize && (
+        <button
+          type="button"
+          onClick={() => setShowOrganize(true)}
+          className="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-[12px] px-4 py-3 text-left transition-colors"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+          <span>
+            <span className="block text-[13px] font-semibold text-token-primary">一键整理</span>
+            <span className="mt-0.5 block text-[11px] text-token-muted">可选下一步，不会改动录音和原文</span>
+          </span>
+          <ChevronRight size={15} className="text-token-muted" />
+        </button>
+      )}
+
+      {/* 整理完全由用户主动展开和选择，不在原文完成后强制执行。 */}
+      {status === 'done' && outputEntryId && styles.length > 0 && showOrganize && (
         <div className="surface-inset rounded-[12px] p-3.5">
-          <p className="mb-1 text-[12px] font-semibold text-token-primary">换个整理方式</p>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold text-token-primary">选择整理方式</p>
+            <button type="button" onClick={() => setShowOrganize(false)} className="min-h-11 px-2 text-[11px] text-token-muted">收起</button>
+          </div>
           <p className="mb-2.5 text-[11px] text-token-muted">
-            只重新整理摘要，转录全文保持不动；原摘要可在文档「历史版本」中找回。
+            只新增或更新所选类型的整理结果，录音和原文保持不动。
           </p>
           <div className="mb-2.5 flex flex-wrap gap-1.5">
             {styles.map((s) => {
@@ -449,25 +598,63 @@ export function TranscribeFlowDrawer({
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
             />
           )}
-          <input
-            value={styleContext}
-            onChange={(e) => setStyleContext(e.target.value)}
-            placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
-            className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
-            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-          />
+          {selectedStyle?.contextInput ? (
+            <div className="mb-2.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <label className="text-[11px] font-semibold text-token-secondary">{selectedStyle.contextInput.label}</label>
+                {selectedStyle.contextInput.example && !styleContext.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setStyleContext(selectedStyle.contextInput?.example || '')}
+                    className="min-h-11 px-2 text-[11px] font-semibold"
+                    style={{ color: 'var(--accent-primary, rgba(96,165,250,0.95))' }}>
+                    填入示例
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-[11px] leading-relaxed text-token-muted">{selectedStyle.contextInput.description}</p>
+              <textarea
+                value={styleContext}
+                onChange={(e) => setStyleContext(e.target.value)}
+                rows={6}
+                placeholder={selectedStyle.contextInput.placeholder}
+                className="w-full resize-y rounded-[10px] px-3 py-2 text-[12px] leading-relaxed text-token-primary outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+              />
+              {meetingContextFields.length > 0 && (
+                <div className="mt-2 rounded-[9px] px-3 py-2" style={{ background: 'var(--bg-elevated)' }}>
+                  <p className="mb-1.5 text-[10px] font-semibold text-token-muted">已识别字段</p>
+                  <div className="space-y-1">
+                    {meetingContextFields.map(field => (
+                      <p key={field.label} className="text-[11px] leading-relaxed text-token-secondary">
+                        <span className="font-semibold">{field.label}：</span>{field.value}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <input
+              value={styleContext}
+              onChange={(e) => setStyleContext(e.target.value)}
+              placeholder="补充背景（可选），例如：参会人：张三、李四；主题：季度复盘"
+              className="mb-2.5 w-full rounded-[10px] px-3 py-2 text-[12px] text-token-primary outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+            />
+          )}
           <Button
             variant="secondary"
             size="sm"
             disabled={restyleSubmitting || (styleKey === 'custom' && !customPrompt.trim())}
             onClick={() => { void startRestyle(); }}>
-            {restyleSubmitting ? <MapSpinner size={12} /> : null} 按此方式重新整理
+            {restyleSubmitting ? <MapSpinner size={12} /> : null} 生成{styles.find(style => style.key === styleKey)?.label || '整理结果'}
           </Button>
         </div>
       )}
 
       {/* 归档到文件夹：默认跟随源音频位置，可现在归档到指定文件夹 */}
-      {status === 'done' && outputEntryId && onMoveNote && (folders?.length ?? 0) > 0 && (
+      {status === 'done' && outputEntryId && !inPlace && onMoveNote && (folders?.length ?? 0) > 0 && (
         <div className="surface-inset rounded-[12px] p-3.5">
           <p className="mb-1 text-[12px] font-semibold text-token-primary">归档到文件夹</p>
           <p className="mb-2 text-[11px] text-token-muted">默认跟随源音频所在位置，选择后立即移动转录笔记。</p>
@@ -500,13 +687,17 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 完成态结果预览：双页签「整理结果 / 转录原文」+ markdown 渲染 + 限高内滚 + 可编辑。
-          原始转录必须可见——整理是加工品，原文是底稿，两者都留（2026-07-13 用户确认交互） */}
-      {status === 'done' && summaryText && (
+      {/* 原文是默认产物且可直接校对；用户主动整理后，第二个页签用所选类型命名。 */}
+      {status === 'done' && outputEntryId && (
         <div className="surface-inset rounded-[12px] p-3.5">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              {([['summary', '整理结果'], ['raw', '转录原文']] as const).map(([key, label]) => (
+              {([
+                ['raw', '原文'],
+                ...(includeSummary && summaryText
+                  ? [['summary', styles.find(style => style.key === styleKey)?.label || '整理结果']]
+                  : []),
+              ] as ['raw' | 'summary', string][]).map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setSummaryView(key)}
@@ -518,7 +709,15 @@ export function TranscribeFlowDrawer({
                 </button>
               ))}
             </div>
-            {outputEntryId && onEditNote && (
+            {summaryView === 'raw' && rawTranscript !== null && !editingRaw ? (
+              <button
+                type="button"
+                onClick={() => { setRawDraft(rawTranscript || ''); setEditingRaw(true); }}
+                className="min-h-11 cursor-pointer rounded-[7px] px-2 text-[11px] font-semibold"
+                style={{ color: 'var(--accent-primary, rgba(96,165,250,0.95))' }}>
+                编辑原文
+              </button>
+            ) : outputEntryId && onEditNote && !inPlace && (
               <button
                 onClick={() => { onEditNote(outputEntryId); onClose(); }}
                 className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors hover:bg-white/8"
@@ -527,13 +726,36 @@ export function TranscribeFlowDrawer({
               </button>
             )}
           </div>
-          <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <div style={{ maxHeight: 280, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {summaryView === 'summary' ? (
               <MarkdownViewer content={summaryText} />
             ) : rawTranscript === null ? (
               <div className="flex items-center gap-2 py-3 text-[12px] text-token-muted"><MapSpinner size={12} /> 正在读取转录原文…</div>
+            ) : editingRaw ? (
+              <div>
+                <textarea
+                  autoFocus
+                  value={rawDraft}
+                  onChange={(event) => setRawDraft(event.target.value)}
+                  rows={8}
+                  className="w-full resize-y rounded-[10px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                />
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button variant="ghost" size="xs" disabled={savingRaw} onClick={() => { setRawDraft(rawTranscript || ''); setEditingRaw(false); }}>取消修改</Button>
+                  <Button variant="primary" size="xs" disabled={savingRaw || !rawDraft.trim()} onClick={() => { void saveRawTranscript(); }}>
+                    {savingRaw ? <MapSpinner size={12} /> : null} 保存原文
+                  </Button>
+                </div>
+              </div>
             ) : rawTranscript ? (
-              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-token-primary">{rawTranscript}</p>
+              <button
+                type="button"
+                onClick={() => { setRawDraft(rawTranscript); setEditingRaw(true); }}
+                className="min-h-11 w-full cursor-text whitespace-pre-wrap rounded-[8px] px-2 py-2 text-left text-[13px] leading-relaxed text-token-primary hover:bg-white/4"
+                title="点击修改原文">
+                {rawTranscript}
+              </button>
             ) : (
               <p className="py-2 text-[12px] text-token-muted">
                 本次任务未单独保存转录原文（旧版本生成）。完整原文在转录笔记的「转录全文」小节，点上方「查看转录笔记」查看。
@@ -542,7 +764,7 @@ export function TranscribeFlowDrawer({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 
   const header = (
@@ -558,7 +780,8 @@ export function TranscribeFlowDrawer({
       </div>
       <button
         onClick={onClose}
-        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+        aria-label="关闭录音转录"
+        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover:bg-white/6">
         <X size={15} />
       </button>
     </div>
@@ -566,8 +789,8 @@ export function TranscribeFlowDrawer({
 
   const footer = (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-token-muted">
-        {running ? '可关闭面板，任务在后台继续' : ''}
+      <span className="min-w-0 flex-1 text-[11px] text-token-muted">
+        {running ? '可关闭面板，任务在后台继续' : status === 'done' ? '关闭会保留录音和原文' : ''}
       </span>
       <div className="flex items-center gap-2">
         {/* 上传阶段失败（网络断开等）：录音 File 还在内存/本机保险箱，直接重试整条链路 */}
@@ -579,6 +802,21 @@ export function TranscribeFlowDrawer({
         {status === 'failed' && entryId && (
           <Button variant="primary" size="sm" onClick={() => { void startTranscribe(entryId); }}>
             重试转录
+          </Button>
+        )}
+        {status === 'done' && entryId && onDiscardEntry && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={discarding}
+            onClick={() => {
+              setDiscarding(true);
+              void onDiscardEntry(entryId)
+                .then(onClose)
+                .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : '取消失败'))
+                .finally(() => setDiscarding(false));
+            }}>
+            {discarding ? <MapSpinner size={12} /> : null} 取消本次录音
           </Button>
         )}
         <Button variant={status === 'done' ? 'primary' : 'ghost'} size="sm" onClick={onClose}>
@@ -598,24 +836,23 @@ export function TranscribeFlowDrawer({
       transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <motion.div
-        className={`surface-popover flex flex-col ${isMobile ? 'w-full rounded-t-[18px]' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
-        style={isMobile ? { maxHeight: '86vh', paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
+        className={`surface-popover flex flex-col ${isMobile ? 'w-full' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
+        style={isMobile ? {
+          height: '100dvh',
+          maxHeight: '100dvh',
+          background: 'var(--bg-primary)',
+        } : undefined}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
         exit={isMobile ? { y: '100%' } : { x: '100%' }}
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
         onClick={(e) => e.stopPropagation()}>
-        {isMobile && (
-          <div className="flex justify-center pt-2.5">
-            <div className="h-1 w-9 rounded-full bg-white/15" />
-          </div>
-        )}
         <div className={`shrink-0 ${isMobile ? 'px-4 py-3' : 'surface-panel-header px-5 py-4'}`}>{header}</div>
         <div className="relative flex-1" style={{ minHeight: 0 }}>
           <div
             ref={scrollRef}
             onScroll={handleBodyScroll}
-            className={`h-full space-y-4 ${isMobile ? 'px-4 pb-2' : 'px-5 py-5'}`}
+            className={`h-full ${isMobile ? 'px-4' : 'px-5'}`}
             style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {body}
           </div>
@@ -634,8 +871,12 @@ export function TranscribeFlowDrawer({
           )}
         </div>
         <div
-          className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 pt-4 pb-5'}`}
-          style={{ borderTop: '1px solid var(--border-faint)' }}>
+          className={`shrink-0 px-4 pt-3 ${isMobile ? '' : 'px-5 pb-5 pt-4'}`}
+          style={{
+            borderTop: '1px solid var(--border-faint)',
+            paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 12px)' : undefined,
+            background: 'var(--bg-primary)',
+          }}>
           {footer}
         </div>
       </motion.div>
@@ -643,6 +884,12 @@ export function TranscribeFlowDrawer({
   );
 
   return createPortal(overlay, document.body);
+}
+
+function formatProcessDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function StepIcon({ state }: { state: StepState }) {

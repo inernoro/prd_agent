@@ -229,11 +229,11 @@ export function ExperienceMap({
         {/* 卡头：手机端单行横滚（mobile-first-density：控制条不换行不堆叠），sm 起恢复左右两端布局。
             实时扫描中 chip 与图例手机端隐藏——小屏寸土寸金，颜色语义由块色自明。 */}
         <div className="flex flex-row items-center gap-2 overflow-x-auto sm:overflow-visible sm:justify-between px-3 sm:px-4 pt-3 pb-2 shrink-0" style={{ overscrollBehavior: 'contain' }}>
-          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 shrink-0 sm:min-w-0 sm:flex-wrap">
+          <span className="text-[13px] font-semibold text-token-primary inline-flex items-center gap-2.5 shrink-0 sm:min-w-0 sm:flex-wrap">
             <span className="whitespace-nowrap">体验全景热力图</span>
             <span
               className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0"
-              style={{ background: 'rgba(45,212,191,0.12)', color: '#5eead4', border: '1px solid rgba(45,212,191,0.32)' }}
+              style={{ background: 'rgba(45,212,191,0.12)', color: 'var(--semantic-cyan-text)', border: '1px solid rgba(45,212,191,0.32)' }}
             >
               <span className="relative inline-flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400" style={{ opacity: 0.6, animation: 'voc-ping 1.5s cubic-bezier(0,0,.2,1) infinite' }} />
@@ -241,29 +241,29 @@ export function ExperienceMap({
               </span>
               实时扫描中
             </span>
-            <span className="hidden sm:inline text-[11px] text-white/35 font-normal whitespace-nowrap">
+            <span className="hidden sm:inline text-[11px] text-token-muted font-normal whitespace-nowrap">
               {mode === 'all' ? '每块=端点 · 面积=访问量 · 颜色=健康' : '只看病灶 · 面积=问题严重度 · 点击下钻'}
             </span>
           </span>
-          <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-nowrap shrink-0 sm:shrink sm:flex-wrap sm:min-w-0">
-            <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+          <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-token-secondary flex-nowrap shrink-0 sm:shrink sm:flex-wrap sm:min-w-0">
+            <div className="inline-flex rounded-lg border border-token-subtle bg-token-nested p-0.5">
               <button
                 type="button"
                 onClick={() => setMode('all')}
-                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'all' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'all' ? 'bg-cyan-500/15 text-semantic-cyan' : 'text-token-muted hover-text-primary'}`}
               >
                 全域
               </button>
               <button
                 type="button"
                 onClick={() => setMode('pain')}
-                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'pain' ? 'bg-rose-500/15 text-rose-200' : 'text-white/45 hover:text-white/75'}`}
+                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'pain' ? 'bg-rose-500/15 text-semantic-danger' : 'text-token-muted hover-text-primary'}`}
               >
                 痛点
               </button>
             </div>
             {headerExtra ? <span className="shrink-0">{headerExtra}</span> : null}
-            <span className="hidden sm:inline w-px h-3.5 bg-white/10" />
+            <span className="hidden sm:inline w-px h-3.5 bg-token-nested" />
             <span className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
             </span>
@@ -279,7 +279,7 @@ export function ExperienceMap({
                   type="button"
                   onClick={onExitFullscreen}
                   title="退出全屏（ESC）"
-                  className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-token-subtle bg-token-nested text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
                 >
                   <Minimize2 size={14} />
                 </button>
@@ -289,7 +289,7 @@ export function ExperienceMap({
                 type="button"
                 onClick={onRequestFullscreen}
                 title="全屏放大热力图"
-                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-token-subtle bg-token-nested text-token-secondary hover-text-primary hover-border-token transition-colors cursor-pointer"
               >
                 <Maximize2 size={14} />
               </button>
@@ -303,8 +303,8 @@ export function ExperienceMap({
           {layout.groupRects.length === 0 ? (
             <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center">
               <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
-              <span className="text-sm text-emerald-300/85">当前范围内没有痛点</span>
-              <span className="text-[12px] text-white/40">系统体验健康，切回「全域」看全部端点</span>
+              <span className="text-sm text-semantic-success">当前范围内没有痛点</span>
+              <span className="text-[12px] text-token-muted">系统体验健康，切回「全域」看全部端点</span>
             </div>
           ) : (
           <svg
@@ -318,7 +318,7 @@ export function ExperienceMap({
                 <rect
                   rx={4}
                   fill="none"
-                  stroke="rgba(255,255,255,0.10)"
+                  stroke="var(--viz-grid)"
                   strokeWidth={1}
                   style={{ x: `${g.rect.x}px`, y: `${g.rect.y}px`, width: `${g.rect.w}px`, height: `${g.rect.h}px`, transition: MORPH }}
                 />
@@ -327,12 +327,12 @@ export function ExperienceMap({
                     x={g.rect.x + 5}
                     y={g.rect.y + 11}
                     style={{
-                      fill: 'rgba(236,236,239,0.82)',
+                      fill: 'var(--viz-label)',
                       fontSize: 10.5,
                       fontWeight: 700,
                       letterSpacing: '0.3px',
                       paintOrder: 'stroke',
-                      stroke: 'rgba(0,0,0,0.6)',
+                      stroke: 'var(--viz-label-halo)',
                       strokeWidth: 2.5,
                     }}
                   >

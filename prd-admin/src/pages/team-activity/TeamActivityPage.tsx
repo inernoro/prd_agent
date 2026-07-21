@@ -236,8 +236,8 @@ export default function TeamActivityPage() {
             title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
             className={`ml-auto inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors shrink-0 whitespace-nowrap ${
               privacy
-                ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
-                : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
+                ? 'bg-violet-500/15 text-semantic-purple border-violet-500/35'
+                : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
             }`}
           >
             {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -281,17 +281,17 @@ export default function TeamActivityPage() {
             <MapSectionLoader text="正在加载团队动态…" />
           ) : loadError && items.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-              <Activity size={36} className="text-white/15" />
-              <div className="text-sm text-white/60">{loadError}</div>
+              <Activity size={36} className="text-token-muted" />
+              <div className="text-sm text-token-secondary">{loadError}</div>
               <Button variant="secondary" size="sm" onClick={() => void load(1, false)}>
                 重试
               </Button>
             </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-              <Activity size={36} className="text-white/15" />
-              <div className="text-sm text-white/60">还没有符合条件的动态</div>
-              <div className="text-[12px] text-white/35 max-w-md leading-relaxed">
+              <Activity size={36} className="text-token-muted" />
+              <div className="text-sm text-token-secondary">还没有符合条件的动态</div>
+              <div className="text-[12px] text-token-muted max-w-md leading-relaxed">
                 团队成员在知识库、缺陷管理、周报、视觉/文学创作、网页托管中的关键操作会自动出现在这里。
                 试试切换成员、模块或时间范围。
               </div>
@@ -302,16 +302,15 @@ export default function TeamActivityPage() {
                 <div key={g.key} className="flex flex-col">
                   {/* 吸顶日期头：长流滚动时始终知道自己看到哪一天 */}
                   <div
-                    className="sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-3 px-3 sm:-mx-5 sm:px-5 backdrop-blur-md"
-                    style={{ background: 'rgba(16,17,19,0.72)' }}
+                    className="viz-sticky-surface sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-3 px-3 sm:-mx-5 sm:px-5"
                   >
-                    <span className="text-[12px] font-semibold text-white/70">{dayLabelOf(g.key)}</span>
-                    <span className="flex-1 h-px bg-white/5" />
-                    <span className="text-[11px] text-white/30">{g.total} 条</span>
+                    <span className="text-[12px] font-semibold text-token-primary">{dayLabelOf(g.key)}</span>
+                    <span className="flex-1 h-px bg-token-nested" />
+                    <span className="text-[11px] text-token-muted">{g.total} 条</span>
                   </div>
                   <div className="relative">
                     {/* 时间线 rail：把同一天的事件串成一条线（GitLab 式） */}
-                    <span className="absolute left-4 top-3 bottom-3 w-px bg-white/[0.06]" aria-hidden />
+                    <span className="absolute left-4 top-3 bottom-3 w-px bg-token-nested" aria-hidden />
                     {g.rows.map((row) => (
                       <ActivityRow key={row.id} group={row} privacy={privacy} />
                     ))}
@@ -358,8 +357,8 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
       onClick={onClick}
       className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors shrink-0 whitespace-nowrap ${
         active
-          ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
-          : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
+          ? 'bg-cyan-500/15 text-semantic-cyan border-cyan-500/35'
+          : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
       }`}
     >
       {label}
@@ -378,7 +377,7 @@ function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: b
   const hasMoreTargets = group.count > titles.length && titles.length > 0;
 
   return (
-    <div className="relative flex items-start gap-3 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+    <div className="relative flex items-start gap-3 py-2 rounded-lg hover-bg-soft transition-colors">
       {/* 头像 + 模块色动作图标徽章（GitLab 时间线式事件类型标识） */}
       <span className="relative z-10 shrink-0">
         <UserAvatar
@@ -388,21 +387,21 @@ function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: b
         />
         <span
           className="absolute -bottom-0.5 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
-          style={{ background: '#16171a', border: `1px solid ${meta.border}` }}
+          style={{ background: 'var(--panel-solid)', border: `1px solid ${meta.border}` }}
         >
           <ActionIcon size={9} style={{ color: meta.accent }} />
         </span>
       </span>
       <div className="flex-1 min-w-0 text-[13px] leading-relaxed pt-1">
-        <span className="text-white/90 font-semibold">{privacy ? maskName(actorName) : actorName}</span>
-        <span className="text-white/50"> {item.actionLabel}</span>
+        <span className="text-token-primary font-semibold">{privacy ? maskName(actorName) : actorName}</span>
+        <span className="text-token-secondary"> {item.actionLabel}</span>
         {titles.map((t, i) => (
-          <span key={i} className="text-cyan-200/90">
+          <span key={i} className="text-semantic-cyan">
             {' '}
             《{t}》
           </span>
         ))}
-        {hasMoreTargets ? <span className="text-white/50"> 等</span> : null}
+        {hasMoreTargets ? <span className="text-token-secondary"> 等</span> : null}
         {group.count > 1 ? (
           <span
             className="inline-block ml-2 px-1.5 py-px rounded text-[11px] font-semibold tabular-nums align-[1px]"
@@ -414,12 +413,12 @@ function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: b
       </div>
       {/* 右侧元信息：模块归属 + 时间戳（第三优先级，弱化） */}
       <div className="flex items-center gap-2.5 shrink-0 pt-1.5">
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-white/35">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-token-muted">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.accent }} />
           {item.moduleLabel}
         </span>
         {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
-        <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35" />
+        <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-token-muted" />
       </div>
     </div>
   );

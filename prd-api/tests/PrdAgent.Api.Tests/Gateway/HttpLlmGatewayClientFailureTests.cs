@@ -1,8 +1,10 @@
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.ModelPool;
 using Shouldly;
 using Xunit;
 
@@ -152,9 +154,58 @@ public class HttpLlmGatewayClientFailureTests
         response.LogId.ShouldBe("log-send-123");
     }
 
+    [Fact]
+    public async Task StructuredRawQuotaFailure_NotifiesAdminInHttpMode()
+    {
+        const string body = "{\"Success\":false,\"StatusCode\":402,\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"大模型平台额度已用尽或被限额\"}";
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(
+            new StaticResponseHttpClientFactory(HttpStatusCode.PaymentRequired, body),
+            failoverNotifier: notifier.Object);
+
+        var raw = await client.SendRawWithResolutionAsync(
+            RawRequest(),
+            new GatewayModelResolution
+            {
+                Success = true,
+                ActualModel = "openai/gpt-audio",
+                ActualPlatformName = "openrouter.ai",
+            });
+
+        raw.ErrorCode.ShouldBe("LLM_QUOTA_EXCEEDED");
+        notifier.Verify(x => x.NotifyQuotaExceededAsync(
+                "openrouter.ai",
+                It.Is<string>(message => message.Contains("额度已用尽")),
+                CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ClientStreamQuotaFailure_NotifiesAdminInHttpMode()
+    {
+        const string body = "{\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"Key limit exceeded (total limit)\"}";
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(
+            new StaticResponseHttpClientFactory(HttpStatusCode.PaymentRequired, body),
+            failoverNotifier: notifier.Object);
+
+        var chunks = await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync(
+            "sys",
+            new List<LLMMessage> { new() { Role = "user", Content = "hi" } }));
+
+        chunks.Count.ShouldBe(1);
+        chunks[0].Type.ShouldBe("error");
+        notifier.Verify(x => x.NotifyQuotaExceededAsync(
+                "独立 LLM 网关",
+                It.Is<string>(message => message.Contains("Key limit exceeded")),
+                CancellationToken.None),
+            Times.Once);
+    }
+
     private static HttpLlmGatewayClient BuildClient(
         IHttpClientFactory factory,
-        string baseUrl = "http://llmgw-serve.test")
+        string baseUrl = "http://llmgw-serve.test",
+        IPoolFailoverNotifier? failoverNotifier = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -165,7 +216,8 @@ public class HttpLlmGatewayClientFailureTests
         return new HttpLlmGatewayClient(
             factory,
             config,
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance,
+            failoverNotifier: failoverNotifier);
     }
 
     private static GatewayRequest Request() => new()

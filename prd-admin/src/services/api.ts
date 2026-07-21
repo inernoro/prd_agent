@@ -1278,6 +1278,7 @@ export const api = {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
+      quickCapture: () => '/api/document-store/stores/quick-capture',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
       size: (storeId: string) => `/api/document-store/stores/${storeId}/size`,
       setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
@@ -1312,6 +1313,7 @@ export const api = {
       // 录音转笔记：整理方式列表 + 换个整理方式（免重跑 ASR）
       transcribeStyles: () => `/api/document-store/transcribe-styles`,
       transcribeRestyle: (runId: string) => `/api/document-store/agent-runs/${runId}/restyle`,
+      transcribeTranscript: (runId: string) => `/api/document-store/agent-runs/${runId}/transcript`,
       // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
       autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
     },
@@ -1320,6 +1322,10 @@ export const api = {
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
+      recordingUploadStart: (storeId: string) => `/api/document-store/stores/${storeId}/recording-uploads`,
+      recordingUploadStatus: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}`,
+      recordingUploadChunk: (sessionId: string, index: number) => `/api/document-store/recording-uploads/${sessionId}/chunks/${index}`,
+      recordingUploadComplete: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}/complete`,
       replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,

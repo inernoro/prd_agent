@@ -149,8 +149,8 @@ public class SubtitleGenerationProcessor
     }
 
     /// <summary>
-    /// 录音转录全链路（kind = transcribe）：ASR 转录 + AI 摘要 → 「摘要 + 转录全文」新 entry。
-    /// 与字幕生成共用 ASR 三路分发；差异在产物：字幕是逐句时间轴，转录笔记是摘要在上、全文在下。
+    /// 录音转录（kind = transcribe）：默认只做 ASR 并原地写回原文。
+    /// 只有请求显式携带整理方式时才继续调用 LLM；录音、原文与可选整理结果始终共用同一文档。
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
@@ -198,80 +198,71 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException(
                 "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。");
 
-        // 2) AI 摘要（流式 delta 推给前端逐字生长）。摘要失败不摧毁整条链路：转录稿仍然交付。
-        await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
+        // 2) 可选整理。默认录音链路不调用 LLM，先把原文最快交给用户；
+        // 只有用户显式选择了整理方式（TemplateKey 非空）才生成整理结果。
         var summary = "";
-        try
+        if (!string.IsNullOrWhiteSpace(run.TemplateKey))
         {
-            summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[doc-store-agent] 转录摘要生成失败，降级为仅转录全文 run={RunId}", run.Id);
+            await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
             try
             {
-                await runStore.AppendEventAsync(
-                    DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
-                    new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
-                    ct: CancellationToken.None);
+                summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
             }
-            catch { /* ignore */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[doc-store-agent] 转录整理生成失败，降级为仅保存原文 run={RunId}", run.Id);
+                try
+                {
+                    await runStore.AppendEventAsync(
+                        DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
+                        new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
+                        ct: CancellationToken.None);
+                }
+                catch { /* ignore */ }
+            }
         }
 
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
 
-        // 3) 落库：摘要 + 转录全文 → 新 entry
+        // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
+        // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
         var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
-        var parsed = await _documentService.ParseAsync(noteMd);
-        parsed.Title = BuildTranscriptTitle(entry.Title);
-        await _documentService.SaveAsync(parsed);
+        await _applyService.SaveContentAsync(
+            entry, noteMd, run.UserId, db, preserveFileIdentity: true);
 
-        var newEntry = new DocumentEntry
-        {
-            StoreId = entry.StoreId,
-            ParentId = entry.ParentId,
-            Title = BuildTranscriptTitle(entry.Title),
-            Summary = string.IsNullOrWhiteSpace(summary)
-                ? (transcriptPlain.Length > 200 ? transcriptPlain[..200] : transcriptPlain)
-                : (summary.Length > 200 ? summary[..200] : summary),
-            SourceType = DocumentSourceType.Upload,
-            ContentType = "text/markdown",
-            FileSize = Encoding.UTF8.GetByteCount(noteMd),
-            DocumentId = parsed.Id,
-            CreatedBy = run.UserId,
-            ContentIndex = noteMd.Length > 2000 ? noteMd[..2000] : noteMd,
-            LastChangedAt = DateTime.UtcNow,
-            Metadata = new Dictionary<string, string>
-            {
-                ["generated_kind"] = "transcribe",
-                ["source_entry_id"] = entry.Id,
-            },
-        };
-        await db.DocumentEntries.InsertOneAsync(newEntry);
-
-        await db.DocumentStores.UpdateOneAsync(
-            s => s.Id == entry.StoreId,
-            Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, 1)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-
-        // 源音频 entry 标记「已生成转录笔记」，前端据此展示直达入口而非重复发起。
+        // 源音频 entry 标记「转录已写入本页」；值就是自身 Id，兼容旧前端读取同一 metadata key。
         // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
         // Metadata，整字典回写会用加载时的旧快照覆盖掉对方刚写入的键（Codex P2 lost-update）。
         // 旧数据 Metadata 可能是 BSON null（dotted $set 会失败），此时整字典写入无并发丢失风险。
+        var selectedStyleKey = string.IsNullOrWhiteSpace(run.TemplateKey)
+            ? null
+            : TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey;
         var metaUpdate = entry.Metadata == null
-            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string> { ["transcribe_entry_id"] = newEntry.Id })
-            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_entry_id"], newEntry.Id);
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string>
+            {
+                ["transcribe_entry_id"] = entry.Id,
+                ["generated_kind"] = "transcribe",
+            })
+            : Builders<DocumentEntry>.Update.Combine(
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_entry_id"], entry.Id),
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata["generated_kind"], "transcribe"),
+                selectedStyleKey == null
+                    ? Builders<DocumentEntry>.Update.Unset(e => e.Metadata["transcribe_style_key"])
+                    : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], selectedStyleKey));
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
             metaUpdate,
             cancellationToken: CancellationToken.None);
 
+        await db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
             Builders<DocumentStoreAgentRun>.Update
-                .Set(r => r.OutputEntryId, newEntry.Id)
+                .Set(r => r.OutputEntryId, entry.Id)
                 .Set(r => r.GeneratedText, summary)
                 // 存转录纯文本：「换个整理方式」免重跑 ASR 的一级数据源（超长截断防 run 文档膨胀）
                 .Set(r => r.TranscriptText, transcriptPlain.Length > 60000 ? transcriptPlain[..60000] : transcriptPlain)
@@ -279,8 +270,8 @@ public class SubtitleGenerationProcessor
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
-            "[doc-store-agent] Transcript note generated for {EntryId} → {NewEntryId}, transcript={TLen} chars summary={SLen} chars",
-            entry.Id, newEntry.Id, transcriptPlain.Length, summary.Length);
+            "[doc-store-agent] Transcript written in place for {EntryId}, transcript={TLen} chars summary={SLen} chars",
+            entry.Id, transcriptPlain.Length, summary.Length);
     }
 
     /// <summary>
@@ -300,10 +291,10 @@ public class SubtitleGenerationProcessor
         await UpdateProgressAsync(db, runStore, run, 20, "准备中");
         var noteMd = await _applyService.LoadContentAsync(noteEntry);
 
-        // 转录文本：优先原 run 存的纯文本；老数据兜底从笔记「## 转录全文」节反解
-        var transcript = prior.TranscriptText;
-        if (string.IsNullOrWhiteSpace(transcript))
-            transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
+        // 笔记正文是用户可编辑的权威原文：优先读取当前「转录全文」，run 快照只做老数据兜底。
+        // 否则用户刚校对的内容会在下一次一键整理时被旧 ASR 快照悄悄覆盖语义。
+        var transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
+        if (string.IsNullOrWhiteSpace(transcript)) transcript = prior.TranscriptText;
         if (string.IsNullOrWhiteSpace(transcript))
             throw new InvalidOperationException("找不到原转录文本（笔记可能被改动过），请对源音频重新发起转录");
 
@@ -314,7 +305,26 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
         var newNoteMd = TranscribeNoteText.ReplaceSummarySection(noteMd, summary);
-        await _applyService.SaveContentAsync(noteEntry, newNoteMd, run.UserId, db);
+        await _applyService.SaveContentAsync(
+            noteEntry,
+            newNoteMd,
+            run.UserId,
+            db,
+            preserveFileIdentity: !string.IsNullOrEmpty(noteEntry.AttachmentId));
+
+        // 播放器页签必须展示这份摘要真实使用的后端整理方式，不能在前端猜测。
+        // 旧条目 Metadata 可能为 null，沿用转录写入时的兼容策略。
+        var styleKey = TranscribeStyleRegistry.Find(run.TemplateKey)?.Key ?? TranscribeStyleRegistry.DefaultKey;
+        var styleMetaUpdate = noteEntry.Metadata == null
+            ? Builders<DocumentEntry>.Update.Set(e => e.Metadata, new Dictionary<string, string>
+            {
+                ["transcribe_style_key"] = styleKey,
+            })
+            : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], styleKey);
+        await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == noteEntry.Id,
+            styleMetaUpdate,
+            cancellationToken: CancellationToken.None);
 
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
@@ -322,7 +332,7 @@ public class SubtitleGenerationProcessor
                 .Set(r => r.OutputEntryId, noteEntry.Id)
                 .Set(r => r.GeneratedText, summary)
                 // 链式重整理：把转录文本继续带在新 run 上，下一次 restyle 不必回溯最初 run
-                .Set(r => r.TranscriptText, prior.TranscriptText)
+                .Set(r => r.TranscriptText, transcript)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
 
@@ -359,12 +369,7 @@ public class SubtitleGenerationProcessor
 
         var systemPrompt = TranscribeNoteText.BuildSummarySystemPrompt(run);
 
-        var maxChars = 30000;
-        var clipped = transcript.Length > maxChars ? transcript[..maxChars] : transcript;
-        var userContent = $"录音标题：{title}\n\n转录全文：\n{clipped}";
-        // 补充背景（如"参会人：张三、李四"）只帮助理解，硬约束禁止据此编造
-        if (!string.IsNullOrWhiteSpace(run.StyleContext))
-            userContent = $"补充背景（仅用于理解人物/场景，禁止据此编造转录中没有的内容）：{run.StyleContext.Trim()}\n\n{userContent}";
+        var userContent = TranscribeNoteText.BuildSummaryUserContent(run, title, transcript);
         var messages = new List<LLMMessage>
         {
             new() { Role = "user", Content = userContent },
@@ -390,13 +395,6 @@ public class SubtitleGenerationProcessor
             }
         }
         return sb.ToString().Trim();
-    }
-
-    private static string BuildTranscriptTitle(string srcTitle)
-    {
-        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
-        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
-        return $"{baseName}-转录笔记.md";
     }
 
     // ──────────────────────────────────────────────────────
@@ -788,13 +786,34 @@ public class SubtitleGenerationProcessor
                 BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["bodyShape"] = "audio_data(base64)" }));
         }
 
-        // 豆包异步响应：result.utterances[] 含 start_time/end_time(毫秒) + text
+        // LlmGateway 的 DoubaoAsrTransformer 已把豆包原始响应转换为 Whisper 兼容结构：
+        // { text, segments: [{ start, end, text }] }。这里必须优先消费统一结构，不能继续只读
+        // 豆包旧结构，否则上游实际识别成功也会被业务层误判成“转录结果为空”。
+        // 旧 result.utterances 仅作为兼容兜底，便于处理历史测试桩或未经过 Transformer 的响应。
         var segments = new List<SubtitleSegment>();
         try
         {
             using var jdoc = JsonDocument.Parse(rawResp.Content);
             var root = jdoc.RootElement;
-            if (root.TryGetProperty("result", out var result)
+            if (root.TryGetProperty("segments", out var normalizedSegments)
+                && normalizedSegments.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var segment in normalizedSegments.EnumerateArray())
+                {
+                    var start = segment.TryGetProperty("start", out var s) ? s.GetDouble() : 0;
+                    var end = segment.TryGetProperty("end", out var e) ? e.GetDouble() : 0;
+                    var text = (segment.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                }
+            }
+            if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
+            {
+                var fullText = normalizedText.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText.Trim()));
+            }
+            if (segments.Count == 0 && root.TryGetProperty("result", out var result)
                 && result.TryGetProperty("utterances", out var utts)
                 && utts.ValueKind == JsonValueKind.Array)
             {
@@ -819,6 +838,24 @@ public class SubtitleGenerationProcessor
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] 豆包异步 ASR 响应解析失败");
+            throw new SubtitleAsrException(
+                $"豆包异步 ASR 响应解析失败: {ex.Message}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["bodyShape"] = "gateway-normalized-asr",
+                    ["reason"] = "invalid-json",
+                }));
+        }
+
+        if (segments.Count == 0)
+        {
+            throw new SubtitleAsrException(
+                "豆包异步 ASR 返回为空（音频可能无人声或上游响应结构异常）",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["bodyShape"] = "gateway-normalized-asr",
+                    ["reason"] = "empty-content",
+                }));
         }
 
         return segments;
@@ -891,7 +928,8 @@ public class SubtitleGenerationProcessor
     }
 
     /// <summary>
-    /// 用 ffmpeg 从视频中抽音频（16kHz mono wav）。依赖 /usr/local/bin/ffmpeg（host 挂载）。
+    /// 用 ffmpeg 从音视频中抽取 16kHz mono WAV；短于 15 秒时在末尾补静音，
+    /// 避免 ASR 将清晰的短句稳定误判为无语音。依赖 host 的 ffmpeg。
     /// </summary>
     private async Task<byte[]> ExtractAudioWithFfmpegAsync(byte[] videoBytes)
     {
@@ -903,11 +941,11 @@ public class SubtitleGenerationProcessor
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(psi.ArgumentList, tmpIn, tmpOut);
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
             // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大，

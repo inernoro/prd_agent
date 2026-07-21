@@ -33,18 +33,18 @@ export type RoleMeta = {
  * 颜色和图标统一在此维护，各页面引用此处
  */
 export const ROLE_META: Record<UserRole, RoleMeta> = {
-  ADMIN:      { label: '管理员',   icon: Crown,        color: 'rgba(251,191,36,0.95)',  bg: 'rgba(251,191,36,0.10)',  border: 'rgba(251,191,36,0.25)' },
-  PM:         { label: '产品',     icon: Briefcase,    color: 'rgba(59,130,246,0.95)',  bg: 'rgba(59,130,246,0.12)',  border: 'rgba(59,130,246,0.25)' },
-  DEV:        { label: '开发',     icon: Code,         color: 'rgba(34,197,94,0.95)',   bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.25)' },
-  QA:         { label: '测试',     icon: FlaskConical, color: 'rgba(168,85,247,0.95)',  bg: 'rgba(168,85,247,0.12)',  border: 'rgba(168,85,247,0.25)' },
-  HR:         { label: '行政',     icon: UserCog,      color: 'rgba(236,72,153,0.95)',  bg: 'rgba(236,72,153,0.10)',  border: 'rgba(236,72,153,0.25)' },
-  FINANCE:    { label: '财务',     icon: Calculator,   color: 'rgba(245,158,11,0.95)',  bg: 'rgba(245,158,11,0.10)',  border: 'rgba(245,158,11,0.25)' },
-  RD:         { label: '研发',     icon: Cpu,          color: 'rgba(6,182,212,0.95)',   bg: 'rgba(6,182,212,0.10)',   border: 'rgba(6,182,212,0.25)' },
-  TEST:       { label: '测试',     icon: TestTube2,    color: 'rgba(139,92,246,0.95)',  bg: 'rgba(139,92,246,0.10)',  border: 'rgba(139,92,246,0.25)' },
-  COPYWRITER: { label: '文案',     icon: PenTool,      color: 'rgba(244,63,94,0.95)',   bg: 'rgba(244,63,94,0.10)',   border: 'rgba(244,63,94,0.25)' },
-  CSM:        { label: '客成经理', icon: Handshake,    color: 'rgba(16,185,129,0.95)',  bg: 'rgba(16,185,129,0.10)',  border: 'rgba(16,185,129,0.25)' },
-  SUPPORT:    { label: '客服',     icon: Headset,      color: 'rgba(99,102,241,0.95)',  bg: 'rgba(99,102,241,0.10)',  border: 'rgba(99,102,241,0.25)' },
-  SALES:      { label: '销售',     icon: TrendingUp,   color: 'rgba(249,115,22,0.95)',  bg: 'rgba(249,115,22,0.10)',  border: 'rgba(249,115,22,0.25)' },
+  ADMIN:      { label: '管理员',   icon: Crown,        color: 'var(--semantic-warning-text)', bg: 'rgba(251,191,36,0.10)', border: 'rgba(251,191,36,0.25)' },
+  PM:         { label: '产品',     icon: Briefcase,    color: 'var(--semantic-info-text)',    bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
+  DEV:        { label: '开发',     icon: Code,         color: 'var(--semantic-success-text)', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.25)' },
+  QA:         { label: '测试',     icon: FlaskConical, color: 'var(--semantic-purple-text)',  bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)' },
+  HR:         { label: '行政',     icon: UserCog,      color: 'var(--semantic-pink-text)',    bg: 'rgba(236,72,153,0.10)', border: 'rgba(236,72,153,0.25)' },
+  FINANCE:    { label: '财务',     icon: Calculator,   color: 'var(--semantic-orange-text)',  bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.25)' },
+  RD:         { label: '研发',     icon: Cpu,          color: 'var(--semantic-cyan-text)',    bg: 'rgba(6,182,212,0.10)',  border: 'rgba(6,182,212,0.25)' },
+  TEST:       { label: '测试',     icon: TestTube2,    color: 'var(--semantic-purple-text)',  bg: 'rgba(139,92,246,0.10)', border: 'rgba(139,92,246,0.25)' },
+  COPYWRITER: { label: '文案',     icon: PenTool,      color: 'var(--semantic-danger-text)',  bg: 'rgba(244,63,94,0.10)',  border: 'rgba(244,63,94,0.25)' },
+  CSM:        { label: '客成经理', icon: Handshake,    color: 'var(--semantic-success-text)', bg: 'rgba(16,185,129,0.10)', border: 'rgba(16,185,129,0.25)' },
+  SUPPORT:    { label: '客服',     icon: Headset,      color: 'var(--semantic-indigo-text)',  bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.25)' },
+  SALES:      { label: '销售',     icon: TrendingUp,   color: 'var(--semantic-orange-text)',  bg: 'rgba(249,115,22,0.10)', border: 'rgba(249,115,22,0.25)' },
 };
 
 /** 所有角色 key 的有序数组（用于下拉选择器等） */

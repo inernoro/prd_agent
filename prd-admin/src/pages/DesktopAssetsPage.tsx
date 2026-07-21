@@ -88,10 +88,10 @@ function formatShortDate(iso: string): string {
 }
 
 const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  image: { label: '图片', bg: 'rgba(251,146,60,0.15)', text: '#FB923C' },
-  document: { label: '文档', bg: 'rgba(129,140,248,0.15)', text: '#818CF8' },
-  attachment: { label: '附件', bg: 'rgba(255,255,255,0.08)', text: 'var(--text-muted)' },
-  webpage: { label: '网页', bg: 'rgba(34,197,94,0.15)', text: '#22C55E' },
+  image: { label: '图片', bg: 'rgba(251,146,60,0.15)', text: 'var(--semantic-orange-text)' },
+  document: { label: '文档', bg: 'rgba(129,140,248,0.15)', text: 'var(--semantic-indigo-text)' },
+  attachment: { label: '附件', bg: 'var(--bg-input)', text: 'var(--text-muted)' },
+  webpage: { label: '网页', bg: 'rgba(34,197,94,0.15)', text: 'var(--semantic-success-text)' },
 };
 
 /** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */
@@ -151,19 +151,19 @@ function AssetGridCard({
           onSelect();
         }
       }}
-      className="group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
+      className="group surface-row relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
       style={{
-        background: 'rgba(255,255,255,0.04)',
+        background: 'var(--bg-nested)',
         border: isSelected
           ? '1px solid var(--accent-primary, #818CF8)'
-          : '1px solid rgba(255,255,255,0.06)',
+          : '1px solid var(--border-faint)',
         boxShadow: isSelected ? '0 0 0 2px rgba(129,140,248,0.15)' : undefined,
       }}
     >
       {/* Thumbnail */}
       <div
         className="relative w-full aspect-[4/3] flex items-center justify-center overflow-hidden"
-        style={{ background: 'rgba(255,255,255,0.02)' }}
+        style={{ background: 'var(--bg-input)' }}
       >
         {isImageAsset(asset) && (asset.thumbnailUrl || asset.url) ? (
           // 图片：直接渲染，无 overlay
@@ -184,7 +184,7 @@ function AssetGridCard({
                 loading="lazy"
               />
             ) : (
-              <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+              <Film size={28} style={{ color: 'var(--text-muted)' }} />
             )}
             {asset.thumbnailUrl && (
               <div
@@ -200,14 +200,14 @@ function AssetGridCard({
           asset.thumbnailUrl ? (
             <img src={asset.thumbnailUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
           ) : (
-            <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+            <Film size={28} style={{ color: 'var(--text-muted)' }} />
           )
         ) : isAudioAsset(asset) ? (
           // 音频：有服务端缩略图则展示，否则图标
           asset.thumbnailUrl ? (
             <img src={asset.thumbnailUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
           ) : (
-            <Music size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+            <Music size={28} style={{ color: 'var(--text-muted)' }} />
           )
         ) : asset.thumbnailUrl ? (
           // 网页/文档等其他类型有服务端缩略图（如网页封面图）时直接展示
@@ -219,16 +219,16 @@ function AssetGridCard({
           />
         ) : asset.summary ? (
           <div className="flex items-center justify-center h-full px-4">
-            <p className="text-[11px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            <p className="text-[11px] leading-relaxed text-center" style={{ color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               {asset.summary}
             </p>
           </div>
         ) : asset.type === 'image' || isImageAsset(asset) ? (
-          <Image size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
+          <Image size={28} style={{ color: 'var(--text-muted)' }} />
         ) : asset.type === 'document' ? (
-          <FileText size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
+          <FileText size={28} style={{ color: 'var(--text-muted)' }} />
         ) : (
-          <Paperclip size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
+          <Paperclip size={28} style={{ color: 'var(--text-muted)' }} />
         )}
       </div>
 
@@ -252,7 +252,7 @@ function AssetGridCard({
             {TYPE_CONFIG[asset.type]?.label || asset.type}
           </span>
           {asset.source && (
-            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {asset.source}
             </span>
           )}
@@ -286,29 +286,23 @@ function AssetListRow({
           onSelect();
         }
       }}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150"
+      className="surface-row flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150"
       style={{
         background: isSelected ? 'rgba(129,140,248,0.08)' : 'transparent',
         border: isSelected
           ? '1px solid rgba(129,140,248,0.25)'
           : '1px solid transparent',
       }}
-      onMouseEnter={(e) => {
-        if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-      }}
-      onMouseLeave={(e) => {
-        if (!isSelected) e.currentTarget.style.background = 'transparent';
-      }}
     >
       {/* Thumbnail */}
       <div
         className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center"
-        style={{ background: 'rgba(255,255,255,0.04)' }}
+        style={{ background: 'var(--bg-input)' }}
       >
         {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
           <img src={asset.thumbnailUrl || asset.url || ''} alt="" loading="lazy" className="w-full h-full object-cover" />
         ) : (
-          <FileText size={14} style={{ color: 'rgba(255,255,255,0.2)' }} />
+          <FileText size={14} style={{ color: 'var(--text-muted)' }} />
         )}
       </div>
 
@@ -318,7 +312,7 @@ function AssetListRow({
           {asset.title}
         </div>
         {asset.summary && (
-          <div className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>
+          <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
             {asset.summary}
           </div>
         )}
@@ -326,7 +320,7 @@ function AssetListRow({
 
       {/* Source */}
       {asset.source && (
-        <span className="text-[10px] flex-shrink-0" style={{ color: 'rgba(255,255,255,0.30)' }}>
+        <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
           {asset.source}
         </span>
       )}
@@ -377,7 +371,7 @@ function DetailPanel({
       className="surface w-[340px] flex-shrink-0 flex flex-col overflow-hidden rounded-[16px]"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border-faint)' }}>
         <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
           资产详情
         </span>
@@ -416,7 +410,7 @@ function DetailPanel({
       </div>
 
       {/* Actions */}
-      <div className="px-4 py-4 flex flex-col gap-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="px-4 py-4 flex flex-col gap-2" style={{ borderTop: '1px solid var(--border-faint)' }}>
         {asset.url && (
           <>
             <button
@@ -443,9 +437,9 @@ function DetailPanel({
                 onClick={handleCopy}
                 className="flex items-center justify-center gap-1.5 flex-1 h-8 rounded-lg text-[12px] font-medium transition-colors"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input)',
                   color: copied ? '#22c55e' : 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               >
                 <Copy size={12} />
@@ -456,9 +450,9 @@ function DetailPanel({
                 download={asset.title}
                 className="flex items-center justify-center gap-1.5 flex-1 h-8 rounded-lg text-[12px] font-medium transition-colors no-underline"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input)',
                   color: 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               >
                 <Download size={12} />
@@ -481,8 +475,8 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
   const isPdf = isPdfAsset(asset);
 
   const containerBase: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.06)',
+    background: 'var(--bg-input)',
+    border: '1px solid var(--border-faint)',
   };
 
   if (isImage && (asset.thumbnailUrl || asset.url)) {
@@ -522,7 +516,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
         className="w-full rounded-xl flex flex-col items-center justify-center gap-3 px-4"
         style={{ ...containerBase, aspectRatio: '3/1' }}
       >
-        <Music size={28} style={{ color: 'rgba(255,255,255,0.25)' }} />
+        <Music size={28} style={{ color: 'var(--text-muted)' }} />
         <audio
           src={asset.url}
           controls
@@ -582,7 +576,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
           <p
             className="text-[12px] leading-relaxed text-center"
             style={{
-              color: 'rgba(255,255,255,0.45)',
+              color: 'var(--text-secondary)',
               display: '-webkit-box',
               WebkitLineClamp: 6,
               WebkitBoxOrient: 'vertical',
@@ -593,9 +587,9 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
           </p>
         </div>
       ) : asset.type === 'document' ? (
-        <FileText size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
+        <FileText size={40} style={{ color: 'var(--text-muted)' }} />
       ) : (
-        <Paperclip size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
+        <Paperclip size={40} style={{ color: 'var(--text-muted)' }} />
       )}
     </div>
   );
@@ -642,7 +636,7 @@ function StatsPanel({
       className="surface w-[340px] flex-shrink-0 flex flex-col overflow-hidden rounded-[16px]"
     >
       {/* Header */}
-      <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-faint)' }}>
         <div className="flex items-center gap-2">
           <BarChart3 size={14} style={{ color: 'var(--accent-primary, #818CF8)' }} />
           <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -686,7 +680,7 @@ function StatsPanel({
                     <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>{source}</span>
                     <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{count}</span>
                   </div>
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
@@ -705,7 +699,7 @@ function StatsPanel({
         {/* Hint */}
         <div
           className="text-[11px] leading-relaxed pt-2"
-          style={{ color: 'rgba(255,255,255,0.25)', borderTop: '1px solid rgba(255,255,255,0.04)' }}
+          style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-faint)' }}
         >
           点击左侧资产卡片查看详情
         </div>
@@ -718,7 +712,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
   return (
     <div
       className="rounded-xl px-3 py-2.5 space-y-1"
-      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+      style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
     >
       <div className="flex items-center gap-1.5">
         <span style={{ color, opacity: 0.8 }}>{icon}</span>
@@ -735,11 +729,11 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
 function EmptyState({ tab }: { tab: AssetTab }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 gap-3">
-      <FolderOpen size={40} style={{ color: 'rgba(255,255,255,0.1)' }} />
+      <FolderOpen size={40} style={{ color: 'var(--text-muted)' }} />
       <div className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>
         {tab === 'all' ? '还没有任何资产' : '该分类下暂无内容'}
       </div>
-      <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+      <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
         使用 Agent 创作后，产出物会自动出现在这里
       </div>
     </div>
@@ -953,7 +947,7 @@ export default function DesktopAssetsPage() {
                     <span
                       className="text-[10px] px-1.5 py-0.5 rounded-full"
                       style={{
-                        background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+                        background: active ? 'var(--bg-input-hover)' : 'var(--bg-input)',
                         color: active ? 'var(--text-secondary)' : 'var(--text-muted)',
                       }}
                     >
@@ -980,15 +974,15 @@ export default function DesktopAssetsPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full h-8 pl-8 pr-3 rounded-lg text-[12px] outline-none transition-all duration-200"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'var(--text-primary)',
                 }}
                 onFocus={(e) => {
                   e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
                 }}
                 onBlur={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
                 }}
               />
             </div>
@@ -1009,7 +1003,7 @@ export default function DesktopAssetsPage() {
                     className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors"
                     style={{
                       color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                      background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                      background: active ? 'var(--bg-input-hover)' : 'transparent',
                     }}
                   >
                     {s.label}
@@ -1022,14 +1016,14 @@ export default function DesktopAssetsPage() {
             {/* View toggle */}
             <div
               className="flex items-center rounded-lg overflow-hidden"
-              style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+              style={{ border: '1px solid var(--border-subtle)' }}
             >
               <button
                 type="button"
                 onClick={() => handleViewMode('grid')}
                 className="h-7 w-8 inline-flex items-center justify-center transition-colors"
                 style={{
-                  background: viewMode === 'grid' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  background: viewMode === 'grid' ? 'var(--bg-input-hover)' : 'transparent',
                   color: viewMode === 'grid' ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}
                 title="网格视图"
@@ -1041,7 +1035,7 @@ export default function DesktopAssetsPage() {
                 onClick={() => handleViewMode('list')}
                 className="h-7 w-8 inline-flex items-center justify-center transition-colors"
                 style={{
-                  background: viewMode === 'list' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  background: viewMode === 'list' ? 'var(--bg-input-hover)' : 'transparent',
                   color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}
                 title="列表视图"
@@ -1089,7 +1083,7 @@ export default function DesktopAssetsPage() {
                 onClick={() => fetchAssets(activeTab)}
                 className="text-[13px] px-3 py-1.5 rounded-lg transition-colors"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--bg-input)',
                   color: 'var(--accent-primary, #818CF8)',
                 }}
               >
@@ -1114,7 +1108,7 @@ export default function DesktopAssetsPage() {
               {/* List header */}
               <div
                 className="flex items-center gap-3 px-3 py-2 text-[10px] font-medium uppercase tracking-wider"
-                style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
               >
                 <div className="w-10 flex-shrink-0" />
                 <div className="flex-1">名称</div>

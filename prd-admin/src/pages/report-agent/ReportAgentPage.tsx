@@ -11,25 +11,18 @@ import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { DailyLogInline } from './components/DailyLogInline';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
-import { ThemeControl, type ColorScheme } from './components/ThemeControl';
+import { ThemeControl } from './components/ThemeControl';
 import { getMyDefaultTab } from '@/services';
 import type { DefaultTabKey } from '@/services/contracts/reportAgent';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
 const ZOOM_STORAGE_KEY = 'report-agent:zoom';
-const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
 
 function readZoomFromStorage(): ZoomLevel {
   if (typeof window === 'undefined') return 'normal';
   const raw = window.sessionStorage.getItem(ZOOM_STORAGE_KEY);
   if (raw === 'large' || raw === 'extra') return raw;
   return 'normal';
-}
-
-function readColorSchemeFromStorage(): ColorScheme {
-  if (typeof window === 'undefined') return 'dark';
-  const raw = window.sessionStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
-  return raw === 'light' ? 'light' : 'dark';
 }
 
 /**
@@ -61,27 +54,6 @@ export default function ReportAgentPage() {
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem(ZOOM_STORAGE_KEY, zoom);
   }, [zoom]);
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(readColorSchemeFromStorage);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.sessionStorage.setItem(COLOR_SCHEME_STORAGE_KEY, colorScheme);
-  }, [colorScheme]);
-
-  // 把 data-theme 同步到 <html>,让 AppShell 的 <main>/body 也进入 scope;
-  // 组件卸载或切回暗色时清除,避免污染其他 Agent 页面。
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const root = document.documentElement;
-    if (colorScheme === 'light') {
-      root.setAttribute('data-theme', 'light');
-    } else {
-      root.removeAttribute('data-theme');
-    }
-    return () => {
-      root.removeAttribute('data-theme');
-    };
-  }, [colorScheme]);
-
   const hasTeamWorkspace = useMemo(() => {
     if (!userId) return false;
     return teams.some((t) => {
@@ -179,7 +151,7 @@ export default function ReportAgentPage() {
   const usageGuideActions = (
     <div className="flex items-center gap-2 ml-auto">
       <ZoomControl value={zoom} onChange={setZoom} />
-      <ThemeControl value={colorScheme} onChange={setColorScheme} />
+      <ThemeControl />
     </div>
   );
 
@@ -187,11 +159,7 @@ export default function ReportAgentPage() {
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
 
   return (
-    <div
-      className="h-full min-h-0 flex flex-col gap-4"
-      data-theme={colorScheme === 'light' ? 'light' : undefined}
-      style={{ background: colorScheme === 'light' ? 'var(--bg-base)' : undefined }}
-    >
+    <div className="h-full min-h-0 flex flex-col gap-4">
       <TabBar
         items={tabItems}
         activeKey={currentTab}

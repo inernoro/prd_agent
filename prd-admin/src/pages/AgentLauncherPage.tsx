@@ -74,11 +74,9 @@ import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { getAccent, glassTileStyle } from '@/lib/tileAccent';
-import { AuroraBackground } from '@/components/backgrounds/AuroraBackground';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
-import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 /**
  * 进场动效节奏 —— 区块级一次 fade，不做逐卡级联。
@@ -204,7 +202,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
     <button
       type="button"
       onClick={onClick}
-      className={`group relative w-full h-full overflow-hidden text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 flex flex-col ${hasArtwork ? '' : 'justify-between gap-3 p-4'}`}
+      className={`group relative w-full h-full overflow-hidden text-left rounded-xl transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 flex flex-col ${hasArtwork ? '' : 'justify-between gap-3 p-4'}`}
       style={{
         ...glassTileStyle(accent),
         minHeight: hasArtwork ? 188 : undefined,
@@ -212,7 +210,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         border: hasArtwork ? 'none' : glassTileStyle(accent).border,
       }}
     >
-      <AgentCardArtwork agentKey={item.agentKey} compact />
+      <AgentCardArtwork agentKey={item.agentKey} compact tint={accent.color} />
       {hasArtwork ? (
         <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
       ) : (
@@ -261,7 +259,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               <ArrowRight
                 size={15}
                 className="shrink-0 opacity-30 transition-[transform,opacity] duration-200 group-hover:translate-x-0.5 group-hover:opacity-[0.65]"
-                style={{ color: 'var(--media-card-task-muted)' }}
+                style={{ color: 'var(--media-card-tag-text)' }}
               />
             </div>
           </div>
@@ -305,7 +303,7 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
     <button
       type="button"
       onClick={onClick}
-      className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3.5 px-4 py-3.5"
+      className="group relative w-full cursor-pointer text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 flex items-center gap-3.5 px-4 py-3.5"
       style={glassTileStyle(accent)}
     >
       {/* Hover：本卡色相描边 + 同色投影 */}
@@ -369,18 +367,14 @@ function RecentWorkChip({ item, onClick }: { item: RecentWorkItemDto; onClick: (
       type="button"
       onClick={onClick}
       title={`${meta.label} · ${item.title}`}
-      className="group inline-flex items-center gap-2 h-9 pl-3 pr-3.5 rounded-full transition-colors duration-150 min-w-0"
-      style={{
-        background: 'rgba(255,255,255,0.025)',
-        border: '1px solid rgba(255,255,255,0.07)',
-      }}
+      className="home-launcher-recent group inline-flex min-w-0 cursor-pointer items-center gap-2 h-9 pl-3 pr-3.5 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
       onMouseEnter={(e) => {
         e.currentTarget.style.background = accent.faint;
         e.currentTarget.style.borderColor = accent.border;
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'rgba(255,255,255,0.025)';
-        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)';
+        e.currentTarget.style.background = '';
+        e.currentTarget.style.borderColor = '';
       }}
     >
       <Icon size={14} className="shrink-0" style={{ color: accent.color }} />
@@ -410,7 +404,7 @@ interface SectionHeaderProps {
   accent?: string;
 }
 
-function SectionHeader({ eyebrow, title, subtitle, count, accent = 'rgba(214, 216, 212, 0.72)' }: SectionHeaderProps) {
+function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--section-label-text)' }: SectionHeaderProps) {
   return (
     <div className="mb-4 flex items-end justify-between gap-4">
       <div className="min-w-0">
@@ -433,8 +427,7 @@ function SectionHeader({ eyebrow, title, subtitle, count, accent = 'rgba(214, 21
           </h2>
           {typeof count === 'number' && (
             <span
-              className="px-1.5 py-0.5 rounded-md text-[12px] font-medium tabular-nums"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
+              className="home-launcher-section-count px-1.5 py-0.5 rounded-md text-[12px] font-medium tabular-nums"
             >
               {count}
             </span>
@@ -456,7 +449,7 @@ function SectionHeader({ eyebrow, title, subtitle, count, accent = 'rgba(214, 21
 // 高密度自适应：1440px 约五列；21:9 带鱼屏继续增列，同时随视口适度放宽卡片下限。
 const AUTO_GRID_FEATURED: React.CSSProperties = {
   display: 'grid',
-  gap: 6,
+  gap: 10,
   gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, clamp(228px, 12vw, 278px)), 1fr))',
   alignItems: 'stretch',
 };
@@ -478,7 +471,6 @@ export default function AgentLauncherPage() {
   const { isMobile } = useBreakpoint();
   // 浅色外观（2026-07-17 全局化）下隐藏 hero 的暗色装饰层、改走文字 token，
   // 否则白字/白雾直接糊在纸面上（首页是门面，浅色必须能看）
-  const isLight = useDataTheme() === 'light';
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
@@ -607,48 +599,7 @@ export default function AgentLauncherPage() {
       }}
     >
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
-
-        {/* 顶带极光（ReactBits Aurora 驯化版）：亮色端锚在右上，补右上角留白的氛围重心。
-            隐藏/离屏自动暂停，reduced-motion 静态一帧，DPR 封顶——不违反首页动画纪律。
-            浅色外观下不渲染：screen 提亮混合在纸面上会糊成一片白雾 */}
-        {!isLight && <div
-          className="absolute inset-x-0 top-0 pointer-events-none overflow-hidden"
-          style={{
-            height: isMobile ? 220 : 300,
-            zIndex: 0,
-            opacity: 0.34,
-            // screen 提亮混合：极光只加光不压暗。液态玻璃等浅色底下，
-            // 普通 alpha 覆盖会把暗色端画成黑块并在画布边缘露出分界线（2026-07-05 用户反馈），
-            // screen 模式下暗部趋近无操作，边界自然消失
-            mixBlendMode: 'screen',
-            maskImage: 'linear-gradient(180deg, black 0%, black 34%, transparent 94%)',
-            WebkitMaskImage: 'linear-gradient(180deg, black 0%, black 34%, transparent 94%)',
-          }}
-        >
-          <AuroraBackground
-            colorStops={['#3A4238', '#4B5745', '#68745E']}
-            amplitude={0.6}
-            blend={0.38}
-            speed={0.35}
-            style={{ width: '100%', height: '100%' }}
-          />
-        </div>}
-
-        {/* 问候语底光（柔白，静态；浅色外观不渲染——白雾会洗掉纸面对比） */}
-        {!isLight && <div
-          className="absolute pointer-events-none"
-          style={{
-            top: '2%',
-            left: isMobile ? '-20%' : '2%',
-            width: isMobile ? '140%' : 520,
-            height: isMobile ? 260 : 340,
-            background:
-              'radial-gradient(ellipse at 30% 50%, rgba(214, 216, 212, 0.05) 0%, rgba(247, 247, 251, 0.025) 36%, transparent 66%)',
-            filter: 'blur(40px)',
-            opacity: 0.68,
-            zIndex: 0,
-          }}
-        />}
+        <div aria-hidden className="home-launcher-color-field" />
 
         {/* ── 页面主体内容（悬浮在背景图之上） ── */}
         <div className="relative z-10">
@@ -662,13 +613,7 @@ export default function AgentLauncherPage() {
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
                     <div
-                      className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
-                      style={{
-                        background: isLight ? 'var(--nested-block-bg)' : 'rgba(247, 247, 251, 0.045)',
-                        border: `1px solid ${isLight ? 'var(--nested-block-border)' : 'rgba(247, 247, 251, 0.13)'}`,
-                        color: isLight ? 'var(--text-muted)' : 'rgba(214, 216, 212, 0.78)',
-                        textShadow: 'none',
-                      }}
+                      className="home-launcher-eyebrow inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
                     >
                       <Sparkles size={10} />
                       MAP · 米多智能体生态平台
@@ -676,27 +621,15 @@ export default function AgentLauncherPage() {
                   </Reveal>
                   <Reveal delay={REVEAL.heroTitle} duration={REVEAL_DURATION} offset={20}>
                     <h1
-                      className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
+                      className={`home-launcher-title font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
                       style={{
-                        color: 'var(--text-primary, #fff)',
-                        textShadow: isLight ? 'none' : '0 1px 12px rgba(0,0,0,0.35)',
                         lineHeight: 1.15,
                       }}
                     >
                       {greeting}
                       {displayName ? '，' : ''}
                       {displayName && (
-                        <span
-                          style={isLight
-                            // 浅色：银白渐变在纸面上隐形，名字直接走主文字色
-                            ? { color: 'var(--text-primary)' }
-                            : {
-                                background: 'linear-gradient(100deg, #F7F7FB 0%, #C8C5BE 100%)',
-                                WebkitBackgroundClip: 'text',
-                                WebkitTextFillColor: 'transparent',
-                                backgroundClip: 'text',
-                              }}
-                        >
+                        <span className="home-launcher-display-name">
                           {displayName}
                         </span>
                       )}
@@ -705,10 +638,8 @@ export default function AgentLauncherPage() {
                   <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
                     <div
                       data-tour-id="home-subtitle"
-                      className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
+                      className={`home-launcher-subtitle mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
-                        color: isLight ? 'var(--text-secondary)' : 'rgba(247, 247, 251, 0.72)',
-                        textShadow: isLight ? 'none' : '0 1px 4px rgba(0,0,0,0.2)',
                         maxWidth: 520,
                       }}
                     >
@@ -735,22 +666,8 @@ export default function AgentLauncherPage() {
                         placeholder="搜索 Agent..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                        style={{
-                          background: isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.54)',
-                          border: `1px solid ${isLight ? 'var(--border-subtle)' : 'rgba(247,247,251,0.14)'}`,
-                          color: 'var(--text-primary, #fff)',
-                          backdropFilter: 'blur(12px)',
-                          WebkitBackdropFilter: 'blur(12px)',
-                        }}
-                        onFocus={(e) => {
-                          e.currentTarget.style.borderColor = isLight ? 'var(--border-strong, rgba(26,26,31,0.3))' : 'rgba(247,247,251,0.30)';
-                          e.currentTarget.style.background = isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.78)';
-                        }}
-                        onBlur={(e) => {
-                          e.currentTarget.style.borderColor = isLight ? 'var(--border-subtle)' : 'rgba(247,247,251,0.14)';
-                          e.currentTarget.style.background = isLight ? 'var(--bg-input)' : 'rgba(20,20,24,0.54)';
-                        }}
+                        aria-label="搜索智能体"
+                        className="home-launcher-search w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-[background-color,border-color,box-shadow] duration-150"
                       />
                     </div>
 
@@ -781,19 +698,7 @@ export default function AgentLauncherPage() {
                         data-tour-id={`quicklink-${link.id}`}
                         onClick={() => navigate(link.path)}
                         title={link.desc}
-                        className="group inline-flex items-center gap-2 h-9 rounded-full transition-colors duration-150 px-3.5"
-                        style={{
-                          background: 'var(--bg-elevated, rgba(255,255,255,0.04))',
-                          border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'var(--bg-card-hover, rgba(247,247,251,0.075))';
-                          e.currentTarget.style.borderColor = 'var(--border-default, rgba(247,247,251,0.16))';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'var(--bg-elevated, rgba(255,255,255,0.04))';
-                          e.currentTarget.style.borderColor = 'var(--border-subtle, rgba(255,255,255,0.08))';
-                        }}
+                        className="home-launcher-quick-link group inline-flex cursor-pointer items-center gap-2 h-9 rounded-full transition-colors duration-150 px-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
                       >
                         <Icon size={15} style={{ color: 'var(--text-muted, rgba(214,216,212,0.66))' }} />
                         <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))' }}>
@@ -832,20 +737,7 @@ export default function AgentLauncherPage() {
                       <button
                         type="button"
                         onClick={() => setRecentExpanded((v) => !v)}
-                        className="group inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full transition-colors duration-150"
-                        style={{
-                          background: 'transparent',
-                          border: '1px dashed rgba(255,255,255,0.14)',
-                          color: 'var(--text-muted, rgba(255,255,255,0.5))',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)';
-                          e.currentTarget.style.color = 'var(--text-primary, rgba(255,255,255,0.85))';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.14)';
-                          e.currentTarget.style.color = 'var(--text-muted, rgba(255,255,255,0.5))';
-                        }}
+                        className="home-launcher-recent-more group inline-flex cursor-pointer items-center gap-1.5 h-9 px-3.5 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
                       >
                         <History size={13} />
                         <span className="text-[12px] font-medium">

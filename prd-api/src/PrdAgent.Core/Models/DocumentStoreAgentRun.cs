@@ -109,7 +109,7 @@ public static class DocumentStoreAgentRunKind
     /// <summary>知识库级自动补链（标题精确匹配改写为 [[标题]]）。SourceEntryId 存空串，任务粒度是整个 StoreId。</summary>
     public const string AutoLink = "autolink";
 
-    /// <summary>录音转录全链路：音视频 ASR 转录 + AI 摘要，产物为「摘要 + 转录全文」新 entry（移动端 Notion 式录音流程）。</summary>
+    /// <summary>录音转录：默认只做 ASR；用户显式选择 TemplateKey 后才生成对应整理结果，并原地写回源 entry。</summary>
     public const string Transcribe = "transcribe";
 }
 

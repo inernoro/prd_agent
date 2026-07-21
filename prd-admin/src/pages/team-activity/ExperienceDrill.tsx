@@ -47,8 +47,8 @@ function ExpandablePanel({
   const [max, setMax] = useState(false);
 
   const head = (large: boolean) => (
-    <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] shrink-0">
-      <span className="text-[12px] font-medium text-white/60 flex items-center gap-1.5 min-w-0">
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-token-subtle shrink-0">
+      <span className="text-[12px] font-medium text-token-secondary flex items-center gap-1.5 min-w-0">
         <Sparkles size={12} style={{ color: VIOLET }} />
         <span className="truncate">{title}</span>
       </span>
@@ -56,7 +56,7 @@ function ExpandablePanel({
         type="button"
         onClick={() => setMax(!large)}
         title={large ? '还原' : '放大查看'}
-        className="ml-auto inline-flex items-center justify-center w-6 h-6 rounded text-white/40 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer shrink-0"
+        className="ml-auto inline-flex items-center justify-center w-6 h-6 rounded text-token-muted hover-text-primary hover-bg-soft transition-colors cursor-pointer shrink-0"
       >
         {large ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </button>
@@ -65,7 +65,7 @@ function ExpandablePanel({
 
   return (
     <>
-      <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] overflow-hidden flex flex-col">
+      <div className="rounded-lg border border-token-subtle bg-token-nested overflow-hidden flex flex-col">
         {head(false)}
         <div
           style={{
@@ -85,17 +85,14 @@ function ExpandablePanel({
       {max
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] flex items-center justify-center p-4"
-              style={{ background: 'rgba(0,0,0,0.62)' }}
+              className="surface-backdrop fixed inset-0 z-[120] flex items-center justify-center p-4"
               onClick={() => setMax(false)}
             >
               <div
-                className="flex flex-col rounded-xl border border-white/12 overflow-hidden"
+                className="surface-popover flex flex-col rounded-xl overflow-hidden"
                 style={{
                   width: 'min(980px, 95vw)',
                   height: 'min(88vh, 920px)',
-                  background: '#16171b',
-                  boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
                   resize: 'both',
                   maxWidth: '95vw',
                   maxHeight: '92vh',
@@ -135,9 +132,9 @@ function DiagnosingAnimation() {
         className="relative"
         style={{ width: 34, height: 34, borderRadius: '50%', background: `conic-gradient(from 0deg, ${VIOLET}, #60a5fa, #2dd4bf, ${VIOLET})`, animation: 'voc-orb-spin 1.4s linear infinite' }}
       >
-        <span className="absolute" style={{ inset: 5, borderRadius: '50%', background: '#16171b' }} />
+        <span className="absolute" style={{ inset: 5, borderRadius: '50%', background: 'var(--panel-solid)' }} />
       </span>
-      <div className="text-[11.5px] text-white/45">大模型正在分析真实请求样本…</div>
+      <div className="text-[11.5px] text-token-muted">大模型正在分析真实请求样本…</div>
       <div className="flex flex-col gap-2 w-full max-w-[260px]">
         {DIAG_STEPS.map((s, i) => {
           const done = i < step;
@@ -149,7 +146,7 @@ function DiagnosingAnimation() {
                 style={{
                   width: 16,
                   height: 16,
-                  border: `1px solid ${done ? 'rgba(52,211,153,0.5)' : active ? 'rgba(167,139,250,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                  border: `1px solid ${done ? 'rgba(52,211,153,0.5)' : active ? 'rgba(167,139,250,0.6)' : 'var(--border-subtle)'}`,
                   background: done ? 'rgba(52,211,153,0.16)' : active ? 'rgba(167,139,250,0.18)' : 'transparent',
                   // 当前步：脉冲光环（1:1 复刻 demo 的 active ring）
                   animation: active ? 'voc-step-ring 1.3s ease-in-out infinite' : undefined,
@@ -160,10 +157,10 @@ function DiagnosingAnimation() {
                 ) : active ? (
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: VIOLET, animation: 'voc-blink 1.1s ease-in-out infinite' }} />
                 ) : (
-                  <span className="w-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+                  <span className="w-1 h-1 rounded-full" style={{ background: 'var(--text-muted)' }} />
                 )}
               </span>
-              <span style={{ color: done ? 'rgba(236,236,239,0.45)' : active ? '#c4b5fd' : 'rgba(236,236,239,0.3)' }}>
+              <span style={{ color: done ? 'var(--text-secondary)' : active ? 'var(--semantic-purple-text)' : 'var(--text-muted)' }}>
                 {s}
                 {active ? '…' : ''}
               </span>
@@ -187,14 +184,14 @@ function SampleBlock({ s }: { s: TeamActivityEndpointDetailData['samples'][numbe
   const tooLong = full.length > LIMIT;
   const shown = !tooLong || expanded ? full : `${full.slice(0, LIMIT)}…`;
   return (
-    <div className="rounded-md border border-white/[0.06] bg-[#0c0d0f] overflow-hidden">
-      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.05] text-[10.5px] tabular-nums">
+    <div className="surface-inset rounded-md overflow-hidden">
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-token-subtle text-[10.5px] tabular-nums">
         <span style={{ color: isErr ? ERR : '#5eead4' }}>HTTP {s.statusCode}</span>
-        {typeof s.durationMs === 'number' ? <span className="text-white/40">{s.durationMs}ms</span> : null}
-        <span className="ml-auto text-white/30 font-mono">{fmtTime(s.occurredAt)}</span>
+        {typeof s.durationMs === 'number' ? <span className="text-token-muted">{s.durationMs}ms</span> : null}
+        <span className="ml-auto text-token-muted font-mono">{fmtTime(s.occurredAt)}</span>
       </div>
       <pre
-        className="px-2.5 py-2 text-[10.5px] leading-relaxed text-white/65 font-mono"
+        className="px-2.5 py-2 text-[10.5px] leading-relaxed text-token-secondary font-mono"
         style={{
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',
@@ -210,7 +207,7 @@ function SampleBlock({ s }: { s: TeamActivityEndpointDetailData['samples'][numbe
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="w-full px-2.5 py-1.5 text-left text-[10.5px] text-white/45 hover:text-white/80 border-t border-white/[0.05] bg-white/[0.015] hover:bg-white/[0.04] transition-colors cursor-pointer"
+          className="w-full px-2.5 py-1.5 text-left text-[10.5px] text-token-muted hover-text-primary border-t border-token-subtle bg-token-nested hover-bg-soft transition-colors cursor-pointer"
         >
           {expanded ? '收起' : `展开全部（约 ${full.length.toLocaleString()} 字）`}
         </button>
@@ -338,16 +335,16 @@ export function ExperienceDrill({
   /* ──【根因分析】页签：AI 报告（可放大 / 拖拽）。流式期间就地展示大模型阅读效果 ── */
   const renderRca = () => (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+      <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
         <Sparkles size={11} style={{ color: VIOLET }} />
         结论由 AI 阅读「真实请求样本」分析得出
       </div>
       {/* 证据卡：端点 + 指标。大模型阅读期间点亮（表示模型正在读它，1:1 复刻 demo） */}
-      <div className={`rounded-md px-3 py-2.5 bg-white/[0.02] border border-white/[0.06] transition-all duration-500 ${diagActive ? 'voc-evi-lit' : ''}`}>
-        <div className="text-[12px] text-white/85 font-mono break-all">{target}</div>
+      <div className={`rounded-md px-3 py-2.5 bg-token-nested border border-token-subtle transition-all duration-500 ${diagActive ? 'voc-evi-lit' : ''}`}>
+        <div className="text-[12px] text-token-primary font-mono break-all">{target}</div>
         {detail ? (
           <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-2 text-[11px] tabular-nums">
-            <span className="text-white/45">{detail.count} 次调用</span>
+            <span className="text-token-muted">{detail.count} 次调用</span>
             {detail.errorCount > 0 ? <span style={{ color: ERR }}>报错 {detail.errorCount} 次</span> : null}
             {detail.slowCount > 0 ? (
               <span style={{ color: SLOW }}>
@@ -361,7 +358,7 @@ export function ExperienceDrill({
         title={
           <span className="flex items-center gap-2">
             AI 根因诊断
-            {diagModel ? <span className="text-[10px] text-white/30 font-mono">{diagModel}</span> : null}
+            {diagModel ? <span className="text-[10px] text-token-muted font-mono">{diagModel}</span> : null}
             {diagActive ? (
               <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: VIOLET }}>
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: VIOLET, animation: 'voc-blink 1.1s ease-in-out infinite' }} />
@@ -374,7 +371,7 @@ export function ExperienceDrill({
         {diagActive ? (
           diag.typing ? (
             // 大模型效果：逐字流（StreamingText blur）
-            <div className="text-[12px] leading-relaxed text-white/80">
+            <div className="text-[12px] leading-relaxed text-token-primary">
               <StreamingText text={diag.typing} streaming mode="blur" />
             </div>
           ) : (
@@ -386,11 +383,11 @@ export function ExperienceDrill({
           <ReportSections md={diag.typing} />
         ) : (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
-            <span className="text-[12px] text-white/45">{diag.phaseMessage || '未能生成诊断'}</span>
+            <span className="text-[12px] text-token-muted">{diag.phaseMessage || '未能生成诊断'}</span>
             <button
               type="button"
               onClick={startDiagnose}
-              className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-white/[0.03] text-white/55 border-white/12 hover:text-white/85 hover:border-white/25 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token transition-colors cursor-pointer"
             >
               <RotateCcw size={11} />
               重新诊断
@@ -404,15 +401,15 @@ export function ExperienceDrill({
   /* ──【真实请求样本】页签：指标 + 错误码 + curl 样本 ── */
   const renderSamples = () => (
     <div className="flex flex-col gap-3.5">
-      <div className="rounded-md px-3 py-2.5 bg-white/[0.02] border border-white/[0.06]">
-        <div className="text-[12px] text-white/85 font-mono break-all">{target}</div>
+      <div className="rounded-md px-3 py-2.5 bg-token-nested border border-token-subtle">
+        <div className="text-[12px] text-token-primary font-mono break-all">{target}</div>
         {loading ? (
           <div className="mt-2">
             <MapSpinner size={13} />
           </div>
         ) : detail ? (
           <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-2 text-[11px] tabular-nums">
-            <span className="text-white/45">{detail.count} 次调用</span>
+            <span className="text-token-muted">{detail.count} 次调用</span>
             {detail.errorCount > 0 ? <span style={{ color: ERR }}>报错 {detail.errorCount} 次</span> : null}
             {detail.slowCount > 0 ? (
               <span style={{ color: SLOW }}>
@@ -421,26 +418,26 @@ export function ExperienceDrill({
             ) : null}
           </div>
         ) : detailError ? (
-          <div className="mt-2 text-[11px] text-amber-200/70">{detailError}</div>
+          <div className="mt-2 text-[11px] text-semantic-warning">{detailError}</div>
         ) : null}
       </div>
 
       {detail && detail.codes.length > 0 ? (
         <div>
-          <div className="text-[12px] text-white/55 font-medium mb-2">错误码分布</div>
+          <div className="text-[12px] text-token-secondary font-medium mb-2">错误码分布</div>
           <div className="flex flex-col gap-2">
             {detail.codes.map((c) => (
               <div key={c.code} className="flex items-center gap-2">
-                <span className="text-[11px] text-white/70 font-mono w-[120px] shrink-0 truncate" title={c.code}>
+                <span className="text-[11px] text-token-primary font-mono w-[120px] shrink-0 truncate" title={c.code}>
                   {c.code}
                 </span>
-                <span className="flex-1 h-[7px] rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <span className="flex-1 h-[7px] rounded-full overflow-hidden bg-token-nested">
                   <i
                     className="block h-full rounded-full"
                     style={{ width: `${Math.round((c.n / maxCodeN) * 100)}%`, background: ERR, transition: 'width .8s cubic-bezier(.2,.8,.2,1)' }}
                   />
                 </span>
-                <span className="text-[11px] text-white/40 tabular-nums w-8 text-right">{c.n}</span>
+                <span className="text-[11px] text-token-muted tabular-nums w-8 text-right">{c.n}</span>
               </div>
             ))}
           </div>
@@ -449,7 +446,7 @@ export function ExperienceDrill({
 
       {detail && detail.samples.length > 0 ? (
         <div>
-          <div className="text-[12px] text-white/55 font-medium mb-2">真实请求样本</div>
+          <div className="text-[12px] text-token-secondary font-medium mb-2">真实请求样本</div>
           <div className="flex flex-col gap-2">
             {detail.samples.map((s, i) => (
               <SampleBlock key={i} s={s} />
@@ -475,23 +472,23 @@ export function ExperienceDrill({
       `}</style>
 
       <div className="flex items-center justify-between px-4 pt-3.5 pb-2 shrink-0">
-        <span className="text-[13px] font-semibold text-white/85">端点下钻诊断</span>
+        <span className="text-[13px] font-semibold text-token-primary">端点下钻诊断</span>
         <button
           type="button"
           onClick={onClose}
           title="关闭"
-          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.06] transition-colors cursor-pointer"
+          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-token-muted hover-text-primary hover-bg-soft transition-colors cursor-pointer"
         >
           <X size={16} />
         </button>
       </div>
 
       {/* 四级面包屑 */}
-      <div className="px-4 pb-2 flex items-center gap-1 flex-wrap text-[11px] text-white/45 shrink-0">
+      <div className="px-4 pb-2 flex items-center gap-1 flex-wrap text-[11px] text-token-muted shrink-0">
         {crumbs.map((c, i) => (
           <span key={i} className="inline-flex items-center gap-1">
-            {i > 0 ? <ChevronRight size={11} className="text-white/25" /> : null}
-            <span className={i === crumbs.length - 1 ? 'text-white/75' : ''}>{c}</span>
+            {i > 0 ? <ChevronRight size={11} className="text-token-muted" /> : null}
+            <span className={i === crumbs.length - 1 ? 'text-token-primary' : ''}>{c}</span>
           </span>
         ))}
       </div>
@@ -503,8 +500,8 @@ export function ExperienceDrill({
           onClick={() => setTab('rca')}
           className={`inline-flex items-center gap-1.5 px-3 h-[30px] rounded-lg text-[12.5px] font-medium border transition-colors cursor-pointer ${
             tab === 'rca'
-              ? 'bg-violet-500/14 text-violet-200 border-violet-500/40'
-              : 'bg-white/[0.02] text-white/55 border-white/10 hover:text-white/80 hover:border-white/20'
+              ? 'bg-violet-500/14 text-semantic-purple border-violet-500/40'
+              : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
           }`}
         >
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: VIOLET }} />
@@ -516,19 +513,19 @@ export function ExperienceDrill({
           onClick={() => setTab('samples')}
           className={`inline-flex items-center gap-1.5 px-3 h-[30px] rounded-lg text-[12.5px] font-medium border transition-colors cursor-pointer ${
             tab === 'samples'
-              ? 'bg-cyan-500/14 text-cyan-200 border-cyan-500/35'
-              : 'bg-white/[0.02] text-white/55 border-white/10 hover:text-white/80 hover:border-white/20'
+              ? 'bg-cyan-500/14 text-semantic-cyan border-cyan-500/35'
+              : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token'
           }`}
         >
           真实请求样本
-          {detail ? <span className="text-[10px] text-white/40 tabular-nums">{detail.count}</span> : null}
+          {detail ? <span className="text-[10px] text-token-muted tabular-nums">{detail.count}</span> : null}
         </button>
         {!diagActive ? (
           <button
             type="button"
             onClick={startDiagnose}
             title="重新诊断"
-            className="ml-auto inline-flex items-center gap-1 px-2 h-[26px] rounded text-[11px] border bg-white/[0.03] text-white/50 border-white/10 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
+            className="ml-auto inline-flex items-center gap-1 px-2 h-[26px] rounded text-[11px] border bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token transition-colors cursor-pointer"
           >
             <RotateCcw size={11} />
             重新诊断
@@ -547,22 +544,22 @@ export function ExperienceDrill({
       </div>
 
       {/* 操作区 */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.05] flex-wrap shrink-0">
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-token-subtle flex-wrap shrink-0">
         <button
           type="button"
           onClick={onRequestDefectModal}
-          className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-amber-500/15 text-amber-200 border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-amber-500/15 text-semantic-warning border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
         >
           <Bug size={12} />
           转为缺陷
         </button>
         {requirementNo ? (
-          <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/25">
+          <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-semantic-cyan border border-cyan-500/25">
             <ClipboardList size={12} />
             已转需求 #{requirementNo}
           </span>
         ) : convertingRequirement ? (
-          <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/25">
+          <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-semantic-cyan border border-cyan-500/25">
             <MapSpinner size={11} />
             流转中…
           </span>
@@ -570,7 +567,7 @@ export function ExperienceDrill({
           <button
             type="button"
             onClick={onRequestRequirementModal}
-            className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-cyan-500/10 text-semantic-cyan border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
           >
             <ClipboardList size={12} />
             转需求
@@ -579,7 +576,7 @@ export function ExperienceDrill({
         <button
           type="button"
           onClick={onClose}
-          className="ml-auto inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-white/[0.03] text-white/50 border-white/10 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
+          className="ml-auto inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-border-token transition-colors cursor-pointer"
         >
           <X size={12} />
           关闭

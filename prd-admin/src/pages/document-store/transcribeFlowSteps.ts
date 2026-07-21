@@ -25,8 +25,10 @@ export function deriveTranscribeSteps(input: {
   /** 源 entry 是否已就绪（上传完成 / 已有条目） */
   hasEntry: boolean;
   summaryFailed: boolean;
+  /** 用户是否主动选择了整理；默认 true 兼容既有调用，快捷录音显式传 false。 */
+  includeSummary?: boolean;
 }): TranscribeStep[] {
-  const { status, phase, hasFile, hasEntry, summaryFailed } = input;
+  const { status, phase, hasFile, hasEntry, summaryFailed, includeSummary = true } = input;
 
   const uploadState: TranscribeStepState =
     status === 'uploading' ? 'active'
@@ -52,7 +54,7 @@ export function deriveTranscribeSteps(input: {
       : phase === '写入中' ? 'active'
         : 'pending';
 
-  return [
+  const steps: TranscribeStep[] = [
     { key: 'upload', label: hasFile ? '上传音频' : '音频已就绪', state: uploadState },
     {
       key: 'transcribe',
@@ -60,12 +62,15 @@ export function deriveTranscribeSteps(input: {
       sub: TRANSCRIBE_PHASES.has(phase) && phase !== '排队中' ? phase : undefined,
       state: transcribeState,
     },
-    {
-      key: 'summary',
-      label: 'AI 摘要',
-      sub: summaryFailed ? '摘要生成失败，保留转录全文' : undefined,
-      state: summaryState,
-    },
-    { key: 'save', label: '保存为转录笔记', state: saveState },
   ];
+  if (includeSummary) {
+    steps.push({
+      key: 'summary',
+      label: '按所选方式整理',
+      sub: summaryFailed ? '整理失败，已保留转录全文' : undefined,
+      state: summaryState,
+    });
+  }
+  steps.push({ key: 'save', label: includeSummary ? '保存录音、原文和整理结果' : '保存录音和原文', state: saveState });
+  return steps;
 }

@@ -185,6 +185,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 r => r.Id == run.Id,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Done)
+                    .Set(r => r.Phase, "完成")
                     .Set(r => r.Progress, 100)
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);

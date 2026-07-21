@@ -1,10 +1,24 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Surface } from '@/components/design/Surface';
 import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services';
-import { Package, Search, Plus, Boxes, User, Star, Globe2, Bot, Zap, X } from 'lucide-react';
+import {
+  Package,
+  Search,
+  Plus,
+  Boxes,
+  User,
+  Star,
+  Globe2,
+  Bot,
+  Zap,
+  X,
+  Grid3X3,
+  LayoutGrid,
+  Image,
+} from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -16,6 +30,11 @@ import { BasicCapabilities } from './components/BasicCapabilities';
 import { QuickCreateWizard } from './components/QuickCreateWizard';
 import { ToolboxPageShell, ToolboxSegmentedControl, type ToolboxSegmentedItem } from './components/ToolboxShell';
 import { MobileToolboxView } from './MobileToolboxView';
+import {
+  readToolboxDisplayMode,
+  writeToolboxDisplayMode,
+  type ToolboxDisplayMode,
+} from './toolboxDisplayMode';
 
 // 权属维度（原有）
 const CATEGORY_TABS: ToolboxSegmentedItem[] = [
@@ -32,8 +51,22 @@ const KIND_TABS: ToolboxSegmentedItem[] = [
   { key: 'tool', label: '工具', icon: <Zap size={14} /> },
 ];
 
+const DISPLAY_MODES: Array<{
+  key: ToolboxDisplayMode;
+  label: string;
+  description: string;
+  icon: typeof Grid3X3;
+}> = [
+  { key: 'compact', label: '紧凑', description: '一行显示更多工具', icon: Grid3X3 },
+  { key: 'standard', label: '标准', description: '平衡图片与信息密度', icon: LayoutGrid },
+  { key: 'showcase', label: '大图', description: '突出智能体插画', icon: Image },
+];
+
 export default function AiToolboxPage() {
   const { isMobile } = useBreakpoint();
+  const [displayMode, setDisplayMode] = useState<ToolboxDisplayMode>(() =>
+    readToolboxDisplayMode(typeof window === 'undefined' ? undefined : window.localStorage)
+  );
   const {
     view,
     pageTab,
@@ -152,6 +185,14 @@ export default function AiToolboxPage() {
 
   const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter;
 
+  const handleDisplayModeChange = (mode: ToolboxDisplayMode) => {
+    setDisplayMode(mode);
+    writeToolboxDisplayMode(
+      typeof window === 'undefined' ? undefined : window.localStorage,
+      mode,
+    );
+  };
+
   // 移动端「发现」：原生手机浏览体验（首屏即时出内容，不卡加载动画）
   if (isMobile) {
     return <MobileToolboxView />;
@@ -204,6 +245,28 @@ export default function AiToolboxPage() {
 
             <div className="toolbox-count-pill">
               {filteredItems.length} 个{hasActiveFilters ? '匹配' : '工具'}
+            </div>
+
+            <div className="toolbox-display-switch" role="group" aria-label="展示方式">
+              {DISPLAY_MODES.map((mode) => {
+                const Icon = mode.icon;
+                const active = displayMode === mode.key;
+
+                return (
+                  <button
+                    key={mode.key}
+                    type="button"
+                    className="toolbox-display-option"
+                    data-active={active}
+                    aria-pressed={active}
+                    title={mode.description}
+                    onClick={() => handleDisplayModeChange(mode.key)}
+                  >
+                    <Icon size={13} aria-hidden />
+                    <span>{mode.label}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="relative">
@@ -281,16 +344,13 @@ export default function AiToolboxPage() {
           )}
         </Surface>
       ) : (
-        // 网格与首页启动器同规格：大图卡保持三列级别的阅读尺度。
-        <div
-          className="grid"
-          style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 360px), 1fr))', alignItems: 'stretch' }}
-        >
+        <div className="toolbox-card-grid" data-display-mode={displayMode}>
           {filteredItems.map((item) => (
             <ToolCard
               key={item.id}
               item={item}
               source={item.ownership === 'others' ? 'marketplace' : 'mine'}
+              displayMode={displayMode}
             />
           ))}
         </div>

@@ -3,7 +3,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { buildStaticAgents } from '@/lib/homeLauncherItems';
-import { AgentCardArtwork, AgentCardFrame, AgentCardTask, getAgentCardTask, hasAgentCardArtwork } from './AgentCardArtwork';
+import {
+  AgentCardArtwork,
+  AgentCardFrame,
+  AgentCardTask,
+  getAgentCardArtworkToken,
+  getAgentCardTask,
+  hasAgentCardArtwork,
+} from './AgentCardArtwork';
 
 describe('AgentCardArtwork', () => {
   it('为全部内置智能体提供职责化背景', () => {
@@ -31,12 +38,46 @@ describe('AgentCardArtwork', () => {
     expect(missingTasks).toEqual([]);
   });
 
+  it('为每个智能体提供唯一的主题素材 token', () => {
+    const builtinAgents = [
+      ...BUILTIN_TOOLS.filter((item) => item.kind === 'agent'),
+      ...buildStaticAgents(),
+    ];
+    const artworkTokens = builtinAgents.map((item) => getAgentCardArtworkToken(item.agentKey));
+
+    expect(artworkTokens.every(Boolean)).toBe(true);
+    expect(new Set(artworkTokens).size).toBe(23);
+    expect(getAgentCardArtworkToken('visual-agent')).toBe('--agent-card-artwork-visual-agent');
+  });
+
   it('支持限制图片高度，为下部信息面板留出空间', () => {
     const html = renderToStaticMarkup(
       createElement(AgentCardArtwork, { agentKey: 'visual-agent', imageHeight: '57%' }),
     );
 
     expect(html).toContain('clip-path:inset(0 0 calc(100% - 57%) 0)');
+  });
+
+  it('支持按智能体类别给灰阶插画注入色彩层', () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentCardArtwork, { agentKey: 'visual-agent', tint: 'hsl(271 68% 64%)' }),
+    );
+
+    expect(html).toContain('agent-card-artwork-tint');
+    expect(html).toContain('--agent-card-tint:hsl(271 68% 64%)');
+    expect(html).toContain('agent-card-artwork-wash');
+    expect(html).toContain('agent-card-artwork-overlay');
+  });
+
+  it('用共享契约区分紧凑遮罩，不在组件里判断明暗主题', () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentCardArtwork, { agentKey: 'visual-agent', compact: true }),
+    );
+
+    expect(html).toContain('data-compact="true"');
+    expect(html).toContain('agent-card-artwork-image');
+    expect(html).toContain('background-image:var(--agent-card-artwork-visual-agent)');
+    expect(html).not.toContain('data-theme');
   });
 
   it('高密度任务标识保留可访问名称并省略重复标签', () => {

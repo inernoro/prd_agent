@@ -202,7 +202,7 @@ function NodeChips({ nodes }: { nodes: WorkflowNode[] }) {
           style={{
             background: `hsla(${getNodeHue(type)}, 50%, 50%, 0.1)`,
             border: `1px solid hsla(${getNodeHue(type)}, 50%, 50%, 0.18)`,
-            color: `hsla(${getNodeHue(type)}, 55%, 70%, 0.9)`,
+            color: 'var(--text-secondary)',
           }}
         >
           <span>{emoji}</span>

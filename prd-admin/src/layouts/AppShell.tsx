@@ -84,10 +84,12 @@ import { NotificationSubscriptionsPanel } from '@/components/notifications/Notif
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
-import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
+import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
+import { MapBrandMark } from '@/components/ui/MapBrandMark';
+import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -201,31 +203,34 @@ export default function AppShell() {
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
+  const setThemeMode = useMobileThemeStore((st) => st.setMode);
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
-  // report 等页面在桌面端自管的主题(Codex P2 修复的所有权语义)。
+  // 仍保留纸面身份的独立页面主题。
   const ownsThemeRef = useRef(false);
 
   // 全局明暗偏好（2026-07-17 升级：从移动端专属扩展到全站，桌面同样生效）:
   // 暗色默认、可切换（首页移动端右上角 / 设置 → 皮肤设置「外观」共用同一 store）,
   // 壳层统一落 <html data-theme>。deps 带 pathname:自管主题的页面卸载清属性后,
-  // 导航到普通页由这里重申。自管主题路由(纸面身份,页面自己 set/remove data-theme)
+  // 导航到普通页由这里重申。自管主题路由(独立纸面身份,页面自己 set/remove data-theme)
   // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
   useEffect(() => {
-    const root = document.documentElement;
-    // 只列真正自己 set/remove data-theme 的页面(weekly-poster 无所有者,已移除 —— Codex P2 三轮)
-    const selfManaged = ['/daily-post', '/report-agent'].some(
-      (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
-    );
-    if (selfManaged) {
+    if (!applyDocumentThemeMode(mobileThemeMode, location.pathname)) {
       // 属性所有权移交给页面:壳层卸载也不清理,避免误清页面自管的主题(Codex P2 二轮)。
       // 离开该路由回普通页时,下方 set/remove 会重新接管所有权。
       ownsThemeRef.current = false;
       return;
     }
-    if (mobileThemeMode === 'light') root.setAttribute('data-theme', 'light');
-    else root.removeAttribute('data-theme');
     ownsThemeRef.current = true;
   }, [mobileThemeMode, location.pathname]);
+
+  const handleThemeModeToggle = useCallback<React.MouseEventHandler<HTMLButtonElement>>((event) => {
+    transitionThemeMode({
+      mode: mobileThemeMode === 'light' ? 'dark' : 'light',
+      pathname: location.pathname,
+      origin: event,
+      commit: setThemeMode,
+    });
+  }, [location.pathname, mobileThemeMode, setThemeMode]);
 
   // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
   useEffect(
@@ -743,7 +748,6 @@ export default function AppShell() {
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
-      <CommandPalette />
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!suppressFloatingDock && !isMobile && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);
@@ -1228,25 +1232,24 @@ export default function AppShell() {
             // flush rail：无圆角，只保留右侧发丝分隔线（覆盖 glassSidebar 的四边 border/浮岛投影）
             borderRadius: 0,
             border: 'none',
-            borderRight: '1px solid rgba(255,255,255,0.08)',
+            borderRight: '1px solid var(--border-faint)',
             boxShadow: 'none',
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
           {/* ── 顶部 Logo 区域 ── */}
-          <div
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            aria-label="返回首页"
+            title="MAP 智能体平台"
             className={cn(
-              'shrink-0 flex items-center',
+              'shrink-0 flex items-center transition-opacity hover:opacity-90',
               collapsed ? 'justify-center py-2' : 'px-3 py-2'
             )}
           >
-            <img
-              src="/favicon.png"
-              alt="Logo"
-              className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
-              draggable={false}
-            />
-          </div>
+            <MapBrandMark expanded={!collapsed} />
+          </button>
 
           {/* ── 首页按钮 ── */}
           {homeItem && (
@@ -1263,8 +1266,8 @@ export default function AppShell() {
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
                   width: 56,
                   padding: '6px 0 4px',
-                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                  background: activeKey === '/' ? 'var(--launcher-control-bg)' : 'transparent',
+                  border: activeKey === '/' ? '1px solid var(--launcher-control-border)' : '1px solid transparent',
                 }}
                 title={homeItem.label}
               >
@@ -1275,7 +1278,7 @@ export default function AppShell() {
                   style={{
                     width: 28,
                     height: 28,
-                    color: activeKey === '/' ? 'rgba(255, 255, 255, 0.88)' : undefined,
+                    color: activeKey === '/' ? 'var(--text-primary)' : undefined,
                   }}
                 >
                   {homeItem.icon}
@@ -1315,9 +1318,7 @@ export default function AppShell() {
                       className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
                       style={{
                         height: 1,
-                        background: collapsed
-                          ? 'rgba(255, 255, 255, 0.06)'
-                          : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                        background: 'var(--border-faint)',
                         width: collapsed ? 24 : undefined,
                       }}
                     />
@@ -1351,8 +1352,8 @@ export default function AppShell() {
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                             width: 56,
                             padding: '6px 0 4px',
-                            background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                            border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                            background: active ? 'var(--launcher-control-bg)' : 'transparent',
+                            border: active ? '1px solid var(--launcher-control-border)' : '1px solid transparent',
                           }}
                           title={it.description ? `${it.label} - ${it.description}` : it.label}
                         >
@@ -1364,7 +1365,7 @@ export default function AppShell() {
                             style={{
                               width: 28,
                               height: 28,
-                              color: active ? 'rgba(255, 255, 255, 0.88)' : undefined,
+                              color: active ? 'var(--text-primary)' : undefined,
                             }}
                           >
                             {it.icon}
@@ -1398,14 +1399,15 @@ export default function AppShell() {
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
             )}
           >
+            <div className="mb-1 flex justify-center px-1">
+              <ThemeModeToggle mode={mobileThemeMode} onToggle={handleThemeModeToggle} />
+            </div>
             {/* 分隔线 */}
             <div
               className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
               style={{
                 height: 1,
-                background: collapsed
-                  ? 'rgba(255, 255, 255, 0.06)'
-                  : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                background: 'var(--border-faint)',
                 width: collapsed ? 24 : undefined,
               }}
             />

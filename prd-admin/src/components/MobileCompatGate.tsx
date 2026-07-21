@@ -78,14 +78,14 @@ export function MobileCompatGate({ pathname }: Props) {
       <div
         className="mb-3 flex items-start gap-2 px-3 py-2 rounded-xl"
         style={{
-          background: 'rgba(251, 191, 36, 0.10)',
-          border: '1px solid rgba(251, 191, 36, 0.25)',
-          color: 'rgba(255, 236, 179, 0.95)',
+          background: 'color-mix(in srgb, var(--semantic-warning-text) 10%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--semantic-warning-text) 28%, transparent)',
+          color: 'var(--semantic-warning-text)',
           fontSize: 12,
           lineHeight: 1.5,
         }}
       >
-        <AlertTriangle size={14} style={{ color: '#FBBF24', marginTop: 2, flexShrink: 0 }} />
+        <AlertTriangle size={14} style={{ color: 'var(--semantic-warning-text)', marginTop: 2, flexShrink: 0 }} />
         <div className="flex-1">
           <span>移动端部分功能受限。</span>
           {entry?.note && <span style={{ opacity: 0.85 }}> {entry.note}</span>}
@@ -95,7 +95,7 @@ export function MobileCompatGate({ pathname }: Props) {
           aria-label="关闭提示"
           onClick={() => setBannerClosed(true)}
           className="shrink-0 p-1 rounded hover:bg-white/10"
-          style={{ color: 'rgba(255, 236, 179, 0.7)' }}
+          style={{ color: 'var(--semantic-warning-text)' }}
         >
           <X size={12} />
         </button>
@@ -112,7 +112,8 @@ export function MobileCompatGate({ pathname }: Props) {
       style={{ background: 'rgba(8, 8, 12, 0.82)', backdropFilter: 'blur(8px)' }}
     >
       <div
-        className="w-full max-w-md rounded-2xl p-5"
+        className="surface-tone-dark w-full max-w-md rounded-2xl p-5"
+        data-surface-tone="dark"
         style={{
           background: 'rgba(22, 22, 28, 0.95)',
           border: '1px solid rgba(255, 255, 255, 0.08)',

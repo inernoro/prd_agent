@@ -53,6 +53,92 @@
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.60);
 
+  /* 跨主题状态文字：组件只表达语义，不再各自维护明暗两套前景色。 */
+  --semantic-success-text: #86efac;
+  --semantic-warning-text: #fcd34d;
+  --semantic-danger-text: #fca5a5;
+  --semantic-info-text: #93c5fd;
+  --semantic-neutral-text: #cbd5e1;
+  --semantic-purple-text: #d8b4fe;
+  --semantic-pink-text: #f9a8d4;
+  --semantic-orange-text: #fdba74;
+  --semantic-cyan-text: #67e8f9;
+  --semantic-indigo-text: #a5b4fc;
+  --semantic-success-soft: rgba(34, 197, 94, 0.12);
+  --semantic-success-border: rgba(34, 197, 94, 0.24);
+  --semantic-warning-soft: rgba(245, 158, 11, 0.12);
+  --semantic-warning-border: rgba(245, 158, 11, 0.24);
+  --semantic-danger-soft: rgba(239, 68, 68, 0.12);
+  --semantic-danger-border: rgba(239, 68, 68, 0.24);
+  --semantic-info-soft: rgba(59, 130, 246, 0.12);
+  --semantic-info-border: rgba(59, 130, 246, 0.24);
+  --semantic-neutral-soft: rgba(148, 163, 184, 0.10);
+  --semantic-neutral-border: rgba(148, 163, 184, 0.20);
+  --semantic-purple-soft: rgba(168, 85, 247, 0.12);
+  --semantic-purple-border: rgba(168, 85, 247, 0.24);
+  --semantic-pink-soft: rgba(236, 72, 153, 0.12);
+  --semantic-pink-border: rgba(236, 72, 153, 0.24);
+  --semantic-orange-soft: rgba(249, 115, 22, 0.12);
+  --semantic-orange-border: rgba(249, 115, 22, 0.24);
+  --semantic-cyan-soft: rgba(34, 211, 238, 0.12);
+  --semantic-cyan-border: rgba(34, 211, 238, 0.24);
+  --semantic-indigo-soft: rgba(129, 140, 248, 0.12);
+  --semantic-indigo-border: rgba(129, 140, 248, 0.24);
+  --workflow-accent-text-lightness: 65%;
+
+  /* 周报品牌层：明暗状态由全局主题持有，周报仅声明编辑风格点缀。
+     暗色沿用平台靛蓝；浅色块覆盖为暖陶橙。历史变量保留为迁移别名。 */
+  --report-accent: var(--accent-primary);
+  --report-accent-hover: var(--accent-gold-2);
+  --report-accent-soft: rgba(var(--accent-primary-rgb), 0.14);
+  --report-accent-border: rgba(var(--accent-primary-rgb), 0.32);
+  --report-status-done: var(--semantic-success-text);
+  --report-status-done-soft: var(--semantic-success-soft);
+  --report-status-done-border: var(--semantic-success-border);
+  --report-status-going: var(--semantic-warning-text);
+  --report-status-going-soft: var(--semantic-warning-soft);
+  --report-status-going-border: var(--semantic-warning-border);
+  --report-status-idle: var(--semantic-neutral-text);
+  --report-status-idle-soft: var(--semantic-neutral-soft);
+  --report-status-idle-border: var(--semantic-neutral-border);
+  --accent-claude: var(--report-accent);
+  --accent-claude-hover: var(--report-accent-hover);
+  --accent-claude-soft: var(--report-accent-soft);
+  --accent-claude-border: var(--report-accent-border);
+  --status-done: var(--report-status-done);
+  --status-done-soft: var(--report-status-done-soft);
+  --status-done-border: var(--report-status-done-border);
+  --status-going: var(--report-status-going);
+  --status-going-soft: var(--report-status-going-soft);
+  --status-going-border: var(--report-status-going-border);
+  --status-idle: var(--report-status-idle);
+  --status-idle-soft: var(--report-status-idle-soft);
+  --status-idle-border: var(--report-status-idle-border);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+
+  /* 首页启动器：普通瓦片与全局外观开关。色彩由类别 accent 动态注入，
+     这些 token 只负责跨主题可读的中性承载面。 */
+  --launcher-tile-bg: rgba(255, 255, 255, 0.055);
+  --launcher-tile-border: rgba(255, 255, 255, 0.10);
+  --launcher-control-bg: rgba(255, 255, 255, 0.045);
+  --launcher-control-border: rgba(255, 255, 255, 0.09);
+  --launcher-theme-icon: #c4b5fd;
+  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.16);
+  --home-ambient-background:
+    radial-gradient(52% 86% at 8% 0%, rgba(124, 58, 237, 0.28) 0%, transparent 68%),
+    radial-gradient(44% 72% at 88% 4%, rgba(14, 165, 233, 0.20) 0%, transparent 70%),
+    radial-gradient(32% 58% at 58% 18%, rgba(244, 114, 182, 0.10) 0%, transparent 72%);
+  --home-ambient-opacity: 0.9;
+  --home-eyebrow-bg: rgba(247, 247, 251, 0.045);
+  --home-eyebrow-border: rgba(247, 247, 251, 0.13);
+  --home-eyebrow-text: rgba(214, 216, 212, 0.78);
+  --home-title-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
+  --home-subtitle-text: rgba(247, 247, 251, 0.72);
+  --home-subtitle-shadow: 0 1px 4px rgba(0, 0, 0, 0.20);
+  --home-name-background: linear-gradient(100deg, #f7f7fb 0%, #c8c5be 100%);
+  --home-name-fill: transparent;
+
   /* 登录页固定暗色视觉：石墨、暖银、冷白，不跟随应用内容主题反相。 */
   --login-bg: #0e0f11;
   --login-backdrop-overlay: radial-gradient(ellipse 82% 58% at 50% -8%, rgba(222, 224, 220, 0.10) 0%, rgba(143, 146, 142, 0.045) 34%, rgba(14, 15, 17, 0.24) 66%, rgba(14, 15, 17, 0.84) 100%);
@@ -75,7 +161,30 @@
   --login-cta-gradient: linear-gradient(115deg, #303136 0%, #4d4f54 58%, #71737a 100%);
   --login-cta-shadow: 0 0 32px rgba(214, 216, 212, 0.08), 0 10px 32px rgba(0, 0, 0, 0.50);
 
-  /* 图片封面上的跨主题语义色：明暗主题都必须保持高对比，不跟随页面正文反转。 */
+  /* 智能体图片卡契约：组件只消费这些 token，不直接判断 light / dark。 */
+  --agent-card-artwork-arena: url('../assets/agent-card-art/arena.webp');
+  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent.webp');
+  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent.webp');
+  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent.webp');
+  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent.webp');
+  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent.webp');
+  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent.webp');
+  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent.webp');
+  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent.webp');
+  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent.webp');
+  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent.webp');
+  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review.webp');
+  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent.webp');
+  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent.webp');
+  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent.webp');
+  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent.webp');
+  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent.webp');
+  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent.webp');
+  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent.webp');
+  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent.webp');
+  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
+  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
+  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
@@ -94,11 +203,50 @@
   --media-card-task-muted: rgba(214, 216, 212, 0.62);
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.66);
+  --media-card-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.60);
+  --media-art-filter: saturate(0.92) contrast(1.05) brightness(0.90);
+  --media-art-opacity: 0.88;
+  --media-art-opacity-hover: 0.94;
+  --media-art-tint-opacity: 0.68;
+  --media-art-tint-opacity-hover: 0.82;
+  --media-art-tint-blend: color;
+  --media-art-wash: linear-gradient(135deg, transparent, transparent);
+  --media-art-wash-blend: normal;
 
   --accent-green: #7cfc00;
+  --accent-primary: #818cf8;
+  --accent-primary-rgb: 129, 140, 248;
   --accent-gold: #818cf8;
   --accent-gold-2: #a5b4fc;
   --gold-gradient: linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%);
+
+  /* 选择/键盘游标是共享交互语义，不由页面各写一套蓝色。 */
+  --selection-bg: rgba(129, 140, 248, 0.16);
+  --selection-icon-bg: rgba(129, 140, 248, 0.22);
+  --selection-border: rgba(129, 140, 248, 0.38);
+  --selection-text: #c7d2fe;
+
+  /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
+  --button-primary-bg: #4f46e5;
+  --button-primary-bg-hover: #4338ca;
+  --button-primary-fg: #ffffff;
+  --button-primary-shadow: 0 4px 16px -4px rgba(79, 70, 229, 0.42);
+  --button-secondary-bg: rgba(255, 255, 255, 0.05);
+  --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
+  --button-secondary-border: rgba(255, 255, 255, 0.10);
+  --button-danger-bg: rgba(239, 68, 68, 0.10);
+  --button-danger-bg-hover: rgba(239, 68, 68, 0.15);
+  --button-danger-border: rgba(239, 68, 68, 0.25);
+  --button-danger-fg: #fca5a5;
+  --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
+  --section-label-text: #a5b4fc;
+
+  /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
+  --viz-sticky-bg: rgba(24, 24, 30, 0.90);
+  --viz-grid: rgba(247, 247, 251, 0.10);
+  --viz-label: rgba(247, 247, 251, 0.82);
+  --viz-label-muted: rgba(247, 247, 251, 0.60);
+  --viz-label-halo: rgba(0, 0, 0, 0.62);
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -177,130 +325,268 @@
   }
 }
 
-/* ── 浅色模式（scope 化，仅在挂 data-theme="light" 的元素子树内生效）──
-   用途：周报 Agent 内浅色切换（进入时挂到 documentElement 上）。
-   其他页面仍按 :root 的暗色默认值渲染，互不干扰。
-   !important 必要性：
-     src/lib/themeApplier.ts 通过 root.style.setProperty('--bg-base', …)
-     把多组变量作为 inline style 挂到 <html> 上（特异性 1,0,0,0），
-     普通 CSS 选择器无法胜过。按 CSS Cascading Level 4 规则，带
-     !important 的作者样式会高于无 !important 的 inline style，因此
-     此处必须加 !important。            */
+/* 材质只在 token 层切换。页面和组件不再维护 solid / glass 分支。 */
+[data-material="solid"] {
+  --glass-bg-start: rgb(36, 36, 42);
+  --glass-bg-end: rgb(36, 36, 42);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.10);
+  --border-default: rgba(255, 255, 255, 0.14);
+  --border-hover: rgba(255, 255, 255, 0.20);
+  --border-faint: rgba(255, 255, 255, 0.06);
+  --nested-block-bg: rgba(255, 255, 255, 0.05);
+  --nested-block-border: rgba(255, 255, 255, 0.09);
+  --list-item-bg: rgba(255, 255, 255, 0.045);
+  --list-item-border: rgba(255, 255, 255, 0.08);
+  --list-item-hover-bg: rgba(255, 255, 255, 0.08);
+  --table-header-bg: rgba(255, 255, 255, 0.045);
+  --table-row-border: rgba(255, 255, 255, 0.08);
+  --table-row-hover-bg: rgba(255, 255, 255, 0.05);
+}
+
+/* 浅色模式是全站 token 的唯一覆盖层。运行时只设置 data-theme，不写颜色。 */
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg-base: #FAF9F5 !important;          /* Anthropic claude.ai 官方暖白,S≈3% 极轻暖偏,L≈97% 几乎纯白 */
-  --bg-elevated: #F0EEE8 !important;      /* elevated 对应同步提亮,保持与 base 的层次 */
-  /* 浅色卡片必须用纯白制造层级。
-     原值 rgba(26, 26, 31, 0.05) 在 #FAF9F5 上视觉差仅约 4% L,
-     卡片"浮"不起来 — Anthropic Claude.ai 等顶级浅色 UX 都用纯白卡 + hairline 描边 */
-  --bg-card: #FFFFFF !important;
-  --bg-card-hover: rgba(26, 26, 31, 0.04) !important;
-  --bg-input: #ffffff !important;
-  --bg-input-hover: #fafafa !important;
+  --bg-base: #EEEAE3;
+  --bg-elevated: #E4DED5;
+  /* 浅色界面用暖灰底、象牙卡和石墨文字建立层级，避免页面与卡片通体纯白。 */
+  --bg-card: #F8F5EF;
+  --bg-card-hover: rgba(26, 26, 31, 0.04);
+  --bg-input: #FBF8F3;
+  --bg-input-hover: #F4F0E9;
 
-  --panel: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.96) 100%) !important;
-  --panel-solid: #ffffff !important;
+  --panel: linear-gradient(180deg, #F8F5EF 0%, #F1ECE4 100%);
+  --panel-solid: #F8F5EF;
 
-  --border-faint: rgba(26, 26, 31, 0.08) !important;
-  --border-subtle: rgba(26, 26, 31, 0.12) !important;
-  --border-default: rgba(26, 26, 31, 0.18) !important;
-  --border-hover: rgba(26, 26, 31, 0.28) !important;
+  --border-faint: rgba(26, 26, 31, 0.08);
+  --border-subtle: rgba(26, 26, 31, 0.12);
+  --border-default: rgba(26, 26, 31, 0.18);
+  --border-hover: rgba(26, 26, 31, 0.28);
 
-  /* 玻璃效果:浅底上用"近纯白卡片"叠加形成清晰层次 */
-  --glass-bg-start: rgba(255, 255, 255, 1) !important;
-  --glass-bg-end: rgba(255, 255, 255, 0.96) !important;
-  --glass-border: rgba(26, 26, 31, 0.14) !important;
+  /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
+  --glass-bg-start: rgba(248, 245, 239, 0.98);
+  --glass-bg-end: rgba(239, 234, 225, 0.96);
+  --glass-border: rgba(26, 26, 31, 0.14);
 
-  --glass-bg: rgba(255, 255, 255, 0.98) !important;
-  --glass-bg-strong: #ffffff !important;
-  --glass-ring: rgba(26, 26, 31, 0.10) !important;
-  --glass-shadow: 0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 4px rgba(15, 23, 42, 0.04) !important;
+  --glass-bg: rgba(248, 245, 239, 0.94);
+  --glass-bg-strong: #F8F5EF;
+  --glass-ring: rgba(26, 26, 31, 0.10);
+  --glass-shadow: 0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 4px rgba(15, 23, 42, 0.04);
 
   /* 同 themeApplier 管理：嵌套块/列表/表格 —— 浅色下也需覆盖避免白底白字 */
-  --nested-block-bg: rgba(26, 26, 31, 0.04) !important;
-  --nested-block-border: rgba(26, 26, 31, 0.08) !important;
-  --list-item-bg: rgba(255, 255, 255, 0.85) !important;
-  --list-item-border: rgba(26, 26, 31, 0.08) !important;
-  --list-item-hover-bg: rgba(255, 255, 255, 0.95) !important;
-  --table-header-bg: rgba(26, 26, 31, 0.04) !important;
-  --table-row-border: rgba(26, 26, 31, 0.06) !important;
-  --table-row-hover-bg: rgba(26, 26, 31, 0.03) !important;
+  --nested-block-bg: rgba(26, 26, 31, 0.04);
+  --nested-block-border: rgba(26, 26, 31, 0.08);
+  --list-item-bg: rgba(248, 245, 239, 0.88);
+  --list-item-border: rgba(26, 26, 31, 0.08);
+  --list-item-hover-bg: rgba(251, 248, 243, 0.96);
+  --table-header-bg: rgba(26, 26, 31, 0.04);
+  --table-row-border: rgba(26, 26, 31, 0.06);
+  --table-row-hover-bg: rgba(26, 26, 31, 0.03);
 
   /* 文字色加深到 slate-900 色阶,确保米底上达到 WCAG AAA 7:1 对比度 */
-  --text-primary: #0F172A !important;
-  --text-secondary: rgba(15, 23, 42, 0.78) !important;
-  --text-muted: rgba(15, 23, 42, 0.68) !important;          /* 0.58 在 #FAF9F5 上仅 4.2:1 不达 WCAG AA,提到 0.68 后 ≈ 4.8:1 达 AA */
+  --text-primary: #0F172A;
+  --text-secondary: rgba(15, 23, 42, 0.78);
+  --text-muted: rgba(15, 23, 42, 0.68);          /* 暖灰底上保持 WCAG AA 对比度。 */
 
-  /* 封面图本身不随页面主题反相，前景色保持稳定对比。 */
-  --media-card-base: #141418 !important;
-  --media-card-panel: rgba(20, 20, 24, 0.92) !important;
-  --media-card-panel-strong: rgba(20, 20, 24, 0.97) !important;
-  --media-card-panel-translucent: linear-gradient(180deg, rgba(20, 20, 24, 0.18) 0%, rgba(20, 20, 24, 0.52) 100%) !important;
-  --media-card-glass: rgba(20, 20, 24, 0.76) !important;
-  --media-card-tag-bg: rgba(247, 247, 251, 0.06) !important;
-  --media-card-tag-border: rgba(247, 247, 251, 0.10) !important;
-  --media-card-tag-text: rgba(247, 247, 251, 0.68) !important;
-  --media-card-border: rgba(247, 247, 251, 0.13) !important;
-  --media-card-border-hover: rgba(247, 247, 251, 0.24) !important;
-  --media-card-edge: rgba(247, 247, 251, 0.08) !important;
-  --media-card-overlay: linear-gradient(90deg, rgba(20, 20, 24, 0.76) 0%, rgba(20, 20, 24, 0.10) 42%, rgba(20, 20, 24, 0.08) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.08) 0%, rgba(20, 20, 24, 0.12) 52%, rgba(20, 20, 24, 0.58) 78%, rgba(20, 20, 24, 0.78) 100%) !important;
-  --media-card-overlay-compact: linear-gradient(90deg, rgba(20, 20, 24, 0.72) 0%, rgba(20, 20, 24, 0.08) 48%, rgba(20, 20, 24, 0.12) 100%), linear-gradient(180deg, rgba(20, 20, 24, 0.06) 0%, rgba(20, 20, 24, 0.18) 48%, rgba(20, 20, 24, 0.64) 78%, rgba(20, 20, 24, 0.82) 100%) !important;
-  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -48px 72px rgba(20, 20, 24, 0.32) !important;
-  --media-card-task: #7cfc00 !important;
-  --media-card-task-muted: rgba(214, 216, 212, 0.62) !important;
-  --text-on-media: #f7f7fb !important;
-  --text-on-media-muted: rgba(247, 247, 251, 0.66) !important;
+  --semantic-success-text: #166534;
+  --semantic-warning-text: #854d0e;
+  --semantic-danger-text: #b91c1c;
+  --semantic-info-text: #1d4ed8;
+  --semantic-neutral-text: #475569;
+  --semantic-purple-text: #6b21a8;
+  --semantic-pink-text: #9d174d;
+  --semantic-orange-text: #9a3412;
+  --semantic-cyan-text: #155e75;
+  --semantic-indigo-text: #4338ca;
+  --semantic-success-soft: rgba(22, 101, 52, 0.12);
+  --semantic-success-border: rgba(22, 101, 52, 0.24);
+  --semantic-warning-soft: rgba(133, 77, 14, 0.12);
+  --semantic-warning-border: rgba(133, 77, 14, 0.24);
+  --semantic-danger-soft: rgba(185, 28, 28, 0.12);
+  --semantic-danger-border: rgba(185, 28, 28, 0.24);
+  --semantic-info-soft: rgba(29, 78, 216, 0.12);
+  --semantic-info-border: rgba(29, 78, 216, 0.24);
+  --semantic-neutral-soft: rgba(71, 85, 105, 0.10);
+  --semantic-neutral-border: rgba(71, 85, 105, 0.20);
+  --semantic-purple-soft: rgba(107, 33, 168, 0.12);
+  --semantic-purple-border: rgba(107, 33, 168, 0.24);
+  --semantic-pink-soft: rgba(157, 23, 77, 0.12);
+  --semantic-pink-border: rgba(157, 23, 77, 0.24);
+  --semantic-orange-soft: rgba(154, 52, 18, 0.12);
+  --semantic-orange-border: rgba(154, 52, 18, 0.24);
+  --semantic-cyan-soft: rgba(21, 94, 117, 0.12);
+  --semantic-cyan-border: rgba(21, 94, 117, 0.24);
+  --semantic-indigo-soft: rgba(67, 56, 202, 0.12);
+  --semantic-indigo-border: rgba(67, 56, 202, 0.24);
+  --workflow-accent-text-lightness: 36%;
 
-  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
+  --accent-primary: #4f46e5;
+  --accent-primary-rgb: 99, 102, 241;
+  --selection-bg: rgba(99, 102, 241, 0.10);
+  --selection-icon-bg: rgba(99, 102, 241, 0.14);
+  --selection-border: rgba(99, 102, 241, 0.34);
+  --selection-text: #4338ca;
+
+  --button-primary-bg: #CC785C;
+  --button-primary-bg-hover: #B8684C;
+  --button-primary-fg: #241915;
+  --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
+  --button-secondary-bg: var(--bg-card);
+  --button-secondary-bg-hover: var(--bg-card-hover);
+  --button-secondary-border: var(--hairline);
+  --button-danger-bg: rgba(220, 38, 38, 0.06);
+  --button-danger-bg-hover: rgba(220, 38, 38, 0.10);
+  --button-danger-border: rgba(220, 38, 38, 0.30);
+  --button-danger-fg: #b91c1c;
+  --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
+  --section-label-text: #4338ca;
+
+  --viz-sticky-bg: rgba(248, 245, 239, 0.92);
+  --viz-grid: rgba(15, 23, 42, 0.12);
+  --viz-label: rgba(15, 23, 42, 0.82);
+  --viz-label-muted: rgba(15, 23, 42, 0.68);
+  --viz-label-halo: rgba(248, 245, 239, 0.88);
+
+  /* 浅色图片卡消费独立浅色插画，不再把暗图用滤镜与白色蒙层洗亮。 */
+  --agent-card-artwork-arena: url('../assets/agent-card-art/arena-light.webp');
+  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent-light.webp');
+  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent-light.webp');
+  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent-light.webp');
+  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent-light.webp');
+  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent-light.webp');
+  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent-light.webp');
+  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent-light.webp');
+  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent-light.webp');
+  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent-light.webp');
+  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent-light.webp');
+  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review-light.webp');
+  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent-light.webp');
+  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent-light.webp');
+  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent-light.webp');
+  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent-light.webp');
+  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent-light.webp');
+  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent-light.webp');
+  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent-light.webp');
+  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent-light.webp');
+  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
+  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
+  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');
+  --media-card-base: #E6E0D7;
+  --media-card-panel: rgba(241, 236, 228, 0.94);
+  --media-card-panel-strong: rgba(245, 241, 234, 0.98);
+  --media-card-panel-translucent: linear-gradient(180deg, rgba(235, 229, 220, 0.80) 0%, rgba(245, 241, 234, 0.96) 100%);
+  --media-card-glass: rgba(238, 232, 223, 0.88);
+  --media-card-tag-bg: rgba(15, 23, 42, 0.055);
+  --media-card-tag-border: rgba(15, 23, 42, 0.11);
+  --media-card-tag-text: rgba(15, 23, 42, 0.76);
+  --media-card-border: rgba(15, 23, 42, 0.13);
+  --media-card-border-hover: rgba(99, 102, 241, 0.52);
+  --media-card-edge: rgba(15, 23, 42, 0.10);
+  --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
+  --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
+  --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
+  --media-card-task: #6d28d9;
+  --media-card-task-muted: rgba(15, 23, 42, 0.58);
+  --text-on-media: #172033;
+  --text-on-media-muted: rgba(15, 23, 42, 0.68);
+
+  --launcher-tile-bg: rgba(248, 245, 239, 0.94);
+  --launcher-tile-border: rgba(15, 23, 42, 0.11);
+  --launcher-control-bg: rgba(241, 236, 228, 0.86);
+  --launcher-control-border: rgba(15, 23, 42, 0.12);
+  --launcher-theme-icon: #6d28d9;
+  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.13);
+  --home-ambient-background:
+    radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
+    radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),
+    radial-gradient(36% 64% at 58% 6%, rgba(251, 146, 60, 0.14) 0%, transparent 72%);
+  --home-ambient-opacity: 1;
+  --home-eyebrow-bg: var(--nested-block-bg);
+  --home-eyebrow-border: var(--nested-block-border);
+  --home-eyebrow-text: var(--text-muted);
+  --home-title-shadow: none;
+  --home-subtitle-text: var(--text-secondary);
+  --home-subtitle-shadow: none;
+  --home-name-background: none;
+  --home-name-fill: var(--text-primary);
+
+  /* 浅色原图保持自然材质，只做轻微色彩校正与类别提示。 */
+  --media-card-shadow: 0 8px 22px -12px rgba(74, 62, 48, 0.28);
+  --media-art-filter: saturate(1) contrast(1.10) brightness(0.94);
+  --media-art-opacity: 1;
+  --media-art-opacity-hover: 1;
+  --media-art-tint-opacity: 0.06;
+  --media-art-tint-opacity-hover: 0.10;
+  --media-art-tint-blend: soft-light;
+  --media-art-wash: linear-gradient(135deg, transparent, transparent);
+  --media-art-wash-blend: normal;
+
+  /* 阴影:暖灰底上的阴影保持克制,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
-     与 #FAF9F5 暖白底协调 — Anthropic Claude.ai 同款 warm shadow tone。 */
-  --shadow-card: 0 1px 3px rgba(89, 65, 50, 0.06), 0 1px 2px rgba(89, 65, 50, 0.04) !important;
-  --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05) !important;
-  --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05) !important;          /* 微 elevation,卡片/segment thumb */
-  --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10) !important;  /* segmented control 选中态 */
+     与暖纸色表面协调。 */
+  --shadow-card: 0 1px 3px rgba(89, 65, 50, 0.06), 0 1px 2px rgba(89, 65, 50, 0.04);
+  --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05);
+  --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05);          /* 微 elevation,卡片/segment thumb */
+  --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10);  /* segmented control 选中态 */
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
-  --modal-overlay: rgba(15, 23, 42, 0.18) !important;
+  --modal-overlay: rgba(15, 23, 42, 0.18);
 
-  /* ── Anthropic 调色扩展（周报 Agent 专用点缀色，其他页面不消费即无感） ── */
-  --accent-claude:        #CC785C !important;               /* Claude 橙,主 accent */
-  --accent-claude-hover:  #B8684C !important;
-  --accent-claude-soft:   rgba(204, 120, 92, 0.10) !important;
-  --accent-claude-border: rgba(204, 120, 92, 0.28) !important;
+  /* 周报浅色品牌覆盖：保留暖纸张与陶橙辨识度，状态仍服从全局语义层。 */
+  --report-accent: #CC785C;
+  --report-accent-hover: #B8684C;
+  --report-accent-soft: rgba(204, 120, 92, 0.10);
+  --report-accent-border: rgba(204, 120, 92, 0.28);
+  --report-status-done: #5A8F5E;
+  --report-status-done-soft: rgba(90, 143, 94, 0.12);
+  --report-status-done-border: rgba(90, 143, 94, 0.32);
+  --report-status-going: #B8784C;
+  --report-status-going-soft: rgba(184, 120, 76, 0.10);
+  --report-status-going-border: rgba(184, 120, 76, 0.28);
+  --report-status-idle: rgba(71, 85, 105, 0.75);
+  --report-status-idle-soft: rgba(71, 85, 105, 0.06);
+  --report-status-idle-border: rgba(71, 85, 105, 0.18);
 
-  /* ── Editorial 状态语义（精修：柔化饱和度，配合米底）──
-     moss-green: 完成态,替代过饱和的 green-700
-     amber: 进行中态,米底上自然的"待办"色感
-     hairline: 真正 1px 可见的深描边 (不是 4% alpha 的透明线) */
-  --status-done:          #5A8F5E !important;               /* 柔和墨绿,用于 100% 完成 */
-  --status-done-soft:     rgba(90, 143, 94, 0.12) !important;
-  --status-done-border:   rgba(90, 143, 94, 0.32) !important;
-  --status-going:         #B8784C !important;               /* 琥珀暖橙,用于进行中 */
-  --status-going-soft:    rgba(184, 120, 76, 0.10) !important;
-  --status-going-border:  rgba(184, 120, 76, 0.28) !important;
-  --status-idle:          rgba(71, 85, 105, 0.75) !important;
-  --status-idle-soft:     rgba(71, 85, 105, 0.06) !important;
-  --status-idle-border:   rgba(71, 85, 105, 0.18) !important;
-
-  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。
-     底色 #FAF9F5 下 alpha 0.08 约等于 #E8E7E4 的描边视觉。 */
-  --hairline:             rgba(15, 23, 42, 0.08) !important;
-  --hairline-strong:      rgba(15, 23, 42, 0.14) !important;
+  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
+  --hairline:             rgba(15, 23, 42, 0.08);
+  --hairline-strong:      rgba(15, 23, 42, 0.14);
 
   /* 历史命名兼容(配合 :root 中的同名 token):
      周报 Agent / SkillAgentDialog / TemplateManager 等 122 处使用,
      若浅色不覆盖会落到暗色值导致深底浅字。
      设计原则同 --bg-card / --bg-input,不再单独造一套色阶。 */
-  --bg-primary:       #FFFFFF !important;
-  --bg-secondary:     rgba(15, 23, 42, 0.05) !important;
-  --bg-tertiary:      rgba(15, 23, 42, 0.08) !important;
-  --border-primary:   rgba(15, 23, 42, 0.14) !important;
-  --border-secondary: rgba(15, 23, 42, 0.08) !important;
+  --bg-primary:       #F8F5EF;
+  --bg-secondary:     rgba(15, 23, 42, 0.05);
+  --bg-tertiary:      rgba(15, 23, 42, 0.08);
+  --border-primary:   rgba(15, 23, 42, 0.14);
+  --border-secondary: rgba(15, 23, 42, 0.08);
 
-  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层 #FFFFFF 卡片形成 ~3% L 差,
+  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层暖纸色卡片形成层级差,
      既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
-  --bg-nested:        rgba(15, 23, 42, 0.025) !important;
+  --bg-nested:        rgba(15, 23, 42, 0.025);
+}
+
+/* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
+   仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
+.surface-tone-dark {
+  color-scheme: dark;
+  --bg-card: rgba(255, 255, 255, 0.08);
+  --bg-card-hover: rgba(255, 255, 255, 0.11);
+  --bg-input: rgba(255, 255, 255, 0.07);
+  --bg-input-hover: rgba(255, 255, 255, 0.10);
+  --bg-nested: rgba(255, 255, 255, 0.025);
+  --glass-bg-start: rgb(30, 30, 36);
+  --glass-bg-end: rgb(25, 25, 30);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --border-faint: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-default: rgba(255, 255, 255, 0.18);
+  --border-hover: rgba(255, 255, 255, 0.24);
+  --text-primary: #f7f7fb;
+  --text-secondary: rgba(247, 247, 251, 0.80);
+  --text-muted: rgba(247, 247, 251, 0.60);
+  --workflow-accent-text-lightness: 65%;
 }
 
 html, body {

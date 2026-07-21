@@ -946,7 +946,7 @@ export function TeamDashboard() {
                       className="whitespace-nowrap px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200"
                       style={{
                         color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                        background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
+                        background: active ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
                         boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
                       }}
                       onClick={() => setViewMode(opt.key)}
