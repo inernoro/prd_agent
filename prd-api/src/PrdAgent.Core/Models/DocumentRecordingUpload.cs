@@ -52,6 +52,13 @@ public class DocumentRecordingUploadChunk
 public static class DocumentRecordingUploadStatus
 {
     public const string Uploading = "uploading";
+
+    /// <summary>
+    /// 原子认领的中间态：某个 /complete 请求已抢到会话并正在创建条目。
+    /// 用于阻止并发 /complete 各自创建重复音频条目；条目创建成功后翻转为 Completed。
+    /// </summary>
+    public const string Completing = "completing";
+
     public const string Completed = "completed";
     public const string Cancelled = "cancelled";
 }

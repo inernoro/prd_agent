@@ -1955,6 +1955,7 @@ export {
   startRecordingUpload,
   appendRecordingUploadChunk,
   completeRecordingUpload,
+  getRecordingUpload,
   cancelRecordingUpload,
   replaceDocumentFile,
   getDocumentContent,

@@ -259,6 +259,18 @@ export async function completeRecordingUpload(sessionId: string) {
   }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
 }
 
+/** 回读录音上传会话状态；用于 /complete 响应丢失时判断服务端是否已完成，避免重复上传。 */
+export async function getRecordingUpload(sessionId: string) {
+  return await apiRequest<{
+    sessionId: string;
+    status: 'uploading' | 'completing' | 'completed' | 'cancelled';
+    nextChunkIndex: number;
+    uploadedBytes: number;
+    entryId: string | null;
+    expiresAt: string;
+  }>(api.documentStore.entries.recordingUploadStatus(sessionId), { method: 'GET' });
+}
+
 /** 用户主动放弃时清理服务端临时录音分片。 */
 export async function cancelRecordingUpload(sessionId: string) {
   return await apiRequest<{ deleted: boolean }>(
