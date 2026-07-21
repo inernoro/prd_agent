@@ -541,7 +541,7 @@ type SlowHttpState =
   | { status: 'ok'; data: PerfOverviewResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -2436,6 +2436,20 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  const restartBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
+    setAction(branch.id, createAction('restart', '正在重新启动'));
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/restart`, { method: 'POST' });
+      setToast(`${branch.branch} 已重新启动`);
+      await refresh(false);
+      setAction(branch.id, null);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'restart', message, 'error'));
+      setToast(message);
+    }
+  }, [refresh, setAction]);
+
   const patchBranch = useCallback(async (
     branch: BranchSummary,
     body: Partial<Pick<BranchSummary, 'isFavorite' | 'isColorMarked' | 'tags'>>,
@@ -2681,13 +2695,13 @@ export function BranchListPage(): JSX.Element {
   // 跳过重渲染），实际实现每次渲染写进 ref，调用时读最新值，规避 stale closure。
   const cardCallbacksRef = useRef({
     openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
-    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    pullBranch, restartBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
     deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
     setReleaseBranchId,
   });
   cardCallbacksRef.current = {
     openPreview, deployBranch, openBranchDetail, openBranchResourcePanel,
-    pullBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
+    pullBranch, restartBranch, stopBranch, forceRebuildBranch, patchBranch, resetBranch,
     deleteBranch, editTags, addTagToBranch, removeTagFromBranch,
     setReleaseBranchId,
   };
@@ -2698,6 +2712,7 @@ export function BranchListPage(): JSX.Element {
     onDetail: (branch: BranchSummary) => cardCallbacksRef.current.openBranchDetail(branch.id),
     onResourcePanel: (branch: BranchSummary, resource: BranchResource) => cardCallbacksRef.current.openBranchResourcePanel(branch, resource),
     onPull: (branch: BranchSummary) => void cardCallbacksRef.current.pullBranch(branch),
+    onRestart: (branch: BranchSummary) => void cardCallbacksRef.current.restartBranch(branch),
     onStop: (branch: BranchSummary) => void cardCallbacksRef.current.stopBranch(branch),
     onForceRebuild: (branch: BranchSummary) => void cardCallbacksRef.current.forceRebuildBranch(branch),
     onToggleFavorite: (branch: BranchSummary) => void cardCallbacksRef.current.patchBranch(branch, { isFavorite: !branch.isFavorite }),
@@ -4697,6 +4712,7 @@ interface BranchCardHandlers {
   onDetail: (branch: BranchSummary) => void;
   onResourcePanel: (branch: BranchSummary, resource: BranchResource) => void;
   onPull: (branch: BranchSummary) => void;
+  onRestart: (branch: BranchSummary) => void;
   onStop: (branch: BranchSummary) => void;
   onForceRebuild: (branch: BranchSummary) => void;
   onToggleFavorite: (branch: BranchSummary) => void;
@@ -4758,6 +4774,7 @@ const BranchCard = memo(function BranchCard({
   const onDetail = () => handlers.onDetail(branch);
   const onResourcePanel = (resource: BranchResource) => handlers.onResourcePanel(branch, resource);
   const onPull = () => handlers.onPull(branch);
+  const onRestart = () => handlers.onRestart(branch);
   const onStop = () => handlers.onStop(branch);
   const onForceRebuild = () => handlers.onForceRebuild(branch);
   const onToggleFavorite = () => handlers.onToggleFavorite(branch);
@@ -4800,12 +4817,12 @@ const BranchCard = memo(function BranchCard({
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
-  // 新设计(2026-05-04 用户主诉求):
+  // 卡片主操作:
   //   1. 预览才是重点色(primary 橙) — running 态显示 Eye,主动作
-  //   2. 部署不再放在卡片右下 — 走"打开抽屉 → 设置 tab → 重新部署"
-  //      避免用户误点(部署=有副作用,需要确认上下文)
-  //   3. 未运行/已停止 → 整卡 opacity-60 暗示,不再单独显示"未运行"chip
-  //   4. 异常态保留 chip(因为是负面信号,需要醒目)
+  //   2. 停止态显示「一键启动」,只复用已有容器,不拉代码/不重建
+  //   3. 重部署仍走"打开抽屉 → 设置 tab → 重新部署",避免误触重操作
+  //   4. 未运行/已停止 → 整卡 opacity-60 暗示,不再单独显示"未运行"chip
+  //   5. 异常态保留 chip(因为是负面信号,需要醒目)
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
@@ -5893,14 +5910,13 @@ const BranchCard = memo(function BranchCard({
           {commitHistoryPanel}
         </div>
         {/*
-          重设计(2026-06-11 用户主诉求):
+          卡片右下主操作:
             - running 态:预览 + 发布合并成一个 split button。主按钮预览,
               下拉菜单包含发布,避免右下角两个强按钮互相抢焦点。
             - 中间态:loading 旋转图标(non-clickable)
-            - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
-              设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
-              到当前服务状态/日志 → 确认后再点",直接卡片右下点 Play 容易误操作。
-              卡片淡化暗示"这个分支没在跑",用户主动点开抽屉就能恢复。
+            - 已停止且保留容器:直接显示「一键启动」,调用 /restart 秒级拉起,
+              不打开抽屉、不拉代码、不重建镜像。
+            - 从未部署/异常且没有停止容器:不显示启动按钮,仍进抽屉重新部署。
         */}
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
@@ -5920,6 +5936,16 @@ const BranchCard = memo(function BranchCard({
           ) : isInterim ? (
             <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
               <Loader2 className="animate-spin" />
+            </Button>
+          ) : hasStopSignal ? (
+            <Button
+              title="一键启动已停止的容器，不拉取代码、不重建镜像"
+              aria-label={`一键启动 ${branch.branch}`}
+              onKeyDown={(event) => event.stopPropagation()}
+              onClick={onRestart}
+            >
+              <Play />
+              一键启动
             </Button>
           ) : null}
         </div>
