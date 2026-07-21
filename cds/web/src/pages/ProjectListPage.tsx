@@ -544,14 +544,36 @@ export function ProjectListPage(): JSX.Element {
   }, [refresh]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void loadPendingImports();
-      // 2026-06-23：周期刷新项目列表，让卡片上的实时 CPU/构建频次与暂停态
-      // 跟随后端采样更新（refresh(false) 不触发整页 loading，只热替换数据）。
-      void refresh(false);
-    }, 10000);
-    return () => window.clearInterval(timer);
-  }, [loadPendingImports, refresh]);
+    // 自调度轮询（2026-07-21 性能修复）：旧写法是裸 setInterval(10s) —— 服务端一慢，
+    // 上一轮还没返回下一轮照发，请求在服务端排队堆积、耗时线性攀升（3.7s → 40s+），
+    // 前端成了「排队恶化器」；且 loadPendingImports 每轮被打两次（interval 一次 +
+    // refresh 内部一次）。改为：等本轮 refresh 完成后再定时下一轮（慢响应自然拉开
+    // 间隔，天然 in-flight 去重），页面隐藏时暂停、回到前台立即刷一轮。
+    // refresh(false) 内部已调 loadPendingImports，不再单独调。
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = async () => {
+      if (cancelled) return;
+      if (!document.hidden) {
+        // refresh 内部已捕获错误（setState error），这里兜底防未预期 reject 中断循环。
+        await refresh(false).catch(() => undefined);
+      }
+      if (cancelled) return;
+      timer = window.setTimeout(() => { void tick(); }, 10000);
+    };
+    timer = window.setTimeout(() => { void tick(); }, 10000);
+    const onVisibilityChange = () => {
+      if (document.hidden || cancelled) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      void tick();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -4055,10 +4077,26 @@ function ResourceUsageDialog({
 
   useEffect(() => {
     if (!open) return;
+    // 自调度轮询（同页顶部列表轮询的 2026-07-21 修复）：等上一轮返回再排下一轮，
+    // 服务端慢时自然拉开间隔，不叠加在途请求。
+    let cancelled = false;
+    let timer: number | undefined;
     setLoading(true);
-    void load().finally(() => setLoading(false));
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
+    const tick = async () => {
+      if (cancelled) return;
+      if (!document.hidden) await load().catch(() => undefined);
+      if (cancelled) return;
+      timer = window.setTimeout(() => { void tick(); }, 5000);
+    };
+    void load().finally(() => {
+      if (cancelled) return;
+      setLoading(false);
+      timer = window.setTimeout(() => { void tick(); }, 5000);
+    });
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [open, load]);
 
   const rows = useMemo(() => {
