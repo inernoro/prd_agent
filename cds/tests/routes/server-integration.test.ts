@@ -1,4 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+
+// 环境免疫:本套件的 createServer 会读 CDS_USERNAME / CDS_PASSWORD 决定是否开
+// basic auth。开发机/Agent 沙箱常为连接远端 CDS 配置这两个变量,导致所有
+// 未带凭据的请求 401、10 个用例假红(2026-07-21 排查:main 基线即红,曾被
+// 误判为分支回归)。套件级摘除 + 恢复;需要 auth 的用例(public-status)自行
+// 显式 set/restore,不受影响。
+const AUTH_ENV_KEYS = ['CDS_USERNAME', 'CDS_PASSWORD'] as const;
+const savedAuthEnv = new Map<string, string | undefined>();
+beforeAll(() => {
+  for (const key of AUTH_ENV_KEYS) {
+    savedAuthEnv.set(key, process.env[key]);
+    delete process.env[key];
+  }
+});
+afterAll(() => {
+  for (const key of AUTH_ENV_KEYS) {
+    const value = savedAuthEnv.get(key);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
