@@ -89,6 +89,18 @@ describe('detectContainerFatalCause', () => {
     expect(cause?.summary).toContain('Flyway 数据库迁移失败');
   });
 
+  it('日志同时含通用 Spring 失败与 Flyway 时,更具体的 Flyway 根因优先(Codex P2)', () => {
+    // 真实 Spring 启动失败日志几乎总是同时有 Application run failed 与
+    // FlywayMigrateException;按序匹配必须让更具体、更可操作的 Flyway 先赢。
+    const logs = [
+      'org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean',
+      'Application run failed',
+      'Caused by: org.flywaydb.core.internal.command.DbMigrate$FlywayMigrateException: failed migration to version 20260720.002',
+    ].join('\n');
+    const cause = detectContainerFatalCause(logs);
+    expect(cause?.summary).toContain('Flyway 数据库迁移失败');
+  });
+
   it('识别进程被强制终止(exit 137 / signal 9)并归到代码侧', () => {
     const cause = detectContainerFatalCause('process exited with code 137');
     expect(cause?.side).toBe('code');

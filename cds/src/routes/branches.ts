@@ -1329,10 +1329,12 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
     { re: /NoClassDefFoundError|ClassNotFoundException/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Java 类未找到' },
     { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
     { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
-    { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, side: 'code', category: 'crashed', label: '应用启动失败 · Spring 初始化错误' },
     // Flyway 迁移失败是 Spring 应用最常见的启动死因之一(2026-07-21 用户实例:
     // imp-api-mdimp 因 failed migration 起不来,却被摘要成「就绪探测超时」甩锅 CDS)。
+    // 必须排在通用 Spring 模式**之前**:这类日志几乎总是同时含 Application run
+    // failed / UnsatisfiedDependencyException,按序匹配时更具体的根因要先赢(Codex P2)。
     { re: /FlywayMigrateException|failed migration to version|FlywayValidateException/i, side: 'code', category: 'crashed', label: '应用启动失败 · Flyway 数据库迁移失败' },
+    { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, side: 'code', category: 'crashed', label: '应用启动失败 · Spring 初始化错误' },
     { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
     { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
     { re: /OOMKilled|Out of memory|cannot allocate memory/i, side: 'config', category: 'oom', label: '内存超限 · 进程被 OOM 终止' },
